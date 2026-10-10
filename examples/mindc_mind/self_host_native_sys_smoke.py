@@ -137,7 +137,15 @@ def run_elf(exe: pathlib.Path, source: bytes) -> bytes:
     result = subprocess.run([str(exe)], input=source, capture_output=True, timeout=600)
     if result.returncode or not result.stdout.startswith(b"\x7fELF"):
         raise RuntimeError(f"{exe.name}: exit={result.returncode}, stderr={result.stderr[:300]!r}")
-    return result.stdout
+    elf = result.stdout
+    if struct.unpack_from("<HH", elf, 16) != (2, 62):
+        raise RuntimeError("native output is not x86-64 ET_EXEC")
+    phoff = struct.unpack_from("<Q", elf, 32)[0]
+    entsize, count = struct.unpack_from("<HH", elf, 54)
+    for i in range(count):
+        if struct.unpack_from("<I", elf, phoff + i * entsize)[0] in (2, 3):
+            raise RuntimeError("native output has a dynamic loader/dependency segment")
+    return elf
 
 
 def main() -> int:
@@ -147,6 +155,7 @@ def main() -> int:
     mindc = resolve_mindc()
     _, seed, _ = build_seed()
     failed = False
+    checked = 0
     with tempfile.TemporaryDirectory(prefix="mind-sys-") as td:
         tmp = pathlib.Path(td)
         stage1 = tmp / "stage1.elf"
@@ -168,8 +177,8 @@ def main() -> int:
                 src = tmp / f"{name}.mind"
                 src.write_text(("import std.posix;\n" if posix else "") + body.replace("EXPECTED_UID", str(os.getuid())))
                 mlir = tmp / f"{name}.mlir-bin"
-                build = subprocess.run([str(mindc), "build", str(src), "--release", "--backend", "mlir",
-                                        "--allow-nondeterministic", "--emit=binary", f"--out={mlir}"],
+                build = subprocess.run([str(mindc), "--allow-nondeterministic", "build", str(src), "--release", "--backend", "mlir",
+                                        "--emit=binary", f"--out={mlir}"],
                                        cwd=tmp, capture_output=True, timeout=300)
                 if build.returncode:
                     raise RuntimeError(f"MLIR build exit={build.returncode}: {build.stderr[-2000:]!r}")
@@ -179,15 +188,22 @@ def main() -> int:
                     work.mkdir()
                     (work / "input").write_bytes(b"ABCD")
                     proc = subprocess.run([str(exe)], cwd=work, capture_output=True, timeout=15)
+                    checked += 1
                     results.append((proc.returncode, proc.stdout))
                     ok = results[-1] == (0, expected) and not (work / "data").exists() and not (work / "renamed").exists()
-                    print(f"{'PASS' if ok else 'FAIL'} {name}/{backend}: exit={proc.returncode} stdout={proc.stdout!r}", flush=True)
+                    if ok:
+                        print(f"PASS {name}/{backend}: exit={proc.returncode} stdout={proc.stdout!r}", flush=True)
+                    else:
+                        print(f"FAIL {name}/{backend}: exit={proc.returncode} stdout={proc.stdout!r}", flush=True)
                     failed |= not ok
                 if results[0] != results[1]:
                     raise RuntimeError(f"backend mismatch: {results!r}")
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                 print(f"FAIL {name}: {exc}", flush=True)
                 failed = True
+    if checked != 6:
+        print(f"FAIL: checked {checked} backend cases, expected 6")
+        failed = True
     print("FAIL native syscall parity" if failed else "ALL PASS native syscall parity")
     return int(failed)
 

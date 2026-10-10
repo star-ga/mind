@@ -70,6 +70,7 @@ map	seed	bundled
 mlir	no	no
 mlkem768	no	no
 net	seed	bundled
+posix	no	bundled
 process	seed	bundled
 reactor	seed	bundled
 regex	seed	bundled

@@ -33062,15 +33062,14 @@ pub fn nb_emit_load_i32_zx(code: String, addr_disp: i64) -> String {
     nb_push(c5, 0)
 }
 
-// emit_write(fd_disp, buf_disp, count_disp): raw write(2) syscall, NO libc
-// (mirror src/native::emit_write). The print path's offset arg is the -1 sentinel
-// that write(2) already implements, so it is intentionally unused here.
+// Fixed stream-write helper for emitter selftests (no source-level offset).
+// Source-level __mind_write uses nb_emit_write below.
 //   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
 //   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
 //   mov rdx,[rbp+count] = 48 8B 95 <disp32>
 //   mov rax,1           = 48 C7 C0 01 00 00 00
 //   syscall             = 0F 05
-pub fn nb_emit_write(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
+pub fn nb_emit_write_stream(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 139);
     let c3: String = nb_push(c2, 189);
@@ -33094,35 +33093,96 @@ pub fn nb_emit_write(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64)
     nb_push(c20, 5)
 }
 
-// emit_read(fd_disp, buf_disp, count_disp): raw read(2) syscall, NO libc (mirror
-// src/native::emit_read). The exact dual of nb_emit_write; rax=0 (SYS_read).
-//   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
-//   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
-//   mov rdx,[rbp+count] = 48 8B 95 <disp32>
-//   mov rax,0           = 48 C7 C0 00 00 00 00
-//   syscall             = 0F 05
-pub fn nb_emit_read(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
-    let c1: String = nb_push(code, 72);
-    let c2: String = nb_push(c1, 139);
-    let c3: String = nb_push(c2, 189);
-    let c4: String = nb_i32le_signed(c3, fd_disp);
-    let c5: String = nb_push(c4, 72);
-    let c6: String = nb_push(c5, 139);
-    let c7: String = nb_push(c6, 181);
-    let c8: String = nb_i32le_signed(c7, buf_disp);
-    let c9: String = nb_push(c8, 72);
-    let c10: String = nb_push(c9, 139);
-    let c11: String = nb_push(c10, 149);
-    let c12: String = nb_i32le_signed(c11, count_disp);
-    let c13: String = nb_push(c12, 72);
-    let c14: String = nb_push(c13, 199);
-    let c15: String = nb_push(c14, 192);
-    let c16: String = nb_push(c15, 0);
-    let c17: String = nb_push(c16, 0);
-    let c18: String = nb_push(c17, 0);
+// Linux syscall argument 3 lives in r10, not the SysV call register rcx.
+// All inputs have stack homes; syscall clobbers rcx/r11, neither is live across it.
+pub fn nb_load_sysarg(code: String, i: i64, disp: i64) -> String {
+    if i == 3 {
+        let c1: String = nb_push(code, 76);
+        let c2: String = nb_push(c1, 139);
+        let c3: String = nb_push(c2, 149);
+        return nb_i32le_signed(c3, disp);
+    }
+    nb_load_argreg(code, i, disp)
+}
+
+// Match the existing C read/write twins, including their -1 error sentinel and
+// zero result for null buffers or nonpositive counts. Negative offsets select
+// stream I/O (-1 is the documented sentinel); nonnegative offsets select
+// pread64/pwrite64 at RUNTIME. Positioned operations do not move the fd cursor.
+pub fn nb_emit_io(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, offset_disp: i64, stream_nr: i64) -> String {
+    let c1: String = nb_load_sysarg(code, 0, fd_disp);
+    let c2: String = nb_load_sysarg(c1, 1, buf_disp);
+    let c3: String = nb_load_sysarg(c2, 2, count_disp);
+    let c4: String = nb_load_sysarg(c3, 3, offset_disp);
+    // xor eax,eax; test rsi,rsi; jz done; test rdx,rdx; jle done;
+    // mov eax,stream_nr; test r10,r10; js syscall; mov eax,stream_nr+17;
+    // syscall; test rax,rax; jns done; mov rax,-1; done.
+    let c5: String = nb_push(c4, 49);
+    let c6: String = nb_push(c5, 192);
+    let c7: String = nb_push(c6, 72);
+    let c8: String = nb_push(c7, 133);
+    let c9: String = nb_push(c8, 246);
+    let c10: String = nb_push(c9, 116);
+    let c11: String = nb_push(c10, 34);
+    let c12: String = nb_push(c11, 72);
+    let c13: String = nb_push(c12, 133);
+    let c14: String = nb_push(c13, 210);
+    let c15: String = nb_push(c14, 126);
+    let c16: String = nb_push(c15, 29);
+    let c17: String = nb_push(c16, 184);
+    let c18: String = nb_push(c17, stream_nr);
     let c19: String = nb_push(c18, 0);
-    let c20: String = nb_push(c19, 15);
-    nb_push(c20, 5)
+    let c20: String = nb_push(c19, 0);
+    let c21: String = nb_push(c20, 0);
+    let c22: String = nb_push(c21, 77);
+    let c23: String = nb_push(c22, 133);
+    let c24: String = nb_push(c23, 210);
+    let c25: String = nb_push(c24, 120);
+    let c26: String = nb_push(c25, 5);
+    let c27: String = nb_push(c26, 184);
+    let c28: String = nb_push(c27, stream_nr + 17);
+    let c29: String = nb_push(c28, 0);
+    let c30: String = nb_push(c29, 0);
+    let c31: String = nb_push(c30, 0);
+    let c32: String = nb_push(c31, 15);
+    let c33: String = nb_push(c32, 5);
+    let c34: String = nb_push(c33, 72);
+    let c35: String = nb_push(c34, 133);
+    let c36: String = nb_push(c35, 192);
+    let c37: String = nb_push(c36, 121);
+    let c38: String = nb_push(c37, 7);
+    let c39: String = nb_push(c38, 72);
+    let c40: String = nb_push(c39, 199);
+    let c41: String = nb_push(c40, 192);
+    let c42: String = nb_push(c41, 255);
+    let c43: String = nb_push(c42, 255);
+    let c44: String = nb_push(c43, 255);
+    let c45: String = nb_push(c44, 255);
+    c45
+}
+
+pub fn nb_emit_read(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, offset_disp: i64) -> String {
+    nb_emit_io(code, fd_disp, buf_disp, count_disp, offset_disp, 0)
+}
+
+pub fn nb_emit_write(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, offset_disp: i64) -> String {
+    nb_emit_io(code, fd_disp, buf_disp, count_disp, offset_disp, 1)
+}
+
+// Raw Linux x86-64 syscall: rax=nr; rdi,rsi,rdx,r10,r8,r9=args.
+// Result is left untouched in rax, including negative errno on failure.
+pub fn nb_emit_syscall(code: String, nr: i64, ids: i64, arity: i64) -> String {
+    let mut out: String = code;
+    let mut i: i64 = 0;
+    while i < arity {
+        let slot: i64 = __mind_load_i64(ids + i * 8);
+        out = nb_load_sysarg(out, i, nb_slot_disp(slot));
+        i = i + 1;
+    }
+    let c1: String = nb_push(out, 184);
+    let c2: String = nb_i32le_signed(c1, nr);
+    let c3: String = nb_push(c2, 15);
+    nb_push(c3, 5)
 }
 
 // emit_open(path_disp): raw open(2) syscall, NO libc (RI-C task #228). Opens the
@@ -33447,6 +33507,60 @@ pub fn nb_is_argv_name(buf: i64, lo: i64, hi: i64) -> i64 {
 // Length-first then byte-by-byte (like is_struct_kw) so it stays in the self-host
 // mic@3 subset and lowers byte-identically. All names share the "__mind_" prefix
 // (95 95 109 105 110 100 95); only the suffix is matched per length.
+// W7a syscall names use full-span matching; IDs 1..19 stay unchanged.
+pub fn nb_sys_intrinsic_id(buf: i64, lo: i64, n: i64) -> i64 {
+    // W7a: append IDs 20..31; existing IDs 1..19 are frozen.
+    // 20: __mind_sys_openat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7020660402696450937, 116, 0, 17, 0, 0) == 1 {
+        return 20;
+    }
+    // 21: __mind_sys_close
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7310309131466797945, 0, 0, 16, 0, 0) == 1 {
+        return 21;
+    }
+    // 22: __mind_sys_fstat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 8386112020128166777, 0, 0, 16, 0, 0) == 1 {
+        return 22;
+    }
+    // 23: __mind_sys_newfstatat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 8315465039513351033, 499851223412, 0, 21, 0, 0) == 1 {
+        return 23;
+    }
+    // 24: __mind_sys_fsync
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7164797593738769273, 0, 0, 16, 0, 0) == 1 {
+        return 24;
+    }
+    // 25: __mind_sys_flock
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7738151096117326713, 0, 0, 16, 0, 0) == 1 {
+        return 25;
+    }
+    // 26: __mind_sys_fcntl
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7814992626593002361, 0, 0, 16, 0, 0) == 1 {
+        return 26;
+    }
+    // 27: __mind_sys_lseek
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7738703081119904633, 0, 0, 16, 0, 0) == 1 {
+        return 27;
+    }
+    // 28: __mind_sys_unlinkat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7956009438398083961, 7627115, 0, 19, 0, 0) == 1 {
+        return 28;
+    }
+    // 29: __mind_sys_renameat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7881702204864689017, 7627109, 0, 19, 0, 0) == 1 {
+        return 29;
+    }
+    // 30: __mind_sys_umask
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7742639307128533881, 0, 0, 16, 0, 0) == 1 {
+        return 30;
+    }
+    // 31: __mind_sys_getuid
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7599107925132407673, 100, 0, 17, 0, 0) == 1 {
+        return 31;
+    }
+    0 - 1
+}
+
 pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
     let n: i64 = hi - lo;
     // Common prefix "__mind_" guard (7 bytes). If absent, not an intrinsic.
@@ -33473,6 +33587,17 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
     }
     if load_byte(buf, lo + 6) != 95 {
         return 0 - 1;
+    }
+    if n >= 16 {
+        if load_byte(buf, lo + 7) == 115 {
+            if load_byte(buf, lo + 8) == 121 {
+                if load_byte(buf, lo + 9) == 115 {
+                    if load_byte(buf, lo + 10) == 95 {
+                        return nb_sys_intrinsic_id(buf, lo, n);
+                    }
+                }
+            }
+        }
     }
     // __mind_alloc (12): a l l o c
     if n == 12 {
@@ -33762,11 +33887,12 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     if kind == 8 {
-        // __mind_write(fd, buf, count, offset) -> i64 (offset unused)
+        // __mind_write(fd, buf, count, offset) -> i64
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
         let a1: i64 = __mind_load_i64(ids + 1 * 8);
         let a2: i64 = __mind_load_i64(ids + 2 * 8);
-        let c1: String = nb_emit_write(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2));
+        let a3: i64 = __mind_load_i64(ids + 3 * 8);
+        let c1: String = nb_emit_write(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2), nb_slot_disp(a3));
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     if kind == 10 {
@@ -33835,11 +33961,72 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         let c2: String = nb_movsxd_rax_eax(c1);
         return nb_store_rax(c2, nb_slot_disp(dst_id));
     }
-    // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
+    if kind == 20 {
+        // __mind_sys_openat: syscall 257, 4 arguments.
+        let c1: String = nb_emit_syscall(code, 257, ids, 4);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 21 {
+        // __mind_sys_close: syscall 3, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 3, ids, 1);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 22 {
+        // __mind_sys_fstat: syscall 5, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 5, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 23 {
+        // __mind_sys_newfstatat: syscall 262, 4 arguments.
+        let c1: String = nb_emit_syscall(code, 262, ids, 4);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 24 {
+        // __mind_sys_fsync: syscall 74, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 74, ids, 1);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 25 {
+        // __mind_sys_flock: syscall 73, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 73, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 26 {
+        // __mind_sys_fcntl: syscall 72, 3 arguments.
+        let c1: String = nb_emit_syscall(code, 72, ids, 3);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 27 {
+        // __mind_sys_lseek: syscall 8, 3 arguments.
+        let c1: String = nb_emit_syscall(code, 8, ids, 3);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 28 {
+        // __mind_sys_unlinkat: syscall 263, 3 arguments.
+        let c1: String = nb_emit_syscall(code, 263, ids, 3);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 29 {
+        // __mind_sys_renameat: syscall 264, 4 arguments.
+        let c1: String = nb_emit_syscall(code, 264, ids, 4);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 30 {
+        // __mind_sys_umask: syscall 95, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 95, ids, 1);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 31 {
+        // __mind_sys_getuid: syscall 102, 0 arguments.
+        let c1: String = nb_emit_syscall(code, 102, ids, 0);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    // kind == 9: __mind_read(fd, buf, count, offset) -> i64
     let a0: i64 = __mind_load_i64(ids + 0 * 8);
     let a1: i64 = __mind_load_i64(ids + 1 * 8);
     let a2: i64 = __mind_load_i64(ids + 2 * 8);
-    let c1: String = nb_emit_read(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2));
+    let a3: i64 = __mind_load_i64(ids + 3 * 8);
+    let c1: String = nb_emit_read(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2), nb_slot_disp(a3));
     nb_store_rax(c1, nb_slot_disp(dst_id))
 }
 
@@ -47931,7 +48118,7 @@ pub fn selftest_native_elf_write8(val: i64) -> EmitState {
     let la: String = nb_intdot_lea(k1, 0 - 16, 0 - 24);
     let k2: String = nb_intdot_movimm(la, 1, 0 - 32);
     let k3: String = nb_intdot_movimm(k2, 8, 0 - 40);
-    let w1: String = nb_emit_write(k3, 0 - 32, 0 - 24, 0 - 40);
+    let w1: String = nb_emit_write_stream(k3, 0 - 32, 0 - 24, 0 - 40);
     let z1: String = nb_intdot_movimm(w1, 0, 0 - 48);
     let r1: String = nb_load_rax(z1, 0 - 48);
     let code: String = nb_emit_return(r1, 1);
@@ -48073,7 +48260,7 @@ pub fn selftest_native_elf_intdot_i16(n: i64) -> EmitState {
     let t4: String = nb_intdot_lea(t3, 0 - 65688, 0 - 65704);
     let t5: String = nb_intdot_movimm(t4, 1, 0 - 65696);
     let t6: String = nb_intdot_movimm(t5, 8, 0 - 65712);
-    let t7: String = nb_emit_write(t6, 0 - 65696, 0 - 65704, 0 - 65712);
+    let t7: String = nb_emit_write_stream(t6, 0 - 65696, 0 - 65704, 0 - 65712);
     // exit(0).
     let t8: String = nb_intdot_movimm(t7, 0, 0 - 65720);
     let t9: String = nb_load_rax(t8, 0 - 65720);
@@ -48235,7 +48422,7 @@ pub fn selftest_native_elf_intdot_q16(n: i64) -> EmitState {
     let t4: String = nb_intdot_lea(t3, 0 - 1048720, 0 - 1048736);
     let t5: String = nb_intdot_movimm(t4, 1, 0 - 1048728);
     let t6: String = nb_intdot_movimm(t5, 8, 0 - 1048744);
-    let t7: String = nb_emit_write(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    let t7: String = nb_emit_write_stream(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
     // exit(0).
     let t8: String = nb_intdot_movimm(t7, 0, 0 - 1048752);
     let t9: String = nb_load_rax(t8, 0 - 1048752);
@@ -48370,7 +48557,7 @@ pub fn nb_gemv_row_loop(code_in: String, is_q16: i64, jmps: i64, jcell: i64) -> 
     let t2: String = nb_movsxd_rax_eax(t1);
     let t3: String = nb_store_rax(t2, 0 - 1048720);
     // write(1, &result, 4) — fd/bufaddr/count were set before the outer loop.
-    let w1: String = nb_emit_write(t3, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    let w1: String = nb_emit_write_stream(t3, 0 - 1048728, 0 - 1048736, 0 - 1048744);
     // r += 1.
     let u1: String = nb_load_rax(w1, 0 - 1048760);
     let u2: String = nb_arith_rax_mem(u1, op_add(), 0 - 1048648);
@@ -48680,7 +48867,7 @@ pub fn nb_gemm_triple_loop(code_in: String, is_q16: i64, jmps: i64, jcell: i64) 
     let t2: String = nb_movsxd_rax_eax(t1);
     let t3: String = nb_store_rax(t2, 0 - 1048720);
     // write(1, &result, 4).
-    let w1: String = nb_emit_write(t3, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    let w1: String = nb_emit_write_stream(t3, 0 - 1048728, 0 - 1048736, 0 - 1048744);
     // j += 1.
     let u1: String = nb_load_rax(w1, 0 - 1048808);
     let u2: String = nb_arith_rax_mem(u1, op_add(), 0 - 1048648);
@@ -48894,7 +49081,7 @@ pub fn selftest_native_elf_write_f32(bits: i64) -> EmitState {
     let w0: String = nb_intdot_lea(m3, 0 - 24, 0 - 32);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 40);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 48);
-    let w3: String = nb_emit_write(w2, 0 - 40, 0 - 32, 0 - 48);
+    let w3: String = nb_emit_write_stream(w2, 0 - 40, 0 - 32, 0 - 48);
     let z1: String = nb_intdot_movimm(w3, 0, 0 - 56);
     let r1: String = nb_load_rax(z1, 0 - 56);
     let code: String = nb_emit_return(r1, 1);
@@ -48959,7 +49146,7 @@ pub fn selftest_native_elf_genf32(n: i64) -> EmitState {
     let d1: String = nb_f32_draw_xmm0(gcj);
     let d2: String = nb_fp_movd_eax_xmm0(d1);
     let d3: String = nb_store_rax(d2, 0 - 224);
-    let d4: String = nb_emit_write(d3, 0 - 232, 0 - 240, 0 - 248);
+    let d4: String = nb_emit_write_stream(d3, 0 - 232, 0 - 240, 0 - 248);
     let d5: String = nb_load_rax(d4, 0 - 32);
     let d6: String = nb_arith_rax_mem(d5, op_add(), 0 - 88);
     let d7: String = nb_store_rax(d6, 0 - 32);
@@ -49158,7 +49345,7 @@ pub fn selftest_native_elf_dot_f32(n: i64) -> EmitState {
     let w0: String = nb_intdot_lea(r2, 0 - 224, 0 - 240);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 232);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 248);
-    let w3: String = nb_emit_write(w2, 0 - 232, 0 - 240, 0 - 248);
+    let w3: String = nb_emit_write_stream(w2, 0 - 232, 0 - 240, 0 - 248);
     // exit(0).
     let e1: String = nb_intdot_movimm(w3, 0, 0 - 256);
     let e2: String = nb_load_rax(e1, 0 - 256);
@@ -49273,7 +49460,7 @@ pub fn nb_f32matmul_row_loop(code_in: String, jmps: i64, jcell: i64) -> String {
     let r1: String = nb_fp_movd_eax_xmm0(r0);
     let r2: String = nb_store_rax(r1, 0 - 224);
     // write(1, &result, 4) — fd/bufaddr/count set in consts.
-    let w1: String = nb_emit_write(r2, 0 - 232, 0 - 240, 0 - 248);
+    let w1: String = nb_emit_write_stream(r2, 0 - 232, 0 - 240, 0 - 248);
     // r += 1.
     let u1: String = nb_load_rax(w1, 0 - 288);
     let u2: String = nb_arith_rax_mem(u1, op_add(), 0 - 88);
@@ -49367,7 +49554,7 @@ pub fn selftest_native_elf_scalar_f64(a_bits: i64, b_bits: i64, c_bits: i64, d_b
     let w0: String = nb_intdot_lea(q1, 0 - 64, 0 - 72);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 80);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 88);
-    let w3: String = nb_emit_write(w2, 0 - 80, 0 - 72, 0 - 88);
+    let w3: String = nb_emit_write_stream(w2, 0 - 80, 0 - 72, 0 - 88);
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 96);
     let z1: String = nb_load_rax(z0, 0 - 96);
     let code: String = nb_emit_return(z1, 1);
@@ -49433,7 +49620,7 @@ pub fn selftest_native_elf_scalar_f32(a_bits: i64, b_bits: i64, c_bits: i64, d_b
     let w0: String = nb_intdot_lea(tc2, 0 - 64, 0 - 72);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 80);
     let w2: String = nb_intdot_movimm(w1, 12, 0 - 88);
-    let w3: String = nb_emit_write(w2, 0 - 80, 0 - 72, 0 - 88);
+    let w3: String = nb_emit_write_stream(w2, 0 - 80, 0 - 72, 0 - 88);
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 96);
     let z1: String = nb_load_rax(z0, 0 - 96);
     let code: String = nb_emit_return(z1, 1);
@@ -49725,7 +49912,7 @@ pub fn selftest_native_elf_scalar_cast_conv(inr_bits: i64, povf_bits: i64, novf_
     let w0: String = nb_intdot_lea(r1, 0 - 136, 0 - 144);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 152);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 160);
-    let w3: String = nb_emit_write(w2, 0 - 152, 0 - 144, 0 - 160);
+    let w3: String = nb_emit_write_stream(w2, 0 - 152, 0 - 144, 0 - 160);
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 168);
     let z1: String = nb_load_rax(z0, 0 - 168);
     let code: String = nb_emit_return(z1, 1);
@@ -49787,7 +49974,7 @@ pub fn selftest_native_elf_scalar_narrow(nmin: i64, nmax: i64, inr_bits: i64, po
     let w0: String = nb_intdot_lea(r1, 0 - 232, 0 - 240);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 248);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 256);
-    let w3: String = nb_emit_write(w2, 0 - 248, 0 - 240, 0 - 256);
+    let w3: String = nb_emit_write_stream(w2, 0 - 248, 0 - 240, 0 - 256);
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 264);
     let z1: String = nb_load_rax(z0, 0 - 264);
     let code: String = nb_emit_return(z1, 1);
@@ -49932,7 +50119,7 @@ pub fn selftest_native_elf_dot_l1_q16(n: i64) -> EmitState {
     let t4: String = nb_intdot_lea(t3, 0 - 1048720, 0 - 1048736);
     let t5: String = nb_intdot_movimm(t4, 1, 0 - 1048728);
     let t6: String = nb_intdot_movimm(t5, 8, 0 - 1048744);
-    let t7: String = nb_emit_write(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    let t7: String = nb_emit_write_stream(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
     // exit(0).
     let t8: String = nb_intdot_movimm(t7, 0, 0 - 1048752);
     let t9: String = nb_load_rax(t8, 0 - 1048752);
@@ -50149,7 +50336,7 @@ pub fn selftest_native_elf_simd_probe() -> EmitState {
     let w0: String = nb_intdot_lea(h5, 0 - 80, 0 - 88);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 96);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 104);
-    let w3: String = nb_emit_write(w2, 0 - 96, 0 - 88, 0 - 104);
+    let w3: String = nb_emit_write_stream(w2, 0 - 96, 0 - 88, 0 - 104);
     let e0: String = nb_intdot_movimm(w3, 0, 0 - 112);
     let e1: String = nb_load_rax(e0, 0 - 112);
     let code: String = nb_emit_return(e1, 1);
@@ -50241,7 +50428,7 @@ pub fn selftest_native_elf_simd_dot_q16(n: i64) -> EmitState {
     let t4: String = nb_intdot_lea(t3, 0 - 1048720, 0 - 1048736);
     let t5: String = nb_intdot_movimm(t4, 1, 0 - 1048728);
     let t6: String = nb_intdot_movimm(t5, 8, 0 - 1048744);
-    let t7: String = nb_emit_write(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    let t7: String = nb_emit_write_stream(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
     // exit(0).
     let t8: String = nb_intdot_movimm(t7, 0, 0 - 1048752);
     let t9: String = nb_load_rax(t8, 0 - 1048752);
@@ -50452,7 +50639,7 @@ pub fn selftest_native_elf_simd_dot_f32(n: i64) -> EmitState {
     let w0: String = nb_intdot_lea(r2f, 0 - 224, 0 - 240);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 232);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 248);
-    let w3: String = nb_emit_write(w2, 0 - 232, 0 - 240, 0 - 248);
+    let w3: String = nb_emit_write_stream(w2, 0 - 232, 0 - 240, 0 - 248);
     // exit(0).
     let ee1: String = nb_intdot_movimm(w3, 0, 0 - 256);
     let ee2: String = nb_load_rax(ee1, 0 - 256);
@@ -50690,7 +50877,7 @@ pub fn selftest_native_elf_avx2_dot_f32(n: i64) -> EmitState {
     let w0: String = nb_intdot_lea(r2f, 0 - 224, 0 - 240);
     let w1: String = nb_intdot_movimm(w0, 1, 0 - 232);
     let w2: String = nb_intdot_movimm(w1, 8, 0 - 248);
-    let w3: String = nb_emit_write(w2, 0 - 232, 0 - 240, 0 - 248);
+    let w3: String = nb_emit_write_stream(w2, 0 - 232, 0 - 240, 0 - 248);
     // exit(0).
     let ee1: String = nb_intdot_movimm(w3, 0, 0 - 256);
     let ee2: String = nb_load_rax(ee1, 0 - 256);
@@ -50917,7 +51104,7 @@ pub fn selftest_native_elf_simd_dot_i16(n: i64) -> EmitState {
     let t4: String = nb_intdot_lea(t3, 0 - 65696, 0 - 65712);
     let t5: String = nb_intdot_movimm(t4, 1, 0 - 65704);
     let t6: String = nb_intdot_movimm(t5, 8, 0 - 65720);
-    let t7: String = nb_emit_write(t6, 0 - 65704, 0 - 65712, 0 - 65720);
+    let t7: String = nb_emit_write_stream(t6, 0 - 65704, 0 - 65712, 0 - 65720);
     // exit(0).
     let t8: String = nb_intdot_movimm(t7, 0, 0 - 65728);
     let t9: String = nb_load_rax(t8, 0 - 65728);
@@ -51091,7 +51278,7 @@ pub fn selftest_native_elf_tensor_ewadd_i64(n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131184);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -51241,7 +51428,7 @@ pub fn selftest_native_elf_tensor_ewadd_f64(a_addr: i64, b_addr: i64, n: i64, ex
     let t3: String = nb_intdot_lea(sjb, 0 - 131272, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exit = (sum_bits == expected_bits)*41 + 1 — 42 only on an EXACT 64-bit match.
     let u1: String = nb_load_rax(t6, 0 - 131272);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -51394,7 +51581,7 @@ pub fn selftest_native_elf_tensor_dot_i64(n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (acc == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131184);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -51785,7 +51972,7 @@ pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitStat
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -52139,11 +52326,60 @@ pub fn tc_shoc_prefix7_span(buf: i64, len: i64) -> i64 {
 }
 
 // Membership in the Rust/MLIR-selectable STD_SURFACE_INTRINSICS subset (all 58
-// entries; the two FrozenNative-only argc/argv rows intentionally stay out),
+// entries plus W7a syscalls; the FrozenNative-only argc/argv rows stay out),
 // with packed-word constants generated from the Rust table in src/intrinsics.rs — the
 // smoke regenerates them from that same source and cross-checks every case
 // against the live `mindc check` E2024 verdict).
 pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    // "__mind_sys_openat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7020660402696450937, 116, 0, 17) == 1 {
+        return 1;
+    }
+    // "__mind_sys_close"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7310309131466797945, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_fstat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 8386112020128166777, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_newfstatat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 8315465039513351033, 499851223412, 0, 21) == 1 {
+        return 1;
+    }
+    // "__mind_sys_fsync"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7164797593738769273, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_flock"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7738151096117326713, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_fcntl"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7814992626593002361, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_lseek"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7738703081119904633, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_unlinkat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7956009438398083961, 7627115, 0, 19) == 1 {
+        return 1;
+    }
+    // "__mind_sys_renameat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7881702204864689017, 7627109, 0, 19) == 1 {
+        return 1;
+    }
+    // "__mind_sys_umask"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7742639307128533881, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_getuid"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7599107925132407673, 100, 0, 17) == 1 {
+        return 1;
+    }
+
     // "__mind_alloc"
     if tc_shoc_eq(w0, w1, w2, w3, len, 7016437169844477791, 1668246636, 0, 0, 12) == 1 {
         return 1;
@@ -56198,7 +56434,7 @@ pub fn selftest_native_elf_tensor_rowsum_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -56398,7 +56634,7 @@ pub fn selftest_native_elf_tensor_transpose_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (chk == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -56623,7 +56859,7 @@ pub fn selftest_native_elf_tensor_ewmul_i64(n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131184);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -56872,7 +57108,7 @@ pub fn selftest_native_elf_tensor_colsum_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -57178,7 +57414,7 @@ pub fn selftest_native_elf_tensor_bcastadd_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (chk == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -57490,7 +57726,7 @@ pub fn selftest_native_elf_tensor_maxrowmax_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -57723,7 +57959,7 @@ pub fn selftest_native_elf_tensor_relu_i64(n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131184);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -57861,7 +58097,7 @@ pub fn selftest_native_elf_narrow_add_i8(a: i64, b: i64) -> EmitState {
     let s4: String = nb_store_rax(s3, 0 - 40);
     // write(1, &result, 8) — the full-width (sign-extended i8) stdout observable.
     let t3: String = nb_intdot_lea(s4, 0 - 40, 0 - 88);
-    let t6: String = nb_emit_write(t3, 0 - 80, 0 - 88, 0 - 96);
+    let t6: String = nb_emit_write_stream(t3, 0 - 80, 0 - 88, 0 - 96);
     // exitcode = (result == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 40);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 48);
@@ -58168,7 +58404,7 @@ pub fn selftest_native_elf_tensor_batchsum_i64(b: i64, m: i64, n: i64) -> EmitSt
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -58470,7 +58706,7 @@ pub fn selftest_native_elf_tensor_rowmin_i64(m: i64, n: i64) -> EmitState {
     let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
     let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
     let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
-    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    let t6: String = nb_emit_write_stream(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131288);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
@@ -58614,7 +58850,7 @@ pub fn selftest_native_elf_narrow_arith(a: i64, b: i64, op: i64, w: i64) -> Emit
     let s4: String = nb_store_rax(s3, 0 - 40);
     // write(1, &result, 8) — the full-width (sign-extended iW) stdout observable.
     let t3: String = nb_intdot_lea(s4, 0 - 40, 0 - 88);
-    let t6: String = nb_emit_write(t3, 0 - 80, 0 - 88, 0 - 96);
+    let t6: String = nb_emit_write_stream(t3, 0 - 80, 0 - 88, 0 - 96);
     // exitcode = (result == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 40);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 48);

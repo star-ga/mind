@@ -39,10 +39,20 @@
 // Growth policy is fixed at "doubling, min-cap 4" (deterministic for the
 // evidence chain and bootstrap fixed point).
 
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#if !defined(_WIN32)
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/file.h>
+#include <dlfcn.h>
+#endif
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -385,6 +395,109 @@ MIND_EXPORT int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, in
     }
     return (int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset);
 }
+
+// POSIX filesystem twins: preserve the raw Linux negative-errno convention.
+// std.posix exports C-spelled wrappers (close/openat/etc.). Resolve the next
+// libc definition explicitly so these calls cannot recurse into those wrappers.
+// No cache or mutable initialization state is needed; dlsym is thread-safe.
+#if !defined(_WIN32)
+MIND_EXPORT int64_t __mind_sys_openat(int64_t dirfd, int64_t path_ptr, int64_t flags, int64_t mode) {
+    typedef int (*libc_fn_t)(int, const char *, int, ...);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "openat");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path_ptr, (int)flags, (mode_t)mode);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_close(int64_t fd) {
+    typedef int (*libc_fn_t)(int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "close");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_fstat(int64_t fd, int64_t buf) {
+    typedef int (*libc_fn_t)(int, struct stat *);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fstat");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd, (struct stat *)(uintptr_t)buf);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_newfstatat(int64_t dirfd, int64_t path, int64_t buf, int64_t flags) {
+    typedef int (*libc_fn_t)(int, const char *, struct stat *, int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fstatat");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf, (int)flags);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_fsync(int64_t fd) {
+    typedef int (*libc_fn_t)(int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fsync");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_flock(int64_t fd, int64_t op) {
+    typedef int (*libc_fn_t)(int, int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "flock");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd, (int)op);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_fcntl(int64_t fd, int64_t cmd, int64_t arg) {
+    typedef int (*libc_fn_t)(int, int, ...);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fcntl");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd, (int)cmd, (intptr_t)arg);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_lseek(int64_t fd, int64_t off, int64_t whence) {
+    typedef off_t (*libc_fn_t)(int, off_t, int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "lseek");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)fd, (off_t)off, (int)whence);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_unlinkat(int64_t dirfd, int64_t path, int64_t flags) {
+    typedef int (*libc_fn_t)(int, const char *, int);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "unlinkat");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path, (int)flags);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_renameat(int64_t olddirfd, int64_t old, int64_t newdirfd, int64_t new) {
+    typedef int (*libc_fn_t)(int, const char *, int, const char *);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "renameat");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((int)olddirfd, (const char *)(uintptr_t)old, (int)newdirfd, (const char *)(uintptr_t)new);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_umask(int64_t mask) {
+    typedef mode_t (*libc_fn_t)(mode_t);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "umask");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn((mode_t)mask);
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+MIND_EXPORT int64_t __mind_sys_getuid(void) {
+    typedef uid_t (*libc_fn_t)(void);
+    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "getuid");
+    if (libc_fn == NULL) return -ENOSYS;
+    int64_t r = (int64_t)libc_fn();
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+#endif
 
 // print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.
 // Corresponds to std/io.mind `print_bytes(buf_addr, count)`.

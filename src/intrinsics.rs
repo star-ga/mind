@@ -339,6 +339,20 @@ pub(crate) const STD_SURFACE_INTRINSICS: &[IntrinsicSpec] = &[
         IntrinsicEffect::FdWrite,
         8,
     ),
+    // Raw filesystem calls observe descriptor/process/filesystem state.
+    // Keep this state visible to determinism admission and evidence labels.
+    IntrinsicSpec::legacy("__mind_sys_openat", 4, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_close", 1, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_fstat", 2, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_newfstatat", 4, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_fsync", 1, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_flock", 2, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_fcntl", 3, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_lseek", 3, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_unlinkat", 3, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_renameat", 4, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_umask", 1, Det::World),
+    IntrinsicSpec::legacy("__mind_sys_getuid", 0, Det::World),
     // `c.byte()` — the byte (low 8 bits) of a char/int receiver. The method-call
     // type-check validates it as a 1-arg call `byte(recv)`; lowering desugars it
     // to `recv & 0xFF` (see the MethodCall arm in eval/lower.rs). mind-flow's

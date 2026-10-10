@@ -1,0 +1,69 @@
+// std.posix — Linux x86-64 filesystem surface, with no libc in native builds.
+// All arguments and results use i64; pointers address caller-owned storage.
+// Paths must be NUL-terminated. stat buffers must hold the Linux x86-64
+// struct stat (144 bytes, 8-byte alignment); its st_size is at byte offset 48.
+// Flags, modes, commands and whence use the platform's POSIX integer values.
+// open/openat always take mode (ignored unless flags require it).
+// Every failure returns -errno directly; no thread-local errno is consulted by
+// MIND. Success returns the C result (fd, offset, old mask, uid, or zero).
+// Existing std.io read/write retain their separate -1 error-sentinel contract.
+
+pub fn open(path_ptr: i64, flags: i64, mode: i64) -> i64 {
+    __mind_sys_openat(0 - 100, path_ptr, flags, mode)
+}
+
+pub fn openat(dirfd: i64, path_ptr: i64, flags: i64, mode: i64) -> i64 {
+    __mind_sys_openat(dirfd, path_ptr, flags, mode)
+}
+
+pub fn close(fd: i64) -> i64 {
+    __mind_sys_close(fd)
+}
+
+pub fn fstat(fd: i64, buf: i64) -> i64 {
+    __mind_sys_fstat(fd, buf)
+}
+
+pub fn fstatat(dirfd: i64, path: i64, buf: i64, flags: i64) -> i64 {
+    __mind_sys_newfstatat(dirfd, path, buf, flags)
+}
+
+pub fn fsync(fd: i64) -> i64 {
+    __mind_sys_fsync(fd)
+}
+
+pub fn flock(fd: i64, op: i64) -> i64 {
+    __mind_sys_flock(fd, op)
+}
+
+pub fn fcntl(fd: i64, cmd: i64, arg: i64) -> i64 {
+    __mind_sys_fcntl(fd, cmd, arg)
+}
+
+pub fn lseek(fd: i64, off: i64, whence: i64) -> i64 {
+    __mind_sys_lseek(fd, off, whence)
+}
+
+pub fn unlinkat(dirfd: i64, path: i64, flags: i64) -> i64 {
+    __mind_sys_unlinkat(dirfd, path, flags)
+}
+
+pub fn renameat(olddirfd: i64, old: i64, newdirfd: i64, new: i64) -> i64 {
+    __mind_sys_renameat(olddirfd, old, newdirfd, new)
+}
+
+pub fn umask(mask: i64) -> i64 {
+    __mind_sys_umask(mask)
+}
+
+pub fn getuid() -> i64 {
+    __mind_sys_getuid()
+}
+
+// Return the positive errno on failure, or zero for any successful result.
+pub fn posix_errno(r: i64) -> i64 {
+    if r < 0 {
+        return 0 - r;
+    }
+    0
+}
