@@ -32,6 +32,11 @@ carried vars pins that the edge moves run as a parallel copy.
 Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
 as a dead tail; every walk of the loop body must drop it the same way.
 
+Nested hidden-counter loops with the SAME header text (`for i in 0..hi() { for i
+in 0..hi() { .. } }`) must keep two counters: a counter is named by its span bytes,
+so it spans the whole `for` statement (a nested one is a strict substring of its
+parent), never the header alone.
+
 A run that does not exit normally is "HANG" / "SIG<n>", never an int: a masked
 timeout sentinel read as exit 255, which is a real expected value here.
 
@@ -249,6 +254,31 @@ CASES = [
     ("assign_var_in_nested_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..2 { i = i + 1; } c = c + 1; } return c; }", 3),
     ("end_assigned_in_nested_while", b"fn main() -> i64 { let mut n: i64 = 3; let mut c: i64 = 0; for i in 0..n { let mut k: i64 = 0; while k < 1 { n = n + 1; k = k + 1; } c = c + 1; } return c; }", 3),
     ("assign_var_nested_while_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } let mut k: i64 = 0; while k < 2 { i = i + 10; k = k + 1; } c = c + i; } return c; }", 65),
+    # ---- nested hidden-counter loops with the SAME header text ----
+    # Both loops hygienic (a param VAR, a call END or a body write to VAR) and both
+    # headers `for i in 0..X`: the hidden counter is named by its span bytes, so a
+    # header-only span named the two counters alike and the inner `let CTR`
+    # captured the outer step (pre-fix: 103, 3, 3, a HANG under `break`, and two
+    # `continue` shapes refused as an ambiguous exit move). References from the Rust
+    # MLIR build of the same programs.
+    ("same_hdr_param", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { for i in 0..n { c = c + 1; } } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 109),
+    ("same_hdr_call", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { c = c + 1; } } return c; }", 9),
+    ("same_hdr_body_write", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 1; for i in 0..3 { i = i + 1; c = c + 1; } } return c; }", 9),
+    ("same_hdr_call_read", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { c = c + i; } c = c + i * 10; } return c; }", 39),
+    ("same_hdr_call_3", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { for i in 0..hi() { c = c + 1; } } } return c; }", 8),
+    ("same_hdr_call_break", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { if i == 1 { break; } c = c + 1; } c = c + 10; } return c; }", 33),
+    ("same_hdr_param_break", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { for i in 0..n { if i == 2 { break; } c = c + 1; } c = c + 10; } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 136),
+    ("same_hdr_call_continue", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { if i == 1 { continue; } for i in 0..hi() { if i == 0 { continue; } c = c + 1; } } return c; }", 4),
+    ("same_hdr_call_outer_cont", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { if i == 1 { continue; } for i in 0..hi() { c = c + 1; } } return c; }", 6),
+    ("same_hdr_call_inner_cont", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { if i == 0 { continue; } c = c + 1; } c = c + 100; } return c % 256; }", 50),
+    ("same_hdr_param_continue", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { if i == 1 { continue; } for i in 0..n { if i == 1 { continue; } c = c + 1; } } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 104),
+    ("same_hdr_in_while", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; let mut k: i64 = 0; while k < 2 { k = k + 1; for i in 0..hi() { for i in 0..hi() { c = c + 1; } } } return c; }", 8),
+    ("sibling_then_nested", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } for i in 0..hi() { for i in 0..hi() { c = c + 10; } } return c; }", 42),
+    # A same-TEXT earlier sibling is harmless (it has finished before the later
+    # let); these pin that the whole-statement counter span keeps it that way, also
+    # when the later copy sits inside a while or inside another loop.
+    ("same_text_sibling_before_while", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } let mut k: i64 = 0; while k < 3 { k = k + 1; for i in 0..hi() { c = c + 1; } } return c; }", 8),
+    ("same_text_sibling_then_inner", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } for j in 0..3 { for i in 0..hi() { c = c + 1; } } return c; }", 8),
     # controls: shapes the oracle keeps byte-neutral (the gate must not over-fire;
     # DESUGAR_PAIRS below pins their form, these pin their values)
     ("prior_sibling_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }", 4),

@@ -4547,22 +4547,35 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     // unchanged: the fixes above only ADD byte-neutral fast paths in front.
     let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
     let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
+    // The hidden counter's NAME spans the whole `for` statement, `for` through the
+    // body's closing `}`. Every backend resolves a name by its span BYTES, so two
+    // NESTED loops with the same header text (`for i in 0..n { for i in 0..n {..} }`
+    // under a param `i`, or a call END on both) named one counter when it spanned the
+    // header alone: the inner `let CTR` shadowed the outer for the rest of the outer
+    // body, so the outer step advanced the inner counter (wrong count, or a hang
+    // under `break`). A nested statement is a strict substring of its parent, so the
+    // full span differs from every counter it can see; the oracle gets the same
+    // uniqueness from `__for_i_{span.start()}`. mic@3 interns a counter by its span
+    // START (for_counter_name), so the emitted `__for_i_N` is unchanged. A same-text
+    // SIBLING loop still reuses the name, which is harmless: its let comes after the
+    // earlier loop has finished, and nothing reads the earlier counter again.
+    let ctr_hi: i64 = close_hi;
 
     if has_cont == 1 {
         // Form (B): TOP-increment on the hidden counter (standard for-continue
         // semantics — a `continue` jumps to the header, which re-runs the cond then
         // the top increment, so the counter still advances).
         // let CTR = LO - 1
-        let ctr_name_b: i64 = ast_new_leaf(ast_ident(), kw_lo, hi_hi);
+        let ctr_name_b: i64 = ast_new_leaf(ast_ident(), kw_lo, ctr_hi);
         let init_b: i64 = ast_new_binop(var_lo, lo_hi, pr_node(lo_res), mk_syn_intlit(1), op_sub());
         let let_ctr_b: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_b, ty, init_b);
         // body = [ CTR = CTR + 1 ; let VAR = CTR ; BODY... ]
-        let tb0: Vec = vec_push(vec_new(), for_make_incr(kw_lo, hi_hi));
-        let tb1: Vec = vec_push(tb0, for_make_var_copy(var_lo, var_hi, kw_lo, hi_hi));
+        let tb0: Vec = vec_push(vec_new(), for_make_incr(kw_lo, ctr_hi));
+        let tb1: Vec = vec_push(tb0, for_make_var_copy(var_lo, var_hi, kw_lo, ctr_hi));
         let tb2: Vec = for_append_stmts(sa, sl, 0, tb1);
         let wbody_b: i64 = ast_new_block(body_open, close_hi, vec_addr(tb2), vec_len(tb2));
         // cond = (CTR + 1) < BND
-        let cplus: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, hi_hi), mk_syn_intlit(1), op_add());
+        let cplus: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, ctr_hi), mk_syn_intlit(1), op_add());
         let cond_b: i64 = ast_new_binop(var_lo, hi_hi, cplus, ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
         let while_b: i64 = ast_new_while(kw_lo, close_hi, cond_b, wbody_b);
         __mind_store_i64(out + 0, let_ctr_b);
@@ -4573,15 +4586,15 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
 
     // Form (A): BOTTOM-increment on the hidden counter.
     // let CTR = LO
-    let ctr_name_a: i64 = ast_new_leaf(ast_ident(), kw_lo, hi_hi);
+    let ctr_name_a: i64 = ast_new_leaf(ast_ident(), kw_lo, ctr_hi);
     let let_ctr_a: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_a, ty, pr_node(lo_res));
     // body = [ let VAR = CTR ; BODY... ; CTR = CTR + 1 ]
-    let ab0: Vec = vec_push(vec_new(), for_make_var_copy(var_lo, var_hi, kw_lo, hi_hi));
+    let ab0: Vec = vec_push(vec_new(), for_make_var_copy(var_lo, var_hi, kw_lo, ctr_hi));
     let ab1: Vec = for_append_stmts(sa, sl, 0, ab0);
-    let ab2: Vec = vec_push(ab1, for_make_incr(kw_lo, hi_hi));
+    let ab2: Vec = vec_push(ab1, for_make_incr(kw_lo, ctr_hi));
     let wbody_a: i64 = ast_new_block(body_open, close_hi, vec_addr(ab2), vec_len(ab2));
     // cond = CTR < BND
-    let cond_a: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, hi_hi), ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
+    let cond_a: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, ctr_hi), ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
     let while_a: i64 = ast_new_while(kw_lo, close_hi, cond_a, wbody_a);
     __mind_store_i64(out + 0, let_ctr_a);
     __mind_store_i64(out + 8, let_bnd);
