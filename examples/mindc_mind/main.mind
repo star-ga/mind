@@ -32439,13 +32439,12 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
         let c3: String = nb_push(c2, 133);
         return nb_i32le_signed(c3, disp);
     }
-    // op_div(): the branchless guarded signed-division sequence (lhs already in
-    // rax). Byte-for-byte src/native::emit_div_mod_guarded(is_mod=false): substitute
-    // divisor 1 when rhs==0 OR (rax==INT_MIN && rcx==-1) so idiv never traps, then
-    // force the result to 0 when rhs==0 — giving MIND's defined edges x/0=0,
-    // INT_MIN/-1=INT_MIN. op_mod routes to the SAME guarded sequence with is_mod=1,
-    // which appends a `mov rax,rdx` tail (remainder, not quotient). tk_to_op DOES
-    // yield op_mod (the `%` operator), so the mod arm below is live.
+    // op_div(): the trapping signed-division sequence (lhs already in rax): rhs==0
+    // or (rax==INT_MIN && rhs==-1) exits the process with status 79 (W2-trap,
+    // docs/errors.md), every other pair is the idiv quotient. op_mod routes to the
+    // SAME sequence with is_mod=1, which appends a `mov rax,rdx` tail (remainder,
+    // not quotient). tk_to_op DOES yield op_mod (the `%` operator), so the mod arm
+    // below is live.
     if op == op_div() {
         return nb_div_guarded(code, disp, 0);
     }
@@ -32485,118 +32484,102 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     let c4: String = nb_push(c3, 133);
     nb_i32le_signed(c4, disp)
 }
-// Emit `emit_div_mod_guarded(is_mod=?, rhs=disp)` — the branchless guarded signed
-// div/mod with the dividend already in rax. Flat sequential `nb_push` chain (one let
-// per byte-group, no value-if-expr) to stay self-flip-clean. INT_MIN is emitted as
-// its raw 8 LE bytes (00*7, 0x80) so no i64 literal is needed. When is_mod==1 the
-// idiv is followed by `mov rax,rdx` (48 89 D0) so the RESULT is the remainder (in
-// rdx), not the quotient (in rax) — 63 bytes for mod vs 60 for div.
+// W2-trap: the TRAPPING signed i64 div/mod (dividend already in rax, divisor at
+// [rbp+disp]). MIND's rule (docs/errors.md, "Integer division trap"): `x / 0`,
+// `x % 0`, `INT_MIN / -1` and `INT_MIN % -1` terminate the process at once with
+// exit status 79 (nb_div_trap_code) — nothing further is written — and every other
+// pair is the plain x86 idiv result (quotient truncated toward zero, remainder with
+// the dividend's sign). The MLIR lowering guards arith.divsi/remsi with the same
+// predicate and the same exit status, so both backends agree. Fixed-length
+// sequence, short jumps with constant displacements (no jump-table entries):
+//    0  mov rcx,[rbp+disp]  = 48 8B 8D <disp32>
+//    7  test rcx,rcx        = 48 85 C9
+//   10  jz trap (+21)       = 74 15
+//   12  cmp rcx,-1          = 48 83 F9 FF
+//   16  jne ok (+27)        = 75 1B
+//   18  movabs r10,INT_MIN  = 49 BA 00 00 00 00 00 00 00 80
+//   28  cmp rax,r10         = 4C 39 D0
+//   31  jne ok (+12)        = 75 0C
+//   33  trap: mov edi,79    = BF 4F 00 00 00
+//   38  mov eax,231         = B8 E7 00 00 00   (exit_group)
+//   43  syscall             = 0F 05
+//   45  ok: cqo             = 48 99
+//   47  idiv rcx            = 48 F7 F9
+//   50  (mod only) mov rax,rdx = 48 89 D0
+// 50 bytes for div, 53 for mod. Clobbers rcx, rdx, r10 (and rdi/rax on the trap
+// path, which never returns). Flat sequential nb_push chain (one let per byte
+// group, no value-if-expr) to stay in the self-host subset.
 pub fn nb_div_guarded(code: String, disp: i64, is_mod: i64) -> String {
     // mov rcx, [rbp+rhs]  = 48 8B 8D <disp32>
     let a1: String = nb_push(code, 72);
     let a2: String = nb_push(a1, 139);
     let a3: String = nb_push(a2, 141);
     let a4: String = nb_i32le_signed(a3, disp);
-    // xor r8,r8 = 4D 31 C0 ; test rcx,rcx = 48 85 C9 ; sete r8b = 41 0F 94 C0
-    let b1: String = nb_push(a4, 77);
-    let b2: String = nb_push(b1, 49);
-    let b3: String = nb_push(b2, 192);
-    let b4: String = nb_push(b3, 72);
-    let b5: String = nb_push(b4, 133);
-    let b6: String = nb_push(b5, 201);
-    let b7: String = nb_push(b6, 65);
-    let b8: String = nb_push(b7, 15);
-    let b9: String = nb_push(b8, 148);
-    let b10: String = nb_push(b9, 192);
+    // test rcx,rcx = 48 85 C9 ; jz +21 = 74 15
+    let b1: String = nb_push(a4, 72);
+    let b2: String = nb_push(b1, 133);
+    let b3: String = nb_push(b2, 201);
+    let b4: String = nb_push(b3, 116);
+    let b5: String = nb_push(b4, 21);
+    // cmp rcx,-1 = 48 83 F9 FF ; jne +27 = 75 1B
+    let c1: String = nb_push(b5, 72);
+    let c2: String = nb_push(c1, 131);
+    let c3: String = nb_push(c2, 249);
+    let c4: String = nb_push(c3, 255);
+    let c5: String = nb_push(c4, 117);
+    let c6: String = nb_push(c5, 27);
     // movabs r10, INT_MIN = 49 BA 00 00 00 00 00 00 00 80
-    let c1: String = nb_push(b10, 73);
-    let c2: String = nb_push(c1, 186);
-    let c3: String = nb_push(c2, 0);
-    let c4: String = nb_push(c3, 0);
-    let c5: String = nb_push(c4, 0);
-    let c6: String = nb_push(c5, 0);
-    let c7: String = nb_push(c6, 0);
-    let c8: String = nb_push(c7, 0);
-    let c9: String = nb_push(c8, 0);
-    let c10: String = nb_push(c9, 128);
-    // xor r9,r9 = 4D 31 C9 ; cmp rax,r10 = 4C 39 D0 ; sete r9b = 41 0F 94 C1
-    let d1: String = nb_push(c10, 77);
-    let d2: String = nb_push(d1, 49);
-    let d3: String = nb_push(d2, 201);
-    let d4: String = nb_push(d3, 76);
-    let d5: String = nb_push(d4, 57);
-    let d6: String = nb_push(d5, 208);
-    let d7: String = nb_push(d6, 65);
-    let d8: String = nb_push(d7, 15);
-    let d9: String = nb_push(d8, 148);
-    let d10: String = nb_push(d9, 193);
-    // xor r11,r11 = 4D 31 DB ; cmp rcx,-1 = 48 83 F9 FF ; sete r11b = 41 0F 94 C3
-    let e1: String = nb_push(d10, 77);
-    let e2: String = nb_push(e1, 49);
-    let e3: String = nb_push(e2, 219);
-    let e4: String = nb_push(e3, 72);
-    let e5: String = nb_push(e4, 131);
-    let e6: String = nb_push(e5, 249);
-    let e7: String = nb_push(e6, 255);
-    let e8: String = nb_push(e7, 65);
-    let e9: String = nb_push(e8, 15);
-    let e10: String = nb_push(e9, 148);
-    let e11: String = nb_push(e10, 195);
-    // and r9,r11 = 4D 21 D9 ; or r9,r8 = 4D 09 C1
-    let f1: String = nb_push(e11, 77);
-    let f2: String = nb_push(f1, 33);
-    let f3: String = nb_push(f2, 217);
-    let f4: String = nb_push(f3, 77);
-    let f5: String = nb_push(f4, 9);
-    let f6: String = nb_push(f5, 193);
-    // mov r10,1 = 49 C7 C2 01 00 00 00
-    let g1: String = nb_push(f6, 73);
-    let g2: String = nb_push(g1, 199);
-    let g3: String = nb_push(g2, 194);
-    let g4: String = nb_push(g3, 1);
-    let g5: String = nb_push(g4, 0);
-    let g6: String = nb_push(g5, 0);
-    let g7: String = nb_push(g6, 0);
-    // test r9,r9 = 4D 85 C9 ; cmovnz rcx,r10 = 49 0F 45 CA
-    let h1: String = nb_push(g7, 77);
-    let h2: String = nb_push(h1, 133);
-    let h3: String = nb_push(h2, 201);
-    let h4: String = nb_push(h3, 73);
-    let h5: String = nb_push(h4, 15);
-    let h6: String = nb_push(h5, 69);
-    let h7: String = nb_push(h6, 202);
-    // cqo = 48 99 ; idiv rcx = 48 F7 F9
-    let i1: String = nb_push(h7, 72);
+    let d1: String = nb_push(c6, 73);
+    let d2: String = nb_push(d1, 186);
+    let d3: String = nb_push(d2, 0);
+    let d4: String = nb_push(d3, 0);
+    let d5: String = nb_push(d4, 0);
+    let d6: String = nb_push(d5, 0);
+    let d7: String = nb_push(d6, 0);
+    let d8: String = nb_push(d7, 0);
+    let d9: String = nb_push(d8, 0);
+    let d10: String = nb_push(d9, 128);
+    // cmp rax,r10 = 4C 39 D0 ; jne +12 = 75 0C
+    let e1: String = nb_push(d10, 76);
+    let e2: String = nb_push(e1, 57);
+    let e3: String = nb_push(e2, 208);
+    let e4: String = nb_push(e3, 117);
+    let e5: String = nb_push(e4, 12);
+    // trap: the shared exit_group(nb_div_trap_code()) block
+    let f1: String = nb_div_trap_exit(e5);
+    // ok: cqo = 48 99 ; idiv rcx = 48 F7 F9
+    let i1: String = nb_push(f1, 72);
     let i2: String = nb_push(i1, 153);
     let i3: String = nb_push(i2, 72);
     let i4: String = nb_push(i3, 247);
     let i5: String = nb_push(i4, 249);
-    // For mod (is_mod==1): the remainder is in rdx after idiv; move it into rax
-    // BEFORE the zero-guard so the guard zeroes the MOD result on rhs==0 too.
+    // For mod (is_mod==1): the remainder is in rdx after idiv; move it into rax.
     //   mov rax,rdx = 48 89 D0
     if is_mod == 1 {
         let m1: String = nb_push(i5, 72);
         let m2: String = nb_push(m1, 137);
-        let m3: String = nb_push(m2, 208);
-        return nb_div_guard_tail(m3);
+        return nb_push(m2, 208);
     }
-    nb_div_guard_tail(i5)
+    i5
 }
-// The shared zero-guard tail of nb_div_guarded (div and mod): force the result to 0
-// when rhs==0 (r8 was set to (rhs==0) earlier), giving MIND's defined edges x/0=0
-// and x%0=0. Extracted so div (is_mod=0) stays byte-identical to before the mod arm.
-//   xor r10,r10 = 4D 31 D2 ; test r8,r8 = 4D 85 C0 ; cmovnz rax,r10 = 49 0F 45 C2
-pub fn nb_div_guard_tail(i5: String) -> String {
-    let j1: String = nb_push(i5, 77);
-    let j2: String = nb_push(j1, 49);
-    let j3: String = nb_push(j2, 210);
-    let j4: String = nb_push(j3, 77);
-    let j5: String = nb_push(j4, 133);
-    let j6: String = nb_push(j5, 192);
-    let j7: String = nb_push(j6, 73);
-    let j8: String = nb_push(j7, 15);
-    let j9: String = nb_push(j8, 69);
-    nb_push(j9, 194)
+
+// The process exit status of the integer-division trap (x/0, x%0, INT_MIN/-1,
+// INT_MIN%-1). One documented value for every backend: docs/errors.md and the
+// MLIR lowering's MIND_DIV_TRAP_EXIT_CODE use the same number. Distinct from the
+// bounds trap (77, nb_oob_trap_code) and the arena-exhausted exit (70).
+pub fn nb_div_trap_code() -> i64 {
+    79
+}
+
+// The 12-byte trap block of nb_div_guarded:
+//   mov edi,79 = BF 4F 00 00 00 ; mov eax,231 = B8 E7 00 00 00 ; syscall = 0F 05
+pub fn nb_div_trap_exit(code: String) -> String {
+    let t1: String = nb_push(code, 191);
+    let t2: String = nb_u32(t1, nb_div_trap_code());
+    let t3: String = nb_push(t2, 184);
+    let t4: String = nb_u32(t3, 231);
+    let t5: String = nb_push(t4, 15);
+    nb_push(t5, 5)
 }
 
 // The `setcc` second opcode byte for a comparison BinOp, or -1 for a
@@ -33378,14 +33361,69 @@ pub fn nb_emit_argv_capture(code: String) -> String {
 }
 
 // Statement-form (Rule-4-safe: no struct-valued if-expr with a call branch) gate:
-// prepend the argc/argv capture iff this fn is the entry AND the module uses argv.
-pub fn nb_entry_prefix(code: String, is_entry: i64, uses_argv: i64) -> String {
+// prepend the argc/argv capture iff this fn is the entry AND the module uses argv,
+// then (W4b) the main(argc, argv) parameter binding iff the entry declares params.
+pub fn nb_entry_prefix(code: String, is_entry: i64, uses_argv: i64, n_params: i64) -> String {
     if is_entry == 1 {
         if uses_argv == 1 {
-            return nb_emit_argv_capture(code);
+            return nb_emit_main_params(nb_emit_argv_capture(code), n_params);
         }
+        return nb_emit_main_params(code, n_params);
     }
     code
+}
+
+// W4b — bind an entry `fn main(argc, argv)` to the OS argc/argv. At `_start`
+// rsp -> [argc][argv0..argvN-1][NULL], and rdi/rsi hold no arguments, so the
+// shared param spill (nb_emit_params: rdi -> slot 0, rsi -> slot 1) used to store
+// garbage (0 in practice). Load the SysV values into the first two GP argument
+// registers BEFORE the STACK_TOP rsp switch abandons the OS stack, so the spill
+// sees them exactly as a C `main(int argc, char **argv)` would:
+//   mov rdi,[rsp]   = 48 8B 3C 24      (argc)
+//   lea rsi,[rsp+8] = 48 8D 74 24 08   (argv: char **, &argv[0])
+// argv is the address of the pointer array — argv + 8*i holds argv[i] (the same
+// pointer __mind_argv(i) returns) and argv + 8*argc holds the NULL terminator.
+// Emitted only for an entry with 1 or 2 params (nb_entry_params_ok refuses the
+// rest); 0 bytes for a parameterless entry, so every existing program — main.mind's
+// own driver included — is byte-identical.
+pub fn nb_emit_main_params(code: String, n_params: i64) -> String {
+    if n_params == 0 {
+        return code;
+    }
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 60);
+    let c4: String = nb_push(c3, 36);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 141);
+    let c7: String = nb_push(c6, 116);
+    let c8: String = nb_push(c7, 36);
+    nb_push(c8, 8)
+}
+
+// W4b fail-closed: 1 when the entry's parameter list is one the binding covers —
+// none, `(argc)` or `(argc, argv)`, each an integer/pointer (GP) parameter. A
+// third parameter (envp is not bound) or a float parameter (it would read xmm0)
+// returns 0 and the caller refuses the whole module (0 bytes), never a program
+// whose parameters hold garbage. Non-entry fns always return 1.
+pub fn nb_entry_params_ok(is_entry: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
+    if is_entry != 1 {
+        return 1;
+    }
+    if n_params > 2 {
+        return 0;
+    }
+    if n_params >= 1 {
+        if nb_param_is_float(buf, ast_child1(__mind_load_i64(params_addr))) == nb_dtype_float() {
+            return 0;
+        }
+    }
+    if n_params == 2 {
+        if nb_param_is_float(buf, ast_child1(__mind_load_i64(params_addr + 8))) == nb_dtype_float() {
+            return 0;
+        }
+    }
+    1
 }
 
 // 1 iff buf[lo..hi) spells exactly "__mind_argc" or "__mind_argv" (both 11 bytes).
@@ -42513,7 +42551,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // RI-C: an argv-using entry captures OS argc/argv as the LITERAL first bytes,
     // BEFORE the STACK_TOP rsp switch abandons the OS stack. Statement-form gate
     // (nb_entry_prefix) so an argv-free entry gets code0 unchanged — byte-identical.
-    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv);
+    // W4b: the entry's main(argc, argv) params are loaded from the OS stack here too.
+    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv, n_params);
     // Entry-only stack switch: movabs rsp, STACK_TOP - 8 = 48 BC <imm64>
     // FIX #169 (SysV rsp alignment): STACK_TOP is 16-aligned, but the entry is
     // reached by this hard rsp-switch, NOT by a `call`, so it lacks the 8-byte
@@ -42594,6 +42633,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell + 88, 0);
     __mind_store_i64(lcell + 80, 0);
+    // W4b fail-closed: an entry whose params the main(argc, argv) binding does not
+    // cover poisons the fn (the whole module then refuses, 0 bytes).
+    if nb_entry_params_ok(is_entry, buf, params_addr, n_params) == 0 {
+        __mind_store_i64(lcell + 80, 1)
+    }
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
     // arm reads it, the `let` arm tags it. Sized nslots+64 (all SSA ids < nslots; the

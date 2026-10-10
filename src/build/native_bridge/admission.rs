@@ -4,11 +4,14 @@
 
 //! Source-level refusals the native bridge applies to the merged program.
 //!
-//! * An entry `main` that declares parameters is refused. The frozen compiler
+//! * An entry `main` that declares parameters is refused, except exactly
+//!   `fn main(argc: i64, argv: i64)` (W4b). A compiler seed that predates W4b
 //!   does not bind `main`'s parameters to the process arguments, so such a
-//!   program would run with every parameter 0: `fn main(argc: i64, argv: i64)`
-//!   built and exited 40 natively where the MLIR build of the same source
-//!   exited 23. Refused until the seed binds them.
+//!   program ran with every parameter 0 (`fn main(argc: i64, argv: i64)` built
+//!   and exited 40 natively where the MLIR build exited 23). The admitted shape
+//!   is therefore only CONDITIONALLY admitted: the bridge checks the emitted
+//!   entry for the argc/argv binding and refuses the artifact when it is missing
+//!   (`native_bridge::check_entry_binds_main_params`).
 //! * The name check the MLIR build path treats as fatal (an unknown identifier
 //!   E2002, a function used as a value E2037) and an unknown enum variant
 //!   (E2008) are refused with the type checker's own diagnostics. Without the
@@ -34,23 +37,47 @@ use crate::diagnostics::{
 };
 use crate::type_checker::resolve;
 
-/// Refuse an entry `main` that declares parameters.
-pub(super) fn refuse_entry_main_with_params(ast: &Module, path: &str) -> Result<(), String> {
+/// What the entry `main`'s parameter list asks of the native compiler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MainParams {
+    /// `fn main()` (or no entry `main` at all).
+    None,
+    /// Exactly `fn main(argc: i64, argv: i64)`: admitted on condition that the
+    /// compiler in use binds both to the process argc / `char **argv`, which the
+    /// bridge verifies on the emitted entry before writing the artifact.
+    ArgcArgv,
+}
+
+/// Refuse an entry `main` that declares parameters, except the one shape the
+/// native compiler binds (W4b): exactly two `i64` parameters, read as argc and
+/// argv (`char **`). Any other count or type -- `(argc)` alone, a third `envp`,
+/// an `i32`/`f64` or aliased type -- is still refused by name.
+pub(super) fn refuse_entry_main_with_params(
+    ast: &Module,
+    path: &str,
+) -> Result<MainParams, String> {
     for item in &ast.items {
         let Node::FnDef(f, _) = item else { continue };
         if f.name != "main" || f.params.is_empty() {
             continue;
         }
+        if f.params.len() == 2
+            && f.params
+                .iter()
+                .all(|p| matches!(p.ty, crate::ast::TypeAnn::ScalarI64))
+        {
+            return Ok(MainParams::ArgcArgv);
+        }
         let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
         return Err(format!(
             "`{path}`: the entry `fn main` declares parameter(s) {params:?}, but the native \
-             backend does not bind `main`'s parameters to the process arguments yet, so the \
-             program would run with every one of them 0 (a silent miscompile). Declare \
-             `fn main()` or rerun with `--backend mlir`. No artifact written. \
-             (native.entry_main_has_params)"
+             backend binds only `fn main(argc: i64, argv: i64)` to the process arguments; \
+             any other parameter list would run with garbage values (a silent miscompile). \
+             Declare `fn main()` or `fn main(argc: i64, argv: i64)`, or rerun with \
+             `--backend mlir`. No artifact written. (native.entry_main_has_params)"
         ));
     }
-    Ok(())
+    Ok(MainParams::None)
 }
 
 /// Refuse a binding that re-declares a name from an enclosing scope.
@@ -304,17 +331,31 @@ mod tests {
     }
 
     #[test]
-    fn only_a_parameterised_main_is_refused() {
-        let ok = crate::parser::parse("fn main() -> i64 { return 0; }\n").expect("parse");
-        assert!(refuse_entry_main_with_params(&ok, "t.mind").is_ok());
-        let helper = crate::parser::parse(
-            "fn h(a: i64) -> i64 { return a; }\nfn main() -> i64 { return h(1); }\n",
-        )
-        .expect("parse");
-        assert!(refuse_entry_main_with_params(&helper, "t.mind").is_ok());
-        let bad =
-            crate::parser::parse("fn main(argc: i64) -> i64 { return argc; }\n").expect("parse");
-        assert!(refuse_entry_main_with_params(&bad, "t.mind").is_err());
+    fn only_the_argc_argv_main_is_conditionally_admitted() {
+        let main_params = |src: &str| {
+            let ast = crate::parser::parse(src).expect("parse");
+            refuse_entry_main_with_params(&ast, "t.mind")
+        };
+        assert_eq!(
+            main_params("fn main() -> i64 { return 0; }\n"),
+            Ok(MainParams::None)
+        );
+        assert_eq!(
+            main_params("fn h(a: i64) -> i64 { return a; }\nfn main() -> i64 { return h(1); }\n"),
+            Ok(MainParams::None)
+        );
+        assert_eq!(
+            main_params("fn main(argc: i64, argv: i64) -> i64 { return argc; }\n"),
+            Ok(MainParams::ArgcArgv)
+        );
+        for refused in [
+            "fn main(argc: i64) -> i64 { return argc; }\n",
+            "fn main(a: i64, b: i64, c: i64) -> i64 { return a; }\n",
+            "fn main(argc: i32, argv: i64) -> i64 { return 0; }\n",
+            "fn main(argc: i64, argv: f64) -> i64 { return argc; }\n",
+        ] {
+            assert!(main_params(refused).is_err(), "{refused}");
+        }
     }
 
     fn shadowed(src: &str) -> Vec<String> {

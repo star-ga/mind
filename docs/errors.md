@@ -110,6 +110,47 @@ Two E6xxx assignments distinguish host capability from compiler lowering:
 Both refusals exit nonzero. `E6009` is emitted before a runnable artifact is
 published and is not a type error.
 
+## Runtime trap exit codes
+
+A compiled MIND program that hits one of these runtime traps terminates at once
+with a fixed exit status. Where both backends (`--backend native` and
+`--backend mlir`) can hit the event, they use the same status:
+
+| Exit | Event |
+|------|-------|
+| 70 | Native arena exhausted (native backend, explicit layout); the program writes `error: native arena exhausted` to stderr first. |
+| 77 | Array index out of bounds (see [array semantics](ARRAY_SEMANTICS.md)). |
+| 79 | Integer division trap (below). |
+
+### Integer division trap
+
+For `i64` operands, `x / 0`, `x % 0`, `INT_MIN / -1` and `INT_MIN % -1` are
+a deterministic trap: the process performs no further action (in particular it
+writes nothing more to any file descriptor) and exits with status **79**. For
+`i8`/`i16`/`i32` and unsigned operands a zero divisor traps the same way; the
+narrow `MIN / -1` pair does not trap and gives `MIN` (remainder `0`), the result
+of dividing the sign-extended values as `i64` and narrowing.
+
+Every other integer division truncates toward zero, and every other remainder
+has the sign of the dividend (`-7 / 2 == -3`, `-7 % 2 == -1`, `7 % -2 == 1`).
+
+Shift counts are taken modulo 64 for `i64`: `x << n` and `x >> n` use
+`n & 63`, so a count of 64 shifts by 0, 65 by 1, and -1 by 63. `>>` is
+arithmetic for signed operands.
+
+The program does not need to do anything to get this behaviour. The MLIR
+backend omits the check when the divisor is a constant other than `0` and `-1`.
+
+## Native backend: `main` parameters
+
+`mindc build --backend native` binds an entry `fn main(argc: i64, argv: i64)`
+to the process arguments: `argc` is the argument count and `argv` is the address
+of the C `char **` array, so `__mind_load_i64(argv + 8 * i)` is the pointer to
+the NUL-terminated `argv[i]` and `argv + 8 * argc` holds the null terminator.
+The MLIR build passes the same values. Any other parameter list on the entry
+`main` is refused (`native.entry_main_has_params`), as is an artifact from a
+compiler seed that does not bind the parameters.
+
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.
 

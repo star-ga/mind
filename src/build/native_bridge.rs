@@ -335,12 +335,16 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(3);
     }
-    // An entry `main` with parameters would run with them all 0 (the frozen
-    // compiler does not bind them to argc/argv): refuse it, never miscompile.
-    if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
-        eprintln!("error[backend-native]: {msg}");
-        process::exit(3);
-    }
+    // An entry `main` with parameters would run with them all 0 unless the
+    // compiler binds them to argc/argv: refuse every shape but
+    // `main(argc: i64, argv: i64)`, whose binding is verified on the artifact.
+    let main_params = match admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        Ok(m) => m,
+        Err(msg) => {
+            eprintln!("error[backend-native]: {msg}");
+            process::exit(3);
+        }
+    };
     // A nested binding that re-declares an enclosing name would be merged into
     // the outer binding by the frozen compiler: refuse, never miscompile.
     // `admit_merged_program` already proved the image is UTF-8, so this is exact.
@@ -427,6 +431,20 @@ pub fn run_native_backend_bridge_profile(
             "error[backend-native]: `{}`: {why}; the source declares `main`, so this \
              artifact would not run the admitted program. No artifact written. \
              (native.entry_is_no_main_stub)",
+            paths[0]
+        );
+        process::exit(3);
+    }
+    // W4b: `main(argc: i64, argv: i64)` was admitted on condition that the
+    // compiler binds both parameters; a seed without the binding is refused here.
+    if main_params == admission::MainParams::ArgcArgv
+        && let Err(why) = check_entry_binds_main_params(&elf_bytes)
+    {
+        eprintln!(
+            "error[backend-native]: `{}`: the entry `fn main` declares parameter(s) \
+             [\"argc\", \"argv\"], but {why} (a silent miscompile). Use a compiler seed \
+             that binds `main(argc, argv)`, declare `fn main()`, or rerun with \
+             `--backend mlir`. No artifact written. (native.entry_main_has_params)",
             paths[0]
         );
         process::exit(3);
@@ -620,6 +638,64 @@ const NO_MAIN_ENTRY_STUB: [u8; 9] = [0x31, 0xFF, 0xB8, 0x3C, 0x00, 0x00, 0x00, 0
 /// writes a fixed `\x7fELF` + zeros anchor (machine 0) that carries no code.
 #[cfg(feature = "std-surface")]
 fn check_entry_is_not_no_main_stub(elf: &[u8]) -> Result<(), String> {
+    match entry_code(elf, NO_MAIN_ENTRY_STUB.len())? {
+        Some(code) if code == NO_MAIN_ENTRY_STUB => Err(
+            "the frozen compiler emitted its no-`main` library entry stub \
+                    (`exit(0)`), so it did not see the admitted `main`"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// W4b: the entry prologue that binds `fn main(argc, argv)` to the process
+/// arguments (`main.mind::nb_emit_main_params`): `mov rdi,[rsp] ; lea
+/// rsi,[rsp+8]`, emitted before the entry switches to its own stack.
+#[cfg(feature = "std-surface")]
+const MAIN_PARAMS_BINDING: [u8; 9] = [0x48, 0x8B, 0x3C, 0x24, 0x48, 0x8D, 0x74, 0x24, 0x08];
+
+/// The 34-byte argc/argv capture (`main.mind::nb_emit_argv_capture`) that an
+/// entry whose program calls `__mind_argc`/`__mind_argv` carries ahead of the
+/// binding; it starts `mov rax,[rsp] ; movabs rcx,..`.
+#[cfg(feature = "std-surface")]
+const ARGV_CAPTURE_PREFIX: [u8; 6] = [0x48, 0x8B, 0x04, 0x24, 0x48, 0xB9];
+#[cfg(feature = "std-surface")]
+const ARGV_CAPTURE_LEN: usize = 34;
+
+/// Refuse an artifact for `fn main(argc: i64, argv: i64)` whose entry does not
+/// bind the parameters to the process arguments. A compiler seed that predates
+/// W4b emits no binding, and its artifact would run `main` with argc = argv = 0;
+/// this check turns that into a refusal, so the shape is admitted exactly when
+/// the compiler in use binds it.
+#[cfg(feature = "std-surface")]
+fn check_entry_binds_main_params(elf: &[u8]) -> Result<(), String> {
+    let want = ARGV_CAPTURE_LEN + MAIN_PARAMS_BINDING.len();
+    let Some(code) = entry_code(elf, MAIN_PARAMS_BINDING.len())? else {
+        return Ok(());
+    };
+    if code == MAIN_PARAMS_BINDING {
+        return Ok(());
+    }
+    if code.starts_with(&ARGV_CAPTURE_PREFIX)
+        && let Some(after) = entry_code(elf, want)?
+        && after[ARGV_CAPTURE_LEN..] == MAIN_PARAMS_BINDING
+    {
+        return Ok(());
+    }
+    Err(
+        "the native compiler in use does not bind `main`'s parameters to the process \
+         arguments (its entry lacks the argc/argv binding), so the program would run with \
+         argc = argv = 0"
+            .to_string(),
+    )
+}
+
+/// The first `len` code bytes at an x86-64 executable's entry point. `None` for
+/// any other machine: the frozen compiler emits only `EM_X86_64`, and the
+/// host-native transport fixture used on other CI hosts writes a fixed
+/// `\x7fELF` + zeros anchor (machine 0) that carries no code.
+#[cfg(feature = "std-surface")]
+fn entry_code(elf: &[u8], len: usize) -> Result<Option<&[u8]>, String> {
     const EM_X86_64: u16 = 62;
     const PT_LOAD: u32 = 1;
     let u16_at = |o: usize| elf.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
@@ -632,7 +708,7 @@ fn check_entry_is_not_no_main_stub(elf: &[u8]) -> Result<(), String> {
             .map(|b| u64::from_le_bytes(b.try_into().expect("8-byte slice")))
     };
     if u16_at(18) != Some(EM_X86_64) {
-        return Ok(());
+        return Ok(None);
     }
     let malformed = || "the emitted ELF's entry point lies in no loaded segment".to_string();
     let entry = u64_at(24).ok_or_else(malformed)?;
@@ -653,24 +729,17 @@ fn check_entry_is_not_no_main_stub(elf: &[u8]) -> Result<(), String> {
             continue;
         }
         let at = off.saturating_add(entry - vaddr) as usize;
-        let code = elf
-            .get(at..at + NO_MAIN_ENTRY_STUB.len())
-            .ok_or_else(malformed)?;
-        if code == NO_MAIN_ENTRY_STUB {
-            return Err(
-                "the frozen compiler emitted its no-`main` library entry stub \
-                        (`exit(0)`), so it did not see the admitted `main`"
-                    .to_string(),
-            );
-        }
-        return Ok(());
+        return elf.get(at..at + len).map(Some).ok_or_else(malformed);
     }
     Err(malformed())
 }
 
 #[cfg(all(test, feature = "std-surface"))]
 mod entry_stub_tests {
-    use super::{NO_MAIN_ENTRY_STUB, check_entry_is_not_no_main_stub};
+    use super::{
+        MAIN_PARAMS_BINDING, NO_MAIN_ENTRY_STUB, check_entry_binds_main_params,
+        check_entry_is_not_no_main_stub,
+    };
 
     /// A minimal ELF64 x86-64 image: one PT_LOAD at file 0 / vaddr 0x400000,
     /// entry 0x400078 (file offset 120, right after the header and one phdr).
@@ -716,6 +785,47 @@ mod entry_stub_tests {
         let mut anchor = b"\x7fELF".to_vec();
         anchor.resize(397, 0);
         assert_eq!(check_entry_is_not_no_main_stub(&anchor), Ok(()));
+        assert_eq!(check_entry_binds_main_params(&anchor), Ok(()));
+    }
+
+    /// `movabs rsp, STACK_TOP-8` -- what follows the prefix of every entry.
+    const STACK_SWITCH: [u8; 10] = [0x48, 0xBC, 0xF8, 0x0F, 0x00, 0x41, 0x01, 0, 0, 0];
+
+    #[test]
+    fn an_entry_that_binds_argc_argv_is_admitted() {
+        let mut code = MAIN_PARAMS_BINDING.to_vec();
+        code.extend_from_slice(&STACK_SWITCH);
+        assert_eq!(
+            check_entry_binds_main_params(&elf_with_entry_code(62, &code)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_entry_with_the_argv_capture_then_the_binding_is_admitted() {
+        // nb_emit_argv_capture (34 bytes) ahead of the binding.
+        let mut code = vec![0x48, 0x8B, 0x04, 0x24, 0x48, 0xB9];
+        code.extend_from_slice(&[0x00, 0x00, 0x00, 0x40, 0, 0, 0, 0]);
+        code.extend_from_slice(&[0x48, 0x89, 0x41, 0x08, 0x48, 0x8D, 0x44, 0x24, 0x08]);
+        code.extend_from_slice(&[0x48, 0x89, 0x41, 0x10, 0x48, 0xC7, 0x01, 0x10, 0, 0, 0]);
+        assert_eq!(code.len(), 34);
+        code.extend_from_slice(&MAIN_PARAMS_BINDING);
+        code.extend_from_slice(&STACK_SWITCH);
+        assert_eq!(
+            check_entry_binds_main_params(&elf_with_entry_code(62, &code)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_entry_without_the_binding_is_refused() {
+        // A pre-W4b seed: the stack switch comes first, nothing loads rdi/rsi.
+        assert!(check_entry_binds_main_params(&elf_with_entry_code(62, &STACK_SWITCH)).is_err());
+        // The argv capture alone does not bind the parameters either.
+        let mut code = vec![0x48, 0x8B, 0x04, 0x24, 0x48, 0xB9];
+        code.resize(34, 0);
+        code.extend_from_slice(&STACK_SWITCH);
+        assert!(check_entry_binds_main_params(&elf_with_entry_code(62, &code)).is_err());
     }
 }
 
