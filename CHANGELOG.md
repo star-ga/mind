@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — std.iouring waits are bounded and report the kernel's reason
+- On Linux 6.6 `io_uring_multishot_recv_demo` hung: it armed a multishot RECV with
+  `sqe.len = 256`, which that kernel rejects with one terminal `-EINVAL` CQE, then waited
+  for three completions with no timeout. `io_ring_submit_recv_multishot` now refuses a
+  nonzero length with `-EINVAL` on every kernel, and the demo submits length 0.
+- `io_ring_enter` waits at most `io_ring_wait_bound_ns()` (5 s) through
+  `IORING_ENTER_EXT_ARG`; `io_ring_enter_timeout` takes an explicit bound.
+  `io_ring_wait_multishot` stops at the first terminal CQE (no `IORING_CQE_F_MORE`, or a
+  negative `res`), when it has the completions it needs, or when a bounded wait expires.
+- `io_ring_reap` / `io_ring_reap_full` sign-extend `cqe.res`. An error CQE used to read as
+  a 4-billion byte count.
+- `io_ring_try_new_flags` reports why a ring could not be created through its `err_out`
+  slot: `io_uring_setup`'s `-errno` (a setup flag or ring size the kernel refuses, io_uring
+  disabled), or `iouring_err_kernel_feature()` for a kernel without
+  `IORING_FEAT_SINGLE_MMAP` / `IORING_FEAT_EXT_ARG`. `io_uring_nop` and the demos return
+  that reason instead of a bare -1. `io_uring_register` results are `-errno` too. The
+  surface's own codes (`iouring_err_*`) are all at or below -4096, outside the errno range.
+
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer
   exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then

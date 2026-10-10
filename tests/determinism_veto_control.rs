@@ -53,7 +53,7 @@ use std::process::Command;
 const CASES: &[(&str, &str, &str)] = &[
     // tests/std_surface_http.rs (compiles std/net.mind + std/http.mind)
     ("net.mind", "getsockname", "tests/std_surface_http.rs"),
-    // tests/std_surface_iouring.rs (two sites)
+    // tests/std_surface_iouring.rs (one shared compile, `iouring_so`)
     ("iouring.mind", "syscall", "tests/std_surface_iouring.rs"),
     // tests/std_surface_net_fs_process.rs (world-reading fixtures)
     ("fs.mind", "read", "tests/std_surface_net_fs_process.rs"),
