@@ -19,6 +19,15 @@ one the emit really writes; the outer condition re-read a never-updated slot and
 OUTER loop hung (`for i in 0..3 { for j in 0..2 { continue; } }`). Every walker now uses
 the same truncated length. The NESTED fixtures below are the regression gate for that.
 
+Exit edges: a carried var's working slot is its LAST body write, and the header (or
+the post-loop code) re-reads that slot. A conditional `continue`/`break` taken AFTER
+an earlier write and BEFORE the last one left the live value in the earlier slot, so
+`i = i + 1; if i == 5 { continue; } i = i + 0;` re-entered the loop with the previous
+iteration's i and never terminated, and accumulators lost updates. The emitter now
+writes every carried var back to its working slot on each exit edge
+(nb_loops_exit_writeback). The EXIT-EDGE WRITE-BACK fixtures below gate that, at one
+level and across nested loops.
+
 DEAD_TAIL_IDENTICAL proves the truncation is applied by EVERY id-threading walker, not
 just by enough of them for the loop to terminate: a loop body with a dead tail must
 compile to the SAME code segment (first PT_LOAD, so the trace-hash note — which hashes
@@ -173,6 +182,34 @@ FIXTURES = [
     # dead tails at BOTH levels (the outer one after its own `continue`)
     ("outer_while_dead_tail_after_inner",
      "fn main() -> i64 { let mut i: i64 = 0; let mut s: i64 = 0; while i < 3 { for j in 0..2 { s = s + 1; continue; } i = i + 1; continue; i = i + 50; } return s * 10 + i; }", 63),
+    # ---- EXIT-EDGE WRITE-BACK: a carried var written BEFORE a conditional
+    # `continue`/`break` and AGAIN after it. The header (and the post-loop code)
+    # read the var's working slot = its LAST write; on the exit edge the live
+    # value still sits in the EARLIER write's slot. Without the write-back the
+    # `continue` re-enters the loop with the previous iteration's value — the
+    # induction variable never advances (HANG) or an accumulator loses the
+    # update (wrong value). Values cross-checked against the Rust MLIR path. ----
+    ("while_continue_induction_written_after",
+     "fn main() -> i64 { let mut i: i64 = 0; while i < 10 { i = i + 1; if i == 5 { continue; } i = i + 0; } return i; }", 10),
+    ("while_continue_write_before_and_after",
+     "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; s = s + 1; if i == 2 { continue; } s = s + 100; } return s - 100; }", 103),
+    ("while_break_write_before_and_after",
+     "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 10 { i = i + 1; s = s + 1; if i == 3 { break; } s = s + 100; } return s - 200; }", 3),
+    ("break_post_loop_reads_live_counter",
+     "fn main() -> i64 { let mut j: i64 = 0; let mut u: i64 = 0; while j < 20 { j = j + 2; u = j + 0; if j == 8 { break; } j = j + 1; } return j * 10 + u; }", 88),
+    ("continue_two_stale_carried_vars",
+     "fn main() -> i64 { let mut a: i64 = 0; let mut b: i64 = 0; let mut i: i64 = 0; while i < 4 { i = i + 1; a = a + 1; b = b + 2; if i == 2 { continue; } a = a + 10; b = b + 20; } return a + b; }", 102),
+    # the working slot is an if-MERGE slot (the var's last write is inside an if)
+    ("continue_post_is_if_merge_slot",
+     "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; s = s + 1; if i == 2 { continue; } if i >= 0 { s = s + 10; } } return s; }", 23),
+    # nested: the OUTER `continue` follows an inner loop that wrote the outer var
+    ("outer_continue_after_inner_write",
+     "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; for j in 0..2 { s = s + j; continue; } if i == 2 { continue; } s = s + 100; } return s; }", 203),
+    # nested: the INNER loop's own exit edges inside an outer range-for
+    ("inner_continue_write_back_in_for",
+     "fn main() -> i64 { let mut t: i64 = 0; for k in 0..3 { let mut j: i64 = 0; while j < 4 { j = j + 1; t = t + 1; if j == 2 { continue; } t = t + 10; } } return t; }", 102),
+    ("inner_break_write_back_in_for",
+     "fn main() -> i64 { let mut t: i64 = 0; for k in 0..2 { let mut j: i64 = 0; while j < 10 { j = j + 1; t = t + 1; if j == 3 { break; } t = t + 100; } } return t - 400; }", 6),
 ]
 # No-hang guard: shapes the native backend may REFUSE (0 bytes, honest fail-closed —
 # an if-wrapped inner loop, a `continue` on an if-branch that also writes) but must

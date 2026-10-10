@@ -60,7 +60,60 @@ use std::process::Command;
 //                       after `continue` that writes an OUTER var (must not run).
 //  * nest_break_tail  — the same with `break`: the post-loop value of the inner
 //                       counter must be the LIVE one (1), never the dead tail's.
+//
+// Exit-edge write-back shapes — a carried var written BEFORE a conditional
+// `continue`/`break` and AGAIN after it (the native emitter re-entered the loop
+// with the previous iteration's value: a hang for an induction var, a lost
+// update for an accumulator, a stale post-loop value after `break`):
+//  * wb_cont_ind      — the induction var itself (`i = i + 1; if i == k {
+//                       continue; } i = i + 0;`) must still reach `n`.
+//  * wb_cont          — an accumulator keeps the pre-`continue` update.
+//  * wb_break         — the post-loop value is the one live at the `break`.
+//  * wb_outer_after_inner — an OUTER `continue` after an inner loop that wrote
+//                       the outer var.
 const SRC: &str = r#"
+fn wb_cont_ind(n: i64, k: i64) -> i64 {
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        if i == k { continue; }
+        i = i + 0;
+    }
+    return i;
+}
+fn wb_cont(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        s = s + 1;
+        if i == k { continue; }
+        s = s + 100;
+    }
+    return s;
+}
+fn wb_break(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        s = s + 1;
+        if i == k { break; }
+        s = s + 100;
+    }
+    return s;
+}
+fn wb_outer_after_inner(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        for j in 0..2 { s = s + j; continue; }
+        if i == k { continue; }
+        s = s + 100;
+    }
+    return s;
+}
 fn nest_bare(n: i64, m: i64) -> i64 {
     let mut s = 0;
     for i in 0..n {
@@ -235,6 +288,12 @@ fn for_continue_advances_loop() {
          assert wf(3,4) == 12,    'while_in_for(3,4)='+str(wf(3,4))\n\
          assert wt(3,2) == 6,     'nest_while_tail(3,2)='+str(wt(3,2))\n\
          assert bt(3,2) == 33,    'nest_break_tail(3,2)='+str(bt(3,2))\n\
+         wi = f('wb_cont_ind', 2); wc = f('wb_cont', 2); wk = f('wb_break', 2)\n\
+         wo = f('wb_outer_after_inner', 2)\n\
+         assert wi(10,5) == 10,   'wb_cont_ind(10,5)='+str(wi(10,5))\n\
+         assert wc(3,2) == 203,   'wb_cont(3,2)='+str(wc(3,2))\n\
+         assert wk(10,3) == 203,  'wb_break(10,3)='+str(wk(10,3))\n\
+         assert wo(3,2) == 203,   'wb_outer_after_inner(3,2)='+str(wo(3,2))\n\
          print('ok')\n",
         so.to_string_lossy()
     );

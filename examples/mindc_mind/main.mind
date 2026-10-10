@@ -36989,23 +36989,28 @@ pub fn nb_carry_promote_inner(carry: i64, ccell: i64, icarry: i64, incarry: i64,
     nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n)
 }
 
-// ---- loop-frame stack (header offset + break-site list) ----
-// One frame = 3 i64 words: (header_offset, breaks_buf, nbreaks). breaks_buf is a
-// per-loop buffer of recorded break jmp indices (`which` into the jmps table),
-// patched to the loop end once known. Threaded like jmps/jcell.
-pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, breaks_buf: i64) -> i64 {
+// ---- loop-frame stack (header offset + break-site list + carry table) ----
+// One frame = 5 i64 words: (header_offset, breaks_buf, nbreaks, carry, ncarry).
+// breaks_buf is a per-loop buffer of recorded break jmp indices (`which` into the
+// jmps table), patched to the loop end once known. carry/ncarry are the loop's
+// carry table (nb_emit_while's, fully populated before the body emit) so a
+// `break`/`continue` can write each carried var back to its working slot
+// (nb_loops_exit_writeback). Threaded like jmps/jcell.
+pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, breaks_buf: i64, carry: i64, ncarry: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
-    // Cap guard: the loop-frame stack is a fixed 256-entry x 3-word buffer
-    // (__mind_alloc(256 * 3 * 8)). A 257th nested loop frame would overflow it and
+    // Cap guard: the loop-frame stack is a fixed 256-entry x 5-word buffer
+    // (__mind_alloc(256 * 5 * 8)). A 257th nested loop frame would overflow it and
     // corrupt adjacent arena state. Refuse loudly (fail-closed -1) rather than
     // overflow; >256 nested loops is unreachable in current source, so this is
     // never taken during self-compile (byte-identical).
     if n >= 256 {
         return 0 - 1;
     }
-    __mind_store_i64(loops + (n * 3 + 0) * 8, header);
-    __mind_store_i64(loops + (n * 3 + 1) * 8, breaks_buf);
-    __mind_store_i64(loops + (n * 3 + 2) * 8, 0);
+    __mind_store_i64(loops + (n * 5 + 0) * 8, header);
+    __mind_store_i64(loops + (n * 5 + 1) * 8, breaks_buf);
+    __mind_store_i64(loops + (n * 5 + 2) * 8, 0);
+    __mind_store_i64(loops + (n * 5 + 3) * 8, carry);
+    __mind_store_i64(loops + (n * 5 + 4) * 8, ncarry);
     __mind_store_i64(lpcell, n + 1);
     0
 }
@@ -37021,7 +37026,7 @@ pub fn nb_loops_top_header(loops: i64, lpcell: i64) -> i64 {
     if n <= 0 {
         return 0 - 1;
     }
-    __mind_load_i64(loops + ((n - 1) * 3 + 0) * 8)
+    __mind_load_i64(loops + ((n - 1) * 5 + 0) * 8)
 }
 // Record a break jmp index (`which`) into the innermost loop's break list.
 pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
@@ -37029,11 +37034,87 @@ pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
     if n <= 0 {
         return 0 - 1;
     }
-    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
-    let nb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 2) * 8);
+    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 1) * 8);
+    let nb: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 2) * 8);
     __mind_store_i64(bb + nb * 8, which);
-    __mind_store_i64(loops + ((n - 1) * 3 + 2) * 8, nb + 1);
+    __mind_store_i64(loops + ((n - 1) * 5 + 2) * 8, nb + 1);
     0
+}
+
+// EXIT-EDGE WRITE-BACK for `break`/`continue` (mirror lower.rs's break/continue
+// edge rebindings: the jump carries every loop-carried var's CURRENT value).
+// A carried var lives in its working slot post_id (its LAST body write) at the
+// header and after the loop. On an exit edge its live value may still sit in an
+// EARLIER incarnation's slot — `i = i + 1; if c { continue; } i = i + 0;` leaves
+// i in the first add's slot while the header re-reads the second's, so without
+// this copy the loop re-entered with the previous iteration's i and never
+// terminated (and a `break` exited with a stale post-loop value). For each
+// carried var of the innermost loop whose current let-env slot differs from
+// post_id, emit load(cur) ; store(post_id) before the jmp. A pure slot-to-slot
+// move: no SSA id, so count/emit id threading is untouched; when every var is
+// already in its working slot nothing is emitted (byte-identical). main.mind
+// contains no `break`/`continue`, so this never fires during self-compile.
+pub fn nb_loops_exit_writeback(code: String, loops: i64, lpcell: i64, buf: i64, lets: i64, lcell: i64) -> String {
+    let n: i64 = __mind_load_i64(lpcell);
+    if n <= 0 {
+        return code;
+    }
+    let carry: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 3) * 8);
+    let ncarry: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 4) * 8);
+    nb_exit_writeback_rest(code, carry, ncarry, 0, buf, lets, lcell)
+}
+pub fn nb_exit_writeback_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, lets: i64, lcell: i64) -> String {
+    if i >= ncarry {
+        return code;
+    }
+    let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
+    let post_id: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
+    let cur: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+    let stale: i64 = if cur >= 0 {
+        if cur != post_id {
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    // The copies run in table order, so they are only a correct PARALLEL move
+    // when no target slot is also another carried var's source or target. Two
+    // carried names sharing a slot (an aliasing bare `x = y` rebind) would make
+    // one copy clobber the other's value — refuse fail-closed instead (poison)
+    // rather than emit a silently-wrong exit edge.
+    if stale == 1 {
+        if nb_carry_slot_clash(carry, ncarry, 0, i, post_id, buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
+    }
+    let c1: String = if stale == 1 {
+        let a: String = nb_load_rax(code, nb_slot_disp(cur));
+        nb_store_rax(a, nb_slot_disp(post_id))
+    } else {
+        code
+    };
+    nb_exit_writeback_rest(c1, carry, ncarry, i + 1, buf, lets, lcell)
+}
+// 1 iff `slot` (carried var `skip`'s working slot) is the current OR working slot
+// of any OTHER carried var in the table.
+pub fn nb_carry_slot_clash(carry: i64, ncarry: i64, j: i64, skip: i64, slot: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if j >= ncarry {
+        return 0;
+    }
+    if j != skip {
+        if __mind_load_i64(carry + (j * 4 + 3) * 8) == slot {
+            return 1;
+        }
+        let jlo: i64 = __mind_load_i64(carry + (j * 4 + 0) * 8);
+        let jhi: i64 = __mind_load_i64(carry + (j * 4 + 1) * 8);
+        if nb_lets_lookup(lets, lcell, buf, jlo, jhi) == slot {
+            return 1;
+        }
+    }
+    nb_carry_slot_clash(carry, ncarry, j + 1, skip, slot, buf, lets, lcell)
 }
 
 // Emit each carried var's copy-in (load init_slot; store post_slot) when the slots
@@ -37524,9 +37605,10 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let je_which: i64 = __mind_load_i64(jcell) - 1;
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
-    // Push a loop frame (header + per-loop break list).
+    // Push a loop frame (header + per-loop break list + this loop's carry table,
+    // read back by a `break`/`continue` exit-edge write-back).
     let breaks_buf: i64 = __mind_alloc(256 * 8);
-    let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf);
+    let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf, carry, ncarry);
 
     // body.
     let s_body: NbState = nb_block_stmts(s_je, buf, body_sa, nb_truncate_dead(body_sa, body_sl, 0), 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -37566,11 +37648,11 @@ pub fn nb_while_patch_breaks(loops: i64, lpcell: i64, jmps: i64, jcell: i64, end
     if n <= 0 {
         return 0;
     }
-    let nb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 2) * 8);
+    let nb: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 2) * 8);
     if i >= nb {
         return 0;
     }
-    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
+    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 5 + 1) * 8);
     let which: i64 = __mind_load_i64(bb + i * 8);
     let _p: i64 = nb_jmp_set_target(jmps, jcell, which, end_at);
     nb_while_patch_breaks(loops, lpcell, jmps, jcell, end_at, i + 1)
@@ -38031,18 +38113,22 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     if k == ast_break() {
         // `break` — emit the leading ConstI64(unit,0) (lower.rs 5967), then a jmp
         // whose target is the loop end (patched at loop close). Record its index in
-        // the innermost loop frame's break list.
+        // the innermost loop frame's break list. Before the jmp, write every carried
+        // var back to its working slot (post-loop code reads post_id).
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let cwb: String = nb_loops_exit_writeback(s0.code, loops, lpcell, buf, lets, lcell);
+        let c1: String = nb_emit_jmp(cwb, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pb: i64 = nb_loops_push_break(loops, lpcell, which);
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
     }
     if k == ast_continue() {
-        // `continue` — emit leading const0 then a jmp back to the innermost loop's
-        // header (set immediately, a backward target).
+        // `continue` — emit leading const0, write every carried var back to its
+        // working slot (the header re-reads post_id), then a jmp back to the
+        // innermost loop's header (set immediately, a backward target).
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let cwb: String = nb_loops_exit_writeback(s0.code, loops, lpcell, buf, lets, lcell);
+        let c1: String = nb_emit_jmp(cwb, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pc: i64 = nb_jmp_set_target(jmps, jcell, which, nb_loops_top_header(loops, lpcell));
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
@@ -40439,13 +40525,21 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
 // dropped too). `return` is EXCLUDED: a return computes its value from the live
 // env at the return site (the branch's writes are bound), proven correct
 // empirically (write+return in branch -> 102 == ref), and main.mind's
-// early-return style depends on it. An exit-ONLY branch (no assign) is ALSO
-// correct — the merge slot retains the pre-region value, which is the var's true
-// value on that path — and stays permitted. Refuse loudly (0B) rather than emit
-// the drop; carrying writes through an exit edge properly (mirror lower.rs's
-// break-edge rebindings) is a follow-up. main.mind's own source contains ZERO
-// `break`/`continue` statements, so this never fires during self-compile and the
-// loop stays byte-identical.
+// early-return style depends on it. An exit-ONLY branch (no assign) stays
+// permitted. It was once argued correct because the merge slot keeps the
+// pre-region value — but a var written BEFORE the exit and AGAIN after it is
+// still stale on the exit edge (its working slot is the LATER write), which hung
+// `i = i + 1; if c { continue; } i = i + 0;` and lost updates on `break`. Those
+// exit edges are now written back (nb_loops_exit_writeback copies every carried
+// var's current slot into its working slot before the jmp). This guard still
+// refuses (0B) the narrower shape it was written for — writes INSIDE the exit
+// branch. deferred: the write-back should also make that shape correct, but
+// relaxing this guard widens the admitted subset and needs its own adversarial
+// battery — upgrade path: drop the nb_block_any_assign arm, then gate
+// write+continue / write+break branches (including the range-for step injected
+// before a conditional `continue`) against the MLIR path. main.mind's own source
+// contains ZERO `break`/`continue` statements, so this never fires during
+// self-compile and the loop stays byte-identical.
 
 // 1 iff block [sa,sl) contains a `break`/`continue` binding to the ENCLOSING
 // loop: descends nested `if` branches but NOT nested `while` bodies (an exit
@@ -41417,10 +41511,10 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // the emitted offsets match the counted frame size exactly.
     let _erp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, lets, lcell, 0);
 
-    // Per-fn loop-frame stack (header offset + per-loop break list), threaded like
-    // jmps/jcell. Each frame is 3 i64 words; lpcell = a 1-i64 depth count, zeroed.
-    // Up to 64 nested loops.
-    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    // Per-fn loop-frame stack (header offset + per-loop break list + carry table),
+    // threaded like jmps/jcell. Each frame is 5 i64 words (nb_loops_push); lpcell =
+    // a 1-i64 depth count, zeroed. Up to 256 nested loops (cap-guarded).
+    let loops: i64 = __mind_alloc(256 * 5 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
 
@@ -45357,7 +45451,7 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 72, 64);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
     let srt: i64 = srt_build(src_addr, src_len);
-    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let loops: i64 = __mind_alloc(256 * 5 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
@@ -45465,7 +45559,7 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
         return es_new();
     }
     let _fa: i64 = frt_apply_aliases(frt, src_addr, aliases, 0);
-    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let loops: i64 = __mind_alloc(256 * 5 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
     // FIX (fp-field SIGSEGV): stash the FULL nb_lower_fn lcell side-channel —
@@ -45631,7 +45725,7 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 8, dtbl);
     let _tfp: i64 = nb_tag_float_params(dtbl, src_addr, params_addr, n_params, 0);
     let srt: i64 = srt_build(src_addr, src_len);
-    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let loops: i64 = __mind_alloc(256 * 5 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
 
