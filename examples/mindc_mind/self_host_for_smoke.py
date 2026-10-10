@@ -26,7 +26,8 @@ that var's live value into its loop slot (nb_exit_edge_copies), or the next
 iteration / the code after the loop reads the stale one. The byte-neutral desugar
 of an own-level `continue` steps VAR inside the branch (`if c { VAR = VAR + 1;
 continue; }`), so every range-for `continue` depends on that edge. Two plain
-`while` shapes pin the same root cause outside `for`.
+`while` shapes pin the same root cause outside `for`, and a swap through two
+carried vars pins that the edge moves run as a parallel copy.
 
 Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
 as a dead tail; every walk of the loop body must drop it the same way.
@@ -181,6 +182,14 @@ CASES = [
     # positive control for REFUSE_CASES below: the same loop without the shadowing
     # `let` compiles and runs (x == 5), so the refusal is about the shadow alone.
     ("shadow_control", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { continue; } } return x; }", 5),
+    # A branch swaps two carried vars through bare-ident copies, then exits: at the
+    # exit `a` is bound to b's loop slot and `b` to a's, so the edge moves are a
+    # cycle and must run as a PARALLEL copy (sequential moves give a == b).
+    # a,b = 1,2 -> (2,12) -> swap (12,2) -> (13,12) -> (14,22): 14*16+22 = 246 ; the
+    # break leaves (12,2): 194. References from the Rust MLIR build.
+    ("swap_in_branch_continue", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; let mut i: i64 = 0; while i < 4 { i = i + 1; if i == 2 { let t: i64 = a; a = b; b = t; continue; } a = a + 1; b = b + 10; } return a * 16 + b; }", 246),
+    ("swap_in_branch_break", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; let mut i: i64 = 0; while i < 4 { i = i + 1; if i == 2 { let t: i64 = a; a = b; b = t; break; } a = a + 1; b = b + 10; } return a * 16 + b; }", 194),
+    ("for_swap_in_branch_continue", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; for i in 0..4 { if i == 1 { let t: i64 = a; a = b; b = t; continue; } a = a + 1; b = b + 10; } return a * 16 + b; }", 246),
     # ---- unconditional exits in a NESTED range-for ----
     # The desugar appends `VAR = VAR + 1` after the body, so an unconditional
     # `break`/`continue` leaves a dead tail. The loop's own emit drops it
