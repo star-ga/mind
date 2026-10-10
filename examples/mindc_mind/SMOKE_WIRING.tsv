@@ -113,6 +113,7 @@ self_host_native_intdot_i16_smoke	ci	gate
 self_host_native_intdot_q16_smoke	ci	gate	
 self_host_native_intdot_smoke	ci	gate	
 self_host_native_matmul_f32_v_smoke	ci	gate	
+self_host_native_misc_census_smoke	ci	gate	
 self_host_native_narrow_add_i8_smoke	ci,keystone	gate	
 self_host_native_narrow_arith_batch_smoke	ci,keystone	gate	
 self_host_native_narrow_paramret_smoke	ci,keystone	gate	

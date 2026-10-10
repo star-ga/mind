@@ -1666,6 +1666,9 @@ pub fn ast_new_if(span_lo: i64, span_hi: i64, cond: i64, then_blk: i64, else_blk
     __mind_store_i64(n + 32, then_blk);
     __mind_store_i64(n + 40, else_blk);
     __mind_store_i64(n + 48, 0);
+    // +56: the native "value observed" mark (nb_if_mark_obs), 0 until a
+    // lowering context proves the if's value is read.
+    __mind_store_i64(n + 56, 0);
     n
 }
 
@@ -3417,6 +3420,21 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     // a variable — no postfix shape is shadowed.
     if tok_kind(toks, pos) == tk_ident() {
         if is_ident_as(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            // `EXPR as *const T` / `EXPR as *mut T` (T itself may be a pointer
+            // type): a width-64 ast_cast whose target span starts with `*`. The
+            // source-width proof and the no-op lowering live in nb_expr's cast arm
+            // (see nb_ptrc_src_w64); a malformed pointer type poisons.
+            if tok_kind(toks, pos + 1) == tk_star() {
+                let pend: i64 = ptr_type_end(toks, buf, pos + 1);
+                if pend < 0 {
+                    let pbad: i64 = ast_new_leaf(ast_unsupported(), ast_span_lo(recv), tok_hi(toks, pos + 1));
+                    return pr_new(pos + 2, pbad);
+                }
+                let pty_lo: i64 = tok_lo(toks, pos + 1);
+                let pty_hi: i64 = tok_hi(toks, pend - 1);
+                let cptr: i64 = ast_new_cast(ast_span_lo(recv), pty_hi, recv, pty_lo, pty_hi, 64);
+                return parse_postfix_rest(toks, pend, buf, cptr);
+            }
             if tok_kind(toks, pos + 1) == tk_ident() {
                 let cty_lo: i64 = tok_lo(toks, pos + 1);
                 let cty_hi: i64 = tok_hi(toks, pos + 1);
@@ -5184,12 +5202,23 @@ pub fn const_find_from(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64
 // Read the initializer of `const NAME : TYPE = <int> ;` (NAME at `np`). Returns
 // the i64 value, or -1 if the decl is not the plain `: <ident-type> = <int> ;`
 // shape (a const-expr / non-int RHS is a later slice — refuse).
+//
+// The `;` is optional, as in mindc-Rust's item parser: `const NAME: i64 = 7`
+// followed directly by the next top-level item (or EOF) is the same declaration.
+// Without the `;` the int token must be IMMEDIATELY followed by an item start
+// (tok_is_item_start) or EOF, so `const K: i64 = 1 + 2` (a const-expr, no `;`)
+// still refuses instead of inlining the bare `1`. A float/bool-typed const with
+// an int initializer is a mindc-Rust type error (E2001), so it refuses here too
+// rather than inlining raw integer bits into a float context.
 pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
     if tok_kind(toks, np + 1) == tk_colon() {
         if tok_kind(toks, np + 2) == tk_ident() {
             if tok_kind(toks, np + 3) == tk_eq() {
                 if tok_kind(toks, np + 4) == tk_int() {
-                    if tok_kind(toks, np + 5) == tk_semi() {
+                    if const_type_not_int(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 1 {
+                        return 0 - 1;
+                    }
+                    if const_init_ends(toks, buf, np + 5) == 1 {
                         return parse_int_span(buf, tok_lo(toks, np + 4), tok_hi(toks, np + 4), 0);
                     }
                 }
@@ -5197,6 +5226,41 @@ pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
         }
     }
     0 - 1
+}
+
+// 1 iff the token at `pos` terminates a single-int const initializer: a `;`,
+// EOF, or the start of the next top-level item (the `;`-less form).
+pub fn const_init_ends(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 1;
+    }
+    if tok_kind(toks, pos) == tk_semi() {
+        return 1;
+    }
+    tok_is_item_start(toks, pos, buf)
+}
+
+// 1 iff a const's declared TYPE cannot hold an int initializer: `f32` / `f64`
+// (3 bytes, 'f'=102) or `bool` (b o o l). Every other spelling keeps the
+// pre-existing int-inline behaviour.
+pub fn const_type_not_int(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo) == 102 {
+            return 1;
+        }
+    }
+    if hi - lo == 4 {
+        if load_byte(buf, lo) == 98 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 111 {
+                    if load_byte(buf, lo + 3) == 108 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
 }
 
 // Resolve a bare ident buf[nlo..nhi) to its const value, or -1 (refuse; see the
@@ -6553,6 +6617,32 @@ pub fn skip_balanced_bracket(toks: Vec, pos: i64, depth: i64) -> i64 {
 // single-token parameter types — the exact self-host blind spot that lets a
 // construct the compiler cannot parse sit undetected behind a green byte-identity
 // loop.
+// End (exclusive token index) of a pointer type starting at the `*` token
+// `pos`: `* const T` / `* mut T`, where T is an identifier or, recursively,
+// another pointer type. -1 when the shape is anything else.
+pub fn ptr_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_star() {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos + 1) != tk_ident() {
+        return 0 - 1;
+    }
+    let qlo: i64 = tok_lo(toks, pos + 1);
+    let qhi: i64 = tok_hi(toks, pos + 1);
+    if is_const_kw(buf, qlo, qhi) == 0 {
+        if is_ident_mut(buf, qlo, qhi) == 0 {
+            return 0 - 1;
+        }
+    }
+    if tok_kind(toks, pos + 2) == tk_star() {
+        return ptr_type_end(toks, buf, pos + 2);
+    }
+    if tok_kind(toks, pos + 2) != tk_ident() {
+        return 0 - 1;
+    }
+    pos + 3
+}
+
 pub fn param_type_end(toks: Vec, pos: i64) -> i64 {
     let k: i64 = tok_kind(toks, pos);
     // `&T` / `&[T]` — a reference binds tighter than anything that follows it.
@@ -34870,6 +34960,288 @@ pub fn nb_record_index_expr(st: NbState, buf: i64, node: i64, params_addr: i64, 
     return NbState { code: xl2, next_id: xdst_id + 1, last_id: xdst_id, ncalls: s_xi.ncalls };
 }
 
+// ===== Pointer casts `EXPR as *const T` / `EXPR as *mut T` (census A2) =====
+//
+// A pointer is a 64-bit integer on every MIND target, so a cast between a
+// 64-bit integer and a pointer (or between two pointer types) is a
+// representation no-op: the parser builds a width-64 ast_cast node whose
+// target span starts with `*`, and nb_expr lowers it through the `as i64`
+// identity copy. mindc-Rust also accepts NARROW and FLOAT sources (it sign-/
+// zero-extends an i32/u32, converts an f64), so native admits a pointer cast
+// only when the SOURCE is PROVEN to be a 64-bit signed integer
+// (nb_ptrc_src_w64) and refuses every other source; a narrowing / unsigned /
+// float cast of a pointer value refuses too. Every refusal poisons
+// (lcell+80) -> a 0-byte fail-closed compile, never a re-interpreted value.
+// main.mind's own source has no `as *`, so none of this is reached during
+// self-compile.
+
+// 1 iff the cast node's target span starts with `*` (42).
+pub fn ast_cast_is_ptr(buf: i64, node: i64) -> i64 {
+    let lo: i64 = ast_child1(node);
+    let hi: i64 = ast_child2(node);
+    if hi <= lo {
+        return 0;
+    }
+    if load_byte(buf, lo) == 42 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff `node` is pointer-valued by shape: a pointer cast, through parens.
+// (Pointer-ANNOTATED lets/params are not parsed by this port — they refuse —
+// so a pointer value can only reach an expression through a pointer cast.)
+pub fn nb_ptrc_is_ptr(buf: i64, node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_ptrc_is_ptr(buf, ast_child0(node));
+    }
+    if k == ast_cast() {
+        return ast_cast_is_ptr(buf, node);
+    }
+    0
+}
+
+// 1 iff buf[lo..hi) spells exactly `i64` or starts with `*` (a pointer type).
+pub fn nb_ptrc_ty_w64(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi <= lo {
+        return 0;
+    }
+    if load_byte(buf, lo) == 42 {
+        return 1;
+    }
+    is_ident_i64(buf, lo, hi)
+}
+
+// Skip ASCII whitespace forward from `i` (bounded by `end`).
+pub fn nb_ptrc_skip_ws(buf: i64, i: i64, end: i64) -> i64 {
+    if i >= end {
+        return i;
+    }
+    if is_space(load_byte(buf, i)) == 1 {
+        return nb_ptrc_skip_ws(buf, i + 1, end);
+    }
+    i
+}
+
+// Classify the text after a `let` keyword ending at `j`: 0 = not a declaration
+// of buf[nlo..nhi); 1 = `NAME: i64` / `NAME: *..`; 4 = any other annotation or
+// none. `mut` is skipped. `end` bounds every read.
+pub fn nb_ptrc_let_class(buf: i64, j: i64, end: i64, nlo: i64, nhi: i64) -> i64 {
+    let a: i64 = nb_ptrc_skip_ws(buf, j, end);
+    let b: i64 = if is_ident_mut(buf, a, a + 3) == 1 {
+        if is_alnum(load_byte(buf, a + 3)) == 0 {
+            nb_ptrc_skip_ws(buf, a + 3, end)
+        } else {
+            a
+        }
+    } else {
+        a
+    };
+    let len: i64 = nhi - nlo;
+    if b + len >= end {
+        return 0;
+    }
+    if span_bytes_equal(buf, b, b + len, nlo, nhi) == 0 {
+        return 0;
+    }
+    if is_alnum(load_byte(buf, b + len)) == 1 {
+        return 0;
+    }
+    let c: i64 = nb_ptrc_skip_ws(buf, b + len, end);
+    if load_byte(buf, c) != 58 {
+        return 4;
+    }
+    let t: i64 = nb_ptrc_skip_ws(buf, c + 1, end);
+    if load_byte(buf, t) == 42 {
+        return 1;
+    }
+    if is_ident_i64(buf, t, t + 3) == 1 {
+        if is_alnum(load_byte(buf, t + 3)) == 0 {
+            return 1;
+        }
+    }
+    4
+}
+
+// 1 iff buf[i..] starts the `let` keyword as a whole word.
+pub fn nb_ptrc_is_let_kw(buf: i64, i: i64) -> i64 {
+    if i > 0 {
+        if is_alnum(load_byte(buf, i - 1)) == 1 {
+            return 0;
+        }
+    }
+    if load_byte(buf, i) != 108 {
+        return 0;
+    }
+    if load_byte(buf, i + 1) != 101 {
+        return 0;
+    }
+    if load_byte(buf, i + 2) != 116 {
+        return 0;
+    }
+    if is_alnum(load_byte(buf, i + 3)) == 1 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff buf[i..] is a top-level `fn` item start at column 0 (`fn ` or
+// `pub fn `, directly after a newline or at offset 0) — the backward scan stop.
+pub fn nb_ptrc_is_fn_start(buf: i64, i: i64) -> i64 {
+    if i > 0 {
+        if load_byte(buf, i - 1) != 10 {
+            return 0;
+        }
+    }
+    if load_byte(buf, i) == 102 {
+        if load_byte(buf, i + 1) == 110 {
+            if is_space(load_byte(buf, i + 2)) == 1 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if load_byte(buf, i) == 112 {
+        if load_byte(buf, i + 1) == 117 {
+            if load_byte(buf, i + 2) == 98 {
+                if is_space(load_byte(buf, i + 3)) == 1 {
+                    if load_byte(buf, i + 4) == 102 {
+                        if load_byte(buf, i + 5) == 110 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Scan BACKWARDS from byte `i` to the start of the enclosing top-level fn,
+// OR-ing the class (nb_ptrc_let_class) of every textual `let NAME` declaration
+// of buf[nlo..nhi). Result 1 = only i64/pointer-annotated declarations seen;
+// any 4 bit = some declaration that is not provably 64-bit; 0 = none seen.
+// Comments/strings can only ADD a declaration-shaped match, which can only
+// make the result more conservative (a refusal), never admit a narrow source.
+pub fn nb_ptrc_decls_back(buf: i64, i: i64, end: i64, nlo: i64, nhi: i64, acc: i64) -> i64 {
+    if i < 0 {
+        return acc;
+    }
+    let here: i64 = if nb_ptrc_is_let_kw(buf, i) == 1 {
+        nb_ptrc_let_class(buf, i + 3, end, nlo, nhi)
+    } else {
+        0
+    };
+    let nacc: i64 = acc | here;
+    if nb_ptrc_is_fn_start(buf, i) == 1 {
+        return nacc;
+    }
+    nb_ptrc_decls_back(buf, i - 1, end, nlo, nhi, nacc)
+}
+
+// The declared type leaf of the PARAMETER named buf[lo..hi), or 0.
+pub fn nb_ptrc_param_ty(buf: i64, params_addr: i64, n_params: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let p: i64 = __mind_load_i64(params_addr + i * 8);
+    let nm: i64 = ast_child0(p);
+    if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+        return ast_child1(p);
+    }
+    nb_ptrc_param_ty(buf, params_addr, n_params, lo, hi, i + 1)
+}
+
+// 1 iff the identifier `node` is PROVEN 64-bit: a let-bound name whose every
+// declaration in the enclosing fn is annotated `i64` / pointer (and whose
+// declared width is 64), or an unshadowed parameter annotated `i64` / pointer.
+pub fn nb_ptrc_ident_w64(buf: i64, node: i64, params_addr: i64, n_params: i64, lets: i64, lcell: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if nb_lets_lookup(lets, lcell, buf, lo, hi) >= 0 {
+        if nb_lets_lookup_width(lets, lcell, buf, lo, hi) != 64 {
+            return 0;
+        }
+        let acc: i64 = nb_ptrc_decls_back(buf, lo - 1, lo, lo, hi, 0);
+        if acc == 1 {
+            return 1;
+        }
+        if acc != 0 {
+            return 0;
+        }
+        // No textual `let NAME` before the use: the binding is a parameter
+        // (spilled params are registered too) or a pattern binder — decided
+        // by the parameter annotation below (a binder has none -> refused).
+    }
+    let ty: i64 = nb_ptrc_param_ty(buf, params_addr, n_params, lo, hi, 0);
+    if ty == 0 {
+        return 0;
+    }
+    nb_ptrc_ty_w64(buf, ast_span_lo(ty), ast_span_hi(ty))
+}
+
+// 1 iff `node` is PROVEN to be a 64-bit signed integer (or a pointer): an int
+// literal, a pointer cast, an `as i64` cast, a parenthesised / negated proven
+// value, an ARITHMETIC binop of two proven values, a proven identifier, a
+// __mind_* intrinsic (all return i64), or a call to a fn declared `-> i64`.
+// Anything else (comparison, field/index read, narrow/float source, unknown
+// call) is NOT proven -> the pointer cast refuses.
+pub fn nb_ptrc_src_w64(buf: i64, node: i64, params_addr: i64, n_params: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell);
+    }
+    if k == ast_neg() {
+        return nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell);
+    }
+    if k == ast_cast() {
+        if ast_aux(node) == 64 {
+            if ast_cast_is_unsigned(buf, node) == 0 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if k == ast_binop() {
+        let op: i64 = ast_aux(node);
+        if op >= op_lt() {
+            if op <= op_ne() {
+                return 0;
+            }
+        }
+        if nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell) == 0 {
+            return 0;
+        }
+        return nb_ptrc_src_w64(buf, ast_child1(node), params_addr, n_params, lets, lcell);
+    }
+    if k == ast_ident() {
+        return nb_ptrc_ident_w64(buf, node, params_addr, n_params, lets, lcell);
+    }
+    if k == ast_call() {
+        let callee: i64 = ast_child0(node);
+        if ast_kind(callee) != ast_ident() {
+            return 0;
+        }
+        if nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee)) >= 0 {
+            return 1;
+        }
+        let frt: i64 = __mind_load_i64(lcell + 16);
+        if frt == 0 {
+            return 0;
+        }
+        let fk: i64 = frt_find(frt, buf, ast_span_lo(callee), ast_span_hi(callee), 0);
+        if fk < 0 {
+            return 0;
+        }
+        return is_ident_i64(buf, frt_retty_lo(frt, fk), frt_retty_hi(frt, fk));
+    }
+    0
+}
+
 pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
@@ -35222,6 +35594,15 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
         if intr >= 0 {
             let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+            // A store intrinsic reached HERE is in VALUE position (a let init, a
+            // `return`, an operand / argument): its result is the defined 0 the
+            // C runtime returns, so write it (xor rax,rax ; mov [dst],rax) instead
+            // of leaving the slot stale. A store in STATEMENT position never gets
+            // here — nb_stmt routes it to nb_store_stmt (unchanged bytes).
+            if nb_intr_is_store(intr) == 1 {
+                let c_z: String = nb_store_rax(nb_emit_free_xor(c_intr), nb_slot_disp(id));
+                return NbState { code: c_z, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
+            }
             return NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
         }
         // RI-D2 S-E1: the `__mind_blas_dot_q16_v` BLAS extern INLINES the Q16.16 MAC
@@ -35402,6 +35783,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // escapes, via last_id), exactly as nb_stmt's let-init arm restores lcell. The
         // simple (no-merge) path binds nothing, so the restore is a no-op there.
         let pre_if_n: i64 = __mind_load_i64(lcell);
+        let _mo: i64 = nb_if_mark_obs(node);
         let sv: NbState = nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
         __mind_store_i64(lcell, pre_if_n);
         return sv;
@@ -35423,6 +35805,30 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let cid: i64 = cs1.next_id;
         let cw: i64 = ast_aux(node);
         let cop_dt: i64 = nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+        // A2 POINTER cast `EXPR as *const T` / `as *mut T` (width 64, target span
+        // starts with `*`): a no-op ONLY for a source PROVEN to be a 64-bit signed
+        // integer or a pointer (nb_ptrc_src_w64) that also classifies INT; it then
+        // takes the `as i64` identity copy below (same 5-id layout as nb_count_expr's
+        // cw==64 arm). Any other source refuses (fail-closed poison).
+        if ast_cast_is_ptr(buf, node) == 1 {
+            let pok: i64 = if cop_dt == nb_dtype_int() {
+                nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell)
+            } else {
+                0
+            };
+            if pok == 0 {
+                __mind_store_i64(lcell + 80, 1);
+                return NbState { code: cs1.code, next_id: cid + 5, last_id: cid + 4, ncalls: cs1.ncalls };
+            }
+        }
+        // A narrowing / unsigned / f64 cast of a POINTER value is not a 64-bit
+        // reinterpretation: refuse it (fail-closed) rather than truncate.
+        if cw != 64 {
+            if nb_ptrc_is_ptr(buf, ast_child0(node)) == 1 {
+                __mind_store_i64(lcell + 80, 1);
+                return NbState { code: cs1.code, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+            }
+        }
         // INT -> f64 WIDENING cast `EXPR as f64`: cvtsi2sd xmm0, [operand slot] then
         // movsd [dst], xmm0; the dst slot is tagged FLOAT so a downstream float op /
         // float-annotated let routes the SSE2 path. Fixed 1-id layout (dst=cid),
@@ -38423,6 +38829,7 @@ pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_p
     // matches the count side's generic ast_if id progression) instead of nb_expr's
     // fail-closed const-0 (which desyncs next_id — the diverging-branch mis-lower).
     if is_native_if_value(init) == 1 {
+        let _mo: i64 = nb_if_mark_obs(init);
         return nb_if_value(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     }
     nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell)
@@ -38765,6 +39172,305 @@ pub fn nb_record_field_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     return NbState { code: fs1, next_id: fdst_id + 1, last_id: fdst_id, ncalls: s_fv.ncalls };
 }
 
+// ===== Store intrinsic used as a VALUE (census: the `w_set` shape) =====
+//
+// `__mind_store_i64/i8/i16/i32` return 0 in the C runtime (the MLIR build), and
+// a store used as a value — a fn's tail `fn w_set(..) -> i64 { __mind_store_i64(..) }`,
+// a let init, a `return`, a value-if branch tail — must read that 0. The native
+// emitter historically left the store's result slot UNWRITTEN, so such a read
+// returned whatever the stack slot last held. Statement-position stores (the
+// overwhelmingly common case, incl. all of main.mind's) keep the old bytes via
+// nb_store_stmt; value positions write the 0 (nb_expr's intrinsic arm, plus
+// nb_block_tail_store_zero for a block whose value is its last statement).
+
+// 1 iff intrinsic kind `intr` (nb_intrinsic_id) is a store: kinds 2 (i64),
+// 4 (i8), 13 (i16), 15 (i32).
+pub fn nb_intr_is_store(intr: i64) -> i64 {
+    if intr == 2 {
+        return 1;
+    }
+    if intr == 4 {
+        return 1;
+    }
+    if intr == 13 {
+        return 1;
+    }
+    if intr == 15 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff `node` is a direct call to a __mind_store_* intrinsic.
+pub fn nb_is_store_call(buf: i64, node: i64) -> i64 {
+    if ast_kind(node) != ast_call() {
+        return 0;
+    }
+    let callee: i64 = ast_child0(node);
+    nb_intr_is_store(nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee)))
+}
+
+// A store-intrinsic call in STATEMENT position: exactly nb_expr's call-arm
+// prefix (args lowered into `ids`, one result id reserved) and the inline store,
+// WITHOUT writing the discarded result slot.
+pub fn nb_store_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+    let callee: i64 = ast_child0(node);
+    let args_addr: i64 = ast_child1(node);
+    let args_len: i64 = ast_aux(node);
+    let ids: i64 = __mind_alloc((args_len + 1) * 8);
+    let arg_dts: i64 = __mind_alloc((args_len + 1) * 8);
+    let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, arg_dts, lets, lcell);
+    let id: i64 = sa.next_id;
+    let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
+    let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+    NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls }
+}
+
+// A block whose VALUE is its last statement (a fn body's implicit tail, a
+// value-if branch): when that statement is a store call (lowered by
+// nb_store_stmt, slot unwritten), write the store's defined result 0 into the
+// block's result slot. No new id is consumed, so count and emit stay in step.
+pub fn nb_block_tail_store_zero(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64) -> NbState {
+    if stmts_len <= 0 {
+        return st;
+    }
+    let last: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    if nb_is_store_call(buf, last) == 0 {
+        return st;
+    }
+    let cz: String = nb_store_rax(nb_emit_free_xor(st.code), nb_slot_disp(st.last_id));
+    NbState { code: cz, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// nb_block_tail_store_zero only when `obs` == 1 (the block's value is read).
+pub fn nb_block_tail_store_zero_if(obs: i64, st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64) -> NbState {
+    if obs != 1 {
+        return st;
+    }
+    nb_block_tail_store_zero(st, buf, stmts_addr, stmts_len)
+}
+
+// Mark an if node's VALUE as observed (+56 = 1, see ast_new_if). Non-if nodes
+// are left alone (their +56 slot belongs to other annotations).
+pub fn nb_if_mark_obs(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    if ast_kind(node) == ast_if() {
+        __mind_store_i64(node + 56, 1)
+    }
+    0
+}
+
+pub fn nb_if_is_obs(node: i64) -> i64 {
+    if __mind_load_i64(node + 56) == 1 {
+        return 1;
+    }
+    0
+}
+
+// When `obs` == 1, mark the block's trailing statement observed if it is an if
+// (its value is the block's value).
+pub fn nb_mark_tail_if_when(obs: i64, stmts_addr: i64, stmts_len: i64) -> i64 {
+    if obs != 1 {
+        return 0;
+    }
+    if stmts_len <= 0 {
+        return 0;
+    }
+    nb_if_mark_obs(__mind_load_i64(stmts_addr + (stmts_len - 1) * 8))
+}
+
+// ===== Which fns' RESULTS are read (nb_obs_build) =====
+//
+// A fn whose body ends in a store (or a value-if ending in one) must return the
+// store's 0 only if some caller READS that result. obs[k] = 1 for every fn `k`
+// of `ordered` called in a VALUE position anywhere in the module: any call that
+// is not a statement whose result is discarded (a non-final statement, or the
+// final statement of a block whose own value is unread — a while body, an if
+// statement in statement position). Mirrors the reach walker (nb_reach_*) over
+// the same node kinds, with callee resolution by nb_last_def_idx. Conservative:
+// a fn tail call is treated as read (the caller's own result may be read), so
+// an over-mark only adds a zeroing store, never removes a needed one.
+pub fn nb_obs_flag(obs: i64, k: i64) -> i64 {
+    if obs == 0 {
+        return 1;
+    }
+    __mind_load_i64(obs + k * 8)
+}
+
+pub fn nb_obs_build(buf: i64, fns: i64, n_fns: i64) -> i64 {
+    let obs: i64 = __mind_alloc((n_fns + 1) * 8);
+    let _z: i64 = nb_cyc_zero(obs, n_fns, 0);
+    let _w: i64 = nb_obs_fns(buf, fns, n_fns, obs, 0);
+    obs
+}
+
+pub fn nb_obs_fns(buf: i64, fns: i64, n_fns: i64, obs: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(fns + k * 8);
+    let body: i64 = ast_child2(node);
+    let _b: i64 = nb_obs_stmts(buf, fns, n_fns, obs, ast_child0(body), ast_aux(body), 0, 1);
+    nb_obs_fns(buf, fns, n_fns, obs, k + 1)
+}
+
+pub fn nb_obs_callee(buf: i64, fns: i64, n_fns: i64, obs: i64, callee: i64) -> i64 {
+    let idx: i64 = nb_last_def_idx(buf, fns, n_fns, ast_span_lo(callee), ast_span_hi(callee), 0, 0 - 1);
+    if idx < 0 {
+        return 0;
+    }
+    __mind_store_i64(obs + idx * 8, 1);
+    0
+}
+
+pub fn nb_obs_args(buf: i64, fns: i64, n_fns: i64, obs: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let _a: i64 = nb_obs_expr(buf, fns, n_fns, obs, __mind_load_i64(args_addr + i * 8));
+    nb_obs_args(buf, fns, n_fns, obs, args_addr, args_len, i + 1)
+}
+
+pub fn nb_obs_list(buf: i64, fns: i64, n_fns: i64, obs: i64, addr: i64, n: i64, stride: i64, off: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let _v: i64 = nb_obs_expr(buf, fns, n_fns, obs, __mind_load_i64(addr + (i * stride + off) * 8));
+    nb_obs_list(buf, fns, n_fns, obs, addr, n, stride, off, i + 1)
+}
+
+// An if's two blocks with value flag `val` (0 when the if's value is unread).
+pub fn nb_obs_if(buf: i64, fns: i64, n_fns: i64, obs: i64, node: i64, val: i64) -> i64 {
+    let _c: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    let tb: i64 = ast_child1(node);
+    let _t: i64 = nb_obs_stmts(buf, fns, n_fns, obs, ast_child0(tb), ast_aux(tb), 0, val);
+    let eb: i64 = ast_child2(node);
+    if eb == 0 {
+        return 0;
+    }
+    nb_obs_stmts(buf, fns, n_fns, obs, ast_child0(eb), ast_aux(eb), 0, val)
+}
+
+// An expression in VALUE position: every call's callee result is read.
+pub fn nb_obs_expr(buf: i64, fns: i64, n_fns: i64, obs: i64, node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_call() {
+        let _a: i64 = nb_obs_args(buf, fns, n_fns, obs, ast_child1(node), ast_aux(node), 0);
+        return nb_obs_callee(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_if() {
+        return nb_obs_if(buf, fns, n_fns, obs, node, 1);
+    }
+    if k == ast_binop() {
+        let _l: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child1(node));
+    }
+    if k == ast_index() {
+        let _b: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child1(node));
+    }
+    if k == ast_struct_lit() {
+        return nb_obs_list(buf, fns, n_fns, obs, ast_child1(node), ast_aux(node), 3, 2, 0);
+    }
+    if k == ast_array_lit() {
+        return nb_obs_list(buf, fns, n_fns, obs, ast_child1(node), ast_aux(node), 1, 0, 0);
+    }
+    if k == ast_enum_ctor() {
+        if ast_aux(node) == 1 {
+            return nb_obs_expr(buf, fns, n_fns, obs, ast_child1(node));
+        }
+        return 0;
+    }
+    if k == ast_paren() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_field() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_neg() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_not() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_cast() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_addr_of() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_deref() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    0
+}
+
+// A statement; `val` = 1 when its value is the enclosing block's READ value.
+pub fn nb_obs_stmt(buf: i64, fns: i64, n_fns: i64, obs: i64, node: i64, val: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_call() {
+        if val == 1 {
+            return nb_obs_expr(buf, fns, n_fns, obs, node);
+        }
+        return nb_obs_args(buf, fns, n_fns, obs, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_if() {
+        return nb_obs_if(buf, fns, n_fns, obs, node, val);
+    }
+    if k == ast_while() {
+        let _c: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+        let wb: i64 = ast_child1(node);
+        return nb_obs_stmts(buf, fns, n_fns, obs, ast_child0(wb), ast_aux(wb), 0, 0);
+    }
+    if k == ast_return() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+    }
+    if k == ast_let() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child2(node));
+    }
+    if k == ast_assign() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child2(node));
+    }
+    if k == ast_index_assign() {
+        let _wb: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+        let _wi: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child1(node));
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child2(node));
+    }
+    if k == ast_deref_assign() {
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child2(node));
+    }
+    if k == ast_field_assign() {
+        let _ft: i64 = nb_obs_expr(buf, fns, n_fns, obs, ast_child0(node));
+        return nb_obs_expr(buf, fns, n_fns, obs, ast_child2(node));
+    }
+    if k == ast_break() {
+        return 0;
+    }
+    if k == ast_continue() {
+        return 0;
+    }
+    nb_obs_expr(buf, fns, n_fns, obs, node)
+}
+
+// A statement list; the LAST statement carries `val`, every other one is 0.
+pub fn nb_obs_stmts(buf: i64, fns: i64, n_fns: i64, obs: i64, stmts_addr: i64, stmts_len: i64, i: i64, val: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let sv: i64 = if i == stmts_len - 1 {
+        val
+    } else {
+        0
+    };
+    let _s: i64 = nb_obs_stmt(buf, fns, n_fns, obs, __mind_load_i64(stmts_addr + i * 8), sv);
+    nb_obs_stmts(buf, fns, n_fns, obs, stmts_addr, stmts_len, i + 1, val)
+}
+
 pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
@@ -38791,6 +39497,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             __mind_store_i64(lcell + 80, 1)
         }
         if is_any_value_if_expr(ret_operand) == 1 {
+            let _mo: i64 = nb_if_mark_obs(ret_operand);
             let sv: NbState = nb_if_value(st, buf, ret_operand, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
             let rvdt: i64 = nb_node_dtype_tbl(ret_operand, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
             let cv: String = if rvdt == nb_dtype_float() {
@@ -38954,6 +39661,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // value-if, so this branch is inert during self-compile — byte-identical.
         let rhs_node: i64 = ast_child2(node);
         if is_any_value_if_expr(rhs_node) == 1 {
+            let _mo: i64 = nb_if_mark_obs(rhs_node);
             let sv: NbState = nb_if_value(st, buf, rhs_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
             let dtblv: i64 = __mind_load_i64(lcell + 8);
             let rhsdtv: i64 = nb_node_dtype_tbl(rhs_node, dtblv, lets, lcell, buf, params_addr, n_params);
@@ -39093,6 +39801,12 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pc: i64 = nb_jmp_set_target(jmps, jcell, which, nb_loops_top_header(loops, lpcell));
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
+    }
+    // A bare store-intrinsic call STATEMENT discards its result: lower it
+    // without writing the result slot (byte-identical to the historical
+    // emission). Value positions go through nb_expr, which writes the 0.
+    if nb_is_store_call(buf, node) == 1 {
+        return nb_store_stmt(st, buf, node, params_addr, n_params, calls, lets, lcell);
     }
     nb_expr(st, buf, node, params_addr, n_params, calls, lets, lcell)
 }
@@ -39468,6 +40182,11 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let else_blk: i64 = ast_child2(node);
     let else_sa: i64 = ast_child0(else_blk);
     let else_sl: i64 = ast_aux(else_blk);
+    // Value observed? Then a branch's trailing store must yield 0 and a branch-
+    // tail value-if is observed too (nb_block_tail_store_zero_if / mark below).
+    let obs: i64 = nb_if_is_obs(node);
+    let _mtt: i64 = nb_mark_tail_if_when(obs, then_sa, then_sl);
+    let _mte: i64 = nb_mark_tail_if_when(obs, else_sa, else_sl);
 
     // cond
     let sc: NbState = nb_expr(st, buf, cond, params_addr, n_params, calls, lets, lcell);
@@ -39489,7 +40208,8 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // #318 SIMPLE-PATH SCOPING — value-if twin of the statement-if fix above.
     let branch_fork_vs: i64 = __mind_load_i64(lcell);
     let s_t0: NbState = nb_emit_const0(s_je);
-    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_tbs: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_tb: NbState = nb_block_tail_store_zero_if(obs, s_tbs, buf, then_sa, then_sl);
     let then_result: i64 = s_tb.last_id;
     let then_diverges: i64 = nb_block_diverges(then_sa, then_sl);
 
@@ -39517,7 +40237,8 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     __mind_store_i64(lcell, branch_fork_vs);
     // else-block: leading const0, then the else value-expr (trailing = else_result).
     let s_e0: NbState = nb_emit_const0(s_tj);
-    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_ebs: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_eb: NbState = nb_block_tail_store_zero_if(obs, s_ebs, buf, else_sa, else_sl);
     let else_result: i64 = s_eb.last_id;
     // #318: drop the else-branch's local bindings at the join.
     __mind_store_i64(lcell, branch_fork_vs);
@@ -39562,6 +40283,11 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let else_blk: i64 = ast_child2(node);
     let else_sa: i64 = ast_child0(else_blk);
     let else_sl: i64 = ast_aux(else_blk);
+    // Value observed? Then a branch's trailing store must yield 0 and a branch-
+    // tail value-if is observed too (nb_block_tail_store_zero_if / mark below).
+    let obs: i64 = nb_if_is_obs(node);
+    let _mtt: i64 = nb_mark_tail_if_when(obs, then_sa, then_sl);
+    let _mte: i64 = nb_mark_tail_if_when(obs, else_sa, else_sl);
 
     // Snapshot the outer let-env size (prefix before the branches' branch-local lets).
     let outer_n: i64 = __mind_load_i64(lcell);
@@ -39588,7 +40314,8 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let branch_fork_n: i64 = __mind_load_i64(lcell);
     // then-block: leading const0 + then-stmts.
     let s_t0: NbState = nb_emit_const0(s_je);
-    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_tbs: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_tb: NbState = nb_block_tail_store_zero_if(obs, s_tbs, buf, then_sa, then_sl);
     let then_result: i64 = s_tb.last_id;
 
     // PHYSICAL slot layout (walk order):
@@ -39637,7 +40364,8 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     __mind_store_i64(lcell, branch_fork_n);
     let s_e_in: NbState = NbState { code: c_tj, next_id: p_t, last_id: s_tb.last_id, ncalls: s_tb.ncalls };
     let s_e0: NbState = nb_emit_const0(s_e_in);
-    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_ebs: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_eb: NbState = nb_block_tail_store_zero_if(obs, s_ebs, buf, else_sa, else_sl);
     let else_result: i64 = s_eb.last_id;
 
     // else side: emit else-placeholder const0s, then per-merge `load else_val ;
@@ -42424,7 +43152,7 @@ pub fn nb_val_epilogue(plan: i64, code: String) -> String {
     c1
 }
 
-pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64) -> NbState {
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, fobs: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
@@ -42688,7 +43416,17 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     }
 
     // Body.
-    let st_body0: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // The fn's RESULT is read (entry exit code, or a value-position call found
+    // by nb_obs_build): a trailing store must then yield 0, and a trailing
+    // value-if is observed. An unread result keeps the historical bytes.
+    let res_obs: i64 = if is_entry == 1 {
+        1
+    } else {
+        fobs
+    };
+    let _mtf: i64 = nb_mark_tail_if_when(res_obs, stmts_addr, stmts_len);
+    let st_body0s: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let st_body0: NbState = nb_block_tail_store_zero_if(res_obs, st_body0s, buf, stmts_addr, stmts_len);
 
     // Validate the implicit trailing return after the body walk has populated
     // the let/parameter descriptor environment. Explicit returns are checked
@@ -43125,7 +43863,8 @@ pub fn nb_w_get(w_addr: i64, i: i64) -> i64 {
     __mind_load_i64(w_addr + i * 8)
 }
 pub fn nb_w_set(w_addr: i64, i: i64, v: i64) -> i64 {
-    __mind_store_i64(w_addr + i * 8, v)
+    __mind_store_i64(w_addr + i * 8, v);
+    0
 }
 
 // compress_block — process one 64-byte block at `block_addr` (stride-1 bytes)
@@ -45040,7 +45779,7 @@ pub fn nb_copy32(dst: i64, src: i64, i: i64) -> i64 {
     if i >= 32 {
         return 0;
     }
-    let _s: i64 = __mind_store_i8(dst + i, __mind_load_i8(src + i));
+    __mind_store_i8(dst + i, __mind_load_i8(src + i));
     nb_copy32(dst, src, i + 1)
 }
 
@@ -45066,7 +45805,7 @@ pub fn nb_arena_reclaim(ckpt: i64) -> i64 {
     if ckpt >= nb_arena_addr() + nb_arena_bytes_default() {
         return 0;
     }
-    let _r: i64 = __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
+    __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
     0
 }
 
@@ -45318,7 +46057,9 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     let rod: i64 = __mind_alloc(8 + (nb_arena_addr() - nb_rodata_addr()));
     __mind_store_i64(rod, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod);
+    // Which fns' RESULTS are read (store-as-value: see nb_obs_build).
+    let obs: i64 = nb_obs_build(src_addr, ordered, n_fns);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, obs);
     // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
     // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
     // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
@@ -45506,7 +46247,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64, obs: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -45515,7 +46256,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, nb_obs_flag(obs, k));
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
@@ -45530,7 +46271,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let accn: i64 = acc.next_id;
     let pn: i64 = nb_poison_merge(frn, accn);
     let acc2: NbState = NbState { code: image2, next_id: pn, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, obs)
 }
 // The REFUSED-fn sentinel NbState (fail-closed): empty code + next_id == -1.
 // A single-expression helper (the es_new shape) so nb_lower_fn's poison gate
@@ -47718,7 +48459,7 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
 
     // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0, 0);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0, 0, 0);
     // FAIL CLOSED (same top gate as selftest_native_elf_hb_from_tokens): a
     // refused fn propagates the -1 sentinel — return the empty EmitState.
     if lr.next_id < 0 {

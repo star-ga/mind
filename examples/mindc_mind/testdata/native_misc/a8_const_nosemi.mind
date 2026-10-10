@@ -1,0 +1,46 @@
+// A8: top-level `const` items WITHOUT a trailing `;` (the MIND-Lab SX_* table
+// shape): forward references, use as call args / index keys / operands /
+// conditions, and a const as the very last item of the file. Expected exit 42,
+// stdout "OK\n".
+fn sx_l(l: i64, key: i64) -> i64 {
+    __mind_load_i64(l + key * 8)
+}
+
+fn fill(l: i64, i: i64) -> i64 {
+    let mut k: i64 = i;
+    while k < SX_COUNT {
+        __mind_store_i64(l + k * 8, k * 10 + SX_BIAS);
+        k = k + 1;
+    }
+    k
+}
+
+fn pick(l: i64, which: i64) -> i64 {
+    if which == SX_SECOND {
+        return sx_l(l, SX_SECOND);
+    }
+    sx_l(l, SX_FIRST)
+}
+
+fn main() -> i64 {
+    let l: i64 = __mind_alloc(SX_COUNT * 8);
+    let n: i64 = fill(l, 0);
+    let a: i64 = pick(l, SX_SECOND);
+    let b: i64 = pick(l, SX_FIRST);
+    let msg: i64 = __mind_alloc(8);
+    __mind_store_i8(msg, SX_CHAR_O);
+    __mind_store_i8(msg + 1, SX_CHAR_K);
+    __mind_store_i8(msg + 2, 10);
+    let w: i64 = __mind_write(1, msg, 3, 0 - 1);
+    // n=5, a=SX_SECOND*10+SX_BIAS=10+3=13, b=0*10+3=3 -> 5+13+3+21=42
+    n + a + b + SX_LAST
+}
+
+// Author: STARGA Inc. Fixed protocol indices, no trailing semicolons.
+const SX_FIRST: i64 = 0
+const SX_SECOND: i64 = 1
+const SX_COUNT: i64 = 5
+const SX_BIAS: i64 = 3
+const SX_CHAR_O: i64 = 79
+const SX_CHAR_K: i64 = 75
+const SX_LAST: i64 = 21
