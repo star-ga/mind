@@ -32,6 +32,9 @@ carried vars pins that the edge moves run as a parallel copy.
 Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
 as a dead tail; every walk of the loop body must drop it the same way.
 
+A run that does not exit normally is "HANG" / "SIG<n>", never an int: a masked
+timeout sentinel read as exit 255, which is a real expected value here.
+
 The hygiene gate: parse_for must pick the hidden-counter form wherever the Rust
 For arm goes hygienic — VAR bound in an enclosing scope (parameter, outer block
 `let`, enclosing range-for) or re-declared by a top-level body `let` — and keep
@@ -76,7 +79,12 @@ def mind_elf(lib, src: bytes) -> bytes:
     return ctypes.string_at(rd(sh, 0), n) if n > 0 else b""
 
 
-def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
+def run_elf(elf: bytes, tmp: pathlib.Path) -> "int | str":
+    """main's return value (low 8 bits), or "HANG" / "SIG<n>" for a run that did
+    not exit normally. The abnormal outcomes are strings, never ints: an int
+    sentinel masked with 0xFF aliased a real exit code (a timeout's -1 read as
+    255, which is exactly what while_inner_break_outer_var expects, so a hang
+    passed it; a SIGSEGV's -11 read as 245)."""
     p = tmp / "mind.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -84,9 +92,12 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     # (an infinite loop) fails LOUD instead of hanging the battery. Any real case
     # here terminates in well under a second.
     try:
-        return subprocess.run([str(p)], timeout=10).returncode
+        rc = subprocess.run([str(p)], timeout=10).returncode
     except subprocess.TimeoutExpired:
-        return -1  # sentinel: never matches an expected exit code -> FAIL
+        return "HANG"
+    if rc < 0:
+        return f"SIG{-rc}"
+    return rc & 0xFF
 
 
 # (name, source, expected exit code). main()->i64 return IS the process exit code
@@ -359,7 +370,7 @@ def main() -> int:
                 print(f"  FAIL  {name}: native entry failed closed (empty ELF)")
                 rc = 1
                 continue
-            got = run_elf(elf, tmp) & 0xFF
+            got = run_elf(elf, tmp)
             if got != want:
                 print(f"  FAIL  {name}: exit {got}, want {want}")
                 rc = 1
@@ -369,7 +380,7 @@ def main() -> int:
         for name, src in REFUSE_CASES:
             elf = mind_elf(lib, src)
             if elf:
-                print(f"  FAIL  {name}: emitted a {len(elf)} B ELF (exit {run_elf(elf, tmp) & 0xFF}), "
+                print(f"  FAIL  {name}: emitted a {len(elf)} B ELF (exit {run_elf(elf, tmp)}), "
                       f"want a fail-closed refusal (empty ELF)")
                 rc = 1
             else:
@@ -394,7 +405,7 @@ def main() -> int:
         xfail_unexpected_pass = 0
         for name, src, want, xfail, note in GATED_CASES:
             elf = mind_elf(lib, src)
-            got = (run_elf(elf, tmp) & 0xFF) if elf else None  # None = fail-closed
+            got = run_elf(elf, tmp) if elf else None  # None = fail-closed
             matches = got == want
             if xfail:
                 xfail_expected += 1

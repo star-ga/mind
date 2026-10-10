@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1913 | **Est. tokens:** ~3,758,160
-**Generated:** 2026-10-10 13:40 UTC
+**Files:** 1913 | **Est. tokens:** ~3,758,287
+**Generated:** 2026-10-10 16:56 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~461,661 |
+| `examples/mindc_mind/` | 175 | ~461,788 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -705,7 +705,7 @@
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
 - `self_host_failclosed_smoke.py` (~9902 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1368 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
-- `self_host_for_smoke.py` (~8040 tok, huge) — Permanent battery for the self-host range-`for` loop.
+- `self_host_for_smoke.py` (~8167 tok, huge) — Permanent battery for the self-host range-`for` loop.
 - `self_host_if_region_carry_smoke.py` (~4821 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
 - `self_host_ifret_chain_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_letpath_failclose_smoke.py` (~2243 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
