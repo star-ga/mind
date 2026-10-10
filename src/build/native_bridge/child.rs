@@ -11,7 +11,8 @@
 //! this side only as a broken pipe. So on a stream failure the supervisor
 //! closes the pipe, reaps the child -- bounded wait, then SIGKILL and reap if
 //! it is still running -- and returns the process's actual outcome together
-//! with a bounded capture of its stderr.
+//! with a bounded capture of its stderr: the head AND the tail, because what a
+//! dying process wrote last is what explains its death.
 //!
 //! Both output pipes are drained on their own threads WHILE the image is
 //! written. Writing first and reading afterwards deadlocks as soon as the child
@@ -20,6 +21,7 @@
 //! The successful path is unbounded exactly as before: a long compile is not a
 //! hang. Only the post-failure wait has a deadline.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::process::{Child, ExitStatus};
@@ -27,9 +29,23 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Most stderr bytes kept from the child. The child keeps being drained past
-/// this point (so it never blocks); the excess is counted and reported.
-pub(super) const STDERR_CAPTURE_LIMIT: usize = 64 * 1024;
+/// Stable code of every compiler-PROCESS failure (docs/errors.md): the child
+/// could not be started, a pipe to it failed, or it ended by a signal or could
+/// not be reaped. A compiler that read the whole image and exited nonzero has
+/// refused the PROGRAM; that verdict is not a process failure and is uncoded.
+pub(super) const CHILD_FAILURE_CODE: &str = "E6011";
+
+/// Most stderr bytes kept from the START of the child's stderr.
+pub(super) const STDERR_HEAD_LIMIT: usize = 16 * 1024;
+
+/// Most stderr bytes kept from the END of the child's stderr. The tail is
+/// what a dying process wrote last, so it gets the larger share.
+pub(super) const STDERR_TAIL_LIMIT: usize = 48 * 1024;
+
+/// Most stderr bytes kept in total. The child keeps being drained past this
+/// point (so it never blocks); the elided middle is counted and reported.
+#[cfg(test)]
+pub(super) const STDERR_CAPTURE_LIMIT: usize = STDERR_HEAD_LIMIT + STDERR_TAIL_LIMIT;
 
 /// How long a child may keep running after a stream failure before it is
 /// killed. A child that stopped consuming its input is not compiling it.
@@ -47,11 +63,24 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// capped when this path matters most.
 const DRAIN_STACK: usize = 64 * 1024;
 
-/// The head of a stream plus how many bytes past the limit were discarded.
+/// The head and the tail of a stream, plus how many bytes between them were
+/// discarded. `head` then `tail` is the stream itself when `dropped == 0`.
 #[derive(Debug, Default)]
 pub(super) struct BoundedCapture {
-    pub(super) bytes: Vec<u8>,
+    pub(super) head: Vec<u8>,
+    pub(super) tail: Vec<u8>,
     pub(super) dropped: u64,
+}
+
+impl BoundedCapture {
+    pub(super) fn is_empty(&self) -> bool {
+        self.head.is_empty() && self.tail.is_empty() && self.dropped == 0
+    }
+
+    /// The last byte the child wrote, if any was kept.
+    pub(super) fn last_byte(&self) -> Option<u8> {
+        self.tail.last().or_else(|| self.head.last()).copied()
+    }
 }
 
 /// Which pipe failed, and how. The first failure observed wins.
@@ -144,7 +173,11 @@ pub(super) fn supervise(mut child: Child, image: &[u8], grace: Duration) -> Chil
         Some(err) => {
             let tx = tx.clone();
             match spawn_drain("stderr", move || {
-                let _ = tx.send(Drained::Stderr(drain_bounded(err, STDERR_CAPTURE_LIMIT)));
+                let _ = tx.send(Drained::Stderr(drain_bounded(
+                    err,
+                    STDERR_HEAD_LIMIT,
+                    STDERR_TAIL_LIMIT,
+                )));
             }) {
                 Ok(()) => pending += 1,
                 Err(e) => {
@@ -263,21 +296,39 @@ fn reap_bounded(child: &mut Child, grace: Duration) -> Reaped {
     }
 }
 
-/// Read `r` to EOF, keeping the first `limit` bytes and counting the rest.
-fn drain_bounded(mut r: impl Read, limit: usize) -> io::Result<BoundedCapture> {
-    let mut cap = BoundedCapture::default();
+/// Read `r` to EOF, keeping the first `head_limit` bytes and the last
+/// `tail_limit` bytes, and counting the bytes elided between them. Memory
+/// stays bounded by the two limits however much the child writes.
+fn drain_bounded(
+    mut r: impl Read,
+    head_limit: usize,
+    tail_limit: usize,
+) -> io::Result<BoundedCapture> {
+    let mut head = Vec::new();
+    let mut tail: VecDeque<u8> = VecDeque::new();
+    let mut dropped = 0u64;
     let mut buf = [0u8; 8192];
     loop {
         let n = match r.read(&mut buf) {
-            Ok(0) => return Ok(cap),
+            Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         };
-        let keep = n.min(limit - cap.bytes.len());
-        cap.bytes.extend_from_slice(&buf[..keep]);
-        cap.dropped += (n - keep) as u64;
+        let to_head = n.min(head_limit - head.len());
+        head.extend_from_slice(&buf[..to_head]);
+        tail.extend(&buf[to_head..n]);
+        if tail.len() > tail_limit {
+            let excess = tail.len() - tail_limit;
+            tail.drain(..excess);
+            dropped += excess as u64;
+        }
     }
+    Ok(BoundedCapture {
+        head,
+        tail: tail.into(),
+        dropped,
+    })
 }
 
 /// Exit code the bridge reports for this outcome: the child's own nonzero

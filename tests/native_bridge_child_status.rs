@@ -10,10 +10,14 @@
 //! A broken pipe is a symptom, not a cause: these controls require the bridge to
 //! close the pipe, reap the child, and report what the process actually did --
 //! exit status or terminating signal, plus its bounded stderr -- while still
-//! exiting nonzero and writing no artifact.
+//! exiting nonzero and writing no artifact. Every such failure carries the
+//! stable code `E6011` (docs/errors.md); a compiler that read the whole image
+//! and refused the program keeps its own uncoded verdict.
 //!
 //! Every fixture compiler here is a `/bin/sh` script, so the file is Unix-only.
-//! The address-space case executes the committed Linux x86-64 seed itself.
+//! The address-space case executes the committed Linux x86-64 seed itself,
+//! with `RLIMIT_AS` set by this harness (`setrlimit` before `exec` of mindc),
+//! exactly as a resource-capped campaign runs it.
 #![cfg(all(unix, feature = "std-surface"))]
 
 mod native_bridge_support;
@@ -77,19 +81,57 @@ fn fixture_compiler(p: &Project, name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// Run `mindc build --backend native` with `compiler` as the child. `prefix`
-/// wraps mindc itself (e.g. `prlimit --as=...`), exactly as a resource-capped
-/// caller would.
-fn build_with(p: &Project, compiler: &Path, prefix: &[&str]) -> Run {
+/// Run `mindc build --backend native` with `compiler` as the child.
+fn build_with(p: &Project, compiler: &Path) -> Run {
+    build_capped(p, compiler, None)
+}
+
+/// `RLIMIT_AS` for mindc and, by inheritance, for the compiler child it
+/// spawns. Set in the forked process before `exec`, so nothing outside this
+/// harness (no `prlimit` binary) is involved.
+#[cfg(target_os = "linux")]
+mod as_cap {
+    use std::io;
+    use std::os::unix::process::CommandExt as _;
+    use std::process::Command;
+
+    /// `struct rlimit` on 64-bit Linux: two `rlim_t` (unsigned long).
+    #[repr(C)]
+    struct RLimit {
+        cur: u64,
+        max: u64,
+    }
+
+    unsafe extern "C" {
+        fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
+    }
+
+    /// `RLIMIT_AS` in the generic Linux numbering (x86-64, AArch64, RISC-V).
+    const RLIMIT_AS: i32 = 9;
+
+    pub fn apply(cmd: &mut Command, bytes: u64) {
+        // SAFETY: the closure only issues the async-signal-safe setrlimit(2)
+        // syscall and reads errno; it allocates nothing in the forked child.
+        unsafe {
+            cmd.pre_exec(move || {
+                let lim = RLimit {
+                    cur: bytes,
+                    max: bytes,
+                };
+                if setrlimit(RLIMIT_AS, &lim) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+/// [`build_with`], optionally under an address-space cap of `as_cap` bytes.
+fn build_capped(p: &Project, compiler: &Path, as_cap: Option<u64>) -> Run {
     let out = p.root().join("out.elf");
     let _ = std::fs::remove_file(&out);
-    let mut cmd = if let Some((head, rest)) = prefix.split_first() {
-        let mut c = Command::new(head);
-        c.args(rest).arg(MINDC);
-        c
-    } else {
-        Command::new(MINDC)
-    };
+    let mut cmd = Command::new(MINDC);
     cmd.args(["build", "src/main.mind", "--release", "--backend", "native"])
         .arg("--out")
         .arg(&out)
@@ -99,6 +141,12 @@ fn build_with(p: &Project, compiler: &Path, prefix: &[&str]) -> Run {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    if let Some(bytes) = as_cap {
+        #[cfg(target_os = "linux")]
+        as_cap::apply(&mut cmd, bytes);
+        #[cfg(not(target_os = "linux"))]
+        panic!("the address-space cap is only wired for Linux, asked for {bytes}");
+    }
     let start = Instant::now();
     let mut child = cmd.spawn().expect("spawn mindc");
     let mut stderr_pipe = child.stderr.take().expect("stderr");
@@ -131,6 +179,19 @@ fn build_with(p: &Project, compiler: &Path, prefix: &[&str]) -> Run {
     }
 }
 
+/// The stable code every child-process failure carries (docs/errors.md).
+const CHILD_FAILURE: &str = "error[backend-native][E6011]: ";
+
+/// The coded header must lead the line that names the failure.
+fn assert_coded(run: &Run, headline: &str, context: &str) {
+    let want = format!("{CHILD_FAILURE}{headline}");
+    assert!(
+        run.stderr.lines().any(|l| l.starts_with(&want)),
+        "{context}: expected a line starting with {want:?}: {}",
+        run.stderr
+    );
+}
+
 fn assert_refused_without_artifact(run: &Run, context: &str) {
     assert_ne!(run.code, 0, "{context}: must exit nonzero: {}", run.stderr);
     assert!(
@@ -160,7 +221,7 @@ fn early_exit_before_reading_reports_exit_status_and_stderr() {
         "early_exit.sh",
         "#!/bin/sh\necho 'fixture: refusing before reading stdin' >&2\nexit 3\n",
     );
-    let run = build_with(&p, &cc, &[]);
+    let run = build_with(&p, &cc);
     assert_refused_without_artifact(&run, "early exit");
     assert!(
         run.stderr
@@ -181,6 +242,11 @@ fn early_exit_before_reading_reports_exit_status_and_stderr() {
         run.stderr
     );
     assert_eq!(run.code, 3, "mindc must propagate the child's exit status");
+    assert_coded(
+        &run,
+        "failed to stream source image to compiler",
+        "early exit",
+    );
     assert_says_no_artifact(&run, "early exit");
 }
 
@@ -193,7 +259,7 @@ fn signal_death_reports_signal_name_and_number() {
         "segv.sh",
         "#!/bin/sh\nexec 0<&-\necho 'fixture: about to fault' >&2\nkill -SEGV $$\n",
     );
-    let run = build_with(&p, &cc, &[]);
+    let run = build_with(&p, &cc);
     assert_refused_without_artifact(&run, "SIGSEGV child");
     assert!(
         run.stderr
@@ -207,29 +273,30 @@ fn signal_death_reports_signal_name_and_number() {
         run.stderr
     );
     assert_eq!(run.code, 128 + 11, "a signal death exits 128 + signo");
+    assert_coded(
+        &run,
+        "failed to stream source image to compiler",
+        "SIGSEGV child",
+    );
     assert_says_no_artifact(&run, "SIGSEGV child");
 }
 
 /// THE CONSUMER CASE: mindc under RLIMIT_AS = 2 GiB with the real committed
 /// seed. The seed's load segments exceed the cap, the kernel fails execve with
-/// ENOMEM past the point of no return and delivers SIGSEGV. Before this fix the
-/// only report was "Broken pipe (os error 32)".
+/// ENOMEM past the point of no return and delivers SIGSEGV. Before the
+/// supervisor the only report was "Broken pipe (os error 32)". The cap is set
+/// by this harness with setrlimit(2) on mindc and inherited by the child.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn address_space_cap_reports_loader_signal_not_broken_pipe() {
-    assert!(
-        Command::new("prlimit")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false),
-        "prlimit (util-linux) is required for the address-space control; \
-         refusing to skip it silently"
-    );
+    const TWO_GIB: u64 = 2 * 1024 * 1024 * 1024;
     let p = return42_project("as_cap");
     let seed = repo_path("examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
-    let run = build_with(&p, &seed, &["prlimit", "--as=2147483648:2147483648", "--"]);
+    // Positive control: the same seed and source build without the cap, so
+    // the capped failure below is the cap's doing and nothing else.
+    let free = build_with(&p, &seed);
+    assert_eq!(free.code, 0, "uncapped control must build: {}", free.stderr);
+    let run = build_capped(&p, &seed, Some(TWO_GIB));
     assert_refused_without_artifact(&run, "seed under a 2 GiB address-space cap");
     assert!(
         run.stderr
@@ -238,6 +305,11 @@ fn address_space_cap_reports_loader_signal_not_broken_pipe() {
         run.stderr
     );
     assert_eq!(run.code, 128 + 11);
+    assert_coded(
+        &run,
+        "failed to stream source image to compiler",
+        "seed under a 2 GiB address-space cap",
+    );
     assert_says_no_artifact(&run, "seed under a 2 GiB address-space cap");
 }
 
@@ -254,7 +326,7 @@ fn hung_child_is_killed_and_reaped_after_bounded_grace() {
         "hang.sh",
         "#!/bin/sh\nexec 0<&-\necho 'fixture: hanging' >&2\nexec sleep 30\n",
     );
-    let run = build_with(&p, &cc, &[]);
+    let run = build_with(&p, &cc);
     assert_refused_without_artifact(&run, "hung child");
     assert!(
         run.stderr.contains("did not exit within"),
@@ -283,6 +355,11 @@ fn hung_child_is_killed_and_reaped_after_bounded_grace() {
         run.elapsed
     );
     assert_eq!(run.code, 128 + 9);
+    assert_coded(
+        &run,
+        "failed to stream source image to compiler",
+        "hung child",
+    );
     assert_says_no_artifact(&run, "hung child");
 }
 
@@ -298,7 +375,7 @@ fn stderr_flood_before_reading_does_not_deadlock_and_is_bounded() {
         "flood.sh",
         "#!/bin/sh\nhead -c 1048576 /dev/zero | tr '\\0' 'x' >&2\ncat >/dev/null\nexit 5\n",
     );
-    let run = build_with(&p, &cc, &[]);
+    let run = build_with(&p, &cc);
     assert_refused_without_artifact(&run, "stderr flood");
     assert_eq!(run.code, 5, "the child's rejection status must propagate");
     assert_says_no_artifact(&run, "stderr flood");
@@ -314,6 +391,151 @@ fn stderr_flood_before_reading_does_not_deadlock_and_is_bounded() {
     );
 }
 
+/// The TAIL of a long stderr is what explains a death: a compiler that logs
+/// a lot and then faults must not have its last words cut off. The head is
+/// kept too, the elided middle is counted, and the whole report stays bounded.
+#[test]
+fn stderr_tail_survives_a_flood_before_the_fault() {
+    let p = return42_project("tail");
+    let cc = fixture_compiler(
+        &p,
+        "tail.sh",
+        "#!/bin/sh\necho 'fixture: first words' >&2\n\
+         head -c 1048576 /dev/zero | tr '\\0' 'x' >&2\necho >&2\n\
+         echo 'fixture: last words before the fault' >&2\nexec 0<&-\nkill -SEGV $$\n",
+    );
+    let run = build_with(&p, &cc);
+    assert_refused_without_artifact(&run, "flood then fault");
+    assert_eq!(run.code, 128 + 11, "{}", tail_of(&run.stderr));
+    assert!(
+        run.stderr.contains("fixture: last words before the fault"),
+        "the stderr TAIL must be surfaced: {}",
+        tail_of(&run.stderr)
+    );
+    assert!(
+        run.stderr.contains("fixture: first words"),
+        "the stderr head must still be surfaced: {}",
+        &run.stderr[..run.stderr.len().min(600)]
+    );
+    assert!(
+        run.stderr.contains("bytes of compiler stderr truncated"),
+        "the elided middle must be stated: {}",
+        tail_of(&run.stderr)
+    );
+    assert!(
+        run.stderr.len() < 256 * 1024,
+        "surfaced stderr must be bounded, got {} bytes",
+        run.stderr.len()
+    );
+    assert_coded(
+        &run,
+        "failed to stream source image to compiler",
+        "flood then fault",
+    );
+    assert_says_no_artifact(&run, "flood then fault");
+}
+
+/// A child that read the WHOLE image, wrote an ELF-looking prefix to stdout
+/// and then faulted: no stream failure at all, yet the run failed. The
+/// partial artifact must not be written, and the death is coded `E6011`.
+#[test]
+fn signal_after_reading_everything_writes_no_partial_artifact() {
+    let p = return42_project("late_segv");
+    let cc = fixture_compiler(
+        &p,
+        "late_segv.sh",
+        "#!/bin/sh\ncat >/dev/null\nprintf '\\177ELF'\nhead -c 393 /dev/zero\n\
+         echo 'fixture: faulting after the artifact' >&2\nkill -SEGV $$\n",
+    );
+    let run = build_with(&p, &cc);
+    assert_refused_without_artifact(&run, "late SIGSEGV");
+    assert_eq!(run.code, 128 + 11, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("fixture: faulting after the artifact"),
+        "stderr must be surfaced: {}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("failed to stream"),
+        "no stream failed here; none may be invented: {}",
+        run.stderr
+    );
+    assert_coded(
+        &run,
+        "pure-MIND compiler terminated by signal 11 (SIGSEGV)",
+        "late SIGSEGV",
+    );
+    assert_says_no_artifact(&run, "late SIGSEGV");
+}
+
+/// Control for the code's scope: a compiler that read the whole image and
+/// REFUSED the program (its own nonzero exit) is a verdict on the program,
+/// not a process failure. It keeps its uncoded wording and exit status.
+#[test]
+fn program_rejection_after_full_read_keeps_its_uncoded_verdict() {
+    let p = return42_project("reject");
+    let cc = fixture_compiler(
+        &p,
+        "reject.sh",
+        "#!/bin/sh\ncat >/dev/null\necho 'fixture: unsupported construct' >&2\nexit 3\n",
+    );
+    let run = build_with(&p, &cc);
+    assert_refused_without_artifact(&run, "rejection");
+    assert_eq!(run.code, 3);
+    // Positive control first: the refusal is there and is the child's own.
+    assert!(
+        run.stderr
+            .contains("pure-MIND compiler rejected the program (exit 3)"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("fixture: unsupported construct"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("E6011") && !run.stderr.contains("compiler process:"),
+        "a program rejection is not a process failure: {}",
+        run.stderr
+    );
+}
+
+/// execve can also fail BEFORE its point of no return (EACCES here; ENOMEM
+/// for a cap too small to even set up the new image). Then there is no child
+/// status at all: the spawn itself fails, and that is coded `E6011` too.
+#[test]
+fn compiler_that_cannot_be_executed_is_coded_with_the_os_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let p = return42_project("noexec");
+    let cc = fixture_compiler(&p, "noexec.sh", "#!/bin/sh\nexit 0\n");
+    let mut perm = std::fs::metadata(&cc).expect("meta").permissions();
+    perm.set_mode(0o644);
+    std::fs::set_permissions(&cc, perm).expect("chmod -x");
+    let run = build_with(&p, &cc);
+    assert_refused_without_artifact(&run, "non-executable compiler");
+    assert_eq!(run.code, 2, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("Permission denied (os error 13)"),
+        "the OS error must be named: {}",
+        run.stderr
+    );
+    assert_coded(
+        &run,
+        "failed to spawn compiler ELF",
+        "non-executable compiler",
+    );
+    assert_says_no_artifact(&run, "non-executable compiler");
+}
+
+fn tail_of(s: &str) -> &str {
+    let mut cut = s.len().saturating_sub(800);
+    while !s.is_char_boundary(cut) {
+        cut += 1;
+    }
+    &s[cut..]
+}
+
 /// The success path is unchanged: a child that drains the full image and
 /// emits an ELF-framed artifact produces exactly those bytes, exit 0.
 #[test]
@@ -324,7 +546,7 @@ fn draining_child_success_path_is_unchanged() {
         "drain.sh",
         "#!/bin/sh\nwc -c >\"$0.len\"\nprintf '\\177ELF'\nhead -c 393 /dev/zero\n",
     );
-    let run = build_with(&p, &cc, &[]);
+    let run = build_with(&p, &cc);
     assert_eq!(run.code, 0, "success path must stay green: {}", run.stderr);
     let bytes = run.artifact.expect("artifact written");
     assert_eq!(bytes.len(), 397);
@@ -353,8 +575,62 @@ fn draining_child_success_path_is_unchanged() {
 fn real_seed_success_path_is_unchanged() {
     let p = return42_project("seed_ok");
     let seed = repo_path("examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
-    let run = build_with(&p, &seed, &[]);
+    let run = build_with(&p, &seed);
     assert_eq!(run.code, 0, "seed build must succeed: {}", run.stderr);
     let bytes = run.artifact.expect("artifact written");
     assert_eq!(native_bridge_support::run(&bytes), 42);
+}
+
+/// Byte identity of the success path with the real seed: the artifact the
+/// bridge writes is exactly the bytes the compiler printed for the image the
+/// bridge streamed. A `tee` shim records the image; the seed is then run on
+/// that image directly, outside the bridge, and the two outputs compared.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn real_seed_artifact_is_the_compilers_stdout_byte_for_byte() {
+    let p = return42_project("seed_tee");
+    let seed = repo_path("examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
+    let image_path = p.root().join("image.bin");
+    let shim = fixture_compiler(
+        &p,
+        "tee.sh",
+        &format!(
+            "#!/bin/sh\nset -e\ntee '{}' | '{}'\n",
+            image_path.display(),
+            seed.display()
+        ),
+    );
+    let run = build_with(&p, &shim);
+    assert_eq!(
+        run.code, 0,
+        "shimmed seed build must succeed: {}",
+        run.stderr
+    );
+    let bridged = run.artifact.expect("artifact written");
+    let image = std::fs::read(&image_path).expect("the shim recorded the image");
+    assert!(image.len() > 64 * 1024, "image too small: {}", image.len());
+    let direct = Command::new(&seed)
+        .stdin(std::fs::File::open(&image_path).expect("open image"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .expect("run the seed directly");
+    assert!(direct.status.success(), "{:?}", direct.status);
+    assert_eq!(
+        bridged.len(),
+        direct.stdout.len(),
+        "artifact length differs from the compiler's own output"
+    );
+    assert!(
+        bridged == direct.stdout,
+        "the bridge altered the compiler's output bytes"
+    );
+    // And the shim changes nothing: the plain seed run writes the same bytes.
+    let plain = build_with(&p, &seed);
+    assert_eq!(plain.code, 0, "{}", plain.stderr);
+    assert!(
+        plain.artifact.as_deref() == Some(&bridged[..]),
+        "the shimmed and the direct bridge builds differ"
+    );
+    assert_eq!(native_bridge_support::run(&bridged), 42);
 }
