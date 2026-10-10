@@ -1056,6 +1056,28 @@ jobs:
             python3 scripts/run_gate.py examples/mindc_mind/self_host_native_elf_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native nested-binding scoping gate (self_host_native_shadow_scope_smoke.py)
+        # A `let` in an if/else block or while body that re-declares an outer `let`
+        # or parameter must get its own storage for that block, a break/continue
+        # must carry the outer binding (not a body shadow) out of the loop, and a
+        # range-for variable must stay scoped to its loop. stage1 is built from
+        # main.mind by the frozen pure-MIND seed; hand fixtures plus 200 generated
+        # programs (seed 1234, block depths 1-4, break/continue/return) are compiled
+        # by stage1, run, and compared with a lexically scoped Python model. A
+        # refusal passes only when the shadow-free twin is refused too, or when
+        # MINDC_SO shows the code generator alone builds it to the model's value
+        # (only the mic@3 note builder refused). stage1 must carry the
+        # scoped-nested-bindings mark the Rust bridge checks; --bridge also runs
+        # `mindc build --backend native` with that stage1 (the proven shadows are
+        # admitted and exit with the model's value) and with the embedded seed
+        # (unmarked: still refused, native.block_shadow / loop_body_shadow).
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+            python3 scripts/run_gate.py --min-asserted 20 \
+              examples/mindc_mind/self_host_native_shadow_scope_smoke.py --bridge
+        working-directory: ${{ github.workspace }}
+
       - name: Twin-emitter mic@3 differential fuzzer (mindfuzz_self_host.py)
         # Generated-program agreement of the pure-MIND self-host mic@3 note
         # (selftest_native_elf_u) with the Rust emit_mic3 reference note

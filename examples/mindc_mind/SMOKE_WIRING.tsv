@@ -123,6 +123,7 @@ self_host_native_record_trace_smoke	ci,keystone	gate	Canonical record-field trac
 self_host_native_scalar_f32_smoke	ci,keystone	gate	
 self_host_native_scalar_f64_smoke	ci	gate	
 self_host_native_scast_smoke	none	gate	RED at this commit: signed-cast precedence — `a + b as i8` must parse as `a + (b as i8)` (300 + (-56) = 244, >>1 = 122) but the pure-MIND emit runs to 122 while live mindc returns 250, i.e. the loose-parse bug is in the Rust reference leg. deferred: wire once the `as` binding-power disagreement between the two front-ends is resolved.
+self_host_native_shadow_scope_smoke	ci	gate	
 self_host_native_simd_dot_f32_smoke	ci	gate	
 self_host_native_simd_dot_i16_smoke	ci	gate	
 self_host_native_simd_dot_q16_smoke	ci	gate	

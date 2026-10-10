@@ -66,6 +66,14 @@ pub(super) fn refuse_entry_main_with_params(ast: &Module, path: &str) -> Result<
 /// the seed scopes nested bindings. The scope rules are in `shadow`; when
 /// unsure they refuse.
 ///
+/// `compiler_scopes` reports whether the compiler that will run carries the
+/// scoped-nested-bindings mark (`seed::compiler_scopes_nested_bindings`); it
+/// is asked only when a shadow exists. When it does, the shapes `shadow` marks
+/// `proven` (a plain `let` over an outer `let` or parameter across statement
+/// `if`/`else` blocks and `while` loops only) are admitted; every other shadow
+/// is still refused. A compiler without the mark merges nested bindings, so
+/// nothing is admitted.
+///
 /// `origins` maps the composed user region back to its source files: each
 /// entry is a file's display path and the byte offset where it starts in
 /// `text`, in ascending order, so a binding in an imported module is reported
@@ -74,10 +82,17 @@ pub(super) fn refuse_shadowing(
     ast: &Module,
     text: &str,
     origins: &[(String, usize)],
+    compiler_scopes: &dyn Fn() -> bool,
 ) -> Result<(), String> {
-    let shadows = super::shadow::find(ast);
+    let mut shadows = super::shadow::find(ast);
     if shadows.is_empty() {
         return Ok(());
+    }
+    if shadows.iter().any(|s| s.proven) && compiler_scopes() {
+        shadows.retain(|s| !s.proven);
+        if shadows.is_empty() {
+            return Ok(());
+        }
     }
     let locate = |offset: usize| {
         let offset = offset.min(text.len());
@@ -391,6 +406,91 @@ mod tests {
         }
     }
 
+    fn proven(src: &str) -> Vec<(String, bool)> {
+        let ast = crate::parser::parse(src).expect("parse");
+        super::super::shadow::find(&ast)
+            .into_iter()
+            .map(|s| (s.name, s.proven))
+            .collect()
+    }
+
+    #[test]
+    fn only_lets_across_if_blocks_and_while_loops_are_proven() {
+        let yes = [
+            "fn f() -> i64 { let mut x: i64 = 5; if 1 { let mut x: i64 = 9; if 1 { x = 40; } } \
+             return x; }",
+            "fn f(x: i64) -> i64 { if x == 1 { let x: i64 = 7; } return x; }",
+            "fn f() -> i64 { let x: i64 = 5; if 1 { } else { let x: i64 = 9; } return x; }",
+            "fn f() -> i64 { let mut x: i64 = 5; let mut k: i64 = 0; \
+             while k < 2 { k = k + 1; let mut x: i64 = 7; x = 3; } return x; }",
+            "fn f() -> i64 { while 1 { let a: i64 = 1; while 1 { if 1 { let a: i64 = 2; } } } \
+             return 0; }",
+            "fn f(x: i64) -> i64 { while x < 2 { if x == 1 { let x: i64 = 1; } } return x; }",
+            // the other proven scalar types, mixed across the pair
+            "fn f(x: i32) -> i64 { if x == 1 { let x: i64 = 7; } return 0; }",
+            "fn f() -> i64 { let x: i64 = 5; if 1 { let x: f64 = 2.5; } return x; }",
+        ];
+        for src in yes {
+            let got = proven(src);
+            assert!(
+                !got.is_empty() && got.iter().all(|(_, p)| *p),
+                "{src}: {got:?}"
+            );
+        }
+        let no = [
+            // for / for-each variables and bodies
+            "fn f(x: i64) -> i64 { for i in 0..2 { let x = 1; } return x; }",
+            "fn f() -> i64 { for i in 0..3 { let i = 10; } return 0; }",
+            "fn f(i: i64) -> i64 { for i in 0..3 { } return i; }",
+            // tuple let, module constant, match binding / arm
+            "fn f(b: i64) -> i64 { while 1 { let (a, b) = (1, 2); } return b; }",
+            "const N: i64 = 4;\nfn f() -> i64 { while 1 { let N = 3; } return N; }",
+            "fn f(v: i64) -> i64 { let y = 5; match v { y => { return y; } } }",
+            "fn f(v: i64) -> i64 { let y = 5; match v { 1 => { let y = 2; return y; } _ => 0 } }",
+            // a `let` inside a value-`if` branch is an expression position
+            "fn f() -> i64 { let x: i64 = 5; let y: i64 = if 1 { let x: i64 = 9; x } else { 0 }; \
+             return x + y; }",
+            // an unannotated binding on either side, or a type the proof does not cover
+            "fn f() -> i64 { let mut x = 5; if 1 { let mut x: i64 = 9; x = 1; } return x; }",
+            "fn f() -> i64 { let mut x: i64 = 5; if 1 { let mut x = 9; x = 1; } return x; }",
+            "fn f() -> i64 { let x: bool = true; if 1 { let x: i64 = 9; } return 0; }",
+            "fn f(x: f32) -> i64 { if 1 { let x: i64 = 9; } return 0; }",
+        ];
+        for src in no {
+            let got = proven(src);
+            assert!(
+                !got.is_empty() && got.iter().all(|(_, p)| !*p),
+                "{src}: {got:?}"
+            );
+        }
+        // A `for` anywhere between the two bindings makes the pair unproven,
+        // even when the inner frame is an `if`.
+        let mixed = "fn f() -> i64 { let x: i64 = 1; for i in 0..2 { if 1 { let x: i64 = 2; } } return x; }";
+        assert_eq!(proven(mixed), [("x".to_string(), false)]);
+    }
+
+    #[test]
+    fn a_scoping_compiler_admits_only_the_proven_shadows() {
+        let ok = "fn main() -> i64 {\n    let mut x: i64 = 5;\n    if 1 {\n        \
+                  let mut x: i64 = 9;\n        if 1 { x = 40; }\n    }\n    return x;\n}\n";
+        let ast = crate::parser::parse(ok).expect("parse");
+        let o = [("t.mind".to_string(), 0)];
+        assert!(refuse_shadowing(&ast, ok, &o, &|| true).is_ok());
+        let err = refuse_shadowing(&ast, ok, &o, &|| false).unwrap_err();
+        assert!(err.contains("native.block_shadow"), "{err}");
+        // Mixed: the proven `x` is admitted, the `for` variable is still refused
+        // and is the only binding named.
+        let mixed = "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let i: i64 = 1;\n    \
+                     if 1 { let x: i64 = 2; }\n    for i in 0..2 { }\n    return x + i;\n}\n";
+        let ast = crate::parser::parse(mixed).expect("parse");
+        let err = refuse_shadowing(&ast, mixed, &o, &|| true).unwrap_err();
+        assert!(err.contains("`i`") && !err.contains("`x`"), "{err}");
+        // The mark probe is not consulted when nothing shadows.
+        let none = "fn main() -> i64 { let x: i64 = 1; return x; }";
+        let ast = crate::parser::parse(none).expect("parse");
+        assert!(refuse_shadowing(&ast, none, &o, &|| panic!("asked")).is_ok());
+    }
+
     #[test]
     fn each_function_starts_a_fresh_scope_chain() {
         // `x` is a parameter of `g` only; the loop in `h` binds a fresh `x`.
@@ -404,7 +504,7 @@ mod tests {
         let src = "fn main() -> i64 {\n    let mut x: i64 = 5;\n    while 1 {\n        \
                    let mut x: i64 = 7;\n    }\n    return x;\n}\n";
         let ast = crate::parser::parse(src).expect("parse");
-        let err = refuse_shadowing(&ast, src, &[("t.mind".to_string(), 0)]).unwrap_err();
+        let err = refuse_shadowing(&ast, src, &[("t.mind".to_string(), 0)], &|| false).unwrap_err();
         assert!(err.contains("native.loop_body_shadow"), "{err}");
         assert!(!err.contains("native.block_shadow"), "{err}");
         assert!(err.contains("t.mind:4:"), "{err}");
@@ -427,7 +527,7 @@ mod tests {
             ("src/main.mind".to_string(), 0),
             ("src/helper.mind".to_string(), main.len() + 1),
         ];
-        let err = refuse_shadowing(&ast, &text, &origins).unwrap_err();
+        let err = refuse_shadowing(&ast, &text, &origins, &|| false).unwrap_err();
         assert!(err.contains("native.block_shadow"), "{err}");
         assert!(err.contains("src/helper.mind:4:"), "{err}");
         assert!(err.contains("at src/helper.mind:2"), "{err}");
