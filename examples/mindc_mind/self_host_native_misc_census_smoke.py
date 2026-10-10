@@ -25,9 +25,12 @@ Env:
   MISC_MAIN_MIND  main.mind to build stage1 from (default: this tree's). Used to
                   show the gate RED on a base-tree copy or on a mutant.
   MINDC_BIN       mindc for the MLIR oracle leg (default: the shared resolver).
+  MISC_JOBS       fixtures checked concurrently (default 3).
 
 Run:  python3 examples/mindc_mind/self_host_native_misc_census_smoke.py
 """
+import concurrent.futures
+import errno
 import hashlib
 import os
 import pathlib
@@ -35,6 +38,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
@@ -124,8 +128,18 @@ def native_compile(stage1: pathlib.Path, src: bytes) -> tuple[int, bytes, str]:
 
 
 def run_exe(path: pathlib.Path) -> tuple[int, bytes]:
-    r = subprocess.run([str(path)], capture_output=True, timeout=120)
-    return r.returncode, r.stdout
+    # A sibling worker's fork can briefly inherit the write descriptor of an
+    # executable this worker just wrote; exec then fails with ETXTBSY until that
+    # child execs. Retry that one error only.
+    for attempt in range(50):
+        try:
+            r = subprocess.run([str(path)], capture_output=True, timeout=120)
+            return r.returncode, r.stdout
+        except OSError as e:
+            if e.errno != errno.ETXTBSY or attempt == 49:
+                raise
+            time.sleep(0.1)
+    raise AssertionError("unreachable")
 
 
 def mindc_bin() -> str:
@@ -137,7 +151,11 @@ def mindc_bin() -> str:
 
 def mlir_outcome(src: pathlib.Path, work: pathlib.Path, name: str):
     # Build a COPY outside the repo: `mindc build` on a file inside the tree
-    # would pick up the repository's Mind.toml and emit a cdylib instead.
+    # would pick up the repository's Mind.toml and emit a cdylib instead. Each
+    # fixture gets its own directory so concurrent builds never share the
+    # project-local build products (target/, the build lock).
+    work = work / f"mlir_{name}"
+    work.mkdir()
     copy = work / f"{name}.mind"
     copy.write_bytes(src.read_bytes())
     out = work / f"{name}.mlir.bin"
@@ -148,6 +166,50 @@ def mlir_outcome(src: pathlib.Path, work: pathlib.Path, name: str):
     return run_exe(out)
 
 
+def check_case(stage1: pathlib.Path, rust: RustRef, work: pathlib.Path, case) -> tuple[list[str], list[str]]:
+    """Run every leg of ONE fixture; return (report lines, failure tags). Pure
+    per-fixture state (its own scratch names under `work`), so fixtures can run
+    concurrently and still print in CASES order."""
+    name, kind, want, want_mlir = case
+    lines: list[str] = []
+    failures: list[str] = []
+    src = FIX / f"{name}.mind"
+    rc, out, err = native_compile(stage1, src.read_bytes())
+    is_elf = rc == 0 and out[:4] == b"\x7fELF"
+    if kind == RUN:
+        if not is_elf:
+            got = f"compile rc={rc} {len(out)}B err={err.strip()[-120:]!r}"
+            ok = False
+        else:
+            exe = _write_exec(work / f"{name}.native", out)
+            got_run = run_exe(exe)
+            got = f"run={got_run!r}"
+            ok = got_run == want
+            refd = work / f"ref_{name}"
+            refd.mkdir()
+            note = note_of_elf(out)
+            ref = rust.seeded_note(src.read_text(), refd)
+            nok = note is not None and ref is not None and note == ref
+            lines.append(f"[{'PASS' if nok else 'FAIL'}] note {name}: "
+                         f"native={note.hex()[:16] if note else None} "
+                         f"rust={ref.hex()[:16] if ref else None}")
+            if not nok:
+                failures.append(f"note:{name}")
+        lines.append(f"[{'PASS' if ok else 'FAIL'}] native {name}: {got} want={want!r}")
+    else:
+        ok = rc != 0 and len(out) == 0
+        lines.append(f"[{'PASS' if ok else 'FAIL'}] native refuse {name}: "
+                     f"rc={rc} {len(out)}B (want non-zero rc, 0B)")
+    if not ok:
+        failures.append(f"native:{name}")
+    got_mlir = mlir_outcome(src, work, name)
+    mok = got_mlir == want_mlir
+    lines.append(f"[{'PASS' if mok else 'FAIL'}] mlir {name}: got={got_mlir!r} want={want_mlir!r}")
+    if not mok:
+        failures.append(f"mlir:{name}")
+    return lines, failures
+
+
 def main() -> int:
     if not FROZEN_SEED.exists():
         print(f"[FAIL] frozen seed missing: {FROZEN_SEED}")
@@ -156,43 +218,19 @@ def main() -> int:
     print(f"stage1 from {main_mind()} -> {stage1.name}")
     failures = []
     rust = RustRef(HERE.parent.parent)
+    # Fixtures are independent subprocess work (stage1 compile, run, MLIR build,
+    # Rust reference note), so a small pool keeps the gate inside run_gate's
+    # default per-gate timeout on a loaded runner. Output stays in CASES order.
+    jobs = max(1, int(os.environ.get("MISC_JOBS", "3")))
     with tempfile.TemporaryDirectory(prefix="native_misc_") as tdn:
         work = pathlib.Path(tdn)
-        for name, kind, want, want_mlir in CASES:
-            src = FIX / f"{name}.mind"
-            rc, out, err = native_compile(stage1, src.read_bytes())
-            is_elf = rc == 0 and out[:4] == b"\x7fELF"
-            if kind == RUN:
-                if not is_elf:
-                    got = f"compile rc={rc} {len(out)}B err={err.strip()[-120:]!r}"
-                    ok = False
-                else:
-                    exe = _write_exec(work / f"{name}.native", out)
-                    got_run = run_exe(exe)
-                    got = f"run={got_run!r}"
-                    ok = got_run == want
-                    refd = work / f"ref_{name}"
-                    refd.mkdir()
-                    note = note_of_elf(out)
-                    ref = rust.seeded_note(src.read_text(), refd)
-                    nok = note is not None and ref is not None and note == ref
-                    print(f"[{'PASS' if nok else 'FAIL'}] note {name}: "
-                          f"native={note.hex()[:16] if note else None} "
-                          f"rust={ref.hex()[:16] if ref else None}")
-                    if not nok:
-                        failures.append(f"note:{name}")
-                print(f"[{'PASS' if ok else 'FAIL'}] native {name}: {got} want={want!r}")
-            else:
-                ok = rc != 0 and len(out) == 0
-                print(f"[{'PASS' if ok else 'FAIL'}] native refuse {name}: "
-                      f"rc={rc} {len(out)}B (want non-zero rc, 0B)")
-            if not ok:
-                failures.append(f"native:{name}")
-            got_mlir = mlir_outcome(src, work, name)
-            mok = got_mlir == want_mlir
-            print(f"[{'PASS' if mok else 'FAIL'}] mlir {name}: got={got_mlir!r} want={want_mlir!r}")
-            if not mok:
-                failures.append(f"mlir:{name}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = [pool.submit(check_case, stage1, rust, work, c) for c in CASES]
+            for fut in futs:
+                lines, fails = fut.result()
+                for line in lines:
+                    print(line, flush=True)
+                failures.extend(fails)
     if failures:
         print(f"FAIL ({len(failures)}): {', '.join(failures)}")
         return 1
