@@ -1208,6 +1208,7 @@ jobs:
             option_netverify \
             ref_netverify \
             self_host_failclosed_smoke \
+            self_host_for_smoke \
             self_host_if_region_carry_smoke \
             self_host_native_fp_call_smoke \
             self_host_native_fp_field_smoke \

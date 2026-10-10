@@ -18,7 +18,7 @@
 # fast_keystone.sh "runs the SAME set"; fast_keystone.sh claimed "CI protects
 # each landed rung" — both were false).
 #
-# deferred: six `gate` rows below are UNWIRED because they are RED at this commit,
+# deferred: five `gate` rows below are UNWIRED because they are RED at this commit,
 # not because they are unimportant. They are recorded here with their exact
 # failing case so the gap is visible instead of implied; wiring them into CI is
 # blocked on FIXING them (each note names what must change). Do not wire a red
@@ -70,12 +70,12 @@ self_host_carry_cap_smoke	ci,keystone	gate
 self_host_cast_mic3_smoke	ci	gate	
 self_host_alias_controls_smoke	ci	gate	
 self_host_check_driver_smoke	ci	gate	
-self_host_continue_smoke	none	gate	RED at this commit: nested_for_continue HANGS (the harness reports `HUNG (must fail-close or terminate, never hang)`) — issue #308/#286 regression gate. deferred: wire once nested `continue` inside a range-for either lowers correctly or refuses fail-closed; a hanging case must never be wired into CI as-is.
+self_host_continue_smoke	none	gate	RED at this commit only through the FROZEN seed it runs (testdata/selfhost_loop/stage1.elf): nested_for_continue HANGS there. The fix is in main.mind (e70b00a1: nested while bodies counted to their first terminator; self_host_for_smoke's nested_uncond_continue covers the same shape on a fresh .so, and this exact program exits 0 there). deferred: wire once the seed is advanced past e70b00a1 — the harness reads no MINDC_SO, so it turns green only with a new stage1.elf.
 self_host_dtype_tag_smoke	ci	gate	
 self_host_else_if_smoke	ci	gate	
 self_host_failclosed_smoke	ci,keystone	gate	
 self_host_float_lit_exact_smoke	ci,keystone	gate	
-self_host_for_smoke	none	gate	RED at this commit: 4 of 16 range-for cases fail — continue_at2 / continue_sum / continue_ge all `native entry failed closed (empty ELF)`, and shadow_outer diverges (self-host exit 3, want 100: the loop VAR stays loop-local instead of restoring the outer binding). deferred: same root cause as self_host_continue_smoke; wire both together once continue-in-for lowers.
+self_host_for_smoke	ci,keystone	gate	
 self_host_if_region_carry_smoke	ci,keystone	gate	
 self_host_ifret_chain_mic3_smoke	ci	gate	
 self_host_letpath_failclose_smoke	ci	gate	
