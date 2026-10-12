@@ -134,7 +134,10 @@ fn main() -> i64 {
 
 def run_elf(exe: pathlib.Path, source: bytes) -> bytes:
     # Full compiler derivation can exceed two minutes on shared CI hosts.
-    result = subprocess.run([str(exe)], input=source, capture_output=True, timeout=600)
+    result = subprocess.run(
+        [str(exe)], input=source, capture_output=True,
+        timeout=int(os.environ.get("MIND_SELFHOST_TIMEOUT_SECS", "600")),
+    )
     if result.returncode or not result.stdout.startswith(b"\x7fELF"):
         raise RuntimeError(f"{exe.name}: exit={result.returncode}, stderr={result.stderr[:300]!r}")
     elf = result.stdout
