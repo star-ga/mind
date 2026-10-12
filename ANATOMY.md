@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2002 | **Est. tokens:** ~3,786,248
-**Generated:** 2026-10-12 07:38 UTC
+**Files:** 2002 | **Est. tokens:** ~3,787,209
+**Generated:** 2026-10-12 08:33 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 176 | ~474,018 |
+| `examples/mindc_mind/` | 176 | ~474,979 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -758,7 +758,7 @@
 - `self_host_native_scalar_f64_smoke.py` (~1301 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
 - `self_host_native_scalar_narrow_smoke.py` (~1800 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
 - `self_host_native_scast_smoke.py` (~1694 tok, huge)
-- `self_host_native_shadow_scope_smoke.py` (~12590 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
+- `self_host_native_shadow_scope_smoke.py` (~13551 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
 - `self_host_native_simd_dot_f32_smoke.py` (~1606 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
 - `self_host_native_simd_dot_i16_smoke.py` (~1234 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.

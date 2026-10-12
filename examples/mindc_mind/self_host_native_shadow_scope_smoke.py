@@ -801,6 +801,41 @@ FIXTURES.update({
         "i = i + value; } return i + borrow; } "
         "fn main() -> i64 { return f(2, 2) + f(1, 3) * 7; }", 106),
 })
+# A loop exit resolves each carried name to the binding made before the first
+# body-local DECLARATION of that name; whether a let-env entry is a declaration is
+# read from the source text before the name (`let`, `let mut`, `for`). A `//`
+# comment ending in one of those words right before a plain assignment must not
+# make that assignment look like a declaration (no shadow anywhere: the exit
+# would otherwise drop the assignment), and a comment between `let` and the name
+# must not hide a real declaration.
+FIXTURES.update({
+    "comment_let_before_assign_continue": (
+        "fn main() -> i64 { let mut x: i64 = 1; let mut k: i64 = 0; while k < 4 { k = k + 1;\n"
+        "    // no new let\n    x = x + 10; if k > 1 { continue; } x = x + 1; } return x; }", 42),
+    "comment_for_before_assign_break": (
+        "fn main() -> i64 { let mut x: i64 = 1; let mut k: i64 = 0; while k < 5 { k = k + 1;\n"
+        "    // wait for\n    x = x + 10; if k == 3 { break; } x = x + 1; } return x; }", 33),
+    "comment_let_mut_before_assign_break": (
+        "fn main() -> i64 { let mut x: i64 = 1; let mut k: i64 = 0; while k < 5 { k = k + 1;\n"
+        "    // keep let mut\n    x = x + 10; if k == 3 { break; } x = x + 1; } return x; }", 33),
+    "comment_slashes_in_string_line": (
+        "fn main() -> i64 { let mut x: i64 = 1; let mut k: i64 = 0; while k < 5 { k = k + 1;\n"
+        "    let c: i64 = '\"'; // let\n    x = x + 10; if k == 3 { break; } x = x + c - 33; } "
+        "return x; }", 33),
+    "comment_between_let_and_name": (
+        "fn main() -> i64 { let mut x: i64 = 1; let mut k: i64 = 0; while k < 5 { k = k + 1; "
+        "x = x + 10; let\n    // the per-iteration copy\n    x: i64 = 100; if k == 3 { break; } } "
+        "return x; }", 31),
+    # The byte-neutral range-for desugar's step `i = i + 1` (spliced before each
+    # `continue`) is an assignment whose target span is the header's `i`, which
+    # follows `for`; the native control-flow subset refuses this loop shape today
+    # (so does its explicit `while` form). Once it is admitted the step must not be
+    # read as a declaration at the continue (the counter would never advance): it
+    # must build to 3, or stay refused -- never hang (see nb_lets_lookup_carried).
+    "for_continue_step": (
+        "fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { if i > 2 { continue; } "
+        "s = s + i; } return s; }", 3),
+})
 MLAB_TWINS = {
     "mlab_ec_add_tail": FIXTURES["mlab_ec_add_tail"][0].replace(
         "let tail: i64 = start + 1; if tail == 0 { return 7; } else { return tail * 2; }",
@@ -834,6 +869,8 @@ TWINS = {
                                    "s = s + i; } return s; }",
 }
 TWINS.update(MLAB_TWINS)
+# no shadow to rename: refused is acceptable only while the program itself is
+TWINS["for_continue_step"] = FIXTURES["for_continue_step"][0]
 
 # The MLIR build's exit for the fixtures that take a loop exit while a body-local
 # shadow is in scope (the comments above): the shadow's value leaks out of the loop.
@@ -842,6 +879,18 @@ MLIR_DEFECT_FIXTURES = {
     "continue_mut_shadow": 51, "two_carried_one_shadowed": 40,
     "shadow_rw_then_break": 117, "else_break_after_shadow": 1,
     "i32_carried_i64_shadow_break": 1, "for_continue_branch_let_var": 103,
+    "comment_between_let_and_name": 100,
+}
+
+# The embedded frozen seed (testdata/selfhost_loop/stage1.elf, abb0622b) drops the
+# first of two assignments to a carried name at a `continue`/`break` taken between
+# them -- no shadow involved (`while k < 4 { k = k + 1; x = x + 10; if k > 1 {
+# continue; } x = x + 1; }` exits 12, lexically 42). main.mind already lowers it
+# correctly (stage1 from this tree exits 42); the integration reseed ships that. The
+# bridge leg accepts this recorded exit from the embedded seed only.
+EMBEDDED_SEED_DEFECT = {
+    "comment_let_before_assign_continue": 12, "comment_for_before_assign_break": 23,
+    "comment_let_mut_before_assign_break": 23, "comment_slashes_in_string_line": 23,
 }
 
 
@@ -850,7 +899,10 @@ MLIR_DEFECT_FIXTURES = {
 # whatever compiler runs. And the fixture the guard sees no shadow in at all.
 BRIDGE_UNPROVEN = {"for_body_let_shadows_var", "nested_for_same_var", "for_var_shadows_param",
                    "for_var_shadows_outer_let", "for_continue_branch_let_var"}
-NO_GUARD_SHADOW = {"sibling_fors_reuse_var"} | {k for k in FIXTURES if k.startswith("mlab_")}
+NO_GUARD_SHADOW = ({"sibling_fors_reuse_var", "for_continue_step", "comment_let_before_assign_continue",
+                    "comment_for_before_assign_break", "comment_let_mut_before_assign_break",
+                    "comment_slashes_in_string_line"}
+                   | {k for k in FIXTURES if k.startswith("mlab_")})
 
 
 def shadow_refusal(got) -> bool:
@@ -939,8 +991,13 @@ def main(argv=None) -> int:
             ok = emb == ("ok", want) or (emb[0] == "refused" and emb[1] == 3 and not emb[3])
             if got[0] == "ok" and k not in NO_GUARD_SHADOW:
                 ok = shadow_refusal(emb)
+            tag = ""
+            if not ok and emb == ("ok", EMBEDDED_SEED_DEFECT.get(k)):
+                # the frozen seed's own miscompile (fixed in main.mind, shipped by
+                # the next reseed): counted and named, not a scoping failure here
+                ok, tag = True, f"  EMBEDDED-SEED-KNOWN-DEFECT (lexical {want})"
             fails += not ok
-            print(f"  {'PASS' if ok else 'FAIL'}  bridge(embedded seed) {k}: {emb[:2]}"
+            print(f"  {'PASS' if ok else 'FAIL'}  bridge(embedded seed) {k}: {emb[:2]}{tag}"
                   + ("" if ok else f"\n{emb[2:]}"))
     rng = random.Random(a.seed)
     progs = []

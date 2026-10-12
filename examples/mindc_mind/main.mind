@@ -38181,6 +38181,13 @@ pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i6
 // rebinds of an assignment, if-merge or nested-loop copy-in (spans of assignment
 // targets) all belong to the carried binding. No body-local declaration -> the
 // same answer as nb_lets_lookup (last match wins).
+// deferred: the byte-neutral range-for desugar's step `VAR = VAR + 1` (also spliced
+// before each `continue`) targets the header's VAR, which follows `for`, so
+// nb_decl_site reads it as a declaration; that loop shape (an if-branch assign then
+// `continue`) is refused by the native control-flow subset today, so no exit flush
+// sees it. Upgrade path when that shape is admitted: skip entries whose span is the
+// carried var's own carry-table span (an assignment by construction) before the
+// nb_decl_site test (fixture for_continue_step in self_host_native_shadow_scope_smoke.py).
 pub fn nb_lets_lookup_carried(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, body_scope: i64, i: i64, best: i64) -> i64 {
     if i >= n {
         return best;
@@ -38199,9 +38206,11 @@ pub fn nb_lets_lookup_carried(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, bod
 }
 // 1 iff the identifier starting at byte `lo` is a binding DECLARATION: the token
 // before it is `let`, `let mut` or `for`. An assignment target follows `;`, `{`
-// or `}` instead.
+// or `}` instead. Whitespace and `//` comments between the tokens are skipped
+// (nb_code_back), so a comment ending in one of those words before an assignment
+// is not read as a declaration, and one between `let` and the name hides nothing.
 pub fn nb_decl_site(buf: i64, lo: i64) -> i64 {
-    let p: i64 = nb_ws_back(buf, lo - 1);
+    let p: i64 = nb_code_back(buf, lo - 1);
     if nb_kw3_ends_at(buf, p, 108, 101, 116) == 1 {
         return 1;
     }
@@ -38209,9 +38218,77 @@ pub fn nb_decl_site(buf: i64, lo: i64) -> i64 {
         return 1;
     }
     if nb_kw3_ends_at(buf, p, 109, 117, 116) == 1 {
-        return nb_kw3_ends_at(buf, nb_ws_back(buf, p - 3), 108, 101, 116);
+        return nb_kw3_ends_at(buf, nb_code_back(buf, p - 3), 108, 101, 116);
     }
     0
+}
+// Index of the last code byte at or before i (-1 when none): whitespace and `//`
+// line comments are skipped.
+pub fn nb_code_back(buf: i64, i: i64) -> i64 {
+    let p: i64 = nb_ws_back(buf, i);
+    if p < 0 {
+        return p;
+    }
+    let c: i64 = nb_line_comment_start(buf, nb_line_start(buf, p), p, 0);
+    if c >= 0 {
+        return nb_code_back(buf, c - 1);
+    }
+    p
+}
+// Index of the first byte of the line holding byte p.
+pub fn nb_line_start(buf: i64, p: i64) -> i64 {
+    if p <= 0 {
+        return 0;
+    }
+    if load_byte(buf, p - 1) == 10 {
+        return p;
+    }
+    nb_line_start(buf, p - 1)
+}
+// Index of the `//` opening a line comment at or before byte p, scanning the line
+// forward from j (string and char literals skipped), or -1 when byte p is code.
+pub fn nb_line_comment_start(buf: i64, j: i64, p: i64, in_str: i64) -> i64 {
+    if j > p {
+        return 0 - 1;
+    }
+    let c: i64 = load_byte(buf, j);
+    if in_str == 1 {
+        if c == 92 {
+            return nb_line_comment_start(buf, j + 2, p, 1);
+        }
+        if c == 34 {
+            return nb_line_comment_start(buf, j + 1, p, 0);
+        }
+        return nb_line_comment_start(buf, j + 1, p, 1);
+    }
+    if c == 34 {
+        return nb_line_comment_start(buf, j + 1, p, 1);
+    }
+    if c == 39 {
+        // a char literal ('x', '\x', a multi-byte scalar): resume after its close
+        if load_byte(buf, j + 1) == 92 {
+            return nb_line_comment_start(buf, nb_quote_at(buf, j + 3, p) + 1, p, 0);
+        }
+        return nb_line_comment_start(buf, nb_quote_at(buf, j + 2, p) + 1, p, 0);
+    }
+    if c == 47 {
+        if j < p {
+            if load_byte(buf, j + 1) == 47 {
+                return j;
+            }
+        }
+    }
+    nb_line_comment_start(buf, j + 1, p, 0)
+}
+// Index of the first `'` in [j, p], or p when there is none.
+pub fn nb_quote_at(buf: i64, j: i64, p: i64) -> i64 {
+    if j >= p {
+        return p;
+    }
+    if load_byte(buf, j) == 39 {
+        return j;
+    }
+    nb_quote_at(buf, j + 1, p)
 }
 // Index of the last non-whitespace byte at or before i (-1 when none).
 pub fn nb_ws_back(buf: i64, i: i64) -> i64 {
