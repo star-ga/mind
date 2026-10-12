@@ -88,6 +88,7 @@ CASES = {
     "interleaved_growth": (21, b"", True),
     "bin_fit_search": (23, b"", True),
     "realloc_free_neighbour": (25, b"", True),
+    "dup_struct_name": (7, b"", False),
 }
 FAILS: list[str] = []
 

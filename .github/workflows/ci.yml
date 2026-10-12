@@ -1038,13 +1038,16 @@ jobs:
         # (alloc/free/realloc loops with a small live footprint, a fitting block
         # behind a smaller bin head, realloc growth into a free neighbour,
         # C-runtime edge cases incl. realloc(NULL, 0), deterministic
-        # out-of-memory exit 70)
+        # out-of-memory exit 70, duplicate struct names that crashed the
+        # compiler under the bounded allocator)
         # natively AND through the MLIR backend under the same cap; and the
-        # compiler's own arena reclaim code run natively. 35 verdicts; the MLIR
-        # legs need MINDC_BIN, so a missing binary is a red SKIP.
+        # compiler's own arena reclaim code run natively. 36 verdicts; the MLIR
+        # legs need MINDC_BIN, so a missing binary is a red SKIP. Three whole
+        # self-compiles plus 12 MLIR builds overrun run_gate's 900 s default on
+        # a loaded runner, hence the explicit 2400 s budget.
         run: |
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
-            python3 scripts/run_gate.py --min-asserted 35 examples/mindc_mind/self_host_native_alloc_bounded_smoke.py
+            python3 scripts/run_gate.py --min-asserted 36 --timeout 2400 examples/mindc_mind/self_host_native_alloc_bounded_smoke.py
         working-directory: ${{ github.workspace }}
 
       - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)

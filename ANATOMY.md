@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2018 | **Est. tokens:** ~3,785,990
-**Generated:** 2026-10-10 17:53 UTC
+**Files:** 2019 | **Est. tokens:** ~3,786,186
+**Generated:** 2026-10-12 14:14 UTC
 
 ## Token Budget Guide
 
@@ -62,12 +62,12 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 176 | ~467,071 |
+| `examples/mindc_mind/` | 176 | ~467,081 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
-| `examples/mindc_mind/testdata/native_alloc_bounded/` | 13 | ~3,076 |
+| `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -723,7 +723,7 @@
 - `self_host_mlir_smoke.py` (~1954 tok, huge)
 - `self_host_narrow_let_mic3_smoke.py` (~1612 tok, huge)
 - `self_host_narrow_param_smoke.py` (~11275 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
-- `self_host_native_alloc_bounded_smoke.py` (~5454 tok, huge) — Bounded-profile allocator gate (W11c): grow-on-demand arena, C-runtime
+- `self_host_native_alloc_bounded_smoke.py` (~5464 tok, huge) — Bounded-profile allocator gate (W11c): grow-on-demand arena, C-runtime
 - `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
 - `self_host_native_avx2_dot_f32_smoke.py` (~1663 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
@@ -931,6 +931,7 @@
 - `alloc_nonpos.mind` (~291 tok, medium) — alloc/realloc/free parity with the C runtime (runtime-support/mind_intrinsics.c):
 - `big_increasing.mind` (~159 tok, small) — A 300..319 MB scratch buffer allocated, touched at its last word and freed,
 - `bin_fit_search.mind` (~338 tok, medium) — A free block that fits must be found even when it is not the head of its
+- `dup_struct_name.mind` (~186 tok, small) — Two struct declarations with the same name (W11c). The emitter visits the
 - `grow8.mind` (~173 tok, small) — Naive append (verifier repro, W11c round 2): one buffer grown by 8 bytes per
 - `grow_big.mind` (~283 tok, medium) — measured-report's synthesize-path footprint: 256+512+4+6+8 MiB = 786 MiB of
 - `interleaved_growth.mind` (~306 tok, medium) — Two buffers grown alternately by __mind_realloc, 8 and 16 bytes per step for
