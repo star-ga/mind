@@ -51,7 +51,6 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/file.h>
-#include <dlfcn.h>
 #endif
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
@@ -396,108 +395,155 @@ MIND_EXPORT int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, in
     return (int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset);
 }
 
-// POSIX filesystem twins: preserve the raw Linux negative-errno convention.
-// std.posix exports C-spelled wrappers (close/openat/etc.). Resolve the next
-// libc definition explicitly so these calls cannot recurse into those wrappers.
-// No cache or mutable initialization state is needed; dlsym is thread-safe.
-#if !defined(_WIN32)
-MIND_EXPORT int64_t __mind_sys_openat(int64_t dirfd, int64_t path_ptr, int64_t flags, int64_t mode) {
-    typedef int (*libc_fn_t)(int, const char *, int, ...);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "openat");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path_ptr, (int)flags, (mode_t)mode);
-    return r < 0 ? -(int64_t)errno : r;
+// Raw Linux x86-64 twins. No libc call, interposition or errno conversion.
+#if defined(__linux__) && defined(__x86_64__)
+static int64_t mind_raw_syscall(int64_t nr, int64_t a0, int64_t a1,
+                               int64_t a2, int64_t a3, int64_t a4, int64_t a5) {
+    register int64_t r10 __asm__("r10") = a3;
+    register int64_t r8 __asm__("r8") = a4;
+    register int64_t r9 __asm__("r9") = a5;
+    int64_t result;
+    __asm__ volatile ("syscall" : "=a"(result)
+                      : "a"(nr), "D"(a0), "S"(a1), "d"(a2),
+                        "r"(r10), "r"(r8), "r"(r9)
+                      : "rcx", "r11", "memory");
+    return result;
+}
+#else
+static int64_t mind_raw_syscall(int64_t nr, int64_t a0, int64_t a1,
+                               int64_t a2, int64_t a3, int64_t a4, int64_t a5) {
+    (void)nr; (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    return -38; // ENOSYS: this ABI is Linux x86-64 only.
+}
+#endif
+
+MIND_EXPORT int64_t __mind_sys_openat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(257, a0, a1, a2, a3, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_close(int64_t fd) {
-    typedef int (*libc_fn_t)(int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "close");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_close(int64_t a0) {
+    return mind_raw_syscall(3, a0, 0, 0, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_fstat(int64_t fd, int64_t buf) {
-    typedef int (*libc_fn_t)(int, struct stat *);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fstat");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd, (struct stat *)(uintptr_t)buf);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_fstat(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(5, a0, a1, 0, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_newfstatat(int64_t dirfd, int64_t path, int64_t buf, int64_t flags) {
-    typedef int (*libc_fn_t)(int, const char *, struct stat *, int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fstatat");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path, (struct stat *)(uintptr_t)buf, (int)flags);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_newfstatat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(262, a0, a1, a2, a3, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_fsync(int64_t fd) {
-    typedef int (*libc_fn_t)(int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fsync");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_fsync(int64_t a0) {
+    return mind_raw_syscall(74, a0, 0, 0, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_flock(int64_t fd, int64_t op) {
-    typedef int (*libc_fn_t)(int, int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "flock");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd, (int)op);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_flock(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(73, a0, a1, 0, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_fcntl(int64_t fd, int64_t cmd, int64_t arg) {
-    typedef int (*libc_fn_t)(int, int, ...);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "fcntl");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd, (int)cmd, (intptr_t)arg);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_fcntl(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(72, a0, a1, a2, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_lseek(int64_t fd, int64_t off, int64_t whence) {
-    typedef off_t (*libc_fn_t)(int, off_t, int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "lseek");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)fd, (off_t)off, (int)whence);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_lseek(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(8, a0, a1, a2, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_unlinkat(int64_t dirfd, int64_t path, int64_t flags) {
-    typedef int (*libc_fn_t)(int, const char *, int);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "unlinkat");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)dirfd, (const char *)(uintptr_t)path, (int)flags);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_unlinkat(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(263, a0, a1, a2, 0, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_renameat(int64_t olddirfd, int64_t old, int64_t newdirfd, int64_t new) {
-    typedef int (*libc_fn_t)(int, const char *, int, const char *);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "renameat");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((int)olddirfd, (const char *)(uintptr_t)old, (int)newdirfd, (const char *)(uintptr_t)new);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_renameat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(264, a0, a1, a2, a3, 0, 0);
 }
 
-MIND_EXPORT int64_t __mind_sys_umask(int64_t mask) {
-    typedef mode_t (*libc_fn_t)(mode_t);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "umask");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn((mode_t)mask);
-    return r < 0 ? -(int64_t)errno : r;
+MIND_EXPORT int64_t __mind_sys_umask(int64_t a0) {
+    return mind_raw_syscall(95, a0, 0, 0, 0, 0, 0);
 }
 
 MIND_EXPORT int64_t __mind_sys_getuid(void) {
-    typedef uid_t (*libc_fn_t)(void);
-    libc_fn_t libc_fn = (libc_fn_t)dlsym(RTLD_NEXT, "getuid");
-    if (libc_fn == NULL) return -ENOSYS;
-    int64_t r = (int64_t)libc_fn();
-    return r < 0 ? -(int64_t)errno : r;
+    return mind_raw_syscall(102, 0, 0, 0, 0, 0, 0);
 }
 
-#endif
+MIND_EXPORT int64_t __mind_sys_fork(void) {
+    return mind_raw_syscall(57, 0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_pipe2(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(293, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_dup2(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(33, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_close_range(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(436, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_execveat(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(322, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_wait4(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(61, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_waitid(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(247, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_kill(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(62, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_setpgid(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(109, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getpgid(int64_t a0) {
+    return mind_raw_syscall(121, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_prctl(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(157, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getrlimit(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(97, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_setrlimit(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(160, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_rt_sigaction(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(13, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_nanosleep(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(35, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_clock_gettime(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(228, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_memfd_create(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(319, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_fchdir(int64_t a0) {
+    return mind_raw_syscall(81, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getdents64(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(217, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_exit_group(int64_t a0) {
+    return mind_raw_syscall(231, a0, 0, 0, 0, 0, 0);
+}
 
 // print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.
 // Corresponds to std/io.mind `print_bytes(buf_addr, count)`.

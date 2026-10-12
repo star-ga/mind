@@ -33558,6 +33558,86 @@ pub fn nb_sys_intrinsic_id(buf: i64, lo: i64, n: i64) -> i64 {
     if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7599107925132407673, 100, 0, 17, 0, 0) == 1 {
         return 31;
     }
+    // 32: __mind_sys_fork
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 30243645292508025, 0, 0, 15, 0, 0) == 1 {
+        return 32;
+    }
+    // 33: __mind_sys_pipe2
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 3631432272703353721, 0, 0, 16, 0, 0) == 1 {
+        return 33;
+    }
+    // 34: __mind_sys_dup2
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 14197398332994425, 0, 0, 15, 0, 0) == 1 {
+        return 34;
+    }
+    // 35: __mind_sys_close_range
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7310309131466797945, 111494907916895, 0, 22, 0, 0) == 1 {
+        return 35;
+    }
+    // 36: __mind_sys_execveat
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 8530773686941086585, 7627109, 0, 19, 0, 0) == 1 {
+        return 36;
+    }
+    // 37: __mind_sys_wait4
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 3779761854606177145, 0, 0, 16, 0, 0) == 1 {
+        return 37;
+    }
+    // 38: __mind_sys_waitid
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7598814338616357753, 100, 0, 17, 0, 0) == 1 {
+        return 38;
+    }
+    // 39: __mind_sys_kill
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 30518497513534329, 0, 0, 15, 0, 0) == 1 {
+        return 39;
+    }
+    // 40: __mind_sys_setpgid
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7453585362374325113, 25705, 0, 18, 0, 0) == 1 {
+        return 40;
+    }
+    // 41: __mind_sys_getpgid
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7453585362172998521, 25705, 0, 18, 0, 0) == 1 {
+        return 41;
+    }
+    // 42: __mind_sys_prctl
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7814980596557378425, 0, 0, 16, 0, 0) == 1 {
+        return 42;
+    }
+    // 43: __mind_sys_getrlimit
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7814436282316059513, 1953066345, 0, 20, 0, 0) == 1 {
+        return 43;
+    }
+    // 44: __mind_sys_setrlimit
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7814436282517386105, 1953066345, 0, 20, 0, 0) == 1 {
+        return 44;
+    }
+    // 45: __mind_sys_rt_sigaction
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7598521950043861881, 31084746153091431, 0, 23, 0, 0) == 1 {
+        return 45;
+    }
+    // 46: __mind_sys_nanosleep
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 8317988401519227769, 1885693292, 0, 20, 0, 0) == 1 {
+        return 46;
+    }
+    // 47: __mind_sys_clock_gettime
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7738151096066995065, 7308613719182108511, 0, 24, 0, 0) == 1 {
+        return 47;
+    }
+    // 48: __mind_sys_memfd_create
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7234590133811377017, 28556934310421343, 0, 23, 0, 0) == 1 {
+        return 48;
+    }
+    // 49: __mind_sys_fchdir
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7594309647782081401, 114, 0, 17, 0, 0) == 1 {
+        return 49;
+    }
+    // 50: __mind_sys_getdents64
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7306092474376614777, 224251835502, 0, 21, 0, 0) == 1 {
+        return 50;
+    }
+    // 51: __mind_sys_exit_group
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 6878238496719336313, 483006575207, 0, 21, 0, 0) == 1 {
+        return 51;
+    }
     0 - 1
 }
 
@@ -33588,7 +33668,7 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
     if load_byte(buf, lo + 6) != 95 {
         return 0 - 1;
     }
-    if n >= 16 {
+    if n >= 15 {
         if load_byte(buf, lo + 7) == 115 {
             if load_byte(buf, lo + 8) == 121 {
                 if load_byte(buf, lo + 9) == 115 {
@@ -34019,6 +34099,106 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
     if kind == 31 {
         // __mind_sys_getuid: syscall 102, 0 arguments.
         let c1: String = nb_emit_syscall(code, 102, ids, 0);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 32 {
+        // __mind_sys_fork: Linux x86-64 syscall 57, 0 arguments.
+        let c1: String = nb_emit_syscall(code, 57, ids, 0);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 33 {
+        // __mind_sys_pipe2: Linux x86-64 syscall 293, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 293, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 34 {
+        // __mind_sys_dup2: Linux x86-64 syscall 33, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 33, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 35 {
+        // __mind_sys_close_range: Linux x86-64 syscall 436, 3 arguments.
+        let c1: String = nb_emit_syscall(code, 436, ids, 3);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 36 {
+        // __mind_sys_execveat: Linux x86-64 syscall 322, 5 arguments.
+        let c1: String = nb_emit_syscall(code, 322, ids, 5);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 37 {
+        // __mind_sys_wait4: Linux x86-64 syscall 61, 4 arguments.
+        let c1: String = nb_emit_syscall(code, 61, ids, 4);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 38 {
+        // __mind_sys_waitid: Linux x86-64 syscall 247, 5 arguments.
+        let c1: String = nb_emit_syscall(code, 247, ids, 5);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 39 {
+        // __mind_sys_kill: Linux x86-64 syscall 62, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 62, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 40 {
+        // __mind_sys_setpgid: Linux x86-64 syscall 109, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 109, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 41 {
+        // __mind_sys_getpgid: Linux x86-64 syscall 121, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 121, ids, 1);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 42 {
+        // __mind_sys_prctl: Linux x86-64 syscall 157, 5 arguments.
+        let c1: String = nb_emit_syscall(code, 157, ids, 5);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 43 {
+        // __mind_sys_getrlimit: Linux x86-64 syscall 97, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 97, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 44 {
+        // __mind_sys_setrlimit: Linux x86-64 syscall 160, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 160, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 45 {
+        // __mind_sys_rt_sigaction: Linux x86-64 syscall 13, 4 arguments.
+        let c1: String = nb_emit_syscall(code, 13, ids, 4);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 46 {
+        // __mind_sys_nanosleep: Linux x86-64 syscall 35, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 35, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 47 {
+        // __mind_sys_clock_gettime: Linux x86-64 syscall 228, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 228, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 48 {
+        // __mind_sys_memfd_create: Linux x86-64 syscall 319, 2 arguments.
+        let c1: String = nb_emit_syscall(code, 319, ids, 2);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 49 {
+        // __mind_sys_fchdir: Linux x86-64 syscall 81, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 81, ids, 1);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 50 {
+        // __mind_sys_getdents64: Linux x86-64 syscall 217, 3 arguments.
+        let c1: String = nb_emit_syscall(code, 217, ids, 3);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 51 {
+        // __mind_sys_exit_group: Linux x86-64 syscall 231, 1 arguments.
+        let c1: String = nb_emit_syscall(code, 231, ids, 1);
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64
@@ -52331,6 +52511,86 @@ pub fn tc_shoc_prefix7_span(buf: i64, len: i64) -> i64 {
 // smoke regenerates them from that same source and cross-checks every case
 // against the live `mindc check` E2024 verdict).
 pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    // "__mind_sys_fork"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 30243645292508025, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_sys_pipe2"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 3631432272703353721, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_dup2"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 14197398332994425, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_sys_close_range"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7310309131466797945, 111494907916895, 0, 22) == 1 {
+        return 1;
+    }
+    // "__mind_sys_execveat"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 8530773686941086585, 7627109, 0, 19) == 1 {
+        return 1;
+    }
+    // "__mind_sys_wait4"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 3779761854606177145, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_waitid"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7598814338616357753, 100, 0, 17) == 1 {
+        return 1;
+    }
+    // "__mind_sys_kill"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 30518497513534329, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_sys_setpgid"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7453585362374325113, 25705, 0, 18) == 1 {
+        return 1;
+    }
+    // "__mind_sys_getpgid"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7453585362172998521, 25705, 0, 18) == 1 {
+        return 1;
+    }
+    // "__mind_sys_prctl"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7814980596557378425, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_sys_getrlimit"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7814436282316059513, 1953066345, 0, 20) == 1 {
+        return 1;
+    }
+    // "__mind_sys_setrlimit"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7814436282517386105, 1953066345, 0, 20) == 1 {
+        return 1;
+    }
+    // "__mind_sys_rt_sigaction"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7598521950043861881, 31084746153091431, 0, 23) == 1 {
+        return 1;
+    }
+    // "__mind_sys_nanosleep"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 8317988401519227769, 1885693292, 0, 20) == 1 {
+        return 1;
+    }
+    // "__mind_sys_clock_gettime"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7738151096066995065, 7308613719182108511, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_sys_memfd_create"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7234590133811377017, 28556934310421343, 0, 23) == 1 {
+        return 1;
+    }
+    // "__mind_sys_fchdir"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7594309647782081401, 114, 0, 17) == 1 {
+        return 1;
+    }
+    // "__mind_sys_getdents64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7306092474376614777, 224251835502, 0, 21) == 1 {
+        return 1;
+    }
+    // "__mind_sys_exit_group"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 6878238496719336313, 483006575207, 0, 21) == 1 {
+        return 1;
+    }
     // "__mind_sys_openat"
     if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 7020660402696450937, 116, 0, 17) == 1 {
         return 1;

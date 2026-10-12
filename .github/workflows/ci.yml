@@ -1180,6 +1180,7 @@ jobs:
             self_host_native_toplevel_assign_smoke \
             self_host_native_narrow_paramret_smoke \
             self_host_native_sys_smoke \
+            self_host_native_process_smoke \
             self_host_native_tensor_batchsum_smoke \
             self_host_native_tensor_rowmin_smoke \
             self_host_param_mutation_smoke \
