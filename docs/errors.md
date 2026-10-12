@@ -144,11 +144,15 @@ Unsigned operands divide as unsigned values and trap only on a zero divisor:
   truncate the value they receive, a function returning one truncates its
   return value, a struct field of such a type truncates an arithmetic value
   stored into it (in a struct literal or a field assignment), and an 8- or
-  16-bit result of `+`, `-`, `*` or `<<` (typed by the same narrow rules the
-  MLIR backend uses, including a call to a function returning an 8- or 16-bit
-  type) is truncated before it is used. A `/` or `%` therefore sees the
-  wrapped values (with `a: u8 = 200` and `b: u8 = 100`, both
-  `let d: u8 = a + b; d / 3` and `(a + b) / 3` are `14`) and gives the
+  16-bit result of `+`, `-`, `*`, `/`, `%` or `<<` is truncated before it is
+  used. The result is typed by the same narrow rules the MLIR backend uses: a
+  call to a function returning an 8- or 16-bit type has that type, a shift has
+  the type of its left operand and takes its count modulo that width
+  (`a << 9` on `u8` shifts by 1), and `&`, `|` and `^` give a width-neutral
+  result, so arithmetic over two such results, or over one and a literal, is
+  not truncated. A `/` or `%` therefore sees the wrapped values (with
+  `a: u8 = 200` and `b: u8 = 100`, both `let d: u8 = a + b; d / 3` and
+  `(a + b) / 3` are `14`, and `((a << 1) + 200) % 11` is `0`) and gives the
   unsigned result; a zero divisor, including one produced by wrapping, traps
   with status 79. Signed `i8`/`i16`/`i32` values are sign-extended the same
   way. Division of 64-bit unsigned values is **not implemented natively**. The
@@ -171,7 +175,12 @@ The same holds for an `i32` quotient: `MIN / -1` is `2147483648` at 64 bits and
 when:
 
 - an operand is an unbound `i32`/`u32` arithmetic result (`let d: u32 = a - b;
-  d / 2` is `2147483647` on both backends);
+  d / 2` is `2147483647` on both backends), including arithmetic that reaches
+  an `i32`/`u32` value through `&`, `|`, `^`, `<<` or `>>` (with `b: u32`,
+  `((b >> 1) - 7) % 11` is refused like `(b - 7) % 11`);
+- an operand contains an `i32`/`u32` `>>` whose count is not a decimal
+  literal from 0 to 31 (MLIR takes that count modulo 32 when the operands are
+  parameters and modulo 64 when they are local variables);
 - an operand's unbound arithmetic involves a call to a function returning
   `i32`/`u32`, a struct field whose name any struct declares with a narrow
   integer type, a `u8` array element of a struct field, or a method returning a
@@ -195,7 +204,16 @@ has the sign of the dividend (`-7 / 2 == -3`, `-7 % 2 == -1`, `7 % -2 == 1`).
 
 Shift counts are taken modulo 64 for `i64`: `x << n` and `x >> n` use
 `n & 63`, so a count of 64 shifts by 0, 65 by 1, and -1 by 63. `>>` is
-arithmetic for signed operands.
+arithmetic for signed operands. An 8- or 16-bit left operand takes its count
+modulo its width on both backends (`n & 7`, `n & 15`). **Open defects (shifts
+outside a division):** the native backend applies that narrow count rule only
+when its lattice types the left operand (a variable, parameter, cast, call or
+arithmetic result), so a shift of an 8- or 16-bit struct field or array
+element still uses `n & 63` there (with `v: u8 = 200`, `let x: u8 = s.v << 9;`
+is `0` natively and `144` on MLIR); and an `i32`/`u32` count of 32 or more
+differs inside the MLIR backend itself (modulo 32 for parameters, modulo 64 for
+local variables), where the native backend always uses modulo 64. A `/` or `%`
+whose operand contains either shape is refused natively, as listed above.
 
 The program does not need to do anything to get this behaviour. The MLIR
 backend omits the check when the divisor is a constant other than `0` and `-1`.
