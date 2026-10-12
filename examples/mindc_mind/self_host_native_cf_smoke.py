@@ -443,16 +443,16 @@ def extreme_cases():
     trace-hash front end scanned (and copied) the whole source one stack frame
     per byte (find_alloc_name_span: 1.57M frames at the bounded 384 MiB stack's
     end on a 21 MB program, 3M+ frames on the 18.8 MB tree in the default
-    profile; a 1.96 MB tree already overflowed the bounded stack)."""
-    d16 = dense_tree_program(16)
+    profile; a 1.96 MB tree already overflowed the bounded stack). The 18.8 MB
+    tree runs seeded only: unseeded it reaches the same scanners as the 21 MB
+    unseeded case below, at twice the compile time."""
     pad = refused_padded_program(320000)
     return [
         # ~786k tokens (18.8 MB): past the bounded profile's whole-program stack
         # budget (nb_stack_short); the front end's per-token walk overflowed the
         # 384 MiB stack here (SIGSEGV), so that compiler must refuse it cleanly.
         ("dense if/else tree, 65536 leaves (18.8 MB, past the bounded stack budget)",
-         d16, True, True),
-        ("dense if/else tree, 65536 leaves (18.8 MB), unseeded image", d16, True, False),
+         dense_tree_program(16), True, True),
         # A 21 MB program that is refused (a Tensor parameter, after 320k comment
         # lines): the refusal reporter scanned the user region one stack frame
         # per byte and overflowed the stack (SIGSEGV) instead of exiting rc 3.
