@@ -1,4 +1,4 @@
-// A8: top-level `const` items WITHOUT a trailing `;` (the MIND-Lab SX_* table
+// A8: top-level `const` items WITHOUT a trailing `;` (the `SX_*` table
 // shape): forward references, use as call args / index keys / operands /
 // conditions, and a const as the very last item of the file. Expected exit 42,
 // stdout "OK\n".

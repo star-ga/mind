@@ -5207,8 +5207,9 @@ pub fn ent_syn_node(v: i64, lo: i64, hi: i64) -> i64 {
 // (0 bytes) at emit rather than mis-resolving — never a wrong value.
 //
 // FAIL-CLOSED (return -1 -> no inline): no `const NAME:` decl, a DUPLICATE decl
-// of the same name (ambiguous), or an initializer that is not a plain decimal
-// int token (a const-expr RHS is a later slice).
+// of the same name (ambiguous), a declared type that is not an integer type,
+// or an initializer that is not a plain decimal int token (a const-expr RHS is
+// a later slice).
 //
 // main.mind's own source has NO top-level `const` decl (const_find_from returns
 // -1 for every ident), so none of this changes any byte during self-compile.
@@ -5242,19 +5243,19 @@ pub fn const_find_from(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64
 // followed directly by the next top-level item (or EOF) is the same declaration.
 // Without the `;` the int token must be IMMEDIATELY followed by an item start
 // (tok_is_item_start) or EOF, so `const K: i64 = 1 + 2` (a const-expr, no `;`)
-// still refuses instead of inlining the bare `1`. Only a const DECLARED `i64`
-// inlines: mindc-Rust records the declared type of every const
-// (set_module_const_types) and its IR for a narrow / unsigned const is not the
-// bare int-lit this inline produces (the mic@3 trace note of `const K: u8 =
-// 300` diverges from the twin emitter's), and a float/bool-typed const with an
-// int initializer is a type error (E2001). Every non-i64 declared type
-// therefore refuses (fail closed).
+// still refuses instead of inlining the bare `1`. The declared type must be an
+// INTEGER type (i8/i16/i32/i64, u8/u16/u32/u64, isize/usize): mindc-Rust
+// neither range-checks nor truncates the initializer to a narrow declared
+// type, so `const K: u8 = 300` reads as the plain 300 on both backends and
+// records the same int-lit trace note. Every other declared type refuses
+// (fail closed): f32/f64/bool with an int initializer is a type error in
+// mindc-Rust (E2001), and a non-scalar type is not an int value.
 pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
     if tok_kind(toks, np + 1) == tk_colon() {
         if tok_kind(toks, np + 2) == tk_ident() {
             if tok_kind(toks, np + 3) == tk_eq() {
                 if tok_kind(toks, np + 4) == tk_int() {
-                    if is_ident_i64(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 {
+                    if const_type_is_int(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 {
                         return 0 - 1;
                     }
                     if const_init_ends(toks, buf, np + 5) == 1 {
@@ -5265,6 +5266,19 @@ pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
         }
     }
     0 - 1
+}
+
+// 1 iff buf[lo..hi) names an integer type a const may be declared with. The
+// type checker's scalar class (tc_ann_scalar_class) counts `bool` as Int, so
+// the one 4-byte Int-class name (`bool`) is excluded here.
+pub fn const_type_is_int(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 4 {
+        return 0;
+    }
+    if tc_ann_scalar_class(buf, lo, hi) == 1 {
+        return 1;
+    }
+    0
 }
 
 // 1 iff the token at `pos` terminates a single-int const initializer: a `;`,

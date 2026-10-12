@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2031 | **Est. tokens:** ~3,776,687
-**Generated:** 2026-10-10 21:45 UTC
+**Files:** 2038 | **Est. tokens:** ~3,777,901
+**Generated:** 2026-10-12 12:24 UTC
 
 ## Token Budget Guide
 
@@ -62,13 +62,13 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 176 | ~464,148 |
+| `examples/mindc_mind/` | 176 | ~464,376 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
-| `examples/mindc_mind/testdata/native_misc/` | 29 | ~3,822 |
+| `examples/mindc_mind/testdata/native_misc/` | 36 | ~4,808 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
@@ -681,7 +681,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — 205f72af59489c3ce4f1ca7382f5faccb1033387fb26972c9b4b8f03b19caadc
+- `_ref_main.note` (~16 tok, tiny) — b4f8f9279d6293ade979b979521cdceee42484e3beebcda467e14ae78497fb4b
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
@@ -748,7 +748,7 @@
 - `self_host_native_intdot_q16_smoke.py` (~1111 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
-- `self_host_native_misc_census_smoke.py` (~2720 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
+- `self_host_native_misc_census_smoke.py` (~2948 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
 - `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
@@ -946,22 +946,29 @@
 - `a2_refuse_src_u32let.mind` (~71 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
 - `a2_refuse_src_unannotated.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
 - `a8_const_mixed.mind` (~91 tok, small) — A8: `;`-terminated and `;`-less consts interleaved with fns, a const
-- `a8_const_nosemi.mind` (~332 tok, medium) — A8: top-level `const` items WITHOUT a trailing `;` (the MIND-Lab SX_* table
+- `a8_const_narrow_types.mind` (~111 tok, small) — A8: consts declared with each narrow, unsigned and pointer-sized integer
+- `a8_const_narrow_u8.mind` (~72 tok, small) — A8: a narrow-typed const inlines exactly like an i64 one. mindc-Rust neither
+- `a8_const_nosemi.mind` (~331 tok, medium) — A8: top-level `const` items WITHOUT a trailing `;` (the `SX_*` table
+- `a8_const_usize.mind` (~30 tok, tiny) — A8: the common `const N: usize = ...;` shape. Expected exit 8.
+- `a8_refuse_bool_const.mind` (~59 tok, small) — A8 fail-closed: `bool` shares the integer scalar class in the type checker,
 - `a8_refuse_const_assign.mind` (~78 tok, small) — A8 refusal: assignment to a top-level const. mindc-Rust assigns a
 - `a8_refuse_const_compound.mind` (~59 tok, small) — A8 refusal: compound assignment to a top-level const. MLIR: K += 2 on the
 - `a8_refuse_constexpr.mind` (~64 tok, small) — A8 fail-closed: a `;`-less const whose initializer is an EXPRESSION. The
 - `a8_refuse_float_const.mind` (~61 tok, small) — A8 fail-closed: an int initializer on an f64 const is a type error in
-- `a8_refuse_narrow_const.mind` (~84 tok, small) — A8 refusal: a narrow-typed const. Native inlines only consts declared `i64`
 - `a8_str_const.mind` (~300 tok, medium) — A8 refusal (deferred): string consts `const NAME: str|&str|String = "..."`,
 - `a8_str_refuse_i64type.mind` (~74 tok, small) — A8 refusal: a string initializer under an `i64` declared type. mindc-Rust
 - `st_cond_use.mind` (~237 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_let_init.mind` (~161 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_main_tail.mind` (~157 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_operand_i16.mind` (~167 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_pos_assign.mind` (~198 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_pos_call_arg.mind` (~196 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_pos_if_cond.mind` (~201 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_pos_while_cond.mind` (~205 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_return_i32.mind` (~177 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_tail_chain.mind` (~284 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_tail_valueif_main.mind` (~198 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
-- `st_tail_w_set.mind` (~183 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_tail_w_set.mind` (~182 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 - `st_valueif_i8.mind` (~179 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 ### `examples/mindc_mind/testdata/native_record_array/`
 

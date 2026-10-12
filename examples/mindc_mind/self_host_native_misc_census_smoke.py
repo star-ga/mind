@@ -1,5 +1,5 @@
 """Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
-store intrinsic used as a value (the MIND-Lab `w_set` shape).
+store intrinsic used as a value (a `w_set`-style store-tail helper).
 
 What it proves, per fixture in testdata/native_misc/:
   * A stage1 compiler is built from THIS tree's main.mind by running the FROZEN
@@ -26,6 +26,7 @@ Env:
                   show the gate RED on a base-tree copy or on a mutant.
   MINDC_BIN       mindc for the MLIR oracle leg (default: the shared resolver).
   MISC_JOBS       fixtures checked concurrently (default 3).
+  MISC_ONLY       comma-separated fixture names to check (default: all).
 
 Run:  python3 examples/mindc_mind/self_host_native_misc_census_smoke.py
 """
@@ -59,7 +60,10 @@ CASES = [
     ("a8_const_mixed", RUN, (7, b""), (7, b"")),
     ("a8_refuse_constexpr", REFUSE, None, (3, b"")),
     ("a8_refuse_float_const", REFUSE, None, "build-fail"),
-    ("a8_refuse_narrow_const", REFUSE, None, (150, b"")),
+    ("a8_const_narrow_u8", RUN, (150, b""), (150, b"")),
+    ("a8_const_narrow_types", RUN, (181, b""), (181, b"")),
+    ("a8_const_usize", RUN, (8, b""), (8, b"")),
+    ("a8_refuse_bool_const", REFUSE, None, "build-fail"),
     ("a8_refuse_const_assign", REFUSE, None, (7, b"")),
     ("a8_refuse_const_compound", REFUSE, None, (8, b"")),
     ("a8_str_const", REFUSE, None, (22, b"hello hi\n")),
@@ -86,7 +90,23 @@ CASES = [
     ("st_tail_chain", RUN, (40, b""), (40, b"")),
     ("st_main_tail", RUN, (0, b""), (0, b"")),
     ("st_cond_use", RUN, (64, b""), (64, b"")),
+    # one read position each, so a walker that skips that position goes red
+    ("st_pos_if_cond", RUN, (15, b""), (15, b"")),
+    ("st_pos_while_cond", RUN, (37, b""), (37, b"")),
+    ("st_pos_assign", RUN, (8, b""), (8, b"")),
+    ("st_pos_call_arg", RUN, (8, b""), (8, b"")),
 ]
+
+
+def selected_cases() -> list:
+    only = [n for n in os.environ.get("MISC_ONLY", "").split(",") if n]
+    if not only:
+        return CASES
+    known = {c[0] for c in CASES}
+    unknown = [n for n in only if n not in known]
+    if unknown:
+        raise SystemExit(f"MISC_ONLY names unknown fixtures: {unknown}")
+    return [c for c in CASES if c[0] in only]
 
 
 def main_mind() -> pathlib.Path:
@@ -221,11 +241,12 @@ def main() -> int:
     # Fixtures are independent subprocess work (stage1 compile, run, MLIR build,
     # Rust reference note), so a small pool keeps the gate inside run_gate's
     # default per-gate timeout on a loaded runner. Output stays in CASES order.
+    cases = selected_cases()
     jobs = max(1, int(os.environ.get("MISC_JOBS", "3")))
     with tempfile.TemporaryDirectory(prefix="native_misc_") as tdn:
         work = pathlib.Path(tdn)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            futs = [pool.submit(check_case, stage1, rust, work, c) for c in CASES]
+            futs = [pool.submit(check_case, stage1, rust, work, c) for c in cases]
             for fut in futs:
                 lines, fails = fut.result()
                 for line in lines:
@@ -234,7 +255,7 @@ def main() -> int:
     if failures:
         print(f"FAIL ({len(failures)}): {', '.join(failures)}")
         return 1
-    print(f"ALL PASS ({len(CASES)} fixtures: native vs hand-computed, MLIR vs hand-computed, "
+    print(f"ALL PASS ({len(cases)} fixtures: native vs hand-computed, MLIR vs hand-computed, "
           f"native trace note vs Rust emit_mic3 note)")
     return 0
 

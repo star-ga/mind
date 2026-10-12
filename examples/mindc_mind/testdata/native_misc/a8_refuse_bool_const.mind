@@ -1,0 +1,8 @@
+// A8 fail-closed: `bool` shares the integer scalar class in the type checker,
+// but a bool const is not an integer value; native refuses instead of
+// inlining the initializer bits.
+const B: bool = 1;
+
+fn main() -> i64 {
+    B + 2
+}

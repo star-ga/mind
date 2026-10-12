@@ -1,7 +1,7 @@
 // Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 // __mind_store_i64/i8/i16/i32, so every read of a store's result must be 0.
 // `junk` first dirties the stack so a stale result slot would be visible.
-// Shape: fn tail (the MIND-Lab `w_set` shape): exit 40.
+// Shape: fn tail (a `w_set`-style helper): exit 40.
 fn junk(a: i64, b: i64, c: i64) -> i64 {
     let x: i64 = a * 3;
     let y: i64 = x + b;
