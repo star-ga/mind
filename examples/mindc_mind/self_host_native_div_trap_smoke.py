@@ -182,6 +182,19 @@ USER_EXIT_PROGRAM = (
     "}\n"
 )
 
+# A program that defines its OWN MIND fn named `_exit` must still build and trap
+# with the documented status: the MLIR trampoline then exits through libc's C99
+# twin `_Exit` instead of declaring a second `_exit` symbol (or calling the
+# program's function). Exit 8 would mean the user's `_exit` ran instead.
+USER_MIND_EXIT_PROGRAM = (
+    "fn _exit(code: i64) -> i64 {\n    return code + 1;\n}\n"
+    "fn dv(a: i64, b: i64) -> i64 {\n    return a / b;\n}\n"
+    "fn main() -> i64 {\n"
+    "    let q: i64 = dv(7, 0);\n"
+    "    return _exit(q);\n"
+    "}\n"
+)
+
 
 # 64-bit unsigned division (W2-trap unsigned fence). The native emitter's only
 # division is the SIGNED trapping idiv, and its width lattice cannot tell u64 from
@@ -567,6 +580,14 @@ def main() -> int:
         ok = ok and good
         check(good, f"program declaring extern _exit, 7 / 0: "
               f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT}) [native: extern calls refused]")
+        elf = sh.elf(USER_MIND_EXIT_PROGRAM)
+        mbin, diag = mlir_binary(USER_MIND_EXIT_PROGRAM, d, "user_mind_exit")
+        gn = run(write_exec(d / "user_mind_exit.native.elf", elf), []) if elf else ("refused", b"")
+        gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-200:], b"")
+        good = gn == (TRAP_EXIT, b"") and gm == (TRAP_EXIT, b"")
+        ok = ok and good
+        check(good, f"program defining its own fn _exit, 7 / 0: native=(exit {gn[0]}) "
+              f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT})")
         for name, prog, mlir_want in U64_REFUSED + NARROW32_INLINE_REFUSED + NARROW_LEAVES_REFUSED:
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "u64")

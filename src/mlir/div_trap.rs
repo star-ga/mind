@@ -58,23 +58,45 @@ pub(super) fn append_trampoline(
     Ok(())
 }
 
-/// The W2-trap trampoline `llvm.func internal @__mind_div_trap()`, plus the
-/// `_exit` declaration it needs. When the program declares `extern "C" fn
-/// _exit` itself, that declaration (emitted from `extern_c_fns`, whose integer
-/// parameter may be widened to `i64`) is reused and the call is typed to match
-/// it; a declaration that does not take exactly one integer is refused rather
-/// than called with a guessed signature.
-fn trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> {
+/// The libc process-exit symbol the trampoline calls: `_exit`, or its C99 twin
+/// `_Exit` (same contract: no atexit handlers, no stdio flush) when the program
+/// defines its own MIND fn named `_exit` (a second `_exit` symbol would clash
+/// with it, and calling it would run the program's function instead of
+/// exiting). A program that defines both names is refused.
+fn exit_symbol(ctx: &LoweringContext) -> Result<&'static str, MlirLowerError> {
     #[cfg(feature = "std-surface")]
-    let user_decl = ctx.extern_c_fns.get("_exit");
+    let defines = |name: &str| ctx.defined_fns.contains(name);
     #[cfg(not(feature = "std-surface"))]
-    let user_decl: Option<&(Vec<String>, Option<String>)> = {
+    let defines = |_name: &str| {
         let _ = ctx;
-        None
+        false
     };
+    match (defines("_exit"), defines("_Exit")) {
+        (false, _) => Ok("_exit"),
+        (true, false) => Ok("_Exit"),
+        (true, true) => Err(MlirLowerError::ShapeError(
+            "the program defines functions named both `_exit` and `_Exit`; the integer \
+             division trap exits the process through one of these libc symbols"
+                .to_string(),
+        )),
+    }
+}
+
+/// The W2-trap trampoline `llvm.func internal @__mind_div_trap()`, plus the
+/// declaration of the exit symbol it needs ([`exit_symbol`]). When the program
+/// declares that symbol itself (`extern "C" fn _exit`), the declaration (emitted
+/// from `extern_c_fns`, whose integer parameter may be widened to `i64`) is
+/// reused and the call is typed to match it; a declaration that does not take
+/// exactly one integer is refused rather than called with a guessed signature.
+fn trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> {
+    let sym = exit_symbol(ctx)?;
+    #[cfg(feature = "std-surface")]
+    let user_decl = ctx.extern_c_fns.get(sym);
+    #[cfg(not(feature = "std-surface"))]
+    let user_decl: Option<&(Vec<String>, Option<String>)> = None;
     let (decl, param, ret) = match user_decl {
         None => (
-            "  llvm.func @_exit(i32)\n".to_string(),
+            format!("  llvm.func @{sym}(i32)\n"),
             "i32".to_string(),
             None,
         ),
@@ -83,8 +105,8 @@ fn trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> {
             let is_int = |t: &str| matches!(t, "i8" | "i16" | "i32" | "i64");
             if params.len() != 1 || !is_int(params[0].as_str()) {
                 return Err(MlirLowerError::ShapeError(format!(
-                    "the program declares `_exit` with parameters {params:?}; the integer \
-                     division trap calls `_exit(status)` and needs exactly one integer \
+                    "the program declares `{sym}` with parameters {params:?}; the integer \
+                     division trap calls `{sym}(status)` and needs exactly one integer \
                      parameter"
                 )));
             }
@@ -97,8 +119,8 @@ fn trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> {
         }
     };
     let call = match &ret {
-        None => format!("    llvm.call @_exit(%0) : ({param}) -> ()\n"),
-        Some(r) => format!("    %1 = llvm.call @_exit(%0) : ({param}) -> {r}\n"),
+        None => format!("    llvm.call @{sym}(%0) : ({param}) -> ()\n"),
+        Some(r) => format!("    %1 = llvm.call @{sym}(%0) : ({param}) -> {r}\n"),
     };
     Ok(format!(
         "{decl}  llvm.func internal @__mind_div_trap() {{\n    \
