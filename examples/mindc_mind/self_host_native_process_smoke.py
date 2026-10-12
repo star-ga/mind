@@ -116,23 +116,38 @@ CASES = {
     if nanosleep(p + 16, 0) != 0 - 22 { return 10; }
     return 0;
 }''', 0),
-    'directory_memfd': (c_string('path', b'.') + '''fn main() -> i64 {
+    'directory_memfd': (c_string('path', b'inside') + c_string('entry_path', b'entry-0000') + '''fn name_is(entry: i64, first: i64) -> i64 {
+    if __mind_load_i8(entry + 19) == first { return 1; }
+    return 0;
+}
+fn main() -> i64 {
     let fd: i64 = open(path(), 65536, 0);
     if fd < 0 { return 1; }
     if fchdir(fd) != 0 { return 2; }
+    let check: i64 = open(entry_path(), 0, 0);
+    if check < 0 { return 16; }
+    close(check);
     if fchdir(0 - 1) != 0 - 9 { return 3; }
     let d: i64 = fdopendir(fd);
     if d <= 0 { return 4; }
     let mut n: i64 = 0;
+    let mut dots: i64 = 0;
+    let mut files: i64 = 0;
     let mut entry: i64 = readdir(d);
     while entry > 0 {
         n = n + 1;
+        dots = dots + name_is(entry, 46);
+        files = files + name_is(entry, 101);
         entry = readdir(d);
     }
     if entry != 0 { return 5; }
     if n != 402 { return 6; }
+    if dots != 2 { return 17; }
+    if files != 400 { return 18; }
     if readdir(d) != 0 { return 7; }
     if closedir(d) != 0 { return 8; }
+    if closedir(0) != 0 - 9 { return 19; }
+    if readdir(0) != 0 - 9 { return 20; }
     if close(fd) != 0 - 9 { return 9; }
     if fdopendir(0 - 1) != 0 - 9 { return 10; }
     let mem: i64 = memfd_create(path(), 1);
@@ -185,8 +200,10 @@ def check(stage1, mindc, tmp):
                 work = tmp / (name + '-' + backend)
                 work.mkdir()
                 if name == 'directory_memfd':
+                    inside = work / 'inside'
+                    inside.mkdir()
                     for i in range(400):
-                        (work / f'entry-{i:04d}').write_bytes(b'')
+                        (inside / f'entry-{i:04d}').write_bytes(b'')
                 if name == 'exec_exit':
                     child_source = prefix + b'fn main() -> i64 { return 0; }\n'
                     child = work / 'child'
