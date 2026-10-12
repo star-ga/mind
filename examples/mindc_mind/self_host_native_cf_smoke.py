@@ -45,7 +45,9 @@ Steps
   3. capacity  giant functions (a 2500-arm else-if chain inside a loop;
                800- and 2800-statement straight-line let/if-return functions,
                the census X1 shape, past the mic@3 planner's old 512-record
-               table and the SSA path's 512-entry jump / let tables) must
+               table and the SSA path's 512-entry jump / let tables; 520
+               straight-line reassignments, 300 let/assign pairs and 600
+               reassignments in a loop body, past the 512-entry let-env) must
                compile and run correctly — never SIGSEGV.
                Bounded production profile: the compiler the frozen seed emits
                with the v2 layout header (768 MiB arena, 384 MiB stack), run
@@ -54,8 +56,16 @@ Steps
                cs_ucd_mask shape at 7x) and a comment-padded 1024-leaf tree;
                the HOME tables were sized from the source span and initialised
                one stack frame per slot, which overflowed the 384 MiB stack.
-               A function past the arena budget may be refused (rc 3), never
-               a signal.
+               A function past the arena budget, or a program past the stack
+               budget (a 65536-leaf, 18.8 MB tree), may be refused (rc 3),
+               never a signal; a 21 MB program with an unsupported construct
+               must be refused (rc 3): the refusal reporter's per-byte scan
+               overflowed the stack there. Both extremes also run through the
+               default-profile compiler (1 GiB arena / 4 GiB stack) and with the
+               UNSEEDED image (no std prefix, so no intrinsic literal in the
+               source: the trace-hash front end's per-byte source scan and copy
+               overflowed both stacks), plus a 1.96 MB unseeded tree that must
+               compile: success or rc 3, never a signal.
   4. refusal   a HOME-lowered function that takes an address refuses cleanly
                (rc 3, no ELF), never a crash.
   5. twin      with MINDC_SO set, the oracle .so's selftest_native_elf_stage
@@ -160,12 +170,11 @@ def capped():
     resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
 
 
-def native_bounded(stage1b, src: bytes, td: pathlib.Path):
+def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True):
     """Compile with the bounded compiler (v2 header, RLIMIT_AS 2 GiB) and run the
     program under the same cap. ('crash', signal) for a compiler killed by a
     signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF."""
-    comb = BLOB + src
-    img = v2_header() + struct.pack("<qq", len(BLOB), len(comb)) + comb
+    img = v2_header() + image(src, seeded)
     r = subprocess.run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
     if r.returncode < 0:
         return ("crash", -r.returncode)
@@ -335,6 +344,32 @@ def straight_line_program(blocks: int) -> tuple:
     return "\n".join(lines) + "\n", (sum(k * 3 + 1 for k in range(blocks)) % 251, b"")
 
 
+def reassign_program(n: int, shape: str) -> tuple:
+    """Census X1 let-env capacity: every parameter, `let` and reassignment of
+    the SSA path appends one entry to its 512-entry let-env, which had no bound
+    check — `n` straight-line reassignments (n >= 511), n let/assign pairs
+    (n >= 256) or n reassignments in a loop body overran it and segfaulted
+    stage1. Such a function must compile (HOME) and run correctly."""
+    lines = ["fn f(a: i64) -> i64 {", "    let mut s: i64 = a;"]
+    s, reps = 1, 1
+    if shape == "loop":
+        lines.append("    let mut i: i64 = 0;")
+        lines.append("    while i < 3 {")
+        reps = 3
+    for k in range(n):
+        if shape == "pairs":
+            lines += [f"    let x{k}: i64 = s + {k};", f"    s = x{k} % 1000;"]
+        else:
+            lines.append(f"    s = (s + {k}) % 1000;")
+    if shape == "loop":
+        lines += ["        i = i + 1;", "    }"]
+    lines += ["    s", "}", "fn main() -> i64 { f(1) % 251 }"]
+    for _ in range(reps):
+        for k in range(n):
+            s = (s + k) % 1000
+    return "\n".join(lines) + "\n", (s % 251, b"")
+
+
 def dense_tree_program(depth: int, pad: int = 0) -> tuple:
     """Census X1 shape at scale (MIND-Lab cs_ucd_mask is a 2006-node if/else tree
     over a code point): one function holding a balanced if/else tree of `depth`
@@ -386,15 +421,55 @@ def dense_tree_program(depth: int, pad: int = 0) -> tuple:
 
 
 def bounded_cases():
-    """(label, (source, expected), may_refuse) for the bounded production compiler.
+    """(label, (source, expected), may_refuse, seeded) for the bounded production compiler.
     Each must compile and run to the Python value; a may_refuse case may instead
     be refused cleanly (rc 3). A compiler killed by a signal is always a FAIL."""
     return [
         ("dense if/else tree, 2048 leaves (census X1 cs_ucd_mask shape at 7x)",
-         dense_tree_program(11), False),
+         dense_tree_program(11), False, True),
         ("dense if/else tree, 1024 leaves + 2600 comment lines in the body",
-         dense_tree_program(10, pad=2600), False),
+         dense_tree_program(10, pad=2600), False, True),
+    ] + extreme_cases()
+
+
+def extreme_cases():
+    """(label, (source, expected), may_refuse, seeded) whole-program extremes, run
+    in BOTH the default and the bounded profile: each must compile and run to the
+    Python value or be refused cleanly (rc 3); an expected ("refused", 3) must
+    refuse. Each SIGSEGVed stage1 before nb_stack_short, the halving
+    nb_region_has and the halving source scanners (census X1). The UNSEEDED image
+    (user_lo = 0, no std blob) matters: without the std prefix the source holds
+    no `__mind_alloc` / `__mind_store_i64` / `__mind_load_i64` literal, so the
+    trace-hash front end scanned (and copied) the whole source one stack frame
+    per byte (find_alloc_name_span: 1.57M frames at the bounded 384 MiB stack's
+    end on a 21 MB program, 3M+ frames on the 18.8 MB tree in the default
+    profile; a 1.96 MB tree already overflowed the bounded stack)."""
+    d16 = dense_tree_program(16)
+    pad = refused_padded_program(320000)
+    return [
+        # ~786k tokens (18.8 MB): past the bounded profile's whole-program stack
+        # budget (nb_stack_short); the front end's per-token walk overflowed the
+        # 384 MiB stack here (SIGSEGV), so that compiler must refuse it cleanly.
+        ("dense if/else tree, 65536 leaves (18.8 MB, past the bounded stack budget)",
+         d16, True, True),
+        ("dense if/else tree, 65536 leaves (18.8 MB), unseeded image", d16, True, False),
+        # A 21 MB program that is refused (a Tensor parameter, after 320k comment
+        # lines): the refusal reporter scanned the user region one stack frame
+        # per byte and overflowed the stack (SIGSEGV) instead of exiting rc 3.
+        ("21 MB comment-padded program with an unsupported construct (must refuse)",
+         pad, False, True),
+        ("21 MB comment-padded program with an unsupported construct, unseeded image (must refuse)",
+         pad, False, False),
+        # 8192 leaves (1.96 MB): fits every budget, so it must compile and run.
+        ("dense if/else tree, 8192 leaves (1.96 MB), unseeded image", dense_tree_program(13), False, False),
     ]
+
+
+def refused_padded_program(lines: int):
+    pad = "// padding comment line for the refusal reporter scan xxxxxxxxxxxx\n" * lines
+    src = ("fn main() -> i64 { return 0; }\n" + pad
+           + "fn sink(x: Tensor<f32, [4]>) -> i64 { return 0; }\n")
+    return src, ("refused", 3)
 
 
 REFUSE_ADDR = """fn f(n: i64) -> i64 {
@@ -514,6 +589,21 @@ def main() -> int:
             rep.check(got == sexp, f"giant straight-line fn ({blocks} x let/if-return/store = "
                                    f"{4 * blocks} statements): native={got} Python={sexp}")
 
+        for n, shape in ((520, "straight"), (300, "pairs"), (600, "loop")):
+            rsrc, rexp = reassign_program(n, shape)
+            got, _ = native(stage1, rsrc.encode(), td)
+            rep.check(got == rexp, f"let-env capacity ({n} {shape} reassignments, past the SSA "
+                                   f"path's 512-entry let-env): native={got} Python={rexp}")
+
+        for label, (xsrc, xexp), may_refuse, seeded in extreme_cases():
+            got, _ = native(stage1, xsrc.encode(), td, seeded)
+            if xexp[0] == "refused":
+                ok = got[:2] == xexp  # an expected clean refusal: rc 3, no ELF
+            else:
+                ok = got == xexp or (may_refuse and got[0] == "refused" and got[1] == 3)
+            rep.check(ok, f"default-profile {label} ({len(xsrc)} B): native={got[:2]} Python={xexp}"
+                          + (" (a clean rc-3 refusal is accepted)" if may_refuse else ""))
+
         print("[cf] capacity, bounded production profile (768 MiB arena / 384 MiB stack, "
               "RLIMIT_AS 2 GiB)")
         if a.stage1_bounded:
@@ -522,9 +612,12 @@ def main() -> int:
         else:
             stage1b = bfut.result()
             print(f"  stage1 (bounded) = frozen seed + v2 header -> this tree ({stage1b.stat().st_size} B)")
-        for label, (bsrc, bexp), may_refuse in bounded_cases():
-            got = native_bounded(stage1b, bsrc.encode(), td)
-            ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
+        for label, (bsrc, bexp), may_refuse, seeded in bounded_cases():
+            got = native_bounded(stage1b, bsrc.encode(), td, seeded)
+            if bexp[0] == "refused":
+                ok = got[:2] == bexp  # an expected clean refusal: rc 3, no ELF
+            else:
+                ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
             rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:2]} Python={bexp}"
                           + (" (a clean rc-3 refusal is accepted)" if may_refuse else ""))
 

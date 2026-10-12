@@ -19460,7 +19460,24 @@ pub fn load_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
 // first occurrence into the 2-i64 cell and return 1, else 0. Used so the
 // pre-fold's synthetic callee leaf carries a REAL source span (whose interned
 // bytes equal the oracle's "__mind_load_i64" string-table entry).
+// Census X1 capacity: a source without the `__mind_load_i64` literal (an unseeded or
+// giant program) was scanned one stack frame per byte, which overflowed the
+// native compiler's stack (SIGSEGV) on multi-MB sources. A range longer than
+// 4096 bytes is halved first; the left half also covers the 14 bytes past
+// `mid`, so it finds exactly the matches that START before `mid` and the
+// FIRST occurrence is still the one returned. Depth: log2(len / 4096) + 4096.
 pub fn find_load_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if len - i > 4096 {
+        let mid: i64 = i + (len - i) / 2;
+        if find_load_name_span(src, mid + 14, i, cell) == 1 {
+            return 1;
+        }
+        return find_load_name_span(src, len, mid, cell);
+    }
+    find_load_name_walk(src, len, i, cell)
+}
+
+pub fn find_load_name_walk(src: i64, len: i64, i: i64, cell: i64) -> i64 {
     if i + 15 > len {
         return 0;
     }
@@ -19469,7 +19486,7 @@ pub fn find_load_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
         __mind_store_i64(cell + 8, i + 15);
         return 1;
     }
-    find_load_name_span(src, len, i + 1, cell)
+    find_load_name_walk(src, len, i + 1, cell)
 }
 
 // Build a synthetic int-literal leaf carrying `value` DIRECTLY (no source decimal
@@ -20263,7 +20280,24 @@ pub fn alloc_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
     alloc_name_matches_at(src, at, j + 1)
 }
 
+// Census X1 capacity: a source without the `__mind_alloc` literal (an unseeded or
+// giant program) was scanned one stack frame per byte, which overflowed the
+// native compiler's stack (SIGSEGV) on multi-MB sources. A range longer than
+// 4096 bytes is halved first; the left half also covers the 11 bytes past
+// `mid`, so it finds exactly the matches that START before `mid` and the
+// FIRST occurrence is still the one returned. Depth: log2(len / 4096) + 4096.
 pub fn find_alloc_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if len - i > 4096 {
+        let mid: i64 = i + (len - i) / 2;
+        if find_alloc_name_span(src, mid + 11, i, cell) == 1 {
+            return 1;
+        }
+        return find_alloc_name_span(src, len, mid, cell);
+    }
+    find_alloc_name_walk(src, len, i, cell)
+}
+
+pub fn find_alloc_name_walk(src: i64, len: i64, i: i64, cell: i64) -> i64 {
     if i + 12 > len {
         return 0;
     }
@@ -20272,7 +20306,7 @@ pub fn find_alloc_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
         __mind_store_i64(cell + 8, i + 12);
         return 1;
     }
-    find_alloc_name_span(src, len, i + 1, cell)
+    find_alloc_name_walk(src, len, i + 1, cell)
 }
 
 // "__mind_store_i64" (16 bytes) per-index byte source.
@@ -20335,7 +20369,24 @@ pub fn store_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
     store_name_matches_at(src, at, j + 1)
 }
 
+// Census X1 capacity: a source without the `__mind_store_i64` literal (an unseeded or
+// giant program) was scanned one stack frame per byte, which overflowed the
+// native compiler's stack (SIGSEGV) on multi-MB sources. A range longer than
+// 4096 bytes is halved first; the left half also covers the 15 bytes past
+// `mid`, so it finds exactly the matches that START before `mid` and the
+// FIRST occurrence is still the one returned. Depth: log2(len / 4096) + 4096.
 pub fn find_store_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if len - i > 4096 {
+        let mid: i64 = i + (len - i) / 2;
+        if find_store_name_span(src, mid + 15, i, cell) == 1 {
+            return 1;
+        }
+        return find_store_name_span(src, len, mid, cell);
+    }
+    find_store_name_walk(src, len, i, cell)
+}
+
+pub fn find_store_name_walk(src: i64, len: i64, i: i64, cell: i64) -> i64 {
     if i + 16 > len {
         return 0;
     }
@@ -20344,16 +20395,26 @@ pub fn find_store_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
         __mind_store_i64(cell + 8, i + 16);
         return 1;
     }
-    find_store_name_span(src, len, i + 1, cell)
+    find_store_name_walk(src, len, i + 1, cell)
 }
 
 // Byte-copy src[0..n) into dst.
 pub fn nfn_copy_src_bytes(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    // Census X1 capacity: halve a long copy so the per-byte walk recurses at
+    // most 4096 deep (a multi-MB source overflowed the native stack here).
+    if n - i > 4096 {
+        let mid: i64 = i + (n - i) / 2;
+        let _lo: i64 = nfn_copy_src_bytes(dst, src, mid, i);
+        return nfn_copy_src_bytes(dst, src, n, mid);
+    }
+    nfn_copy_src_walk(dst, src, n, i)
+}
+pub fn nfn_copy_src_walk(dst: i64, src: i64, n: i64, i: i64) -> i64 {
     if i >= n {
         return n;
     }
     __mind_store_i8(dst + i, load_byte(src, i));
-    nfn_copy_src_bytes(dst, src, n, i + 1)
+    nfn_copy_src_walk(dst, src, n, i + 1)
 }
 
 // Write the 12-byte `__mind_alloc` literal at dst[0..12) using alloc_name_byte.
@@ -32394,6 +32455,28 @@ pub fn nb_arena_short(need: i64) -> i64 {
     }
     0
 }
+// Stack budget of the RUNNING native compiler for a whole program (census X1
+// capacity). The front end walks the token stream by recursion, one frame per
+// token: the deepest walk (const_find_from, 512-byte frames from token 0) was
+// measured at 512 B of stack per token on dense trees, the cf fixtures and the
+// self-host source alike, and a 786k-token program overflowed the bounded
+// compiler's 384 MiB stack (SIGSEGV). 1 iff `ntok` tokens at 640 B each (25%
+// margin) plus 16 MiB could overflow the stack: the published layout's stack,
+// floored at the bounded profile's 384 MiB as in nb_arena_short. The stage then
+// refuses the program (clean rc 3) before the front end runs. The .so has no
+// layout (4 GiB default) and refuses only past ~6.7M tokens.
+pub fn nb_stack_short(ntok: i64) -> i64 {
+    let own: i64 = nb_stack_bytes();
+    let cap: i64 = if own < 402653184 {
+        402653184
+    } else {
+        own
+    };
+    if ntok * 640 + 16777216 > cap {
+        return 1;
+    }
+    0
+}
 pub fn nb_stack_addr() -> i64 {
     // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + GUARD (default 0x1000)
     nb_arena_addr() + nb_arena_bytes() + nb_guard_bytes()
@@ -34510,8 +34593,18 @@ struct NbState {
 // heap-table word only — recording 64 emits no machine code, so every all-i64
 // module (all of main.mind) lowers byte-identically; the wrap fires only when a
 // consumer reads back a narrow width.
+// Census X1 capacity: the table's entry capacity is the lcell word at +112
+// (512 for the SSA tables, lcap + 1 for HOME's). A full table no longer
+// overruns: the bind is dropped, the count stays at the capacity and the fn is
+// poisoned (+80), so the SSA path retries it on HOME and HOME refuses it (rc 3).
+// Straight-line code with >= 511 reassignments overran the SSA path's 512-entry
+// table here and segfaulted stage1. Below the capacity nothing changes.
 pub fn nb_lets_bind(lets: i64, lcell: i64, name_lo: i64, name_hi: i64, slot: i64, slit_node: i64, width: i64) -> i64 {
     let n: i64 = __mind_load_i64(lcell);
+    if n >= __mind_load_i64(lcell + 112) {
+        __mind_store_i64(lcell + 80, 1);
+        return 0;
+    }
     __mind_store_i64(lets + (n * 5 + 0) * 8, name_lo);
     __mind_store_i64(lets + (n * 5 + 1) * 8, name_hi);
     __mind_store_i64(lets + (n * 5 + 2) * 8, slot);
@@ -43091,8 +43184,9 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(lcap * 5 * 8 + 40);
-    let lcell: i64 = __mind_alloc(112);
+    let lcell: i64 = __mind_alloc(120);
     __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 112, lcap + 1);
     __mind_store_i64(lcell + 104, rod);
     __mind_store_i64(lcell + 96, hc);
     __mind_store_i64(lcell + 88, atab);
@@ -43433,8 +43527,9 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // (string-literal slice): the count walk emits no bytes so it needs no rodata
     // channel, but a pre-walk that ALIASES a count cell as an emit lcell would read
     // +104 — store 0 here so any such read fail-closes (poison), never OOB garbage.
-    let clcell0: i64 = __mind_alloc(112);
+    let clcell0: i64 = __mind_alloc(120);
     __mind_store_i64(clcell0, 0);
+    __mind_store_i64(clcell0 + 112, 512);
     __mind_store_i64(clcell0 + 104, 0);
     __mind_store_i64(clcell0 + 96, 0);
     __mind_store_i64(clcell0 + 24, srt);
@@ -43458,6 +43553,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // CONST+ADD ids for a nonzero-offset field read must be counted into nslots).
     let _crp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, clets0, clcell0, 0);
     let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params, clets0, clcell0, srt);
+    // A full count-pass let-env (see nb_lets_bind) means binds were dropped and
+    // nslots is unreliable: poison, so nb_lower_fn_routed retries on HOME.
+    if __mind_load_i64(clcell0) >= 512 {
+        return nb_poison_state(ncalls0);
+    }
     // DTK SLICE 1 (#254): plan callee-saved reg homes for this fn. 0 (empty) for
     // every ineligible fn => every nb_val_* wrapper below falls through to the
     // stack scheme => bytes identical to pre-DTK. Reuses the already-built atab.
@@ -43543,7 +43643,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // there and builds the borrowed {rodata_va, len, 0} handle. 0 => no rodata
     // channel => a string literal fail-closes (poison). main.mind's native-emitted
     // source has no string literals, so this is inert during self-compile.
-    let lcell: i64 = __mind_alloc(112);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 104, rod);
     __mind_store_i64(lcell + 96, 0);
@@ -45048,7 +45149,8 @@ pub fn selftest_dtk_plan(src_addr: i64, src_len: i64, out_addr: i64) -> i64 {
     // nb_lower_fn path does — no behavior change, just a valid (non-null) table.
     let srt: i64 = srt_build_from_tokens(tokens, src_addr);
     let clets: i64 = __mind_alloc(512 * 5 * 8);
-    let clcell: i64 = __mind_alloc(104);
+    let clcell: i64 = __mind_alloc(120);
+    __mind_store_i64(clcell + 112, 512);
     let _zc: i64 = nb_dtk_zero(clcell, 13, 0);
     __mind_store_i64(clcell + 88, atab);
     let nslots: i64 = nb_count_stmts(n_params, src_addr, stmts_addr, stmts_len, 0, params_addr, n_params, clets, clcell, srt);
@@ -46098,6 +46200,9 @@ pub fn hm_route_cap() -> i64 {
 
 pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
+    if nb_stack_short(tok_count(tokens)) == 1 {
+        return es_new();
+    }
     let hslot: i64 = __mind_alloc(32);
     let route: i64 = __mind_alloc(hm_route_cap() * 8 + 16);
     __mind_store_i64(route, 0);
@@ -47516,7 +47621,8 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(104);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
     // returns -1 (spill) for every id, matching the stack-slot store/load these
@@ -47578,7 +47684,8 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(104);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
     // returns -1 (spill) for every id, matching the stack-slot store/load these
@@ -47648,7 +47755,8 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(104);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
     // returns -1 (spill) for every id, matching the stack-slot store/load these
@@ -47743,7 +47851,8 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(104);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
     // returns -1 (spill) for every id, matching the stack-slot store/load these
@@ -47920,7 +48029,8 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(104);
+    let lcell: i64 = __mind_alloc(120);
+    __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
     // returns -1 (spill) for every id, matching the stack-slot store/load these

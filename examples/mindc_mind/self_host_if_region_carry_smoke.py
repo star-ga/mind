@@ -339,8 +339,12 @@ def main() -> int:
                         exitw_ok += 1
                     else:
                         exitc_ok += 1
-                print(f"  {'PASS' if ok else 'FAIL'}  {group}: {label} "
-                      f"-> exit {rc} (python-ref {exp} -> byte {want})")
+                if ok:
+                    print(f"  PASS  {group}: {label} "
+                          f"-> exit {rc} (python-ref {exp} -> byte {want})")
+                else:
+                    print(f"  FAIL  {group}: {label} "
+                          f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
     if (loop_ok < len(CASES) or sl_ok < len(STRAIGHT)
             or exitc_ok < len(EXIT_CONTROLS) or fstore_ok < len(FIELD_STORE_CASES)

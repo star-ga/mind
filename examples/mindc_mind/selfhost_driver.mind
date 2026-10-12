@@ -53,18 +53,29 @@ pub fn nb_read_fully(fd: i64, buf: i64, want: i64, got: i64) -> i64 {
 // the whole-module native note emitter (selftest_native_elf_u) emits this form
 // but fail-closes on the `let mut`+`while`+early-return loop form (bisected
 // v2b FAIL / v3 EMIT_OK, 2026-08-14); the inner bytes_eq recurses only patlen
-// (<=8) deep. deferred: recursion depth == user-region length, so a very large
-// FAIL-CLOSING program could overflow the runtime stack (corpus programs are
-// small; the SUCCESS path never calls this) — upgrade path: teach the note
-// emitter the while form, or scan in bounded chunks.
+// (<=8) deep. A region longer than 4096 bytes is halved first (the halves
+// overlap by patlen - 1 bytes, so a match straddling the split is still found),
+// so the depth is log2(len / 4096) + 4096 frames, not len: a per-byte walk over
+// a multi-MB refused program overflowed the bounded compiler's stack (SIGSEGV
+// instead of the clean rc-3 refusal, census X1).
 pub fn nb_region_has(buf: i64, lo: i64, hi: i64, pat: i64, patlen: i64) -> i64 {
+    if hi - lo > 4096 {
+        let mid: i64 = lo + (hi - lo) / 2;
+        if nb_region_has(buf, lo, mid + patlen - 1, pat, patlen) == 1 {
+            return 1;
+        }
+        return nb_region_has(buf, mid, hi, pat, patlen);
+    }
+    nb_region_walk(buf, lo, hi, pat, patlen)
+}
+pub fn nb_region_walk(buf: i64, lo: i64, hi: i64, pat: i64, patlen: i64) -> i64 {
     if lo + patlen > hi {
         return 0;
     }
     if bytes_eq(buf, lo, lo + patlen, pat, 0, patlen) == 1 {
         return 1;
     }
-    nb_region_has(buf, lo + 1, hi, pat, patlen)
+    nb_region_walk(buf, lo + 1, hi, pat, patlen)
 }
 
 // RI-D1a pattern buffer for `Tensor<` (7 bytes).
