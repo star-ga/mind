@@ -28267,6 +28267,57 @@ pub fn eval_const_expr(node: i64, buf: i64) -> i64 {
     0
 }
 
+// W2-trap: 1 iff folding `node` with eval_const_expr never divides by zero and
+// never divides INT_MIN by -1. Those two quotients are the division trap
+// (docs/errors.md), so a compiler built with the trap would itself exit 79 inside
+// eval_const_expr, and the Rust oracle leaves such a division unfolded
+// (`div %a, %b`), which emit_bare_expr cannot print. lower_program and
+// lower_program_bimap refuse the module (es_refused) when this returns 0.
+pub fn const_expr_div_ok(node: i64, buf: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return const_expr_div_ok(ast_child0(node), buf);
+    }
+    if k != ast_binop() {
+        return 1;
+    }
+    if const_expr_div_ok(ast_child0(node), buf) == 0 {
+        return 0;
+    }
+    if const_expr_div_ok(ast_child1(node), buf) == 0 {
+        return 0;
+    }
+    if ast_aux(node) != op_div() {
+        return 1;
+    }
+    let r: i64 = eval_const_expr(ast_child1(node), buf);
+    if r == 0 {
+        return 0;
+    }
+    if r != 0 - 1 {
+        return 1;
+    }
+    let l: i64 = eval_const_expr(ast_child0(node), buf);
+    if l == 0 - 9223372036854775807 - 1 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff every bare top-level expression item folds without a trapping division.
+pub fn items_const_div_ok(buf: i64, items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 1;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if is_bare_expr_kind(ast_kind(item)) == 1 {
+        if const_expr_div_ok(item, buf) == 0 {
+            return 0;
+        }
+    }
+    items_const_div_ok(buf, items_addr, items_len, i + 1)
+}
+
 // Emit a bare top-level expression as one const-folded result:
 //   %<count-1> = const.i64 <val>
 //   output %<count-1>
@@ -28608,6 +28659,9 @@ pub fn lower_program_bimap(ast_addr: i64, buf: i64) -> EmitState {
     if bimap_items_valid(buf, items, n, 0) == 0 {
         return es_refused();
     }
+    if items_const_div_ok(buf, items, n, 0) == 0 {
+        return es_refused();
+    }
     let s0: EmitState = es_new();
     let s1: EmitState = emit_lit_module_open(s0);
     let s2: EmitState = emit_program_items_bimap(s1, buf, items, n, 0);
@@ -28654,6 +28708,9 @@ pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
     // none of which reach the parser fallback, so this never fires during
     // self-compile and the fixed point is unchanged.
     if nb_items_any_unsupported(items_addr, items_len, 0) == 1 {
+        return es_refused();
+    }
+    if items_const_div_ok(buf, items_addr, items_len, 0) == 0 {
         return es_refused();
     }
     let s0: EmitState = es_new();

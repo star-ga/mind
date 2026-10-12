@@ -33,6 +33,7 @@ Run:
 
 import pathlib
 import struct
+import subprocess
 import sys
 import tempfile
 
@@ -518,6 +519,73 @@ NARROW_LEAVES_REFUSED = [
 ]
 
 
+# The canary IR-text path (mindc_compile -> emit_bare_expr) folds a bare top-level
+# expression on the HOST with eval_const_expr. A fold that divides by zero or
+# divides INT_MIN by -1 would hit the division trap inside the compiler itself
+# (exit 79), and the Rust oracle leaves such a division unfolded, so the module
+# must be REFUSED (es_refused: next_id -1, no text). Each call runs in a child
+# process: a trap there must never take this smoke down with it. Non-trapping
+# folds are compared with live `mindc --emit-ir`.
+HOST_FOLD_REFUSED = [
+    "7 / 0",
+    "(0 - 9223372036854775807 - 1) / (0 - 1)",
+    "1 + 7 / (3 - 3)",
+    "(7 / 0) * 0",
+]
+HOST_FOLD_CONTROLS = [
+    "7 / 2",
+    "(0 - 9223372036854775807 - 1) / (0 - 2)",
+    "100 / 7 - 4",
+]
+_HOST_FOLD_CHILD = r"""
+import ctypes, sys
+lib = ctypes.CDLL(sys.argv[1]); src = sys.argv[2].encode()
+lib.mindc_compile.restype = ctypes.c_int64
+lib.mindc_compile.argtypes = [ctypes.c_int64, ctypes.c_int64]
+b = ctypes.create_string_buffer(src, len(src))
+es = lib.mindc_compile(ctypes.cast(b, ctypes.c_void_p).value, len(src))
+rd = lambda a, o=0: ctypes.cast(a + o, ctypes.POINTER(ctypes.c_int64))[0]
+buf = rd(es, 0)
+text = ctypes.string_at(rd(buf, 0), rd(buf, 8)) if buf and rd(buf, 8) > 0 else b""
+sys.stdout.write(str(rd(es, 8)) + "\n" + text.decode())
+"""
+
+
+def host_fold(so, src: str):
+    """(child exit, next_id or None, IR text) of mindc_compile(src) in a child."""
+    r = subprocess.run([sys.executable, "-c", _HOST_FOLD_CHILD, str(so), src],
+                       capture_output=True, text=True, timeout=120)
+    head, _, text = r.stdout.partition("\n")
+    return r.returncode, (int(head) if head.lstrip("-").isdigit() else None), text
+
+
+def rust_emit_ir(src: str, d: pathlib.Path) -> str:
+    p = d / "fold.mind"
+    p.write_text(src + "\n")
+    r = subprocess.run([str(mindc_bin()), str(p), "--emit-ir"], capture_output=True,
+                       text=True, timeout=120)
+    # `mindc --emit-ir` ends with one extra newline (as fixed_point_smoke.py normalizes)
+    return r.stdout.rstrip("\n") + "\n" if r.returncode == 0 else f"<mindc rc={r.returncode}>"
+
+
+def host_fold_checks(so, d: pathlib.Path) -> bool:
+    ok = True
+    for src in HOST_FOLD_REFUSED:
+        rc, nid, text = host_fold(so, src)
+        good = rc == 0 and nid == -1 and text == ""
+        ok = ok and good
+        check(good, f"host fold `{src}`: child exit {rc}, next_id {nid}, "
+              f"{len(text)}B text (expected exit 0, refusal next_id -1, no text)")
+    for src in HOST_FOLD_CONTROLS:
+        rc, nid, text = host_fold(so, src)
+        want = rust_emit_ir(src, d)
+        good = rc == 0 and text == want
+        ok = ok and good
+        check(good, f"host fold control `{src}`: child exit {rc}, next_id {nid}, "
+              f"text {'==' if text == want else '!='} live mindc --emit-ir")
+    return ok
+
+
 def main() -> int:
     so = resolve_so()
     sh = SelfHost(so)
@@ -604,11 +672,13 @@ def main() -> int:
             good = gn[0] == want_exit and gm[0] == want_exit
             ok = ok and good
             check(good, f"{name}: native=(exit {gn[0]}) mlir=(exit {gm[0]}) expected=(exit {want_exit})")
+        ok = host_fold_checks(so, d) and ok
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
               "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees, "
               "including call-result and struct-field operands; u64/usize, unbound i32/u32 "
-              "and mixed-type division refused natively)")
+              "and mixed-type division refused natively; a trapping host-side constant fold "
+              "is refused, never run)")
         return 0
     print("\nFAIL  div-trap smoke")
     return 1

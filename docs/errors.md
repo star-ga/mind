@@ -210,7 +210,11 @@ Scope: the trap is implemented by `mindc build` with the MLIR and native
 backends. Three other evaluators do not implement it yet: the tree-walking
 interpreter, the `--emit-mlir` text export (`src/eval/mlir_export.rs`, a bare
 `arith.divsi`), and compile-time constant evaluation (`src/opt/comptime.rs`,
-which refuses a zero divisor and folds `INT_MIN / -1` to `INT_MIN`).
+which refuses a zero divisor and folds `INT_MIN / -1` to `INT_MIN`). The
+pure-MIND compiler's IR-text path (`mindc_compile` in
+`examples/mindc_mind/main.mind`, which folds a bare top-level constant
+expression) refuses a module whose fold would divide by zero or divide
+`INT_MIN` by `-1`, rather than fold it.
 
 ## Native backend: `main` parameters
 
