@@ -36,6 +36,12 @@ Steps
                fed unseeded: they call no std function);
                native == Python == MLIR. An MLIR build failure is accepted only
                for the pinned "break/continue outside a loop" limitation.
+               A second, "shadow" profile (default seed 13 x 80) lets half of
+               the new bindings re-use a visible name, so lets shadow outer
+               variables and parameters inside loop bodies, if branches and
+               value-if branches; native == Python strictly, and MLIR may
+               differ only where a loop body re-binds a name (pinned:
+               mlir_shadow_exit_carry.mind).
   3. capacity  giant functions (a 2500-arm else-if chain inside a loop;
                800- and 2800-statement straight-line let/if-return functions,
                the census X1 shape, past the mic@3 planner's old 512-record
@@ -286,6 +292,8 @@ def main() -> int:
     ap.add_argument("--stage1", default=os.environ.get("CF_STAGE1"))
     ap.add_argument("--seeds", default="11,12")
     ap.add_argument("--count", type=int, default=160)
+    ap.add_argument("--shadow-seeds", default="13")
+    ap.add_argument("--shadow-count", type=int, default=80)
     ap.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
     mindc = os.environ.get("MINDC_BIN") or str(_REPO / "target" / "release" / "mindc")
@@ -322,7 +330,11 @@ def main() -> int:
         cases = []
         for sd in seeds:
             cases += [(n, s, e, ba, stage1, mindc) for n, s, e, ba in C.corpus(sd, a.count)]
-        print(f"[cf] corpus: {len(cases)} generated programs (seeds {seeds}), native vs MLIR vs Python")
+        shadow_seeds = [int(x) for x in a.shadow_seeds.split(",") if x]
+        for sd in shadow_seeds:
+            cases += [(n, s, e, ba, stage1, mindc) for n, s, e, ba in C.corpus(sd, a.shadow_count, "shadow")]
+        print(f"[cf] corpus: {len(cases)} generated programs (seeds {seeds} x {a.count}, shadow profile "
+              f"seeds {shadow_seeds} x {a.shadow_count}), native vs MLIR vs Python")
         st = {"three_way": 0, "native_eq_python_mlir_limit": 0, "native_eq_python_mlir_defect": 0}
         with ThreadPoolExecutor(a.jobs) as ex:
             for name, src, exp, ba, got, mres in ex.map(corpus_case, cases):
@@ -337,9 +349,11 @@ def main() -> int:
                         st["native_eq_python_mlir_limit"] += 1
                     continue
                 if mres != exp and ba:
-                    # pinned MLIR defect family (see _cf_corpus.has_branch_assign)
-                    rep.check(True, f"corpus {name}: native == Python {exp}; MLIR {mres} "
-                                    "(pinned: MLIR loses a value-if branch assignment)")
+                    # pinned MLIR defect families (see _cf_corpus.has_branch_assign
+                    # and, for the shadow profile, _cf_corpus.has_loop_shadow)
+                    why = ("MLIR loses a value-if branch assignment or carries a loop-body shadow"
+                           if name.startswith("cfshadow_") else "MLIR loses a value-if branch assignment")
+                    rep.check(True, f"corpus {name}: native == Python {exp}; MLIR {mres} (pinned: {why})")
                     st["native_eq_python_mlir_defect"] += 1
                     continue
                 if not rep.check(mres == exp, f"corpus {name}: native == MLIR == Python {exp}"
@@ -352,7 +366,7 @@ def main() -> int:
         print(f"  corpus: {st['three_way']} three-way equal (native == MLIR == Python), "
               f"{st['native_eq_python_mlir_limit']} native == Python where MLIR refuses "
               f"'{MLIR_LIMIT}', {st['native_eq_python_mlir_defect']} native == Python where MLIR "
-              f"loses a value-if branch assignment (pinned defect), "
+              f"hits a pinned defect (value-if branch assignment / loop-body shadow), "
               f"{len(cases) - sum(st.values())} divergent")
 
         print("[cf] capacity (census X1: giant function)")

@@ -70,6 +70,16 @@ class Gen:
         self.n += 1
         return f"{p}{self.n}"
 
+    def let_name(self, scope, p: str) -> str:
+        """Name for a new `let`: always fresh in the default profile (whose
+        random stream this never touches); in the "shadow" profile, half the
+        time a name already visible in `scope`, so the new binding shadows it
+        for the rest of its block (a loop body, an if branch, a value-if
+        branch, or the function body itself)."""
+        if self.profile == "shadow" and scope and self.r.random() < 0.5:
+            return self.r.choice(scope)
+        return self.fresh(p)
+
     # ---- expressions
     def expr(self, scope, d, fns):
         r = self.r
@@ -96,7 +106,7 @@ class Gen:
         ts, es = [], []
         sc_t, sc_e = list(scope), list(scope)
         if r.random() < 0.35:
-            t = self.fresh("t")
+            t = self.let_name(scope, "t")
             ts.append(("let", t, self.expr(scope, d - 1, fns)))
             sc_t.append(t)
         if r.random() < 0.25:
@@ -105,7 +115,7 @@ class Gen:
             # an assignment to an enclosing variable inside a value-if branch
             ts.append(("set", r.choice(self.muts), self.expr(sc_t, d - 1, fns)))
         if r.random() < 0.3:
-            e = self.fresh("e")
+            e = self.let_name(scope, "e")
             es.append(("let", e, self.expr(scope, d - 1, fns)))
             sc_e.append(e)
         if r.random() < 0.12:
@@ -169,7 +179,7 @@ class Gen:
         k = r.choice(kinds)
         ed = 2
         if k == "let":
-            return ("let", self.fresh("v"), self.expr(scope, ed, fns))
+            return ("let", self.let_name(scope, "v"), self.expr(scope, ed, fns))
         if k == "set":
             return ("set", r.choice(muts), self.expr(scope, ed, fns))
         if k == "out":
@@ -589,17 +599,84 @@ def has_branch_assign(prog) -> bool:
     return any(_stmts_branch_assign(body) for _, _, body in prog[0])
 
 
-def corpus(seed: int, count: int):
-    """`count` (name, source, expected, branch_assign) tuples; expected =
-    (exit, stdout); branch_assign = has_branch_assign(program)."""
+def _let_walk(stmts, seen, depth, hits):
+    """Record in `hits` every `let` (statement or value-if branch) that reuses a
+    name already bound earlier in the function while inside a `while` body."""
+    for st in stmts:
+        k = st[0]
+        if k == "let":
+            _let_walk_expr(st[2], seen, depth, hits)
+            if st[1] in seen and depth > 0:
+                hits.append(st[1])
+            seen.add(st[1])
+        elif k in ("set",):
+            _let_walk_expr(st[2], seen, depth, hits)
+        elif k in ("out", "ret"):
+            _let_walk_expr(st[1], seen, depth, hits)
+        elif k == "if":
+            _let_walk_if(st, seen, depth, hits)
+        elif k == "while":
+            _let_walk(st[4], seen, depth + 1, hits)
+
+
+def _let_walk_if(st, seen, depth, hits):
+    _let_walk(st[2], seen, depth, hits)
+    els = st[3]
+    if els is None:
+        return
+    if els[0] == "elif":
+        _let_walk_if(els[1], seen, depth, hits)
+    else:
+        _let_walk(els, seen, depth, hits)
+
+
+def _let_walk_expr(e, seen, depth, hits):
+    k = e[0]
+    if k == "bin":
+        _let_walk_expr(e[2], seen, depth, hits)
+        _let_walk_expr(e[3], seen, depth, hits)
+    elif k == "call":
+        for x in e[2]:
+            _let_walk_expr(x, seen, depth, hits)
+    elif k == "vif":
+        _let_walk(e[2], seen, depth, hits)
+        _let_walk(e[4], seen, depth, hits)
+    elif k == "vifd":
+        _let_walk(e[4], seen, depth, hits)
+
+
+def has_loop_shadow(prog) -> bool:
+    """True when a `let` inside a loop body re-binds a name bound before it in
+    the same function (a parameter or an earlier `let`) - an over-approximation
+    of "shadows an outer variable inside a loop".
+
+    The MLIR backend carries the SHADOWING binding, not the outer variable, out
+    of a block that holds the shadow and leaves the loop iteration through
+    `continue` or `break` (pinned by mlir_shadow_exit_carry.mind). MIND scopes
+    the shadow to its block: the interpreter and the native backend agree. The
+    smoke gates such programs on native == Python and reports MLIR separately."""
+    for _, params, body in prog[0]:
+        hits = []
+        _let_walk(body, set(params), 0, hits)
+        if hits:
+            return True
+    return False
+
+
+def corpus(seed: int, count: int, profile: str = "mix"):
+    """`count` (name, source, expected, mlir_pinned) tuples; expected =
+    (exit, stdout); mlir_pinned = has_branch_assign(program), or, in the
+    "shadow" profile, has_loop_shadow(program)."""
     out = []
     i = 0
+    tag = "cf" if profile == "mix" else f"cf{profile}"
     while len(out) < count:
-        g = Gen(seed * 1000003 + i)
+        g = Gen(seed * 1000003 + i, profile)
         prog = g.program()
         i += 1
         exp = run_program(prog)
         if exp is None or len(exp[1]) > 4000:
             continue
-        out.append((f"cf_{seed}_{i - 1}", render(prog), exp, has_branch_assign(prog)))
+        pinned = has_branch_assign(prog) or (profile == "shadow" and has_loop_shadow(prog))
+        out.append((f"{tag}_{seed}_{i - 1}", render(prog), exp, pinned))
     return out
