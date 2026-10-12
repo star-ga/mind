@@ -89,14 +89,124 @@ fn captured_import_targets_from_map(
     )
 }
 
-/// Resolve a bare imported function using the current module's captured
-/// imports. A single imported owner wins over unimported siblings; multiple
-/// owners or a missing imported symbol return `None` so the checker refuses
-/// the unresolved/ambiguous spelling before native lowering.
-pub(crate) fn lookup_visible_fn(
+/// `std.posix` publishes libc names (`open`, `close`, `umask`, …). Those
+/// names are visible only to a file that imports `std.posix` (or to
+/// `std.posix` itself). Every other file keeps the pre-posix resolution:
+/// its own `extern "C"` declaration is the callee.
+const IMPORT_SCOPED_MODULE: &str = "std.posix";
+
+thread_local! {
+    /// Modules whose exports the file currently being checked imported by
+    /// path. Independent of the captured import map: std imports are dropped
+    /// from that map because the seed blob satisfies them.
+    static ADMITTED_IMPORT_SCOPED: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    /// `extern "C"` names declared in the file currently being checked.
+    /// They hide a same-named import-scoped export for the whole check, so
+    /// the call stays on the extern lowering path.
+    static LOCAL_EXTERN_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+}
+
+pub(crate) fn is_import_scoped_module(module: &str) -> bool {
+    module == IMPORT_SCOPED_MODULE
+}
+
+fn admitted_import_scoped(module: &str) -> bool {
+    ADMITTED_IMPORT_SCOPED.with(|cell| cell.borrow().contains(module))
+}
+
+fn local_extern_hides(name: &str) -> bool {
+    LOCAL_EXTERN_NAMES.with(|cell| cell.borrow().contains(name))
+}
+
+/// Whether `module`'s bare exports may satisfy a lookup in `owner`.
+/// Import-scoped modules are excluded from the legacy whole-table set
+/// unless this file imported them, the captured map names them, or the
+/// file being checked is that module.
+fn bare_module_visible(
+    module: &str,
+    owner: Option<&str>,
+    captured: &Option<BTreeSet<String>>,
+) -> bool {
+    if is_import_scoped_module(module) {
+        return owner == Some(module)
+            || captured
+                .as_ref()
+                .is_some_and(|targets| targets.contains(module))
+            || admitted_import_scoped(module);
+    }
+    captured
+        .as_ref()
+        .is_none_or(|targets| targets.contains(module))
+}
+
+fn collect_file_scope(
+    items: &[crate::ast::Node],
+    admitted: &mut BTreeSet<String>,
+    externs: &mut BTreeSet<String>,
+) {
+    for item in items {
+        match item {
+            crate::ast::Node::Import { path, .. } => {
+                let joined = path.join(".");
+                if is_import_scoped_module(&joined) {
+                    admitted.insert(joined);
+                }
+            }
+            crate::ast::Node::ExternBlock { fns, .. } => {
+                for function in fns {
+                    externs.insert(function.name.clone());
+                }
+            }
+            crate::ast::Node::Block { stmts, .. } => {
+                collect_file_scope(stmts, admitted, externs);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Installs the file-local import admission and extern-name set for one
+/// check or lower, and restores the previous sets on drop.
+pub(crate) struct FileScopeGuard {
+    previous_admitted: BTreeSet<String>,
+    previous_externs: BTreeSet<String>,
+}
+
+impl FileScopeGuard {
+    pub(crate) fn install(items: &[crate::ast::Node]) -> Self {
+        let mut admitted = BTreeSet::new();
+        let mut externs = BTreeSet::new();
+        collect_file_scope(items, &mut admitted, &mut externs);
+        let previous_admitted = ADMITTED_IMPORT_SCOPED.with(|cell| cell.replace(admitted));
+        let previous_externs = LOCAL_EXTERN_NAMES.with(|cell| cell.replace(externs));
+        Self {
+            previous_admitted,
+            previous_externs,
+        }
+    }
+}
+
+impl Drop for FileScopeGuard {
+    fn drop(&mut self) {
+        ADMITTED_IMPORT_SCOPED.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_admitted);
+        });
+        LOCAL_EXTERN_NAMES.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_externs);
+        });
+    }
+}
+
+/// The defining module and signature of a bare name visible to `owner`.
+/// A local `extern "C"` hides the name. The current module's own export
+/// wins over an import.
+fn resolve_visible(
     owner: Option<&str>,
     name: &str,
-) -> Option<super::module_table::ExportedFn> {
+) -> Option<(String, super::module_table::ExportedFn)> {
+    if local_extern_hides(name) {
+        return None;
+    }
     ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
         let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
         ACTIVE.with(|active| {
@@ -104,16 +214,15 @@ pub(crate) fn lookup_visible_fn(
             let table = table.as_ref()?;
             let candidates = table.exported_fn_candidate_refs(name);
             if let Some(owner) = owner {
-                if let Some((_, function)) = candidates.iter().find(|(module, _)| *module == owner)
+                if let Some((module, function)) =
+                    candidates.iter().find(|(module, _)| *module == owner)
                 {
-                    return Some((*function).clone());
+                    return Some(((*module).to_string(), (*function).clone()));
                 }
             }
-            let mut selected = candidates.iter().filter(|(module, _)| {
-                captured
-                    .as_ref()
-                    .is_none_or(|targets| targets.contains(*module))
-            });
+            let mut selected = candidates
+                .iter()
+                .filter(|(module, _)| bare_module_visible(module, owner, &captured));
             let first = selected.next()?;
             if selected.next().is_some() {
                 // Explicit multi-file checking historically exposed one
@@ -125,9 +234,35 @@ pub(crate) fn lookup_visible_fn(
                     return None;
                 }
             }
-            Some(first.1.clone())
+            Some((first.0.to_string(), first.1.clone()))
         })
     })
+}
+
+/// Linker symbol for a call or definition that resolved to `std.posix`.
+/// The source name stays `close`; the object symbol is `mind_posix_close`
+/// so it cannot interpose libc when the same program also has
+/// `extern "C" { fn close... }`.
+pub(crate) fn link_name(owner: Option<&str>, name: &str) -> String {
+    match resolve_visible(owner, name) {
+        Some((module, _)) if is_import_scoped_module(&module) => {
+            format!("mind_posix_{name}")
+        }
+        _ => name.to_string(),
+    }
+}
+
+/// Resolve a bare imported function using the current module's captured
+/// imports. A single imported owner wins over unimported siblings; multiple
+/// owners or a missing imported symbol return `None` so the checker refuses
+/// the unresolved/ambiguous spelling before native lowering.
+/// A name declared `extern "C"` in the current file resolves to that
+/// declaration, never to an import-scoped std export of the same name.
+pub(crate) fn lookup_visible_fn(
+    owner: Option<&str>,
+    name: &str,
+) -> Option<super::module_table::ExportedFn> {
+    resolve_visible(owner, name).map(|(_, function)| function)
 }
 
 /// Return all typed function signatures visible to the current module. This
@@ -144,6 +279,9 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
             let mut by_name: BTreeMap<String, Vec<(&str, &super::module_table::ExportedFn)>> =
                 BTreeMap::new();
             for (module, function) in table.all_exported_fn_refs() {
+                if local_extern_hides(&function.name) {
+                    continue;
+                }
                 by_name
                     .entry(function.name.clone())
                     .or_default()
@@ -159,11 +297,9 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
                             return Some((*function).clone());
                         }
                     }
-                    let mut selected = candidates.iter().filter(|(module, _)| {
-                        captured
-                            .as_ref()
-                            .is_none_or(|targets| targets.contains(*module))
-                    });
+                    let mut selected = candidates
+                        .iter()
+                        .filter(|(module, _)| bare_module_visible(module, owner, &captured));
                     let first = selected.next()?;
                     if selected.next().is_some() {
                         (captured.is_none()
@@ -182,6 +318,9 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
 /// Imported owners are authoritative when present; otherwise the legacy
 /// whole-project metadata surface remains available only for one owner.
 pub(crate) fn symbol_visible(owner: Option<&str>, name: &str) -> bool {
+    if local_extern_hides(name) {
+        return false;
+    }
     ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
         let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
         ACTIVE.with(|active| {
@@ -192,11 +331,7 @@ pub(crate) fn symbol_visible(owner: Option<&str>, name: &str) -> bool {
             let mut selected = table
                 .exported_symbol_candidate_refs(name)
                 .into_iter()
-                .filter(|module| {
-                    captured
-                        .as_ref()
-                        .is_none_or(|targets| targets.contains(*module))
-                });
+                .filter(|module| bare_module_visible(module, owner, &captured));
             selected.next().is_some() && selected.next().is_none()
         })
     })
@@ -259,10 +394,7 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
             };
             let mut counts = BTreeMap::<String, u8>::new();
             for (module, name) in table.all_exported_symbol_refs() {
-                if captured
-                    .as_ref()
-                    .is_some_and(|targets| !targets.contains(module))
-                {
+                if local_extern_hides(name) || !bare_module_visible(module, owner, &captured) {
                     continue;
                 }
                 let count = counts.entry(name.to_owned()).or_default();
