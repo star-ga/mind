@@ -1071,10 +1071,14 @@ jobs:
         # `mindc build --backend native` with that stage1 (the proven shadows are
         # admitted and exit with the model's value) and with the embedded seed
         # (unmarked: still refused, native.block_shadow / loop_body_shadow).
+        # A stage1 build plus ~400 compiles and ~180 bridge builds measured 635 s on
+        # a loaded 12-core host, so run_gate gets 1800 s instead of its 900 s default
+        # and the step's timeout-minutes is the binding limit.
+        timeout-minutes: 35
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
-            python3 scripts/run_gate.py --min-asserted 20 \
+            python3 scripts/run_gate.py --min-asserted 20 --timeout 1800 \
               examples/mindc_mind/self_host_native_shadow_scope_smoke.py --bridge
         working-directory: ${{ github.workspace }}
 
