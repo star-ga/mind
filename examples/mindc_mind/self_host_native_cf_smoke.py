@@ -590,7 +590,7 @@ def main() -> int:
         rep = Report()
         with tempfile.TemporaryDirectory() as tdn:
             harness_checks(rep, a.jobs, pathlib.Path(tdn))
-        print(f"\nSDLC-GATE self_host_native_cf harness ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
+        print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
         print("FAIL" if rep.fails else "ALL PASS  (harness self-checks)")
         return 1 if rep.fails else 0
     mindc = os.environ.get("MINDC_BIN") or str(_REPO / "target" / "release" / "mindc")
