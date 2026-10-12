@@ -1252,7 +1252,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // only when this module imports std.posix, and a local extern name is
     // left to ExternFnDecl. Must be installed before `visible_fns` runs.
     #[cfg(feature = "cross-module-imports")]
-    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(&module.items);
+    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     // PURE-SCALAR FAST LANE. For a module whose every item passes
     // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
     // `1 + 2 * 3 - 4 / 2`) AND an empty whole-project registry, every setup
@@ -8081,10 +8081,24 @@ pub(super) fn lower_expr_inner(
             let name = {
                 let mut linked_name =
                     try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
-                let linked = crate::project::active_module_table::link_name(
-                    crate::qualified_enums::current_module_path().as_deref(),
-                    &linked_name,
-                );
+                let qualified_posix =
+                    crate::project::active_module_table::is_qualified_posix_call(*span);
+                let linked = if qualified_posix {
+                    format!("mind_posix_{linked_name}")
+                } else {
+                    crate::project::active_module_table::link_name(
+                        crate::qualified_enums::current_module_path().as_deref(),
+                        &linked_name,
+                    )
+                };
+                if qualified_posix {
+                    if let Some(sig) =
+                        crate::project::active_module_table::qualified_import_fn(*span, callee)
+                    {
+                        ir.fn_signatures
+                            .insert(linked.clone(), (sig.param_types, sig.ret_type));
+                    }
+                }
                 if linked != linked_name {
                     if let Some(sig) = ir.fn_signatures.get(&linked_name).cloned() {
                         ir.fn_signatures.entry(linked.clone()).or_insert(sig);

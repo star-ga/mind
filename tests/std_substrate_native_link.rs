@@ -627,6 +627,7 @@ fn extern_close_wins_beside_std_posix_import() {
 /// Importing the wrapper calls std.posix, which returns -errno (-EBADF),
 /// not libc's -1.
 #[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn import_std_posix_close_returns_raw_errno() {
     let main = "import std.posix;\nfn main() -> i64 {\n    if close(0 - 1) != 0 - 9 {\n        return 1;\n    }\n    return 0;\n}\n";
     let Some(code) = build_and_run("std_posix_import_close", &[("main.mind", main)]) else {
@@ -637,6 +638,7 @@ fn import_std_posix_close_returns_raw_errno() {
 
 /// A file that does import std.posix can call the wrapper.
 #[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn import_std_posix_getuid_is_callable() {
     let main = "import std.posix;\nfn main() -> i64 {\n    let a: i64 = getuid();\n    let b: i64 = getuid();\n    if a != b {\n        return 1;\n    }\n    if a < 0 {\n        return 2;\n    }\n    return 0;\n}\n";
     let Some(code) = build_and_run("std_posix_import_getuid", &[("main.mind", main)]) else {
@@ -653,4 +655,27 @@ fn import_std_iouring_compiles() {
         return;
     };
     assert_eq!(code, 0);
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn qualified_posix_call_keeps_its_owner_beside_local_extern() {
+    for (index, qualifier) in ["posix.close", "px.close", "std.posix.close", "posix::close"]
+        .iter()
+        .enumerate()
+    {
+        let main = format!(
+            "import std.posix as px;\nextern \"C\" {{ unsafe fn close(fd: i32) -> i32; }}\nfn main() -> i64 {{\n    if {qualifier}(0 - 1) != 0 - 9 {{ return 1; }}\n    if close((0 - 1) as i32) != 0 - 1 {{ return 2; }}\n    return 0;\n}}\n"
+        );
+        let Some(code) = build_and_run(
+            &format!("std_posix_qualified_extern_{index}"),
+            &[("main.mind", &main)],
+        ) else {
+            return;
+        };
+        assert_eq!(
+            code, 0,
+            "qualified {qualifier} uses std.posix; bare close uses libc"
+        );
+    }
 }

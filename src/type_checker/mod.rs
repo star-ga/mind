@@ -4504,7 +4504,7 @@ pub fn check_module_types_in_file(
     // module imports them, and a local extern name never does. Body
     // recursion goes through `_impl`, so this guard covers the walk.
     #[cfg(feature = "cross-module-imports")]
-    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(&module.items);
+    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]

@@ -104,6 +104,7 @@ thread_local! {
     /// They hide a same-named import-scoped export for the whole check, so
     /// the call stays on the extern lowering path.
     static LOCAL_EXTERN_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    static QUALIFIED_POSIX_CALLS: RefCell<BTreeSet<(usize, usize)>> = const { RefCell::new(BTreeSet::new()) };
 }
 
 pub(crate) fn is_import_scoped_module(module: &str) -> bool {
@@ -143,11 +144,22 @@ fn collect_file_scope(
     items: &[crate::ast::Node],
     admitted: &mut BTreeSet<String>,
     externs: &mut BTreeSet<String>,
+    qualifiers: &mut BTreeMap<String, BTreeSet<String>>,
 ) {
     for item in items {
         match item {
-            crate::ast::Node::Import { path, .. } => {
+            crate::ast::Node::Import { path, alias, .. } => {
                 let joined = path.join(".");
+                qualifiers
+                    .entry(joined.clone())
+                    .or_default()
+                    .insert(joined.clone());
+                for qualifier in path.last().into_iter().chain(alias.iter()) {
+                    qualifiers
+                        .entry(qualifier.clone())
+                        .or_default()
+                        .insert(joined.clone());
+                }
                 if is_import_scoped_module(&joined) {
                     admitted.insert(joined);
                 }
@@ -158,7 +170,7 @@ fn collect_file_scope(
                 }
             }
             crate::ast::Node::Block { stmts, .. } => {
-                collect_file_scope(stmts, admitted, externs);
+                collect_file_scope(stmts, admitted, externs, qualifiers);
             }
             _ => {}
         }
@@ -170,24 +182,43 @@ fn collect_file_scope(
 pub(crate) struct FileScopeGuard {
     previous_admitted: BTreeSet<String>,
     previous_externs: BTreeSet<String>,
+    previous_qualified: BTreeSet<(usize, usize)>,
 }
 
 impl FileScopeGuard {
-    pub(crate) fn install(items: &[crate::ast::Node]) -> Self {
+    pub(crate) fn install(module: &crate::ast::Module) -> Self {
         let mut admitted = BTreeSet::new();
         let mut externs = BTreeSet::new();
-        collect_file_scope(items, &mut admitted, &mut externs);
+        let mut qualifiers = BTreeMap::new();
+        collect_file_scope(&module.items, &mut admitted, &mut externs, &mut qualifiers);
+        // The parser folds a qualified call to its bare member. Retain its
+        // recorded qualifier so a same-named local extern hides only bare calls.
+        let qualified = module
+            .spelling
+            .call_qualifiers
+            .iter()
+            .filter_map(|(span, qualifier)| {
+                let targets = qualifiers.get(&qualifier.replace("::", "."))?;
+                (targets.len() == 1 && targets.contains(IMPORT_SCOPED_MODULE))
+                    .then_some((span.start(), span.end()))
+            })
+            .collect();
+        let previous_qualified = QUALIFIED_POSIX_CALLS.with(|cell| cell.replace(qualified));
         let previous_admitted = ADMITTED_IMPORT_SCOPED.with(|cell| cell.replace(admitted));
         let previous_externs = LOCAL_EXTERN_NAMES.with(|cell| cell.replace(externs));
         Self {
             previous_admitted,
             previous_externs,
+            previous_qualified,
         }
     }
 }
 
 impl Drop for FileScopeGuard {
     fn drop(&mut self) {
+        QUALIFIED_POSIX_CALLS.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_qualified);
+        });
         ADMITTED_IMPORT_SCOPED.with(|cell| {
             *cell.borrow_mut() = std::mem::take(&mut self.previous_admitted);
         });
@@ -345,7 +376,14 @@ pub(crate) fn current_symbol_exported(name: &str) -> bool {
     )
 }
 
+pub(crate) fn is_qualified_posix_call(span: crate::ast::Span) -> bool {
+    QUALIFIED_POSIX_CALLS.with(|cell| cell.borrow().contains(&(span.start(), span.end())))
+}
+
 fn qualified_import_target(span: crate::ast::Span, name: &str, is_call: bool) -> Option<String> {
+    if is_call && is_qualified_posix_call(span) {
+        return Some(IMPORT_SCOPED_MODULE.to_string());
+    }
     let owner = crate::qualified_enums::current_module_path()?;
     ACTIVE_QUALIFIED_IMPORTS.with(|refs| {
         refs.borrow()
