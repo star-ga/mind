@@ -33198,52 +33198,11 @@ pub fn nrw_field_name_scan(srt: i64, buf: i64, frt: i64, lo: i64, hi: i64, k: i6
     nrw_field_name_scan(srt, buf, frt, lo, hi, k, j + 1, acc)
 }
 
-// Wrap a struct-field value in place before it is stored. `fw` is the field's
-// declared narrow code (0 for a wide field). Only an arithmetic value or an
-// integer literal is wrapped (`S { v: 300 }` on a u8 field stores 44, as MLIR
-// does): each lowers to its own fresh temporary, never a named binding, so the
-// in-place wrap aliases nothing and consumes no id. A narrow field wraps by its
-// own width; a wide field keeps the i32/u32 rule of nb_wrap_bound32. Every
-// other value (a name, call, cast or field read) already holds a value of its
-// own declared type.
-pub fn nb_wrap_bound_w(st: NbState, node: i64, fw: i64, lcell: i64) -> NbState {
-    if fw == 0 {
-        return nb_wrap_bound32(st, node, lcell);
-    }
-    let vk: i64 = nb_strip_paren_kind(node);
-    if vk != ast_binop() {
-        if vk != ast_int_lit() {
-            return st;
-        }
-    }
-    let plan: i64 = __mind_load_i64(lcell + 96);
-    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
-    let c2: String = nb_wrap_rax_w(c1, fw);
-    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
-    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
-}
-
 pub fn nb_strip_paren_kind(node: i64) -> i64 {
     if ast_kind(node) == ast_paren() {
         return nb_strip_paren_kind(ast_child0(node));
     }
     ast_kind(node)
-}
-
-// Wrap the value `st.last_id` (the lowered `node`) in place to its i32/u32 width
-// when nb_bound32_code says it is unwrapped. The slot is the binop's own fresh
-// temporary, never a named binding, so the in-place wrap aliases nothing and
-// consumes no id. Every other value passes through with no bytes emitted.
-pub fn nb_wrap_bound32(st: NbState, node: i64, lcell: i64) -> NbState {
-    let w: i64 = nb_bound32_code(node);
-    if w == 0 {
-        return st;
-    }
-    let plan: i64 = __mind_load_i64(lcell + 96);
-    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
-    let c2: String = nb_wrap_rax_w(c1, w);
-    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
-    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
 }
 
 // w when it is an 8- or 16-bit narrow code (+-8, +-16), else 0.
@@ -35138,6 +35097,52 @@ struct NbState {
     next_id: i64,
     last_id: i64,
     ncalls: i64,
+}
+
+// nb_wrap_bound_w / nb_wrap_bound32 read fields of an NbState parameter, so
+// they sit after the struct declaration (the Rust mic@3 lowering resolves a
+// struct parameter's field reads only once the struct is declared; see the
+// nb_deref_store note above).
+
+// Wrap a struct-field value in place before it is stored. `fw` is the field's
+// declared narrow code (0 for a wide field). Only an arithmetic value or an
+// integer literal is wrapped (`S { v: 300 }` on a u8 field stores 44, as MLIR
+// does): each lowers to its own fresh temporary, never a named binding, so the
+// in-place wrap aliases nothing and consumes no id. A narrow field wraps by its
+// own width; a wide field keeps the i32/u32 rule of nb_wrap_bound32. Every
+// other value (a name, call, cast or field read) already holds a value of its
+// own declared type.
+pub fn nb_wrap_bound_w(st: NbState, node: i64, fw: i64, lcell: i64) -> NbState {
+    if fw == 0 {
+        return nb_wrap_bound32(st, node, lcell);
+    }
+    let vk: i64 = nb_strip_paren_kind(node);
+    if vk != ast_binop() {
+        if vk != ast_int_lit() {
+            return st;
+        }
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
+    let c2: String = nb_wrap_rax_w(c1, fw);
+    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
+    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// Wrap the value `st.last_id` (the lowered `node`) in place to its i32/u32 width
+// when nb_bound32_code says it is unwrapped. The slot is the binop's own fresh
+// temporary, never a named binding, so the in-place wrap aliases nothing and
+// consumes no id. Every other value passes through with no bytes emitted.
+pub fn nb_wrap_bound32(st: NbState, node: i64, lcell: i64) -> NbState {
+    let w: i64 = nb_bound32_code(node);
+    if w == 0 {
+        return st;
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
+    let c2: String = nb_wrap_rax_w(c1, w);
+    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
+    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
 }
 
 // ---- native let-env (name span -> frame slot) ----

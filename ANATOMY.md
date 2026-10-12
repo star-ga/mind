@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 2005 | **Est. tokens:** ~3,785,930
-**Generated:** 2026-10-10 18:34 UTC
+**Generated:** 2026-10-12 07:43 UTC
 
 ## Token Budget Guide
 
@@ -680,7 +680,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — 3ee71d7d56e549e32cad80c8dd2f04bcbb642e893d335075b745e42b4220ba8c
+- `_ref_main.note` (~16 tok, tiny) — 67959411be956b8bcfef10d02247958d0386a419cd55e493f23227a3eacccfdd
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
