@@ -645,8 +645,9 @@ strongest single argument for unification:
 | `src/opt/fold.rs` (unwired) | refuse to fold | **would panic** |
 
 Nine implementations, **eight distinct answer-pairs**. Exactly one pair —
-`(0, INT_MIN)` — is the sanctioned contract, and only the two code generators
-hold it. One is target-defined, which is a determinism leak by itself. Two of
+trap with exit status 79 for both (docs/errors.md, "Integer division trap";
+it superseded the earlier `(0, INT_MIN)` contract) — is the sanctioned
+contract, and only the two code generators hold it. One is target-defined, which is a determinism leak by itself. Two of
 them (engines 6 and 7) crash the **shipped compiler process** on an operation
 MIND defines as total; a third crash sits in the unwired folder and a fourth in
 the fuzzer's oracle, hidden only because its generator forces divisors non-zero.

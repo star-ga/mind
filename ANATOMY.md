@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2005 | **Est. tokens:** ~3,787,406
-**Generated:** 2026-10-12 14:33 UTC
+**Files:** 2005 | **Est. tokens:** ~3,787,434
+**Generated:** 2026-10-12 14:42 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~112,794 |
+| `docs/` | 38 | ~112,822 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -459,7 +459,7 @@
 ### `docs/`
 
 - `determinism.md` (~4495 tok, huge) — The Determinism Contract
-- `ENGINE_CONSUMER_LIST.md` (~9538 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
+- `ENGINE_CONSUMER_LIST.md` (~9566 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
 - `errors.md` (~3110 tok, huge) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
