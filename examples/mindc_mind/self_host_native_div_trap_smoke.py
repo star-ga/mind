@@ -519,6 +519,75 @@ NARROW_LEAVES_REFUSED = [
 ]
 
 
+# Verifier round 4: narrow operands built from shifts and bitwise ops. A shift
+# result has its LEFT operand's type (Rust's infer_narrow_arith_ty): an 8/16-bit
+# shift masks its count to width-1 and wraps its result, arithmetic over it wraps
+# to that width, and `& | ^` are width-neutral (arithmetic over two neutral or
+# wide operands is not wrapped). Expected exits come from the wrapping model;
+# both backends must give them. Before the fix the native image left
+# `(a << 1) + 200` on u8 unwrapped (exit 3 where the model and MLIR give 0).
+def _sb(sig: str, body: str, args: str) -> str:
+    return (f"fn f({sig}) -> i64 {{\n    return {body};\n}}\n"
+            f"fn main() -> i64 {{\n    return f({args});\n}}\n")
+
+
+def _u(v: int, w: int) -> int:
+    return _wrapw(v, w, False)
+
+
+def _s(v: int, w: int) -> int:
+    return _wrapw(v, w, True)
+
+
+SHIFT_BITWISE = [
+    ("u8 ((a << 1) + 200) % 11",
+     _sb("a: u8", "(((a << 1) + 200) % 11) as i64", "200"), _u(_u(200 << 1, 8) + 200, 8) % 11),
+    ("u16 ((a >> 1) - 40000) % 13",
+     _sb("a: u16", "(((a >> 1) - 40000) % 13) as i64 & 255", "65535"),
+     (_u((65535 >> 1) - 40000, 16) % 13) & 255),
+    ("i8 ((a << 2) * (b << 1)) / 5",
+     _sb("a: i8, b: i8", "(((a << 2) * (b << 1)) / 5) as i64 & 255", "100, 50"),
+     _tdiv(_s(_s(100 << 2, 8) * _s(50 << 1, 8), 8), 5) & 255),
+    ("i16 ((a >> 1) * (b >> 1)) % 1000 wraps the product",
+     _sb("a: i16, b: i16", "(((a >> 1) * (b >> 1)) % 1000) as i64 & 255", "32767, 0 - 32768"),
+     (_s((32767 >> 1) * (-32768 >> 1), 16) - _tdiv(_s((32767 >> 1) * (-32768 >> 1), 16), 1000) * 1000) & 255),
+    ("u8 count 9 is masked to 1: (a << c) % 11",
+     _sb("a: u8, c: u8", "((a << c) % 11) as i64", "200, 9"), _u(200 << (9 & 7), 8) % 11),
+    ("i16 count 17 is masked to 1: (a >> c) / 3",
+     _sb("a: i16, c: i16", "((a >> c) / 3) as i64 & 255", "0 - 32768, 17"),
+     _tdiv(-32768 >> (17 & 15), 3) & 255),
+    ("u8 ((a ^ b) + a) % 11 wraps",
+     _sb("a: u8, b: u8", "(((a ^ b) + a) % 11) as i64", "200, 100"), _u((200 ^ 100) + 200, 8) % 11),
+    ("u8 ((a & 15) - 7) % 11 stays wide",
+     _sb("a: u8", "(((a & 15) - 7) % 11) as i64 & 255", "196"),
+     ((196 & 15) - 7 - _tdiv((196 & 15) - 7, 11) * 11) & 255),
+    ("u16 ((a | 1) * (b | 1)) / 7 stays wide",
+     _sb("a: u16, b: u16", "(((a | 1) * (b | 1)) / 7) as i64 & 255", "65535, 300"),
+     _tdiv((65535 | 1) * (300 | 1), 7) & 255),
+    ("i64 shift keeps u8 arithmetic wide",
+     _sb("w: i64, a: u8", "((w << 1) + a) % 11", "200, 100"), (400 + 100) % 11),
+    ("u32 (b >> 1) % 11 builds",
+     _sb("b: u32", "((b >> 1) % 11) as i64", "4294967295"), (4294967295 >> 1) % 11),
+]
+
+# i32/u32 values that reach arithmetic inside a division operand through a shift
+# or a bitwise op are unbound 32-bit arithmetic (MLIR evaluates it at 32 bits
+# from parameters, at 64 bits from locals), and an i32/u32 `>>` count that is not
+# a literal below 32 is masked to 31 by MLIR at 32 bits but to 63 natively: the
+# native backend refuses. MLIR exit for the parameter form given.
+SHIFT_BITWISE_REFUSED = [
+    ("u32 ((b >> 1) - 7) % 11 over a param",
+     _sb("b: u32", "(((b >> 1) - 7) % 11) as i64", "5"), _u((5 >> 1) - 7, 32) % 11),
+    ("u32 ((a & 15) - 7) % 11 over a param",
+     _sb("a: u32", "(((a & 15) - 7) % 11) as i64", "5"), _u((5 & 15) - 7, 32) % 11),
+    ("i32 ((a >> 1) * (b >> 1)) / 11 over params",
+     _sb("a: i32, b: i32", "(((a >> 1) * (b >> 1)) / 11) as i64 & 255", "2147483647, 2147483647"),
+     _tdiv(_s((2147483647 >> 1) * (2147483647 >> 1), 32), 11) & 255),
+    ("u32 (b >> c) % 11 with a variable count",
+     _sb("b: u32, c: u32", "((b >> c) % 11) as i64", "4294967295, 33"), (4294967295 >> (33 & 31)) % 11),
+]
+
+
 # The canary IR-text path (mindc_compile -> emit_bare_expr) folds a bare top-level
 # expression on the HOST with eval_const_expr. A fold that divides by zero or
 # divides INT_MIN by -1 would hit the division trap inside the compiler itself
@@ -656,7 +725,8 @@ def main() -> int:
         ok = ok and good
         check(good, f"program defining its own fn _exit, 7 / 0: native=(exit {gn[0]}) "
               f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT})")
-        for name, prog, mlir_want in U64_REFUSED + NARROW32_INLINE_REFUSED + NARROW_LEAVES_REFUSED:
+        for name, prog, mlir_want in (U64_REFUSED + NARROW32_INLINE_REFUSED + NARROW_LEAVES_REFUSED
+                                      + SHIFT_BITWISE_REFUSED):
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "u64")
             gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
@@ -664,7 +734,8 @@ def main() -> int:
             ok = ok and good
             check(good, f"{name}: native image {len(elf)}B (expected 0B refusal), "
                   f"mlir=(exit {gm[0]}) expected mlir=(exit {mlir_want})")
-        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED + NARROW_WRAP + NARROW_LEAVES:
+        for name, prog, want_exit in (U64_NOT_FENCED + NARROW_UNSIGNED + NARROW_WRAP + NARROW_LEAVES
+                                      + SHIFT_BITWISE):
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "unsigned")
             gn = run(write_exec(d / "unsigned.native.elf", elf), []) if elf else ("refused", b"")
@@ -676,7 +747,7 @@ def main() -> int:
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
               "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees, "
-              "including call-result and struct-field operands; u64/usize, unbound i32/u32 "
+              "including call-result, struct-field, shift and bitwise operands; u64/usize, unbound i32/u32 "
               "and mixed-type division refused natively; a trapping host-side constant fold "
               "is refused, never run)")
         return 0

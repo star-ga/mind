@@ -2739,6 +2739,34 @@ pub fn alias_join_narrow_code(left: i64, right: i64, op: i64) -> i64 {
     64
 }
 
+// The lattice code the annotation pass caches on a binop. Arithmetic joins its
+// operands (alias_join_narrow_code). A shift result carries its LEFT operand's
+// type, as in Rust's infer_narrow_arith_ty: an 8/16-bit left keeps its code (so
+// `(a << 1) + 200` on u8 is re-masked like any u8 arithmetic) and a wide left
+// keeps the result wide. An i32/u32 or literal left stays neutral, as before:
+// Rust types those shifts outside this lattice, so the mic@3 lowering of i32/u32
+// shifts is unchanged, and the native division check reads their 32-bit type
+// through nb_div_bits32_code instead. `& | ^` and comparisons are neutral.
+pub fn alias_binop_lattice_code(lw: i64, rw: i64, op: i64) -> i64 {
+    if op == op_shl() {
+        return alias_shift_lattice_code(lw);
+    }
+    if op == op_shr() {
+        return alias_shift_lattice_code(lw);
+    }
+    alias_join_narrow_code(lw, rw, op)
+}
+
+pub fn alias_shift_lattice_code(lw: i64) -> i64 {
+    if nb_narrow_8_16(lw) != 0 {
+        return lw;
+    }
+    if lw == 64 {
+        return 64;
+    }
+    0
+}
+
 pub fn flatten_narrow_binop_result(op: i64, left: i64, right: i64, root: i64, nodes: i64, cursor: i64) -> i64 {
     let lw: i64 = cached_narrow_expr_code(left);
     let rw: i64 = cached_narrow_expr_code(right);
@@ -32685,6 +32713,53 @@ pub fn nb_binop_narrow_code(node: i64, op: i64) -> i64 {
     0
 }
 
+// The width (8 or 16) whose count mask a `<<` or `>>` uses, or 0. Rust masks the
+// count of a shift whose LEFT operand is an 8/16-bit narrow value to width-1
+// (`1u8 << 9` shifts by 1) and leaves every other shift to the 64-bit `& 63`
+// rule; the native shift follows the same cached left-operand type.
+pub fn nb_shift_count_width(node: i64, op: i64) -> i64 {
+    if op != op_shl() {
+        if op != op_shr() {
+            return 0;
+        }
+    }
+    let w: i64 = nb_narrow_8_16(cached_narrow_expr_code(ast_child0(node)));
+    if w < 0 {
+        return 0 - w;
+    }
+    w
+}
+
+// nb_val_arith_rax, except that a shift with a nonzero count width `cw`
+// (nb_shift_count_width) masks its count to cw-1 first:
+//   mov rcx,[rbp+disp32] = 48 8B 8D <disp32> ; and ecx,imm8 = 83 E1 <cw-1> ;
+//   shl rax,cl = 48 D3 E0 | sar rax,cl = 48 D3 F8
+// The result of an 8/16-bit `>>` then stays in range; a `<<` result is wrapped by
+// nb_binop_narrow_code. A shift count is never register-homed (the DTK
+// whitelist refuses shifts); if one ever were, the fn is refused (fail-closed).
+pub fn nb_val_arith_shift_rax(plan: i64, id: i64, code: String, op: i64, lcell: i64, cw: i64) -> String {
+    if cw == 0 {
+        return nb_val_arith_rax(plan, id, code, op, lcell);
+    }
+    if nb_plan_reg(plan, id) >= 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    let s1: String = nb_push(code, 72);
+    let s2: String = nb_push(s1, 139);
+    let s3: String = nb_push(s2, 141);
+    let s4: String = nb_i32le_signed(s3, nb_slot_disp(id));
+    let m1: String = nb_push(s4, 131);
+    let m2: String = nb_push(m1, 225);
+    let m3: String = nb_push(m2, cw - 1);
+    let s5: String = nb_push(m3, 72);
+    let s6: String = nb_push(s5, 211);
+    if op == op_shl() {
+        return nb_push(s6, 224);
+    }
+    nb_push(s6, 248)
+}
+
 // +-32 when `node` (parens stripped) is an i32/u32 `+ - * / % <<` result: that
 // arithmetic is evaluated at 64 bits (nb_binop_narrow_code) and must be wrapped
 // where it is bound. Bindings that know their declared width (let, assign,
@@ -33027,6 +33102,9 @@ pub fn nb_div_inner_exact(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
         if nb_bound32_code(node) != 0 {
             return 0;
         }
+        if nb_div_bits32_inexact(node, buf) == 1 {
+            return 0;
+        }
         if nb_div_inner_exact(ast_child0(node), buf, lets, lcell) == 0 {
             return 0;
         }
@@ -33046,6 +33124,124 @@ pub fn nb_div_inner_exact(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
         return nb_div_inner_exact(ast_child0(node), buf, lets, lcell);
     }
     nb_div_leaf_exact(node, buf, lets, lcell)
+}
+
+// 1 when a binop inside a division operand reaches an i32/u32 value through
+// `& | ^ << >>`, where the cached lattice (nb_bound32_code) does not see it:
+//  - arithmetic over such an operand (`(b >> 1) - 7`, `(a & 15) - 7` on u32):
+//    MLIR evaluates it at 32 bits from parameters and at 64 bits from locals,
+//    like any unbound i32/u32 arithmetic;
+//  - a `>>` of such a value whose count is not a literal below 32: MLIR masks
+//    an i32 count to 31 and an i64 count to 63, the native shift masks to 63.
+// A bitwise result of in-range i32/u32 operands is itself in range, so it is
+// exact as an operand of its own.
+pub fn nb_div_bits32_inexact(node: i64, buf: i64) -> i64 {
+    let op: i64 = ast_aux(node);
+    if alias_is_arith_op(op) == 1 {
+        if nb_div_bits32_code(ast_child0(node)) != 0 {
+            return 1;
+        }
+        if nb_div_bits32_code(ast_child1(node)) != 0 {
+            return 1;
+        }
+        return 0;
+    }
+    if op == op_shr() {
+        if nb_div_bits32_code(ast_child0(node)) != 0 {
+            if nb_div_count_below_32(ast_child1(node), buf) == 0 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// +-32 when `node` (parens stripped) is an i32/u32 value or a `& | ^ << >>`
+// combination of one (a shift's type is its left operand's), else 0.
+pub fn nb_div_bits32_code(node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    if k == ast_binop() {
+        let op: i64 = ast_aux(node);
+        if op == op_shl() {
+            return nb_div_bits32_code(ast_child0(node));
+        }
+        if op == op_shr() {
+            return nb_div_bits32_code(ast_child0(node));
+        }
+        if nb_div_is_bitwise(op) == 1 {
+            let lc: i64 = nb_div_bits32_code(ast_child0(node));
+            if lc != 0 {
+                return lc;
+            }
+            return nb_div_bits32_code(ast_child1(node));
+        }
+        return nb_div_w32_or_zero(__mind_load_i64(node + 56));
+    }
+    if k == ast_ident() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_cast() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_call() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_neg() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    if k == ast_not() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    0
+}
+
+pub fn nb_div_w32_or_zero(c: i64) -> i64 {
+    if nb_div_is_w32(c) == 1 {
+        return c;
+    }
+    0
+}
+
+pub fn nb_div_is_bitwise(op: i64) -> i64 {
+    if op == op_bitand() {
+        return 1;
+    }
+    if op == op_bitor() {
+        return 1;
+    }
+    if op == op_bitxor() {
+        return 1;
+    }
+    0
+}
+
+// 1 iff `node` (parens stripped) is a decimal literal from 0 to 31.
+pub fn nb_div_count_below_32(node: i64, buf: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_div_count_below_32(ast_child0(node), buf);
+    }
+    if ast_kind(node) != ast_int_lit() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if nb_div_all_digits(buf, lo, hi) == 0 {
+        return 0;
+    }
+    if hi - lo == 1 {
+        return 1;
+    }
+    if hi - lo != 2 {
+        return 0;
+    }
+    let v: i64 = (load_byte(buf, lo) - 48) * 10 + (load_byte(buf, lo + 1) - 48);
+    if v < 32 {
+        return 1;
+    }
+    0
 }
 
 // A leaf used inside unbound arithmetic. Identifiers, literals and 8/16-bit call
@@ -36420,7 +36616,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c2: String = if setcc >= 0 {
             nb_val_cmp_rax(dplan, rhs_id, c1, setcc)
         } else {
-            nb_val_arith_rax(dplan, rhs_id, c1, op, lcell)
+            nb_val_arith_shift_rax(dplan, rhs_id, c1, op, lcell, nb_shift_count_width(node, op))
         };
         // W2-trap narrow lattice: an arithmetic result of narrow type is wrapped
         // to its width before it is stored (the native twin of the mic@3
@@ -48699,7 +48895,7 @@ pub fn alias_annotate_call_expr(src: i64, aliases: i64, frt: i64, env: i64, node
         if rw == alias_env_refusal() {
             return alias_env_refusal();
         }
-        let w: i64 = alias_join_narrow_code(lw, rw, ast_aux(node));
+        let w: i64 = alias_binop_lattice_code(lw, rw, ast_aux(node));
         __mind_store_i64(node + 56, w);
         return w;
     }
