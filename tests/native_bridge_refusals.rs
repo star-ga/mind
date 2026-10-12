@@ -325,3 +325,192 @@ fn a_struct_sharing_a_name_with_an_enum_still_builds() {
         assert_native_result(&p, &bytes.expect("artifact"), want, name);
     }
 }
+
+/// A value reaching a slot declared `f64` (a `let` annotation, a parameter, a
+/// return type) that is not PROVEN an f64 built natively and ran on its raw bits:
+/// `let x: f64 = __mind_load_i64(p); return x;` exits 0 natively and 7 under MLIR,
+/// and an i64 struct field read into an `f64` let likewise. The rest were
+/// refused by the MLIR type checker (E2015 / E2027 / E2010) yet built natively.
+/// A `let` annotation never reaches the IR, so the operand proof could not see any
+/// of them; the bridge now refuses each by name before the frozen compiler runs.
+#[test]
+fn a_value_not_proven_f64_reaching_an_f64_slot_is_refused() {
+    for (name, src) in [
+        (
+            "f64_launder_ret",
+            "fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 7); \
+             let x: f64 = __mind_load_i64(p); return x; }\n",
+        ),
+        (
+            "f64_let_operand",
+            "fn main() -> i64 { let a: i64 = 4621819117588971520; let p: i64 = __mind_alloc(8); \
+             __mind_store_i64(p, a); let x: f64 = a; if x > 5.0 { return 1; } return 2; }\n",
+        ),
+        (
+            "f64_param_wrap",
+            "fn big(x: f64) -> i64 { if x > 5.0 { return 1; } return 2; }\n\
+             fn w(a: i64) -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); \
+             return big(a); }\nfn main() -> i64 { return w(4621819117588971520); }\n",
+        ),
+        (
+            "f64_ret_operand",
+            "fn g(a: i64) -> f64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); \
+             return a; }\nfn main() -> i64 { if g(4621819117588971520) > 5.0 { return 1; } \
+             return 2; }\n",
+        ),
+        (
+            "f64_launder_i64_param",
+            "fn g(y: i64) -> i64 { if y > 5 { return 1; } return 2; }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 7); \
+             let x: f64 = __mind_load_i64(p); return g(x); }\n",
+        ),
+        (
+            "f64_from_i64_field",
+            "struct S { v: i64 }\nfn main() -> i64 { let s = S { v: 7 }; let x: f64 = s.v; \
+             return x; }\n",
+        ),
+        (
+            "f64_param_int_literal",
+            "fn big(x: f64) -> i64 { if x > 5.0 { return 1; } return 2; }\n\
+             fn main() -> i64 { return big(7); }\n",
+        ),
+    ] {
+        assert_refused(name, src, "type.f64_slot_unproven");
+    }
+}
+
+/// The other direction: a value proven an f64 reaching a slot declared otherwise.
+/// Each built natively (`fn f() -> i64 { let x: f64 = 2.5; return x; }` exits 0)
+/// where the MLIR backend refuses the program (E2015 / E2027 / an `mlir-opt`
+/// return-type error).
+#[test]
+fn an_f64_value_reaching_a_non_f64_slot_is_refused() {
+    for (name, src) in [
+        (
+            "f64_into_i64_ret",
+            "fn f() -> i64 { let x: f64 = 2.5; return x; }\nfn main() -> i64 { return f(); }\n",
+        ),
+        (
+            "f64_into_i64_let",
+            "fn main() -> i64 { let b: f64 = 2.5; let a: i64 = b; return a; }\n",
+        ),
+        (
+            "f64_into_i64_param",
+            "fn g(y: i64) -> i64 { if y > 5 { return 1; } return 2; }\n\
+             fn main() -> i64 { return g(2.5); }\n",
+        ),
+        (
+            // `x` is declared i64 and, shadowed in a block, f64: the write must
+            // satisfy both (native 2, MLIR refuses).
+            "f64_shadow_assign",
+            "fn main() -> i64 { let mut x: i64 = 1; if x == 1 { let mut x: f64 = 1.0; } \
+             x = 2.5; return x; }\n",
+        ),
+        // An f64 that is not a PROVEN one (an `if` / `match` value, a name bound to
+        // one) reaching an i64 slot: native exits 1 / 1 / 1 / 0, MLIR refuses all.
+        (
+            "f64_if_into_i64_let",
+            "fn main() -> i64 { let c: i64 = 1; \
+             let a: i64 = if c == 1 { 1.5 } else { 2.5 }; return a; }\n",
+        ),
+        (
+            "f64_match_into_i64_let",
+            "fn main() -> i64 { let c: i64 = 1; \
+             let a: i64 = match c { 1 => 1.5, _ => 2.5 }; return a; }\n",
+        ),
+        (
+            "f64_if_name_into_i64_let",
+            "fn main() -> i64 { let c: i64 = 1; let y = if c == 1 { 1.5 } else { 2.5 }; \
+             let a: i64 = y; return a; }\n",
+        ),
+        (
+            "f64_if_name_into_i64_ret",
+            "fn g(c: i64) -> i64 { let y = if c == 1 { 1.5 } else { 2.5 }; return y; }\n\
+             fn main() -> i64 { return g(1); }\n",
+        ),
+        (
+            // No declared return type: the slot is i64 (native 0; `mlir-opt`
+            // refuses `return` of an f64 from an i64 function).
+            "f64_into_unannotated_ret",
+            "fn h() { return 1.5; }\nfn main() -> i64 { let a: i64 = h(); return a; }\n",
+        ),
+    ] {
+        assert_refused(name, src, "type.f64_value_in_non_f64_slot");
+    }
+}
+
+/// Positive control: an `f64` slot fed a proven f64 (a float literal, float
+/// arithmetic, an `f64` binding, including an unannotated `let` of a float
+/// literal, a call returning `f64`, a trailing float expression) still builds
+/// and returns what the MLIR backend returns (measured on both).
+#[test]
+fn a_proven_f64_slot_still_builds() {
+    for (name, src, want) in [
+        (
+            "f64_ok_param",
+            "fn k(x: f64, y: f64) -> i64 { if x < y { return 1; } return 2; }\n\
+             fn main() -> i64 { let a: f64 = 1.5; let b: f64 = a * 2.0; \
+             return k(a, b) + k(3.0, 0.0 - 1.0); }\n",
+            3,
+        ),
+        (
+            "f64_ok_ret",
+            "fn h(x: f64) -> f64 { return x * 2.0; }\n\
+             fn main() -> i64 { let a: f64 = h(1.5); if a > 2.5 { return 4; } return 5; }\n",
+            4,
+        ),
+        (
+            "f64_ok_untyped",
+            "fn k(x: f64) -> i64 { if x > 1.0 { return 1; } return 2; }\n\
+             fn main() -> i64 { let a = 1.5; return k(a); }\n",
+            1,
+        ),
+        (
+            "f64_ok_tail",
+            "fn h(x: f64) -> f64 { x * 2.0 }\n\
+             fn main() -> i64 { if h(1.5) > 2.5 { return 4; } return 5; }\n",
+            4,
+        ),
+    ] {
+        let p = Project::new(name);
+        p.write("src/main.mind", src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_native_result(&p, &bytes.expect("artifact"), want, name);
+    }
+}
+
+/// `bool` is the i64 truthiness encoding on both backends (`true`/`false` parse as
+/// 1 / 0), so a bool slot fed an i64 needs no slot proof: an i64 variable (one also
+/// an intrinsic operand), the literal 256 and an i64 returned from a `-> bool`
+/// function all read as true natively and under MLIR (measured: 1, 1, 1 on both).
+#[test]
+fn a_bool_slot_fed_an_i64_matches_the_mlir_result() {
+    for (name, src, want) in [
+        (
+            "bool_param_intr_operand",
+            "fn f(b: bool) -> i64 { if b { return 1; } return 2; }\n\
+             fn main() -> i64 { let a: i64 = 2; let p: i64 = __mind_alloc(8); \
+             __mind_store_i64(p, a); return f(a); }\n",
+            1,
+        ),
+        (
+            "bool_param_lit",
+            "fn f(b: bool) -> i64 { if b { return 1; } return 2; }\n\
+             fn main() -> i64 { return f(256); }\n",
+            1,
+        ),
+        (
+            "bool_ret_i64var",
+            "fn g() -> bool { let a: i64 = 256; return a; }\n\
+             fn main() -> i64 { let b = g(); if b { return 1; } return 2; }\n",
+            1,
+        ),
+    ] {
+        let p = Project::new(name);
+        p.write("src/main.mind", src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_native_result(&p, &bytes.expect("artifact"), want, name);
+    }
+}

@@ -18,6 +18,8 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
+mod float_slots;
+#[cfg(feature = "std-surface")]
 mod linkage;
 #[cfg(feature = "std-surface")]
 use linkage::{admit_linked_program, fence_std_seed_fn, std_seed_for_linkage};
@@ -390,6 +392,17 @@ pub fn run_native_backend_bridge_profile(
              (out-of-profile construct: {}).\n  Rerun with `--backend mlir` for the \
              full surface. This is a refusal, not a fallback.",
             paths[0], rejection.construct
+        );
+        process::exit(3);
+    }
+
+    // A declared f64 slot: a `let` annotation never reaches the IR
+    // (float_slots.rs).
+    if let Err(r) = float_slots::admit_f64_slots(&merged_ast) {
+        eprintln!(
+            "error[backend-native]: `{}` is not in the frozen native profile \
+             (out-of-profile construct: {}): {}.\n  Rerun with `--backend mlir`.",
+            paths[0], r.construct, r.detail
         );
         process::exit(3);
     }

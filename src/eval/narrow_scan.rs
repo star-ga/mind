@@ -90,6 +90,26 @@ fn is_non_i64_integer_scalar(leaf: TypeLeaf<'_>) -> bool {
     }
 }
 
+/// A SCALAR floating-point type of any width. Tensor element dtypes are not counted.
+#[cfg(feature = "std-surface")]
+fn is_float_scalar(leaf: TypeLeaf<'_>) -> bool {
+    match leaf {
+        TypeLeaf::Scalar(n) => {
+            n == "f64" || n == "F64" || is_non_f64_float_scalar(TypeLeaf::Scalar(n))
+        }
+        TypeLeaf::TensorDtype(_) => false,
+    }
+}
+
+/// `true` when `ty` names a scalar float anywhere inside it (an element, a tuple
+/// member, a generic argument, a pointee, a fn-pointer signature). Tensor element
+/// dtypes are not counted. The native bridge uses it to refuse an f64 held in an
+/// aggregate, where no slot-by-slot proof is made.
+#[cfg(feature = "std-surface")]
+pub(crate) fn type_mentions_float(ty: &TypeAnn) -> bool {
+    ty_mentions(is_float_scalar, ty)
+}
+
 /// A SCALAR floating-point type other than `f64`. Tensor element dtypes are not
 /// counted: a tensor is out of the frozen profile on its own, and the refusal
 /// should name the tensor rather than its element type.

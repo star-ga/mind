@@ -37,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a function body, including two different function bodies) is refused
   (`closure.duplicate_struct`) instead of crashing the frozen compiler with SIGSEGV.
   The MLIR backend still builds the function-scoped shapes.
+- A slot declared `f64` (a `let` annotation, an assignment to such a binding, a
+  parameter, a return type including a trailing expression, a struct field, a
+  `const`) must receive a value proven to be an f64: a float literal, an `as f64`, a
+  name every binding of which is an f64, float arithmetic over those, or a call to a
+  function declared to return `f64`; anything else is refused
+  (`type.f64_slot_unproven`). `let x: f64 = __mind_load_i64(p); return x;` exited 0
+  natively and 7 under MLIR, an `i64` struct field read into an `f64` let likewise, and
+  an integer reaching an `f64` let, parameter or return built natively where MLIR
+  refuses it (E2015 / E2027 / E2010). A value that may be an f64 (a float literal, an
+  f64 name, an `if` / `match` / tuple value with an f64 part, an f64 field read)
+  reaching a slot declared otherwise is refused too
+  (`type.f64_value_in_non_f64_slot`): `let a: i64 = if c == 1 { 1.5 } else { 2.5 };`
+  built natively where MLIR refuses it. A function with no declared return type has
+  an i64 return slot: `fn h() { return 1.5; }` read into an `i64` exited 0 natively
+  where `mlir-opt` refuses it. A write to a name or field declared `f64` in
+  one place and otherwise in another must satisfy both slots. An `f64` inside an
+  array, tuple, generic, pointer, enum payload or type alias is refused
+  (`type.f64_in_aggregate`). A `let` annotation never reaches the IR, so the proof is
+  made on the source.
 
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer

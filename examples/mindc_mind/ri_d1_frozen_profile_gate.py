@@ -362,6 +362,18 @@ OUT_PROFILE = [
      "first", "type.non_i64_integer"),
     ("std_struct_collision",
      "struct Value{h:i64} fn main()->i64{let v=Value{h:33}; return v.h;}", "closure"),
+    # Round-5: a slot declared f64 takes only a proven f64 (native 0 vs MLIR 7 on the
+    # first: the let annotation never reaches the IR), a proven f64 stays out of a
+    # slot declared otherwise, and an f64 alias has no slot proof.
+    ("f64_let_launder",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, 7); "
+     "let x:f64=__mind_load_i64(p); return x;}",
+     "first", "type.f64_slot_unproven"),
+    ("f64_into_i64_ret",
+     "fn f()->i64{let x:f64=2.5; return x;} fn main()->i64{return f();}",
+     "first", "type.f64_value_in_non_f64_slot"),
+    ("f64_alias", "type R = f64;\nfn main()->i64{let x:R=2.5; return 0;}",
+     "first", "type.f64_in_aggregate"),
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
@@ -435,7 +447,7 @@ def main() -> int:
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
     PINNED_IN_PROFILE = 38
-    PINNED_OUT_PROFILE = 27
+    PINNED_OUT_PROFILE = 30
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
