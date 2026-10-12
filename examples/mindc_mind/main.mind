@@ -33062,14 +33062,18 @@ pub fn nb_emit_load_i32_zx(code: String, addr_disp: i64) -> String {
     nb_push(c5, 0)
 }
 
-// Fixed stream-write helper for emitter selftests (no source-level offset).
-// Source-level __mind_write uses nb_emit_write below.
+// Legacy stream read/write sequence (no source-level offset). It is the exact
+// 30-byte form the bootstrap seed and the Rust native backend emit for
+// `__mind_read`/`__mind_write`, so every call whose offset is the compile-time
+// stream sentinel -1 stays byte-identical across the self-host fixed point (see
+// nb_is_stream_sentinel). The result is the raw kernel value (negative errno on
+// failure). nr = 0 (SYS_read) or 1 (SYS_write).
 //   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
 //   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
 //   mov rdx,[rbp+count] = 48 8B 95 <disp32>
-//   mov rax,1           = 48 C7 C0 01 00 00 00
+//   mov rax,nr          = 48 C7 C0 <nr> 00 00 00
 //   syscall             = 0F 05
-pub fn nb_emit_write_stream(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
+pub fn nb_emit_stream_io(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, nr: i64) -> String {
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 139);
     let c3: String = nb_push(c2, 189);
@@ -33085,12 +33089,81 @@ pub fn nb_emit_write_stream(code: String, fd_disp: i64, buf_disp: i64, count_dis
     let c13: String = nb_push(c12, 72);
     let c14: String = nb_push(c13, 199);
     let c15: String = nb_push(c14, 192);
-    let c16: String = nb_push(c15, 1);
+    let c16: String = nb_push(c15, nr);
     let c17: String = nb_push(c16, 0);
     let c18: String = nb_push(c17, 0);
     let c19: String = nb_push(c18, 0);
     let c20: String = nb_push(c19, 15);
     nb_push(c20, 5)
+}
+
+// Fixed stream-write helper for emitter selftests (no source-level offset).
+pub fn nb_emit_write_stream(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
+    nb_emit_stream_io(code, fd_disp, buf_disp, count_disp, 1)
+}
+
+// The value nb_expr's int-literal arm emits for an int-lit node: a synthetic
+// literal (child1 == 1) carries it in child0, a source literal is parsed from
+// its span. Kept identical to that arm so the classifier below and the emitted
+// constant can never disagree.
+pub fn nb_int_lit_value(buf: i64, node: i64) -> i64 {
+    if ast_child1(node) == 1 {
+        return ast_child0(node);
+    }
+    parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
+}
+
+// 1 when the offset operand DENOTES the compile-time constant -1 (spelled
+// `0 - 1`, `-1`, a folded const, or either in parentheses), else 0. Keyed on
+// the denoted value, not the node constructor: a runtime value, any other
+// constant, or any other operator returns 0 and takes the runtime dispatch.
+pub fn nb_is_stream_sentinel(buf: i64, node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_is_stream_sentinel(buf, ast_child0(node));
+    }
+    if k == ast_int_lit() {
+        if nb_int_lit_value(buf, node) == 0 - 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if k != ast_binop() {
+        return 0;
+    }
+    if ast_aux(node) != op_sub() {
+        return 0;
+    }
+    let l: i64 = ast_child0(node);
+    let r: i64 = ast_child1(node);
+    if ast_kind(l) != ast_int_lit() {
+        return 0;
+    }
+    if ast_kind(r) != ast_int_lit() {
+        return 0;
+    }
+    if nb_int_lit_value(buf, l) - nb_int_lit_value(buf, r) == 0 - 1 {
+        return 1;
+    }
+    0
+}
+
+// Intrinsic kind for a call site. `__mind_write` (8) and `__mind_read` (9) whose
+// fourth operand is the stream sentinel map to the legacy stream kinds 1008 and
+// 1009; every other call keeps its table id.
+pub fn nb_intrinsic_site_kind(intr: i64, buf: i64, args_addr: i64, args_len: i64) -> i64 {
+    if args_len != 4 {
+        return intr;
+    }
+    if intr != 8 {
+        if intr != 9 {
+            return intr;
+        }
+    }
+    if nb_is_stream_sentinel(buf, __mind_load_i64(args_addr + 3 * 8)) == 1 {
+        return intr + 1000;
+    }
+    intr
 }
 
 // Linux syscall argument 3 lives in r10, not the SysV call register rcx.
@@ -33107,8 +33180,10 @@ pub fn nb_load_sysarg(code: String, i: i64, disp: i64) -> String {
 
 // Match the existing C read/write twins, including their -1 error sentinel and
 // zero result for null buffers or nonpositive counts. Negative offsets select
-// stream I/O (-1 is the documented sentinel); nonnegative offsets select
-// pread64/pwrite64 at RUNTIME. Positioned operations do not move the fd cursor.
+// stream I/O; nonnegative offsets select pread64/pwrite64 at RUNTIME.
+// Positioned operations do not move the fd cursor. A call whose offset operand
+// is the compile-time constant -1 does not come here: nb_intrinsic_site_kind
+// routes it to the seed's raw stream sequence (nb_emit_stream_io).
 pub fn nb_emit_io(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, offset_disp: i64, stream_nr: i64) -> String {
     let c1: String = nb_load_sysarg(code, 0, fd_disp);
     let c2: String = nb_load_sysarg(c1, 1, buf_disp);
@@ -33171,14 +33246,21 @@ pub fn nb_emit_write(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64,
 
 // Raw Linux x86-64 syscall: rax=nr; rdi,rsi,rdx,r10,r8,r9=args.
 // Result is left untouched in rax, including negative errno on failure.
-pub fn nb_emit_syscall(code: String, nr: i64, ids: i64, arity: i64) -> String {
-    let mut out: String = code;
-    let mut i: i64 = 0;
-    while i < arity {
-        let slot: i64 = __mind_load_i64(ids + i * 8);
-        out = nb_load_sysarg(out, i, nb_slot_disp(slot));
-        i = i + 1;
+// Arguments are loaded recursively rather than through a `let mut` copy of
+// `code` carried by a while loop: the bootstrap seed's mic@3 builder predates
+// the loop-carried alias-break rules, so that shape would give the seed and
+// the current compiler different trace notes for main.mind itself.
+pub fn nb_emit_sysargs(code: String, ids: i64, i: i64, arity: i64) -> String {
+    if i >= arity {
+        return code;
     }
+    let slot: i64 = __mind_load_i64(ids + i * 8);
+    let c1: String = nb_load_sysarg(code, i, nb_slot_disp(slot));
+    nb_emit_sysargs(c1, ids, i + 1, arity)
+}
+
+pub fn nb_emit_syscall(code: String, nr: i64, ids: i64, arity: i64) -> String {
+    let out: String = nb_emit_sysargs(code, ids, 0, arity);
     let c1: String = nb_push(out, 184);
     let c2: String = nb_i32le_signed(c1, nr);
     let c3: String = nb_push(c2, 15);
@@ -33924,6 +34006,20 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
 // store rax -> dst slot; the two store intrinsics leave dst untouched (the front-
 // end never reads a store's dst). A pure function of the IR.
 pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> String {
+    if kind >= 1008 {
+        // Stream sentinel __mind_write (1008) / __mind_read (1009): the legacy
+        // raw stream sequence, byte-identical to the bootstrap seed.
+        let sa0: i64 = __mind_load_i64(ids + 0 * 8);
+        let sa1: i64 = __mind_load_i64(ids + 1 * 8);
+        let sa2: i64 = __mind_load_i64(ids + 2 * 8);
+        let snr: i64 = if kind == 1008 {
+            1
+        } else {
+            0
+        };
+        let cs: String = nb_emit_stream_io(code, nb_slot_disp(sa0), nb_slot_disp(sa1), nb_slot_disp(sa2), snr);
+        return nb_store_rax(cs, nb_slot_disp(dst_id));
+    }
     if kind == 1 {
         // __mind_alloc(bytes) -> addr
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
@@ -35588,7 +35684,8 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // like a regular call, so downstream slot ids are unchanged.
         let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
         if intr >= 0 {
-            let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+            let site_kind: i64 = nb_intrinsic_site_kind(intr, buf, args_addr, args_len);
+            let c_intr: String = nb_emit_intrinsic(sa.code, site_kind, ids, id);
             return NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
         }
         // RI-D2 S-E1: the `__mind_blas_dot_q16_v` BLAS extern INLINES the Q16.16 MAC

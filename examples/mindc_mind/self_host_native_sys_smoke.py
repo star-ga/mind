@@ -10,6 +10,7 @@ import hashlib
 import os
 import pathlib
 import platform
+import re
 import struct
 import subprocess
 import tempfile
@@ -105,6 +106,9 @@ fn main() -> i64 {
 }
 """
 ERRORS = PATHS + """
+fn write_dyn(fd: i64, p: i64, n: i64, off: i64) -> i64 {
+    return __mind_write(fd, p, n, off);
+}
 fn main() -> i64 {
     let p: i64 = __mind_alloc(256);
     let path: i64 = old_path();
@@ -122,14 +126,163 @@ fn main() -> i64 {
     if posix_errno(0 - 9) != 9 { return 61; }
     if posix_errno(0) != 0 { return 62; }
     if posix_errno(7) != 0 { return 63; }
-    // Existing read/write keep the C twin's -1 error sentinel and no-op guards.
+    // Non-sentinel offsets keep the C twin's -1 error sentinel and no-op guards.
     if __mind_read(0 - 1, p, 1, 0) != 0 - 1 { return 64; }
-    if __mind_write(0 - 1, p, 1, 0 - 1) != 0 - 1 { return 65; }
+    if write_dyn(0 - 1, p, 1, 0 - 1) != 0 - 1 { return 65; }
     if __mind_read(0 - 1, 0, 1, 0) != 0 { return 66; }
     if __mind_write(0 - 1, p, 0 - 1, 0) != 0 { return 67; }
+    // A literal -1 offset is the bootstrap stream sequence: failure is negative
+    // on both backends (raw errno natively, -1 from the C twin).
+    if __mind_write(0 - 1, p, 1, 0 - 1) >= 0 { return 68; }
     return 0;
 }
 """
+# Literal -1 offsets in every spelling, and nothing else. The frozen seed and
+# the current stage1 must emit this program byte for byte (code and trace note).
+SENTINEL_ONLY = """
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65);
+    let a: i64 = __mind_write(1, p, 1, 0 - 1);
+    let b: i64 = __mind_write(1, p, 1, -1);
+    let c: i64 = __mind_write(1, p, 1, (0 - 1));
+    let d: i64 = __mind_read(0, p, 1, 0 - 1);
+    let e: i64 = __mind_read(0, p, 1, 1 - 2);
+    return a + b + c + d + e;
+}
+"""
+# Sentinel and non-sentinel sites side by side: 3 legacy writes, 1 legacy read,
+# 3 runtime dispatches (a runtime offset, the constant -2, the constant 0).
+SENTINEL_MIXED = """
+fn put(p: i64, off: i64) -> i64 {
+    return __mind_write(1, p, 1, off);
+}
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65);
+    if __mind_write(1, p, 1, 0 - 1) != 1 { return 1; }
+    __mind_store_i8(p, 66);
+    if __mind_write(1, p, 1, -1) != 1 { return 2; }
+    __mind_store_i8(p, 67);
+    if __mind_write(1, p, 1, (0 - 1)) != 1 { return 3; }
+    __mind_store_i8(p, 68);
+    if put(p, 0 - 1) != 1 { return 4; }
+    __mind_store_i8(p, 69);
+    if __mind_write(1, p, 1, 0 - 2) != 1 { return 5; }
+    if __mind_read(0 - 1, p, 1, 1 - 2) >= 0 { return 6; }
+    if __mind_read(0 - 1, p, 1, 0) != 0 - 1 { return 7; }
+    return 0;
+}
+"""
+LEGACY_IO = {
+    nr: re.compile(rb"\x48\x8b\xbd.{4}\x48\x8b\xb5.{4}\x48\x8b\x95.{4}\x48\xc7\xc0"
+                   + bytes([nr]) + rb"\x00\x00\x00\x0f\x05", re.DOTALL)
+    for nr in (0, 1)
+}
+DISPATCH_IO = re.compile(rb"\x31\xc0\x48\x85\xf6\x74\x22\x48\x85\xd2\x7e\x1d\xb8")
+# Every main.mind function this lane adds or changes is reachable from these
+# roots. Their transitive closure, compiled by the frozen seed and by stage1,
+# must give identical ELFs: any shape the seed's emitters or trace-note builder
+# treat differently breaks the self-host fixed point (stage1 != stage2).
+PARITY_ROOTS = [
+    "nb_expr", "nb_emit_intrinsic", "nb_intrinsic_id", "nb_intrinsic_site_kind",
+    "tc_is_std_surface_intrinsic", "nb_emit_write_stream",
+]
+_ITEM = re.compile(r"^(?:pub )?(?:fn|struct|enum|const)\s+([A-Za-z_][A-Za-z0-9_]*)")
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def closure_program(source: str, roots: list[str]) -> tuple[str, list[str]]:
+    """(program, missing_roots): the roots' transitive top-level closure plus a
+    main that references every present root behind a runtime-false guard."""
+    lines = source.split("\n")
+    items: dict[str, str] = {}
+    order: list[str] = []
+    i = 0
+    while i < len(lines):
+        m = _ITEM.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i
+        if not lines[i].rstrip().endswith(";"):
+            while not lines[j].startswith("}"):
+                j += 1
+        items[m.group(1)] = "\n".join(lines[i:j + 1])
+        order.append(m.group(1))
+        i = j + 1
+    missing = [r for r in roots if r not in items]
+    need: set[str] = set()
+    stack = [r for r in roots if r in items]
+    while stack:
+        name = stack.pop()
+        if name in need:
+            continue
+        need.add(name)
+        body = re.sub(r"//[^\n]*", "", items[name])
+        stack.extend(t for t in set(_IDENT.findall(body)) if t in items and t not in need)
+    calls = []
+    for k, root in enumerate(r for r in roots if r in items):
+        params = re.search(r"fn\s+" + root + r"\((.*?)\)", items[root]).group(1)
+        args = ["string_new()" if p.split(":")[1].strip() == "String" else "0"
+                for p in params.split(",") if p.strip()]
+        calls.append(f"        let _r{k} = {root}({', '.join(args)});")
+    main = ("fn main() -> i64 {\n    let z: i64 = __mind_argc();\n    if z == 99 {\n"
+            + "\n".join(calls) + "\n    }\n    return 0;\n}\n")
+    return "\n\n".join(items[n] for n in order if n in need) + "\n\n" + main, missing
+
+
+def emit(exe: pathlib.Path, user: str) -> bytes:
+    prefix = seed_blob()
+    source = prefix + user.encode()
+    return run_elf(exe, struct.pack("<qq", len(prefix), len(source)) + source)
+
+
+def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
+    """Failures of the bootstrap byte-neutrality checks (empty list = pass)."""
+    fails: list[str] = []
+    seed_bytes, new_bytes = emit(_FROZEN, SENTINEL_ONLY), emit(stage1, SENTINEL_ONLY)
+    if seed_bytes != new_bytes:
+        fails.append(f"sentinel_seed_bytes: stage1 {len(new_bytes)}B != frozen seed {len(seed_bytes)}B")
+    else:
+        print(f"PASS sentinel_seed_bytes: stage1 == frozen seed ({len(new_bytes)}B)", flush=True)
+    mixed = emit(stage1, SENTINEL_MIXED)
+    counts = (len(LEGACY_IO[1].findall(mixed)), len(LEGACY_IO[0].findall(mixed)),
+              len(DISPATCH_IO.findall(mixed)))
+    if counts != (3, 1, 3):
+        fails.append(f"sentinel_dispatch: legacy write/read, dispatch = {counts}, expected (3, 1, 3)")
+    else:
+        print(f"PASS sentinel_dispatch: legacy write/read, dispatch = {counts}", flush=True)
+    native = tmp / "sentinel_mixed.elf"
+    native.write_bytes(mixed)
+    native.chmod(0o755)
+    src = tmp / "sentinel_mixed.mind"
+    src.write_text(SENTINEL_MIXED)
+    mlir = tmp / "sentinel_mixed.mlir-bin"
+    build = subprocess.run([str(mindc), "--allow-nondeterministic", "build", str(src), "--release",
+                            "--backend", "mlir", "--emit=binary", f"--out={mlir}"],
+                           cwd=tmp, capture_output=True, timeout=300)
+    if build.returncode:
+        fails.append(f"sentinel_mixed: MLIR build exit={build.returncode}: {build.stderr[-500:]!r}")
+    else:
+        for backend, exe in [("native", native), ("mlir", mlir)]:
+            proc = subprocess.run([str(exe)], cwd=tmp, capture_output=True, timeout=15)
+            if (proc.returncode, proc.stdout) != (0, b"ABCDE"):
+                fails.append(f"sentinel_mixed/{backend}: exit={proc.returncode} stdout={proc.stdout!r}")
+            else:
+                print(f"PASS sentinel_mixed/{backend}: exit=0 stdout={proc.stdout!r}", flush=True)
+    program, missing = closure_program((HERE / "main.mind").read_text(), PARITY_ROOTS)
+    if missing:
+        fails.append(f"emitter_seed_parity: roots missing from main.mind: {missing}")
+    seed_elf, new_elf = emit(_FROZEN, program), emit(stage1, program)
+    if seed_elf != new_elf:
+        part = "code" if seed_elf[:-32] != new_elf[:-32] else "trace note"
+        fails.append(f"emitter_seed_parity: stage1 != frozen seed ({part} differs; "
+                     f"{len(new_elf)}B vs {len(seed_elf)}B)")
+    else:
+        print(f"PASS emitter_seed_parity: {len(PARITY_ROOTS)} roots, stage1 == frozen seed "
+              f"({len(new_elf)}B, sha256={hashlib.sha256(new_elf).hexdigest()[:16]})", flush=True)
+    return fails
 
 
 def run_elf(exe: pathlib.Path, source: bytes) -> bytes:
@@ -204,6 +357,13 @@ def main() -> int:
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                 print(f"FAIL {name}: {exc}", flush=True)
                 failed = True
+        try:
+            neutral_fails = seed_neutral(stage1, tmp, mindc)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            neutral_fails = [f"seed_neutral: {exc}"]
+        for line in neutral_fails:
+            print(f"FAIL {line}", flush=True)
+        failed |= bool(neutral_fails)
     if checked != 6:
         print(f"FAIL: checked {checked} backend cases, expected 6")
         failed = True

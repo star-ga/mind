@@ -34,6 +34,21 @@ errno, or with NULL on pointer-returning errors.
 negative offsets, positioned I/O otherwise, `-1` on failure, and zero for a
 null buffer or nonpositive count. They do not supply an errno location.
 
+One native exception keeps the self-host fixed point: when the offset operand
+denotes the compile-time constant `-1` (`0 - 1`, `-1`, `1 - 2`, or either in
+parentheses), the native emitter keeps the bootstrap seed's raw 30-byte stream
+sequence, the form the compiler's own read/write call sites have always
+compiled to. On that path success results are identical on both backends; a
+failure returns the raw negative errno natively and `-1` from the C twin, and a
+null buffer or nonpositive count reaches the kernel natively. This divergence
+already existed before the positioned-I/O change. A runtime `-1` offset, any
+other constant, and every nonnegative offset take the C-twin-identical
+dispatch. Removing the exception changes how the compiler compiles itself, so
+it needs a two-hop seed advance at integration, never a per-lane edit.
+`self_host_native_sys_smoke.py` asserts both forms and checks that the frozen
+seed and current stage1 emit identical bytes for the sentinel sites and for
+every emitter function this substrate changed.
+
 ## Tier 2 kernel adaptations
 
 IDs 32–51 append to the existing native IDs without renumbering:
