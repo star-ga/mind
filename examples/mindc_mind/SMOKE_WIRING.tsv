@@ -27,6 +27,7 @@ _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refus
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
 _selfhost_loop_reseed	none	helper	Focused legacy Rust-seeded publication path imported by self_host_loop_smoke.py; not a gate — running it directly is a no-op.
 _selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
+_shadow_scope_lang	none	helper	Mini-language of self_host_native_shadow_scope_smoke (lexically scoped model interpreter, printer, seeded generator, alpha-renamer), imported by that smoke; not a gate - running it directly is a no-op.
 
 _stdlib_manifest	none	helper	Shared reader for testdata/stdlib_manifest.txt (seed_modules/bundled_modules/seed_blob), imported by the self-host smokes and the twin of mindc.rs::frozen_std_seed_modules; not a gate — running it directly is a no-op.
 backend_native_bridge_smoke	ci	gate	
