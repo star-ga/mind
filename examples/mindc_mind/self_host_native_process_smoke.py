@@ -80,6 +80,23 @@ CASES = {
     if signal(17, 2) != 0 - 22 { return 9; }
     return 0;
 }''', 0),
+    'kill_child': ('''fn main() -> i64 {
+    let p: i64 = __mind_alloc(32);
+    if signal(15, 0) < 0 { return 1; }
+    let child: i64 = fork();
+    if child < 0 { return 2; }
+    if child == 0 {
+        __mind_store_i64(p, 10);
+        __mind_store_i64(p + 8, 0);
+        nanosleep(p, 0);
+        _exit(91);
+    }
+    let sent: i64 = kill(child, 15);
+    if waitpid(child, p, 0) != child { return 3; }
+    if sent != 0 { return 4; }
+    if __mind_load_i32(p) != 15 { return 5; }
+    return 0;
+}''', 0),
     'clock_limits': ('''fn main() -> i64 {
     let p: i64 = __mind_alloc(128);
     if getrlimit(7, p) != 0 { return 1; }
@@ -196,6 +213,9 @@ def check(stage1, mindc, tmp):
 
 
 def main():
+    if len(CASES) != 7:
+        print('FAIL: expected seven process cases', flush=True)
+        return 1
     with tempfile.TemporaryDirectory(prefix='mind-process-') as td:
         tmp = pathlib.Path(td)
         _, seed, _ = build_seed()
