@@ -201,7 +201,10 @@ The program does not need to do anything to get this behaviour. The MLIR
 backend omits the check when the divisor is a constant other than `0` and `-1`.
 It exits through libc `_exit`, or through `_Exit` when the program defines its
 own function named `_exit`; a program that divides and defines functions named
-both `_exit` and `_Exit` is refused by the MLIR backend.
+both `_exit` and `_Exit` is refused by the MLIR backend. When the program itself
+declares that libc symbol (`extern` `_exit` or `_Exit`), the MLIR backend calls
+the program's declaration, and refuses a program that divides when that
+declaration does not take exactly one integer parameter.
 
 Scope: the trap is implemented by `mindc build` with the MLIR and native
 backends. Three other evaluators do not implement it yet: the tree-walking
