@@ -47,6 +47,15 @@ Steps
                the census X1 shape, past the mic@3 planner's old 512-record
                table and the SSA path's 512-entry jump / let tables) must
                compile and run correctly — never SIGSEGV.
+               Bounded production profile: the compiler the frozen seed emits
+               with the v2 layout header (768 MiB arena, 384 MiB stack), run
+               under RLIMIT_AS 2 GiB like the MIND-Lab consumer harness, must
+               compile and run a 2048-leaf if/else tree (~425 KB, the
+               cs_ucd_mask shape at 7x) and a comment-padded 1024-leaf tree;
+               the HOME tables were sized from the source span and initialised
+               one stack frame per slot, which overflowed the 384 MiB stack.
+               A function past the arena budget may be refused (rc 3), never
+               a signal.
   4. refusal   a HOME-lowered function that takes an address refuses cleanly
                (rc 3, no ELF), never a crash.
   5. twin      with MINDC_SO set, the oracle .so's selftest_native_elf_stage
@@ -54,15 +63,19 @@ Steps
 
 Usage:
   MINDC_BIN=target/release/mindc [MINDC_SO=/tmp/oracle.so] \\
-    python3 self_host_native_cf_smoke.py [--stage1 PATH] [--seeds 11,12] [--count 160]
+    python3 self_host_native_cf_smoke.py [--stage1 PATH] [--stage1-bounded PATH] [--seeds 11,12]
+Without --stage1 / --stage1-bounded each compiler is derived from the frozen seed
+and this tree (two whole self-compiles).
 Exit: 0 ALL PASS, 1 FAIL, 2 BLOCKED (no MLIR-capable mindc / no seed).
 """
 
 import argparse
+import bisect
 import ctypes
 import os
 import pathlib
 import re
+import resource
 import struct
 import subprocess
 import sys
@@ -116,6 +129,56 @@ def derive_stage1(td: pathlib.Path) -> pathlib.Path:
     out.write_bytes(r.stdout)
     out.chmod(0o755)
     return out
+
+
+BOUNDED = (768 << 20, 384 << 20, 1 << 20)  # arena, stack, guard (self_host_bounded_profile_smoke)
+AS_CAP = 2 << 30  # the MIND-Lab consumer harness runs every compile and program under this
+
+
+def v2_header() -> bytes:
+    magic = int.from_bytes(b"MINDLAY\x01", "little", signed=True)
+    return b"".join(int(v).to_bytes(8, "little", signed=True) for v in (magic, *BOUNDED))
+
+
+def derive_stage1_bounded(td: pathlib.Path) -> pathlib.Path:
+    """The bounded production compiler: the frozen DEFAULT seed given the v2 header
+    emits this tree's compiler with the bounded layout (768 MiB arena, 384 MiB stack)."""
+    comb = BLOB + (_HERE / "main.mind").read_bytes() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
+    img = v2_header() + struct.pack("<qq", len(BLOB), len(comb)) + comb
+    r = subprocess.run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
+    if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
+        raise SystemExit(f"BLOCKED: frozen seed could not emit the bounded compiler (rc={r.returncode}): "
+                         f"{r.stderr[-300:]!r}")
+    out = td / "stage1_bounded.elf"
+    out.write_bytes(r.stdout)
+    out.chmod(0o755)
+    return out
+
+
+def capped():
+    os.nice(15)
+    resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
+
+
+def native_bounded(stage1b, src: bytes, td: pathlib.Path):
+    """Compile with the bounded compiler (v2 header, RLIMIT_AS 2 GiB) and run the
+    program under the same cap. ('crash', signal) for a compiler killed by a
+    signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF."""
+    comb = BLOB + src
+    img = v2_header() + struct.pack("<qq", len(BLOB), len(comb)) + comb
+    r = subprocess.run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
+    if r.returncode < 0:
+        return ("crash", -r.returncode)
+    if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
+        return ("refused", r.returncode, r.stderr.decode(errors="replace").strip()[-120:])
+    p = td / "b.elf"
+    p.write_bytes(r.stdout)
+    p.chmod(0o755)
+    try:
+        rr = subprocess.run([str(p)], capture_output=True, timeout=120, preexec_fn=capped)
+    except subprocess.TimeoutExpired:
+        return ("timeout", b"")
+    return (rr.returncode & 255 if rr.returncode >= 0 else rr.returncode, rr.stdout)
 
 
 def native_compile(stage1: pathlib.Path, src: bytes, seeded: bool = True):
@@ -272,6 +335,68 @@ def straight_line_program(blocks: int) -> tuple:
     return "\n".join(lines) + "\n", (sum(k * 3 + 1 for k in range(blocks)) % 251, b"")
 
 
+def dense_tree_program(depth: int, pad: int = 0) -> tuple:
+    """Census X1 shape at scale (MIND-Lab cs_ucd_mask is a 2006-node if/else tree
+    over a code point): one function holding a balanced if/else tree of `depth`
+    levels (2**depth leaf returns, 4-space indentation), optionally padded with
+    `pad` comment lines inside the body. Its source span, not its node count, is
+    what used to size the HOME tables, so the indentation alone pushed the
+    bounded compiler's stack past its guard."""
+    lim = 1114112
+    leaves = []
+
+    def leaf(k: int) -> int:
+        return (k * 2654435761 + 97) % 251
+
+    lines = ["fn mask(cp: i64) -> i64 {", "    if cp < 0 || cp > 1114111 { return 0; }"]
+    lines += [f"    // capacity padding line {i}: words if while let && || in a comment" for i in range(pad)]
+
+    def tree(lo: int, hi: int, d: int, ind: int) -> None:
+        sp = "    " * ind
+        if d == 0:
+            leaves.append((lo, hi))
+            lines.append(f"{sp}return {leaf(len(leaves) - 1)};")
+            return
+        mid = (lo + hi) // 2
+        lines.append(f"{sp}if cp < {mid} {{")
+        tree(lo, mid, d - 1, ind + 1)
+        lines.append(f"{sp}}} else {{")
+        tree(mid, hi, d - 1, ind + 1)
+        lines.append(f"{sp}}}")
+
+    tree(0, lim, depth, 1)
+    lines += ["}", "fn main() -> i64 {", "    let mut cp: i64 = 0 - 3;", "    let mut acc: i64 = 0;",
+              "    while cp < 1114130 {", "        acc = (acc * 131 + mask(cp) + 7) % 1000003;",
+              "        cp = cp + 37;", "    }", "    return acc % 251;", "}"]
+
+    lows = [lo for lo, _ in leaves]
+
+    def mask(cp: int) -> int:
+        if cp < 0 or cp > 1114111:
+            return 0
+        k = bisect.bisect_right(lows, cp) - 1
+        assert leaves[k][0] <= cp < leaves[k][1]
+        return leaf(k)
+
+    acc, cp = 0, -3
+    while cp < 1114130:
+        acc = (acc * 131 + mask(cp) + 7) % 1000003
+        cp += 37
+    return "\n".join(lines) + "\n", (acc % 251, b"")
+
+
+def bounded_cases():
+    """(label, (source, expected), may_refuse) for the bounded production compiler.
+    Each must compile and run to the Python value; a may_refuse case may instead
+    be refused cleanly (rc 3). A compiler killed by a signal is always a FAIL."""
+    return [
+        ("dense if/else tree, 2048 leaves (census X1 cs_ucd_mask shape at 7x)",
+         dense_tree_program(11), False),
+        ("dense if/else tree, 1024 leaves + 2600 comment lines in the body",
+         dense_tree_program(10, pad=2600), False),
+    ]
+
+
 REFUSE_ADDR = """fn f(n: i64) -> i64 {
     let mut x: i64 = 0;
     let r: i64 = &x;
@@ -290,6 +415,7 @@ fn main() -> i64 { return f(4); }
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage1", default=os.environ.get("CF_STAGE1"))
+    ap.add_argument("--stage1-bounded", default=os.environ.get("CF_STAGE1_BOUNDED"))
     ap.add_argument("--seeds", default="11,12")
     ap.add_argument("--count", type=int, default=160)
     ap.add_argument("--shadow-seeds", default="13")
@@ -309,8 +435,15 @@ def main() -> int:
         so.selftest_native_elf_stage.restype = ctypes.c_int64
         so.selftest_native_elf_stage.argtypes = [ctypes.c_int64] * 3
     rep = Report()
-    with tempfile.TemporaryDirectory() as tdn:
+    with tempfile.TemporaryDirectory() as tdn, ThreadPoolExecutor(1) as bex:
         td = pathlib.Path(tdn)
+        # The bounded compiler is a second whole self-compile: start it now so it
+        # overlaps the default derivation, the fixtures and the corpus (wall time
+        # ~ one derivation, inside run_gate's budget).
+        if not a.stage1_bounded and not SEED.exists():
+            print(f"BLOCKED: frozen seed {SEED} missing")
+            return 2
+        bfut = None if a.stage1_bounded else bex.submit(derive_stage1_bounded, td)
         if a.stage1:
             stage1 = pathlib.Path(a.stage1).resolve()
             print(f"[cf] stage1 = {stage1} (given)")
@@ -381,6 +514,20 @@ def main() -> int:
             rep.check(got == sexp, f"giant straight-line fn ({blocks} x let/if-return/store = "
                                    f"{4 * blocks} statements): native={got} Python={sexp}")
 
+        print("[cf] capacity, bounded production profile (768 MiB arena / 384 MiB stack, "
+              "RLIMIT_AS 2 GiB)")
+        if a.stage1_bounded:
+            stage1b = pathlib.Path(a.stage1_bounded).resolve()
+            print(f"  stage1 (bounded) = {stage1b} (given)")
+        else:
+            stage1b = bfut.result()
+            print(f"  stage1 (bounded) = frozen seed + v2 header -> this tree ({stage1b.stat().st_size} B)")
+        for label, (bsrc, bexp), may_refuse in bounded_cases():
+            got = native_bounded(stage1b, bsrc.encode(), td)
+            ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
+            rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:2]} Python={bexp}"
+                          + (" (a clean rc-3 refusal is accepted)" if may_refuse else ""))
+
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)
         rep.check(got[0] == "refused" and got[1] == 3,
@@ -391,7 +538,8 @@ def main() -> int:
         print(f"FAIL ({len(rep.fails)}): " + "; ".join(rep.fails[:6]))
         return 1
     print("ALL PASS  (stage1 general control flow: fixtures == hand-derived == MLIR, "
-          "corpus native == MLIR == Python, giant fn compiles, clean refusal)")
+          "corpus native == MLIR == Python, giant fn compiles in the default and the "
+          "bounded profile, clean refusal)")
     return 0
 
 

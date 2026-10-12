@@ -21316,6 +21316,10 @@ pub fn emit_mic3_module_fndef_narrow(s: EmitState, src: i64, fn_node: i64, nidx:
         __mind_store_i64(ok_cell, 0);
         return s;
     }
+    if seq_tables_short(fn_node, stmts_len) == 1 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     // Census X1: the planner writes one record per statement and one descriptor
     // per lowered node with no bound check, so a giant straight-line function
     // (600+ statements) ran off the fixed 512-record plan and segfaulted the
@@ -21330,6 +21334,15 @@ pub fn emit_mic3_module_fndef_narrow(s: EmitState, src: i64, fn_node: i64, nidx:
     let plan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
     let nplan_cell: i64 = __mind_alloc(8);
     emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes, cursor, vidbuf, env, nlets_cell, plan, nplan_cell, strbuf, offs, ncount, ok_cell)
+}
+
+// 1 iff the planner tables below would not fit the native compiler's arena
+// budget (nb_arena_short). The twin then rejects the function (fail closed: the
+// stage driver lowers it on the HOME path under a source note, where its own
+// budget check applies) instead of exhausting the arena.
+pub fn seq_tables_short(fn_node: i64, stmts_len: i64) -> i64 {
+    let need: i64 = seq_cap_nodes(fn_node) * 40 + seq_cap_env(fn_node, stmts_len) * 24 + seq_cap_plan(stmts_len) * 64;
+    nb_arena_short(need)
 }
 
 // Table capacities for the statement-sequence planner (see emit_mic3_module_
@@ -21580,17 +21593,19 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // single trailing `return E` / value if-expr body reaches the seq path too (the
         // narrow stmts_len==1 cases above already return before here when they match).
         if stmts_len >= 1 {
-            let hncap: i64 = seq_cap_nodes(fn_node);
-            let hnodes: i64 = __mind_alloc(hncap * 32);
-            let hcursor: i64 = __mind_alloc(8);
-            let hvidbuf: i64 = __mind_alloc(hncap * 8);
-            let henv: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
-            let hnlets: i64 = __mind_alloc(8);
-            let hplan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
-            let hnplan: i64 = __mind_alloc(8);
-            let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
-            if __mind_load_i64(ok_cell) == 1 {
-                return sseq;
+            if seq_tables_short(fn_node, stmts_len) == 0 {
+                let hncap: i64 = seq_cap_nodes(fn_node);
+                let hnodes: i64 = __mind_alloc(hncap * 32);
+                let hcursor: i64 = __mind_alloc(8);
+                let hvidbuf: i64 = __mind_alloc(hncap * 8);
+                let henv: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
+                let hnlets: i64 = __mind_alloc(8);
+                let hplan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
+                let hnplan: i64 = __mind_alloc(8);
+                let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
+                if __mind_load_i64(ok_cell) == 1 {
+                    return sseq;
+                }
             }
         }
     }
@@ -32350,6 +32365,35 @@ pub fn nb_layout_check(arena: i64, stack: i64, guard: i64) -> i64 {
     }
     0
 }
+// Arena budget of the RUNNING native compiler, for per-function tables sized
+// from the source (census X1: giant functions). 1 iff allocating `need` more
+// bytes would leave less than `need` free after them: twice the estimate must
+// fit in what is left, because the emitted code, the image and the ELF are
+// built after the tables. The arena end is the arena start plus the larger of
+// the published layout's arena and the bounded profile's 768 MiB (every native
+// compiler image is built with at least that arena), so a small arena requested
+// for the PROGRAM never shrinks the compiler's own budget; a bounded compiler
+// asked for a larger layout can still overrun, and then stops on its explicit
+// arena guard (exit 70 with a diagnostic). The malloc-backed .so has no arena
+// (probe 0) and never refuses here. Only a function that could not fit is
+// refused, so no image that compiled before changes.
+pub fn nb_arena_short(need: i64) -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() {
+        return 0;
+    }
+    let own: i64 = nb_arena_bytes();
+    let cap: i64 = if own < 805306368 {
+        805306368
+    } else {
+        own
+    };
+    let left: i64 = nb_arena_addr() + cap - probe;
+    if need > left / 2 {
+        return 1;
+    }
+    0
+}
 pub fn nb_stack_addr() -> i64 {
     // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + GUARD (default 0x1000)
     nb_arena_addr() + nb_arena_bytes() + nb_guard_bytes()
@@ -34418,6 +34462,14 @@ pub fn nb_deref_store(code: String, next_id: i64, last_id: i64, ncalls: i64, tsl
 pub fn nb_patch_jmps(code_addr: i64, jmps: i64, njmps: i64, c: i64) -> i64 {
     if c >= njmps {
         return 0;
+    }
+    // Halve long runs so the stack depth is logarithmic in the record count
+    // (a giant HOME function holds one record per if / loop / exit); a run of
+    // at most 64 records is walked one frame per record, as before.
+    if njmps - c > 64 {
+        let mid: i64 = c + (njmps - c) / 2;
+        let _a: i64 = nb_patch_jmps(code_addr, jmps, mid, c);
+        return nb_patch_jmps(code_addr, jmps, njmps, mid);
     }
     let site: i64 = __mind_load_i64(jmps + (c * 2 + 0) * 8);
     let target: i64 = __mind_load_i64(jmps + (c * 2 + 1) * 8);
@@ -42993,11 +43045,19 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
     let body: i64 = ast_child2(node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    let span: i64 = hm_fn_span(node);
-    let idcap: i64 = span * 8 + n_params + 1024;
-    let jcap: i64 = span * 4 + 256;
-    let lcap: i64 = span + n_params + 256;
-    let hc: i64 = hm_new_ctx(span + 64, jcap, lcap);
+    // Table capacities scale with the fn's NON-WHITESPACE source bytes (every
+    // value, jump and binding comes from a non-blank byte; the indentation of
+    // a deep nest is most of a giant function). Census X1 capacity: a function
+    // whose tables could not fit the native arena budget is refused here, before
+    // anything is allocated (a clean rc 3, never an arena trap or a crash).
+    let dense: i64 = __mind_load_i64(hm_fn_counts(buf, node) + 16);
+    if nb_arena_short(dense * 256 + 4194304) == 1 {
+        return nb_poison_state(ncalls0);
+    }
+    let idcap: i64 = dense * 8 + n_params + 1024;
+    let jcap: i64 = dense * 4 + 256;
+    let lcap: i64 = dense + n_params + 256;
+    let hc: i64 = hm_new_ctx(dense + 64, jcap, lcap);
     let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8 + 32);
     __mind_store_i64(atab, 0);
     __mind_store_i64(atab + 8, 0);
@@ -43120,12 +43180,7 @@ pub fn hm_fn_pregate(buf: i64, node: i64) -> i64 {
 // function. The largest self-host function stays far below (lets ~251, jump
 // estimate ~214 at this commit), so the self-compile never takes this branch.
 pub fn hm_over_ssa_caps(buf: i64, node: i64) -> i64 {
-    let lo: i64 = ast_span_lo(node);
-    let hi: i64 = lo + hm_fn_span(node);
-    let cells: i64 = __mind_alloc(16);
-    __mind_store_i64(cells, 0);
-    __mind_store_i64(cells + 8, 0);
-    let _c: i64 = hm_count_words(buf, lo, hi, cells);
+    let cells: i64 = hm_fn_counts(buf, node);
     if __mind_load_i64(cells) > 400 {
         return 1;
     }
@@ -43192,15 +43247,50 @@ pub fn hm_pow256(k: i64) -> i64 {
     256 * hm_pow256(k - 1)
 }
 
+// Word counts over a fn's source span (see hm_count_words), in a fresh 24-byte
+// cell block: +0 lets, +8 jump estimate, +16 non-whitespace bytes.
+pub fn hm_fn_counts(buf: i64, node: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    let cells: i64 = __mind_alloc(24);
+    __mind_store_i64(cells, 0);
+    __mind_store_i64(cells + 8, 0);
+    __mind_store_i64(cells + 16, 0);
+    let _c: i64 = hm_count_words(buf, lo, lo + hm_fn_span(node), cells);
+    cells
+}
+
 // cells+0 += lets; cells+8 += jump estimate (if/while 2, break/continue 1,
-// && / || 4: the short-circuit desugar is two value-ifs).
+// && / || 4: the short-circuit desugar is two value-ifs); cells+16 += bytes
+// that are not whitespace (<= 32). The scan halves the span so the stack depth
+// is log2(span / 256) + 256 frames: one frame per source byte overflowed the
+// bounded native compiler's stack on a giant function (census X1).
 pub fn hm_count_words(buf: i64, i: i64, hi: i64, cells: i64) -> i64 {
-    if i >= hi {
-        return 0;
+    let _e: i64 = hm_count_span(buf, i, i, hi, hi, cells);
+    0
+}
+
+// Scan from position `i` every word that STARTS in [a, b) (one may end past b,
+// exactly as in a single left-to-right scan); returns the first position at or
+// past b, where the scan of the next range resumes.
+pub fn hm_count_span(buf: i64, i: i64, a: i64, b: i64, hi: i64, cells: i64) -> i64 {
+    if b - a <= 256 {
+        return hm_count_run(buf, i, b, hi, cells);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    let j: i64 = hm_count_span(buf, i, a, mid, hi, cells);
+    hm_count_span(buf, j, mid, b, hi, cells)
+}
+
+pub fn hm_count_run(buf: i64, i: i64, b: i64, hi: i64, cells: i64) -> i64 {
+    if i >= b {
+        return i;
     }
     let c: i64 = load_byte(buf, i);
     let step: i64 = hm_count_one(buf, i, hi, c, cells);
-    hm_count_words(buf, i + step, hi, cells)
+    if c > 32 {
+        __mind_store_i64(cells + 16, __mind_load_i64(cells + 16) + step)
+    }
+    hm_count_run(buf, i + step, b, hi, cells)
 }
 pub fn hm_count_one(buf: i64, i: i64, hi: i64, c: i64, cells: i64) -> i64 {
     if c == 108 {
@@ -47152,8 +47242,21 @@ pub fn nb_dtype_table_new(n: i64) -> i64 {
     __mind_store_i64(base, n);
     __mind_store_i64(base + 8, 0);
     let tbl: i64 = base + 16;
-    let _z: i64 = nb_dtype_table_init(tbl, n, 0);
+    let _z: i64 = nb_dtype_table_fill(tbl, 0, n);
     tbl
+}
+
+// Zero slots [lo, hi) by halving, so the stack depth is log2(n / 64) + 64
+// frames whatever the table size. The plain walk (nb_dtype_table_init) took
+// one frame per slot: a HOME table sized for a giant function overflowed the
+// bounded native compiler's stack (census X1, SIGSEGV past ~349 KB of fn).
+pub fn nb_dtype_table_fill(tbl: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo <= 64 {
+        return nb_dtype_table_init(tbl, hi, lo);
+    }
+    let mid: i64 = lo + (hi - lo) / 2;
+    let _a: i64 = nb_dtype_table_fill(tbl, lo, mid);
+    nb_dtype_table_fill(tbl, mid, hi)
 }
 
 pub fn nb_dtype_overflowed(tbl: i64) -> i64 {
