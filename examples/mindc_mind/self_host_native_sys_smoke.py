@@ -5,6 +5,11 @@ Never updates bootstrap fixtures. Derives stage1 from this tree's main.mind
 using the frozen pure-MIND seed. Every program runs in a fresh temporary
 working directory, with independent expected exit/stdout and disk assertions.
 MINDC_BIN selects the freshly built Rust/MLIR oracle.
+
+The seed-neutral checks guard the self-host fixed point: read/write calls with
+a literal -1 offset, and every emitter function this substrate changed, must
+compile to the same bytes (code and trace note) under the frozen seed and the
+current stage1.
 """
 import hashlib
 import os
