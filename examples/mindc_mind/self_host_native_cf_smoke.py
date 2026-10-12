@@ -25,6 +25,12 @@ Legs (each a separate, non-shared implementation):
           hand-derived `// expect:` header (fixtures).
 
 Steps
+  0. harness   the gate's own exec helpers (run_bin, the bounded run) survive
+               ETXTBSY: exec of an ELF while another process holds a write
+               descriptor on it (deterministic), and 600 pooled write+exec cases
+               with forking siblings (the thread-pool race). Every exec goes
+               through exec_run, which retries ETXTBSY for up to 5 s.
+               `--harness-only` runs just this step (no compiler needed).
   1. fixtures  testdata/native_cf/*.mind. Header keys:
                `// expect: exit=N`, `// stdout: TEXT` (hand-derived),
                `// note: 1|2` (required PT_NOTE n_type),
@@ -82,6 +88,7 @@ Exit: 0 ALL PASS, 1 FAIL, 2 BLOCKED (no MLIR-capable mindc / no seed).
 import argparse
 import bisect
 import ctypes
+import errno
 import os
 import pathlib
 import re
@@ -90,6 +97,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 _HERE = pathlib.Path(__file__).resolve().parent
@@ -128,10 +136,33 @@ def nice():
     os.nice(15)
 
 
+ETXTBSY_TRIES, ETXTBSY_WAIT = 250, 0.02  # up to 5 s for a writer to let go
+_etxtbsy_retries = [0]
+
+
+def exec_run(argv, **kw):
+    """subprocess.run for every exec this gate performs, retried while the target
+    is busy (ETXTBSY). The gate writes ELFs (stage1, the bounded compiler, every
+    program) and execs them from a thread pool; a sibling thread's fork holds a
+    copy of a just-written file's write descriptor until its child execs, and an
+    exec of that file in the window fails with ETXTBSY. The window closes within
+    milliseconds, so the exec is retried; any other OSError, or a writer that
+    never lets go, still fails the gate."""
+    for _ in range(ETXTBSY_TRIES - 1):
+        try:
+            return subprocess.run(argv, **kw)
+        except OSError as e:
+            if e.errno != errno.ETXTBSY:
+                raise
+            _etxtbsy_retries[0] += 1
+            time.sleep(ETXTBSY_WAIT)
+    return subprocess.run(argv, **kw)
+
+
 def derive_stage1(td: pathlib.Path) -> pathlib.Path:
     comb = BLOB + (_HERE / "main.mind").read_bytes() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
     img = struct.pack("<qq", len(BLOB), len(comb)) + comb
-    r = subprocess.run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
+    r = exec_run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise SystemExit(f"BLOCKED: frozen seed could not compile this tree (rc={r.returncode}): "
                          f"{r.stderr[-300:]!r}")
@@ -155,7 +186,7 @@ def derive_stage1_bounded(td: pathlib.Path) -> pathlib.Path:
     emits this tree's compiler with the bounded layout (768 MiB arena, 384 MiB stack)."""
     comb = BLOB + (_HERE / "main.mind").read_bytes() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
     img = v2_header() + struct.pack("<qq", len(BLOB), len(comb)) + comb
-    r = subprocess.run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
+    r = exec_run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise SystemExit(f"BLOCKED: frozen seed could not emit the bounded compiler (rc={r.returncode}): "
                          f"{r.stderr[-300:]!r}")
@@ -175,7 +206,7 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True):
     program under the same cap. ('crash', signal) for a compiler killed by a
     signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF."""
     img = v2_header() + image(src, seeded)
-    r = subprocess.run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
+    r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
     if r.returncode < 0:
         return ("crash", -r.returncode)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
@@ -183,23 +214,19 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True):
     p = td / "b.elf"
     p.write_bytes(r.stdout)
     p.chmod(0o755)
-    try:
-        rr = subprocess.run([str(p)], capture_output=True, timeout=120, preexec_fn=capped)
-    except subprocess.TimeoutExpired:
-        return ("timeout", b"")
-    return (rr.returncode & 255 if rr.returncode >= 0 else rr.returncode, rr.stdout)
+    return run_bin(p, timeout=120, preexec_fn=capped)
 
 
 def native_compile(stage1: pathlib.Path, src: bytes, seeded: bool = True):
-    r = subprocess.run([str(stage1)], input=image(src, seeded), capture_output=True, timeout=600,
+    r = exec_run([str(stage1)], input=image(src, seeded), capture_output=True, timeout=600,
                        preexec_fn=nice)
     ok = r.returncode == 0 and r.stdout[:4] == b"\x7fELF"
     return ok, r.returncode, (r.stdout if ok else b""), r.stderr.decode(errors="replace")
 
 
-def run_bin(path: pathlib.Path):
+def run_bin(path: pathlib.Path, timeout: int = 60, preexec_fn=None):
     try:
-        r = subprocess.run([str(path)], capture_output=True, timeout=60)
+        r = exec_run([str(path)], capture_output=True, timeout=timeout, preexec_fn=preexec_fn)
     except subprocess.TimeoutExpired:
         return ("timeout", b"")
     return (r.returncode & 255 if r.returncode >= 0 else r.returncode, r.stdout)
@@ -219,7 +246,7 @@ def mlir(mindc: str, src: str, td: pathlib.Path):
     p = td / "p.mind"
     p.write_text(src)
     o = td / "m.elf"
-    r = subprocess.run([mindc, "build", str(p), "--backend", "mlir", "--emit", "binary", "--out", str(o)],
+    r = exec_run([mindc, "build", str(p), "--backend", "mlir", "--emit", "binary", "--out", str(o)],
                        capture_output=True, timeout=600, preexec_fn=nice, cwd=str(td))
     if r.returncode != 0 or not o.exists():
         return ("nobuild", r.stderr.decode(errors="replace").strip()[-200:])
@@ -292,6 +319,66 @@ def so_stage(so, src: bytes) -> bytes:
     if not sh or rd(sh, 8) <= 0:
         return b""
     return ctypes.string_at(rd(sh, 0), rd(sh, 8))
+
+
+def tiny_elf(code: int) -> bytes:
+    """A 132-byte static x86-64 ELF that exits with `code` (harness self-check payload)."""
+    base, off = 0x400000, 64 + 56
+    text = b"\xbf" + struct.pack("<i", code) + b"\xb8\x3c\x00\x00\x00\x0f\x05"  # mov edi; mov eax,60; syscall
+    size = off + len(text)
+    eh = struct.pack("<16sHHIQQQIHHHHHH", b"\x7fELF\x02\x01\x01" + bytes(9), 2, 0x3E, 1, base + off,
+                     64, 0, 0, 64, 56, 1, 0, 0, 0)
+    ph = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base, size, size, 0x1000)
+    return eh + ph + text
+
+
+def write_elf(path: pathlib.Path, elf: bytes) -> pathlib.Path:
+    path.write_bytes(elf)
+    path.chmod(0o755)
+    return path
+
+
+def harness_checks(rep: Report, jobs: int, td: pathlib.Path) -> None:
+    """The gate writes ELFs and execs them from a thread pool. Any process that
+    holds a write descriptor on a file makes exec of that file fail with ETXTBSY
+    (Text file busy); a sibling thread's fork (subprocess with preexec_fn) holds
+    copies of every descriptor open at fork time until its child execs. Both
+    checks drive the gate's own helpers (run_bin, native_bounded's run)."""
+    print("[cf] harness: exec of a freshly written ELF while a writer holds it (ETXTBSY)")
+    h = write_elf(td / "held.elf", tiny_elf(7))
+    for label, kw in (("run_bin", {}), ("bounded run", {"timeout": 120, "preexec_fn": capped})):
+        holder = subprocess.Popen([sys.executable, "-c", "import sys, time; f = open(sys.argv[1], 'r+b'); "
+                                   "print('held', flush=True); time.sleep(0.4)", str(h)],
+                                  stdout=subprocess.PIPE)
+        held = holder.stdout.readline().strip() == b"held"
+        try:
+            got = run_bin(h, **kw)
+        except OSError as e:
+            got = ("OSError", e.errno, e.strerror)
+        holder.wait()
+        rep.check(held and got == (7, b""), f"harness {label}: exec while another process holds a write "
+                                            f"descriptor (writer released after 0.4 s): got={got} want=(7, b'')")
+    sib = write_elf(td / "sibling.elf", tiny_elf(0))
+    n = 600
+
+    def case(k: int):
+        with tempfile.TemporaryDirectory() as cdn:
+            exec_run([str(sib)], capture_output=True, preexec_fn=nice)  # a sibling fork, like native_compile
+            p = write_elf(pathlib.Path(cdn) / "n.elf", tiny_elf(k % 200))  # like native(): write the ELF
+            try:
+                got = run_bin(p)  # then exec it
+            except OSError as e:
+                got = ("OSError", e.errno)
+            exec_run([str(sib)], capture_output=True, preexec_fn=nice)  # like mlir()
+        return got == (k % 200, b""), got
+
+    before = _etxtbsy_retries[0]
+    with ThreadPoolExecutor(max(4, jobs)) as ex:
+        res = list(ex.map(case, range(n)))
+    bad = [g for ok, g in res if not ok]
+    rep.check(not bad, f"harness pooled write+exec ({n} cases, {max(4, jobs)} threads, forking siblings): "
+                       f"{len(bad)} failed{(' e.g. ' + str(bad[:3])) if bad else ''}")
+    print(f"  ETXTBSY retries absorbed: {_etxtbsy_retries[0]} ({_etxtbsy_retries[0] - before} in the pool)")
 
 
 def corpus_case(args):
@@ -496,7 +583,16 @@ def main() -> int:
     ap.add_argument("--shadow-seeds", default="13")
     ap.add_argument("--shadow-count", type=int, default=80)
     ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--harness-only", action="store_true",
+                    help="run only the harness self-checks (no compiler needed)")
     a = ap.parse_args()
+    if a.harness_only:
+        rep = Report()
+        with tempfile.TemporaryDirectory() as tdn:
+            harness_checks(rep, a.jobs, pathlib.Path(tdn))
+        print(f"\nSDLC-GATE self_host_native_cf harness ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
+        print("FAIL" if rep.fails else "ALL PASS  (harness self-checks)")
+        return 1 if rep.fails else 0
     mindc = os.environ.get("MINDC_BIN") or str(_REPO / "target" / "release" / "mindc")
     if not pathlib.Path(mindc).exists():
         print(f"BLOCKED: MINDC_BIN (an MLIR-capable mindc) not found at {mindc}")
@@ -512,6 +608,7 @@ def main() -> int:
     rep = Report()
     with tempfile.TemporaryDirectory() as tdn, ThreadPoolExecutor(1) as bex:
         td = pathlib.Path(tdn)
+        harness_checks(rep, a.jobs, td)
         # The bounded compiler is a second whole self-compile: start it now so it
         # overlaps the default derivation, the fixtures and the corpus (wall time
         # ~ one derivation, inside run_gate's budget).
@@ -626,7 +723,8 @@ def main() -> int:
         rep.check(got[0] == "refused" and got[1] == 3,
                   f"address-taking HOME function: clean rc-3 refusal, no ELF (got {got[:2]})")
 
-    print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
+    print(f"\n  ETXTBSY retries absorbed over the whole run: {_etxtbsy_retries[0]}")
+    print(f"SDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
     if rep.fails:
         print(f"FAIL ({len(rep.fails)}): " + "; ".join(rep.fails[:6]))
         return 1
