@@ -35,7 +35,13 @@ What runs:
      in scope (the fixtures' comments give its exits); a disagreement on a program
      the model saw take such an exit is MLIR-KNOWN-DEFECT (counted, allowed); any
      other disagreement is MLIR-DISAGREE and fails above --max-mlir-disagree
-     (default 0).
+     (default 0). Every hand fixture is built with MLIR as well: it must exit with
+     the model's value, or, for the fixtures listed in MLIR_DEFECT_FIXTURES, with
+     the recorded defect exit (so a change in either backend is noticed).
+     The mlab_* fixtures are the re-declaration shapes of the ten MIND-Lab
+     programs (a block-local name re-declared after the block, the same name in
+     both branches, in sibling loop bodies); they are not shadows to the Rust
+     guard and must keep separate storage under every compiler.
   5. stage1 must carry the scoped-nested-bindings capability mark
      (`nb_cap_scoped_nested_bindings`: movabs rax, "nbscope1"), the bytes the Rust
      bridge looks for before admitting the proven shadow shapes.
@@ -744,6 +750,74 @@ FIXTURES.update({
         "s = s + i; continue; } s = s + i; } return s; }", 203),
 })
 
+# The re-declaration shapes the ten MIND-Lab programs (current-ten export) use, with
+# their memory intrinsics replaced by arithmetic: a block-local `let` followed by an
+# outer `let` of the same name after the block (ec_add `tail`, nn_add `i`), the same
+# name in the then- and else-branch (ec_integer `b`), and the same name in sibling
+# while bodies (nn_decimal / nn_add `b`, `value`). None of them is a shadow (the Rust
+# guard sees none); each must keep its own storage. The four with a `return` or
+# `break` inside the loop and the if/else-assign merge are refused by the native
+# control-flow subset with or without the repeated name (TWINS).
+FIXTURES.update({
+    "mlab_ec_add_tail": (
+        "fn f(key: i64, start: i64) -> i64 { if key == 0 { let tail: i64 = start + 1; "
+        "if tail == 0 { return 7; } else { return tail * 2; } } let mut old: i64 = start; "
+        "let mut tail: i64 = 0; while old != 0 { if key != 0 { if old == 3 { return 100 + tail; } } "
+        "tail = tail + old; old = old - 1; } if tail == 0 { return 9; } else { return tail; } } "
+        "fn main() -> i64 { return f(0, 4) + f(1, 2) * 3 + f(1, 5); }", 128),
+    "mlab_ec_add_tail_noret": (
+        "fn f(key: i64, start: i64) -> i64 { if key == 0 { let tail: i64 = start + 1; "
+        "return tail * 2; } let mut old: i64 = start; let mut tail: i64 = 0; while old != 0 { "
+        "tail = tail + old; old = old - 1; } return tail; } "
+        "fn main() -> i64 { return f(0, 4) + f(1, 5); }", 25),
+    "mlab_ec_integer_b": (
+        "fn f(first: i64, c: i64) -> i64 { let mut start: i64 = 10; if first == 48 { "
+        "start = start + 1; let b: i64 = c + 1; if b >= 48 { return 1; } } else { "
+        "let mut b: i64 = c; while b < 57 { start = start + 1; b = b + 2; } } return start; } "
+        "fn main() -> i64 { return f(48, 3) * 10 + f(50, 50) + f(48, 60); }", 125),
+    "mlab_ec_integer_b_merge": (
+        "fn f(first: i64, c: i64) -> i64 { let mut start: i64 = 10; if first == 48 { "
+        "let b: i64 = c + 1; start = start + b; } else { let mut b: i64 = c; while b < 57 { "
+        "start = start + 1; b = b + 2; } } return start; } "
+        "fn main() -> i64 { return f(48, 3) * 10 + f(50, 50); }", 154),
+    "mlab_nn_decimal_b": (
+        "fn f(n: i64, base: i64) -> i64 { let mut i: i64 = 0; let mut digits: i64 = 0; "
+        "while i < n { let b: i64 = base + i; if b > 57 { break; } digits = digits + 1; i = i + 1; } "
+        "let mut frac: i64 = 0; if i < n { i = i + 1; while i < n { let b: i64 = base + i * 2; "
+        "if b > 70 { break; } frac = frac + 1; i = i + 1; } } let mut e: i64 = 0; if i < n { "
+        "while i < n { let b: i64 = i; if b > 100 { return 1; } e = e + b; i = i + 1; } } "
+        "return digits * 100 + frac * 10 + e; } fn main() -> i64 { return f(12, 50) % 256; }", 63),
+    "mlab_sibling_loops_b": (
+        "fn f(n: i64) -> i64 { let mut i: i64 = 0; let mut s: i64 = 0; while i < n { "
+        "let b: i64 = i * 2; if b > 9 { break; } s = s + b; i = i + 1; } while i < n { "
+        "let b: i64 = i * 3; s = s + b; i = i + 1; } return s; } "
+        "fn main() -> i64 { return f(8); }", 74),
+    "mlab_nn_add_i_value": (
+        "fn f(a: i64, b: i64) -> i64 { if a == b { let n: i64 = 3; let mut carry: i64 = 0; "
+        "let mut i: i64 = 0; while i < n { let value: i64 = a + carry + i; carry = value - a; "
+        "i = i + 1; } if carry != 0 { i = i + 1; } return i * 10 + carry; } "
+        "let mut borrow: i64 = 0; let mut i: i64 = 0; while i < 4 { "
+        "let mut value: i64 = a - b - borrow; if value < 0 { value = value + 10; borrow = 1; } "
+        "i = i + value; } return i + borrow; } "
+        "fn main() -> i64 { return f(2, 2) + f(1, 3) * 7; }", 106),
+})
+MLAB_TWINS = {
+    "mlab_ec_add_tail": FIXTURES["mlab_ec_add_tail"][0].replace(
+        "let tail: i64 = start + 1; if tail == 0 { return 7; } else { return tail * 2; }",
+        "let tl: i64 = start + 1; if tl == 0 { return 7; } else { return tl * 2; }"),
+    "mlab_ec_integer_b": FIXTURES["mlab_ec_integer_b"][0].replace(
+        "let b: i64 = c + 1; if b >= 48", "let bb: i64 = c + 1; if bb >= 48"),
+    "mlab_ec_integer_b_merge": FIXTURES["mlab_ec_integer_b_merge"][0].replace(
+        "let b: i64 = c + 1; start = start + b;", "let bb: i64 = c + 1; start = start + bb;"),
+    "mlab_nn_decimal_b": FIXTURES["mlab_nn_decimal_b"][0].replace(
+        "let b: i64 = base + i * 2; if b > 70", "let b2: i64 = base + i * 2; if b2 > 70").replace(
+        "let b: i64 = i; if b > 100 { return 1; } e = e + b;",
+        "let b3: i64 = i; if b3 > 100 { return 1; } e = e + b3;"),
+    "mlab_sibling_loops_b": FIXTURES["mlab_sibling_loops_b"][0].replace(
+        "let b: i64 = i * 3; s = s + b;", "let b2: i64 = i * 3; s = s + b2;"),
+}
+assert all(MLAB_TWINS[k] != FIXTURES[k][0] for k in MLAB_TWINS)
+
 # Fixtures the native control-flow subset refuses whatever the names (an `if` with
 # a nested loop inside a loop, an if/else assign merge, `loop`, `else if`): each
 # twin renames the shadow away; the fixture may be refused only while its twin is.
@@ -759,6 +833,16 @@ TWINS = {
                                    "if i > 2 { let w: i64 = 100; s = s + w; continue; } "
                                    "s = s + i; } return s; }",
 }
+TWINS.update(MLAB_TWINS)
+
+# The MLIR build's exit for the fixtures that take a loop exit while a body-local
+# shadow is in scope (the comments above): the shadow's value leaks out of the loop.
+MLIR_DEFECT_FIXTURES = {
+    "continue_edge_assign_before_shadow": 9, "break_after_shadow": 100,
+    "continue_mut_shadow": 51, "two_carried_one_shadowed": 40,
+    "shadow_rw_then_break": 117, "else_break_after_shadow": 1,
+    "i32_carried_i64_shadow_break": 1, "for_continue_branch_let_var": 103,
+}
 
 
 # Fixtures whose shadow the Rust bridge guard keeps unproven (range-for variables
@@ -766,7 +850,7 @@ TWINS = {
 # whatever compiler runs. And the fixture the guard sees no shadow in at all.
 BRIDGE_UNPROVEN = {"for_body_let_shadows_var", "nested_for_same_var", "for_var_shadows_param",
                    "for_var_shadows_outer_let", "for_continue_branch_let_var"}
-NO_GUARD_SHADOW = {"sibling_fors_reuse_var"}
+NO_GUARD_SHADOW = {"sibling_fors_reuse_var"} | {k for k in FIXTURES if k.startswith("mlab_")}
 
 
 def shadow_refusal(got) -> bool:
@@ -821,6 +905,20 @@ def main(argv=None) -> int:
     fails += not has_mark
     print(f"  {'PASS' if has_mark else 'FAIL'}  stage1 carries the scoped-nested-bindings mark "
           f"{MARK!r}")
+    if a.mlir:
+        # every fixture's lexical value under the MLIR build too; the fixtures whose
+        # comments give a different MLIR exit carry a shadow out through a loop exit
+        # (the known MLIR defect) and must still show it, so a fix is noticed
+        for k, (src, want) in FIXTURES.items():
+            ml = mlir_exit(src, td, f"fxm_{k}")
+            if k in MLIR_DEFECT_FIXTURES:
+                ok = ml == ("ok", MLIR_DEFECT_FIXTURES[k])
+                tag = f"MLIR-KNOWN-DEFECT exit (lexical {want})"
+            else:
+                ok = ml == ("ok", want)
+                tag = f"want={want}"
+            fails += not ok
+            print(f"  {'PASS' if ok else 'FAIL'}  mlir fixture {k}: {ml} {tag}")
     if a.bridge:
         for k, (src, want) in FIXTURES.items():
             got = bridge_exit(src, td, f"m_{k}", st)
