@@ -1243,16 +1243,11 @@ pub fn lower_to_ir_with_limits(
     limits: MaterializationLimits,
 ) -> Result<IRModule, MaterializationRefusal> {
     let mut context = LoweringContext::new(limits);
-    let ir = lower_to_ir_inner(module, &mut context);
+    let ir = lower_entry::lower_module(module, &mut context);
     context.refusal.map_or(Ok(ir), Err)
 }
 
 pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringContext) -> IRModule {
-    // Same admission as type-checking: std.posix signatures are registered
-    // only when this module imports std.posix, and a local extern name is
-    // left to ExternFnDecl. Must be installed before `visible_fns` runs.
-    #[cfg(feature = "cross-module-imports")]
-    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     // PURE-SCALAR FAST LANE. For a module whose every item passes
     // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
     // `1 + 2 * 3 - 4 / 2`) AND an empty whole-project registry, every setup
@@ -6571,27 +6566,9 @@ pub(super) fn lower_expr_inner(
             let canonical_semantic = context.canonical_finish_function(ret_id);
 
             // Add function definition to IR, propagating the REAP threshold
-            // from the AST attribute if present.
-            // std.posix keeps its source names (`close`, `open`, …) and emits
-            // them under `mind_posix_*` so a program extern of the C name
-            // still links to libc.
-            #[cfg(feature = "cross-module-imports")]
-            let symbol = {
-                let renamed = crate::project::active_module_table::link_name(
-                    crate::qualified_enums::current_module_path().as_deref(),
-                    name,
-                );
-                if renamed != *name {
-                    if let Some(sig) = ir.fn_signatures.get(name).cloned() {
-                        ir.fn_signatures.entry(renamed.clone()).or_insert(sig);
-                    }
-                }
-                renamed
-            };
-            #[cfg(not(feature = "cross-module-imports"))]
-            let symbol = name.clone();
-            ir.instrs.push(Instr::FnDef {
-                name: symbol,
+            // from the AST attribute if present (std.posix: under its link name).
+            ir.push_fn_def(Instr::FnDef {
+                name: name.clone(),
                 params: param_pairs,
                 ret_id,
                 body: fn_ir.instrs,
@@ -8075,40 +8052,9 @@ pub(super) fn lower_expr_inner(
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types, context))
                 .collect();
             // mangled instance (`id$i64`) and queue that instance for emission.
-            // A non-generic callee (or a shape outside the bounded slice) keeps
-            // the original name, so non-generic call lowering is byte-identical.
-            #[cfg(feature = "cross-module-imports")]
-            let name = {
-                let mut linked_name =
-                    try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
-                let qualified_posix =
-                    crate::project::active_module_table::is_qualified_posix_call(*span);
-                let linked = if qualified_posix {
-                    format!("mind_posix_{linked_name}")
-                } else {
-                    crate::project::active_module_table::link_name(
-                        crate::qualified_enums::current_module_path().as_deref(),
-                        &linked_name,
-                    )
-                };
-                if qualified_posix {
-                    if let Some(sig) =
-                        crate::project::active_module_table::qualified_import_fn(*span, callee)
-                    {
-                        ir.fn_signatures
-                            .insert(linked.clone(), (sig.param_types, sig.ret_type));
-                    }
-                }
-                if linked != linked_name {
-                    if let Some(sig) = ir.fn_signatures.get(&linked_name).cloned() {
-                        ir.fn_signatures.entry(linked.clone()).or_insert(sig);
-                    }
-                    linked_name = linked;
-                }
-                linked_name
-            };
-            #[cfg(not(feature = "cross-module-imports"))]
-            let name = try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
+            // A non-generic callee (or a shape outside the bounded slice) keeps its
+            // name (std.posix: its link name), so other call lowering is byte-identical.
+            let name = lower_entry::call_name(ir, callee, args, *span);
             let dst = ir.fresh();
             #[cfg(feature = "cross-module-imports")]
             context.canonical_record_call(*span, canonical_identity.as_ref(), &arg_ids, dst);

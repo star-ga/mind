@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::{LoweringContext, lower_to_ir_inner};
+use super::{LoweringContext, lower_entry::lower_module};
 use crate::eval::materialization::MaterializationLimits;
 use crate::ir::{IRModule, Instr, ValueId};
 use crate::project::canonical_bridge::{CanonicalBindingError, CanonicalBindingPlan};
@@ -413,7 +413,7 @@ pub fn lower_to_ir_with_canonical_plan(
 ) -> Result<IRModule, CanonicalBindingError> {
     let mut context = LoweringContext::new(limits);
     context.canonical = Some(CanonicalLoweringState::new(plan));
-    let mut ir = lower_to_ir_inner(module, &mut context);
+    let mut ir = lower_module(module, &mut context);
     if let Some(reason) = context.refusal.as_ref() {
         return Err(CanonicalBindingError::Lowering(reason.to_string()));
     }
