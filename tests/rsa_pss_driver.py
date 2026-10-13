@@ -23,8 +23,10 @@
 # std/x509.mind's bignum, so combine the three sources with import lines
 # stripped, exactly as tests/x509_vectors_driver.py combines sha256+x509):
 #   cat std/sha256.mind > /tmp/rsa_pss_combined.mind
-#   grep -v '^import std.sha256;' std/x509.mind >> /tmp/rsa_pss_combined.mind
-#   grep -v '^import '            std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/sha512.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/ecdsa_p256.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/x509.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
 #   mindc /tmp/rsa_pss_combined.mind --emit-shared /tmp/rsa_pss.so
 #
 # Usage: python3 rsa_pss_driver.py <rsa_pss.so>

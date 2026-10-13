@@ -137,3 +137,6 @@ node_modules/
 # Python bytecode caches — regenerated on every run, never an input to a gate.
 __pycache__/
 *.pyc
+
+# Generated local X.509 test keys and certificate intermediates.
+/tests/x509/tmp/

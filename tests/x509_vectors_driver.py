@@ -22,14 +22,12 @@
 # SHA-256, self-signed) so ground truth is independent and the run is
 # reproducible.  Prints PASS/FAIL per case.
 #
-# Build the .so first (std/x509.mind imports std.sha256, which the standalone
-# --emit-shared path leaves undefined — so combine the two sources into one file,
-# stripping the import line, exactly as hkdf+sha256 are combined):
-#   cat std/sha256.mind > /tmp/x509_combined.mind
-#   grep -v '^import std.sha256;' std/x509.mind >> /tmp/x509_combined.mind
-#   mindc /tmp/x509_combined.mind --emit-shared /tmp/x509.so   # needs mlir-build
+# Build the .so first (std/x509.mind imports several std crypto modules, which
+# the standalone --emit-shared path resolves only through the bundled subset —
+# so combine the sources into one file, stripping import lines):
+#   tests/x509/build_shared.sh /tmp/x509.so
 #
-# Usage: python3 x509_vectors_driver.py <x509.so>
+# Usage: python3 x509_vectors_driver.py /tmp/x509.so
 
 import ctypes
 import sys
@@ -317,16 +315,17 @@ for _ in range(200):
 record_bool("harden: 200 bit-flip mutations survived (no crash)", True)
 
 # ---------------------------------------------------------------------------
-# CAPABILITY SCOPE (honesty marker): std/x509 does NOT authenticate a peer.
-# The module must self-declare this fail-closed so nothing can wire it to a
-# live socket believing it is MITM-safe. Flipping this to 1 without adding
-# real chain+validity+hostname validation must turn this driver RED.
+# CAPABILITY SCOPE: peer authentication IS now implemented by
+# x509_verify_server_chain (chain building to an explicit trust-anchor set,
+# validity windows, SAN hostname matching; see std/x509.mind), so the
+# capability reads 1.  This driver pins the legacy scope marker's UPDATE: the
+# value must read 1 (authentication tests live in tests/x509/x509_chain_driver.py).
 # ---------------------------------------------------------------------------
 print("=" * 72)
-print("CAPABILITY SCOPE - module must declare it is NOT peer authentication")
+print("CAPABILITY SCOPE - module declares peer authentication (see tests/x509/)")
 print("=" * 72)
-record_bool("scope: x509_peer_auth_supported()==0 (no chain/validity/hostname)",
-            X.x509_peer_auth_supported() == 0,
+record_bool("scope: x509_peer_auth_supported()==1 (chain/validity/hostname implemented)",
+            X.x509_peer_auth_supported() == 1,
             f"got={X.x509_peer_auth_supported()}")
 
 print("=" * 72)

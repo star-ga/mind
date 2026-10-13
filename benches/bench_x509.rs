@@ -160,33 +160,26 @@ fn build_x509_so() -> Option<&'static PathBuf> {
             return None;
         };
 
-        // Combine chain, byte-for-byte the driver's `cat sha256 > c; grep -v
-        // '^import std.sha256;' x509 >> c`: sha256 first (it imports nothing),
-        // then x509 with its `import std.sha256;` line dropped.
+        // Combine the same import-stripped module set as
+        // tests/x509/build_shared.sh (x509 now also pulls sha512 / ecdsa_p256 /
+        // rsa_pss for the chain validator).
         let std_dir = manifest_dir().join("std");
-        let sha = match std::fs::read_to_string(std_dir.join("sha256.mind")) {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("bench_x509: cannot read std/sha256.mind; skipping");
-                return None;
+        let mut combined = String::new();
+        for m in ["sha256", "sha512", "ecdsa_p256", "x509", "rsa_pss"] {
+            let src = match std::fs::read_to_string(std_dir.join(format!("{m}.mind"))) {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("bench_x509: cannot read std/{m}.mind; skipping");
+                    return None;
+                }
+            };
+            for line in src.lines() {
+                if line.trim_start().starts_with("import ") {
+                    continue;
+                }
+                combined.push_str(line);
+                combined.push('\n');
             }
-        };
-        let x509 = match std::fs::read_to_string(std_dir.join("x509.mind")) {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("bench_x509: cannot read std/x509.mind; skipping");
-                return None;
-            }
-        };
-        let mut combined = String::with_capacity(sha.len() + x509.len() + 2);
-        combined.push_str(&sha);
-        combined.push('\n');
-        for line in x509.lines() {
-            if line.trim_start().starts_with("import std.sha256") {
-                continue;
-            }
-            combined.push_str(line);
-            combined.push('\n');
         }
 
         let dir = std::env::temp_dir();

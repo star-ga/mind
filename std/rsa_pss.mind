@@ -7,9 +7,13 @@
 // bn_cmp_ge / modexp_2048) — nothing is reimplemented here.  Like std/x509.mind
 // itself, the standalone --emit-shared build combines the three sources into
 // one file with the import lines stripped:
+//   (std/x509.mind itself now composes sha512 + ecdsa_p256 for the chain
+//   validator, so the full combine is:)
 //   cat std/sha256.mind > /tmp/rsa_pss_combined.mind
-//   grep -v '^import std.sha256;' std/x509.mind >> /tmp/rsa_pss_combined.mind
-//   grep -v '^import '            std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/sha512.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/ecdsa_p256.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/x509.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
 //   mindc /tmp/rsa_pss_combined.mind --emit-shared /tmp/rsa_pss.so
 //
 // Scope (deliberately minimal):

@@ -1,0 +1,44 @@
+// native_body.mind — statements of main() for the native harness, appended by
+// build_native.sh after `let cases_hex: String = "<hex>";` (closing brace is
+// here).  Replays every manifest case against x509_verify_server_chain and
+// exits with the number of failed cases.
+
+let src: i64 = __mind_alloc(1048576);
+let hn: i64 = cases_hex.len;
+let hx: i64 = cases_hex.addr;
+let mut hi: i64 = 0;
+let mut oi: i64 = 0;
+while hi + 1 < hn + 1 {
+    let c1: i64 = __mind_load_i8(hx + hi);
+    let c2: i64 = __mind_load_i8(hx + hi + 1);
+    let v1: i64 = nat_hexval(c1);
+    let v2: i64 = nat_hexval(c2);
+    __mind_store_i8(src + oi, v1 * 16 + v2);
+    oi = oi + 1;
+    hi = hi + 2;
+}
+let ncases: i64 = nat_ld(src);
+let mut pos: i64 = 8;
+let mut fails: i64 = 0;
+let mut c: i64 = 0;
+let ws: i64 = __mind_alloc(131072);
+let ws2: i64 = __mind_alloc(131072);
+while c < ncases {
+    let want: i64 = nat_ld(src + pos);
+    let now: i64 = nat_ld(src + pos + 8);
+    let dns: i64 = src + pos + 16;
+    pos = pos + 16 + 256;
+    pos = nat_blob(src, pos, ws);
+    pos = nat_blob(src, pos, ws2);
+    let rc: i64 = x509_verify_server_chain(ws, ws2, dns, now);
+    if rc != want {
+        print("FAIL case", c);
+        fails = fails + 1;
+    } else {
+        print("PASS case", c);
+    }
+    c = c + 1;
+}
+print("native fails:", fails);
+fails
+}

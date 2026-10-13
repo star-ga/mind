@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1996 | **Est. tokens:** ~3,751,861
-**Generated:** 2026-10-09 22:13 UTC
+**Files:** 2032 | **Est. tokens:** ~3,806,297
+**Generated:** 2026-10-13 04:33 UTC
 
 ## Token Budget Guide
 
@@ -22,14 +22,14 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31,123 |
+| `./` | 33 | ~31,677 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~83,855 |
+| `benches/` | 28 | ~83,789 |
 | `benches/common/` | 2 | ~2,995 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 13 | ~28,163 |
@@ -63,7 +63,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 175 | ~461,417 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,159 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
@@ -112,9 +112,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,987 |
+| `src/build/` | 13 | ~54,464 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 2 | ~4,881 |
+| `src/build/native_bridge/` | 5 | ~15,307 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,774 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 20 | ~69,954 |
+| `src/project/` | 20 | ~69,999 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -151,8 +151,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 42 | ~205,452 |
-| `tests/` | 420 | ~861,169 |
+| `std/` | 42 | ~218,994 |
+| `tests/` | 423 | ~870,824 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -223,6 +223,8 @@
 | `tests/std_process_wait/` | 5 | ~7,294 |
 | `tests/support/` | 9 | ~19,407 |
 | `tests/type_checker/` | 2 | ~140 |
+| `tests/x509/` | 8 | ~6,251 |
+| `tests/x509/testdata/` | 22 | ~13,548 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
 | `tools/` | 4 | ~12,993 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
@@ -245,7 +247,7 @@
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) â€” === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) â€” === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) â€” MIND Bounty Board
-- `build.rs` (~234 tok, medium) â€” Copyright 2025 STARGA Inc.
+- `build.rs` (~767 tok, large) â€” Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~3947 tok, huge) â€” [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) â€” Code of Conduct
@@ -255,7 +257,7 @@
 - `.editorconfig` (~51 tok, small) â€” root = true
 - `.gitattributes` (~130 tok, small) â€” # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) â€” GitHub Setup (Quick)
-- `.gitignore` (~950 tok, large) â€” # Rust
+- `.gitignore` (~971 tok, large) â€” # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) â€”                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) â€” COMMERCIAL LICENSE NOTICE â€“ MIND (Enterprise & SaaS)
@@ -306,7 +308,7 @@
 - `bench_sha256.rs` (~2594 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
 - `bench_tls13_record.rs` (~6121 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
 - `bench_x25519.rs` (~2469 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
-- `bench_x509.rs` (~3990 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
+- `bench_x509.rs` (~3924 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
 - `cerebras_stencil.rs` (~831 tok, large) â€” Copyright 2025-2026 STARGA Inc.
 ### `benches/common/`
 
@@ -1001,7 +1003,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) â€” #298 self-host f64 MLIR emit â€” self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~831 tok, large) â€” # std/*.mind MANIFEST â€” the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~835 tok, large) â€” # std/*.mind MANIFEST â€” the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1305,11 +1307,18 @@
 - `mod.rs` (~9611 tok, huge) â€” Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
+- `admission.rs` (~5064 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `child.rs` (~3650 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1231 tok, large) â€” Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8564 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9041 tok, huge) â€” Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `seed.rs` (~2735 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `shadow.rs` (~2627 tok, huge) â€” Copyright 2025 STARGA Inc.
+### `src/build/`
+
 - `native_image.rs` (~4296 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) â€” Seam tests for the captured-source snapshot and its module identities.
@@ -1564,7 +1573,7 @@
 - `single_file_scope.rs` (~7065 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) â€” Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5153 tok, huge) â€” Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3656 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3701 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `substrate_link.rs` (~4504 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) â€” The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
@@ -1654,7 +1663,7 @@
 - `chacha20_poly1305.mind` (~3972 tok, huge) â€” std/chacha20_poly1305.mind â€” ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3211 tok, huge) â€” std/cli.mind â€” RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4059 tok, huge) â€” std.detmath â€” deterministic transcendental tier (roadmap Phase 17.6).
-- `ecdsa_p256.mind` (~6517 tok, huge) â€” std/ecdsa_p256.mind â€” ECDSA signature VERIFICATION on NIST P-256
+- `ecdsa_p256.mind` (~7346 tok, huge) â€” std/ecdsa_p256.mind â€” ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~5043 tok, huge) â€” std/fs.mind â€” Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) â€” std/hkdf.mind â€” HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) â€” std/hpack.mind â€” HPACK header-compression DECODING (RFC 7541) in pure MIND.
@@ -1674,7 +1683,7 @@
 - `reactor.mind` (~1420 tok, large) â€” std.reactor â€” deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) â€” std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) â€” std.ring â€” fixed-capacity byte ring buffer (FIFO).
-- `rsa_pss.mind` (~2453 tok, huge) â€” std/rsa_pss.mind â€” RSASSA-PSS signature VERIFICATION (RFC 8017 Â§8.1.2) with
+- `rsa_pss.mind` (~2512 tok, huge) â€” std/rsa_pss.mind â€” RSASSA-PSS signature VERIFICATION (RFC 8017 Â§8.1.2) with
 - `sha256.mind` (~3643 tok, huge) â€” std/sha256.mind â€” FIPS 180-4 SHA-256 in pure MIND.
 - `sha512.mind` (~5100 tok, huge) â€” std/sha512.mind â€” FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
 - `string.mind` (~2725 tok, huge) â€” std/string.mind â€” RFC 0005 Phase 2: pure-MIND String.
@@ -1688,7 +1697,7 @@
 - `vec.mind` (~1100 tok, large) â€” std/vec.mind â€” RFC 0005 Phase 2: pure-MIND growable vector.
 - `x25519.mind` (~4019 tok, huge) â€” std/x25519.mind â€” X25519 (RFC 7748 Â§5) Curve25519 Montgomery-ladder ECDH in
 - `x25519mlkem768.mind` (~1554 tok, huge) â€” std/x25519mlkem768.mind â€” X25519MLKEM768 post-quantum hybrid key exchange in
-- `x509.mind` (~7131 tok, huge) â€” std/x509.mind â€” minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
+- `x509.mind` (~19785 tok, huge) â€” std/x509.mind â€” X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
 ### `tests/`
 
 - `aggregate_const_run.rs` (~1765 tok, huge) â€” Copyright 2026 STARGA Inc.
@@ -1957,7 +1966,7 @@
 - `dot_enum_variant_run.rs` (~756 tok, large) â€” Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) â€” Copyright 2025 STARGA Inc.
 - `duplicate_struct_declarations.rs` (~576 tok, large) â€” Copyright 2026 STARGA Inc.
-- `ecdsa_p256_driver.py` (~2752 tok, huge) â€” # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
+- `ecdsa_p256_driver.py` (~2771 tok, huge) â€” # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
 - `emit_ir_for_loop.rs` (~374 tok, medium) â€” Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `enum_match_collision_run.rs` (~987 tok, large) â€” Copyright 2025 STARGA Inc.
 - `enum_match_run.rs` (~2310 tok, huge) â€” Copyright 2025 STARGA Inc.
@@ -2346,6 +2355,7 @@
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) â€” Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) â€” Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~3380 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~5405 tok, huge) â€” Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) â€” Host-native compiler fixture for admission-only controls.
@@ -2354,6 +2364,7 @@
 
 - `native_closure_admission.rs` (~3941 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) â€” Default-feature-profile controls for the native backend's import admission.
+- `native_embedded_seed.rs` (~1432 tok, large) â€” Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) â€” Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_module_bridge_controls.rs` (~8330 tok, huge) â€” Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) â€” Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
@@ -2400,7 +2411,7 @@
 - `rfc0012_phase_b_operators.rs` (~4737 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~2405 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `roofline_peak.rs` (~697 tok, large) â€” Correctness proof for the CPUID-gated roofline denominator (B4).
-- `rsa_pss_driver.py` (~2692 tok, huge) â€” # Ground-truth driver for std/rsa_pss.mind (pure-MIND RSASSA-PSS-VERIFY,
+- `rsa_pss_driver.py` (~2722 tok, huge) â€” # Ground-truth driver for std/rsa_pss.mind (pure-MIND RSASSA-PSS-VERIFY,
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) â€” Runtime test: Element-wise addition execution
@@ -2734,7 +2745,7 @@
 - `tensor_symbolic.rs` (~542 tok, large) â€” Copyright 2025 STARGA Inc.
 - `test_harness_root_cause_error.rs` (~758 tok, large) â€” Copyright 2025 STARGA Inc.
 - `tls13_finished_driver.py` (~3085 tok, huge) â€” # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
-- `tls13_handshake_driver.py` (~6662 tok, huge) â€” # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
+- `tls13_handshake_driver.py` (~6701 tok, huge) â€” # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
 - `tls13_keyschedule_driver.py` (~2863 tok, huge) â€” # Official-vector driver for std/tls13_keyschedule.mind (pure-MIND TLS 1.3 key
 - `tls13_record_driver.py` (~3051 tok, huge) â€” # Official-vector driver for std/tls13_record.mind (pure-MIND TLS 1.3 record
 - `trait_static_dispatch_run.rs` (~1081 tok, large) â€” Copyright 2025 STARGA Inc.
@@ -2775,7 +2786,50 @@
 - `wide_integer_types.rs` (~517 tok, large) â€” Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) â€” # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) â€” # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
-- `x509_vectors_driver.py` (~3593 tok, huge) â€” # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
+### `tests/x509/`
+
+- `build_native.sh` (~399 tok, medium) â€” Build and run the NATIVE-backend harness for std/x509.mind chain validation.
+- `build_shared.sh` (~247 tok, medium) â€” Build std/x509.mind (+ its std crypto dependencies) as a shared library via
+### `tests/`
+
+- `x509_chain_smoke.rs` (~2749 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
+### `tests/x509/`
+
+- `gen_fixtures.sh` (~1972 tok, huge) â€” Regenerate the committed X.509 DER fixtures for std/x509.mind chain-validation
+- `gen_native_manifest.py` (~1008 tok, large) â€” # Generate tests/x509/testdata/cases_native.bin â€” the offline fixture pack for
+- `native_body.mind` (~332 tok, medium) â€” native_body.mind â€” statements of main() for the native harness, appended by
+- `native_head.mind` (~378 tok, medium) â€” tests/x509/native_main_head.mind + native_main_body.mind â€” NATIVE-backend
+- `native_main_body.mind` (~345 tok, medium) â€” Body of the native main() â€” appended inside a `fn main() -> i64 { ... }`
+### `tests/x509/testdata/`
+
+- `cases_native.bin` (~10972 tok, huge) â€” qÒÏjwww.example.com
+- `ec_inter.der` (~105 tok, small) â€” 0‚ 0‚F @x>åpÐ0
+- `ec_leaf_badsig.der` (~115 tok, small) â€” 0‚Å0‚k 	…‹ÒKdx0
+- `ec_leaf_crit.der` (~119 tok, small) â€” 0‚×0‚~ 	¬0…@A›ý‚0
+- `ec_leaf.der` (~115 tok, small) â€” 0‚Å0‚k 	…‹ÒKdx0
+- `ec_leaf_noeku.der` (~109 tok, small) â€” 0‚°0‚V €<ß¥ùVw0
+- `ec_leaf_nosan.der` (~109 tok, small) â€” 0‚­0‚R Vç¹Ž˜t6x0
+- `ec_leaf_trunc.der` (~25 tok, tiny) â€” 0‚Å0‚k 	…‹ÒKdx0
+- `ec_leaf_wild.der` (~123 tok, small) â€” 0‚è0‚ 	þõÂµ ª0
+- `ec_root.der` (~106 tok, small) â€” 0‚¤0‚J 3ùÞ}Î˜€bYÓ¡~lªs;g‹Þ0
+- `noca_inter.der` (~105 tok, small) â€” 0‚0‚B 	Èk’KÚ7K0
+- `noca_leaf.der` (~115 tok, small) â€” 0‚Ç0‚m 	ä‚Ï€¿Œ?0
+- `noca_root.der` (~107 tok, small) â€” 0‚¥0‚K BDßd“¾©
+- `now.txt` (~3 tok, tiny) â€” 1792004721
+- `pl_i1.der` (~105 tok, small) â€” 0‚Ÿ0‚F 	×Uv=†çH0
+- `pl_i2.der` (~106 tok, small) â€” 0‚¤0‚J 	Ï|%i"%N0
+- `pl_leaf.der` (~114 tok, small) â€” 0‚Â0‚h W–Oû­ÁÓ0
+- `pl_root.der` (~106 tok, small) â€” 0‚¤0‚J Sº^ 2+0ÙñŒÆíLRˆ=¨0
+- `pss_leaf.der` (~239 tok, medium) â€” 0‚¶0‚j y20A	*†H†÷
+- `pss_root.der` (~231 tok, medium) â€” 0‚—0‚K qñŒJŸ FÆŠgg:èjaÿî
+- `rsa_leaf.der` (~214 tok, medium) â€” 0‚S0‚; ü:‡bÏï.0	*†H†÷010UMindTest RSA Root CA026101
+- `rsa_root.der` (~205 tok, medium) â€” 0‚/0‚ ‘8éÏbµ«•š”u?-ËM¦)F_0	*†H†÷010UMindTest RSA Root
+### `tests/`
+
+- `x509_vectors_driver.py` (~3574 tok, huge) â€” # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
+### `tests/x509/`
+
+- `x509_chain_driver.py` (~1570 tok, huge) â€” # Chain-validation driver for std/x509.mind :: x509_verify_server_chain.
 ### `tests/xsi_quant/`
 
 - `gates.rs` (~4100 tok, huge) â€” Copyright 2025 STARGA Inc.

@@ -39,7 +39,7 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 23
+# BUNDLED_COUNT 26
 # TOTAL_COUNT 42
 #
 # 19 modules are `no`/`no`: on disk, reachable by NEITHER consumer. That is not an
@@ -54,7 +54,7 @@ blas	seed	bundled
 chacha20_poly1305	no	no
 cli	seed	bundled
 detmath	no	no
-ecdsa_p256	no	no
+ecdsa_p256	no	bundled
 fs	seed	bundled
 hkdf	no	no
 hpack	no	no
@@ -74,7 +74,7 @@ process	seed	bundled
 reactor	seed	bundled
 regex	seed	bundled
 ring	seed	bundled
-rsa_pss	no	no
+rsa_pss	no	bundled
 sha256	seed	bundled
 sha512	no	bundled
 string	seed	bundled
@@ -88,4 +88,4 @@ tui	seed	bundled
 vec	seed	bundled
 x25519	no	no
 x25519mlkem768	no	no
-x509	no	no
+x509	no	bundled

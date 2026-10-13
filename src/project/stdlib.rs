@@ -44,6 +44,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.async", include_str!("../../std/async.mind")),
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.ecdsa_p256", include_str!("../../std/ecdsa_p256.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
     ("std.http", include_str!("../../std/http.mind")),
     ("std.io", include_str!("../../std/io.mind")),
@@ -56,6 +57,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
     ("std.ring", include_str!("../../std/ring.mind")),
+    ("std.rsa_pss", include_str!("../../std/rsa_pss.mind")),
     ("std.sha256", include_str!("../../std/sha256.mind")),
     ("std.sha512", include_str!("../../std/sha512.mind")),
     ("std.string", include_str!("../../std/string.mind")),
@@ -63,6 +65,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.toml", include_str!("../../std/toml.mind")),
     ("std.tui", include_str!("../../std/tui.mind")),
     ("std.vec", include_str!("../../std/vec.mind")),
+    ("std.x509", include_str!("../../std/x509.mind")),
 ];
 
 /// Parse every bundled std/*.mind source and return the

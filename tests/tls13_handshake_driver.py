@@ -37,8 +37,10 @@
 #
 # Build the .so first (combine deps in dependency order, stripping imports):
 #   cat std/sha256.mind                                     > /tmp/tls13hs.mind
+#   grep -v '^import ' std/sha512.mind                    >> /tmp/tls13hs.mind
+#   grep -v '^import ' std/ecdsa_p256.mind                >> /tmp/tls13hs.mind
 #   grep -v '^import std.sha256;' std/hkdf.mind            >> /tmp/tls13hs.mind
-#   grep -v '^import std.sha256;' std/x509.mind            >> /tmp/tls13hs.mind
+#   grep -v '^import ' std/x509.mind                       >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
 #                                                          >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.' std/aes_gcm.mind              >> /tmp/tls13hs.mind
