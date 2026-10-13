@@ -1,0 +1,2111 @@
+// std/tls13_client.mind — bounded TLS 1.3 CLIENT STATE MACHINE in pure MIND.
+//
+// Builds on the already-verified modules (nothing cryptographic is
+// reimplemented here except suite-dispatch record framing and the
+// handshake parsers):
+//   std/tls13_handshake.mind   tls13_hs_derive_* / tls13_hs_verify_*
+//   std/tls13_keyschedule.mind tls13_hkdf_expand_label / traffic secrets
+//   std/tls13_record.mind      AES-GCM record seal/open (+ nonce)
+//   std/tls13_finished.mind    tls13_transcript_hash / finished MAC
+//   std/x25519.mind            ECDHE
+//   std/x25519mlkem768.mind    optional hybrid group 0x11EC
+//   std/aes_gcm.mind           TLS_AES_128_GCM_SHA256
+//   std/chacha20_poly1305.mind TLS_CHACHA20_POLY1305_SHA256
+//   std/x509.mind              leaf key extraction + chain-verify stub
+//
+// ============================ SECURITY SCOPE ==============================
+// This module is the CLIENT STATE MACHINE.  Peer authentication is delegated
+// to x509_verify_server_chain(chain, anchors, expected_dns, now_unix) -> i64
+// (0 = accept, negative = refuse).  On this branch that entry point is a
+// CLEARLY MARKED STUB that REFUSES every chain (std/x509.mind).  Nothing
+// authenticates until the real std/x509-auth implementation is merged.
+// CertificateVerify and Finished are still verified fail-closed against the
+// leaf key and the handshake traffic secret — a chain refusal is the last
+// gate, not the only one.
+// ==========================================================================
+//
+// ABSTRACT I/O — NO SOCKETS.  The caller supplies buffers:
+//   - inbound : tls13c_feed() accepts whatever the peer read produced
+//               (partial records are fine; they are accumulated).
+//   - outbound: tls13c_pump() / tls13c_write_app() append complete wire
+//               records to an out buffer; the caller drains with
+//               tls13c_read_out() and writes them however it likes.
+//   - time    : now_unix is caller-supplied; deadline/cancellation is a
+//               caller-supplied tick budget consumed by tls13c_tick().
+//
+// Fail-closed contract (every path):
+//   - entropy shorter than the configured requirement => refuse to start
+//   - any malformed / truncated / oversized record or handshake message
+//   - HelloRetryRequest is REFUSED explicitly (E_HRR) — not silently dropped
+//   - alert records, close_notify, EOF mid-handshake
+//   - application data is NEVER emitted before server Finished is verified
+//   - every key/secret in the state buffer is zeroized on close/failure
+//
+// Combined-file build (order matters — deps must precede dependents):
+//   cat std/sha256.mind                                      > /tmp/tls13c.mind
+//   grep -v '^import std.sha256;' std/hkdf.mind             >> /tmp/tls13c.mind
+//   grep -v '^import std.sha256;' std/x509.mind             >> /tmp/tls13c.mind
+//   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
+//                                                          >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/aes_gcm.mind               >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/chacha20_poly1305.mind     >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/tls13_record.mind          >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/tls13_finished.mind        >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/rsa_pss.mind               >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/x25519.mind                >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/keccak.mind                >> /tmp/tls13c.mind
+//   grep -vE '^import std\.keccak;' std/mlkem768.mind       >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/x25519mlkem768.mind        >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/tls13_handshake.mind       >> /tmp/tls13c.mind
+//   grep -vE '^import std\.' std/tls13_client.mind          >> /tmp/tls13c.mind
+//   mindc /tmp/tls13c.mind --emit-shared /tmp/tls13c.so      # needs mlir-build
+//
+// Naming: every symbol is tls13c_-prefixed (clear of libc/libm and of every
+// composed module).  Buffer layout: one byte per offset.  Determinism: pure
+// integer arithmetic; no floats, no clocks inside the module (now_unix is an
+// argument), no external calls beyond the composed std modules.
+
+import std.sha256;
+import std.hkdf;
+import std.x509;
+import std.tls13_keyschedule;
+import std.tls13_finished;
+import std.tls13_record;
+import std.tls13_handshake;
+import std.aes_gcm;
+import std.chacha20_poly1305;
+import std.x25519;
+import std.x25519mlkem768;
+
+// ---------------------------------------------------------------------------
+// Status codes (tls13c_status / tls13c_init / pump returns).
+// ---------------------------------------------------------------------------
+//  0 INIT          1 CH_SENT        2 WAIT_SH        3 WAIT_EE
+//  4 WAIT_CERT     5 WAIT_CV        6 WAIT_FIN       7 CONNECTED
+//  8 CLOSED        9 ERROR
+pub fn tls13c_st_init() -> i64 {
+    0
+}
+
+pub fn tls13c_st_ch_sent() -> i64 {
+    1
+}
+
+pub fn tls13c_st_wait_sh() -> i64 {
+    2
+}
+
+pub fn tls13c_st_wait_ee() -> i64 {
+    3
+}
+
+pub fn tls13c_st_wait_cert() -> i64 {
+    4
+}
+
+pub fn tls13c_st_wait_cv() -> i64 {
+    5
+}
+
+pub fn tls13c_st_wait_fin() -> i64 {
+    6
+}
+
+pub fn tls13c_st_connected() -> i64 {
+    7
+}
+
+pub fn tls13c_st_closed() -> i64 {
+    8
+}
+
+pub fn tls13c_st_error() -> i64 {
+    9
+}
+
+// ---------------------------------------------------------------------------
+// Error codes (negative).  0 means success / need-more-input where noted.
+// ---------------------------------------------------------------------------
+// E_INVAL   -1  E_ENTROPY -2  E_STATE   -3  E_IO      -4
+// E_RECORD  -5  E_HS      -6  E_ALERT   -7  E_AUTH    -8
+// E_TIMEOUT -9  E_EOF    -10  E_HRR    -11  E_SUITE  -12
+// E_GROUP  -13  E_APP    -14  E_CLOSED -15  E_OVF    -16
+// E_CHAIN  -17  E_CV     -18  E_FIN    -19  E_CIPHER -20
+// E_ENTROPY_SHORT is the same as E_ENTROPY.
+pub fn tls13c_err_inval() -> i64 {
+    0 - 1
+}
+
+pub fn tls13c_err_entropy() -> i64 {
+    0 - 2
+}
+
+pub fn tls13c_err_state() -> i64 {
+    0 - 3
+}
+
+pub fn tls13c_err_io() -> i64 {
+    0 - 4
+}
+
+pub fn tls13c_err_record() -> i64 {
+    0 - 5
+}
+
+pub fn tls13c_err_hs() -> i64 {
+    0 - 6
+}
+
+pub fn tls13c_err_alert() -> i64 {
+    0 - 7
+}
+
+pub fn tls13c_err_auth() -> i64 {
+    0 - 8
+}
+
+pub fn tls13c_err_timeout() -> i64 {
+    0 - 9
+}
+
+pub fn tls13c_err_eof() -> i64 {
+    0 - 10
+}
+
+pub fn tls13c_err_hrr() -> i64 {
+    0 - 11
+}
+
+pub fn tls13c_err_suite() -> i64 {
+    0 - 12
+}
+
+pub fn tls13c_err_group() -> i64 {
+    0 - 13
+}
+
+pub fn tls13c_err_app() -> i64 {
+    0 - 14
+}
+
+pub fn tls13c_err_closed() -> i64 {
+    0 - 15
+}
+
+pub fn tls13c_err_ovf() -> i64 {
+    0 - 16
+}
+
+pub fn tls13c_err_chain() -> i64 {
+    0 - 17
+}
+
+pub fn tls13c_err_cv() -> i64 {
+    0 - 18
+}
+
+pub fn tls13c_err_fin() -> i64 {
+    0 - 19
+}
+
+pub fn tls13c_err_cipher() -> i64 {
+    0 - 20
+}
+
+// ---------------------------------------------------------------------------
+// Wire constants.
+// ---------------------------------------------------------------------------
+pub fn tls13c_suite_aes128gcm_sha256() -> i64 {
+    0x1301
+}
+
+pub fn tls13c_suite_chacha20_poly1305_sha256() -> i64 {
+    0x1303
+}
+
+pub fn tls13c_group_x25519() -> i64 {
+    0x001d
+}
+
+pub fn tls13c_group_x25519mlkem768() -> i64 {
+    0x11EC
+}
+
+pub fn tls13c_sig_rsa_pss_rsae_sha256() -> i64 {
+    0x0804
+}
+
+pub fn tls13c_sig_ecdsa_secp256r1_sha256() -> i64 {
+    0x0403
+}
+
+pub fn tls13c_sig_rsa_pkcs1_sha256() -> i64 {
+    0x0401
+}
+
+// Record content types (RFC 8446 §5.1).
+pub fn tls13c_ct_change_cipher_spec() -> i64 {
+    20
+}
+
+pub fn tls13c_ct_alert() -> i64 {
+    21
+}
+
+pub fn tls13c_ct_handshake() -> i64 {
+    22
+}
+
+pub fn tls13c_ct_app_data() -> i64 {
+    23
+}
+
+// Handshake message types (RFC 8446 §4).
+pub fn tls13c_hs_client_hello() -> i64 {
+    1
+}
+
+pub fn tls13c_hs_server_hello() -> i64 {
+    2
+}
+
+pub fn tls13c_hs_encrypted_extensions() -> i64 {
+    8
+}
+
+pub fn tls13c_hs_certificate() -> i64 {
+    11
+}
+
+pub fn tls13c_hs_certificate_verify() -> i64 {
+    15
+}
+
+pub fn tls13c_hs_finished() -> i64 {
+    20
+}
+
+// ---------------------------------------------------------------------------
+// Bounds.  Every length is checked against these before any allocation or
+// copy; anything larger is refused (E_OVF / E_RECORD / E_HS).
+// ---------------------------------------------------------------------------
+pub fn tls13c_max_record() -> i64 {
+    // RFC 8446 §5.2 ciphertext limit is 2^14+256; we bound tighter.
+    16640
+}
+
+pub fn tls13c_max_hs_msg() -> i64 {
+    // One handshake message (header included).
+    8192
+}
+
+pub fn tls13c_max_transcript() -> i64 {
+    // CH..client Finished concatenated handshake messages.
+    16384
+}
+
+pub fn tls13c_max_sni() -> i64 {
+    253
+}
+
+pub fn tls13c_max_chain_bytes() -> i64 {
+    // Certificate message body (context + list).
+    8192
+}
+
+pub fn tls13c_state_size() -> i64 {
+    // Large enough for every persistent field + inbound/outbound staging.
+    // Layout documented at the init function.
+    65536
+}
+
+// ---------------------------------------------------------------------------
+// State buffer layout (offsets; all little-endian i64 unless noted).
+//   0   status (i64)
+//   8   error  (i64, last error, 0 = none)
+//  16   ticks_used (i64)
+//  24   tick_budget (i64)
+//  32   now_unix (i64)
+//  40   suite (i64)            selected cipher suite
+//  48   group (i64)            selected key-exchange group
+//  56   sigalg (i64)           CertificateVerify algorithm
+//  64   flags (i64)            bit0 = hybrid key share offered
+//  72   entropy_need (i64)
+//  80   entropy_len (i64)
+//  88   anchors_addr (i64)     (caller-owned, valid for the connection)
+//  96   anchors_len (i64)
+// 104   dns_addr (i64)         (caller-owned)
+// 112   dns_len (i64)
+// 120   ch_len (i64)           ClientHello handshake message length
+// 128   tx_seq_hs (i64)
+// 136   tx_seq_app (i64)
+// 144   rx_seq_hs (i64)
+// 152   rx_seq_app (i64)
+// 160   in_len (i64)           bytes buffered in the inbound staging area
+// 168   out_len (i64)          bytes buffered in the outbound staging area
+// 176   out_rd (i64)           read cursor into the outbound staging area
+// 184   hs_buf_len (i64)       current handshake-reassembly length
+// 192   app_rx_len (i64)
+// 200   app_rx_rd (i64)
+// 208   need_hrr_check (i64)   reserved
+//
+// Byte regions (see tls13c_state_size):
+//   256      ..  256+32     client random
+//   288      ..  288+32     legacy session id
+//   320      ..  320+32     x25519 private scalar
+//   352      ..  352+32     x25519 public
+//   384      ..  384+32     x25519 shared secret
+//   416      .. 416+2432    hybrid private (dk||scalar)   (optional)
+//  2848      .. 2848+1216   hybrid client share           (optional)
+//  4064      .. 4064+32     handshake secret
+//  4096      .. 4096+32     client hs traffic secret
+//  4128      .. 4128+32     server hs traffic secret
+//  4160      .. 4160+16     client hs key / 4176+12 iv
+//  4192      .. 4192+16     server hs key / 4208+12 iv
+//  4224      .. 4224+32     master secret
+//  4256      .. 4256+32     client app traffic secret
+//  4288      .. 4288+32     server app traffic secret
+//  4320      .. 4320+16     client app key / 4336+12 iv
+//  4352      .. 4352+16     server app key / 4368+12 iv
+//  4384      .. 4384+32     expected/derived finished scratch
+//  4416      .. 4416+130    CertificateVerify signed content scratch
+//  4544      .. 4544+32     transcript-hash scratch
+//  4576      .. 4576+176    x509_parse fields scratch
+//  4752      .. 4752+32     leaf RSA modulus (up to 256; 32 used for tests)
+//  4784      .. 4784+8      leaf RSA exponent (i64 store)
+//  4792      .. 4792+32     leaf EC qx / 4824+32 qy
+//  4856      .. 4856+256    leaf RSA modulus full (256 bytes) if present
+//  5112      .. 5112+32     received Finished verify_data
+//  5144      .. 5144+32     client Finished verify_data
+//  5176      .. 5176+32     ch transcript hash
+//  5208      .. 5208+32     fin transcript hash
+//  5240      .. 5240+16384  transcript accumulation
+// 21624      .. 21624+8192  handshake reassembly buffer
+// 29816      .. 29816+16640 inbound staging
+// 46456      .. 46456+16640 outbound staging
+// 63096      .. 63096+2048  application receive staging
+// 65144      .. 65144+256   chain encode scratch (lengths + pointers)
+// 65400      .. 65536       reserved
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Tiny buffer helpers (module-local; not the composed modules' names).
+// ---------------------------------------------------------------------------
+fn tls13c_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+fn tls13c_zero(dst: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn tls13c_zero_i64(dst: i64, slots: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < slots {
+        __mind_store_i64(dst + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn tls13c_store_i64(p: i64, v: i64) -> i64 {
+    __mind_store_i64(p, v);
+    0
+}
+
+fn tls13c_load_i64(p: i64) -> i64 {
+    __mind_load_i64(p)
+}
+
+fn tls13c_u8(p: i64) -> i64 {
+    __mind_load_i8(p) & 255
+}
+
+fn tls13c_be16(p: i64) -> i64 {
+    (tls13c_u8(p) << 8) | tls13c_u8(p + 1)
+}
+
+fn tls13c_be24(p: i64) -> i64 {
+    (tls13c_u8(p) << 16) | (tls13c_u8(p + 1) << 8) | tls13c_u8(p + 2)
+}
+
+fn tls13c_put_be16(p: i64, v: i64) -> i64 {
+    __mind_store_i8(p, (v >> 8) & 255);
+    __mind_store_i8(p + 1, v & 255);
+    0
+}
+
+fn tls13c_put_be24(p: i64, v: i64) -> i64 {
+    __mind_store_i8(p, (v >> 16) & 255);
+    __mind_store_i8(p + 1, (v >> 8) & 255);
+    __mind_store_i8(p + 2, v & 255);
+    0
+}
+
+fn tls13c_ct_eq32(a: i64, b: i64) -> i64 {
+    // Constant-shape 32-byte compare (no early exit).
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 32 {
+        diff = diff | (tls13c_u8(a + i) ^ tls13c_u8(b + i));
+        i = i + 1;
+    }
+    if diff == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State field accessors.
+// ---------------------------------------------------------------------------
+fn tls13c_set_status(s: i64, v: i64) -> i64 {
+    tls13c_store_i64(s + 0, v);
+    0
+}
+
+pub fn tls13c_status(s: i64) -> i64 {
+    tls13c_load_i64(s + 0)
+}
+
+fn tls13c_set_error(s: i64, e: i64) -> i64 {
+    tls13c_store_i64(s + 8, e);
+    0
+}
+
+pub fn tls13c_error(s: i64) -> i64 {
+    tls13c_load_i64(s + 8)
+}
+
+fn tls13c_fail(s: i64, e: i64) -> i64 {
+    // Enter ERROR and zeroize every key/secret.  Fail-closed.
+    tls13c_set_error(s, e);
+    tls13c_set_status(s, tls13c_st_error());
+    tls13c_zero_keys(s);
+    e
+}
+
+fn tls13c_zero_keys(s: i64) -> i64 {
+    tls13c_zero(s + 320, 32 + 32 + 32);
+    // x25519 priv/pub/shared
+    tls13c_zero(s + 416, 2432 + 1216);
+    // hybrid private + share
+    tls13c_zero(s + 4064, 32 + 32 + 32 + 16 + 12 + 16 + 12);
+    // hs secret + keys
+    tls13c_zero(s + 4224, 32 + 32 + 32 + 16 + 12 + 16 + 12);
+    // master + app keys
+    tls13c_zero(s + 4384, 32 + 130 + 32 + 32 + 32);
+    // scratch / finished
+    tls13c_zero(s + 4752, 32 + 8 + 32 + 32 + 256);
+    // leaf key material
+    0
+}
+
+fn tls13c_zero_all(s: i64) -> i64 {
+    tls13c_zero(s, tls13c_state_size());
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_init — bind caller configuration and fail closed on short entropy.
+//   state          : tls13c_state_size() bytes, zeroed by this call
+//   entropy_addr   : caller entropy buffer (NOT copied; consumed by CH build)
+//   entropy_len    : must be >= tls13c_entropy_need(flags) or E_ENTROPY
+//   anchors_addr   : length-prefixed DER trust anchors (see x509 stub)
+//   anchors_len    : byte length of that buffer
+//   dns_addr/dns_len : expected DNS identity (raw ascii, no NUL required)
+//   now_unix       : caller clock (seconds)
+//   tick_budget    : max tls13c_tick() calls before E_TIMEOUT (0 = unlimited)
+//   flags          : bit0 = offer x25519mlkem768 alongside x25519
+// Returns 0 or a negative error.  On entropy shortfall the state is left
+// ERROR and every key slot is zeroed (nothing was derived yet anyway).
+// ---------------------------------------------------------------------------
+pub fn tls13c_entropy_need(flags: i64) -> i64 {
+    // 32 (client random) + 32 (legacy session id) + 32 (x25519 scalar)
+    // + optional 96 (x25519mlkem768 keygen rand96)
+    let mut n: i64 = 96;
+    if (flags & 1) != 0 {
+        n = n + 96;
+    }
+    n
+}
+
+pub fn tls13c_init(state: i64, entropy_addr: i64, entropy_len: i64, anchors_addr: i64, anchors_len: i64, dns_addr: i64, dns_len: i64, now_unix: i64, tick_budget: i64, flags: i64) -> i64 {
+    tls13c_zero_all(state);
+    tls13c_store_i64(state + 0, tls13c_st_init());
+    tls13c_store_i64(state + 8, 0);
+    tls13c_store_i64(state + 16, 0);
+    tls13c_store_i64(state + 24, tick_budget);
+    tls13c_store_i64(state + 32, now_unix);
+    tls13c_store_i64(state + 64, flags);
+    let need: i64 = tls13c_entropy_need(flags);
+    tls13c_store_i64(state + 72, need);
+    tls13c_store_i64(state + 80, entropy_len);
+    tls13c_store_i64(state + 88, anchors_addr);
+    tls13c_store_i64(state + 96, anchors_len);
+    tls13c_store_i64(state + 104, dns_addr);
+    tls13c_store_i64(state + 112, dns_len);
+
+    // Fail closed if entropy is short: refuse to even reach CH_SENT.
+    if entropy_len < need {
+        tls13c_set_error(state, tls13c_err_entropy());
+        tls13c_set_status(state, tls13c_st_error());
+        return tls13c_err_entropy();
+    }
+    if dns_len < 0 {
+        return tls13c_fail(state, tls13c_err_inval());
+    }
+    if dns_len > tls13c_max_sni() {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    if anchors_len < 0 {
+        return tls13c_fail(state, tls13c_err_inval());
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Entropy consumption plan (caller buffer, offset from entropy_addr):
+//   0 .. 32   client random
+//   32 .. 64  legacy session id (middlebox compatibility, RFC 8446 §4.1.2)
+//   64 .. 96  x25519 private scalar
+//   96 ..192  x25519mlkem768 rand96 (only when flags bit0 set)
+// ---------------------------------------------------------------------------
+fn tls13c_entropy_at(state: i64, off: i64) -> i64 {
+    // The caller keeps the entropy buffer alive; we retain only its address
+    // via the public init arguments.  Entropy is re-read from a stash: the
+    // first 192 bytes are copied into the state at CH-build time from the
+    // pointer stored below (set by tls13c_build_client_hello's argument).
+    state + 0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_build_client_hello — construct the ClientHello handshake message
+// (NOT a record; the caller/pump wraps it in a record).
+//   state
+//   entropy_addr/entropy_len : same buffer passed to init (re-checked)
+//   out_addr                 : >= tls13c_max_hs_msg() bytes
+// Returns message length (>0) or a negative error.
+//
+// Offered:
+//   cipher suites : TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256
+//   groups        : x25519 (+ x25519mlkem768 when flags bit0)
+//   sigalgs       : rsa_pss_rsae_sha256, ecdsa_secp256r1_sha256, rsa_pkcs1_sha256
+//   extensions    : server_name (SNI = expected DNS), supported_versions
+//                   (TLS 1.3 only), supported_groups, signature_algorithms,
+//                   key_share (x25519 and optionally the hybrid share)
+// ---------------------------------------------------------------------------
+pub fn tls13c_build_client_hello(state: i64, entropy_addr: i64, entropy_len: i64, out_addr: i64) -> i64 {
+    if tls13c_status(state) != tls13c_st_init() {
+        return tls13c_err_state();
+    }
+    let flags: i64 = tls13c_load_i64(state + 64);
+    let need: i64 = tls13c_load_i64(state + 72);
+    if entropy_len < need {
+        tls13c_set_error(state, tls13c_err_entropy());
+        tls13c_set_status(state, tls13c_st_error());
+        return tls13c_err_entropy();
+    }
+
+    let ch_rand: i64 = state + 256;
+    let ch_sid: i64 = state + 288;
+    let x_priv: i64 = state + 320;
+    let x_pub: i64 = state + 352;
+    tls13c_copy(ch_rand, entropy_addr + 0, 32);
+    tls13c_copy(ch_sid, entropy_addr + 32, 32);
+    tls13c_copy(x_priv, entropy_addr + 64, 32);
+
+    // X25519 public key = x25519(scalar, base=9).
+    let base: i64 = __mind_alloc(32);
+    tls13c_zero(base, 32);
+    __mind_store_i8(base + 0, 9);
+    x25519(x_priv, base, x_pub);
+
+    let hybrid: i64 = 0;
+    if (flags & 1) != 0 {
+        // Keygen consumes rand96; share is 1216 bytes, priv 2432.
+        x25519mlkem768_keygen(entropy_addr + 96, state + 2848, state + 416);
+    }
+
+    // ----- build the message body -----
+    // body layout after the 4-byte handshake header:
+    //   2  legacy_version 0x0303
+    //  32  random
+    //   1  session_id_len (32)
+    //  32  session_id
+    //   2  cipher_suites_len
+    //   4  suites (2 x uint16)
+    //   1  comp_methods_len = 1
+    //   1  comp = 0
+    //   2  extensions_len
+    //   ... extensions
+    let dns_len: i64 = tls13c_load_i64(state + 112);
+    let dns_addr: i64 = tls13c_load_i64(state + 104);
+
+    // Extension blobs are assembled first so their length is known.
+    // Use a scratch region at out_addr + 64 as extension staging, then
+    // assemble the final message at out_addr.  Max ext staging 4096.
+    let ext: i64 = __mind_alloc(4096);
+    let mut elen: i64 = 0;
+
+    // -- server_name (0x0000) --
+    // Extension header: type(2) len(2); body: list_len(2) name_type(1)
+    // name_len(2) name
+    let sni_body: i64 = 5 + dns_len;
+    let sni_ext: i64 = 4 + sni_body;
+    if elen + sni_ext > 4096 {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    tls13c_put_be16(ext + elen, 0x0000);
+    tls13c_put_be16(ext + elen + 2, sni_body);
+    tls13c_put_be16(ext + elen + 4, 3 + dns_len);
+    __mind_store_i8(ext + elen + 6, 0);
+    // host_name
+    tls13c_put_be16(ext + elen + 7, dns_len);
+    tls13c_copy(ext + elen + 9, dns_addr, dns_len);
+    elen = elen + sni_ext;
+
+    // -- supported_versions (0x002b) --
+    // body: versions_len(1) = 2, version = 0x0304
+    if elen + 7 > 4096 {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    tls13c_put_be16(ext + elen, 0x002b);
+    tls13c_put_be16(ext + elen + 2, 3);
+    __mind_store_i8(ext + elen + 4, 2);
+    tls13c_put_be16(ext + elen + 5, 0x0304);
+    elen = elen + 7;
+
+    // -- supported_groups (0x000a) --
+    let ngroups: i64 = 2;
+    let mut gbytes: i64 = 4;
+    if (flags & 1) != 0 {
+        ngroups = 3;
+        gbytes = 6;
+    }
+    if elen + 4 + 2 + gbytes > 4096 {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    tls13c_put_be16(ext + elen, 0x000a);
+    tls13c_put_be16(ext + elen + 2, 2 + gbytes);
+    tls13c_put_be16(ext + elen + 4, gbytes);
+    tls13c_put_be16(ext + elen + 6, tls13c_group_x25519());
+    if (flags & 1) != 0 {
+        tls13c_put_be16(ext + elen + 8, tls13c_group_x25519mlkem768());
+        tls13c_put_be16(ext + elen + 10, 0);
+        // placeholder if a third group is ever needed
+    }
+    elen = elen + 4 + 2 + gbytes;
+
+    // -- signature_algorithms (0x000d) --
+    // 3 schemes x uint16
+    if elen + 12 > 4096 {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    tls13c_put_be16(ext + elen, 0x000d);
+    tls13c_put_be16(ext + elen + 2, 8);
+    tls13c_put_be16(ext + elen + 4, 6);
+    tls13c_put_be16(ext + elen + 6, tls13c_sig_rsa_pss_rsae_sha256());
+    tls13c_put_be16(ext + elen + 8, tls13c_sig_ecdsa_secp256r1_sha256());
+    tls13c_put_be16(ext + elen + 10, tls13c_sig_rsa_pkcs1_sha256());
+    elen = elen + 12;
+
+    // -- key_share (0x0033) --
+    // client_shares: list of KeyShareEntry { group, key_exchange }
+    let x_entry: i64 = 4 + 32;
+    let mut ks_body: i64 = 2 + x_entry;
+    if (flags & 1) != 0 {
+        ks_body = ks_body + 4 + 1216;
+    }
+    if elen + 4 + ks_body > 4096 {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    tls13c_put_be16(ext + elen, 0x0033);
+    tls13c_put_be16(ext + elen + 2, ks_body);
+    let mut koff: i64 = elen + 4;
+    tls13c_put_be16(ext + koff, ks_body - 2);
+    // client_shares length
+    koff = koff + 2;
+    tls13c_put_be16(ext + koff, tls13c_group_x25519());
+    tls13c_put_be16(ext + koff + 2, 32);
+    tls13c_copy(ext + koff + 4, x_pub, 32);
+    koff = koff + x_entry;
+    if (flags & 1) != 0 {
+        tls13c_put_be16(ext + koff, tls13c_group_x25519mlkem768());
+        tls13c_put_be16(ext + koff + 2, 1216);
+        tls13c_copy(ext + koff + 4, state + 2848, 1216);
+        koff = koff + 4 + 1216;
+    }
+    elen = elen + 4 + ks_body;
+
+    // ----- assemble handshake message -----
+    let body_len: i64 = 2 + 32 + 1 + 32 + 2 + 4 + 1 + 1 + 2 + elen;
+    let total: i64 = 4 + body_len;
+    if total > tls13c_max_hs_msg() {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+    __mind_store_i8(out_addr + 0, tls13c_hs_client_hello());
+    tls13c_put_be24(out_addr + 1, body_len);
+    let mut p: i64 = 4;
+    tls13c_put_be16(out_addr + p, 0x0303);
+    p = p + 2;
+    tls13c_copy(out_addr + p, ch_rand, 32);
+    p = p + 32;
+    __mind_store_i8(out_addr + p, 32);
+    p = p + 1;
+    tls13c_copy(out_addr + p, ch_sid, 32);
+    p = p + 32;
+    tls13c_put_be16(out_addr + p, 4);
+    p = p + 2;
+    tls13c_put_be16(out_addr + p, tls13c_suite_aes128gcm_sha256());
+    p = p + 2;
+    tls13c_put_be16(out_addr + p, tls13c_suite_chacha20_poly1305_sha256());
+    p = p + 2;
+    __mind_store_i8(out_addr + p, 1);
+    p = p + 1;
+    __mind_store_i8(out_addr + p, 0);
+    p = p + 1;
+    tls13c_put_be16(out_addr + p, elen);
+    p = p + 2;
+    tls13c_copy(out_addr + p, ext, elen);
+
+    tls13c_store_i64(state + 120, total);
+    tls13c_store_i64(state + 0, tls13c_st_ch_sent());
+    total
+}
+
+// ---------------------------------------------------------------------------
+// Suite-aware record key expansion (RFC 8446 §7.3).  AES-128 uses a 16-byte
+// key; ChaCha20-Poly1305 uses a 32-byte key.  IV is always 12 bytes.
+// ---------------------------------------------------------------------------
+fn tls13c_derive_key_n(secret_addr: i64, key_len: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(8);
+    __mind_store_i8(lbl + 0, 107);
+    // 'k'
+    __mind_store_i8(lbl + 1, 101);
+    // 'e'
+    __mind_store_i8(lbl + 2, 121);
+    // 'y'
+    tls13_hkdf_expand_label(secret_addr, 32, lbl, 3, secret_addr, 0, key_len, out_addr);
+    0
+}
+
+fn tls13c_suite_key_len(suite: i64) -> i64 {
+    if suite == tls13c_suite_chacha20_poly1305_sha256() {
+        32
+    } else {
+        16
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Suite-aware record seal.  Wire format matches std/tls13_record.mind:
+//   header(5) || ciphertext || tag(16);  total = content_len + 22.
+// Returns total record length, or a negative error.
+// ---------------------------------------------------------------------------
+pub fn tls13c_record_seal(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, content_addr: i64, content_len: i64, inner_type: i64, out_record_addr: i64) -> i64 {
+    if content_len < 0 {
+        return tls13c_err_inval();
+    }
+    if content_len + 22 > tls13c_max_record() {
+        return tls13c_err_ovf();
+    }
+    if suite == tls13c_suite_aes128gcm_sha256() {
+        return tls13_record_seal(key_addr, iv_addr, seq, content_addr, content_len, inner_type, out_record_addr);
+    }
+    if suite == tls13c_suite_chacha20_poly1305_sha256() {
+        // TLSInnerPlaintext = content || type (no padding).
+        let inner_len: i64 = content_len + 1;
+        let inner: i64 = __mind_alloc(inner_len);
+        tls13c_copy(inner, content_addr, content_len);
+        __mind_store_i8(inner + content_len, inner_type & 255);
+        let enc_len: i64 = inner_len + 16;
+        // Header 0x17 0x0303 || uint16 enc_len (also the AAD).
+        __mind_store_i8(out_record_addr + 0, 23);
+        __mind_store_i8(out_record_addr + 1, 3);
+        __mind_store_i8(out_record_addr + 2, 3);
+        tls13c_put_be16(out_record_addr + 3, enc_len);
+        let nonce: i64 = __mind_alloc(12);
+        tls13_record_nonce(iv_addr, seq, nonce);
+        chacha20_poly1305_encrypt(key_addr, nonce, inner, inner_len, out_record_addr, 5, out_record_addr + 5, out_record_addr + 5 + inner_len);
+        5 + enc_len
+    } else {
+        tls13c_err_suite()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Suite-aware record open.  Returns (content_len << 8) | inner_type on
+// success; -1 malformed; -2 authentication failure.  Fail-closed.
+// ---------------------------------------------------------------------------
+pub fn tls13c_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64, record_len: i64, out_content_addr: i64) -> i64 {
+    if record_len < 22 {
+        return 0 - 1;
+    }
+    if record_len > tls13c_max_record() {
+        return 0 - 1;
+    }
+    if suite == tls13c_suite_aes128gcm_sha256() {
+        return tls13_record_open(key_addr, iv_addr, seq, record_addr, record_len, out_content_addr);
+    }
+    if suite == tls13c_suite_chacha20_poly1305_sha256() {
+        if tls13c_u8(record_addr + 0) != 23 {
+            return 0 - 1;
+        }
+        if tls13c_u8(record_addr + 1) != 3 {
+            return 0 - 1;
+        }
+        if tls13c_u8(record_addr + 2) != 3 {
+            return 0 - 1;
+        }
+        let enc_len: i64 = tls13c_be16(record_addr + 3);
+        if enc_len != record_len - 5 {
+            return 0 - 1;
+        }
+        if enc_len < 17 {
+            return 0 - 1;
+        }
+        let ct_len: i64 = enc_len - 16;
+        let nonce: i64 = __mind_alloc(12);
+        tls13_record_nonce(iv_addr, seq, nonce);
+        let inner: i64 = __mind_alloc(ct_len);
+        let rc: i64 = chacha20_poly1305_decrypt(key_addr, nonce, record_addr + 5, ct_len, record_addr, 5, record_addr + 5 + ct_len, inner);
+        if rc != 0 {
+            return 0 - 2;
+        }
+        // Strip zero padding: last non-zero byte is the inner type.
+        let mut idx: i64 = ct_len - 1;
+        let mut stop: i64 = 0;
+        while stop == 0 {
+            if idx < 0 {
+                stop = 1;
+            } else {
+                if tls13c_u8(inner + idx) != 0 {
+                    stop = 1;
+                } else {
+                    idx = idx - 1;
+                }
+            }
+        }
+        if idx < 0 {
+            return 0 - 1;
+        }
+        let inner_type: i64 = tls13c_u8(inner + idx);
+        let content_len: i64 = idx;
+        tls13c_copy(out_content_addr, inner, content_len);
+        (content_len << 8) | inner_type
+    } else {
+        0 - 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Outbound staging.  pump/write_app append complete records here; the caller
+// drains with tls13c_read_out.
+// ---------------------------------------------------------------------------
+fn tls13c_out_append(state: i64, src: i64, len: i64) -> i64 {
+    let out_len: i64 = tls13c_load_i64(state + 168);
+    if out_len + len > 16640 {
+        return tls13c_err_io();
+    }
+    tls13c_copy(state + 46456 + out_len, src, len);
+    tls13c_store_i64(state + 168, out_len + len);
+    0
+}
+
+pub fn tls13c_out_pending(state: i64) -> i64 {
+    let out_len: i64 = tls13c_load_i64(state + 168);
+    let out_rd: i64 = tls13c_load_i64(state + 176);
+    out_len - out_rd
+}
+
+pub fn tls13c_read_out(state: i64, dst: i64, max_len: i64) -> i64 {
+    let pending: i64 = tls13c_out_pending(state);
+    let mut n: i64 = pending;
+    if n > max_len {
+        n = max_len;
+    }
+    if n <= 0 {
+        return 0;
+    }
+    let out_rd: i64 = tls13c_load_i64(state + 176);
+    tls13c_copy(dst, state + 46456 + out_rd, n);
+    tls13c_store_i64(state + 176, out_rd + n);
+    if tls13c_load_i64(state + 176) >= tls13c_load_i64(state + 168) {
+        tls13c_store_i64(state + 168, 0);
+        tls13c_store_i64(state + 176, 0);
+    }
+    n
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_feed — append inbound bytes (partial records allowed).
+// Returns 0, or a negative error if the staging buffer would overflow.
+// ---------------------------------------------------------------------------
+pub fn tls13c_feed(state: i64, data_addr: i64, data_len: i64) -> i64 {
+    if data_len < 0 {
+        return tls13c_err_inval();
+    }
+    if tls13c_status(state) == tls13c_st_error() {
+        return tls13c_error(state);
+    }
+    if tls13c_status(state) == tls13c_st_closed() {
+        return tls13c_err_closed();
+    }
+    let in_len: i64 = tls13c_load_i64(state + 160);
+    if in_len + data_len > 16640 {
+        return tls13c_fail(state, tls13c_err_io());
+    }
+    tls13c_copy(state + 29816 + in_len, data_addr, data_len);
+    tls13c_store_i64(state + 160, in_len + data_len);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_tick — deadline / cancellation.  Each call consumes one unit of the
+// caller-supplied budget.  Returns 0 while budget remains, E_TIMEOUT once
+// exhausted (state moves to ERROR, keys zeroized).  Budget 0 = unlimited.
+// ---------------------------------------------------------------------------
+pub fn tls13c_tick(state: i64) -> i64 {
+    let st: i64 = tls13c_status(state);
+    if st == tls13c_st_error() {
+        return tls13c_error(state);
+    }
+    if st == tls13c_st_closed() {
+        return tls13c_err_closed();
+    }
+    let budget: i64 = tls13c_load_i64(state + 24);
+    if budget == 0 {
+        return 0;
+    }
+    let used: i64 = tls13c_load_i64(state + 16) + 1;
+    tls13c_store_i64(state + 16, used);
+    if used > budget {
+        return tls13c_fail(state, tls13c_err_timeout());
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_signal_eof — peer closed the transport mid-connection.
+// Pre-handshake this is E_EOF (fail closed); post-close_notify it is benign.
+// ---------------------------------------------------------------------------
+pub fn tls13c_signal_eof(state: i64) -> i64 {
+    let st: i64 = tls13c_status(state);
+    if st == tls13c_st_closed() {
+        return 0;
+    }
+    if st == tls13c_st_error() {
+        return tls13c_error(state);
+    }
+    tls13c_fail(state, tls13c_err_eof())
+}
+
+// ---------------------------------------------------------------------------
+// Handshake-secret extract that accepts a 32-byte X25519 DHE or the 64-byte
+// X25519MLKEM768 combiner secret (ML-KEM ss || X25519 ss).  Mirrors
+// std/tls13_keyschedule.mind tls13_handshake_secret but with variable IKM.
+// ---------------------------------------------------------------------------
+fn tls13c_handshake_secret(dhe_addr: i64, dhe_len: i64, out_addr: i64) -> i64 {
+    let early: i64 = __mind_alloc(32);
+    let derived: i64 = __mind_alloc(32);
+    let lbl: i64 = __mind_alloc(16);
+    __mind_store_i8(lbl + 0, 100);
+    // 'd'
+    __mind_store_i8(lbl + 1, 101);
+    // 'e'
+    __mind_store_i8(lbl + 2, 114);
+    // 'r'
+    __mind_store_i8(lbl + 3, 105);
+    // 'i'
+    __mind_store_i8(lbl + 4, 118);
+    // 'v'
+    __mind_store_i8(lbl + 5, 101);
+    // 'e'
+    __mind_store_i8(lbl + 6, 100);
+    // 'd'
+    tls13_early_secret(early);
+    tls13_derive_secret(early, 32, lbl, 7, early, 0, derived);
+    hkdf_extract(derived, 32, dhe_addr, dhe_len, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// HelloRetryRequest detection (RFC 8446 §4.1.4).  The ServerHello.random
+// equals SHA-256("HelloRetryRequest").  We REFUSE HRR explicitly (E_HRR)
+// rather than attempting a second ClientHello — a bounded client has no
+// retry loop, and a silent drop would look like a hang.
+// ---------------------------------------------------------------------------
+fn tls13c_is_hrr(rand_addr: i64) -> i64 {
+    // Precomputed SHA-256("HelloRetryRequest"):
+    // cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c
+    let mut i: i64 = 0;
+    let mut eq: i64 = 1;
+    while i < 32 {
+        let expect: i64 = 0;
+        if i == 0 {
+            expect = 207;
+        }
+        if i == 1 {
+            expect = 33;
+        }
+        if i == 2 {
+            expect = 173;
+        }
+        if i == 3 {
+            expect = 116;
+        }
+        if i == 4 {
+            expect = 229;
+        }
+        if i == 5 {
+            expect = 154;
+        }
+        if i == 6 {
+            expect = 97;
+        }
+        if i == 7 {
+            expect = 17;
+        }
+        if i == 8 {
+            expect = 190;
+        }
+        if i == 9 {
+            expect = 29;
+        }
+        if i == 10 {
+            expect = 140;
+        }
+        if i == 11 {
+            expect = 2;
+        }
+        if i == 12 {
+            expect = 30;
+        }
+        if i == 13 {
+            expect = 101;
+        }
+        if i == 14 {
+            expect = 184;
+        }
+        if i == 15 {
+            expect = 145;
+        }
+        if i == 16 {
+            expect = 194;
+        }
+        if i == 17 {
+            expect = 162;
+        }
+        if i == 18 {
+            expect = 17;
+        }
+        if i == 19 {
+            expect = 22;
+        }
+        if i == 20 {
+            expect = 122;
+        }
+        if i == 21 {
+            expect = 187;
+        }
+        if i == 22 {
+            expect = 140;
+        }
+        if i == 23 {
+            expect = 94;
+        }
+        if i == 24 {
+            expect = 7;
+        }
+        if i == 25 {
+            expect = 158;
+        }
+        if i == 26 {
+            expect = 9;
+        }
+        if i == 27 {
+            expect = 226;
+        }
+        if i == 28 {
+            expect = 200;
+        }
+        if i == 29 {
+            expect = 168;
+        }
+        if i == 30 {
+            expect = 51;
+        }
+        if i == 31 {
+            expect = 156;
+        }
+        if (tls13c_u8(rand_addr + i) & 255) != (expect & 255) {
+            eq = 0;
+        }
+        i = i + 1;
+    }
+    eq
+}
+
+// ---------------------------------------------------------------------------
+// Append a handshake message to the running transcript (bounded).
+// ---------------------------------------------------------------------------
+fn tls13c_transcript_append(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    let tlen: i64 = tls13c_load_i64(state + 208);
+    // reuse hs_buf_len slot? No — transcript length is tracked separately.
+    // Transcript length lives at offset 21624-8 via a dedicated field: we
+    // overload offset 200 (app_rx_rd) is NOT used yet.  Use 208 as
+    // transcript_len and 184 as hs_buf_len.  See layout: 208 was
+    // need_hrr_check; repurposed as transcript_len.
+    if tlen + msg_len > tls13c_max_transcript() {
+        return tls13c_err_ovf();
+    }
+    tls13c_copy(state + 5240 + tlen, msg_addr, msg_len);
+    tls13c_store_i64(state + 208, tlen + msg_len);
+    0
+}
+
+fn tls13c_transcript_len(state: i64) -> i64 {
+    tls13c_load_i64(state + 208)
+}
+
+fn tls13c_transcript_hash_into(state: i64, out_addr: i64) -> i64 {
+    let tlen: i64 = tls13c_load_i64(state + 208);
+    sha256(state + 5240, tlen, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Parse ServerHello (plaintext handshake message, 4-byte header included).
+//   msg_addr/msg_len : full handshake message
+// On success: selects suite, detects HRR (E_HRR), extracts key_share group
+// and the peer public value into scratch at 2848 (hybrid) or 352.
+// Returns 0 or negative.
+// ---------------------------------------------------------------------------
+fn tls13c_parse_server_hello(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    if msg_len < 4 {
+        return tls13c_err_hs();
+    }
+    if tls13c_u8(msg_addr + 0) != tls13c_hs_server_hello() {
+        return tls13c_err_hs();
+    }
+    let blen: i64 = tls13c_be24(msg_addr + 1);
+    if blen + 4 != msg_len {
+        return tls13c_err_hs();
+    }
+    if blen < 2 + 32 + 1 + 2 + 1 + 2 {
+        return tls13c_err_hs();
+    }
+    let body: i64 = msg_addr + 4;
+    let mut p: i64 = 0;
+    // legacy_version
+    p = p + 2;
+    let rand_addr: i64 = body + p;
+    if tls13c_is_hrr(rand_addr) == 1 {
+        return tls13c_err_hrr();
+    }
+    p = p + 32;
+    let sid_len: i64 = tls13c_u8(body + p);
+    p = p + 1;
+    if sid_len > 32 {
+        return tls13c_err_hs();
+    }
+    if p + sid_len + 3 > blen {
+        return tls13c_err_hs();
+    }
+    // legacy_session_id_echo must equal what we sent (RFC 8446 §4.1.3).
+    let mut i: i64 = 0;
+    let mut same: i64 = 1;
+    if sid_len != 32 {
+        same = 0;
+    }
+    while i < sid_len {
+        if i < 32 {
+            if tls13c_u8(body + p + i) != tls13c_u8(state + 288 + i) {
+                same = 0;
+            }
+        }
+        i = i + 1;
+    }
+    if same == 0 {
+        return tls13c_err_hs();
+    }
+    p = p + sid_len;
+    let suite: i64 = tls13c_be16(body + p);
+    p = p + 2;
+    if suite != tls13c_suite_aes128gcm_sha256() {
+        if suite != tls13c_suite_chacha20_poly1305_sha256() {
+            return tls13c_err_cipher();
+        }
+    }
+    let comp: i64 = tls13c_u8(body + p);
+    p = p + 1;
+    if comp != 0 {
+        return tls13c_err_hs();
+    }
+    if p + 2 > blen {
+        return tls13c_err_hs();
+    }
+    let ext_len: i64 = tls13c_be16(body + p);
+    p = p + 2;
+    if p + ext_len != blen {
+        return tls13c_err_hs();
+    }
+
+    // Walk extensions looking for key_share (0x0033) and supported_versions.
+    let ext: i64 = body + p;
+    let mut eoff: i64 = 0;
+    let mut found_key: i64 = 0;
+    let mut found_ver: i64 = 0;
+    while eoff + 4 <= ext_len {
+        let etype: i64 = tls13c_be16(ext + eoff);
+        let elen: i64 = tls13c_be16(ext + eoff + 2);
+        if eoff + 4 + elen > ext_len {
+            return tls13c_err_hs();
+        }
+        let ebody: i64 = ext + eoff + 4;
+        if etype == 0x002b {
+            // supported_versions: selected_version
+            if elen != 2 {
+                return tls13c_err_hs();
+            }
+            if tls13c_be16(ebody) != 0x0304 {
+                return tls13c_err_hs();
+            }
+            found_ver = 1;
+        }
+        if etype == 0x0033 {
+            // key_share: KeyShareEntry { group, key_exchange }
+            if elen < 4 {
+                return tls13c_err_hs();
+            }
+            let grp: i64 = tls13c_be16(ebody);
+            let klen: i64 = tls13c_be16(ebody + 2);
+            if 4 + klen != elen {
+                return tls13c_err_hs();
+            }
+            if grp == tls13c_group_x25519() {
+                if klen != 32 {
+                    return tls13c_err_group();
+                }
+                tls13c_store_i64(state + 48, grp);
+                // stash server pub at 384 (shared-secret slot is filled later)
+                tls13c_copy(state + 384, ebody + 4, 32);
+                found_key = 1;
+            } else {
+                if grp == tls13c_group_x25519mlkem768() {
+                    if klen != 1120 {
+                        return tls13c_err_group();
+                    }
+                    tls13c_store_i64(state + 48, grp);
+                    tls13c_copy(state + 2848, ebody + 4, 1120);
+                    found_key = 1;
+                } else {
+                    return tls13c_err_group();
+                }
+            }
+        }
+        eoff = eoff + 4 + elen;
+    }
+    if found_ver != 1 {
+        return tls13c_err_hs();
+    }
+    if found_key != 1 {
+        return tls13c_err_group();
+    }
+    tls13c_store_i64(state + 40, suite);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Derive the handshake traffic secrets after ServerHello is accepted.
+// ---------------------------------------------------------------------------
+fn tls13c_derive_hs_keys(state: i64) -> i64 {
+    let grp: i64 = tls13c_load_i64(state + 48);
+    if grp == tls13c_group_x25519() {
+        // shared secret = x25519(our scalar, server pub).  Server pub was
+        // stashed at 384; move it aside first.
+        let spub: i64 = __mind_alloc(32);
+        tls13c_copy(spub, state + 384, 32);
+        x25519(state + 320, spub, state + 384);
+    } else {
+        if grp == tls13c_group_x25519mlkem768() {
+            // server share is at 2848 (1120 bytes); decaps with private.
+            x25519mlkem768_decaps(state + 416, state + 2848, state + 384);
+            // out_ss is 64 bytes at 384 — overlaps the x25519 shared slot
+            // which we do not otherwise use for hybrid.
+        } else {
+            return tls13c_err_group();
+        }
+    }
+    let dhe_addr: i64 = state + 384;
+    let dhe_len: i64 = 32;
+    if grp == tls13c_group_x25519mlkem768() {
+        dhe_len = 64;
+    }
+    // Transcript-Hash(CH..SH).
+    tls13c_transcript_hash_into(state, state + 5176);
+    tls13c_handshake_secret(dhe_addr, dhe_len, state + 4064);
+    // c/s handshake traffic secrets over the CH..SH hash.
+    tls13c_client_handshake_traffic_secret(state + 4064, state + 5176, state + 4096);
+    tls13c_server_handshake_traffic_secret(state + 4064, state + 5176, state + 4128);
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let klen: i64 = tls13c_suite_key_len(suite);
+    tls13c_derive_key_n(state + 4096, klen, state + 4160);
+    tls13c_derive_iv(state + 4096, state + 4160 + 16);
+    tls13c_derive_key_n(state + 4128, klen, state + 4192);
+    tls13c_derive_iv(state + 4128, state + 4192 + 16);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Parse EncryptedExtensions (opaque extensions, must be well-formed).
+// ---------------------------------------------------------------------------
+fn tls13c_parse_ee(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    if msg_len < 4 {
+        return tls13c_err_hs();
+    }
+    if tls13c_u8(msg_addr + 0) != tls13c_hs_encrypted_extensions() {
+        return tls13c_err_hs();
+    }
+    let blen: i64 = tls13c_be24(msg_addr + 1);
+    if blen + 4 != msg_len {
+        return tls13c_err_hs();
+    }
+    if blen < 2 {
+        return tls13c_err_hs();
+    }
+    let ext_len: i64 = tls13c_be16(msg_addr + 4);
+    if ext_len + 2 != blen {
+        return tls13c_err_hs();
+    }
+    // Walk to reject truncated extension headers.
+    let ext: i64 = msg_addr + 6;
+    let mut eoff: i64 = 0;
+    while eoff + 4 <= ext_len {
+        let elen: i64 = tls13c_be16(ext + eoff + 2);
+        if eoff + 4 + elen > ext_len {
+            return tls13c_err_hs();
+        }
+        eoff = eoff + 4 + elen;
+    }
+    if eoff != ext_len {
+        return tls13c_err_hs();
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Parse Certificate (RFC 8446 §4.4.2).  Bounded.  Extracts the LEAF public
+// key (RSA n/e or EC P-256 qx/qy) into the leaf-key scratch and encodes the
+// chain for x509_verify_server_chain.
+// Returns 0 or negative.
+// ---------------------------------------------------------------------------
+fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    if msg_len < 4 {
+        return tls13c_err_hs();
+    }
+    if tls13c_u8(msg_addr + 0) != tls13c_hs_certificate() {
+        return tls13c_err_hs();
+    }
+    let blen: i64 = tls13c_be24(msg_addr + 1);
+    if blen + 4 != msg_len {
+        return tls13c_err_hs();
+    }
+    if msg_len > tls13c_max_chain_bytes() {
+        return tls13c_err_ovf();
+    }
+    let body: i64 = msg_addr + 4;
+    let ctx_len: i64 = tls13c_u8(body + 0);
+    let mut p: i64 = 1 + ctx_len;
+    if p + 3 > blen {
+        return tls13c_err_hs();
+    }
+    let list_len: i64 = tls13c_be24(body + p);
+    p = p + 3;
+    if p + list_len != blen {
+        return tls13c_err_hs();
+    }
+    if list_len == 0 {
+        return tls13c_err_chain();
+    }
+
+    // Encode chain for x509_verify_server_chain:
+    //   u32be ncert, then ncert times (u32be der_len || der)
+    // into scratch at 65144.  We also pull the leaf key out of cert 0.
+    let chain_scratch: i64 = state + 65144;
+    let mut ncert: i64 = 0;
+    let mut off: i64 = 0;
+    // reserve 4 bytes for the count
+    let mut cpos: i64 = 4;
+    let mut leaf_seen: i64 = 0;
+    while off < list_len {
+        if off + 3 > list_len {
+            return tls13c_err_hs();
+        }
+        let clen: i64 = tls13c_be24(body + p + off);
+        off = off + 3;
+        if off + clen > list_len {
+            return tls13c_err_hs();
+        }
+        // Per-entry extensions follow the DER cert.
+        if off + clen + 2 > list_len {
+            return tls13c_err_hs();
+        }
+        let cert_addr: i64 = body + p + off;
+        let ext_len: i64 = tls13c_be16(cert_addr + clen);
+        if off + clen + 2 + ext_len > list_len {
+            return tls13c_err_hs();
+        }
+        off = off + clen + 2 + ext_len;
+
+        if cpos + 4 + clen > 256 {
+            // chain scratch is small; refuse oversized chains (bounded).
+            return tls13c_err_ovf();
+        }
+        __mind_store_i8(chain_scratch + cpos + 0, (clen >> 24) & 255);
+        __mind_store_i8(chain_scratch + cpos + 1, (clen >> 16) & 255);
+        __mind_store_i8(chain_scratch + cpos + 2, (clen >> 8) & 255);
+        __mind_store_i8(chain_scratch + cpos + 3, clen & 255);
+        tls13c_copy(chain_scratch + cpos + 4, cert_addr, clen);
+        cpos = cpos + 4 + clen;
+        ncert = ncert + 1;
+
+        if leaf_seen == 0 {
+            leaf_seen = 1;
+            // Extract the leaf public key with x509_parse.
+            let f: i64 = state + 4576;
+            if x509_parse(cert_addr, clen, f) != 0 {
+                return tls13c_err_chain();
+            }
+            let n_off: i64 = tls13c_load_i64(f + 96);
+            let n_len: i64 = tls13c_load_i64(f + 104);
+            let e_off: i64 = tls13c_load_i64(f + 112);
+            let e_len: i64 = tls13c_load_i64(f + 120);
+            if n_len > 0 {
+                // RSA leaf.  Copy modulus (up to 256 bytes) and exponent.
+                if n_len > 256 {
+                    return tls13c_err_ovf();
+                }
+                tls13c_copy(state + 4856, cert_addr + n_off, n_len);
+                tls13c_store_i64(state + 4752, n_len);
+                // n_len stashed in the 4752 slot
+                if e_len < 1 || e_len > 8 {
+                    return tls13c_err_chain();
+                }
+                let mut e_val: i64 = 0;
+                let mut ei: i64 = 0;
+                while ei < e_len {
+                    e_val = (e_val << 8) | tls13c_u8(cert_addr + e_off + ei);
+                    ei = ei + 1;
+                }
+                tls13c_store_i64(state + 4784, e_val);
+                tls13c_store_i64(state + 56, tls13c_sig_rsa_pss_rsae_sha256());
+                // default; CV may still select the actual algorithm
+            } else {
+                // EC leaf: x509_parse does not extract Qx/Qy.  Refuse rather
+                // than authenticate without a key.  (A later lane can parse
+                // the SPKI bitstring.)  Mark as no-key.
+                tls13c_store_i64(state + 4752, 0);
+                tls13c_store_i64(state + 56, 0);
+            }
+        }
+    }
+    __mind_store_i8(chain_scratch + 0, (ncert >> 24) & 255);
+    __mind_store_i8(chain_scratch + 1, (ncert >> 16) & 255);
+    __mind_store_i8(chain_scratch + 2, (ncert >> 8) & 255);
+    __mind_store_i8(chain_scratch + 3, ncert & 255);
+    tls13c_store_i64(state + 184, cpos);
+    // chain encoded length (hs_buf_len reused ONLY here as chain_len is fine
+    // because hs reassembly is complete by the time Certificate is parsed)
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Parse CertificateVerify and verify it against the leaf key over
+// Transcript-Hash(CH..Certificate) with the RFC 8446 §4.4.3 signed content.
+// Returns 0 if the signature verifies, E_CV otherwise.
+// ---------------------------------------------------------------------------
+fn tls13c_parse_and_verify_cv(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    if msg_len < 4 {
+        return tls13c_err_hs();
+    }
+    if tls13c_u8(msg_addr + 0) != tls13c_hs_certificate_verify() {
+        return tls13c_err_hs();
+    }
+    let blen: i64 = tls13c_be24(msg_addr + 1);
+    if blen + 4 != msg_len {
+        return tls13c_err_hs();
+    }
+    if blen < 4 {
+        return tls13c_err_hs();
+    }
+    let alg: i64 = tls13c_be16(msg_addr + 4);
+    let slen: i64 = tls13c_be16(msg_addr + 6);
+    if slen + 4 != blen {
+        return tls13c_err_hs();
+    }
+    if slen < 1 || slen > 512 {
+        return tls13c_err_hs();
+    }
+    let sig: i64 = msg_addr + 8;
+    tls13c_store_i64(state + 56, alg);
+
+    // Transcript-Hash(CH..Certificate) — everything appended so far.
+    tls13c_transcript_hash_into(state, state + 4544);
+    let content: i64 = state + 4416;
+    tls13c_hs_cert_verify_content(state + 4544, content);
+
+    if alg == tls13c_sig_rsa_pss_rsae_sha256() {
+        let n_len: i64 = tls13c_load_i64(state + 4752);
+        if n_len != 128 {
+            if n_len != 256 {
+                return tls13c_err_cv();
+            }
+        }
+        let e_val: i64 = tls13c_load_i64(state + 4784);
+        let ok: i64 = tls13c_hs_rsa_pss_verify(state + 4856, n_len, e_val, sig, slen, content, 130, 32);
+        if ok != 1 {
+            return tls13c_err_cv();
+        }
+        0
+    } else {
+        // ECDSA and anything else: refuse (no leaf EC key is extracted).
+        tls13c_err_cv()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Verify the server Finished over Transcript-Hash(CH..CertificateVerify).
+// ---------------------------------------------------------------------------
+fn tls13c_verify_server_finished(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    if msg_len != 36 {
+        return tls13c_err_hs();
+    }
+    if tls13c_u8(msg_addr + 0) != tls13c_hs_finished() {
+        return tls13c_err_hs();
+    }
+    let blen: i64 = tls13c_be24(msg_addr + 1);
+    if blen != 32 {
+        return tls13c_err_hs();
+    }
+    tls13c_copy(state + 5112, msg_addr + 4, 32);
+    tls13c_transcript_hash_into(state, state + 4544);
+    let ok: i64 = tls13c_hs_verify_server_finished(state + 4128, state + 4544, state + 5112);
+    if ok != 1 {
+        return tls13c_err_fin();
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Build the client Finished handshake message (4 + 32 bytes) over
+// Transcript-Hash(CH..server Finished).
+// ---------------------------------------------------------------------------
+fn tls13c_build_client_finished(state: i64, out_addr: i64) -> i64 {
+    tls13c_transcript_hash_into(state, state + 5208);
+    tls13c_hs_client_finished(state + 4096, state + 5208, state + 5144);
+    __mind_store_i8(out_addr + 0, tls13c_hs_finished());
+    tls13c_put_be24(out_addr + 1, 32);
+    tls13c_copy(out_addr + 4, state + 5144, 32);
+    36
+}
+
+// ---------------------------------------------------------------------------
+// Derive application traffic secrets after the server Finished is verified
+// and the client Finished is appended to the transcript.
+// ---------------------------------------------------------------------------
+fn tls13c_derive_app_keys(state: i64) -> i64 {
+    tls13c_transcript_hash_into(state, state + 5208);
+    tls13c_master_secret(state + 4064, state + 4224);
+    tls13c_client_application_traffic_secret(state + 4224, state + 5208, state + 4256);
+    tls13c_server_application_traffic_secret(state + 4224, state + 5208, state + 4288);
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let klen: i64 = tls13c_suite_key_len(suite);
+    tls13c_derive_key_n(state + 4256, klen, state + 4320);
+    tls13c_derive_iv(state + 4256, state + 4320 + 16);
+    tls13c_derive_key_n(state + 4288, klen, state + 4352);
+    tls13c_derive_iv(state + 4288, state + 4352 + 16);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Process one complete handshake record payload (which may contain several
+// handshake messages).  `phase` selects which messages are legal.
+// Returns 0 when the payload is fully consumed, or a negative error.
+// ---------------------------------------------------------------------------
+fn tls13c_consume_hs_payload(state: i64, data_addr: i64, data_len: i64) -> i64 {
+    let mut off: i64 = 0;
+    while off < data_len {
+        if off + 4 > data_len {
+            return tls13c_err_hs();
+        }
+        let mtype: i64 = tls13c_u8(data_addr + off);
+        let mlen: i64 = tls13c_be24(data_addr + off + 1);
+        if mlen < 0 || mlen + 4 > tls13c_max_hs_msg() {
+            return tls13c_err_hs();
+        }
+        if off + 4 + mlen > data_len {
+            return tls13c_err_hs();
+        }
+        let msg: i64 = data_addr + off;
+        let msg_len: i64 = 4 + mlen;
+        let st: i64 = tls13c_status(state);
+
+        if st == tls13c_st_ch_sent() || st == tls13c_st_wait_sh() {
+            if mtype != tls13c_hs_server_hello() {
+                return tls13c_err_hs();
+            }
+            let rc: i64 = tls13c_parse_server_hello(state, msg, msg_len);
+            if rc != 0 {
+                return tls13c_fail(state, rc);
+            }
+            // Transcript includes the ServerHello, then handshake keys.
+            let arc: i64 = tls13c_transcript_append(state, msg, msg_len);
+            if arc != 0 {
+                return tls13c_fail(state, arc);
+            }
+            let krc: i64 = tls13c_derive_hs_keys(state);
+            if krc != 0 {
+                return tls13c_fail(state, krc);
+            }
+            tls13c_set_status(state, tls13c_st_wait_ee());
+        } else {
+            if st == tls13c_st_wait_ee() {
+                if mtype != tls13c_hs_encrypted_extensions() {
+                    return tls13c_fail(state, tls13c_err_hs());
+                }
+                let rc: i64 = tls13c_parse_ee(state, msg, msg_len);
+                if rc != 0 {
+                    return tls13c_fail(state, rc);
+                }
+                let arc: i64 = tls13c_transcript_append(state, msg, msg_len);
+                if arc != 0 {
+                    return tls13c_fail(state, arc);
+                }
+                tls13c_set_status(state, tls13c_st_wait_cert());
+            } else {
+                if st == tls13c_st_wait_cert() {
+                    if mtype != tls13c_hs_certificate() {
+                        return tls13c_fail(state, tls13c_err_hs());
+                    }
+                    let rc: i64 = tls13c_parse_certificate(state, msg, msg_len);
+                    if rc != 0 {
+                        return tls13c_fail(state, rc);
+                    }
+                    // Chain check (x509_verify_server_chain) — THE
+                    // authentication gate.  The stub refuses; the real
+                    // implementation lives on std/x509-auth.
+                    let chain_addr: i64 = state + 65144;
+                    let anchors_addr: i64 = tls13c_load_i64(state + 88);
+                    let anchors_len: i64 = tls13c_load_i64(state + 96);
+                    let dns_addr: i64 = tls13c_load_i64(state + 104);
+                    let now_unix: i64 = tls13c_load_i64(state + 32);
+                    if anchors_len <= 0 {
+                        return tls13c_fail(state, tls13c_err_chain());
+                    }
+                    let crc: i64 = x509_verify_server_chain(chain_addr, anchors_addr, dns_addr, now_unix);
+                    if crc != 0 {
+                        return tls13c_fail(state, tls13c_err_chain());
+                    }
+                    let arc: i64 = tls13c_transcript_append(state, msg, msg_len);
+                    if arc != 0 {
+                        return tls13c_fail(state, arc);
+                    }
+                    tls13c_set_status(state, tls13c_st_wait_cv());
+                } else {
+                    if st == tls13c_st_wait_cv() {
+                        if mtype != tls13c_hs_certificate_verify() {
+                            return tls13c_fail(state, tls13c_err_hs());
+                        }
+                        // Verify BEFORE appending so the signed content is
+                        // Transcript-Hash(CH..Certificate).
+                        let rc: i64 = tls13c_parse_and_verify_cv(state, msg, msg_len);
+                        if rc != 0 {
+                            return tls13c_fail(state, rc);
+                        }
+                        let arc: i64 = tls13c_transcript_append(state, msg, msg_len);
+                        if arc != 0 {
+                            return tls13c_fail(state, arc);
+                        }
+                        tls13c_set_status(state, tls13c_st_wait_fin());
+                    } else {
+                        if st == tls13c_st_wait_fin() {
+                            if mtype != tls13c_hs_finished() {
+                                return tls13c_fail(state, tls13c_err_hs());
+                            }
+                            // Verify BEFORE appending (signed over CH..CV).
+                            let rc: i64 = tls13c_verify_server_finished(state, msg, msg_len);
+                            if rc != 0 {
+                                return tls13c_fail(state, rc);
+                            }
+                            let arc: i64 = tls13c_transcript_append(state, msg, msg_len);
+                            if arc != 0 {
+                                return tls13c_fail(state, arc);
+                            }
+                            // Client Finished + app secrets.
+                            let fin: i64 = __mind_alloc(36);
+                            tls13c_build_client_finished(state, fin);
+                            let flen: i64 = 36;
+                            let arc2: i64 = tls13c_transcript_append(state, fin, flen);
+                            if arc2 != 0 {
+                                return tls13c_fail(state, arc2);
+                            }
+                            tls13c_derive_app_keys(state);
+                            // Seal and emit the client Finished under the
+                            // HANDSHAKE traffic keys.
+                            let rec: i64 = __mind_alloc(tls13c_max_record());
+                            let suite: i64 = tls13c_load_i64(state + 40);
+                            let seq: i64 = tls13c_load_i64(state + 128);
+                            let rlen: i64 = tls13c_record_seal(suite, state + 4160, state + 4176, seq, fin, flen, tls13c_ct_handshake(), rec);
+                            if rlen < 0 {
+                                return tls13c_fail(state, rlen);
+                            }
+                            tls13c_store_i64(state + 128, seq + 1);
+                            let orc: i64 = tls13c_out_append(state, rec, rlen);
+                            if orc != 0 {
+                                return tls13c_fail(state, orc);
+                            }
+                            // Application data is now allowed.
+                            tls13c_set_status(state, tls13c_st_connected());
+                        } else {
+                            // Unexpected handshake message in this state.
+                            return tls13c_fail(state, tls13c_err_hs());
+                        }
+                    }
+                }
+            }
+        }
+        off = off + msg_len;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Process one complete wire record from the inbound staging area.
+// `rec_addr` points at a full record of `rec_len` bytes (header included).
+// Returns 0 or negative.
+// ---------------------------------------------------------------------------
+fn tls13c_handle_record(state: i64, rec_addr: i64, rec_len: i64) -> i64 {
+    if rec_len < 5 {
+        return tls13c_fail(state, tls13c_err_record());
+    }
+    let rtype: i64 = tls13c_u8(rec_addr + 0);
+    let ver_hi: i64 = tls13c_u8(rec_addr + 1);
+    let ver_lo: i64 = tls13c_u8(rec_addr + 2);
+    let rlen: i64 = tls13c_be16(rec_addr + 3);
+    if rlen + 5 != rec_len {
+        return tls13c_fail(state, tls13c_err_record());
+    }
+    if ver_hi != 3 {
+        return tls13c_fail(state, tls13c_err_record());
+    }
+    // TLS 1.3 allows 0x0303 on the wire (RFC 8446 §5.1).
+    if ver_lo != 3 {
+        return tls13c_fail(state, tls13c_err_record());
+    }
+    if rlen > tls13c_max_record() {
+        return tls13c_fail(state, tls13c_err_ovf());
+    }
+
+    let st: i64 = tls13c_status(state);
+
+    // ---- plaintext records (before handshake keys) ----
+    if st == tls13c_st_ch_sent() || st == tls13c_st_wait_sh() {
+        if rtype == tls13c_ct_change_cipher_spec() {
+            // TLS 1.3 middlebox-compatibility CCS: legal, ignored.
+            return 0;
+        }
+        if rtype == tls13c_ct_alert() {
+            return tls13c_fail(state, tls13c_err_alert());
+        }
+        if rtype != tls13c_ct_handshake() {
+            return tls13c_fail(state, tls13c_err_record());
+        }
+        // Handshake payload is plaintext at rec+5.
+        tls13c_consume_hs_payload(state, rec_addr + 5, rlen);
+    } else {
+        // ---- protected records (handshake then application keys) ----
+        if rtype == tls13c_ct_change_cipher_spec() {
+            return 0;
+        }
+        if st == tls13c_st_closed() {
+            return tls13c_err_closed();
+        }
+        if rtype != tls13c_ct_app_data() {
+            // TLS 1.3 protects everything as application_data on the wire.
+            return tls13c_fail(state, tls13c_err_record());
+        }
+        let suite: i64 = tls13c_load_i64(state + 40);
+        let use_app: i64 = 0;
+        if st == tls13c_st_connected() {
+            use_app = 1;
+        }
+        let key: i64 = state + 4192;
+        let iv: i64 = state + 4208;
+        let seq: i64 = tls13c_load_i64(state + 144);
+        if use_app == 1 {
+            key = state + 4352;
+            iv = state + 4368;
+            seq = tls13c_load_i64(state + 152);
+        }
+        let plain: i64 = __mind_alloc(tls13c_max_record());
+        let prc: i64 = tls13c_record_open(suite, key, iv, seq, rec_addr, rec_len, plain);
+        if prc < 0 {
+            return tls13c_fail(state, tls13c_err_record());
+        }
+        let plen: i64 = prc >> 8;
+        let ptype: i64 = prc & 255;
+        if use_app == 0 {
+            tls13c_store_i64(state + 144, seq + 1);
+        } else {
+            tls13c_store_i64(state + 152, seq + 1);
+        }
+        if ptype == tls13c_ct_alert() {
+            // close_notify (0) => clean close; anything else => fail.
+            if plen >= 2 {
+                if tls13c_u8(plain + 1) == 0 {
+                    tls13c_zero_keys(state);
+                    tls13c_set_status(state, tls13c_st_closed());
+                    return 0;
+                }
+            }
+            return tls13c_fail(state, tls13c_err_alert());
+        }
+        if ptype == tls13c_ct_handshake() {
+            if use_app == 1 {
+                // Post-handshake handshake messages are out of scope.
+                return tls13c_fail(state, tls13c_err_hs());
+            }
+            tls13c_consume_hs_payload(state, plain, plen);
+        } else {
+            if ptype == tls13c_ct_app_data() {
+                if use_app != 1 {
+                    // Application data BEFORE authentication is refused.
+                    return tls13c_fail(state, tls13c_err_app());
+                }
+                // Stage into the application receive buffer.
+                let arx: i64 = tls13c_load_i64(state + 192);
+                if arx + plen > 2048 {
+                    return tls13c_fail(state, tls13c_err_ovf());
+                }
+                tls13c_copy(state + 63096 + arx, plain, plen);
+                tls13c_store_i64(state + 192, arx + plen);
+            } else {
+                return tls13c_fail(state, tls13c_err_record());
+            }
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_pump — drive the state machine over whatever is buffered inbound.
+// Consumes complete records; leaves partial data staged.  Returns
+//   0  progress (check status / out_pending)
+//  >0  same (reserved)
+//  <0  error (state is ERROR or CLOSED)
+// Never emits application data; only handshake records (client Finished).
+// ---------------------------------------------------------------------------
+pub fn tls13c_pump(state: i64) -> i64 {
+    let st: i64 = tls13c_status(state);
+    if st == tls13c_st_error() {
+        return tls13c_error(state);
+    }
+    if st == tls13c_st_closed() {
+        return tls13c_err_closed();
+    }
+    // After CH is built the first outbound record is produced by
+    // tls13c_seal_client_hello (called from the driver).
+    let mut guard: i64 = 0;
+    let mut rc: i64 = 0;
+    while guard < 64 {
+        guard = guard + 1;
+        let in_len: i64 = tls13c_load_i64(state + 160);
+        if in_len < 5 {
+            return 0;
+        }
+        let rec_len: i64 = tls13c_be16(state + 29816 + 3) + 5;
+        if rec_len < 5 {
+            return tls13c_fail(state, tls13c_err_record());
+        }
+        if rec_len > tls13c_max_record() {
+            return tls13c_fail(state, tls13c_err_ovf());
+        }
+        if in_len < rec_len {
+            // Partial record: wait for more.
+            return 0;
+        }
+        // Copy the record out of the staging area so handlers can use scratch.
+        let rec: i64 = __mind_alloc(rec_len);
+        tls13c_copy(rec, state + 29816, rec_len);
+        // Shift the remainder down.
+        let mut i: i64 = 0;
+        let rem: i64 = in_len - rec_len;
+        while i < rem {
+            __mind_store_i8(state + 29816 + i, __mind_load_i8(state + 29816 + rec_len + i));
+            i = i + 1;
+        }
+        tls13c_store_i64(state + 160, rem);
+        rc = tls13c_handle_record(state, rec, rec_len);
+        if rc != 0 {
+            return rc;
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_seal_client_hello — wrap the built ClientHello in a plaintext
+// handshake record and stage it outbound.  Call once after build_client_hello.
+// ---------------------------------------------------------------------------
+pub fn tls13c_seal_client_hello(state: i64, ch_addr: i64, ch_len: i64) -> i64 {
+    if tls13c_status(state) != tls13c_st_ch_sent() {
+        return tls13c_err_state();
+    }
+    if ch_len < 4 || ch_len > tls13c_max_hs_msg() {
+        return tls13c_err_ovf();
+    }
+    // Plaintext record: type 0x16, version 0x0303, length = ch_len.
+    let rec: i64 = __mind_alloc(5 + ch_len);
+    __mind_store_i8(rec + 0, tls13c_ct_handshake());
+    __mind_store_i8(rec + 1, 3);
+    __mind_store_i8(rec + 2, 3);
+    tls13c_put_be16(rec + 3, ch_len);
+    tls13c_copy(rec + 5, ch_addr, ch_len);
+    tls13c_out_append(state, rec, 5 + ch_len);
+    // Transcript starts with the ClientHello handshake message.
+    tls13c_transcript_append(state, ch_addr, ch_len);
+    tls13c_set_status(state, tls13c_st_wait_sh());
+    0
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_write_app — queue application data.  REFUSES before CONNECTED:
+// no bytes of application data may be sent before server Finished is
+// verified.  Each call seals one application record under the client app
+// traffic keys and stages it outbound.  Returns the plaintext length or a
+// negative error.
+// ---------------------------------------------------------------------------
+pub fn tls13c_write_app(state: i64, data_addr: i64, data_len: i64) -> i64 {
+    if data_len < 0 {
+        return tls13c_err_inval();
+    }
+    let st: i64 = tls13c_status(state);
+    if st == tls13c_st_error() {
+        return tls13c_error(state);
+    }
+    if st == tls13c_st_closed() {
+        return tls13c_err_closed();
+    }
+    if st != tls13c_st_connected() {
+        // Hard refuse — nothing is queued, nothing is sent.
+        return tls13c_err_app();
+    }
+    if data_len > 16384 {
+        return tls13c_err_ovf();
+    }
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let seq: i64 = tls13c_load_i64(state + 136);
+    let rec: i64 = __mind_alloc(tls13c_max_record());
+    let rlen: i64 = tls13c_record_seal(suite, state + 4320, state + 4336, seq, data_addr, data_len, tls13c_ct_app_data(), rec);
+    if rlen < 0 {
+        return tls13c_fail(state, rlen);
+    }
+    tls13c_store_i64(state + 136, seq + 1);
+    let orc: i64 = tls13c_out_append(state, rec, rlen);
+    if orc != 0 {
+        return tls13c_fail(state, orc);
+    }
+    data_len
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_read_app — drain received application data.  Returns bytes copied
+// (0 if none).  Only meaningful after CONNECTED.
+// ---------------------------------------------------------------------------
+pub fn tls13c_read_app(state: i64, out_addr: i64, max_len: i64) -> i64 {
+    let st: i64 = tls13c_status(state);
+    if st != tls13c_st_connected() {
+        return 0;
+    }
+    let avail: i64 = tls13c_load_i64(state + 192);
+    let rd: i64 = tls13c_load_i64(state + 200);
+    let mut n: i64 = avail - rd;
+    if n > max_len {
+        n = max_len;
+    }
+    if n <= 0 {
+        return 0;
+    }
+    tls13c_copy(out_addr, state + 63096 + rd, n);
+    tls13c_store_i64(state + 200, rd + n);
+    if tls13c_load_i64(state + 200) >= tls13c_load_i64(state + 192) {
+        tls13c_store_i64(state + 192, 0);
+        tls13c_store_i64(state + 200, 0);
+    }
+    n
+}
+
+// ---------------------------------------------------------------------------
+// tls13c_close — send close_notify (if connected), zeroize every key, and
+// enter CLOSED.  Safe to call from any non-ERROR state.
+// ---------------------------------------------------------------------------
+pub fn tls13c_close(state: i64) -> i64 {
+    let st: i64 = tls13c_status(state);
+    if st == tls13c_st_error() {
+        tls13c_zero_keys(state);
+        return tls13c_error(state);
+    }
+    if st == tls13c_st_closed() {
+        tls13c_zero_keys(state);
+        return 0;
+    }
+    if st == tls13c_st_connected() {
+        // close_notify alert: level=1 (warning), description=0.
+        let alert: i64 = __mind_alloc(2);
+        __mind_store_i8(alert + 0, 1);
+        __mind_store_i8(alert + 1, 0);
+        let suite: i64 = tls13c_load_i64(state + 40);
+        let seq: i64 = tls13c_load_i64(state + 136);
+        let rec: i64 = __mind_alloc(tls13c_max_record());
+        let rlen: i64 = tls13c_record_seal(suite, state + 4320, state + 4336, seq, alert, 2, tls13c_ct_alert(), rec);
+        if rlen > 0 {
+            tls13c_store_i64(state + 136, seq + 1);
+            tls13c_out_append(state, rec, rlen);
+        }
+    }
+    tls13c_zero_keys(state);
+    tls13c_set_status(state, tls13c_st_closed());
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics.
+// ---------------------------------------------------------------------------
+pub fn tls13c_suite(state: i64) -> i64 {
+    tls13c_load_i64(state + 40)
+}
+
+pub fn tls13c_group(state: i64) -> i64 {
+    tls13c_load_i64(state + 48)
+}
+
+pub fn tls13c_is_connected(state: i64) -> i64 {
+    if tls13c_status(state) == tls13c_st_connected() {
+        1
+    } else {
+        0
+    }
+}

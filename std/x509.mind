@@ -739,3 +739,33 @@ pub fn x509_verify_self_signed(cert_addr: i64, cert_len: i64) -> i64 {
     let e_val: i64 = bytes_be_to_i64(cert_addr + e_off, e_len);
     rsa_pkcs1_sha256_verify(cert_addr + n_off, n_len, e_val, cert_addr + sig_off, sig_len, cert_addr + tbs_off, tbs_len)
 }
+
+// === BEGIN x509_verify_server_chain STUB (std/tls13-client lane) ============
+// STUB — REFUSES EVERY CHAIN. Do not treat a return of 0 as possible here.
+//
+// Contract (fixed; the real implementation lands on branch std/x509-auth):
+//   pub fn x509_verify_server_chain(chain, anchors, expected_dns, now_unix) -> i64
+//     chain         addr of a length-prefixed DER chain:
+//                     u32be ncert, then ncert times (u32be der_len || der)
+//                   (leaf first).  Caller owns the buffer for the duration
+//                   of the call.
+//     anchors       addr of a length-prefixed DER trust-anchor set,
+//                   same encoding (CA certs / roots).
+//     expected_dns  addr of a length-prefixed DNS identity:
+//                     u32be name_len || ascii bytes (no NUL required).
+//     now_unix      seconds since the Unix epoch, used for the
+//                   notBefore/notAfter validity window.
+//   Returns 0 iff the chain validates to an anchor AND the leaf binds
+//   `expected_dns` AND `now_unix` falls inside every cert's validity
+//   window.  Returns NEGATIVE on any refusal (untrusted root, broken
+//   path, expired/not-yet-valid, identity mismatch, malformed input).
+//
+// THIS STUB ALWAYS RETURNS -1 (fail closed).  Nothing authenticates until
+// the real std/x509-auth implementation is merged and this stub is removed.
+// Tests that need a positive handshake MUST swap this symbol for a
+// test-only accept hook (see tests/tls13_client_driver.py).
+// ==========================================================================
+pub fn x509_verify_server_chain(chain_addr: i64, anchors_addr: i64, expected_dns_addr: i64, now_unix: i64) -> i64 {
+    0 - 1
+}
+// === END x509_verify_server_chain STUB =====================================
