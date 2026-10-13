@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2005 | **Est. tokens:** ~3,784,757
-**Generated:** 2026-10-12 22:13 UTC
+**Files:** 2005 | **Est. tokens:** ~3,784,556
+**Generated:** 2026-10-13 01:43 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 178 | ~469,926 |
+| `examples/mindc_mind/` | 178 | ~470,308 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -107,7 +107,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~53,478 |
+| `src/` | 11 | ~52,010 |
 | `src/ast/` | 2 | ~12,313 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~16,999 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,227 |
+| `src/eval/` | 38 | ~142,112 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -753,7 +753,7 @@
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
 - `self_host_native_narrow_paramret_smoke.py` (~2029 tok, huge) — Byte-behavior smoke for narrow-int (i8/i16/i32) PARAM + RETURN auto-wrap in the
 - `self_host_native_narrowwrap_smoke.py` (~1673 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
-- `self_host_native_process_smoke.py` (~2419 tok, huge) — Linux x86-64 process/clock/directory syscall parity, in disposable directories.
+- `self_host_native_process_smoke.py` (~2454 tok, huge) — Linux x86-64 process/clock/directory syscall parity, in disposable directories.
 - `self_host_native_record_array_smoke.py` (~2437 tok, huge) — Focused pure-MIND native fixed-array record-field gate."""
 - `self_host_native_record_trace_smoke.py` (~4806 tok, huge) — Canonical-trace contract for record-field reads, incl. the fixed-array case.
 - `self_host_native_scalar_f32_smoke.py` (~1548 tok, huge) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
@@ -764,7 +764,7 @@
 - `self_host_native_simd_dot_i16_smoke.py` (~1234 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_string_smoke.py` (~2275 tok, huge)
-- `self_host_native_sys_smoke.py` (~4190 tok, huge) — Linux x86-64 filesystem parity: current-source stage1 versus Rust/MLIR.
+- `self_host_native_sys_smoke.py` (~4537 tok, huge) — Linux x86-64 filesystem parity: current-source stage1 versus Rust/MLIR.
 - `self_host_native_tensor_batchsum_smoke.py` (~2372 tok, huge) — C4-T6 — native-ELF 3-D BATCHED SUM (i64), zero MLIR/LLVM. The FIRST N-D
 - `self_host_native_tensor_bcastadd_smoke.py` (~1700 tok, huge) — C4-T5 — native-ELF tensor ROW-VECTOR BROADCAST ADD (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_colsum_smoke.py` (~2094 tok, huge) — C4-T5 — native-ELF tensor COLUMN REDUCTION (i64), zero MLIR/LLVM.
@@ -1386,7 +1386,7 @@
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
+- `lower_entry.rs` (~1244 tok, large) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build.rs` (~10750 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1437,7 +1437,7 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~11517 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~10049 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.

@@ -79,6 +79,11 @@ fn main() -> i64 {
     if fcntl(fd, 2, 1) != 0 { return 26; }
     if fcntl(fd, 1, 0) != 1 { return 27; }
     if flock(fd, 6) != 0 { return 28; }
+    // A second open file description must see the exclusive lock (EWOULDBLOCK).
+    let other: i64 = open(old, 2, 0);
+    if other < 0 { return 47; }
+    if flock(other, 6) != 0 - 11 { return 48; }
+    if close(other) != 0 { return 49; }
     __mind_store_i8(p, 65);
     if write_at(fd, p, 0 - 1) != 1 { return 29; }
     let mut off: i64 = 3;
@@ -179,6 +184,17 @@ fn main() -> i64 {
     return 0;
 }
 """
+# The pre-offset 3-argument spelling (no offset operand at all) is the legacy
+# stream call too: it must emit the frozen seed's bytes and write 8 bytes.
+LEGACY_THREE_ARG = """
+fn main() -> i64 {
+    let b: i64 = __mind_alloc(8);
+    __mind_store_i64(b, 1234605616436508552);
+    if __mind_write(1, b, 8) != 8 { return 1; }
+    if __mind_read(0, b, 8) != 0 { return 2; }
+    return 0;
+}
+"""
 LEGACY_IO = {
     nr: re.compile(rb"\x48\x8b\xbd.{4}\x48\x8b\xb5.{4}\x48\x8b\x95.{4}\x48\xc7\xc0"
                    + bytes([nr]) + rb"\x00\x00\x00\x0f\x05", re.DOTALL)
@@ -258,6 +274,20 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
         fails.append(f"sentinel_dispatch: legacy write/read, dispatch = {counts}, expected (3, 1, 3)")
     else:
         print(f"PASS sentinel_dispatch: legacy write/read, dispatch = {counts}", flush=True)
+    three = emit(stage1, LEGACY_THREE_ARG)
+    if three != emit(_FROZEN, LEGACY_THREE_ARG):
+        fails.append("legacy_three_arg: stage1 bytes != frozen seed bytes")
+    counts = (len(LEGACY_IO[1].findall(three)), len(LEGACY_IO[0].findall(three)),
+              len(DISPATCH_IO.findall(three)))
+    exe = tmp / "legacy_three_arg.elf"
+    exe.write_bytes(three)
+    exe.chmod(0o755)
+    proc = subprocess.run([str(exe)], cwd=tmp, input=b"", capture_output=True, timeout=15)
+    got = (counts, proc.returncode, proc.stdout)
+    if got != ((1, 1, 0), 0, bytes.fromhex("8877665544332211")):
+        fails.append(f"legacy_three_arg: (legacy write/read, dispatch), exit, stdout = {got!r}")
+    else:
+        print(f"PASS legacy_three_arg: {got!r}", flush=True)
     native = tmp / "sentinel_mixed.elf"
     native.write_bytes(mixed)
     native.chmod(0o755)

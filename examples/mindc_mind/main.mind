@@ -33148,17 +33148,20 @@ pub fn nb_is_stream_sentinel(buf: i64, node: i64) -> i64 {
     0
 }
 
-// Intrinsic kind for a call site. `__mind_write` (8) and `__mind_read` (9) whose
-// fourth operand is the stream sentinel map to the legacy stream kinds 1008 and
-// 1009; every other call keeps its table id.
+// Intrinsic kind for a call site. `__mind_write` (8) and `__mind_read` (9) map to
+// the legacy stream kinds 1008 and 1009 when the fourth operand is the stream
+// sentinel, or when there is no fourth operand slot (the pre-offset 3-argument
+// form, which reads only slots 0..2 exactly as the bootstrap seed does). Only a
+// 4-argument call with any other offset takes the runtime dispatch; every other
+// intrinsic keeps its table id.
 pub fn nb_intrinsic_site_kind(intr: i64, buf: i64, args_addr: i64, args_len: i64) -> i64 {
-    if args_len != 4 {
-        return intr;
-    }
     if intr != 8 {
         if intr != 9 {
             return intr;
         }
+    }
+    if args_len != 4 {
+        return intr + 1000;
     }
     if nb_is_stream_sentinel(buf, __mind_load_i64(args_addr + 3 * 8)) == 1 {
         return intr + 1000;
