@@ -34,6 +34,14 @@ errno, or with NULL on pointer-returning errors.
 negative offsets, positioned I/O otherwise, `-1` on failure, and zero for a
 null buffer or nonpositive count. They do not supply an errno location.
 
+Reading errno after a failed `__mind_read` (the campaign `nc_errno()` pattern
+after a literal `0 - 1` read) has no portable form yet. Natively that call
+returns the raw `-errno` (for example `-11` for EAGAIN), so
+`posix_errno(got)` gives the errno. The C twin returns `-1` and leaves the
+code in libc's thread-local errno, where `posix_errno(-1)` reads 1, not the
+errno. Until the admission lane maps `__errno_location`, a consumer that needs
+the errno must take it from the native result, not from `__errno_location()`.
+
 One native exception keeps the self-host fixed point: when the offset operand
 denotes the compile-time constant `-1` (`0 - 1`, `-1`, `1 - 2`, or either in
 parentheses), the native emitter keeps the bootstrap seed's raw 30-byte stream
@@ -45,6 +53,11 @@ already existed before the positioned-I/O change. A runtime `-1` offset, any
 other constant, and every nonnegative offset take the C-twin-identical
 dispatch. Removing the exception changes how the compiler compiles itself, so
 it needs a two-hop seed advance at integration, never a per-lane edit.
+
+A call with no offset operand at all (the pre-offset 3-argument form
+`__mind_write(fd, buf, n)`, used by the BLAS dot smokes) takes the same
+legacy stream sequence: it reads only argument slots 0..2, as the seed does.
+Only a 4-argument call whose offset is not the constant `-1` is dispatched.
 `self_host_native_sys_smoke.py` asserts both forms and checks that the frozen
 seed and current stage1 emit identical bytes for the sentinel sites and for
 every emitter function this substrate changed.
@@ -100,6 +113,14 @@ for byte. Both smokes are wired in `SMOKE_WIRING.tsv` and CI.
 Bootstrap fixture publication belongs to integration. A local temporary seed
 can be derived through two pure-MIND hops before running the existing loop
 gate against it. The repository's frozen seed and manifest must remain intact.
+
+Any `main.mind` edit invalidates three seed-pinned gates until integration
+advances the seeds once: `self_host_loop_smoke.py` (`testdata/selfhost_loop`,
+stage1 == stage2 == stage3 must still hold; only "stage1 != frozen seed"
+fails), `self_host_bounded_profile_smoke.py` (`testdata/selfhost_loop_bounded`,
+the bounded seed; fails on its derive and loop checks) and
+`self_host_standalone_driver_smoke.py` (its headline `out.elf` is compared
+with the frozen stage1).
 
 ## Consumer declarations
 

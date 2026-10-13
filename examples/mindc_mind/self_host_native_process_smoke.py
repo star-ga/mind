@@ -141,9 +141,9 @@ fn main() -> i64 {
         entry = readdir(d);
     }
     if entry != 0 { return 5; }
-    if n != 402 { return 6; }
+    if n != 403 { return 6; }
     if dots != 2 { return 17; }
-    if files != 400 { return 18; }
+    if files != 401 { return 18; }
     if readdir(d) != 0 { return 7; }
     if closedir(d) != 0 { return 8; }
     if closedir(0) != 0 - 9 { return 19; }
@@ -204,6 +204,8 @@ def check(stage1, mindc, tmp):
                     inside.mkdir()
                     for i in range(400):
                         (inside / f'entry-{i:04d}').write_bytes(b'')
+                    # 240-byte name: d_reclen 264 needs the high byte of the u16.
+                    (inside / ('e' * 240)).write_bytes(b'')
                 if name == 'exec_exit':
                     child_source = prefix + b'fn main() -> i64 { return 0; }\n'
                     child = work / 'child'
