@@ -480,10 +480,12 @@ fn a_proven_f64_slot_still_builds() {
     }
 }
 
-/// `bool` is the i64 truthiness encoding on both backends (`true`/`false` parse as
-/// 1 / 0), so a bool slot fed an i64 needs no slot proof: an i64 variable (one also
-/// an intrinsic operand), the literal 256 and an i64 returned from a `-> bool`
+/// `if b` on a bool parameter is nonzero on both backends, so a non-canonical i64
+/// still matches (`true`/`false` parse as 1 / 0). An i64 variable (one also an
+/// intrinsic operand), the literal 256 and an i64 returned from a `-> bool`
 /// function all read as true natively and under MLIR (measured: 1, 1, 1 on both).
+/// `!b`, a compare with a literal and arithmetic do not: those are refused by
+/// `type.bool_param_i1` / `type.bool_param_arith`.
 #[test]
 fn a_bool_slot_fed_an_i64_matches_the_mlir_result() {
     for (name, src, want) in [
@@ -513,4 +515,82 @@ fn a_bool_slot_fed_an_i64_matches_the_mlir_result() {
         assert_eq!(code, 0, "{name}: {stderr}");
         assert_native_result(&p, &bytes.expect("artifact"), want, name);
     }
+}
+
+/// `!b` on a bool parameter is the low bit under MLIR and `b == 0` natively.
+/// `f(2)` is 1 under MLIR and 2 natively. The same split shows up for an i64
+/// variable and for an i64 returned from a `-> bool` wrapper.
+#[test]
+fn a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64() {
+    for (name, src) in [
+        (
+            "bool_not_lit",
+            "fn f(b: bool) -> i64 { if !b { return 1; } return 2; }\n\
+             fn main() -> i64 { return f(2); }\n",
+        ),
+        (
+            "bool_not_var",
+            "fn f(b: bool) -> i64 { if !b { return 1; } return 2; }\n\
+             fn main() -> i64 { let a: i64 = 2; return f(a); }\n",
+        ),
+        (
+            "bool_not_wrap",
+            "fn g(a: i64) -> bool { return a; }\n\
+             fn f(b: bool) -> i64 { if !b { return 1; } return 2; }\n\
+             fn main() -> i64 { return f(g(2)); }\n",
+        ),
+        (
+            "bool_eq_true",
+            "fn f(b: bool) -> i64 { if b == true { return 1; } return 2; }\n\
+             fn main() -> i64 { return f(3); }\n",
+        ),
+    ] {
+        assert_refused(name, src, "type.bool_param_i1");
+    }
+}
+
+/// `b + 10` is i1 addition under MLIR (1 + 0 = 1) and i64 addition natively
+/// (11), so it disagrees even when the argument is the canonical `true`.
+#[test]
+fn arithmetic_on_a_bool_parameter_is_refused() {
+    assert_refused(
+        "bool_arith",
+        "fn f(b: bool) -> i64 { return b + 10; }\n\
+         fn main() -> i64 { return f(true); }\n",
+        "type.bool_param_arith",
+    );
+}
+
+/// An unannotated float binding later given an integer is an f64 slot. MLIR
+/// refuses the write; the native backend must too.
+#[test]
+fn an_unannotated_float_assigned_an_integer_is_refused() {
+    assert_refused(
+        "f64_if_int",
+        "fn main() -> i64 { let mut x = 0.5; let c: i64 = 1; if c > 0 { x = 5; } \
+         if x > 2.0 { return 1; } return 2; }\n",
+        "type.f64_slot_unproven",
+    );
+    assert_refused(
+        "f64_loop_int",
+        "fn main() -> i64 { let mut x = 0.5; let mut i: i64 = 0; while i < 3 { x = i; \
+         i = i + 1; } if x > 2.0 { return 1; } return 2; }\n",
+        "type.f64_slot_unproven",
+    );
+}
+
+/// `phase_10_5_struct.mind` declares `i32` fields and never constructs or reads
+/// them. That built at d6050e9d. A mention with no value is not a slot.
+#[test]
+fn an_unused_non_i64_struct_field_still_builds() {
+    let p = Project::new("phase_10_5_struct");
+    p.write(
+        "src/main.mind",
+        "struct Effect {\n    tag: i32,\n    code: i32,\n}\n\
+         \nenum Decision {\n    Allow,\n    Deny,\n}\n\
+         \nfn main() {\n    return 0\n}\n",
+    );
+    let (code, stderr, bytes) = p.build_native("src/main.mind");
+    assert_eq!(code, 0, "{stderr}");
+    assert_native_result(&p, &bytes.expect("artifact"), 0, "unused i32 fields");
 }

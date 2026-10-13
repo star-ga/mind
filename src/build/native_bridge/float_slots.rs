@@ -214,33 +214,40 @@ impl<'a> Program<'a> {
 
     /// The names proven f64.
     ///
-    /// A name declared f64 whose every other binding is an assignment is proven
-    /// outright: each of those assignments is itself an f64 slot, checked by
-    /// `Unit::node` under this same assumption, so every write keeps the invariant
-    /// (`x = x + 1.5`). Any other name joins in a LEAST fixpoint, only once each of
-    /// its bindings is grounded in a proof (two names feeding each other prove
-    /// nothing).
+    /// A name declared f64, or introduced by an unannotated initializer proven to
+    /// be one, is proven outright when every other binding is an assignment: each
+    /// of those assignments is itself checked as a write to this slot
+    /// (`x = x + 1.5`, and `x = x + 1.0` after `let mut x = 0.5`). A non-f64
+    /// annotation or an opaque binding withholds the proof. Any other name joins
+    /// in a least fixpoint, only once each of its initializers is grounded (two
+    /// names feeding each other prove nothing).
     fn proven_names(&self, b: &Bindings<'a>) -> BTreeSet<&'a str> {
-        let mut s: BTreeSet<&'a str> = b
-            .iter()
-            .filter(|(_, binds)| {
-                binds.iter().any(|bd| matches!(bd, Binding::Float))
-                    && binds
-                        .iter()
-                        .all(|bd| matches!(bd, Binding::Float | Binding::Assigned(_)))
-            })
-            .map(|(name, _)| *name)
-            .collect();
+        // A declared f64, or an unannotated initializer proven to be one, anchors
+        // the name. Later assignments do not have to prove it: each of them is
+        // checked as a write to this slot (`x = x + 1.0` after `let mut x = 0.5`).
+        // A non-f64 annotation or an opaque binding withholds the proof.
+        let mut s: BTreeSet<&'a str> = BTreeSet::new();
         loop {
             let joined: Vec<&'a str> = b
                 .iter()
                 .filter(|(name, _)| !s.contains(*name))
                 .filter(|(_, binds)| {
-                    binds.iter().all(|bd| match bd {
-                        Binding::Float => true,
-                        Binding::NonFloat | Binding::Opaque(_) => false,
-                        Binding::Value(v) | Binding::Assigned(v) => self.proves(v, &s),
-                    })
+                    let mut anchor = false;
+                    for bd in binds.iter() {
+                        match bd {
+                            Binding::Float => anchor = true,
+                            Binding::NonFloat | Binding::Opaque(_) => return false,
+                            Binding::Value(v) => {
+                                if self.proves(v, &s) {
+                                    anchor = true;
+                                } else {
+                                    return false;
+                                }
+                            }
+                            Binding::Assigned(_) => {}
+                        }
+                    }
+                    anchor
                 })
                 .map(|(name, _)| *name)
                 .collect();
@@ -360,14 +367,34 @@ impl<'a> Unit<'_, 'a> {
         Ok(())
     }
 
-    /// The slots a plain assignment to `name` may write: (some binding declares it
-    /// f64, some binding declares it otherwise).
+    /// The slots a plain assignment to `name` may write: (some binding is an f64
+    /// slot, some binding is a non-f64 slot).
+    ///
+    /// An annotation decides the slot. An unannotated binding does too: a value
+    /// that is or may be an f64 makes the name an f64 slot, and a value that
+    /// cannot be an f64 makes it a non-f64 slot. A later write under an `if` or
+    /// a loop is the same assignment. When both are true the write must satisfy
+    /// both, which is how `let mut x = 0.5; x = 5` is refused.
     fn assigned_slots(&self, name: &str) -> [bool; 2] {
         let binds = self.binds.get(name).map_or(&[][..], Vec::as_slice);
-        [
-            binds.iter().any(|b| matches!(b, Binding::Float)),
-            binds.iter().any(|b| matches!(b, Binding::NonFloat)),
-        ]
+        let mut float_slot = false;
+        let mut nonfloat_slot = false;
+        for bd in binds {
+            match bd {
+                Binding::Float => float_slot = true,
+                Binding::NonFloat => nonfloat_slot = true,
+                Binding::Value(v) | Binding::Assigned(v) | Binding::Opaque(v) => {
+                    let may = self.prog.may_be_f64(v, &self.may);
+                    if may || self.prog.proves(v, &self.proven) {
+                        float_slot = true;
+                    }
+                    if !may {
+                        nonfloat_slot = true;
+                    }
+                }
+            }
+        }
+        [float_slot, nonfloat_slot]
     }
 
     /// Check each argument against the callee's parameter slots. A callee the

@@ -118,7 +118,42 @@ fn proven_f64_slots_and_integer_programs_are_admitted() {
         "fn main() -> i64 { let x: f64 = 2.5; let a: i64 = x > 1.0; let b: i64 = (x * 2.0) as i64; \
          let c: i64 = !(x < 0.5) && x != 3.0; return a + b + c; }",
         "fn main() -> i64 { let mut t: i64 = 0; for i in 0..3 { t = t + i; } return t; }",
+        // An unannotated float keeps its slot across a later float write, including
+        // a loop-carried `x = x + 1.0`.
+        "fn main() -> i64 { let mut x = 0.5; x = 1.5; if x > 2.0 { return 1; } return 2; }",
+        "fn main() -> i64 { let mut x = 0.5; let mut i: i64 = 0; while i < 3 { x = x + 1.0; \
+         i = i + 1; } if x > 2.0 { return 1; } return 2; }",
+        "fn main() -> i64 { let mut x = 1; x = x + 2; return x; }",
     ] {
         assert_eq!(admit(src), Ok(()), "{src}");
+    }
+}
+
+/// A binding introduced by an unannotated float is an f64 slot, and one
+/// introduced by an integer is not. A later write under an `if` or a loop is
+/// the same slot the straight-line write is. MLIR refuses the mismatch
+/// (`f64` vs `i64`); the frozen compiler used to build it.
+#[test]
+fn an_unannotated_binding_refuses_a_later_write_of_the_other_kind() {
+    for src in [
+        "fn main() -> i64 { let mut x = 0.5; let c: i64 = 1; if c > 0 { x = 5; } \
+         if x > 2.0 { return 1; } return 2; }",
+        "fn main() -> i64 { let mut x = 0.5; let mut i: i64 = 0; while i < 3 { x = i; \
+         i = i + 1; } if x > 2.0 { return 1; } return 2; }",
+        "fn main() -> i64 { let a: i64 = 5; let mut x = 0.5; let mut i: i64 = 0; \
+         while i < 6 { x = a; i = i + 1; } return 2; }",
+        "fn main() -> i64 { let mut x = 0.5; x = 5; return 2; }",
+        "fn main() -> i64 { let mut x = 0.5; let mut i: i64 = 0; while i < 6 { x = 5; \
+         i = i + 1; } return 2; }",
+    ] {
+        assert_eq!(admit(src), Err(UNPROVEN), "{src}");
+    }
+    for src in [
+        "fn main() -> i64 { let mut x = 1; let c: i64 = 1; if c > 0 { x = 1.5; } return 2; }",
+        "fn main() -> i64 { let mut x = 5; x = 0.5; if x > 2 { return 1; } return 2; }",
+        "fn main() -> i64 { let mut x = 1; let mut i: i64 = 0; while i < 6 { x = 3.5; \
+         i = i + 1; } return x; }",
+    ] {
+        assert_eq!(admit(src), Err(MISMATCH), "{src}");
     }
 }

@@ -320,16 +320,258 @@ pub(crate) fn module_mentions_non_f64_float(module: &ast::Module) -> bool {
         .any(|n| node_mentions(is_non_f64_float_scalar, n))
 }
 
-/// `true` when ANY type annotation in the module names a scalar integer type other
-/// than `i64` (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `u64`), including cast targets,
-/// struct fields, aliases and nested element types. The frozen native profile uses
-/// it: a declared narrow or unsigned width lives only in the AST (an unsigned `let`
-/// lowers to a bare `BitAnd`), and the frozen compiler carries every integer in an
-/// i64 slot without re-materialising a narrow `let` or parameter at its width or
-/// comparing a `u64` unsigned.
-pub(crate) fn module_mentions_non_i64_integer(module: &ast::Module) -> bool {
-    module
-        .items
+/// `true` when a non-i64 integer value reaches a slot.
+///
+/// A bare mention does not: an unused `struct` field, an unused `enum` payload
+/// and an unused `type` alias declare no value, and the frozen compiler never
+/// materialises them. A value does reach a slot when it is a `let` / `const`
+/// annotation, a parameter, a return type, an `as` target, a struct or enum
+/// literal field, a field read or write, or a constructed / matched enum payload.
+/// Aliases are resolved, so `type Word = u16; let v: Word = 1` still counts.
+/// `isize` / `usize` are i64 on both backends and are not counted. Tensor element
+/// dtypes are not counted.
+pub(crate) fn value_reaches_non_i64_integer_slot(module: &ast::Module) -> bool {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut aliases: BTreeMap<&str, &TypeAnn> = BTreeMap::new();
+    let mut fields: BTreeMap<&str, Vec<(&str, &TypeAnn)>> = BTreeMap::new();
+    let mut variants: BTreeMap<String, VariantInfo<'_>> = BTreeMap::new();
+    for item in &module.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| match node {
+            Node::TypeAlias { name, target, .. } => {
+                aliases.insert(name.as_str(), target);
+            }
+            Node::StructDef {
+                name, fields: fs, ..
+            } => {
+                for f in fs {
+                    fields
+                        .entry(name.as_str())
+                        .or_default()
+                        .push((f.name.as_str(), &f.ty));
+                }
+            }
+            Node::EnumDef {
+                name, variants: vs, ..
+            } => {
+                for v in vs {
+                    variants.insert(
+                        format!("{name}::{}", v.name),
+                        VariantInfo {
+                            payload: v.payload.iter().collect(),
+                            field_names: &v.field_names,
+                        },
+                    );
+                }
+            }
+            _ => {}
+        });
+    }
+    let mut narrow_fields: BTreeSet<&str> = BTreeSet::new();
+    for fs in fields.values() {
+        for (fname, ty) in fs {
+            if ann_is_non_i64_integer(ty, &aliases, &mut Vec::new()) {
+                narrow_fields.insert(fname);
+            }
+        }
+    }
+    for info in variants.values() {
+        for (i, ty) in info.payload.iter().enumerate() {
+            if ann_is_non_i64_integer(ty, &aliases, &mut Vec::new()) {
+                if let Some(fname) = info.field_names.get(i) {
+                    narrow_fields.insert(fname.as_str());
+                }
+            }
+        }
+    }
+    let ctx = FlowCtx {
+        aliases: &aliases,
+        fields: &fields,
+        variants: &variants,
+        narrow_fields: &narrow_fields,
+    };
+    module.items.iter().any(|item| node_reaches(&ctx, item))
+}
+
+struct VariantInfo<'a> {
+    payload: Vec<&'a TypeAnn>,
+    field_names: &'a [String],
+}
+
+struct FlowCtx<'a> {
+    aliases: &'a std::collections::BTreeMap<&'a str, &'a TypeAnn>,
+    fields: &'a std::collections::BTreeMap<&'a str, Vec<(&'a str, &'a TypeAnn)>>,
+    variants: &'a std::collections::BTreeMap<String, VariantInfo<'a>>,
+    narrow_fields: &'a std::collections::BTreeSet<&'a str>,
+}
+
+fn ann_is_non_i64_integer(
+    ty: &TypeAnn,
+    aliases: &std::collections::BTreeMap<&str, &TypeAnn>,
+    stack: &mut Vec<String>,
+) -> bool {
+    match ty {
+        TypeAnn::ScalarI32 | TypeAnn::ScalarU32 => true,
+        TypeAnn::ScalarI64 | TypeAnn::ScalarF32 | TypeAnn::ScalarF64 | TypeAnn::ScalarBool => false,
+        TypeAnn::Tensor { .. } | TypeAnn::DiffTensor { .. } | TypeAnn::SparseTensor { .. } => false,
+        TypeAnn::Named(n) => {
+            if is_non_i64_integer_scalar(TypeLeaf::Scalar(n)) {
+                return true;
+            }
+            let Some(target) = aliases.get(n.as_str()) else {
+                return false;
+            };
+            if stack.iter().any(|s| s == n) {
+                // A cycle used as a slot is not an i64. Refuse it.
+                return true;
+            }
+            stack.push(n.clone());
+            let hit = ann_is_non_i64_integer(target, aliases, stack);
+            stack.pop();
+            hit
+        }
+        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
+            ann_is_non_i64_integer(element, aliases, stack)
+        }
+        TypeAnn::Ref { target, .. } => ann_is_non_i64_integer(target, aliases, stack),
+        TypeAnn::RawPtr { pointee, .. } => ann_is_non_i64_integer(pointee, aliases, stack),
+        TypeAnn::Generic { args, .. } => args
+            .iter()
+            .any(|t| ann_is_non_i64_integer(t, aliases, stack)),
+        TypeAnn::Tuple { elements } => elements
+            .iter()
+            .any(|t| ann_is_non_i64_integer(t, aliases, stack)),
+        TypeAnn::FnPtr { params, ret } => {
+            params
+                .iter()
+                .any(|t| ann_is_non_i64_integer(t, aliases, stack))
+                || ret
+                    .as_deref()
+                    .is_some_and(|t| ann_is_non_i64_integer(t, aliases, stack))
+        }
+    }
+}
+
+fn opt_ann(ty: &Option<TypeAnn>, aliases: &std::collections::BTreeMap<&str, &TypeAnn>) -> bool {
+    ty.as_ref()
+        .is_some_and(|t| ann_is_non_i64_integer(t, aliases, &mut Vec::new()))
+}
+
+fn params_reach(
+    params: &[ast::Param],
+    aliases: &std::collections::BTreeMap<&str, &TypeAnn>,
+) -> bool {
+    params
         .iter()
-        .any(|n| node_mentions(is_non_i64_integer_scalar, n))
+        .any(|p| ann_is_non_i64_integer(&p.ty, aliases, &mut Vec::new()))
+}
+
+fn variant_of<'a>(ctx: &'a FlowCtx<'a>, path: &str) -> Option<&'a VariantInfo<'a>> {
+    if let Some(info) = ctx.variants.get(path) {
+        return Some(info);
+    }
+    ctx.variants.get(&path.replace('.', "::"))
+}
+
+fn pattern_reaches(ctx: &FlowCtx<'_>, pat: &ast::Pattern) -> bool {
+    match pat {
+        ast::Pattern::EnumVariant { path, args } => {
+            if let Some(info) = variant_of(ctx, path) {
+                if args.iter().zip(info.payload.iter()).any(|(sub, ty)| {
+                    binds_value(sub) && ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new())
+                }) {
+                    return true;
+                }
+            }
+            args.iter().any(|sub| pattern_reaches(ctx, sub))
+        }
+        ast::Pattern::EnumStruct { path, fields } => {
+            if let Some(info) = variant_of(ctx, path) {
+                for (fname, sub) in fields {
+                    if !binds_value(sub) {
+                        continue;
+                    }
+                    if let Some(i) = info.field_names.iter().position(|n| n == fname) {
+                        if info.payload.get(i).is_some_and(|ty| {
+                            ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new())
+                        }) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            fields.iter().any(|(_, sub)| pattern_reaches(ctx, sub))
+        }
+        ast::Pattern::Tuple(args) => args.iter().any(|sub| pattern_reaches(ctx, sub)),
+        ast::Pattern::Literal(_) | ast::Pattern::Ident(_) | ast::Pattern::Wildcard => false,
+    }
+}
+
+fn binds_value(pat: &ast::Pattern) -> bool {
+    !matches!(pat, ast::Pattern::Wildcard | ast::Pattern::Literal(_))
+}
+
+fn lit_field_reaches(ctx: &FlowCtx<'_>, type_name: &str, field: &str) -> bool {
+    let short = type_name.rsplit([':', '.']).next().unwrap_or(type_name);
+    for name in [type_name, short] {
+        if let Some(fs) = ctx.fields.get(name) {
+            for (fname, ty) in fs {
+                if *fname == field && ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new()) {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(info) = variant_of(ctx, type_name) {
+        if let Some(i) = info.field_names.iter().position(|n| n == field) {
+            if info
+                .payload
+                .get(i)
+                .is_some_and(|ty| ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new()))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn node_reaches(ctx: &FlowCtx<'_>, node: &Node) -> bool {
+    let hit = match node {
+        Node::Let { ann, .. } | Node::Const { ty: ann, .. } => opt_ann(ann, ctx.aliases),
+        Node::ExternConst { ty, .. } => ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new()),
+        Node::FnDef(fd, _) => {
+            params_reach(&fd.params, ctx.aliases) || opt_ann(&fd.ret_type, ctx.aliases)
+        }
+        Node::Closure(c, _) => {
+            params_reach(&c.params, ctx.aliases) || opt_ann(&c.ret_type, ctx.aliases)
+        }
+        Node::ExternBlock { fns, .. } => fns
+            .iter()
+            .any(|f| params_reach(&f.params, ctx.aliases) || opt_ann(&f.ret_type, ctx.aliases)),
+        Node::As { ty, .. } => ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new()),
+        Node::StructLit { name, fields, .. } => {
+            fields.iter().any(|f| lit_field_reaches(ctx, name, &f.name))
+        }
+        Node::FieldAssign { field, .. } | Node::FieldAccess { field, .. } => {
+            ctx.narrow_fields.contains(field.as_str())
+        }
+        Node::Call { callee, args, .. } if !args.is_empty() => {
+            variant_of(ctx, callee).is_some_and(|info| {
+                info.payload
+                    .iter()
+                    .any(|ty| ann_is_non_i64_integer(ty, ctx.aliases, &mut Vec::new()))
+            })
+        }
+        Node::Match { arms, .. } => arms.iter().any(|arm| pattern_reaches(ctx, &arm.pattern)),
+        _ => false,
+    };
+    if hit {
+        return true;
+    }
+    let mut child_hit = false;
+    crate::type_checker::nerve_walk::for_each_child(node, &mut |child| {
+        child_hit = child_hit || node_reaches(ctx, child);
+    });
+    child_hit
 }

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1908 | **Est. tokens:** ~3,733,656
-**Generated:** 2026-10-09 13:02 UTC
+**Files:** 1923 | **Est. tokens:** ~3,805,546
+**Generated:** 2026-10-13 03:04 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31,123 |
+| `./` | 33 | ~31,656 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -41,7 +41,7 @@
 | `benchmarks/mojo/` | 8 | ~4,276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 2 | ~3,347 |
+| `config/` | 2 | ~3,341 |
 | `docs/` | 38 | ~110,799 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~456,534 |
+| `examples/mindc_mind/` | 175 | ~459,924 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -93,7 +93,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~21,911 |
+| `runtime-support/` | 1 | ~22,262 |
 | `scripts/` | 31 | ~116,970 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -110,27 +110,29 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,987 |
+| `src/build/` | 13 | ~54,834 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 2 | ~4,881 |
+| `src/build/native_bridge/` | 7 | ~25,991 |
+| `src/build/native_bridge/float_slots/` | 1 | ~2,180 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
 | `src/diagnostics/` | 4 | ~16,999 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,227 |
+| `src/eval/` | 38 | ~143,988 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 10 | ~97,464 |
+| `src/ir/` | 11 | ~105,810 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
+| `src/ir/frozen_intrinsics/` | 5 | ~15,997 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 6 | ~14,931 |
@@ -150,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,452 |
-| `tests/` | 420 | ~860,065 |
+| `tests/` | 423 | ~876,446 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -243,7 +245,7 @@
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) — === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
-- `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
+- `build.rs` (~767 tok, large) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~3947 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
@@ -421,7 +423,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~2375 tok, huge) — [ir]
+- `capabilities.toml` (~2369 tok, huge) — [ir]
 - `token_pricing.toml` (~972 tok, large) — [pricing]
 ### `docs/`
 
@@ -676,15 +678,15 @@
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
-- `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 641c06d594084dc29762eaee24589dfb484dfea00ddcad6575e14335e1df8004
+- `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
+- `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
+- `_ref_main.note` (~16 tok, tiny) — 787443c9f2b9b10017083d42da5b18faa7738c52a6fc36fb84b86ee020569ecf
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
-- `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
-- `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
-- `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
+- `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
+- `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
+- `_ref_value_if.note` (~16 tok, tiny) — 52ffae963503ad85946c606998b7086d786b48ba8c990042357fb4af423df02b
 - `rh_f64_aggregate_canary_smoke.py` (~1597 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
-- `ri_d1_frozen_profile_gate.py` (~4276 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
+- `ri_d1_frozen_profile_gate.py` (~7666 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
 - `self_host_andor_precedence_smoke.py` (~1680 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
@@ -1053,7 +1055,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~21911 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22262 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
@@ -1209,11 +1211,25 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
+- `admission.rs` (~2401 tok, huge) — Copyright 2025 STARGA Inc.
+- `bool_params.rs` (~6637 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
+- `float_slots.rs` (~6787 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/float_slots/`
+
+- `tests.rs` (~2180 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `linkage.rs` (~2550 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9411 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `seed.rs` (~2735 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/`
+
 - `native_image.rs` (~4296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -1291,7 +1307,7 @@
 - `module_bindings.rs` (~1211 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
-- `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
+- `narrow_scan.rs` (~6307 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
@@ -1380,9 +1396,23 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~7794 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/frozen_intrinsics/`
+
+- `alloc_budget.rs` (~1999 tok, huge) — Copyright 2025 STARGA Inc.
+- `operand_types.rs` (~4849 tok, huge) — Copyright 2025 STARGA Inc.
+- `program.rs` (~1253 tok, large) — Copyright 2025 STARGA Inc.
+- `program_tests.rs` (~2316 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/`
+
+- `frozen_intrinsics.rs` (~3470 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/frozen_intrinsics/`
+
+- `tests.rs` (~5580 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/`
+
+- `frozen_profile.rs` (~8902 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17729 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure.rs` (~8029 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2236,7 +2266,7 @@
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
 - `module_path_reference.rs` (~613 tok, large) — Copyright 2026 STARGA Inc.
-- `module_size_ratchet.rs` (~4019 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_size_ratchet.rs` (~4040 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
@@ -2250,16 +2280,19 @@
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~5811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
 - `mod.rs` (~2274 tok, huge) — Shared harness for the native module-bridge integration controls.
 ### `tests/`
 
-- `native_closure_admission.rs` (~3941 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure_admission.rs` (~5280 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
+- `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
-- `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
+- `native_intrinsic_std_linkage.rs` (~5788 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_module_bridge_controls.rs` (~8563 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_numerics_lint.rs` (~4079 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2288,7 +2321,7 @@
 - `reap_threshold.rs` (~2108 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `_ref_mic3_dump.rs` (~1821 tok, huge) — Committed self-host reference generator (A9b): reconstruct
+- `_ref_mic3_dump.rs` (~2925 tok, huge) — Committed self-host reference generator (A9b): reconstruct
 - `regalloc_dtk_parity.rs` (~3134 tok, huge) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
 - `region_phase_ja.rs` (~4263 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~434 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2557,14 +2590,14 @@
 - `std_surface_bool_return.rs` (~1279 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_break_continue.rs` (~1335 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~1236 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_cdylib_link.rs` (~2900 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~2993 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~874 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1007 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~799 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~3202 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3893 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1522 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_fs_mind_open.rs` (~1697 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_fs_mind_open.rs` (~2257 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_http.rs` (~4060 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_i32_intrinsics.rs` (~824 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3458 tok, huge) — Copyright 2025 STARGA Inc.

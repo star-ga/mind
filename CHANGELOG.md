@@ -21,9 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced by the same EFAULT the Linux kernel reports.
 
 ### Fixed — native admission refuses non-i64 integer slots and seed struct names
-- `--backend native` refuses a program that declares an integer type other than
-  `i64` (`isize` / `usize` stay admitted) anywhere in its source
-  (`type.non_i64_integer`). The frozen compiler keeps a `u8` / `u16` / `u32` `let` or
+- `--backend native` refuses a program when a value reaches an integer slot other
+  than `i64` (`isize` / `usize` stay admitted) (`type.non_i64_integer`). A `let`,
+  parameter, return, cast, field read or write, or constructed payload counts. An
+  unused struct field or type alias does not: declaring `struct Effect { tag: i32,
+  code: i32 }` and returning 0 builds, as it did before the mention scan. The
+  frozen compiler keeps a `u8` / `u16` / `u32` `let` or
   parameter unmasked and compares a `u64` signed, where the MLIR backend masks and
   compares unsigned: `let v: u8 = 300; if v > 100 {..}` exited 1 natively and 2 under
   MLIR, with or without a frozen intrinsic producing the value. The whole-program
@@ -42,7 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `const`) must receive a value proven to be an f64: a float literal, an `as f64`, a
   name every binding of which is an f64, float arithmetic over those, or a call to a
   function declared to return `f64`; anything else is refused
-  (`type.f64_slot_unproven`). `let x: f64 = __mind_load_i64(p); return x;` exited 0
+  (`type.f64_slot_unproven`). The same slot is an unannotated binding whose
+  initializer is an f64: `let mut x = 0.5; if c > 0 { x = 5; }` and
+  `while i < 3 { x = i; }` built natively and exited 2 where MLIR refuses the
+  `i64` write into an `f64`. `let x: f64 = __mind_load_i64(p); return x;` exited 0
   natively and 7 under MLIR, an `i64` struct field read into an `f64` let likewise, and
   an integer reaching an `f64` let, parameter or return built natively where MLIR
   refuses it (E2015 / E2027 / E2010). A value that may be an f64 (a float literal, an
@@ -56,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   array, tuple, generic, pointer, enum payload or type alias is refused
   (`type.f64_in_aggregate`). A `let` annotation never reaches the IR, so the proof is
   made on the source.
+- A `bool` parameter is an i1 under MLIR and an i64 word in the frozen compiler.
+  `--backend native` refuses a use where those disagree (`type.bool_param_i1`,
+  `type.bool_param_arith`). `if !b` on a parameter fed `2` exited 2 natively and 1
+  under MLIR; `b == true` fed `3` and `b != false` fed `2` split the same way,
+  whether the word was a literal, an `i64` variable, or returned from a `-> bool`
+  wrapper. `b + 10` disagrees even for `true` (11 natively, 1 under MLIR). `if b`,
+  a returned parameter, a compare with a non-literal and `b & 0` / `b & 1` agree
+  for every i64 and stay admitted. A canonical `0` or `1` (`true` / `false`) stays
+  admitted on the i1 uses that agree for those two values.
 
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer

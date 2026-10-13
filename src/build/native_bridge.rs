@@ -16,6 +16,8 @@ use std::process;
 #[cfg(feature = "std-surface")]
 mod admission;
 #[cfg(feature = "std-surface")]
+mod bool_params;
+#[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
 mod float_slots;
@@ -397,8 +399,21 @@ pub fn run_native_backend_bridge_profile(
     }
 
     // A declared f64 slot: a `let` annotation never reaches the IR
-    // (float_slots.rs).
+    // (float_slots.rs). An unannotated binding whose value may be an f64 is
+    // the same slot.
     if let Err(r) = float_slots::admit_f64_slots(&merged_ast) {
+        eprintln!(
+            "error[backend-native]: `{}` is not in the frozen native profile \
+             (out-of-profile construct: {}): {}.\n  Rerun with `--backend mlir`.",
+            paths[0], r.construct, r.detail
+        );
+        process::exit(3);
+    }
+
+    // A bool parameter is an i1 under MLIR and an i64 word in the frozen
+    // compiler. Uses that disagree are refused (bool_params.rs); `if b` is not
+    // one of them.
+    if let Err(r) = bool_params::admit_bool_params(&merged_ast) {
         eprintln!(
             "error[backend-native]: `{}` is not in the frozen native profile \
              (out-of-profile construct: {}): {}.\n  Rerun with `--backend mlir`.",

@@ -117,8 +117,8 @@ fn lower_seed_dropping_refused(
 }
 
 /// Fence one linked std seed function with the same predicates a user body
-/// passes: the source-level width checks, the f64 slot proof and the IR construct
-/// allowlist.
+/// passes: the source-level width checks, the f64 slot proof, the bool-parameter
+/// proof and the IR construct allowlist.
 /// A linked name whose body cannot be found is refused, never assumed proven.
 pub(super) fn fence_std_seed_fn(
     seed: &StdSeed,
@@ -131,6 +131,9 @@ pub(super) fn fence_std_seed_fn(
     let source = seed.fn_source(name).ok_or_else(missing)?;
     profile_frozen_admits_source(&source)?;
     super::float_slots::admit_f64_slots(&source).map_err(|r| FrozenProfileRejection {
+        construct: r.construct,
+    })?;
+    super::bool_params::admit_bool_params(&source).map_err(|r| FrozenProfileRejection {
         construct: r.construct,
     })?;
     let ir = seed.fn_ir(name).ok_or_else(missing)?;

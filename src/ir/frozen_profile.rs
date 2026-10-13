@@ -86,22 +86,22 @@ pub fn profile_frozen_admits_linked(
 ///   float lowering is proven for f64 alone (see `admit_binop`). The frozen stage1.elf
 ///   refuses the same programs on its own (`nb_user_float_tok` in `main.mind`); this
 ///   makes the first fence refuse them too, and name the construct.
-/// * Integer width: any integer type other than `i64` (`isize`/`usize` are i64 on both
-///   backends) is out of profile (`type.non_i64_integer`). The frozen compiler carries
-///   every integer in an i64 slot and re-materialises a declared width only on
-///   `return`: a `u8`/`u16`/`u32` `let` or parameter keeps its unmasked value and a
-///   `u64` compares signed, where the MLIR backend masks and compares unsigned
-///   (measured: `let v: u8 = 300; if v > 100 {..}` is 1 natively and 2 under MLIR; a
-///   `u64` parameter holding `-1` compared `> 5` likewise). The IR cannot see it: an
-///   unsigned `let` lowers to a bare `BitAnd`, a parameter to its own mask. This also
-///   keeps an intrinsic result out of every non-i64 `let`, which the whole-program
-///   operand proof cannot see for the same reason.
+/// * Integer width: a non-i64 integer (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`/`u64`;
+///   `isize`/`usize` are i64 on both backends) is out of profile
+///   (`type.non_i64_integer`) when a value reaches that slot. A bare mention is not
+///   a slot: an unused struct field or type alias declares nothing the frozen
+///   compiler materialises. A `let`, parameter, return, cast, field read or write,
+///   or constructed payload is. The frozen compiler carries every integer in an i64
+///   slot and does not re-materialise a narrow `let` or parameter, and it compares a
+///   `u64` signed, where the MLIR backend masks and compares unsigned (measured:
+///   `let v: u8 = 300; if v > 100 {..}` is 1 natively and 2 under MLIR). The IR
+///   cannot see it: an unsigned `let` lowers to a bare `BitAnd`.
 pub fn profile_frozen_admits_source(
     module: &crate::ast::Module,
 ) -> Result<(), FrozenProfileRejection> {
     if crate::eval::narrow_scan::module_mentions_non_f64_float(module) {
         reject("type.non_f64_float")
-    } else if crate::eval::narrow_scan::module_mentions_non_i64_integer(module) {
+    } else if crate::eval::narrow_scan::value_reaches_non_i64_integer_slot(module) {
         reject("type.non_i64_integer")
     } else {
         Ok(())
@@ -696,12 +696,13 @@ mod tests {
         }
     }
 
-    /// An integer declared anything but `i64` is out of profile wherever it is
-    /// written. The frozen compiler carries every integer in an i64 slot and does
-    /// not re-materialise a `u8`/`u16`/`u32` let or parameter at its width, nor
-    /// compare a `u64` unsigned (measured: `let v: u8 = 300; if v > 100` is 1
-    /// natively and 2 under MLIR). The IR cannot see a let annotation (an unsigned
-    /// one lowers to a bare `BitAnd`), so the refusal is made on the source.
+    /// An integer declared anything but `i64` is out of profile when a value
+    /// reaches that slot. The frozen compiler carries every integer in an i64
+    /// slot and does not re-materialise a `u8`/`u16`/`u32` let or parameter at
+    /// its width, nor compare a `u64` unsigned (measured: `let v: u8 = 300;
+    /// if v > 100` is 1 natively and 2 under MLIR). The IR cannot see a let
+    /// annotation (an unsigned one lowers to a bare `BitAnd`), so the refusal
+    /// is made on the source. A declaration nobody reads or writes is not a slot.
     #[test]
     fn every_non_i64_integer_spelling_is_rejected() {
         for src in [
@@ -714,10 +715,11 @@ mod tests {
             "fn f(x: i8) -> i64 { return 0; }",
             "fn f(x: i16) -> i64 { return 0; }",
             "fn f(x: i32) -> i64 { return 0; }",
-            "struct P { a: u8 }",
-            "type Word = u16;",
             "fn f(xs: [u32; 4]) -> i64 { return 0; }",
             "fn main() -> i64 { let a: i64 = 300; let b = a as u8; return 0; }",
+            "type Word = u16; fn main() -> i64 { let v: Word = 300; return 0; }",
+            "struct P { a: u8 } fn main() -> i64 { let s = P { a: 1 }; return 0; }",
+            "fn main() -> i64 { let v = 300u8; return 0; }",
         ] {
             assert_eq!(
                 source_admits(src).map_err(|r| r.construct),
@@ -725,11 +727,16 @@ mod tests {
                 "{src}"
             );
         }
-        // `i64`, and `isize`/`usize` (measured identical on both backends), and `bool`.
+        // `i64`, and `isize`/`usize` (measured identical on both backends), and
+        // `bool`. An unused struct field or alias declares no value.
         for src in [
             "fn f(x: i64) -> i64 { return x; }",
             "fn f(x: isize) -> usize { return x; }",
             "fn f(b: bool) -> i64 { if b { return 1; } return 2; }",
+            "struct P { a: u8 }",
+            "type Word = u16;",
+            "struct Effect { tag: i32, code: i32 } enum Decision { Allow, Deny } \
+             fn main() { return 0 }",
         ] {
             assert_eq!(source_admits(src), Ok(()), "{src}");
         }
