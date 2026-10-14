@@ -62,6 +62,14 @@ Steps
                cs_ucd_mask shape at 7x) and a comment-padded 1024-leaf tree;
                the HOME tables were sized from the source span and initialised
                one stack frame per slot, which overflowed the 384 MiB stack.
+               Giant FLAT functions in the same profile (40000 straight-line
+               statements and 4000 chained lets must compile and run; 20000
+               chained lets, 40000 statements past the 4 MiB code window and
+               30000 statements in one while body may instead be refused
+               cleanly, rc 3): every statement-list walk took one stack frame per
+               statement (the mic@3 twin's planner alone ~14 KB) and the
+               compiler died with SIGSEGV at ~26k statements. `--flat-only`
+               runs just these cases.
                A function past the arena budget, or a program past the stack
                budget (a 65536-leaf, 18.8 MB tree), may be refused (rc 3),
                never a signal; a 21 MB program with an unsupported construct
@@ -206,7 +214,10 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True):
     program under the same cap. ('crash', signal) for a compiler killed by a
     signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF."""
     img = v2_header() + image(src, seeded)
-    r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
+    try:
+        r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
+    except subprocess.TimeoutExpired:
+        return ("compile-timeout", 900)
     if r.returncode < 0:
         return ("crash", -r.returncode)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
@@ -507,6 +518,64 @@ def dense_tree_program(depth: int, pad: int = 0) -> tuple:
     return "\n".join(lines) + "\n", (acc % 251, b"")
 
 
+def flat_program(n: int, shape: str) -> tuple:
+    """Census X1 giant FLAT function: one block of `n` statements.
+    inc:    `s = s + 1;` x n (straight-line reassignments of one name)
+    assign: `s = (s + k) % 1000;` x n (the same, ~183 B of code per statement:
+            40000 of them pass the image's 4 MiB code window, a clean rc 3)
+    lets:   `let xK: i64 = xJ + k % 7;` x n (a chain of n bindings)
+    loop:   the assign list as the body of a 2-trip while loop.
+    Every statement-list walk of the compiler took one stack frame per
+    statement (the mic@3 twin's planner frame alone is ~14 KB, and its env
+    lookup at statement i recursed over the i bindings before it): the bounded
+    compiler (384 MiB stack) died with SIGSEGV at ~26k straight-line statements."""
+    trips = 2 if shape == "loop" else 1
+    ind = "        " if shape == "loop" else "    "
+    lines = ["fn f(a: i64) -> i64 {", "    let mut s: i64 = a;"]
+    if shape == "loop":
+        lines += ["    let mut i: i64 = 0;", "    while i < 2 {"]
+    v = 1
+    if shape == "lets":
+        lines.append("    let x0: i64 = s;")
+        for k in range(1, n):
+            lines.append(f"    let x{k}: i64 = x{k - 1} + {k % 7};")
+            v += k % 7
+        lines.append(f"    s = x{n - 1} % 1000;")
+        v %= 1000
+    elif shape == "inc":
+        lines += ["    s = s + 1;"] * n
+        v += n
+    else:
+        for k in range(n):
+            lines.append(f"{ind}s = (s + {k % 997}) % 1000;")
+        for _ in range(trips):
+            for k in range(n):
+                v = (v + k % 997) % 1000
+    if shape == "loop":
+        lines += ["        i = i + 1;", "    }"]
+    lines += ["    s", "}", "fn main() -> i64 { f(1) % 251 }"]
+    return "\n".join(lines) + "\n", (v % 251, b"")
+
+
+def flat_cases():
+    """(label, (source, expected), may_refuse, seeded): giant flat statement
+    lists in the bounded production profile. Each must compile and run to the
+    Python value, or (may_refuse) be refused cleanly (rc 3); never a signal."""
+    return [
+        ("40000 straight-line statements in one function (census X1 giant flat list)",
+         flat_program(40000, "inc"), False, True),
+        # 20000 bindings pass the native alias environment's 4096-binding lookup
+        # depth (alias_cap: a structured refusal), so this one may refuse; 4000
+        # stay under it and must compile (the mic@3 twin's let-chain tables were
+        # a fixed 512 bindings / 4096 descriptors and silently overran).
+        ("20000 chained lets in one function", flat_program(20000, "lets"), True, True),
+        ("4000 chained lets in one function", flat_program(4000, "lets"), False, True),
+        ("40000 heavier straight-line statements (past the 4 MiB code window)",
+         flat_program(40000, "assign"), True, True),
+        ("30000 statements in one while body", flat_program(30000, "loop"), True, True),
+    ]
+
+
 def bounded_cases():
     """(label, (source, expected), may_refuse, seeded) for the bounded production compiler.
     Each must compile and run to the Python value; a may_refuse case may instead
@@ -516,7 +585,7 @@ def bounded_cases():
          dense_tree_program(11), False, True),
         ("dense if/else tree, 1024 leaves + 2600 comment lines in the body",
          dense_tree_program(10, pad=2600), False, True),
-    ] + extreme_cases()
+    ] + flat_cases() + extreme_cases()
 
 
 def extreme_cases():
@@ -552,6 +621,19 @@ def extreme_cases():
     ]
 
 
+def bounded_section(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, cases) -> None:
+    for label, (bsrc, bexp), may_refuse, seeded in cases:
+        t0 = time.time()
+        got = native_bounded(stage1b, bsrc.encode(), td, seeded)
+        if bexp[0] == "refused":
+            ok = got[:2] == bexp  # an expected clean refusal: rc 3, no ELF
+        else:
+            ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
+        rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:2]} Python={bexp}"
+                      + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
+                      + f" [{time.time() - t0:.0f} s]")
+
+
 def refused_padded_program(lines: int):
     pad = "// padding comment line for the refusal reporter scan xxxxxxxxxxxx\n" * lines
     src = ("fn main() -> i64 { return 0; }\n" + pad
@@ -585,7 +667,25 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--harness-only", action="store_true",
                     help="run only the harness self-checks (no compiler needed)")
+    ap.add_argument("--flat-only", action="store_true",
+                    help="run only the giant flat statement-list cases in the bounded profile")
     a = ap.parse_args()
+    if a.flat_only:
+        rep = Report()
+        with tempfile.TemporaryDirectory() as tdn:
+            td = pathlib.Path(tdn)
+            if a.stage1_bounded:
+                stage1b = pathlib.Path(a.stage1_bounded).resolve()
+            elif SEED.exists():
+                stage1b = derive_stage1_bounded(td)
+            else:
+                print(f"BLOCKED: frozen seed {SEED} missing")
+                return 2
+            print(f"[cf] giant flat statement lists, bounded profile: stage1 (bounded) = {stage1b}")
+            bounded_section(rep, stage1b, td, flat_cases())
+        print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
+        print("FAIL" if rep.fails else "ALL PASS  (giant flat statement lists, bounded profile)")
+        return 1 if rep.fails else 0
     if a.harness_only:
         rep = Report()
         with tempfile.TemporaryDirectory() as tdn:
@@ -709,14 +809,7 @@ def main() -> int:
         else:
             stage1b = bfut.result()
             print(f"  stage1 (bounded) = frozen seed + v2 header -> this tree ({stage1b.stat().st_size} B)")
-        for label, (bsrc, bexp), may_refuse, seeded in bounded_cases():
-            got = native_bounded(stage1b, bsrc.encode(), td, seeded)
-            if bexp[0] == "refused":
-                ok = got[:2] == bexp  # an expected clean refusal: rc 3, no ELF
-            else:
-                ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
-            rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:2]} Python={bexp}"
-                          + (" (a clean rc-3 refusal is accepted)" if may_refuse else ""))
+        bounded_section(rep, stage1b, td, bounded_cases())
 
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)

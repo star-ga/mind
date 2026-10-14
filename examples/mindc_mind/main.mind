@@ -21439,6 +21439,12 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         __mind_store_i64(ok_cell, 0);
         return s;
     }
+    // Census X1 capacity: a function past the statement cap is rejected before
+    // any per-statement walk (fail closed to the HOME path, nb_fn_stmt_cap).
+    if hm_fn_over_stmt_cap(src, fn_node) == 1 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     if fn_named_narrow_ret_code(src, fn_node) != 0 {
         return emit_mic3_module_fndef_narrow(s, src, fn_node, nidx, strbuf, offs, ncount, ok_cell);
     }
@@ -21579,11 +21585,23 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // bindings then a trailing value expression (every init/expr a param /
         // const / binop / let-ref tree). Substitution-equivalent to the nested
         // expression, so byte-exact vs --emit-mic3.
+        // Census X1 capacity: the chain flattens every init into these tables with
+        // no bound check; the fixed 4096-descriptor / 512-binding sizes were
+        // overrun by a chain of 513+ lets (heap corruption in the .so, a silent
+        // arena overrun in stage1). Sized like the (h) planner below (never below
+        // the old sizes, so every function that fit before sees the same tables);
+        // a function whose tables could not fit the arena budget is rejected
+        // (fail closed to the HOME path).
         if stmts_len >= 2 {
-            let nodes2: i64 = __mind_alloc(4096 * 32);
+            if seq_tables_short(fn_node, stmts_len) == 1 {
+                __mind_store_i64(ok_cell, 0);
+                return s;
+            }
+            let lncap: i64 = seq_cap_nodes(fn_node);
+            let nodes2: i64 = __mind_alloc(lncap * 32);
             let cursor2: i64 = __mind_alloc(8);
-            let vidbuf2: i64 = __mind_alloc(4096 * 8);
-            let env: i64 = __mind_alloc(512 * 24);
+            let vidbuf2: i64 = __mind_alloc(lncap * 8);
+            let env: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
             let nlets_cell: i64 = __mind_alloc(8);
             let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, strbuf, offs, ncount, ok_cell);
             if __mind_load_i64(ok_cell) == 1 {
@@ -34617,8 +34635,29 @@ pub fn nb_lets_bind(lets: i64, lcell: i64, name_lo: i64, name_hi: i64, slot: i64
 // Resolve a name span to its bound let-slot, or -1 if unbound. LAST-match wins
 // (innermost / latest binding), mirroring env_lookup_rest's last-write-wins.
 pub fn nb_lets_lookup(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
-    let n: i64 = __mind_load_i64(lcell);
-    nb_lets_lookup_rest(lets, n, buf, lo, hi, 0, 0 - 1)
+    let k: i64 = nb_lets_find_last(lets, buf, lo, hi, __mind_load_i64(lcell) - 1);
+    if k < 0 {
+        return 0 - 1;
+    }
+    __mind_load_i64(lets + (k * 5 + 2) * 8)
+}
+
+// Index of the LAST entry in [0, i] bound to the name span, or -1: the scan runs
+// backward and stops at the first match, so it returns exactly the entry the
+// forward last-match-wins walks (nb_lets_lookup_rest and its twins) settle on.
+// Census X1 capacity: the forward walks always visited every entry, so a
+// function with n lets did O(n) work per name reference (20000 chained lets:
+// minutes of compile time); a reference to a recent binding is now O(1).
+pub fn nb_lets_find_last(lets: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(lets + (i * 5 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 5 + 1) * 8);
+    if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
+        return i;
+    }
+    nb_lets_find_last(lets, buf, lo, hi, i - 1)
 }
 pub fn nb_lets_lookup_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
     if i >= n {
@@ -34638,8 +34677,11 @@ pub fn nb_lets_lookup_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64
 // match wins, mirroring nb_lets_lookup. Used by the ast_field read path to map
 // the field name to its declared index (and thus its 8*index byte offset).
 pub fn nb_lets_lookup_slit(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
-    let n: i64 = __mind_load_i64(lcell);
-    nb_lets_lookup_slit_rest(lets, n, buf, lo, hi, 0, 0)
+    let k: i64 = nb_lets_find_last(lets, buf, lo, hi, __mind_load_i64(lcell) - 1);
+    if k < 0 {
+        return 0;
+    }
+    __mind_load_i64(lets + (k * 5 + 3) * 8)
 }
 pub fn nb_lets_lookup_slit_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
     if i >= n {
@@ -34661,8 +34703,11 @@ pub fn nb_lets_lookup_slit_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i
 // narrow-declared x re-wraps at x's width; every all-i64 lookup returns 64 and
 // emits nothing (C2 declared-width driver).
 pub fn nb_lets_lookup_width(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
-    let n: i64 = __mind_load_i64(lcell);
-    nb_lets_lookup_width_rest(lets, n, buf, lo, hi, 0, 64)
+    let k: i64 = nb_lets_find_last(lets, buf, lo, hi, __mind_load_i64(lcell) - 1);
+    if k < 0 {
+        return 64;
+    }
+    __mind_load_i64(lets + (k * 5 + 4) * 8)
 }
 pub fn nb_lets_lookup_width_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
     if i >= n {
@@ -42840,14 +42885,25 @@ pub fn hm_copy_tail(code: String, sa: i64, sl: i64, from: i64, to: i64) -> Strin
     nb_store_rax(c1, nb_slot_disp(to))
 }
 
-// Statements [i, sl) of one block, in order.
+// Statements [i, sl) of one block, in order. A range longer than 8 is halved,
+// so the depth is log2(n) + 8 frames per block (census X1: one frame per
+// statement overflowed the bounded compiler's stack on giant flat functions).
 pub fn hm_stmts(st: NbState, buf: i64, sa: i64, sl: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    if sl - i > 8 {
+        let mid: i64 = i + (sl - i) / 2;
+        let sh: NbState = hm_stmts(st, buf, sa, mid, i, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+        return hm_stmts(sh, buf, sa, sl, mid, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    }
+    hm_stmts_run(st, buf, sa, sl, i, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc)
+}
+
+pub fn hm_stmts_run(st: NbState, buf: i64, sa: i64, sl: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
     if i >= sl {
         return st;
     }
     let node: i64 = __mind_load_i64(sa + i * 8);
     let s1: NbState = hm_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
-    hm_stmts(s1, buf, sa, sl, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc)
+    hm_stmts_run(s1, buf, sa, sl, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc)
 }
 
 // A scoped block: bindings made inside it are dropped at its end.
@@ -43281,6 +43337,40 @@ pub fn hm_over_ssa_caps(buf: i64, node: i64) -> i64 {
     if __mind_load_i64(cells + 8) > 400 {
         return 1;
     }
+    if __mind_load_i64(cells + 24) > nb_fn_stmt_cap() {
+        return 1;
+    }
+    0
+}
+
+// Census X1 capacity: the largest function, in statements, that the mic@3
+// twin and the SSA path take. Both walk a statement list one stack frame per
+// statement, and a walk at statement i can itself recurse over the i bindings
+// before it (the twin's planner frame alone is ~14 KB): a 26k-statement
+// straight-line function overflowed the bounded compiler's 384 MiB stack
+// (SIGSEGV). Past the cap the twin rejects the function and the SSA path
+// routes it, so it is lowered on the HOME path (halving statement walks) under
+// a source note. 8192 statements cost the twin ~125 MiB of stack at most; the
+// largest self-host function has ~484 statement ends, so the self-compile
+// never reaches it. A fixed cap, not one derived from the running layout, so
+// the bounded and the default compiler emit the same bytes.
+pub fn nb_fn_stmt_cap() -> i64 {
+    8192
+}
+
+// 1 iff fn `node` may hold more than nb_fn_stmt_cap() statements (counted as
+// the `;` and `}` bytes of its source span, comments included: an
+// over-estimate). A span that short cannot hold that many, so it is not scanned.
+pub fn hm_fn_over_stmt_cap(buf: i64, node: i64) -> i64 {
+    if ast_child2(node) == 0 {
+        return 0;
+    }
+    if hm_fn_span(node) <= nb_fn_stmt_cap() {
+        return 0;
+    }
+    if __mind_load_i64(hm_fn_counts(buf, node) + 24) > nb_fn_stmt_cap() {
+        return 1;
+    }
     0
 }
 
@@ -43341,14 +43431,17 @@ pub fn hm_pow256(k: i64) -> i64 {
     256 * hm_pow256(k - 1)
 }
 
-// Word counts over a fn's source span (see hm_count_words), in a fresh 24-byte
-// cell block: +0 lets, +8 jump estimate, +16 non-whitespace bytes.
+// Word counts over a fn's source span (see hm_count_words), in a fresh 32-byte
+// cell block: +0 lets, +8 jump estimate, +16 non-whitespace bytes, +24
+// statement ends (`;` and `}` bytes: every statement of every block ends in one,
+// so +24 + 1 bounds the statement count of any block and of any nest of blocks).
 pub fn hm_fn_counts(buf: i64, node: i64) -> i64 {
     let lo: i64 = ast_span_lo(node);
-    let cells: i64 = __mind_alloc(24);
+    let cells: i64 = __mind_alloc(32);
     __mind_store_i64(cells, 0);
     __mind_store_i64(cells + 8, 0);
     __mind_store_i64(cells + 16, 0);
+    __mind_store_i64(cells + 24, 0);
     let _c: i64 = hm_count_words(buf, lo, lo + hm_fn_span(node), cells);
     cells
 }
@@ -43387,6 +43480,14 @@ pub fn hm_count_run(buf: i64, i: i64, b: i64, hi: i64, cells: i64) -> i64 {
     hm_count_run(buf, i + step, b, hi, cells)
 }
 pub fn hm_count_one(buf: i64, i: i64, hi: i64, c: i64, cells: i64) -> i64 {
+    if c == 59 {
+        __mind_store_i64(cells + 24, __mind_load_i64(cells + 24) + 1);
+        return 1;
+    }
+    if c == 125 {
+        __mind_store_i64(cells + 24, __mind_load_i64(cells + 24) + 1);
+        return 1;
+    }
     if c == 108 {
         if hm_word_at(buf, i, hi, 7628140, 3) == 1 {
             __mind_store_i64(cells, __mind_load_i64(cells) + 1);
@@ -45384,6 +45485,23 @@ pub fn selftest_nb_trace_counts(src_addr: i64, src_len: i64, user_lo: i64, out: 
 // [9,12) || "f32" [12,15) || "f64" [15,18). "!llvm.ptr" never appears verbatim in
 // source, so type strings are interned from this buffer (dedup is by byte value, so
 // an "i64" that also appears in source shares the one slot).
+// Census X1 capacity: the mic@3 string table (strbuf bytes, offs entries) is
+// filled by intern_span with no bound check, and the fixed 256 KiB / 8192-entry
+// tables were overrun by a program with more distinct names than that (20000
+// chained lets: a silent arena overrun in stage1, heap corruption in the .so).
+// Every interned string is a distinct identifier or string-literal token (disjoint
+// source spans, each followed by a separator: at most src_len / 2 + 1 of them,
+// src_len bytes in all), a hygienic `__for_i_N` counter (<= 18 bytes, one per
+// `for` statement of >= 15 source bytes), or one of the fixed type / intrinsic
+// names, so these bounds hold for every source. The floors are the old sizes:
+// a program that fit before sees the same tables.
+pub fn nb_strtab_bytes_cap(src_len: i64) -> i64 {
+    262144 + src_len * 9 / 4
+}
+pub fn nb_strtab_entries_cap(src_len: i64) -> i64 {
+    8192 + src_len / 2 + src_len / 8
+}
+
 pub fn nb_type_consts() -> i64 {
     let b: i64 = __mind_alloc(24);
     __mind_store_i8(b + 0, 33);
@@ -45650,8 +45768,8 @@ pub fn selftest_nb_strtab(src_addr: i64, src_len: i64, user_lo: i64, out: i64) -
     let n_kept: i64 = nb_build_kept_all(src_addr, all_fns, nb_all, reach, kept, 0, 0);
     let tconst: i64 = nb_type_consts();
     let srt: i64 = srt_build(src_addr, src_len);
-    let strbuf: i64 = __mind_alloc(262144);
-    let offs: i64 = __mind_alloc(8192 * 8);
+    let strbuf: i64 = __mind_alloc(nb_strtab_bytes_cap(src_len));
+    let offs: i64 = __mind_alloc(nb_strtab_entries_cap(src_len) * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
@@ -45940,8 +46058,8 @@ pub fn nb_build_mic3_from_tokens_r(tokens: Vec, src_addr: i64, src_len: i64, use
     let tconst: i64 = nb_type_consts();
     // Buffers sized for FULL main.mind scale (oracle strtab = 2460 entries / 25289 B),
     // not the 84-string add fixture — a 1024-entry offs overflowed the heap at scale.
-    let strbuf: i64 = __mind_alloc(262144);
-    let offs: i64 = __mind_alloc(8192 * 8);
+    let strbuf: i64 = __mind_alloc(nb_strtab_bytes_cap(src_len));
+    let offs: i64 = __mind_alloc(nb_strtab_entries_cap(src_len) * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
@@ -46078,8 +46196,8 @@ pub fn selftest_nb_mic3_faildiag(src_addr: i64, src_len: i64, user_lo: i64, out:
     let tconst: i64 = nb_type_consts();
     // Buffers sized for FULL main.mind scale (oracle strtab = 2460 entries / 25289 B),
     // not the 84-string add fixture — a 1024-entry offs overflowed the heap at scale.
-    let strbuf: i64 = __mind_alloc(262144);
-    let offs: i64 = __mind_alloc(8192 * 8);
+    let strbuf: i64 = __mind_alloc(nb_strtab_bytes_cap(src_len));
+    let offs: i64 = __mind_alloc(nb_strtab_entries_cap(src_len) * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
