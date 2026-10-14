@@ -2630,16 +2630,18 @@ Why this matters for MIND specifically:
 **Goal.** Offer AI as a service for MIND developers and teams, built on the MIND ecosystem working as one system rather than as separate tools.
 
 **Scope.**
-- Hosted assistance for MIND: docs answers (Ask AI), the public MCP server for coding agents and IDEs, and a knowledge base, all drawing on one shared, versioned corpus with citations.
+- Hosted assistance for MIND: docs answers (Ask SI), the public MCP server for coding agents and IDEs, and a knowledge base, all drawing on one shared, versioned corpus with citations.
 - Code services: syntax checking with the compiler's own parser, explaining compiler errors, symbol lookup from the code graph, and help porting code from other languages to MIND.
 - Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, MIND-Flow and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
+- Local MCP server, `mindc mcp`: the hosted docs tools offline, from a docs snapshot that matches the installed compiler version, plus toolchain tools that only a local server can run (check a file with real diagnostics, explain an error from the user's build, build with an evidence record, verify an artifact). Ships with the compiler over stdio, for air-gapped and regulated environments and for users who want no query to leave the machine.
 - Governance: every answer and every self-improvement step bounded by declared invariants, with a tamper-evident evidence record per request; improvements change data only and ship after evaluation and approval.
 
 ### Order of work
 1. Unify the corpus and index shared by the MCP server, Ask AI and the knowledge base.
 2. Wire the code graph and compiler-backed tools into that shared layer.
 3. Add governance invariants and per-request evidence across the services.
-4. Define the service tiers, limits and access model.
+4. Ship the local MCP server as `mindc mcp`, sharing the tool definitions of the hosted server.
+5. Define the service tiers, limits and access model.
 
 ### Open questions — answer before this gets a milestone
 - Free and paid tiers, quotas and identity.
