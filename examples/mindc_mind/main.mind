@@ -11260,7 +11260,7 @@ pub fn slit_emit_value(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64
         let sb: EmitState = emit_mic3_binop(sa, vid + 1, 0, base_vid, vid);
         return emit_mic3_call1(sb, vid + 2, i_load, vid + 1);
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, strc, 0)
 }
 
@@ -11486,9 +11486,9 @@ pub fn emit_mic3_module_structlit_nfn(s: EmitState, src: i64, src_len: i64, strb
         return s;
     }
     // Per-field scratch for the general tree emitter (field VALUES).
-    let nodes: i64 = __mind_alloc(256 * 32);
+    let nodes: i64 = nb_ntab(256);
     let cursor: i64 = __mind_alloc(8);
-    let vidbuf: i64 = __mind_alloc(256 * 8);
+    let vidbuf: i64 = __mind_alloc(257 * 8);
     // header || strtab || next_id(=n_fns+n_structs) || exports(0) ||
     //   instr_count(=2*(n_fns+n_structs)+n_fns).
     let n_items: i64 = n_fns + n_structs;
@@ -11881,9 +11881,9 @@ pub fn emit_mic3_module_structlit_letchain_from_ast(s: EmitState, src: i64, src_
         return s;
     }
     // Flatten the let prefix into a fresh descriptor + let-env.
-    let nodes: i64 = __mind_alloc(256 * 32);
+    let nodes: i64 = nb_ntab(256);
     let cursor: i64 = __mind_alloc(8);
-    let vidbuf: i64 = __mind_alloc(256 * 8);
+    let vidbuf: i64 = __mind_alloc(257 * 8);
     let env: i64 = __mind_alloc(64 * 24);
     let nlets_cell: i64 = __mind_alloc(8);
     __mind_store_i64(cursor, 0);
@@ -12004,9 +12004,9 @@ pub fn emit_mic3_module_structlit_from_ast(s: EmitState, src: i64, src_len: i64,
     // Param AST-node array for the general tree emitter (resolve_param form), and
     // the per-field scratch descriptor / vid buffers.
     let params_addr: i64 = slit_build_params_addr(ptt, src);
-    let nodes: i64 = __mind_alloc(256 * 32);
+    let nodes: i64 = nb_ntab(256);
     let cursor: i64 = __mind_alloc(8);
-    let vidbuf: i64 = __mind_alloc(256 * 8);
+    let vidbuf: i64 = __mind_alloc(257 * 8);
     // Every declared field must have an initializer the general tree emitter can
     // lower (ident / literal / arithmetic / call). Fail-closed otherwise (missing
     // field or an unsupported construct).
@@ -12778,6 +12778,14 @@ pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node:
     let params_addr: i64 = ast_child1(fn_node);
     let n_params: i64 = ast_aux(fn_node) / 2;
     let rp: i64 = collect_param_strings(strbuf, offs, ccell, src, params_addr, n_params, 0);
+    // Census X1 capacity: the twin rejects a function past the statement cap
+    // (emit_mic3_module_fndef_run), so its body strings never reach an emitted
+    // module; walking them anyway cost a frame per statement and, for every
+    // branch assign, a rescan of the branch before it (collect_bwn_prior_let):
+    // quadratic, 100k statements in one if body ran for tens of minutes.
+    if hm_fn_over_stmt_cap(src, fn_node) == 1 {
+        return rp;
+    }
     // Recurse the body in statement order, interning any CALL callee names — the
     // Rust collect_instr_strings(Instr::Call) interns the call name during the
     // body traversal (verified: a forward call interns the callee BEFORE the
@@ -13665,7 +13673,7 @@ pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, strbuf: i64, offs: i6
         __mind_store_i64(ok_cell, 0);
         return s;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     // tree_resolve_vids fills vidbuf and RETURNS the last node's vid. For a single-
     // rooted expression tree the post-order root IS the last node, so its return
     // equals vidbuf[root_slot] (byte-identical). But a struct-lit CONSTRUCTION body
@@ -13784,7 +13792,7 @@ pub fn emit_mic3_if_stmt_instr(s: EmitState, cond_expr: i64, ret_expr: i64, buf:
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -13799,7 +13807,7 @@ pub fn emit_mic3_if_stmt_instr(s: EmitState, cond_expr: i64, ret_expr: i64, buf:
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
+    let then_n: i64 = nb_ntab_slot(nodes, cursor);
     let then_nonparam: i64 = count_nonparam_nodes(ret_expr, buf, params_addr, n_params);
     // then_instrs.len = synth(1) + ret-expr non-param instrs + the Return instr(1).
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
@@ -13889,7 +13897,7 @@ pub fn emit_if_chain_instr(s: EmitState, if_node: i64, buf: i64, params_addr: i6
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -13905,7 +13913,7 @@ pub fn emit_if_chain_instr(s: EmitState, if_node: i64, buf: i64, params_addr: i6
             __mind_store_i64(okcell, 0 - 1);
             return s;
         }
-        let then_n: i64 = __mind_load_i64(cursor);
+        let then_n: i64 = nb_ntab_slot(nodes, cursor);
         let then_nonparam: i64 = count_nonparam_nodes(ret_expr, buf, params_addr, n_params);
         let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
         let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
@@ -14003,7 +14011,7 @@ pub fn emit_if_seq_then_instr(s: EmitState, if_node: i64, buf: i64, params_addr:
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -14366,7 +14374,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             __mind_store_i64(okcell, 0);
             return s;
         }
-        let an: i64 = __mind_load_i64(cursor);
+        let an: i64 = nb_ntab_slot(nodes, cursor);
         let ann: i64 = count_nonparam_nodes_lv(arhs, buf, params_addr, n_params, lvbuf, nlv);
         let as_s: EmitState = emit_mic3_tree_body(s, nodes, an, vidbuf, buf, strbuf, offs, ncount, 0);
         __mind_store_i64(base_cell, cur_base + ann);
@@ -14394,7 +14402,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             __mind_store_i64(okcell, 0);
             return s;
         }
-        let be_n: i64 = __mind_load_i64(cursor);
+        let be_n: i64 = nb_ntab_slot(nodes, cursor);
         let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, lvbuf, nlv);
         let be_s: EmitState = emit_mic3_tree_body(s, nodes, be_n, vidbuf, buf, strbuf, offs, ncount, 0);
         __mind_store_i64(base_cell, cur_base + be_nn);
@@ -14421,7 +14429,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             __mind_store_i64(okcell, 0);
             s
         } else {
-            let init_n: i64 = __mind_load_i64(cursor);
+            let init_n: i64 = nb_ntab_slot(nodes, cursor);
             let nn: i64 = count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv);
             let se: EmitState = emit_mic3_tree_body(s, nodes, init_n, vidbuf, buf, strbuf, offs, ncount, 0);
             __mind_store_i64(lvbuf + nlv * 24 + 16, root);
@@ -14598,7 +14606,7 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -14646,7 +14654,7 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let ret_n: i64 = __mind_load_i64(cursor);
+    let ret_n: i64 = nb_ntab_slot(nodes, cursor);
     let s8: EmitState = emit_mic3_tree_body(s7, nodes, ret_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let s9: EmitState = emit_mic3_return(s8, 1, ret_root);
     let s10: EmitState = emit_uleb128(s9, ret_root);
@@ -14939,7 +14947,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -14976,7 +14984,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
             __mind_store_i64(okcell, 0 - 1);
             return s;
         }
-        let ret_n: i64 = __mind_load_i64(cursor);
+        let ret_n: i64 = nb_ntab_slot(nodes, cursor);
         let s8: EmitState = emit_mic3_tree_body(s7, nodes, ret_n, vidbuf, buf, strbuf, offs, ncount, 0);
         let s9: EmitState = emit_mic3_return(s8, 1, ret_root);
         let s10: EmitState = emit_uleb128(s9, ret_root);
@@ -15201,7 +15209,7 @@ pub fn emit_if_seq_then_instr_lv_bo(s: EmitState, if_node: i64, buf: i64, params
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -15327,7 +15335,7 @@ pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, bu
         __mind_store_i64(okcell, 0);
         return s;
     }
-    let init_n: i64 = __mind_load_i64(cursor);
+    let init_n: i64 = nb_ntab_slot(nodes, cursor);
     let s1: EmitState = emit_mic3_tree_body(s, nodes, init_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let nn: i64 = count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv_now);
     __mind_store_i64(lvbuf + nlv_now * 24 + 0, ast_span_lo(name));
@@ -15436,7 +15444,7 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvbuf, nlv0);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -15628,7 +15636,7 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvbuf, nlv0);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -15919,7 +15927,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -16155,7 +16163,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv0, nlv0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
@@ -16320,9 +16328,9 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
 // branch's vid span (which includes interior if-segment / nested if-else deltas) and its
 // escaping-binding count BEFORE the real two-sided layout is committed.
 pub fn probe_mixed_walk(sa: i64, sl: i64, base: i64, buf: i64, params_addr: i64, n_params: i64, lvenv0: i64, nlv0: i64, strbuf: i64, offs: i64, ncount: i64, nb_out: i64) -> i64 {
-    let pn: i64 = __mind_alloc(256 * 32);
+    let pn: i64 = nb_ntab(256);
     let pc: i64 = __mind_alloc(8);
-    let pv: i64 = __mind_alloc(256 * 8);
+    let pv: i64 = __mind_alloc(257 * 8);
     let lvbuf: i64 = __mind_alloc((nlv0 + sl + 512) * 24);
     let _cp: i64 = lvenv_copy(lvbuf, lvenv0, nlv0, 0);
     let base_cell: i64 = __mind_alloc(8);
@@ -16819,9 +16827,9 @@ pub fn letchain_vid_base(then_sa: i64, nlets: i64, base0: i64, buf: i64, params_
     let _c: i64 = lvenv_copy(pb_lvbuf, lvenv, nlv, 0);
     let pb_ok: i64 = __mind_alloc(8);
     __mind_store_i64(pb_ok, 1);
-    let pb_nodes: i64 = __mind_alloc(256 * 32);
+    let pb_nodes: i64 = nb_ntab(256);
     let pb_cursor: i64 = __mind_alloc(8);
-    let pb_vidbuf: i64 = __mind_alloc(256 * 8);
+    let pb_vidbuf: i64 = __mind_alloc(257 * 8);
     let _e: EmitState = emit_let_inits_lv(es_new(), then_sa, nlets, 0, buf, params_addr, n_params, pb_nodes, pb_cursor, pb_vidbuf, pb_base, pb_lvbuf, nlv, pb_ok, strbuf, offs, ncount);
     __mind_load_i64(pb_base)
 }
@@ -16867,14 +16875,14 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
     // PROBE both branches into throwaway scratch to learn their vid spans + let counts.
-    let pn: i64 = __mind_alloc(256 * 32);
+    let pn: i64 = nb_ntab(256);
     let pc: i64 = __mind_alloc(8);
-    let pv: i64 = __mind_alloc(256 * 8);
+    let pv: i64 = __mind_alloc(257 * 8);
     let p_then_lvbuf: i64 = __mind_alloc((nlv + then_sl + 8) * 24);
     let then_nl_c: i64 = __mind_alloc(8);
     let then_rs_c: i64 = __mind_alloc(8);
@@ -17117,7 +17125,7 @@ pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64,
         __mind_store_i64(okcell, 0);
         return s;
     }
-    let n: i64 = __mind_load_i64(cursor);
+    let n: i64 = nb_ntab_slot(nodes, cursor);
     let se: EmitState = emit_mic3_tree_body(s, nodes, n, vidbuf, buf, strbuf, offs, ncount, 0);
     __mind_store_i64(rcell, root);
     se
@@ -17138,9 +17146,9 @@ pub fn branch_val_instrs(expr: i64, buf: i64, params_addr: i64, n_params: i64, l
 // Returns -1 on a wall.
 pub fn branch_val_span(expr: i64, buf: i64, params_addr: i64, n_params: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> i64 {
     if is_any_value_if_expr(expr) == 1 {
-        let pn: i64 = __mind_alloc(256 * 32);
+        let pn: i64 = nb_ntab(256);
         let pc: i64 = __mind_alloc(8);
-        let pv: i64 = __mind_alloc(256 * 8);
+        let pv: i64 = __mind_alloc(257 * 8);
         let pcell: i64 = __mind_alloc(8);
         __mind_store_i64(pcell, 0 - 1);
         let _ps: EmitState = emit_if_expr_any_lv(es_new(), expr, buf, params_addr, n_params, pn, pc, pv, base, pcell, lvenv, nlv, strbuf, offs, ncount, 0, 0);
@@ -17160,9 +17168,9 @@ pub fn branch_escape_count(expr: i64, buf: i64, params_addr: i64, n_params: i64,
     if is_any_value_if_expr(expr) != 1 {
         return 0;
     }
-    let pn: i64 = __mind_alloc(256 * 32);
+    let pn: i64 = nb_ntab(256);
     let pc: i64 = __mind_alloc(8);
-    let pv: i64 = __mind_alloc(256 * 8);
+    let pv: i64 = __mind_alloc(257 * 8);
     let pcell: i64 = __mind_alloc(8);
     __mind_store_i64(pcell, 0 - 1);
     let vb: i64 = __mind_alloc(64 * 24);
@@ -17183,9 +17191,9 @@ pub fn branch_escape_probe(expr: i64, buf: i64, params_addr: i64, n_params: i64,
     if is_any_value_if_expr(expr) != 1 {
         return 0;
     }
-    let pn: i64 = __mind_alloc(256 * 32);
+    let pn: i64 = nb_ntab(256);
     let pc: i64 = __mind_alloc(8);
-    let pv: i64 = __mind_alloc(256 * 8);
+    let pv: i64 = __mind_alloc(257 * 8);
     let pcell: i64 = __mind_alloc(8);
     __mind_store_i64(pcell, 0 - 1);
     let vb: i64 = __mind_alloc(64 * 24);
@@ -17232,7 +17240,7 @@ pub fn emit_if_expr_lv_bubble(s: EmitState, cond_expr: i64, then_expr: i64, else
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -17345,7 +17353,7 @@ pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: 
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -17497,9 +17505,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // value); bind X -> a synthetic dst-slot whose vid is set to the OP_IF dst in
         // Pass B, so later refs to X resolve to the merged value.
         if is_any_value_if_expr(init) == 1 {
-            let q7_nodes: i64 = __mind_alloc(256 * 32);
+            let q7_nodes: i64 = nb_ntab(256);
             let q7_cursor: i64 = __mind_alloc(8);
-            let q7_vidbuf: i64 = __mind_alloc(256 * 8);
+            let q7_vidbuf: i64 = __mind_alloc(257 * 8);
             let q7_cell: i64 = __mind_alloc(8);
             __mind_store_i64(q7_cell, 0 - 1);
             let q7_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17507,7 +17515,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             let q7: EmitState = emit_if_expr_any_lv(es_new(), init, src, params_addr, n_params, q7_nodes, q7_cursor, q7_vidbuf, 0, q7_cell, q7_lvenv, nlets, 0, 0, 0, 0, 0);
             let q7_dst: i64 = __mind_load_i64(q7_cell);
             if q7_dst >= 0 {
-                let dst_slot: i64 = __mind_load_i64(cursor);
+                let dst_slot: i64 = nb_ntab_slot(nodes, cursor);
                 __mind_store_i64(nodes + dst_slot * 32 + 0, 0);
                 __mind_store_i64(nodes + dst_slot * 32 + 8, 0);
                 __mind_store_i64(nodes + dst_slot * 32 + 16, 0);
@@ -17547,12 +17555,12 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         } else {
             init
         };
-        let start: i64 = __mind_load_i64(cursor);
+        let start: i64 = nb_ntab_slot(nodes, cursor);
         let root_slot: i64 = flatten_expr_env(init_nl, src, params_addr, n_params, nodes, cursor, env, nlets);
         if root_slot < 0 {
             return 0;
         }
-        let end: i64 = __mind_load_i64(cursor);
+        let end: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(name));
         __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(name));
         __mind_store_i64(env + nlets * 24 + 16, root_slot);
@@ -17573,9 +17581,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             let ee_blk: i64 = ast_child2(stmt);
             if mixed_prefix_ok(ast_child0(te_blk), ast_aux(te_blk), 0) == 1 {
                 if mixed_prefix_ok(ast_child0(ee_blk), ast_aux(ee_blk), 0) == 1 {
-                    let i9_nodes: i64 = __mind_alloc(256 * 32);
+                    let i9_nodes: i64 = nb_ntab(256);
                     let i9_cursor: i64 = __mind_alloc(8);
-                    let i9_vidbuf: i64 = __mind_alloc(256 * 8);
+                    let i9_vidbuf: i64 = __mind_alloc(257 * 8);
                     let i9_cell: i64 = __mind_alloc(8);
                     __mind_store_i64(i9_cell, 0 - 1);
                     let i9_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17620,9 +17628,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         if then_sl >= 1 {
             let g_nlets: i64 = count_leading_lets(then_sa, then_sl, 0);
             if g_nlets == then_sl {
-                let g_nodes: i64 = __mind_alloc(256 * 32);
+                let g_nodes: i64 = nb_ntab(256);
                 let g_cursor: i64 = __mind_alloc(8);
-                let g_vidbuf: i64 = __mind_alloc(256 * 8);
+                let g_vidbuf: i64 = __mind_alloc(257 * 8);
                 let g_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(g_cell, 0 - 1);
                 let g_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17652,9 +17660,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // let/call mixes the pure-lets guard above doesn't. Probe emit_if_fallthrough_lv.
         if then_sl >= 1 {
             if fallthrough_all_sidefx(then_sa, then_sl, 0) == 1 {
-                let ft_nodes: i64 = __mind_alloc(256 * 32);
+                let ft_nodes: i64 = nb_ntab(256);
                 let ft_cursor: i64 = __mind_alloc(8);
-                let ft_vidbuf: i64 = __mind_alloc(256 * 8);
+                let ft_vidbuf: i64 = __mind_alloc(257 * 8);
                 let ft_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(ft_cell, 0 - 1);
                 let ft_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17689,9 +17697,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let t4_segs: i64 = then_sl - t4_nlets;
                 if t4_segs >= 1 {
                     if seq_then_all_ifs(then_sa + t4_nlets * 8, t4_segs, 0) == 1 {
-                        let p4_nodes: i64 = __mind_alloc(256 * 32);
+                        let p4_nodes: i64 = nb_ntab(256);
                         let p4_cursor: i64 = __mind_alloc(8);
-                        let p4_vidbuf: i64 = __mind_alloc(256 * 8);
+                        let p4_vidbuf: i64 = __mind_alloc(257 * 8);
                         let p4_cell: i64 = __mind_alloc(8);
                         __mind_store_i64(p4_cell, 0 - 1);
                         // Name-only seq lv-env (vids unresolved at probe time) so the
@@ -17725,9 +17733,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 if then_sl - t4_nlets == 1 {
                     let t5a_fin: i64 = __mind_load_i64(then_sa + t4_nlets * 8);
                     if ast_kind(t5a_fin) == ast_return() {
-                        let q5_nodes: i64 = __mind_alloc(256 * 32);
+                        let q5_nodes: i64 = nb_ntab(256);
                         let q5_cursor: i64 = __mind_alloc(8);
-                        let q5_vidbuf: i64 = __mind_alloc(256 * 8);
+                        let q5_vidbuf: i64 = __mind_alloc(257 * 8);
                         let q5_cell: i64 = __mind_alloc(8);
                         __mind_store_i64(q5_cell, 0 - 1);
                         let q5_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17753,9 +17761,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 }
             }
             if seq_then_all_ifs(then_sa, then_sl, 0) == 1 {
-                let pr_nodes: i64 = __mind_alloc(256 * 32);
+                let pr_nodes: i64 = nb_ntab(256);
                 let pr_cursor: i64 = __mind_alloc(8);
-                let pr_vidbuf: i64 = __mind_alloc(256 * 8);
+                let pr_vidbuf: i64 = __mind_alloc(257 * 8);
                 let pr_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(pr_cell, 0 - 1);
                 let pr_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17786,9 +17794,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // `let op; if{ret} if{ret} let lhs; return ..`). General ordered walk.
         if then_sl >= 2 {
             if mixed_shape_segs(then_sa, then_sl, 0, 0) >= 0 {
-                let p6_nodes: i64 = __mind_alloc(256 * 32);
+                let p6_nodes: i64 = nb_ntab(256);
                 let p6_cursor: i64 = __mind_alloc(8);
-                let p6_vidbuf: i64 = __mind_alloc(256 * 8);
+                let p6_vidbuf: i64 = __mind_alloc(257 * 8);
                 let p6_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(p6_cell, 0 - 1);
                 let p6_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17818,9 +17826,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // above (fallthrough_all_sidefx) rejected it for the if-segments. emit_if_fallthrough_lv
         // (mixed walk) handles them; it fails closed if any if-segment escapes a binding.
         if mixed_prefix_ok(then_sa, then_sl, 0) == 1 {
-            let fs_nodes: i64 = __mind_alloc(256 * 32);
+            let fs_nodes: i64 = nb_ntab(256);
             let fs_cursor: i64 = __mind_alloc(8);
-            let fs_vidbuf: i64 = __mind_alloc(256 * 8);
+            let fs_vidbuf: i64 = __mind_alloc(257 * 8);
             let fs_cell: i64 = __mind_alloc(8);
             __mind_store_i64(fs_cell, 0 - 1);
             let fs_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17873,9 +17881,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 }
             };
             if clean_d2 == 0 {
-                let p5_nodes: i64 = __mind_alloc(256 * 32);
+                let p5_nodes: i64 = nb_ntab(256);
                 let p5_cursor: i64 = __mind_alloc(8);
-                let p5_vidbuf: i64 = __mind_alloc(256 * 8);
+                let p5_vidbuf: i64 = __mind_alloc(257 * 8);
                 let p5_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(p5_cell, 0 - 1);
                 let p5_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -17899,22 +17907,22 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 }
                 return 0;
             }
-            let n2_rs: i64 = __mind_load_i64(cursor);
+            let n2_rs: i64 = nb_ntab_slot(nodes, cursor);
             let n2_ocr: i64 = flatten_expr_env(ast_child0(stmt), src, params_addr, n_params, nodes, cursor, env, nlets);
             if n2_ocr < 0 {
                 return 0;
             }
-            let n2_s1: i64 = __mind_load_i64(cursor);
+            let n2_s1: i64 = nb_ntab_slot(nodes, cursor);
             let n2_icr: i64 = flatten_expr_env(ast_child0(ret_stmt), src, params_addr, n_params, nodes, cursor, env, nlets);
             if n2_icr < 0 {
                 return 0;
             }
-            let n2_s2: i64 = __mind_load_i64(cursor);
+            let n2_s2: i64 = nb_ntab_slot(nodes, cursor);
             let n2_irr: i64 = flatten_expr_env(ast_child0(inner_ret), src, params_addr, n_params, nodes, cursor, env, nlets);
             if n2_irr < 0 {
                 return 0;
             }
-            let n2_re: i64 = __mind_load_i64(cursor);
+            let n2_re: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(plan + p * 64 + 0, 2);
             __mind_store_i64(plan + p * 64 + 8, n2_rs);
             __mind_store_i64(plan + p * 64 + 16, n2_re);
@@ -17931,18 +17939,18 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         }
         let cond_expr: i64 = ast_child0(stmt);
         let ret_expr: i64 = ast_child0(ret_stmt);
-        let cstart: i64 = __mind_load_i64(cursor);
+        let cstart: i64 = nb_ntab_slot(nodes, cursor);
         let cond_root: i64 = flatten_expr_env(cond_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
         if cond_root < 0 {
             return 0;
         }
-        let cend: i64 = __mind_load_i64(cursor);
-        let rstart: i64 = __mind_load_i64(cursor);
+        let cend: i64 = nb_ntab_slot(nodes, cursor);
+        let rstart: i64 = nb_ntab_slot(nodes, cursor);
         let ret_root: i64 = flatten_expr_env(ret_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
         if ret_root < 0 {
             return 0;
         }
-        let rend: i64 = __mind_load_i64(cursor);
+        let rend: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(plan + p * 64 + 0, 1);
         __mind_store_i64(plan + p * 64 + 8, cstart);
         __mind_store_i64(plan + p * 64 + 16, cend);
@@ -18011,9 +18019,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // (seq_fix_deltas / seq_body_len / emit_stmt_seq) is byte-identical to the let
         // case. Additive: no kept main.mind fn has a top-level value-if reassign.
         if is_any_value_if_expr(aval) == 1 {
-            let a7_nodes: i64 = __mind_alloc(256 * 32);
+            let a7_nodes: i64 = nb_ntab(256);
             let a7_cursor: i64 = __mind_alloc(8);
-            let a7_vidbuf: i64 = __mind_alloc(256 * 8);
+            let a7_vidbuf: i64 = __mind_alloc(257 * 8);
             let a7_cell: i64 = __mind_alloc(8);
             __mind_store_i64(a7_cell, 0 - 1);
             let a7_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
@@ -18021,7 +18029,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             let a7: EmitState = emit_if_expr_any_lv(es_new(), aval, src, params_addr, n_params, a7_nodes, a7_cursor, a7_vidbuf, 0, a7_cell, a7_lvenv, nlets, 0, 0, 0, 0, 0);
             let a7_dst: i64 = __mind_load_i64(a7_cell);
             if a7_dst >= 0 {
-                let a7_slot: i64 = __mind_load_i64(cursor);
+                let a7_slot: i64 = nb_ntab_slot(nodes, cursor);
                 __mind_store_i64(nodes + a7_slot * 32 + 0, 0);
                 __mind_store_i64(nodes + a7_slot * 32 + 8, 0);
                 __mind_store_i64(nodes + a7_slot * 32 + 16, 0);
@@ -18041,12 +18049,12 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
             }
         }
-        let astart: i64 = __mind_load_i64(cursor);
+        let astart: i64 = nb_ntab_slot(nodes, cursor);
         let aroot: i64 = flatten_expr_env(aval, src, params_addr, n_params, nodes, cursor, env, nlets);
         if aroot < 0 {
             return 0;
         }
-        let aend: i64 = __mind_load_i64(cursor);
+        let aend: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(aname));
         __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(aname));
         __mind_store_i64(env + nlets * 24 + 16, aroot);
@@ -18075,12 +18083,12 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
     // type-11 arm — their existing "any other type" fallthrough already leaves
     // nnames/env_k/tk untouched, which is exactly correct here. Fails closed if
     // flatten_expr_env rejects the stmt (then this fn / seq is unsupported).
-    let bstart: i64 = __mind_load_i64(cursor);
+    let bstart: i64 = nb_ntab_slot(nodes, cursor);
     let broot: i64 = flatten_expr_env(stmt, src, params_addr, n_params, nodes, cursor, env, nlets);
     if broot < 0 {
         return 0;
     }
-    let bend: i64 = __mind_load_i64(cursor);
+    let bend: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(plan + p * 64 + 0, 11);
     __mind_store_i64(plan + p * 64 + 8, bstart);
     __mind_store_i64(plan + p * 64 + 16, bend);
@@ -18188,9 +18196,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let init7: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa7: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np7: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let v_nodes: i64 = __mind_alloc(256 * 32);
+        let v_nodes: i64 = nb_ntab(256);
         let v_cursor: i64 = __mind_alloc(8);
-        let v_vidbuf: i64 = __mind_alloc(256 * 8);
+        let v_vidbuf: i64 = __mind_alloc(257 * 8);
         let v_cell: i64 = __mind_alloc(8);
         __mind_store_i64(v_cell, 0 - 1);
         let _v: EmitState = emit_if_expr_any_lv(es_new(), init7, src, pa7, np7, v_nodes, v_cursor, v_vidbuf, 0, v_cell, names_buf, nnames, 0, 0, 0, 0, 0);
@@ -18212,9 +18220,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         // probe region before allocating the rebind slots retained by the plan.
         // The malloc-backed .so sees a safe no-op checkpoint/reclaim pair.
         let p_ckpt: i64 = __mind_alloc(0);
-        let p_nodes: i64 = __mind_alloc(256 * 32);
+        let p_nodes: i64 = nb_ntab(256);
         let p_cursor: i64 = __mind_alloc(8);
-        let p_vidbuf: i64 = __mind_alloc(256 * 8);
+        let p_vidbuf: i64 = __mind_alloc(257 * 8);
         let p_cell: i64 = __mind_alloc(8);
         __mind_store_i64(p_cell, 0 - 1);
         let p_bo: i64 = __mind_alloc(64 * 24);
@@ -18240,9 +18248,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let if3: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa3: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np3: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let t_nodes: i64 = __mind_alloc(256 * 32);
+        let t_nodes: i64 = nb_ntab(256);
         let t_cursor: i64 = __mind_alloc(8);
-        let t_vidbuf: i64 = __mind_alloc(256 * 8);
+        let t_vidbuf: i64 = __mind_alloc(257 * 8);
         let t_cell: i64 = __mind_alloc(8);
         __mind_store_i64(t_cell, 0 - 1);
         let t_bo: i64 = __mind_alloc(64 * 24);
@@ -18265,9 +18273,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let if8: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa8: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np8: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let q_nodes: i64 = __mind_alloc(256 * 32);
+        let q_nodes: i64 = nb_ntab(256);
         let q_cursor: i64 = __mind_alloc(8);
-        let q_vidbuf: i64 = __mind_alloc(256 * 8);
+        let q_vidbuf: i64 = __mind_alloc(257 * 8);
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
         let q_then: i64 = ast_child1(if8);
@@ -18292,9 +18300,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let if4: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa4: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np4: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let r_nodes: i64 = __mind_alloc(256 * 32);
+        let r_nodes: i64 = nb_ntab(256);
         let r_cursor: i64 = __mind_alloc(8);
-        let r_vidbuf: i64 = __mind_alloc(256 * 8);
+        let r_vidbuf: i64 = __mind_alloc(257 * 8);
         let r_cell: i64 = __mind_alloc(8);
         __mind_store_i64(r_cell, 0 - 1);
         let r_then: i64 = ast_child1(if4);
@@ -18320,9 +18328,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let if6: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa6: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np6: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let u_nodes: i64 = __mind_alloc(256 * 32);
+        let u_nodes: i64 = nb_ntab(256);
         let u_cursor: i64 = __mind_alloc(8);
-        let u_vidbuf: i64 = __mind_alloc(256 * 8);
+        let u_vidbuf: i64 = __mind_alloc(257 * 8);
         let u_cell: i64 = __mind_alloc(8);
         __mind_store_i64(u_cell, 0 - 1);
         let u_bo: i64 = __mind_alloc(64 * 24);
@@ -18345,9 +18353,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let if9: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa9: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np9: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let w_nodes: i64 = __mind_alloc(256 * 32);
+        let w_nodes: i64 = nb_ntab(256);
         let w_cursor: i64 = __mind_alloc(8);
-        let w_vidbuf: i64 = __mind_alloc(256 * 8);
+        let w_vidbuf: i64 = __mind_alloc(257 * 8);
         let w_cell: i64 = __mind_alloc(8);
         __mind_store_i64(w_cell, 0 - 1);
         let w_bo: i64 = __mind_alloc(64 * 24);
@@ -18592,7 +18600,7 @@ pub fn synth_rebind_slots(bo: i64, nb: i64, nodes: i64, cursor: i64, slots_out: 
     let lo: i64 = __mind_load_i64(bo + i * 24 + 0);
     let hi: i64 = __mind_load_i64(bo + i * 24 + 8);
     let mid: i64 = __mind_load_i64(bo + i * 24 + 16);
-    let dst_slot: i64 = __mind_load_i64(cursor);
+    let dst_slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + dst_slot * 32 + 0, 0);
     __mind_store_i64(nodes + dst_slot * 32 + 8, 0);
     __mind_store_i64(nodes + dst_slot * 32 + 16, 0);
@@ -18830,9 +18838,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta3: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa3: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np3: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e3_nodes: i64 = __mind_alloc(256 * 32);
+        let e3_nodes: i64 = nb_ntab(256);
         let e3_cursor: i64 = __mind_alloc(8);
-        let e3_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e3_vidbuf: i64 = __mind_alloc(257 * 8);
         let e3_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e3_cell, 0 - 1);
         let e3_bo: i64 = __mind_alloc(64 * 24);
@@ -18859,9 +18867,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta4: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa4: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np4: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e4_nodes: i64 = __mind_alloc(256 * 32);
+        let e4_nodes: i64 = nb_ntab(256);
         let e4_cursor: i64 = __mind_alloc(8);
-        let e4_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e4_vidbuf: i64 = __mind_alloc(257 * 8);
         let e4_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e4_cell, 0 - 1);
         let e4_then_blk: i64 = ast_child1(if_node4);
@@ -18889,9 +18897,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta5: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa5: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np5: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e5_nodes: i64 = __mind_alloc(256 * 32);
+        let e5_nodes: i64 = nb_ntab(256);
         let e5_cursor: i64 = __mind_alloc(8);
-        let e5_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e5_vidbuf: i64 = __mind_alloc(257 * 8);
         let e5_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e5_cell, 0 - 1);
         let e5_bindout: i64 = __mind_alloc(64 * 24);
@@ -18915,9 +18923,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta7: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa7: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np7: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e7_nodes: i64 = __mind_alloc(256 * 32);
+        let e7_nodes: i64 = nb_ntab(256);
         let e7_cursor: i64 = __mind_alloc(8);
-        let e7_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e7_vidbuf: i64 = __mind_alloc(257 * 8);
         let e7_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e7_cell, 0 - 1);
         let s7i: EmitState = emit_if_expr_any_lv(s, init7, src, pa7, np7, e7_nodes, e7_cursor, e7_vidbuf, base, e7_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, 0, 0);
@@ -18938,9 +18946,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta6: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa6: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np6: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e6_nodes: i64 = __mind_alloc(256 * 32);
+        let e6_nodes: i64 = nb_ntab(256);
         let e6_cursor: i64 = __mind_alloc(8);
-        let e6_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e6_vidbuf: i64 = __mind_alloc(257 * 8);
         let e6_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e6_cell, 0 - 1);
         let e6_bindout: i64 = __mind_alloc(64 * 24);
@@ -18965,9 +18973,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta8: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa8: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np8: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e8_nodes: i64 = __mind_alloc(256 * 32);
+        let e8_nodes: i64 = nb_ntab(256);
         let e8_cursor: i64 = __mind_alloc(8);
-        let e8_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e8_vidbuf: i64 = __mind_alloc(257 * 8);
         let e8_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e8_cell, 0 - 1);
         let e8_then_blk: i64 = ast_child1(if_node8);
@@ -18993,9 +19001,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let next_delta9: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa9: i64 = __mind_load_i64(plan + i * 64 + 24);
         let np9: i64 = __mind_load_i64(plan + i * 64 + 32);
-        let e9_nodes: i64 = __mind_alloc(256 * 32);
+        let e9_nodes: i64 = nb_ntab(256);
         let e9_cursor: i64 = __mind_alloc(8);
-        let e9_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e9_vidbuf: i64 = __mind_alloc(257 * 8);
         let e9_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e9_cell, 0 - 1);
         let e9_bo: i64 = __mind_alloc(64 * 24);
@@ -19201,7 +19209,7 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     // ends in `return E` lowers identically to a bare trailing `E` PLUS an explicit
     // RETURN <ret_vid> instruction (body_len + 1) — unwrap to E here, emit the Return
     // below. `is_trail_ret` records whether to append it.
-    let trail_start: i64 = __mind_load_i64(cursor);
+    let trail_start: i64 = nb_ntab_slot(nodes, cursor);
     let final_stmt: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
     let is_trail_ret: i64 = if ast_kind(final_stmt) == ast_return() {
         1
@@ -19279,7 +19287,7 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     } else {
         trail_raw_root
     };
-    let trail_end: i64 = __mind_load_i64(cursor);
+    let trail_end: i64 = nb_ntab_slot(nodes, cursor);
     // Pass B — assign vids across statement segments (lets + OP_IF blocks).
     let trail_base: i64 = seq_assign_vids(nodes, vidbuf, plan, nplan, n_params, 0);
     // Resolved trailing lv-env (name -> Pass-B vid) for a trailing if-expr's branch refs.
@@ -19288,9 +19296,9 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     // ret_vid: for a trailing if-expr, probe its OP_IF dst (base0=0) and rebase to trail_base;
     // otherwise the trailing tree's root vid. body_len: an if-expr is 1 top-level OP_IF instr.
     let ie_probe_dst: i64 = if trail_is_if == 1 {
-        let ip_nodes: i64 = __mind_alloc(256 * 32);
+        let ip_nodes: i64 = nb_ntab(256);
         let ip_cursor: i64 = __mind_alloc(8);
-        let ip_vidbuf: i64 = __mind_alloc(256 * 8);
+        let ip_vidbuf: i64 = __mind_alloc(257 * 8);
         let ip_cell: i64 = __mind_alloc(8);
         __mind_store_i64(ip_cell, 0 - 1);
         let _ip: EmitState = emit_if_expr_any_lv(es_new(), final_expr, src, params_addr, n_params, ip_nodes, ip_cursor, ip_vidbuf, 0, ip_cell, trail_lv, tk, 0, 0, 0, 0, 0);
@@ -19306,9 +19314,9 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     }
     // #311 chain probe: dst of the else-nested OP_IF (base0=0), rebased to trail_base.
     let chain_probe_dst: i64 = if trail_is_chain == 1 {
-        let cp_nodes: i64 = __mind_alloc(256 * 32);
+        let cp_nodes: i64 = nb_ntab(256);
         let cp_cursor: i64 = __mind_alloc(8);
-        let cp_vidbuf: i64 = __mind_alloc(256 * 8);
+        let cp_vidbuf: i64 = __mind_alloc(257 * 8);
         let cp_cell: i64 = __mind_alloc(8);
         __mind_store_i64(cp_cell, 0 - 1);
         let _cp: EmitState = emit_mic3_ifret_chain_instr_lv(es_new(), final_stmt, src, params_addr, n_params, cp_nodes, cp_cursor, cp_vidbuf, 0, cp_cell, trail_lv, tk, ret_code);
@@ -19381,17 +19389,17 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
         return s;
     }
     let s9: EmitState = if trail_is_if == 1 {
-        let ie_nodes: i64 = __mind_alloc(256 * 32);
+        let ie_nodes: i64 = nb_ntab(256);
         let ie_cursor: i64 = __mind_alloc(8);
-        let ie_vidbuf: i64 = __mind_alloc(256 * 8);
+        let ie_vidbuf: i64 = __mind_alloc(257 * 8);
         let ie_cell: i64 = __mind_alloc(8);
         __mind_store_i64(ie_cell, 0 - 1);
         emit_if_expr_any_lv(s8, final_expr, src, params_addr, n_params, ie_nodes, ie_cursor, ie_vidbuf, trail_base, ie_cell, trail_lv, tk, strbuf, offs, ncount, 0, 0)
     } else {
         if trail_is_chain == 1 {
-            let ce_nodes: i64 = __mind_alloc(256 * 32);
+            let ce_nodes: i64 = nb_ntab(256);
             let ce_cursor: i64 = __mind_alloc(8);
-            let ce_vidbuf: i64 = __mind_alloc(256 * 8);
+            let ce_vidbuf: i64 = __mind_alloc(257 * 8);
             let ce_cell: i64 = __mind_alloc(8);
             __mind_store_i64(ce_cell, 0 - 1);
             emit_mic3_ifret_chain_instr_lv(s8, final_stmt, src, params_addr, n_params, ce_nodes, ce_cursor, ce_vidbuf, trail_base, ce_cell, trail_lv, tk, ret_code)
@@ -21401,9 +21409,9 @@ pub fn emit_mic3_module_fndef_narrow(s: EmitState, src: i64, fn_node: i64, nidx:
     // compiler. Size every table from the function itself (never below the old
     // fixed sizes, so every function that fit before sees the same tables).
     let ncap: i64 = seq_cap_nodes(fn_node);
-    let nodes: i64 = __mind_alloc(ncap * 32);
+    let nodes: i64 = nb_ntab(ncap);
     let cursor: i64 = __mind_alloc(8);
-    let vidbuf: i64 = __mind_alloc(ncap * 8);
+    let vidbuf: i64 = __mind_alloc((ncap + 1) * 8);
     let env: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
     let nlets_cell: i64 = __mind_alloc(8);
     let plan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
@@ -21473,6 +21481,12 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
         __mind_store_i64(ok_cell, 0);
         return s;
     }
+    // Census X1 capacity: a loop nest the twin would give up on anyway
+    // (nb_twin_while_enter) is rejected before any walk (hm_fn_loop_depth_over).
+    if hm_fn_loop_depth_over(src, fn_node) == 1 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     if fn_named_narrow_ret_code(src, fn_node) != 0 {
         return emit_mic3_module_fndef_narrow(s, src, fn_node, nidx, strbuf, offs, ncount, ok_cell);
     }
@@ -21524,9 +21538,9 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
         let stmts_len: i64 = ast_aux(body);
         if stmts_len == 1 {
             let expr: i64 = __mind_load_i64(stmts_addr + 0);
-            let nodes: i64 = __mind_alloc(256 * 32);
+            let nodes: i64 = nb_ntab(256);
             let cursor: i64 = __mind_alloc(8);
-            let vidbuf: i64 = __mind_alloc(256 * 8);
+            let vidbuf: i64 = __mind_alloc(257 * 8);
             // (e) single if-expression value: if cond { then } else { else }, each
             // branch a single param/const/binop expression (empty merges/bindings).
             if ast_kind(expr) == ast_if() {
@@ -21626,9 +21640,9 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
                 return s;
             }
             let lncap: i64 = seq_cap_nodes(fn_node);
-            let nodes2: i64 = __mind_alloc(lncap * 32);
+            let nodes2: i64 = nb_ntab(lncap);
             let cursor2: i64 = __mind_alloc(8);
-            let vidbuf2: i64 = __mind_alloc(lncap * 8);
+            let vidbuf2: i64 = __mind_alloc((lncap + 1) * 8);
             let env: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
             let nlets_cell: i64 = __mind_alloc(8);
             let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, strbuf, offs, ncount, ok_cell);
@@ -21662,12 +21676,12 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
                                 // itself an else-less if. The chain emitter validates + emits
                                 // arbitrary depth; supersedes the depth-2 dedicated case.
                                 let ntrail: i64 = __mind_load_i64(stmts_addr + 8);
-                                let cnodes: i64 = __mind_alloc(256 * 32);
+                                let cnodes: i64 = nb_ntab(256);
                                 let ccursor: i64 = __mind_alloc(8);
-                                let cvidbuf: i64 = __mind_alloc(256 * 8);
-                                let ctnodes: i64 = __mind_alloc(256 * 32);
+                                let cvidbuf: i64 = __mind_alloc(257 * 8);
+                                let ctnodes: i64 = nb_ntab(256);
                                 let ctcursor: i64 = __mind_alloc(8);
-                                let ctvidbuf: i64 = __mind_alloc(256 * 8);
+                                let ctvidbuf: i64 = __mind_alloc(257 * 8);
                                 let snif: EmitState = emit_mic3_module_fndef_if_chain(s, src, fn_node, nidx, pstr, n_params, if_stmt, ntrail, cnodes, ccursor, cvidbuf, ctnodes, ctcursor, ctvidbuf, ok_cell);
                                 if __mind_load_i64(ok_cell) == 1 {
                                     return snif;
@@ -21677,12 +21691,12 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
                                 let cond_expr: i64 = ast_child0(if_stmt);
                                 let ret_expr: i64 = ast_child0(ret_stmt);
                                 let trail_expr: i64 = __mind_load_i64(stmts_addr + 8);
-                                let gnodes: i64 = __mind_alloc(256 * 32);
+                                let gnodes: i64 = nb_ntab(256);
                                 let gcursor: i64 = __mind_alloc(8);
-                                let gvidbuf: i64 = __mind_alloc(256 * 8);
-                                let tnodes: i64 = __mind_alloc(256 * 32);
+                                let gvidbuf: i64 = __mind_alloc(257 * 8);
+                                let tnodes: i64 = nb_ntab(256);
                                 let tcursor: i64 = __mind_alloc(8);
-                                let tvidbuf: i64 = __mind_alloc(256 * 8);
+                                let tvidbuf: i64 = __mind_alloc(257 * 8);
                                 let sif: EmitState = emit_mic3_module_fndef_ifstmt(s, src, fn_node, nidx, pstr, n_params, cond_expr, ret_expr, trail_expr, gnodes, gcursor, gvidbuf, tnodes, tcursor, tvidbuf, ok_cell);
                                 if __mind_load_i64(ok_cell) == 1 {
                                     return sif;
@@ -21702,9 +21716,9 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
         if stmts_len >= 1 {
             if seq_tables_short(fn_node, stmts_len) == 0 {
                 let hncap: i64 = seq_cap_nodes(fn_node);
-                let hnodes: i64 = __mind_alloc(hncap * 32);
+                let hnodes: i64 = nb_ntab(hncap);
                 let hcursor: i64 = __mind_alloc(8);
-                let hvidbuf: i64 = __mind_alloc(hncap * 8);
+                let hvidbuf: i64 = __mind_alloc((hncap + 1) * 8);
                 let henv: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
                 let hnlets: i64 = __mind_alloc(8);
                 let hplan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
@@ -23356,7 +23370,7 @@ pub fn flatten_argcons(args_addr: i64, args_len: i64, idx: i64, buf: i64, params
     if next_cons < 0 {
         return 0 - 1;
     }
-    let slot: i64 = __mind_load_i64(cursor);
+    let slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + slot * 32 + 0, 4);
     __mind_store_i64(nodes + slot * 32 + 8, 0);
     __mind_store_i64(nodes + slot * 32 + 16, arg_root);
@@ -23410,7 +23424,7 @@ pub fn emit_mic3_ast_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
     if root < 0 {
         return s;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     // Fail-closed: flatten_ast (the base wrapper) now routes through flatten_expr_env,
     // which accepts call/array/index; emit_mic3_tree_fn_module emits with src=0 /
     // empty strtab, so those crash or emit wrong bytes (see descriptor_has_src_dep_kind).
@@ -23554,7 +23568,7 @@ pub fn emit_mic3_let_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
     if root < 0 {
         return s;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     // Fail-closed: emit_mic3_tree_fn_module emits with src=0 / empty strtab; refuse
     // any descriptor kind that needs a real src+strtab (see descriptor_has_src_dep_kind).
     if descriptor_has_src_dep_kind(nodes, n_nodes, 0) == 1 {
@@ -23631,7 +23645,7 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
     // arg-cons / 5 callee leaves). Scratch is sized 256*32 to match the if-path emit's
     // per-fn descriptor discipline; `cur` is a local throwaway cursor. Fail-closed (-1)
     // whenever the flattener refuses, so pre-size and flatten never disagree.
-    let scratch: i64 = __mind_alloc(256 * 32);
+    let scratch: i64 = nb_ntab(256);
     let cur: i64 = __mind_alloc(8);
     __mind_store_i64(cur, 0);
     let root: i64 = flatten_expr_env(node, buf, params_addr, n_params, scratch, cur, 0, 0);
@@ -23715,7 +23729,7 @@ pub fn lvenv_lookup(src: i64, lo: i64, hi: i64, lvenv: i64, nlv: i64, i: i64) ->
 // its slot). Kinds: 2=CONST, 1=BINOP(op byte + l/r slots), 4=arg-cons(arg slot + next),
 // 5=callee-leaf(name span), 3=CALL(callee slot + first-cons slot). Match flatten_ast_lv.
 pub fn desc_emit_const(nodes: i64, cursor: i64, val: i64) -> i64 {
-    let slot: i64 = __mind_load_i64(cursor);
+    let slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + slot * 32 + 0, 2);
     __mind_store_i64(nodes + slot * 32 + 8, val);
     __mind_store_i64(nodes + slot * 32 + 16, 0);
@@ -23724,7 +23738,7 @@ pub fn desc_emit_const(nodes: i64, cursor: i64, val: i64) -> i64 {
     slot
 }
 pub fn desc_emit_binop(nodes: i64, cursor: i64, op_byte: i64, l: i64, r: i64) -> i64 {
-    let slot: i64 = __mind_load_i64(cursor);
+    let slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + slot * 32 + 0, 1);
     __mind_store_i64(nodes + slot * 32 + 8, op_byte);
     __mind_store_i64(nodes + slot * 32 + 16, l);
@@ -23733,19 +23747,19 @@ pub fn desc_emit_binop(nodes: i64, cursor: i64, op_byte: i64, l: i64, r: i64) ->
     slot
 }
 pub fn desc_emit_call1(nodes: i64, cursor: i64, clo: i64, chi: i64, arg0: i64) -> i64 {
-    let cons0: i64 = __mind_load_i64(cursor);
+    let cons0: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + cons0 * 32 + 0, 4);
     __mind_store_i64(nodes + cons0 * 32 + 8, 0);
     __mind_store_i64(nodes + cons0 * 32 + 16, arg0);
     __mind_store_i64(nodes + cons0 * 32 + 24, 0);
     __mind_store_i64(cursor, cons0 + 1);
-    let cleaf: i64 = __mind_load_i64(cursor);
+    let cleaf: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + cleaf * 32 + 0, 5);
     __mind_store_i64(nodes + cleaf * 32 + 8, clo);
     __mind_store_i64(nodes + cleaf * 32 + 16, chi);
     __mind_store_i64(nodes + cleaf * 32 + 24, 0);
     __mind_store_i64(cursor, cleaf + 1);
-    let call: i64 = __mind_load_i64(cursor);
+    let call: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + call * 32 + 0, 3);
     __mind_store_i64(nodes + call * 32 + 8, 0);
     __mind_store_i64(nodes + call * 32 + 16, cleaf);
@@ -23754,25 +23768,25 @@ pub fn desc_emit_call1(nodes: i64, cursor: i64, clo: i64, chi: i64, arg0: i64) -
     call
 }
 pub fn desc_emit_call2(nodes: i64, cursor: i64, clo: i64, chi: i64, arg0: i64, arg1: i64) -> i64 {
-    let vcons: i64 = __mind_load_i64(cursor);
+    let vcons: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + vcons * 32 + 0, 4);
     __mind_store_i64(nodes + vcons * 32 + 8, 0);
     __mind_store_i64(nodes + vcons * 32 + 16, arg1);
     __mind_store_i64(nodes + vcons * 32 + 24, 0);
     __mind_store_i64(cursor, vcons + 1);
-    let acons: i64 = __mind_load_i64(cursor);
+    let acons: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + acons * 32 + 0, 4);
     __mind_store_i64(nodes + acons * 32 + 8, 0);
     __mind_store_i64(nodes + acons * 32 + 16, arg0);
     __mind_store_i64(nodes + acons * 32 + 24, vcons);
     __mind_store_i64(cursor, acons + 1);
-    let cleaf: i64 = __mind_load_i64(cursor);
+    let cleaf: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + cleaf * 32 + 0, 5);
     __mind_store_i64(nodes + cleaf * 32 + 8, clo);
     __mind_store_i64(nodes + cleaf * 32 + 16, chi);
     __mind_store_i64(nodes + cleaf * 32 + 24, 0);
     __mind_store_i64(cursor, cleaf + 1);
-    let call: i64 = __mind_load_i64(cursor);
+    let call: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + call * 32 + 0, 3);
     __mind_store_i64(nodes + call * 32 + 8, 0);
     __mind_store_i64(nodes + call * 32 + 16, cleaf);
@@ -23841,7 +23855,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         // the let itself, so a self-referential `let p = p + 1` still binds the param on the RHS.
         let lvid: i64 = lvenv_lookup(buf, ast_span_lo(node), ast_span_hi(node), lvenv, nlv, 0);
         if lvid >= 0 {
-            let lslot: i64 = __mind_load_i64(cursor);
+            let lslot: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(nodes + lslot * 32 + 0, 0);
             __mind_store_i64(nodes + lslot * 32 + 8, lvid);
             __mind_store_i64(nodes + lslot * 32 + 16, 0);
@@ -23853,7 +23867,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         if idx < 0 {
             return 0 - 1;
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 0);
         __mind_store_i64(nodes + slot * 32 + 8, idx);
         __mind_store_i64(nodes + slot * 32 + 16, 0);
@@ -23867,7 +23881,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         } else {
             parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
         };
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 2);
         __mind_store_i64(nodes + slot * 32 + 8, lit);
         __mind_store_i64(nodes + slot * 32 + 16, 0);
@@ -23883,7 +23897,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
-        let fslot: i64 = __mind_load_i64(cursor);
+        let fslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + fslot * 32 + 0, 6);
         __mind_store_i64(nodes + fslot * 32 + 8, fbits);
         __mind_store_i64(nodes + fslot * 32 + 16, 0);
@@ -23900,7 +23914,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         if rslot < 0 {
             return 0 - 1;
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 1);
         __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
         __mind_store_i64(nodes + slot * 32 + 16, lslot);
@@ -23916,13 +23930,13 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         if first_cons < 0 {
             return 0 - 1;
         }
-        let cslot: i64 = __mind_load_i64(cursor);
+        let cslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + cslot * 32 + 0, 5);
         __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
         __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
         __mind_store_i64(nodes + cslot * 32 + 24, 0);
         __mind_store_i64(cursor, cslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 3);
         __mind_store_i64(nodes + slot * 32 + 8, 0);
         __mind_store_i64(nodes + slot * 32 + 16, cslot);
@@ -23987,7 +24001,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         if index_slot < 0 {
             return 0 - 1;
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 8);
         __mind_store_i64(nodes + slot * 32 + 8, 0);
         __mind_store_i64(nodes + slot * 32 + 16, base_slot);
@@ -24012,7 +24026,7 @@ pub fn flatten_argcons_lv(args_addr: i64, args_len: i64, idx: i64, buf: i64, par
     if next_cons < 0 {
         return 0 - 1;
     }
-    let slot: i64 = __mind_load_i64(cursor);
+    let slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + slot * 32 + 0, 4);
     __mind_store_i64(nodes + slot * 32 + 8, 0);
     __mind_store_i64(nodes + slot * 32 + 16, arg_root);
@@ -24028,7 +24042,7 @@ pub fn flatten_branch_lv(expr: i64, buf: i64, params_addr: i64, n_params: i64, n
     if root_slot < 0 {
         return 0 - 1;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     tree_resolve_vids_base(nodes, n_nodes, vidbuf, 0, base);
     __mind_load_i64(vidbuf + root_slot * 8)
 }
@@ -24240,7 +24254,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         }
         let pidx: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(node), ast_span_hi(node));
         if pidx >= 0 {
-            let slot: i64 = __mind_load_i64(cursor);
+            let slot: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(nodes + slot * 32 + 0, 0);
             __mind_store_i64(nodes + slot * 32 + 8, pidx);
             __mind_store_i64(nodes + slot * 32 + 16, 0);
@@ -24258,7 +24272,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         } else {
             parse_int_span(src, ast_span_lo(node), ast_span_hi(node), 0)
         };
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 2);
         __mind_store_i64(nodes + slot * 32 + 8, lit);
         __mind_store_i64(nodes + slot * 32 + 16, 0);
@@ -24279,7 +24293,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(src, ast_span_lo(node), ast_span_hi(node));
-        let fslot: i64 = __mind_load_i64(cursor);
+        let fslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + fslot * 32 + 0, 6);
         __mind_store_i64(nodes + fslot * 32 + 8, fbits);
         __mind_store_i64(nodes + fslot * 32 + 16, 0);
@@ -24309,7 +24323,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             } else {
                 parse_int_span(src, ast_span_lo(neg_operand), ast_span_hi(neg_operand), 0)
             };
-            let cslot: i64 = __mind_load_i64(cursor);
+            let cslot: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(nodes + cslot * 32 + 0, 2);
             __mind_store_i64(nodes + cslot * 32 + 8, 0 - nlit);
             __mind_store_i64(nodes + cslot * 32 + 16, 0);
@@ -24322,7 +24336,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // flatten_ast's ast_neg arm and src/eval/lower.rs Node::Neg (const-0 fresh id
         // BEFORE lower_expr(operand)) so a seq-let init `let u = -(p+q)` lowers
         // byte-exactly. Additive (no unary neg-of-non-leaf in main.mind's seq positions).
-        let zslot: i64 = __mind_load_i64(cursor);
+        let zslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + zslot * 32 + 0, 2);
         __mind_store_i64(nodes + zslot * 32 + 8, 0);
         __mind_store_i64(nodes + zslot * 32 + 16, 0);
@@ -24332,7 +24346,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if oslot < 0 {
             return 0 - 1;
         }
-        let nslot: i64 = __mind_load_i64(cursor);
+        let nslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + nslot * 32 + 0, 1);
         __mind_store_i64(nodes + nslot * 32 + 8, 1);
         __mind_store_i64(nodes + nslot * 32 + 16, zslot);
@@ -24361,7 +24375,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             } else {
                 0
             };
-            let cslot: i64 = __mind_load_i64(cursor);
+            let cslot: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(nodes + cslot * 32 + 0, 2);
             __mind_store_i64(nodes + cslot * 32 + 8, cval);
             __mind_store_i64(nodes + cslot * 32 + 16, 0);
@@ -24373,13 +24387,13 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if oslot < 0 {
             return 0 - 1;
         }
-        let zslot: i64 = __mind_load_i64(cursor);
+        let zslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + zslot * 32 + 0, 2);
         __mind_store_i64(nodes + zslot * 32 + 8, 0);
         __mind_store_i64(nodes + zslot * 32 + 16, 0);
         __mind_store_i64(nodes + zslot * 32 + 24, 0);
         __mind_store_i64(cursor, zslot + 1);
-        let nslot2: i64 = __mind_load_i64(cursor);
+        let nslot2: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + nslot2 * 32 + 0, 1);
         __mind_store_i64(nodes + nslot2 * 32 + 8, binop_to_byte(op_eq()));
         __mind_store_i64(nodes + nslot2 * 32 + 16, oslot);
@@ -24396,7 +24410,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if rslot < 0 {
             return 0 - 1;
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 1);
         __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
         __mind_store_i64(nodes + slot * 32 + 16, lslot);
@@ -24412,7 +24426,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if cop < 0 {
             return 0 - 1;
         }
-        let cvslot: i64 = __mind_load_i64(cursor);
+        let cvslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + cvslot * 32 + 0, 11);
         __mind_store_i64(nodes + cvslot * 32 + 8, node);
         __mind_store_i64(nodes + cvslot * 32 + 16, cop);
@@ -24442,13 +24456,13 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if first_cons < 0 {
             return 0 - 1;
         }
-        let cslot: i64 = __mind_load_i64(cursor);
+        let cslot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + cslot * 32 + 0, 5);
         __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
         __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
         __mind_store_i64(nodes + cslot * 32 + 24, 0);
         __mind_store_i64(cursor, cslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 3);
         __mind_store_i64(nodes + slot * 32 + 8, 0);
         __mind_store_i64(nodes + slot * 32 + 16, cslot);
@@ -24477,7 +24491,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             if arr_elems_desugar_ok(elems_addr, count, 0) == 0 {
                 return 0 - 1;
             }
-            let new_slot: i64 = __mind_load_i64(cursor);
+            let new_slot: i64 = nb_ntab_slot(nodes, cursor);
             __mind_store_i64(nodes + new_slot * 32 + 0, 9);
             __mind_store_i64(nodes + new_slot * 32 + 8, 0);
             __mind_store_i64(nodes + new_slot * 32 + 16, 0);
@@ -24485,7 +24499,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             __mind_store_i64(cursor, new_slot + 1);
             return flatten_arr_pushes(elems_addr, count, 0, new_slot, src, params_addr, n_params, nodes, cursor, env, nlets);
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 7);
         __mind_store_i64(nodes + slot * 32 + 8, elems_addr);
         __mind_store_i64(nodes + slot * 32 + 16, count);
@@ -24525,7 +24539,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         if index_slot < 0 {
             return 0 - 1;
         }
-        let slot: i64 = __mind_load_i64(cursor);
+        let slot: i64 = nb_ntab_slot(nodes, cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 8);
         __mind_store_i64(nodes + slot * 32 + 8, 0);
         __mind_store_i64(nodes + slot * 32 + 16, base_slot);
@@ -24567,7 +24581,7 @@ pub fn flatten_arr_pushes(elems_addr: i64, count: i64, j: i64, prev_slot: i64, s
     if eslot < 0 {
         return 0 - 1;
     }
-    let pslot: i64 = __mind_load_i64(cursor);
+    let pslot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + pslot * 32 + 0, 10);
     __mind_store_i64(nodes + pslot * 32 + 8, 0);
     __mind_store_i64(nodes + pslot * 32 + 16, prev_slot);
@@ -24594,7 +24608,7 @@ pub fn flatten_argcons_env(args_addr: i64, args_len: i64, idx: i64, src: i64, pa
     if next_cons < 0 {
         return 0 - 1;
     }
-    let slot: i64 = __mind_load_i64(cursor);
+    let slot: i64 = nb_ntab_slot(nodes, cursor);
     __mind_store_i64(nodes + slot * 32 + 0, 4);
     __mind_store_i64(nodes + slot * 32 + 8, 0);
     __mind_store_i64(nodes + slot * 32 + 16, arg_root);
@@ -24652,7 +24666,7 @@ pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nid
         __mind_store_i64(ok_cell, 0);
         return s;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     // tree_resolve_vids FILLS vidbuf (side effect) and returns vidbuf[last]. Take
     // root_vid from the FINAL EXPR's resolved slot instead: they coincide when the
     // trailing expr builds a node (its root IS the last node), but a BARE let-ref
@@ -24799,7 +24813,7 @@ pub fn flatten_branch(expr: i64, buf: i64, params_addr: i64, n_params: i64, node
     if root_slot < 0 {
         return 0 - 1;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     tree_resolve_vids_base(nodes, n_nodes, vidbuf, 0, base);
     __mind_load_i64(vidbuf + root_slot * 8)
 }
@@ -24834,7 +24848,7 @@ pub fn emit_mic3_if_both_return_instr(s: EmitState, cond_expr: i64, then_val: i6
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -24847,7 +24861,7 @@ pub fn emit_mic3_if_both_return_instr(s: EmitState, cond_expr: i64, then_val: i6
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
+    let then_n: i64 = nb_ntab_slot(nodes, cursor);
     let then_nonparam: i64 = count_nonparam_nodes(then_val, buf, params_addr, n_params);
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
@@ -24861,7 +24875,7 @@ pub fn emit_mic3_if_both_return_instr(s: EmitState, cond_expr: i64, then_val: i6
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
+    let else_n: i64 = nb_ntab_slot(nodes, cursor);
     let else_nonparam: i64 = count_nonparam_nodes(else_val, buf, params_addr, n_params);
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 2);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
@@ -24962,7 +24976,7 @@ pub fn emit_mic3_ifret_chain_instr(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -24976,7 +24990,7 @@ pub fn emit_mic3_ifret_chain_instr(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
+    let then_n: i64 = nb_ntab_slot(nodes, cursor);
     let then_nonparam: i64 = count_nonparam_nodes(then_val, buf, params_addr, n_params);
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
@@ -25017,7 +25031,7 @@ pub fn emit_mic3_ifret_chain_instr(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
+    let else_n: i64 = nb_ntab_slot(nodes, cursor);
     let else_nonparam: i64 = count_nonparam_nodes(else_val, buf, params_addr, n_params);
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 2);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
@@ -25061,7 +25075,7 @@ pub fn emit_mic3_ifret_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, para
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
@@ -25075,7 +25089,7 @@ pub fn emit_mic3_ifret_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, para
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
+    let then_n: i64 = nb_ntab_slot(nodes, cursor);
     let then_nonparam: i64 = count_nonparam_nodes_lv(then_val, buf, params_addr, n_params, lvenv, nlv);
     let ret_extra: i64 = named_narrow_ret_extra(ret_code);
     let then_first: i64 = after_cond + 1 + then_nonparam;
@@ -25120,7 +25134,7 @@ pub fn emit_mic3_ifret_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, para
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
+    let else_n: i64 = nb_ntab_slot(nodes, cursor);
     let else_nonparam: i64 = count_nonparam_nodes_lv(else_val, buf, params_addr, n_params, lvenv, nlv);
     let else_first: i64 = after_then + 1 + else_nonparam;
     let else_ret: i64 = named_narrow_ret_result(else_root, else_first, ret_code);
@@ -25213,7 +25227,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_n: i64 = nb_ntab_slot(nodes, cursor);
     let cond_nonparam: i64 = if nested_cond >= 0 {
         1
     } else {
@@ -25254,7 +25268,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
+    let then_n: i64 = nb_ntab_slot(nodes, cursor);
     let then_nonparam: i64 = if nested_then >= 0 {
         1
     } else {
@@ -25294,7 +25308,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
+    let else_n: i64 = nb_ntab_slot(nodes, cursor);
     let else_nonparam: i64 = if nested_else >= 0 {
         1
     } else {
@@ -25443,7 +25457,7 @@ pub fn flatten_branch_block(blk: i64, buf: i64, params_addr: i64, n_params: i64,
     if root_slot < 0 {
         return 0 - 1;
     }
-    let n_nodes: i64 = __mind_load_i64(cursor);
+    let n_nodes: i64 = nb_ntab_slot(nodes, cursor);
     tree_resolve_vids_base(nodes, n_nodes, vidbuf, 0, base);
     // Rewrite each let-env entry's stored SLOT to its resolved VID so the merge pass
     // can read a branch's per-name value directly.
@@ -29048,7 +29062,7 @@ pub fn selftest_struct_field_name_len(src_addr: i64, src_len: i64, i: i64) -> i6
 // the test grammar (4 KiB names, 256 offset slots).
 pub fn cfs_run(src_addr: i64, src_len: i64) -> i64 {
     let strbuf: i64 = __mind_alloc(4096);
-    let offs: i64 = __mind_alloc(256 * 8);
+    let offs: i64 = __mind_alloc(257 * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
@@ -29214,7 +29228,7 @@ pub fn build_module_registry_strtab(strbuf: i64, offs: i64, ccell: i64, src: i64
 // (collect_strings ; collect_struct_def_strings). COLLECTION ONLY.
 pub fn cfs_full_run(src_addr: i64, src_len: i64) -> i64 {
     let strbuf: i64 = __mind_alloc(4096);
-    let offs: i64 = __mind_alloc(256 * 8);
+    let offs: i64 = __mind_alloc(257 * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
@@ -30874,9 +30888,9 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
         return 0;
     }
     let cond_expr: i64 = ast_child0(if_node);
-    let cnodes: i64 = __mind_alloc(256 * 32);
+    let cnodes: i64 = nb_ntab(256);
     let ccursor: i64 = __mind_alloc(8);
-    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cvidbuf: i64 = __mind_alloc(257 * 8);
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
     if cond_id < 0 {
         return 0;
@@ -30886,9 +30900,9 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
         return 0;
     }
     let after_cond: i64 = base0 + cond_n;
-    let bnodes: i64 = __mind_alloc(256 * 32);
+    let bnodes: i64 = nb_ntab(256);
     let bcursor: i64 = __mind_alloc(8);
-    let bvidbuf: i64 = __mind_alloc(256 * 8);
+    let bvidbuf: i64 = __mind_alloc(257 * 8);
     // THEN branch.
     let tenv: i64 = __mind_alloc((wnlv + 1) * 24);
     let _tc: i64 = lvenv_copy(tenv, wenv, wnlv, 0);
@@ -31071,9 +31085,9 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
         ast_aux(else_blk)
     };
     // OP_IF header + cond.
-    let cnodes: i64 = __mind_alloc(256 * 32);
+    let cnodes: i64 = nb_ntab(256);
     let ccursor: i64 = __mind_alloc(8);
-    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cvidbuf: i64 = __mind_alloc(257 * 8);
     let _cid: i64 = flatten_branch_lv(ast_child0(if_node), buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
     let cond_emit_n: i64 = __mind_load_i64(ccursor);
     let s1: EmitState = es_push(s, 28);
@@ -31085,9 +31099,9 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
     let tenv2: i64 = __mind_alloc((wnlv + 1) * 24);
     let _tc2: i64 = lvenv_copy(tenv2, wenv, wnlv, 0);
-    let bnodes: i64 = __mind_alloc(256 * 32);
+    let bnodes: i64 = nb_ntab(256);
     let bcursor: i64 = __mind_alloc(8);
-    let bvidbuf: i64 = __mind_alloc(256 * 8);
+    let bvidbuf: i64 = __mind_alloc(257 * 8);
     let tbase: i64 = __mind_alloc(8);
     __mind_store_i64(tbase, then_synth + 1);
     let tok: i64 = __mind_alloc(8);
@@ -31103,9 +31117,9 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
     let eenv2: i64 = __mind_alloc((wnlv + 1) * 24);
     let _ec2: i64 = lvenv_copy(eenv2, wenv, wnlv, 0);
-    let ebnodes: i64 = __mind_alloc(256 * 32);
+    let ebnodes: i64 = nb_ntab(256);
     let ebcursor: i64 = __mind_alloc(8);
-    let ebvidbuf: i64 = __mind_alloc(256 * 8);
+    let ebvidbuf: i64 = __mind_alloc(257 * 8);
     let ebase: i64 = __mind_alloc(8);
     __mind_store_i64(ebase, else_synth + 1);
     let eok: i64 = __mind_alloc(8);
@@ -31349,7 +31363,7 @@ pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64,
     // ENCLOSING loop placed before this While; abk_cell reports their pair count.
     let wenv: i64 = __mind_alloc((wnlv + 1) * 24);
     let _ac: i64 = lvenv_copy(wenv, wenv_in, wnlv, 0);
-    let ab_ids: i64 = __mind_alloc(256 * 8);
+    let ab_ids: i64 = __mind_alloc(257 * 8);
     let ab_k: i64 = ab_apply(stmt, buf, params_addr, n_params, wenv, wnlv, base_in, ab_ids);
     if ab_k < 0 {
         __mind_store_i64(okcell, 0);
@@ -31361,9 +31375,9 @@ pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64,
     let body_blk: i64 = ast_child1(stmt);
     let body_sa: i64 = ast_child0(body_blk);
     let body_sl: i64 = ast_aux(body_blk);
-    let cnodes: i64 = __mind_alloc(256 * 32);
+    let cnodes: i64 = nb_ntab(256);
     let ccursor: i64 = __mind_alloc(8);
-    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cvidbuf: i64 = __mind_alloc(257 * 8);
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
     if cond_id < 0 {
         __mind_store_i64(okcell, 0);
@@ -31377,9 +31391,9 @@ pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64,
     let after_cond: i64 = base0 + cond_n;
     let nenv: i64 = __mind_alloc((wnlv + body_sl + 64) * 24);
     let _cp: i64 = lvenv_copy(nenv, wenv, wnlv, 0);
-    let wnodes: i64 = __mind_alloc(1024 * 32);
+    let wnodes: i64 = nb_ntab(1024);
     let wcursor: i64 = __mind_alloc(8);
-    let wvidbuf: i64 = __mind_alloc(1024 * 8);
+    let wvidbuf: i64 = __mind_alloc(1025 * 8);
     let m_wnlv: i64 = __mind_alloc(8);
     __mind_store_i64(m_wnlv, wnlv);
     let m_base: i64 = __mind_alloc(8);
@@ -31964,7 +31978,7 @@ pub fn ab_emit(s: EmitState, ids: i64, k: i64, base0: i64, j: i64) -> EmitState 
 pub fn while_alias_break_count(while_node: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64, base0: i64) -> i64 {
     let env: i64 = __mind_alloc((nlv + 1) * 24);
     let _cp: i64 = lvenv_copy(env, lvenv, nlv, 0);
-    let ids: i64 = __mind_alloc(256 * 8);
+    let ids: i64 = __mind_alloc(257 * 8);
     ab_apply(while_node, buf, params_addr, n_params, env, nlv, base0, ids)
 }
 
@@ -31991,7 +32005,7 @@ pub fn emit_mic3_while_general_k_run(s: EmitState, while_node: i64, buf: i64, pa
     // caller's env is untouched, exactly like Rust's `seed_env`) carries them.
     let lvenv: i64 = __mind_alloc((nlv + 1) * 24);
     let _ac: i64 = lvenv_copy(lvenv, lvenv_in, nlv, 0);
-    let ab_ids: i64 = __mind_alloc(256 * 8);
+    let ab_ids: i64 = __mind_alloc(257 * 8);
     let ab_k: i64 = ab_apply(while_node, buf, params_addr, n_params, lvenv, nlv, base_in, ab_ids);
     if ab_k < 0 {
         __mind_store_i64(okcell, 0);
@@ -32006,9 +32020,9 @@ pub fn emit_mic3_while_general_k_run(s: EmitState, while_node: i64, buf: i64, pa
     let body_sa: i64 = ast_child0(body_blk);
     let body_sl: i64 = ast_aux(body_blk);
     // --- cond: flatten + resolve from base0; cond_id = cond root vid. ---
-    let cnodes: i64 = __mind_alloc(256 * 32);
+    let cnodes: i64 = nb_ntab(256);
     let ccursor: i64 = __mind_alloc(8);
-    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cvidbuf: i64 = __mind_alloc(257 * 8);
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, lvenv, nlv);
     if cond_id < 0 {
         __mind_store_i64(okcell, 0);
@@ -32024,9 +32038,9 @@ pub fn emit_mic3_while_general_k_run(s: EmitState, while_node: i64, buf: i64, pa
     // a fresh clone; loop-carried vars rebound at index < nlv. wnodes/wvidbuf scratch. ---
     let wenv: i64 = __mind_alloc((nlv + body_sl + 64) * 24);
     let _cp: i64 = lvenv_copy(wenv, lvenv, nlv, 0);
-    let wnodes: i64 = __mind_alloc(1024 * 32);
+    let wnodes: i64 = nb_ntab(1024);
     let wcursor: i64 = __mind_alloc(8);
-    let wvidbuf: i64 = __mind_alloc(1024 * 8);
+    let wvidbuf: i64 = __mind_alloc(1025 * 8);
     let m_wnlv: i64 = __mind_alloc(8);
     __mind_store_i64(m_wnlv, nlv);
     let m_base: i64 = __mind_alloc(8);
@@ -32062,9 +32076,9 @@ pub fn emit_mic3_while_general_k_run(s: EmitState, while_node: i64, buf: i64, pa
     // Re-clone the env + reset scratch for the byte-emitting walk.
     let wenv2: i64 = __mind_alloc((nlv + body_sl + 64) * 24);
     let _cp2: i64 = lvenv_copy(wenv2, lvenv, nlv, 0);
-    let wnodes2: i64 = __mind_alloc(1024 * 32);
+    let wnodes2: i64 = nb_ntab(1024);
     let wcursor2: i64 = __mind_alloc(8);
-    let wvidbuf2: i64 = __mind_alloc(1024 * 8);
+    let wvidbuf2: i64 = __mind_alloc(1025 * 8);
     let e_wnlv: i64 = __mind_alloc(8);
     __mind_store_i64(e_wnlv, nlv);
     let e_base: i64 = __mind_alloc(8);
@@ -32586,9 +32600,11 @@ pub fn nb_own_stack_ph(ph: i64, n: i64, i: i64, best_va: i64, best_sz: i64) -> i
 // 40000-deep unary minus or `as` chain each SIGSEGVed the bounded compiler
 // (384 MiB stack). Measured peak stack on the bounded compiler: ~15.5 KiB per
 // binary / unary / `as` operator level, <= 13 KiB per bracket level, <= 5.5 KiB
-// per else-if arm, <= 4 KiB per nested block. nb_nest_units charges every
-// level along the deepest path at or above that (KiB units: 16 per operator,
-// `as` and `(` / `[`, 8 per `else`, 4 per `{`, 2 per `if`); the program is
+// per else-if arm, <= 4 KiB per nested block, ~39 KiB per if expression
+// nested in a parenthesised condition. nb_nest_units charges every level along
+// the deepest path at or above that (KiB units: 16 per operator, `as` and `(` /
+// `[`, 8 per `else`, 4 per `{`, 2 per statement `if` and 24 per `if` inside an
+// expression); the program is
 // refused (clean rc 3) when that path, at 1.25 KiB per unit, plus 32 MiB could
 // overflow the compiler's own stack. Flat statement lists add nothing (`;`,
 // `,` and a `}` that ends a statement reset the level's chain): their walks
@@ -32767,9 +32783,10 @@ pub fn nb_nest_tok(src: i64, tokens: Vec, n: i64, i: i64, st: i64) -> i64 {
         return 0;
     }
     if k == 28 {
+        let w: i64 = nb_nest_if_units(tokens, i);
         __mind_store_i64(lv + 16, ops);
-        __mind_store_i64(lv + 8, ops + 2);
-        return nb_nest_max(st, base + ops + 2);
+        __mind_store_i64(lv + 8, ops + w);
+        return nb_nest_max(st, base + ops + w);
     }
     if k == 29 {
         let e: i64 = __mind_load_i64(lv + 16) + 8;
@@ -32783,6 +32800,29 @@ pub fn nb_nest_tok(src: i64, tokens: Vec, n: i64, i: i64, st: i64) -> i64 {
     }
     __mind_store_i64(lv + 8, ops + u);
     nb_nest_max(st, base + ops + u)
+}
+
+// Units of an `if`: 2 where it starts a statement (after `;`, `{`, `}` or
+// `else`, or first), 24 where it is a value inside an expression (an if
+// expression nested in a condition costs ~39 KiB of stack per level).
+pub fn nb_nest_if_units(tokens: Vec, i: i64) -> i64 {
+    if i == 0 {
+        return 2;
+    }
+    let p: i64 = tok_kind(tokens, i - 1);
+    if p == 8 {
+        return 2;
+    }
+    if p == 5 {
+        return 2;
+    }
+    if p == 6 {
+        return 2;
+    }
+    if p == 29 {
+        return 2;
+    }
+    24
 }
 
 pub fn nb_nest_open(st: i64, lv: i64, sp: i64, nb: i64) -> i64 {
@@ -32956,6 +32996,37 @@ pub fn nb_twin_while_exit() -> i64 {
         __mind_store_i64(c, __mind_load_i64(c) - 1)
     }
     0
+}
+
+// Census X1 capacity, mic@3 twin: its descriptor tables (32 bytes per node)
+// had no bound check, so a 300-term value-if branch or while condition, a
+// 1000-term if condition or a 400-deep `!` chain overran a 256-entry table and
+// corrupted the arena (SIGSEGV). nb_ntab allocates `cap` nodes plus one spare
+// sink node behind a 16-byte header [nb_ntab_magic(), cap]; nb_ntab_slot hands
+// out the next slot and, once the table is full, the sink slot `cap` (every
+// slot-indexed side table holds cap + 1 entries) and makes the twin give up
+// on the function, which is then lowered on the HOME path. A table without
+// the header (none in the twin) is not checked.
+pub fn nb_ntab_magic() -> i64 {
+    7954879290893215053
+}
+pub fn nb_ntab(cap: i64) -> i64 {
+    let t: i64 = __mind_alloc((cap + 1) * 32 + 16);
+    __mind_store_i64(t, nb_ntab_magic());
+    __mind_store_i64(t + 8, cap);
+    t + 16
+}
+pub fn nb_ntab_slot(nodes: i64, cursor: i64) -> i64 {
+    let slot: i64 = __mind_load_i64(cursor);
+    if __mind_load_i64(nodes - 16) != nb_ntab_magic() {
+        return slot;
+    }
+    let cap: i64 = __mind_load_i64(nodes - 8);
+    if slot < cap {
+        return slot;
+    }
+    let _g: i64 = nb_twin_give_up();
+    cap
 }
 pub fn nb_stack_addr() -> i64 {
     // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + GUARD (default 0x1000)
@@ -43834,6 +43905,148 @@ pub fn hm_fn_over_stmt_cap(buf: i64, node: i64) -> i64 {
         return 1;
     }
     0
+}
+
+// Census X1 capacity, mic@3 twin: 1 iff fn `node` nests loop bodies (`while`
+// or `for`) deeper than nb_twin_while_depth_cap(). The twin gives up on such a
+// function anyway (nb_twin_while_enter), but only after each level up to the
+// cap had re-walked the rest of the nest with tables sized from the whole
+// function (depth x size): 600..4000 nested while loops, under the statement
+// cap, exhausted the bounded compiler's 768 MiB arena (exit 70, neither a
+// compile nor the rc-3 refusal). Checked before any twin walk, so such a
+// function goes straight to the HOME path. A byte scan of the fn's source span
+// in halving ranges (hm_count_span's stack discipline) that skips string
+// literals and `//` comments and keeps a fixed (cap + 1)-entry stack of the
+// brace depths at which loop bodies opened; no table grows with the function.
+pub fn hm_fn_loop_depth_over(buf: i64, node: i64) -> i64 {
+    if ast_child2(node) == 0 {
+        return 0;
+    }
+    let cap: i64 = nb_twin_while_depth_cap();
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = lo + hm_fn_span(node);
+    // +0 brace depth, +8 a loop keyword waits for its body brace, +16 open
+    // loop bodies, +24 over, +32 lexical mode (0 code, 1 string literal,
+    // 2 after a backslash in one, 3 line comment), +40.. the brace depth at
+    // which each open loop body opened.
+    let st: i64 = __mind_alloc(40 + (cap + 1) * 8);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, 0);
+    __mind_store_i64(st + 24, 0);
+    __mind_store_i64(st + 32, 0);
+    let _e: i64 = hm_ld_span(buf, lo, lo, hi, hi, st, cap);
+    __mind_load_i64(st + 24)
+}
+
+// Scan from position `i` every byte in [a, b) (a keyword may end past b);
+// returns the first position at or past b (see hm_count_span).
+pub fn hm_ld_span(buf: i64, i: i64, a: i64, b: i64, hi: i64, st: i64, cap: i64) -> i64 {
+    if b - a <= 256 {
+        return hm_ld_run(buf, i, b, hi, st, cap);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    let j: i64 = hm_ld_span(buf, i, a, mid, hi, st, cap);
+    hm_ld_span(buf, j, mid, b, hi, st, cap)
+}
+
+pub fn hm_ld_run(buf: i64, i: i64, b: i64, hi: i64, st: i64, cap: i64) -> i64 {
+    if i >= b {
+        return i;
+    }
+    if __mind_load_i64(st + 24) != 0 {
+        return b;
+    }
+    let step: i64 = hm_ld_one(buf, i, hi, load_byte(buf, i), st, cap);
+    hm_ld_run(buf, i + step, b, hi, st, cap)
+}
+
+pub fn hm_ld_one(buf: i64, i: i64, hi: i64, c: i64, st: i64, cap: i64) -> i64 {
+    let mode: i64 = __mind_load_i64(st + 32);
+    if mode == 3 {
+        if c == 10 {
+            __mind_store_i64(st + 32, 0)
+        }
+        return 1;
+    }
+    if mode == 2 {
+        __mind_store_i64(st + 32, 1);
+        return 1;
+    }
+    if mode == 1 {
+        if c == 92 {
+            __mind_store_i64(st + 32, 2)
+        }
+        if c == 34 {
+            __mind_store_i64(st + 32, 0)
+        }
+        return 1;
+    }
+    if c == 34 {
+        __mind_store_i64(st + 32, 1);
+        return 1;
+    }
+    if c == 47 {
+        if i + 1 < hi {
+            if load_byte(buf, i + 1) == 47 {
+                __mind_store_i64(st + 32, 3);
+                return 2;
+            }
+        }
+        return 1;
+    }
+    if c == 123 {
+        return hm_ld_open(st, cap);
+    }
+    if c == 125 {
+        return hm_ld_close(st);
+    }
+    // `while` / `for` (as little-endian byte words, see hm_word_at).
+    if c == 119 {
+        if hm_word_at(buf, i, hi, 435610544247, 5) == 1 {
+            __mind_store_i64(st + 8, 1);
+            return 5;
+        }
+    }
+    if c == 102 {
+        if hm_word_at(buf, i, hi, 7499622, 3) == 1 {
+            __mind_store_i64(st + 8, 1);
+            return 3;
+        }
+    }
+    1
+}
+
+// `{`: one brace deeper; the body of a pending loop keyword is one more open
+// loop body, and the cap + 1st one sets `over`.
+pub fn hm_ld_open(st: i64, cap: i64) -> i64 {
+    let bd: i64 = __mind_load_i64(st) + 1;
+    __mind_store_i64(st, bd);
+    if __mind_load_i64(st + 8) == 0 {
+        return 1;
+    }
+    __mind_store_i64(st + 8, 0);
+    let n: i64 = __mind_load_i64(st + 16);
+    if n >= cap {
+        __mind_store_i64(st + 24, 1);
+        return 1;
+    }
+    __mind_store_i64(st + 40 + n * 8, bd);
+    __mind_store_i64(st + 16, n + 1);
+    1
+}
+
+// `}`: closes the innermost open loop body when it opened at this depth.
+pub fn hm_ld_close(st: i64) -> i64 {
+    let bd: i64 = __mind_load_i64(st);
+    let n: i64 = __mind_load_i64(st + 16);
+    if n > 0 {
+        if __mind_load_i64(st + 40 + (n - 1) * 8) == bd {
+            __mind_store_i64(st + 16, n - 1)
+        }
+    }
+    __mind_store_i64(st, bd - 1);
+    1
 }
 
 pub fn hm_is_word_byte(c: i64) -> i64 {

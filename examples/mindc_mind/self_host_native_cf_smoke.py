@@ -68,15 +68,27 @@ Steps
                30000 statements in one while body may instead be refused
                cleanly, rc 3): every statement-list walk took one stack frame per
                statement (the mic@3 twin's planner alone ~14 KB) and the
-               compiler died with SIGSEGV at ~26k statements. `--flat-only`
-               runs just these cases.
+               compiler died with SIGSEGV at ~26k statements. The same flat
+               list is GENERATED in every statement position (function body,
+               then and else branch, while body, value-if branch, call
+               statements, if-statement sequence, chained and shadowing lets,
+               let/assign pairs) at a mid size and at the largest size the
+               bounded compiler's token budget admits: success or rc 3, never
+               a signal, inside a CPU budget (RLIMIT_CPU): the mic@3 string
+               table walked a twin-rejected function's branch assigns
+               quadratically (100k statements in one if body: tens of
+               minutes). `--flat-only` runs just these cases.
                DEEP trees in the same profile: a 40000-term `+` chain, 40000
                nested parentheses, calls, `0 - (...)` levels, `as` casts and
                unary minus, a 40000-term `&&` condition and 40000 nested if
                statements each SIGSEGVed (or ran past the compile timeout)
                because the front end and the emitters recurse once per
-               nesting level (~15.5 KB per operator level); each must now be
-               refused cleanly (rc 3, the stack-budget diagnostic) or compile.
+               nesting level (~15.5 KB per operator level, ~39 KB per if
+               expression nested in a condition); each must now be refused
+               cleanly (rc 3, the stack-budget diagnostic) or compile. A
+               1000-term if condition, a 300-term value-if branch or while
+               condition and a 400-deep `!` chain overran the mic@3 twin's
+               256-entry descriptor tables (SIGSEGV) and must compile and run.
                15 and 300 nested value-ifs, a 15-arm else-if value chain and
                300 nested while loops exhausted the 768 MiB arena (exit 70:
                the mic@3 twin probed every value-if branch by emitting it into
@@ -118,6 +130,7 @@ import os
 import pathlib
 import re
 import resource
+import signal
 import struct
 import subprocess
 import sys
@@ -226,16 +239,26 @@ def capped():
     resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
 
 
-def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v2: bool = True):
+def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v2: bool = True,
+                   cpu: int = 0):
     """Compile with the bounded compiler (v2 header, RLIMIT_AS 2 GiB) and run the
     program under the same cap. ('crash', signal) for a compiler killed by a
     signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF.
-    v2=False feeds a default-layout (v1) image instead of the bounded request."""
+    v2=False feeds a default-layout (v1) image instead of the bounded request.
+    cpu > 0 also caps the compile at that many CPU seconds (RLIMIT_CPU, so a
+    loaded box does not trip it): ('compile-cpu-budget', cpu) past it."""
     img = (v2_header() if v2 else b"") + image(src, seeded)
+
+    def capped_cpu():
+        capped()
+        if cpu > 0:
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 10))
     try:
-        r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
+        r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped_cpu)
     except subprocess.TimeoutExpired:
         return ("compile-timeout", 900)
+    if r.returncode in (-signal.SIGXCPU, -signal.SIGKILL) and cpu > 0:
+        return ("compile-cpu-budget", cpu)
     if r.returncode < 0:
         return ("crash", -r.returncode)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
@@ -611,6 +634,30 @@ def deep_program(kind: str, d: int) -> tuple:
     elif kind == "while":
         body = ["    let mut c: i64 = 0;", "    while c < 1 {" * d, "    c = c + 1; s = s + 4;", "    }" * d]
         s = 5
+    elif kind == "for":
+        body = ["    for i%d in 0..1 {" % k for k in range(d)] + ["    s = s + 4;", "    }" * d]
+        s = 5
+    elif kind == "whileif":
+        body = ["    let mut c: i64 = 0;", "    while c < 1 { if c < 1 {" * (d // 2),
+                "    c = c + 1; s = s + 4;", "    } }" * (d // 2)]
+        s = 5
+    elif kind == "condadd":
+        body = ["    if s" + " + 1" * d + " > 0 { s = 5; }"]
+        s = 5
+    elif kind == "vifbranch":
+        body = ["    s = if s > 0 { s" + " + 1" * d + " } else { 0 };"]
+        s = 1 + d
+    elif kind == "whilecond":
+        body = ["    let mut c: i64 = 0;", "    while c" + " + 0" * d + " < 1 { c = c + 1; s = s + 2; }"]
+        s = 3
+    elif kind == "not":
+        body = ["    if " + "!" * (2 * (d // 2)) + "(s > 0) { s = s + 5; }"]
+        s = 6
+    elif kind == "condvif":
+        e = "s"
+        for _ in range(d):
+            e = f"if ({e}) > 0 {{ 1 }} else {{ 0 }}"
+        body = [f"    s = {e};"]
     else:
         raise ValueError(kind)
     src = "\n".join(["fn g(x: i64) -> i64 { (x + 1) % 1000 }", "fn f(a: i64) -> i64 {",
@@ -638,6 +685,24 @@ def deep_cases():
         ("4000-term `+` chain (under the budget)", deep_program("add", 4000), False, True),
         ("8000 nested parentheses (under the budget)", deep_program("parens", 8000), False, True),
         ("2000 nested if statements (under the budget)", deep_program("nestif", 2000), False, True),
+        ("10000 if expressions nested in parenthesised conditions", deep_program("condvif", 10000), True, True),
+        # Long expressions past the mic@3 twin's 256-entry descriptor tables
+        # (no bound check: arena corruption, SIGSEGV); each must compile and run.
+        ("1000-term `+` chain in an if condition", deep_program("condadd", 1000), False, True),
+        ("300-term value-if branch value", deep_program("vifbranch", 300), False, True),
+        ("300-term while condition", deep_program("whilecond", 300), False, True),
+        ("400-deep `!` chain in an if condition", deep_program("not", 400), False, True),
+        # Nested loops past the twin's while-depth cap (12) but under the
+        # statement cap (8192): every twin level re-walked the whole nest with
+        # tables sized from the function (depth x size), so 600..4000 nested
+        # while loops exhausted the 768 MiB arena (exit 70, neither a
+        # compile nor the rc-3 refusal); 10000 passed only because the
+        # statement cap routed it past the twin. Each must compile and run.
+        ("600 nested while loops", deep_program("while", 600), False, True),
+        ("1000 nested while loops", deep_program("while", 1000), False, True),
+        ("4000 nested while loops", deep_program("while", 4000), False, True),
+        ("600 nested for loops", deep_program("for", 600), False, True),
+        ("1000-deep alternating while/if nest", deep_program("whileif", 1000), False, True),
     ]
 
 
@@ -673,6 +738,110 @@ def flat_cases():
          flat_program(40000, "assign"), True, True),
         ("30000 statements in one while body", flat_program(30000, "loop"), True, True),
     ]
+
+
+FLAT_POSITIONS = ("body", "then", "else", "while", "vif", "calls", "ifseq", "lets", "shadow", "mixed")
+# Tokens one statement of each position costs (the bounded compiler budgets the
+# whole program at 640 B of stack per token, nb_stack_short).
+FLAT_TOKENS = {"body": 6, "then": 6, "else": 6, "while": 6, "vif": 6, "calls": 7, "ifseq": 12,
+               "lets": 9, "shadow": 9, "mixed": 8}
+# Mid size per position, and whether a clean rc 3 is accepted there (measured:
+# 20000 chained lets pass the native alias environment's 4096-binding lookup
+# depth, a structured refusal; every other position compiles and runs).
+FLAT_MID = {"body": 40000, "then": 40000, "else": 40000, "while": 40000, "vif": 40000, "calls": 40000,
+            "ifseq": 20000, "lets": 20000, "shadow": 40000, "mixed": 20000}
+FLAT_MID_MAY_REFUSE = ("lets", "mixed")
+FLAT_CPU = 240  # CPU seconds per compile; every case takes < 30 s
+
+
+def flat_budget_tokens() -> int:
+    """Program tokens the bounded compiler admits (nb_stack_short: 640 B per
+    token plus 16 MiB of its 384 MiB stack), less the seeded std prefix
+    (~57k tokens) and a margin."""
+    return ((BOUNDED[1] - (16 << 20)) // 640) - 60000
+
+
+def flat_matrix_program(pos: str, n: int) -> tuple:
+    """One function holding a flat list of `n` statements in statement position
+    `pos`, and its value computed here (independent of the compiler)."""
+    L = ["fn g(x: i64) -> i64 { (x + 1) % 1000 }", "fn f(a: i64) -> i64 {", "    let mut s: i64 = a;"]
+    v = 1
+    if pos in ("body", "then", "else", "while", "vif"):
+        stmt = {"body": "    s = s + 1;", "vif": "        t = t + 1;"}.get(pos, "        s = s + 1;")
+        head = {"body": [], "then": ["    if a > 0 {"], "else": ["    if a < 0 { s = 0; } else {"],
+                "while": ["    let mut i: i64 = 0;", "    while i < 2 {"],
+                "vif": ["    s = if a > 0 {", "        let mut t: i64 = s;"]}[pos]
+        tail = {"body": [], "then": ["    }"], "else": ["    }"], "while": ["        i = i + 1;", "    }"],
+                "vif": ["        t", "    } else { 0 };"]}[pos]
+        L += head + [stmt] * n + tail
+        v += 2 * n if pos == "while" else n
+    elif pos == "calls":
+        L += ["    s = g(s);"] * n
+        for _ in range(n):
+            v = (v + 1) % 1000
+    elif pos == "ifseq":
+        L += ["    if s > 0 { s = s + 1; }"] * n
+        v += n
+    elif pos == "lets":
+        L.append("    let x0: i64 = s;")
+        for k in range(1, n):
+            L.append(f"    let x{k}: i64 = x{k - 1} + {k % 7};")
+            v += k % 7
+        L.append(f"    s = x{n - 1} % 1000;")
+        v %= 1000
+    elif pos == "shadow":
+        for k in range(n):
+            L.append(f"    let s: i64 = s + {k % 5};")
+            v += k % 5
+        L.append("    s = s % 1000;")
+        v %= 1000
+    elif pos == "mixed":
+        y = 0
+        for k in range(n):
+            if k % 2 == 0:
+                L.append(f"    let y{k}: i64 = s + {k % 3};")
+                y = v + k % 3
+            else:
+                L.append(f"    s = y{k - 1} % 1000;")
+                v = y % 1000
+    else:
+        raise ValueError(pos)
+    L += ["    s", "}", "fn main() -> i64 { f(1) % 251 }"]
+    return "\n".join(L) + "\n", (v % 251, b"")
+
+
+def flat_matrix_cases():
+    """(label, (source, expected), may_refuse) over FLAT_POSITIONS x {mid size,
+    the largest size the token budget admits}."""
+    out = []
+    for pos in FLAT_POSITIONS:
+        mid = FLAT_MID[pos]
+        out.append((f"{pos}: {mid} statements", flat_matrix_program(pos, mid), pos in FLAT_MID_MAY_REFUSE))
+        top = flat_budget_tokens() // FLAT_TOKENS[pos]
+        out.append((f"{pos}: {top} statements (token-budget boundary)", flat_matrix_program(pos, top), True))
+    return out
+
+
+def flat_matrix_section(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, jobs: int) -> None:
+    """Giant flat statement lists in every statement position, bounded profile,
+    RLIMIT_AS 2 GiB and RLIMIT_CPU FLAT_CPU: success (the Python value) or a
+    clean rc 3; a signal, a CPU-budget kill or a wrong value is a FAIL."""
+    def one(case):
+        label, (src, exp), may_refuse = case
+        t0 = time.time()
+        with tempfile.TemporaryDirectory(dir=td) as sub:
+            got = native_bounded(stage1b, src.encode(), pathlib.Path(sub), True, cpu=FLAT_CPU)
+        ok = got == exp or (may_refuse and got[0] == "refused" and got[1] == 3)
+        if got[0] == "refused" and "stack budget" in str(got[2:]):
+            # Sized under the budget: a budget refusal would make the case vacuous.
+            ok = False
+            label += " VACUOUS: refused by the token budget, the walks never ran"
+        return ok, (f"bounded flat {label} ({len(src)} B): native={got[:2]} Python={exp}"
+                    + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
+                    + f" [{time.time() - t0:.0f} s]")
+    with ThreadPoolExecutor(jobs) as ex:
+        for ok, msg in ex.map(one, flat_matrix_cases()):
+            rep.check(ok, msg)
 
 
 def bounded_cases():
@@ -823,6 +992,7 @@ def main() -> int:
                 return 2
             print(f"[cf] giant flat statement lists, bounded profile: stage1 (bounded) = {stage1b}")
             bounded_section(rep, stage1b, td, flat_cases())
+            flat_matrix_section(rep, stage1b, td, a.jobs)
         print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
         print("FAIL" if rep.fails else "ALL PASS  (giant flat statement lists, bounded profile)")
         return 1 if rep.fails else 0
@@ -950,6 +1120,7 @@ def main() -> int:
             stage1b = bfut.result()
             print(f"  stage1 (bounded) = frozen seed + v2 header -> this tree ({stage1b.stat().st_size} B)")
         bounded_section(rep, stage1b, td, bounded_cases())
+        flat_matrix_section(rep, stage1b, td, a.jobs)
         deep_extra_sections(rep, stage1b, stage1, td)
 
         print("[cf] clean refusal")
