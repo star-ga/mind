@@ -2647,3 +2647,41 @@ Why this matters for MIND specifically:
 - Free and paid tiers, quotas and identity.
 - Which components run hosted, and which stay local or self-hosted.
 - Service-level targets and how they are measured.
+
+## Phase 23 — Learned artifacts with a provenance trail (proposed, 2026-10-14)
+
+**Goal.** Treat a learned model produced by one deterministic forward pass as a compiled
+artifact: same inputs give byte-identical weights on every substrate, and the artifact
+carries an evidence record of exactly what produced it.
+
+**Why it fits MIND.** Recent research shows networks that read a labelled dataset and emit
+the weights of a small classifier for it in a single forward pass, with no per-task training.
+In MIND that forward pass is already byte-identical across x86, ARM and GPU. The emitted
+weights can then be anchored like any other artifact: hash of the generator, hash of the
+dataset, hash of the output weights, all in the evidence chain. The result is a learned
+model whose origin can be checked, not just its output.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 23.1 | Small weight-generating network run in MIND (Q16.16 and strict `f64` tiers) on a fixed table | Emitted weights byte-identical on avx2 and neon |
+| 23.2 | Evidence record binding generator hash, dataset hash and emitted-weights hash | `mindc verify` detects a one-byte change in any of the three |
+| 23.3 | Emitted classifier compared against a gradient-boosted tree fitted on the same table | Accuracy and fit time reported as numbers, not asserted |
+
+### Firewall — do not cross it
+
+- No accuracy claims for the generated classifiers. This phase is about provenance and
+  reproducibility; accuracy is reported, not marketed.
+- The dataset hash covers the exact rows and their order; reordering the table is a new
+  artifact.
+- No external dependency enters the default build; this is an example and a library path.
+
+### Open questions — answer before this gets a milestone
+
+- Which generator architecture is small enough to run in Q16.16 without losing the
+  classifier's usefulness?
+- Should the evidence record also bind the evaluation table and its score, or only the
+  inputs that produced the weights?
+
+Proposed; sequenced after Phase 21 and Phase 22.
