@@ -485,14 +485,54 @@ pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
         let _w: i64 = __mind_write(1, string_addr(es.buf), elf_len, 0 - 1);
         return 0;
     }
+    if __mind_load_i64(nb_layout_cell() + 40) == 1 {
+        return nb_report_capacity();
+    }
     return nb_report_unsupported(src, user_lo, src_len);
+}
+
+// Census X1 capacity: the stage refused the program because compiling it could
+// overflow the compiler's own stack (nb_stack_short / nb_depth_short: too many
+// tokens, or nested too deeply). Writes that diagnostic to fd 2 and returns 3.
+pub fn nb_report_capacity() -> i64 {
+    let m: i64 = __mind_alloc(128);
+    __mind_store_i64(m + 0, 7017271716450824805);
+    __mind_store_i64(m + 8, 7020598778489301859);
+    __mind_store_i64(m + 16, 8079521904311298420);
+    __mind_store_i64(m + 24, 7286944462384099186);
+    __mind_store_i64(m + 32, 8367814982689448824);
+    __mind_store_i64(m + 40, 8532478930838381928);
+    __mind_store_i64(m + 48, 7811898643973349477);
+    __mind_store_i64(m + 56, 7022364302185558629);
+    __mind_store_i64(m + 64, 7306919375752162147);
+    __mind_store_i64(m + 72, 7791349879831797876);
+    __mind_store_i64(m + 80, 2338053341489623649);
+    __mind_store_i64(m + 88, 8367798494562575726);
+    __mind_store_i64(m + 96, 7813856839633760111);
+    __mind_store_i64(m + 104, 2334398928750586233);
+    __mind_store_i64(m + 112, 7954882391399607597);
+    __mind_store_i64(m + 120, 2940546883337572);
+    let _w: i64 = __mind_write(2, m, 127, 0 - 1);
+    3
+}
+
+pub fn nb_zero_words(p: i64, n: i64) -> i64 {
+    if n <= 0 {
+        return 0;
+    }
+    __mind_store_i64(p, 0);
+    nb_zero_words(p + 8, n - 1)
 }
 
 pub fn main() -> i64 {
     // The layout cell is the FIRST allocation, so in a native run it sits at
     // nb_layout_cell() (the bump allocator hands out arena+16 first). It stays
     // zero (no magic) unless a v2 header publishes a validated layout.
-    let lay: i64 = __mind_alloc(40);
+    // Words 5..11 of the cell are the stage's scratch words (nb_xcell): zeroed,
+    // then tagged with nb_xcell_magic().
+    let lay: i64 = __mind_alloc(96);
+    let _z: i64 = nb_zero_words(lay + 40, 6);
+    __mind_store_i64(lay + 88, nb_xcell_magic());
     let hdr: i64 = __mind_alloc(48);
     let _h: i64 = nb_read_fully(0, hdr, 16, 0);
     if __mind_load_i64(hdr) == nb_layout_magic() {

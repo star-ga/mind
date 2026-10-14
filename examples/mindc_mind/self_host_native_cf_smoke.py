@@ -70,6 +70,23 @@ Steps
                statement (the mic@3 twin's planner alone ~14 KB) and the
                compiler died with SIGSEGV at ~26k statements. `--flat-only`
                runs just these cases.
+               DEEP trees in the same profile: a 40000-term `+` chain, 40000
+               nested parentheses, calls, `0 - (...)` levels, `as` casts and
+               unary minus, a 40000-term `&&` condition and 40000 nested if
+               statements each SIGSEGVed (or ran past the compile timeout)
+               because the front end and the emitters recurse once per
+               nesting level (~15.5 KB per operator level); each must now be
+               refused cleanly (rc 3, the stack-budget diagnostic) or compile.
+               15 and 300 nested value-ifs, a 15-arm else-if value chain and
+               300 nested while loops exhausted the 768 MiB arena (exit 70:
+               the mic@3 twin probed every value-if branch by emitting it into
+               scratch first, 2^depth emissions) and must compile and run; so
+               must the 4000-term chain, 8000 nested parentheses and 2000 nested
+               ifs. The bounded compiler fed a DEFAULT-layout (v1) image must
+               still budget its own 384 MiB stack (it read the requested 4 GiB),
+               and the default-profile compiler must refuse a 300000-term chain
+               (past its own 4 GiB stack) instead of crashing. `--deep-only`
+               runs just these cases.
                A function past the arena budget, or a program past the stack
                budget (a 65536-leaf, 18.8 MB tree), may be refused (rc 3),
                never a signal; a 21 MB program with an unsupported construct
@@ -209,11 +226,12 @@ def capped():
     resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
 
 
-def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True):
+def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v2: bool = True):
     """Compile with the bounded compiler (v2 header, RLIMIT_AS 2 GiB) and run the
     program under the same cap. ('crash', signal) for a compiler killed by a
-    signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF."""
-    img = v2_header() + image(src, seeded)
+    signal, ('refused', rc, stderr tail) for a compiler that wrote no ELF.
+    v2=False feeds a default-layout (v1) image instead of the bounded request."""
+    img = (v2_header() if v2 else b"") + image(src, seeded)
     try:
         r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped)
     except subprocess.TimeoutExpired:
@@ -557,6 +575,87 @@ def flat_program(n: int, shape: str) -> tuple:
     return "\n".join(lines) + "\n", (v % 251, b"")
 
 
+def deep_program(kind: str, d: int) -> tuple:
+    """Census X1 DEEP trees: one expression or block nest `d` levels deep inside
+    f (see deep_cases)."""
+    s = 1
+    if kind == "add":
+        body = ["    s = " + " + ".join(["1"] * d) + ";"]
+        s = d
+    elif kind == "parens":
+        body = ["    s = " + "(" * d + "s + 1" + ")" * d + ";"]
+        s = 2
+    elif kind == "calls":
+        body = ["    s = " + "g(" * d + "s" + ")" * d + ";"]
+        for _ in range(d):
+            s = (s + 1) % 1000
+    elif kind == "neg":
+        body = ["    s = " + "0 - (" * d + "s" + ")" * d + ";"]
+        s = 1 if d % 2 == 0 else -1
+    elif kind == "and":
+        body = ["    if " + " && ".join(["s > 0"] * d) + " { s = s + 5; }"]
+        s = 6
+    elif kind == "as":
+        body = ["    s = s" + " as i64" * d + ";"]
+    elif kind == "uminus":
+        body = ["    s = " + "-" * (2 * (d // 2)) + "s;"]
+    elif kind == "nestif":
+        body = ["    if s > 0 {" * d, "    s = s + 7;", "    }" * d]
+        s = 8
+    elif kind == "vif":
+        body = ["    s = " + "if s > 0 { " * d + "s + 2" + " } else { 0 }" * d + ";"]
+        s = 3
+    elif kind == "elsevif":
+        body = ["    s = " + "if s < 0 { 0 } else { " * d + "s + 2" + " }" * d + ";"]
+        s = 3
+    elif kind == "while":
+        body = ["    let mut c: i64 = 0;", "    while c < 1 {" * d, "    c = c + 1; s = s + 4;", "    }" * d]
+        s = 5
+    else:
+        raise ValueError(kind)
+    src = "\n".join(["fn g(x: i64) -> i64 { (x + 1) % 1000 }", "fn f(a: i64) -> i64 {",
+                     "    let mut s: i64 = a;"] + body + ["    s", "}", "fn main() -> i64 { f(1) % 251 }"]) + "\n"
+    return src, (C.tmod(s, 251) & 255, b"")
+
+
+def deep_cases():
+    """(label, (source, expected), may_refuse, seeded): deep trees in the bounded
+    production profile. Each must compile and run to the Python value, or (may_refuse)
+    be refused cleanly (rc 3); never a signal, never past the compile timeout."""
+    return [
+        ("40000-term `+` chain in one expression", deep_program("add", 40000), True, True),
+        ("40000 nested parentheses", deep_program("parens", 40000), True, True),
+        ("40000-deep nested calls g(g(...))", deep_program("calls", 40000), True, True),
+        ("40000-deep `0 - (...)` chain", deep_program("neg", 40000), True, True),
+        ("40000-term `&&` chain in an if condition", deep_program("and", 40000), True, True),
+        ("40000-deep `as i64` chain", deep_program("as", 40000), True, True),
+        ("40000-deep unary minus chain", deep_program("uminus", 40000), True, True),
+        ("40000 nested if statements", deep_program("nestif", 40000), True, True),
+        ("15 nested value-ifs (2^15 mic@3 twin probes)", deep_program("vif", 15), False, True),
+        ("15-arm else-if value chain", deep_program("elsevif", 15), False, True),
+        ("300 nested value-ifs", deep_program("vif", 300), False, True),
+        ("300 nested while loops", deep_program("while", 300), False, True),
+        ("4000-term `+` chain (under the budget)", deep_program("add", 4000), False, True),
+        ("8000 nested parentheses (under the budget)", deep_program("parens", 8000), False, True),
+        ("2000 nested if statements (under the budget)", deep_program("nestif", 2000), False, True),
+    ]
+
+
+def deep_v1_cases():
+    """(label, (source, ("refused", 3)), seeded) for the BOUNDED compiler fed a
+    default-layout (v1) image: its own stack is 384 MiB whatever layout the
+    image requests, so a tree past that budget must be refused, never a signal."""
+    return [("bounded compiler, default-layout image: 40000-term `+` chain",
+             (deep_program("add", 40000)[0], ("refused", 3)), True)]
+
+
+def deep_default_cases():
+    """(label, (source, expected), may_refuse, seeded) for the default-profile
+    compiler (4 GiB stack): a 300000-term chain is past even that budget."""
+    return [("300000-term `+` chain (past the default 4 GiB stack budget)",
+             deep_program("add", 300000), True, True)]
+
+
 def flat_cases():
     """(label, (source, expected), may_refuse, seeded): giant flat statement
     lists in the bounded production profile. Each must compile and run to the
@@ -585,7 +684,7 @@ def bounded_cases():
          dense_tree_program(11), False, True),
         ("dense if/else tree, 1024 leaves + 2600 comment lines in the body",
          dense_tree_program(10, pad=2600), False, True),
-    ] + flat_cases() + extreme_cases()
+    ] + flat_cases() + deep_cases() + extreme_cases()
 
 
 def extreme_cases():
@@ -634,6 +733,26 @@ def bounded_section(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, cases)
                       + f" [{time.time() - t0:.0f} s]")
 
 
+def deep_extra_sections(rep: Report, stage1b, stage1, td: pathlib.Path) -> None:
+    for label, (dsrc, dexp), seeded in deep_v1_cases():
+        t0 = time.time()
+        got = native_bounded(stage1b, dsrc.encode(), td, seeded, v2=False)
+        rep.check(got[:2] == dexp, f"{label} ({len(dsrc)} B): native={got[:2]} (must refuse, rc 3)"
+                                   f" [{time.time() - t0:.0f} s]")
+    if stage1 is None:
+        return
+    for label, (dsrc, dexp), may_refuse, seeded in deep_default_cases():
+        t0 = time.time()
+        try:
+            got, _ = native(stage1, dsrc.encode(), td, seeded)
+        except subprocess.TimeoutExpired:
+            got = ("compile-timeout", 600)
+        ok = got == dexp or (may_refuse and got[0] == "refused" and got[1] == 3)
+        rep.check(ok, f"default-profile {label} ({len(dsrc)} B): native={got[:2]} Python={dexp}"
+                      + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
+                      + f" [{time.time() - t0:.0f} s]")
+
+
 def refused_padded_program(lines: int):
     pad = "// padding comment line for the refusal reporter scan xxxxxxxxxxxx\n" * lines
     src = ("fn main() -> i64 { return 0; }\n" + pad
@@ -669,7 +788,28 @@ def main() -> int:
                     help="run only the harness self-checks (no compiler needed)")
     ap.add_argument("--flat-only", action="store_true",
                     help="run only the giant flat statement-list cases in the bounded profile")
+    ap.add_argument("--deep-only", action="store_true",
+                    help="run only the deep-tree cases (bounded, bounded fed a v1 image, and with "
+                         "--stage1 the default profile)")
     a = ap.parse_args()
+    if a.deep_only:
+        rep = Report()
+        with tempfile.TemporaryDirectory() as tdn:
+            td = pathlib.Path(tdn)
+            if a.stage1_bounded:
+                stage1b = pathlib.Path(a.stage1_bounded).resolve()
+            elif SEED.exists():
+                stage1b = derive_stage1_bounded(td)
+            else:
+                print(f"BLOCKED: frozen seed {SEED} missing")
+                return 2
+            stage1 = pathlib.Path(a.stage1).resolve() if a.stage1 else None
+            print(f"[cf] deep trees: stage1 (bounded) = {stage1b}, stage1 (default) = {stage1}")
+            bounded_section(rep, stage1b, td, deep_cases())
+            deep_extra_sections(rep, stage1b, stage1, td)
+        print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
+        print("FAIL" if rep.fails else "ALL PASS  (deep trees: success or a clean rc-3 refusal, never a signal)")
+        return 1 if rep.fails else 0
     if a.flat_only:
         rep = Report()
         with tempfile.TemporaryDirectory() as tdn:
@@ -810,6 +950,7 @@ def main() -> int:
             stage1b = bfut.result()
             print(f"  stage1 (bounded) = frozen seed + v2 header -> this tree ({stage1b.stat().st_size} B)")
         bounded_section(rep, stage1b, td, bounded_cases())
+        deep_extra_sections(rep, stage1b, stage1, td)
 
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)

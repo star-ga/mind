@@ -16989,6 +16989,20 @@ pub fn measure_mixed_instrs_probe(stmts_addr: i64, n: i64, buf: i64, params_addr
 // bindings (name + merge_id) so an ENCLOSING if-expr whose branch VALUE is this if-expr can
 // re-merge them — its branch-local lets stay live through the value position (SSA F2).
 pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
+    // Census X1 capacity: nested value-if emissions are bounded (nb_twin_vif_enter).
+    if nb_twin_vif_enter() == 0 {
+        if nbind_cell != 0 {
+            __mind_store_i64(nbind_cell, 0)
+        }
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let r: EmitState = emit_if_expr_any_lv_run(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
+    let _x: i64 = nb_twin_vif_exit();
+    r
+}
+
+pub fn emit_if_expr_any_lv_run(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
     if nbind_cell != 0 {
         __mind_store_i64(nbind_cell, 0)
     }
@@ -21434,6 +21448,20 @@ pub fn seq_cap_env(fn_node: i64, stmts_len: i64) -> i64 {
 }
 
 pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
+    // Census X1 capacity: a function on which the twin gave up (nb_twin_vif_enter,
+    // nb_twin_while_enter) is rejected whatever the emission returned.
+    let _r0: i64 = nb_twin_fn_reset(1);
+    let r: EmitState = emit_mic3_module_fndef_run(s, src, fn_node, strbuf, offs, ncount, ok_cell);
+    if nb_twin_gave_up() != 0 {
+        __mind_store_i64(ok_cell, 0);
+        let _r1: i64 = nb_twin_fn_reset(0);
+        return s;
+    }
+    let _r2: i64 = nb_twin_fn_reset(0);
+    r
+}
+
+pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
     let nidx: i64 = fn_name_idx(src, fn_node, strbuf, offs, ncount);
     if nidx < 0 {
         __mind_store_i64(ok_cell, 0);
@@ -31947,6 +31975,17 @@ pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_a
 // emit_mic3_while_general that also reports (abk_cell != 0) the alias-break copy-pair
 // count it EMITTED, so a caller that planned the count earlier can cross-check it.
 pub fn emit_mic3_while_general_k(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, lvenv_in: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64, abk_cell: i64) -> EmitState {
+    // Census X1 capacity: nested while emissions are bounded (nb_twin_while_enter).
+    if nb_twin_while_enter() == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let r: EmitState = emit_mic3_while_general_k_run(s, while_node, buf, params_addr, n_params, base_in, lvenv_in, nlv, strbuf, offs, ncount, merge_out, nmerge_cell, endbase_cell, okcell, abk_cell);
+    let _x: i64 = nb_twin_while_exit();
+    r
+}
+
+pub fn emit_mic3_while_general_k_run(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, lvenv_in: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64, abk_cell: i64) -> EmitState {
     // Alias-break first: the copies precede the While in the parent block, so the
     // cond/body ids start after them, and the seed env (a private copy — the
     // caller's env is untouched, exactly like Rust's `seed_env`) carries them.
@@ -32484,14 +32523,437 @@ pub fn nb_arena_short(need: i64) -> i64 {
 // refuses the program (clean rc 3) before the front end runs. The .so has no
 // layout (4 GiB default) and refuses only past ~6.7M tokens.
 pub fn nb_stack_short(ntok: i64) -> i64 {
-    let own: i64 = nb_stack_bytes();
-    let cap: i64 = if own < 402653184 {
+    if ntok * 640 + 16777216 > nb_own_stack_bytes() {
+        return 1;
+    }
+    0
+}
+
+// Stack of the RUNNING native compiler itself: the memsz of its own stack
+// PT_LOAD (the PT_LOAD with the highest vaddr), read from the program headers
+// that its code segment maps at nb_load_addr() (every native image maps its
+// ELF header there: the code PT_LOAD starts at file offset 0). The published
+// layout (nb_stack_bytes) is the layout requested for the image being EMITTED,
+// not the compiler's own: a bounded compiler (384 MiB stack) fed a default-
+// layout image request budgeted for a 4 GiB stack and could overflow its own
+// (census X1). The malloc-backed .so has no image header (arena probe 0) and
+// keeps the previous rule: the published layout, floored at the bounded
+// profile's 384 MiB.
+pub fn nb_own_stack_bytes() -> i64 {
+    let pub_stack: i64 = nb_stack_bytes();
+    let floor: i64 = if pub_stack < 402653184 {
         402653184
     } else {
-        own
+        pub_stack
     };
-    if ntok * 640 + 16777216 > cap {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() {
+        return floor;
+    }
+    let base: i64 = nb_load_addr();
+    if (__mind_load_i64(base) & 4294967295) != 1179403647 {
+        return floor;
+    }
+    let phoff: i64 = __mind_load_i64(base + 32);
+    let phnum: i64 = __mind_load_i64(base + 56) & 65535;
+    let got: i64 = nb_own_stack_ph(base + phoff, phnum, 0, 0 - 1, 0);
+    if got <= 0 {
+        return floor;
+    }
+    got
+}
+
+// memsz of the PT_LOAD with the highest vaddr among program headers [i, n).
+pub fn nb_own_stack_ph(ph: i64, n: i64, i: i64, best_va: i64, best_sz: i64) -> i64 {
+    if i >= n {
+        return best_sz;
+    }
+    let p: i64 = ph + i * 56;
+    if (__mind_load_i64(p) & 4294967295) == 1 {
+        let va: i64 = __mind_load_i64(p + 16);
+        if va > best_va {
+            return nb_own_stack_ph(ph, n, i + 1, va, __mind_load_i64(p + 40));
+        }
+    }
+    nb_own_stack_ph(ph, n, i + 1, best_va, best_sz)
+}
+
+// Nesting budget of the RUNNING native compiler for a whole program (census X1
+// capacity: deep trees). The parser, the mic@3 twin and the emitters recurse
+// once per nesting level of an expression or a block, not once per token, so
+// nb_stack_short (which budgets the per-token walks) let deep trees through: a
+// 40000-term `1 + 1 + ...` chain, 40000 nested parentheses or calls and a
+// 40000-deep unary minus or `as` chain each SIGSEGVed the bounded compiler
+// (384 MiB stack). Measured peak stack on the bounded compiler: ~15.5 KiB per
+// binary / unary / `as` operator level, <= 13 KiB per bracket level, <= 5.5 KiB
+// per else-if arm, <= 4 KiB per nested block. nb_nest_units charges every
+// level along the deepest path at or above that (KiB units: 16 per operator,
+// `as` and `(` / `[`, 8 per `else`, 4 per `{`, 2 per `if`); the program is
+// refused (clean rc 3) when that path, at 1.25 KiB per unit, plus 32 MiB could
+// overflow the compiler's own stack. Flat statement lists add nothing (`;`,
+// `,` and a `}` that ends a statement reset the level's chain): their walks
+// are per token, which nb_stack_short budgets. The scan's tables are reclaimed.
+pub fn nb_depth_short(src: i64, tokens: Vec) -> i64 {
+    let ckpt: i64 = __mind_alloc(0);
+    let units: i64 = nb_nest_units(src, tokens);
+    let _rs: i64 = nb_arena_reclaim(ckpt);
+    if units * 1280 + 33554432 > nb_own_stack_bytes() {
         return 1;
+    }
+    0
+}
+
+// The deepest nesting path of the token stream, in nb_depth_short's units. A
+// linear scan (halving recursion, so its own depth is log2(n) + 64) over a
+// table of bracket levels: per level [base units, chain units, chain mark at the
+// level's latest `if`].
+pub fn nb_nest_units(src: i64, tokens: Vec) -> i64 {
+    let n: i64 = tok_count(tokens);
+    let st: i64 = __mind_alloc(24);
+    let lv: i64 = __mind_alloc((n + 2) * 24);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, lv);
+    __mind_store_i64(lv, 0);
+    __mind_store_i64(lv + 8, 0);
+    __mind_store_i64(lv + 16, 0);
+    let _s: i64 = nb_nest_span(src, tokens, n, 0, n, st);
+    __mind_load_i64(st + 8)
+}
+
+pub fn nb_nest_span(src: i64, tokens: Vec, n: i64, a: i64, b: i64, st: i64) -> i64 {
+    if b - a <= 64 {
+        return nb_nest_run(src, tokens, n, a, b, st);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    let _l: i64 = nb_nest_span(src, tokens, n, a, mid, st);
+    nb_nest_span(src, tokens, n, mid, b, st)
+}
+
+pub fn nb_nest_run(src: i64, tokens: Vec, n: i64, i: i64, b: i64, st: i64) -> i64 {
+    if i >= b {
+        return 0;
+    }
+    let _t: i64 = nb_nest_tok(src, tokens, n, i, st);
+    nb_nest_run(src, tokens, n, i + 1, b, st)
+}
+
+pub fn nb_nest_max(st: i64, v: i64) -> i64 {
+    if v > __mind_load_i64(st + 8) {
+        __mind_store_i64(st + 8, v)
+    }
+    0
+}
+
+// Units an operator token adds to its level's chain (0: not an operator).
+pub fn nb_nest_op_units(src: i64, tokens: Vec, i: i64, k: i64) -> i64 {
+    if k == 11 {
+        return 16;
+    }
+    if k >= 12 {
+        if k <= 17 {
+            return 16;
+        }
+    }
+    if k >= 22 {
+        if k <= 27 {
+            return 16;
+        }
+    }
+    if k >= 30 {
+        if k <= 35 {
+            return 16;
+        }
+    }
+    if k == 37 {
+        return 16;
+    }
+    if k == 38 {
+        return 16;
+    }
+    if k == 1 {
+        let lo: i64 = tok_lo(tokens, i);
+        if tok_hi(tokens, i) - lo == 2 {
+            if load_byte(src, lo) == 97 {
+                if load_byte(src, lo + 1) == 115 {
+                    return 16;
+                }
+            }
+        }
+    }
+    0
+}
+
+// 1 iff the token after a `}` starts a new statement or item (the `}` ended a
+// statement, so its level's chain restarts): an identifier other than `as`,
+// `let`, `if`, `}`, `;`, `fn`, `pub`, `use`, or the end of the stream.
+pub fn nb_nest_stmt_after(src: i64, tokens: Vec, n: i64, j: i64) -> i64 {
+    if j >= n {
+        return 1;
+    }
+    let k: i64 = tok_kind(tokens, j);
+    if k == 1 {
+        if nb_nest_op_units(src, tokens, j, k) == 0 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == 19 {
+        return 1;
+    }
+    if k == 28 {
+        return 1;
+    }
+    if k == 6 {
+        return 1;
+    }
+    if k == 8 {
+        return 1;
+    }
+    if k == 18 {
+        return 1;
+    }
+    if k == 21 {
+        return 1;
+    }
+    if k == 20 {
+        return 1;
+    }
+    if k == 0 {
+        return 1;
+    }
+    0
+}
+
+pub fn nb_nest_tok(src: i64, tokens: Vec, n: i64, i: i64, st: i64) -> i64 {
+    let k: i64 = tok_kind(tokens, i);
+    let sp: i64 = __mind_load_i64(st);
+    let lv: i64 = __mind_load_i64(st + 16) + sp * 24;
+    let base: i64 = __mind_load_i64(lv);
+    let ops: i64 = __mind_load_i64(lv + 8);
+    if k == 3 {
+        return nb_nest_open(st, lv, sp, base + ops + 16);
+    }
+    if k == 40 {
+        return nb_nest_open(st, lv, sp, base + ops + 16);
+    }
+    if k == 5 {
+        return nb_nest_open(st, lv, sp, base + ops + 4);
+    }
+    if k == 4 {
+        return nb_nest_close(st, sp);
+    }
+    if k == 41 {
+        return nb_nest_close(st, sp);
+    }
+    if k == 6 {
+        let _c: i64 = nb_nest_close(st, sp);
+        if sp > 0 {
+            if nb_nest_stmt_after(src, tokens, n, i + 1) == 1 {
+                __mind_store_i64(lv - 16, 0);
+                __mind_store_i64(lv - 8, 0)
+            }
+        }
+        return 0;
+    }
+    if k == 8 {
+        __mind_store_i64(lv + 8, 0);
+        __mind_store_i64(lv + 16, 0);
+        return 0;
+    }
+    if k == 7 {
+        __mind_store_i64(lv + 8, 0);
+        __mind_store_i64(lv + 16, 0);
+        return 0;
+    }
+    if k == 28 {
+        __mind_store_i64(lv + 16, ops);
+        __mind_store_i64(lv + 8, ops + 2);
+        return nb_nest_max(st, base + ops + 2);
+    }
+    if k == 29 {
+        let e: i64 = __mind_load_i64(lv + 16) + 8;
+        __mind_store_i64(lv + 8, e);
+        __mind_store_i64(lv + 16, e);
+        return nb_nest_max(st, base + e);
+    }
+    let u: i64 = nb_nest_op_units(src, tokens, i, k);
+    if u == 0 {
+        return 0;
+    }
+    __mind_store_i64(lv + 8, ops + u);
+    nb_nest_max(st, base + ops + u)
+}
+
+pub fn nb_nest_open(st: i64, lv: i64, sp: i64, nb: i64) -> i64 {
+    let nl: i64 = lv + 24;
+    __mind_store_i64(nl, nb);
+    __mind_store_i64(nl + 8, 0);
+    __mind_store_i64(nl + 16, 0);
+    __mind_store_i64(st, sp + 1);
+    nb_nest_max(st, nb)
+}
+
+pub fn nb_nest_close(st: i64, sp: i64) -> i64 {
+    if sp > 0 {
+        __mind_store_i64(st, sp - 1)
+    }
+    0
+}
+
+// ---- native-only scratch words after the layout cell (census X1 capacity) ----
+// The self-host driver allocates the layout cell as 96 bytes: after the five
+// layout words come 5 = the stage's refusal reason (1: past the stack budget),
+// 6 = mic@3 twin value-if emission depth, 7 = value-if emissions of the current
+// function, 8 = the twin gave up on the current function, 9 = twin while
+// emission depth, 10 = 1 while a function is being emitted by
+// emit_mic3_module_fndef, 11 = nb_xcell_magic(). Only a native image driven by
+// that driver has them; the .so and any other host see 0 and never write.
+pub fn nb_xcell_magic() -> i64 {
+    5291835012839604563
+}
+pub fn nb_xcell(k: i64) -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() + 96 {
+        return 0;
+    }
+    if __mind_load_i64(nb_layout_cell() + 88) != nb_xcell_magic() {
+        return 0;
+    }
+    nb_layout_cell() + k * 8
+}
+
+// A stage refusal for capacity: recorded for the driver's diagnostic.
+pub fn nb_refuse_capacity() -> EmitState {
+    let c: i64 = nb_xcell(5);
+    if c != 0 {
+        __mind_store_i64(c, 1)
+    }
+    es_new()
+}
+
+// Census X1 capacity, mic@3 twin. A value-if is emitted once into scratch to
+// probe its branches' escaping bindings (branch_escape_count / _probe and the
+// shape planners) and then for real, so value-ifs nested in branch position
+// cost 2^depth emissions, each with fresh tables: 15 nested value-ifs (or a
+// 15-arm else-if value chain) exhausted the bounded compiler's 768 MiB arena
+// (exit 70); nested while loops are probed the same way (a 300-deep nest ran
+// out at while depth 20). The twin gives up on a function past
+// nb_twin_vif_depth_cap() nested value-if emissions,
+// nb_twin_while_depth_cap() nested while emissions, or nb_twin_vif_cap()
+// value-if and while emissions in all; the function is then
+// lowered on the HOME path under a source note, exactly like any other shape
+// the twin rejects. Native images only (nb_xcell); the .so is unchanged.
+pub fn nb_twin_vif_depth_cap() -> i64 {
+    11
+}
+pub fn nb_twin_vif_cap() -> i64 {
+    4096
+}
+pub fn nb_twin_while_depth_cap() -> i64 {
+    12
+}
+
+// Reset the twin's per-function counters and mark whether a function's
+// emission is in progress (`active`): the caps count only inside one.
+pub fn nb_twin_fn_reset(active: i64) -> i64 {
+    let c: i64 = nb_xcell(6);
+    if c == 0 {
+        return 0;
+    }
+    __mind_store_i64(c, 0);
+    __mind_store_i64(c + 8, 0);
+    __mind_store_i64(c + 16, 0);
+    __mind_store_i64(c + 24, 0);
+    __mind_store_i64(c + 32, active);
+    0
+}
+
+// The twin counter word k while a function's emission is in progress, else 0.
+pub fn nb_twin_cell(k: i64) -> i64 {
+    let c: i64 = nb_xcell(k);
+    if c == 0 {
+        return 0;
+    }
+    if __mind_load_i64(nb_layout_cell() + 80) == 0 {
+        return 0;
+    }
+    c
+}
+
+// 1 iff the twin gave up on the current function.
+pub fn nb_twin_gave_up() -> i64 {
+    let c: i64 = nb_twin_cell(8);
+    if c == 0 {
+        return 0;
+    }
+    __mind_load_i64(c)
+}
+
+pub fn nb_twin_give_up() -> i64 {
+    let c: i64 = nb_twin_cell(8);
+    if c != 0 {
+        __mind_store_i64(c, 1)
+    }
+    0
+}
+
+// Enter one value-if emission: 1 = go ahead, 0 = the twin gave up.
+pub fn nb_twin_vif_enter() -> i64 {
+    let c: i64 = nb_twin_cell(6);
+    if c == 0 {
+        return 1;
+    }
+    if __mind_load_i64(c + 16) != 0 {
+        return 0;
+    }
+    let d: i64 = __mind_load_i64(c) + 1;
+    let t: i64 = __mind_load_i64(c + 8) + 1;
+    __mind_store_i64(c + 8, t);
+    if d > nb_twin_vif_depth_cap() {
+        return nb_twin_give_up();
+    }
+    if t > nb_twin_vif_cap() {
+        return nb_twin_give_up();
+    }
+    __mind_store_i64(c, d);
+    1
+}
+
+pub fn nb_twin_vif_exit() -> i64 {
+    let c: i64 = nb_twin_cell(6);
+    if c != 0 {
+        __mind_store_i64(c, __mind_load_i64(c) - 1)
+    }
+    0
+}
+
+// Enter one while emission: 1 = go ahead, 0 = the twin gave up.
+pub fn nb_twin_while_enter() -> i64 {
+    let c: i64 = nb_twin_cell(9);
+    if c == 0 {
+        return 1;
+    }
+    if nb_twin_gave_up() != 0 {
+        return 0;
+    }
+    let d: i64 = __mind_load_i64(c) + 1;
+    let t: i64 = __mind_load_i64(c - 16) + 1;
+    __mind_store_i64(c - 16, t);
+    if d > nb_twin_while_depth_cap() {
+        return nb_twin_give_up();
+    }
+    if t > nb_twin_vif_cap() {
+        return nb_twin_give_up();
+    }
+    __mind_store_i64(c, d);
+    1
+}
+
+pub fn nb_twin_while_exit() -> i64 {
+    let c: i64 = nb_twin_cell(9);
+    if c != 0 {
+        __mind_store_i64(c, __mind_load_i64(c) - 1)
     }
     0
 }
@@ -46319,7 +46781,10 @@ pub fn hm_route_cap() -> i64 {
 pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
     if nb_stack_short(tok_count(tokens)) == 1 {
-        return es_new();
+        return nb_refuse_capacity();
+    }
+    if nb_depth_short(src_addr, tokens) == 1 {
+        return nb_refuse_capacity();
     }
     let hslot: i64 = __mind_alloc(32);
     let route: i64 = __mind_alloc(hm_route_cap() * 8 + 16);
