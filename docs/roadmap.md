@@ -2685,3 +2685,39 @@ model whose origin can be checked, not just its output.
   inputs that produced the weights?
 
 Proposed; sequenced after Phase 21 and Phase 22.
+
+## Phase 24 — Seeded rewrite-rule grid generator, a showcase (proposed, 2026-10-14)
+
+**Goal.** A small `examples/` program where the whole generator is a list of grid rewrite
+rules (find a pattern, replace it, repeat until nothing matches). When a rule matches in
+several places, one match is picked by a seeded integer RNG. Same seed gives the same maze
+or structure, byte for byte, on x86, ARM and GPU.
+
+**Why it fits MIND.** Recent research shows that short ordered lists of local rewrite rules
+grow mazes, caves and buildings, in 2D and 3D, from a single starting cell. The work is all
+integer grid matching, which is the part of MIND that executes today. The only source of
+variation is the random choice between matches, and a seeded integer RNG pins it. It sits
+next to `examples/lorenz_f64.mind` as a second "deterministic but not predictable"
+demonstration: the output is unpredictable by eye and still bit-identical everywhere.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 24.1 | 2D rule engine: integer grid, ordered rules, seeded integer RNG for match choice; maze-growth and backtrack rules | Final grid hash identical on avx2 and neon for fixed seeds |
+| 24.2 | Same rule file run in 3D without changes | 3D grid hash identical on avx2 and neon |
+| 24.3 | Evidence record binding rule-file hash, seed and output-grid hash | `mindc verify` detects a one-byte change in any of the three |
+
+### Firewall — do not cross it
+
+- Integer only: no floats anywhere in the matcher, the RNG or the output.
+- Match enumeration order is part of the spec (row-major, fixed), so the RNG sees the same
+  candidate list on every substrate.
+- Example and library path only; nothing enters the default build.
+
+### Open questions — answer before this gets a milestone
+
+- Which RNG goes in `std` for this: an existing integer generator or a new counter-based one?
+- How large a grid before matching cost needs an index rather than a full scan?
+
+Proposed; a showcase, not on the critical path.
