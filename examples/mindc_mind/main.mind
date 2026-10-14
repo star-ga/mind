@@ -644,24 +644,89 @@ pub fn parse_extern_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 
 // ===== Sub-scans (tail-recursive) =====
 
+// Census X1 capacity: every lexer sub-scan below walked its run one stack
+// frame per source byte (no tail calls in the native compiler), so one long
+// token overflowed the bounded compiler's stack: a 839 KB string literal took
+// 480 B of stack per byte in scan_string_end (SIGSEGV), and a long identifier,
+// digit run or comment line did the same at their own frame sizes. Each scan
+// now walks at most lx_leaf() bytes per recursion chain: a short run is found
+// by the first leaf (the common token, no extra cost), a longer one by halving
+// the rest of the buffer (depth log2(n / lx_leaf()) + lx_leaf()). The
+// positions returned are those of the per-byte walk, so the token stream of
+// every program is unchanged.
+pub fn lx_leaf() -> i64 {
+    64
+}
+pub fn lx_lim(i: i64, hi: i64) -> i64 {
+    if hi - i > lx_leaf() {
+        return i + lx_leaf();
+    }
+    hi
+}
 pub fn scan_ident_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return i;
     }
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_ident_leaf(buf, i, lim);
+    if r < lim {
+        return r;
+    }
+    scan_ident_span(buf, lim, buf_len)
+}
+// First non-alnum position in [i, hi), or hi.
+pub fn scan_ident_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
     if is_alnum(load_byte(buf, i)) == 1 {
-        return scan_ident_end(buf, i + 1, buf_len);
+        return scan_ident_leaf(buf, i + 1, hi);
     }
     i
+}
+pub fn scan_ident_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_ident_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_ident_span(buf, mid, hi);
+    }
+    scan_ident_leaf(buf, lo, hi)
 }
 
 pub fn scan_int_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return i;
     }
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_int_leaf(buf, i, lim);
+    if r < lim {
+        return r;
+    }
+    scan_int_span(buf, lim, buf_len)
+}
+// First non-digit position in [i, hi), or hi.
+pub fn scan_int_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
     if is_digit(load_byte(buf, i)) == 1 {
-        return scan_int_end(buf, i + 1, buf_len);
+        return scan_int_leaf(buf, i + 1, hi);
     }
     i
+}
+pub fn scan_int_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_int_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_int_span(buf, mid, hi);
+    }
+    scan_int_leaf(buf, lo, hi)
 }
 
 // Decimal integer part WITH `_` digit separators, mirroring the Rust parser
@@ -673,18 +738,50 @@ pub fn scan_dec_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return i;
     }
+    let r: i64 = scan_dec_leaf(buf, i, lx_lim(i, buf_len), buf_len);
+    if r >= 0 {
+        return r;
+    }
+    let c: i64 = 0 - 1 - r;
+    if c >= buf_len {
+        return c;
+    }
+    let r2: i64 = scan_dec_span(buf, c, buf_len, buf_len);
+    if r2 >= 0 {
+        return r2;
+    }
+    0 - 1 - r2
+}
+// The digit-run walk over [i, hi): the stop position (>= 0), or -1 - c when the
+// run reaches hi and continues at c (hi, or hi + 1 after a `_d` pair that
+// straddles hi). The `_` lookahead reads past hi, exactly as the per-byte walk.
+pub fn scan_dec_leaf(buf: i64, i: i64, hi: i64, buf_len: i64) -> i64 {
+    if i >= hi {
+        return 0 - 1 - i;
+    }
     let c: i64 = load_byte(buf, i);
     if is_digit(c) == 1 {
-        return scan_dec_end(buf, i + 1, buf_len);
+        return scan_dec_leaf(buf, i + 1, hi, buf_len);
     }
     if c == 95 {
         if i + 1 < buf_len {
             if is_digit(load_byte(buf, i + 1)) == 1 {
-                return scan_dec_end(buf, i + 2, buf_len);
+                return scan_dec_leaf(buf, i + 2, hi, buf_len);
             }
         }
     }
     i
+}
+pub fn scan_dec_span(buf: i64, lo: i64, hi: i64, buf_len: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_dec_span(buf, lo, mid, buf_len);
+        if r >= 0 {
+            return r;
+        }
+        return scan_dec_span(buf, 0 - 1 - r, hi, buf_len);
+    }
+    scan_dec_leaf(buf, lo, hi, buf_len)
 }
 
 // `i` points at the first REQUIRED exponent digit. Returns the index past the
@@ -735,10 +832,37 @@ pub fn scan_comment_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return i;
     }
-    if load_byte(buf, i) == 10 {
-        return i + 1;
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_nl_leaf(buf, i, lim);
+    if r < lim {
+        return r + 1;
     }
-    scan_comment_end(buf, i + 1, buf_len)
+    let r2: i64 = scan_nl_span(buf, lim, buf_len);
+    if r2 < buf_len {
+        return r2 + 1;
+    }
+    buf_len
+}
+// Position of the first newline in [i, hi), or hi.
+pub fn scan_nl_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if load_byte(buf, i) == 10 {
+        return i;
+    }
+    scan_nl_leaf(buf, i + 1, hi)
+}
+pub fn scan_nl_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_nl_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_nl_span(buf, mid, hi);
+    }
+    scan_nl_leaf(buf, lo, hi)
 }
 
 pub fn match_punct(b: i64) -> i64 {
@@ -851,6 +975,24 @@ pub fn scan_drive(buf: i64, buf_len: i64, toks: Vec, cur: i64) -> Vec {
     }
     let t: Vec = scan_chunk(buf, nx, buf_len, toks, cur, scan_chunk_steps());
     scan_drive(buf, buf_len, t, cur)
+}
+// lex() that stops once more than `cap` tokens were lexed (between chunks of
+// scan_chunk_steps() tokens). A stream within the cap is lex()'s exactly.
+pub fn lex_capped(buf: i64, buf_len: i64, cap: i64) -> Vec {
+    let cur: i64 = __mind_alloc(8);
+    __mind_store_i64(cur, 0);
+    scan_drive_capped(buf, buf_len, vec_new(), cur, cap)
+}
+pub fn scan_drive_capped(buf: i64, buf_len: i64, toks: Vec, cur: i64, cap: i64) -> Vec {
+    let nx: i64 = __mind_load_i64(cur);
+    if nx < 0 {
+        return toks;
+    }
+    if tok_count(toks) > cap {
+        return toks;
+    }
+    let t: Vec = scan_chunk(buf, nx, buf_len, toks, cur, scan_chunk_steps());
+    scan_drive_capped(buf, buf_len, t, cur, cap)
 }
 pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
     let cur: i64 = __mind_alloc(8);
@@ -1088,6 +1230,27 @@ pub fn scan_string_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return 0 - 1;
     }
+    let r: i64 = scan_str_leaf(buf, i, lx_lim(i, buf_len), buf_len);
+    if r >= 0 - 1 {
+        return r;
+    }
+    let c: i64 = 0 - 2 - r;
+    if c >= buf_len {
+        return 0 - 1;
+    }
+    let r2: i64 = scan_str_span(buf, c, buf_len, buf_len);
+    if r2 >= 0 - 1 {
+        return r2;
+    }
+    0 - 1
+}
+// The string walk over [i, hi): the index past the closing quote (>= 0), -1
+// when the literal fails closed, or -2 - c when the walk reaches hi and
+// continues at c (hi, or hi + 1 after an escape that straddles hi).
+pub fn scan_str_leaf(buf: i64, i: i64, hi: i64, buf_len: i64) -> i64 {
+    if i >= hi {
+        return 0 - 2 - i;
+    }
     let b: i64 = load_byte(buf, i);
     if b == 34 {
         return i + 1;
@@ -1099,22 +1262,43 @@ pub fn scan_string_end(buf: i64, i: i64, buf_len: i64) -> i64 {
         if string_escape_value(load_byte(buf, i + 1)) < 0 {
             return 0 - 1;
         }
-        return scan_string_end(buf, i + 2, buf_len);
+        return scan_str_leaf(buf, i + 2, hi, buf_len);
     }
     if b == 10 {
         return 0 - 1;
     }
-    scan_string_end(buf, i + 1, buf_len)
+    scan_str_leaf(buf, i + 1, hi, buf_len)
+}
+pub fn scan_str_span(buf: i64, lo: i64, hi: i64, buf_len: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_str_span(buf, lo, mid, buf_len);
+        if r >= 0 - 1 {
+            return r;
+        }
+        return scan_str_span(buf, 0 - 2 - r, hi, buf_len);
+    }
+    scan_str_leaf(buf, lo, hi, buf_len)
 }
 
 pub fn string_span_has_escape(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        if string_span_has_escape(buf, lo, mid) == 1 {
+            return 1;
+        }
+        return string_span_has_escape(buf, mid, hi);
+    }
+    string_escape_leaf(buf, lo, hi)
+}
+pub fn string_escape_leaf(buf: i64, lo: i64, hi: i64) -> i64 {
     if lo >= hi {
         return 0;
     }
     if load_byte(buf, lo) == 92 {
         return 1;
     }
-    string_span_has_escape(buf, lo + 1, hi)
+    string_escape_leaf(buf, lo + 1, hi)
 }
 
 // ===== Public entry: lex =====
@@ -22503,27 +22687,44 @@ pub fn emit_arr_elems(s: EmitState, src: i64, elems_addr: i64, count: i64, j: i6
     emit_arr_elems(s1, src, elems_addr, count, j + 1)
 }
 
+// Census X1 capacity: the descriptor walk took one stack frame per descriptor
+// slot (~2.4 KB each in the native compiler, which has no tail calls), so one
+// wide expression (a balanced `+` tree of 65536 leaves, ~196k slots) overflowed
+// the bounded compiler's 384 MiB stack (SIGSEGV) while its nesting depth was 17.
+// The slots are walked in halving ranges of at most 256 (depth log2(n / 256)
+// + 256), in the same order, so the emitted bytes are unchanged.
 pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, n_strings: i64, i: i64) -> EmitState {
-    if i >= n_nodes {
+    emit_mic3_tree_range(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i, n_nodes)
+}
+pub fn emit_mic3_tree_range(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, n_strings: i64, lo: i64, hi: i64) -> EmitState {
+    if hi - lo > 256 {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let s1: EmitState = emit_mic3_tree_range(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, lo, mid);
+        return emit_mic3_tree_range(s1, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, mid, hi);
+    }
+    emit_mic3_tree_run(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, lo, hi)
+}
+pub fn emit_mic3_tree_run(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, n_strings: i64, i: i64, run_end: i64) -> EmitState {
+    if i >= run_end {
         return s;
     }
     let kind: i64 = __mind_load_i64(nodes + i * 32);
     if kind == 0 {
-        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 4 (arg-cons) and kind 5 (callee leaf) are STRUCTURAL metadata — emit
     // nothing (their vids were never assigned; the call node walks them).
     if kind == 4 {
-        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     if kind == 5 {
-        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     let dst: i64 = __mind_load_i64(vidbuf + i * 8);
     if kind == 2 {
         let lit: i64 = __mind_load_i64(nodes + i * 32 + 8);
         let sc: EmitState = emit_mic3_const_i64(s, dst, lit);
-        return emit_mic3_tree_body(sc, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sc, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 6 = float const leaf (ast_float_lit): record[1] = f64 bit pattern.
     // Emits OP_CONST_F64, byte-exact vs --emit-mic3 (only dyadic literals reach
@@ -22531,7 +22732,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
     if kind == 6 {
         let fbits: i64 = __mind_load_i64(nodes + i * 32 + 8);
         let sf: EmitState = emit_mic3_const_f64(s, dst, fbits);
-        return emit_mic3_tree_body(sf, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sf, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     if kind == 3 {
         // CALL: child0 = callee leaf slot (its span -> strtab index), child1 = first
@@ -22549,7 +22750,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let s3: EmitState = emit_uleb128(s2, name_idx);
         let s4: EmitState = emit_uleb128(s3, nargs);
         let s5: EmitState = emit_argcons_vids(s4, nodes, vidbuf, first_cons);
-        return emit_mic3_tree_body(s5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(s5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 9 = NON-CONST array vec_new (#40) -> OP_CALL (0x16): dst || name_idx(vec_new)
     // || uleb(0 args). The array runtime handle; the strtab already interned "vec_new".
@@ -22559,7 +22760,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sn2: EmitState = emit_uleb128(sn1, dst);
         let sn3: EmitState = emit_uleb128(sn2, vn_idx);
         let sn4: EmitState = emit_uleb128(sn3, 0);
-        return emit_mic3_tree_body(sn4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sn4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 10 = NON-CONST array vec_push (#40) -> OP_CALL (0x16): dst || name_idx(vec_push)
     // || uleb(2) || handle_vid || elem_vid. record[2]=prev-handle slot, record[3]=element
@@ -22576,7 +22777,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sp4: EmitState = emit_uleb128(sp3, 2);
         let sp5: EmitState = emit_uleb128(sp4, vp_vvid);
         let sp6: EmitState = emit_uleb128(sp5, vp_evid);
-        return emit_mic3_tree_body(sp6, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sp6, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 7 = constant-int array literal -> OP_CONST_ARRAY (0x19): dst ||
     // opt_string(None) || uleb(count) || per-element zigzag(value). Elements are
@@ -22590,7 +22791,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sa3: EmitState = es_push(sa2, 0);
         let sa4: EmitState = emit_uleb128(sa3, count);
         let sa5: EmitState = emit_arr_elems(sa4, src, elems_addr, count, 0);
-        return emit_mic3_tree_body(sa5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sa5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 8 = array index READ -> OP_ARRAY_LOAD (0x1A): dst || base_vid ||
     // index_vid. record[2]=base_slot, record[3]=index_slot.
@@ -22603,7 +22804,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sl2: EmitState = emit_uleb128(sl1, dst);
         let sl3: EmitState = emit_uleb128(sl2, base_vid);
         let sl4: EmitState = emit_uleb128(sl3, index_vid);
-        return emit_mic3_tree_body(sl4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(sl4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     // kind 11 = `EXPR as TARGET` conv call -> OP_CALL (0x16): dst ||
     // name_idx(__mind_conv_TARGET) || uleb(1) || operand_vid. record[1]=cast node,
@@ -22618,7 +22819,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let cc3: EmitState = emit_uleb128(cc2, cv_idx);
         let cc4: EmitState = emit_uleb128(cc3, 1);
         let cc5: EmitState = emit_uleb128(cc4, cv_ovid);
-        return emit_mic3_tree_body(cc5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+        return emit_mic3_tree_run(cc5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end);
     }
     let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
     let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
@@ -22626,7 +22827,7 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
     let lvid: i64 = __mind_load_i64(vidbuf + lslot * 8);
     let rvid: i64 = __mind_load_i64(vidbuf + rslot * 8);
     let s1: EmitState = emit_mic3_binop(s, dst, op_byte, lvid, rvid);
-    emit_mic3_tree_body(s1, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1)
+    emit_mic3_tree_run(s1, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1, run_end)
 }
 
 // Count the arg-cons chain length starting at cons slot `c` (0 = end).
@@ -23654,14 +23855,16 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
         // refuse path too. __mind_free is the malloc-backed free in the cdylib emit
         // path and a no-op `xor rax,rax` in the native bump-arena self-host (kind 7 ->
         // nb_emit_free_xor); byte-neutral to every emitted artifact (this fn runs at
-        // emit time and its return value / emitted bytes are unchanged).
-        let _fr1: i64 = __mind_free(scratch);
+        // emit time and its return value / emitted bytes are unchanged). `scratch`
+        // is an nb_ntab table (its allocation + 16), so it is released through
+        // nb_ntab_free: free() of the interior pointer corrupted the .so's heap.
+        let _fr1: i64 = nb_ntab_free(scratch);
         let _fr2: i64 = __mind_free(cur);
         return 0 - 1;
     }
     let n_nodes: i64 = __mind_load_i64(cur);
     let result: i64 = count_descriptor_nonparam(scratch, n_nodes, 0);
-    let _fs1: i64 = __mind_free(scratch);
+    let _fs1: i64 = nb_ntab_free(scratch);
     let _fs2: i64 = __mind_free(cur);
     result
 }
@@ -32526,6 +32729,113 @@ pub fn nb_arena_short(need: i64) -> i64 {
     }
     0
 }
+// Census X1 capacity (arena): 1 iff the RUNNING native compiler has less than
+// nb_arena_reserve() bytes of its OWN arena left (nb_own_arena_end). The
+// per-table estimate nb_arena_short sees one allocation; the HOME and SSA
+// lowerings and the mic@3 twin also allocate per node with no free (a
+// three-term `&&` condition costs the HOME lowering ~26 KB, a small function
+// ~105 KB of SSA tables), so 25000 such conditions in one function, or 8100
+// small functions, ran the bounded compiler's 768 MiB arena out (exit 70,
+// neither a compile nor a refusal). Every walk that allocates per item checks
+// this first (hm_stmt, nb_expr, nb_lower_all, the twin's item walks): once it
+// fires the function is poisoned, each later check short-circuits (the arena
+// only grows during a compile), and the stage refuses with refusal reason 2
+// (the driver's memory-budget diagnostic, rc 3). The reserve covers the work
+// between two checks and the image assembly after the last one. The
+// malloc-backed .so has no arena (probe 0) and never refuses here.
+pub fn nb_arena_reserve() -> i64 {
+    67108864
+}
+pub fn nb_arena_low() -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() {
+        return 0;
+    }
+    if nb_own_arena_end() - probe >= nb_arena_reserve() {
+        return 0;
+    }
+    let c: i64 = nb_xcell(5);
+    if c != 0 {
+        if __mind_load_i64(c) == 0 {
+            __mind_store_i64(c, 2)
+        }
+    }
+    1
+}
+// 1 iff a capacity check already refused this compile for the arena.
+pub fn nb_arena_refused() -> i64 {
+    let c: i64 = nb_xcell(5);
+    if c == 0 {
+        return 0;
+    }
+    if __mind_load_i64(c) == 2 {
+        return 1;
+    }
+    0
+}
+// End of the RUNNING compiler's own arena: the memsz of its own arena PT_LOAD
+// (vaddr nb_arena_addr()), read from the program headers its code segment maps
+// at nb_load_addr(), as nb_own_stack_bytes does for the stack. The published
+// layout is the one requested for the image being EMITTED (a bounded compiler
+// fed a default-layout image would budget 1 GiB of a 768 MiB arena). Without
+// readable headers: the smallest compiler arena (the bounded profile's 768 MiB).
+pub fn nb_own_arena_end() -> i64 {
+    let base: i64 = nb_load_addr();
+    if (__mind_load_i64(base) & 4294967295) != 1179403647 {
+        return nb_arena_addr() + 805306368;
+    }
+    let phoff: i64 = __mind_load_i64(base + 32);
+    let phnum: i64 = __mind_load_i64(base + 56) & 65535;
+    let sz: i64 = nb_own_arena_ph(base + phoff, phnum, 0);
+    if sz <= 0 {
+        return nb_arena_addr() + 805306368;
+    }
+    nb_arena_addr() + sz
+}
+// memsz of the PT_LOAD at vaddr nb_arena_addr() among program headers [i, n), or 0.
+pub fn nb_own_arena_ph(ph: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let p: i64 = ph + i * 56;
+    if (__mind_load_i64(p) & 4294967295) == 1 {
+        if __mind_load_i64(p + 16) == nb_arena_addr() {
+            return __mind_load_i64(p + 40);
+        }
+    }
+    nb_own_arena_ph(ph, n, i + 1)
+}
+// Tokens the RUNNING compiler can walk (nb_stack_short admits at most this
+// many), plus one: the stage lexes at most this many before refusing, so the
+// token stream of a program past the budget (27 MB of source: ~9M tokens) no
+// longer exhausts the arena before the budget can refuse it.
+pub fn nb_stack_tok_cap() -> i64 {
+    (nb_own_stack_bytes() - 16777216) / 640 + 1
+}
+// Longest token of tokens [lo, hi) in bytes (halving: depth log2(n)).
+pub fn nb_tok_max_len(toks: Vec, lo: i64, hi: i64) -> i64 {
+    if hi - lo > 64 {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let a: i64 = nb_tok_max_len(toks, lo, mid);
+        let b: i64 = nb_tok_max_len(toks, mid, hi);
+        if a > b {
+            return a;
+        }
+        return b;
+    }
+    nb_tok_max_leaf(toks, lo, hi, 0)
+}
+pub fn nb_tok_max_leaf(toks: Vec, i: i64, hi: i64, best: i64) -> i64 {
+    if i >= hi {
+        return best;
+    }
+    let w: i64 = tok_hi(toks, i) - tok_lo(toks, i);
+    if w > best {
+        return nb_tok_max_leaf(toks, i + 1, hi, w);
+    }
+    nb_tok_max_leaf(toks, i + 1, hi, best)
+}
+
 // Stack budget of the RUNNING native compiler for a whole program (census X1
 // capacity). The front end walks the token stream by recursion, one frame per
 // token: the deepest walk (const_find_from, 512-byte frames from token 0) was
@@ -33015,6 +33325,14 @@ pub fn nb_ntab(cap: i64) -> i64 {
     __mind_store_i64(t, nb_ntab_magic());
     __mind_store_i64(t + 8, cap);
     t + 16
+}
+// Release a table nb_ntab built: the allocation starts 16 bytes before the
+// table (the magic and capacity words). Freeing the table pointer itself is a
+// free() of an interior pointer, which corrupts the malloc heap of the .so
+// ("double free or corruption" on the self-host source); the native bump arena
+// ignores frees, so only the .so can see it (_cf_oracle.free_lint pins this).
+pub fn nb_ntab_free(nodes: i64) -> i64 {
+    __mind_free(nodes - 16)
 }
 pub fn nb_ntab_slot(nodes: i64, cursor: i64) -> i64 {
     let slot: i64 = __mind_load_i64(cursor);
@@ -35635,6 +35953,12 @@ pub fn nb_record_index_expr(st: NbState, buf: i64, node: i64, params_addr: i64, 
 }
 
 pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+    // Census X1 capacity: out of arena (nb_arena_low) -> poison the function
+    // and emit nothing (a wide expression costs the emitter arena per node).
+    if nb_arena_low() == 1 {
+        __mind_store_i64(lcell + 80, 1);
+        return st;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
         // Honor the synthetic-int-lit sentinel (child1==1 ⇒ the value lives DIRECTLY
@@ -43448,6 +43772,11 @@ pub fn hm_block(st: NbState, buf: i64, sa: i64, sl: i64, params_addr: i64, n_par
 }
 
 pub fn hm_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    // Census X1 capacity: out of arena (nb_arena_low) -> poison, emit nothing.
+    if nb_arena_low() == 1 {
+        let _pa: i64 = hm_poison(lcell);
+        return st;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_let() {
         return hm_let(st, buf, node, params_addr, n_params, calls, lets, lcell, srt, hc);
@@ -46612,6 +46941,11 @@ pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, st
     if i >= items_len {
         return s;
     }
+    // Census X1 capacity: out of arena (nb_arena_low) -> the twin gives up.
+    if nb_arena_low() == 1 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     let item: i64 = __mind_load_i64(items_addr + i * 8);
     // Per-item lowering allocates large tree/vid/env work buffers that are dead as
     // soon as this item has been emitted.  Reuse them when the String kept its
@@ -46992,8 +47326,14 @@ pub fn hm_route_cap() -> i64 {
 }
 
 pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
-    let tokens: Vec = lex(src_addr, src_len);
-    if nb_stack_short(tok_count(tokens)) == 1 {
+    // Census X1 capacity: lex at most nb_stack_tok_cap() tokens (a longer
+    // stream is refused by the token budget anyway), and budget the longest
+    // token like that many more tokens: the walks over one token's bytes (a
+    // string literal, an identifier) recurse once per byte, and one 1 MB
+    // literal overflowed the bounded stack while the token count was tiny.
+    let tokens: Vec = lex_capped(src_addr, src_len, nb_stack_tok_cap());
+    let ntok: i64 = tok_count(tokens);
+    if nb_stack_short(ntok + nb_tok_max_len(tokens, 0, ntok)) == 1 {
         return nb_refuse_capacity();
     }
     if nb_depth_short(src_addr, tokens) == 1 {
@@ -47004,12 +47344,18 @@ pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> E
     __mind_store_i64(route, 0);
     let ckpt: i64 = __mind_alloc(0);
     let h32: i64 = nb_trace_hash(tokens, src_addr, src_len, user_lo);
+    if nb_arena_refused() == 1 {
+        return es_new();
+    }
     if h32 != 0 {
         let _cp: i64 = nb_copy32(hslot, h32, 0);
         let _rs: i64 = nb_arena_reclaim(ckpt);
         return selftest_native_elf_hb_route(tokens, src_addr, hslot, user_lo, 0);
     }
     let _fr: EmitState = nb_build_mic3_from_tokens_r(tokens, src_addr, src_len, user_lo, route);
+    if nb_arena_refused() == 1 {
+        return es_new();
+    }
     let nf: i64 = __mind_load_i64(route);
     let _sh: i64 = nb_sha256(src_addr, src_len, hslot);
     let _rs2: i64 = nb_arena_reclaim(ckpt);
@@ -47039,6 +47385,10 @@ pub fn hm_twin_fail_walk(src: i64, items_addr: i64, items_len: i64, strbuf: i64,
         return 0;
     }
     if __mind_load_i64(route) < 0 {
+        return 0;
+    }
+    if nb_arena_low() == 1 {
+        __mind_store_i64(route, 0 - 1);
         return 0;
     }
     let item: i64 = __mind_load_i64(items_addr + i * 8);
@@ -47472,6 +47822,11 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64, route: i64) -> NbState {
     if k >= n_fns {
         return acc;
+    }
+    // Census X1 capacity: out of arena (nb_arena_low) -> the refused-module
+    // sentinel, and no further function is lowered.
+    if nb_arena_low() == 1 {
+        return NbState { code: acc.code, next_id: 0 - 1, last_id: 0, ncalls: acc.ncalls };
     }
     let node: i64 = __mind_load_i64(ordered + k * 8);
     let is_entry: i64 = nb_is_entry(k, entry_idx);

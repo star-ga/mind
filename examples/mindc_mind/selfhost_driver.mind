@@ -488,6 +488,9 @@ pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
     if __mind_load_i64(nb_layout_cell() + 40) == 1 {
         return nb_report_capacity();
     }
+    if __mind_load_i64(nb_layout_cell() + 40) == 2 {
+        return nb_report_arena();
+    }
     return nb_report_unsupported(src, user_lo, src_len);
 }
 
@@ -513,6 +516,28 @@ pub fn nb_report_capacity() -> i64 {
     __mind_store_i64(m + 112, 7954882391399607597);
     __mind_store_i64(m + 120, 2940546883337572);
     let _w: i64 = __mind_write(2, m, 127, 0 - 1);
+    3
+}
+
+// Census X1 capacity: the stage refused the program because compiling it would
+// exhaust the compiler's own arena (nb_arena_low, refusal reason 2). Writes that
+// diagnostic to fd 2 and returns 3 (it used to be the arena trap: exit 70).
+pub fn nb_report_arena() -> i64 {
+    let m: i64 = __mind_alloc(104);
+    __mind_store_i64(m + 0, 7017271716450824805);
+    __mind_store_i64(m + 8, 7020598778489301859);
+    __mind_store_i64(m + 16, 8079521904311298420);
+    __mind_store_i64(m + 24, 7286944462384099186);
+    __mind_store_i64(m + 32, 8367814982689448824);
+    __mind_store_i64(m + 40, 8532478930838381928);
+    __mind_store_i64(m + 48, 7811898643973349477);
+    __mind_store_i64(m + 56, 7882826708920267365);
+    __mind_store_i64(m + 64, 7310011970147152495);
+    __mind_store_i64(m + 72, 7450208747884470638);
+    __mind_store_i64(m + 80, 2334398928750605413);
+    __mind_store_i64(m + 88, 7954882391399607597);
+    __mind_store_i64(m + 96, 2940546883337572);
+    let _w: i64 = __mind_write(2, m, 103, 0 - 1);
     3
 }
 
