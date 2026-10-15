@@ -1,0 +1,421 @@
+// Copyright 2026 STARGA Inc.
+// Native dynamic ELF writer, Linux x86-64 LP64, version 1 candidate.
+// Standalone library: NOT wired into main.mind or an accepted compiler profile.
+// Requires std.string/std.vec and existing nb_push/nb_u16/nb_u32/nb_i64le/nb_le.
+// Input descriptors and their borrowed buffers must be valid, live, immutable
+// allocations. This raw-memory API cannot validate arbitrary forged pointers.
+// Validation is bounded and precedes mutation; no input bytes are modified.
+
+pub fn nd_base() -> i64 { 4194304 }
+pub fn nd_code_addr() -> i64 { nd_base() + 4096 }
+
+// Four words: borrowed name address/length, version address/length.
+pub fn nd_import(name: String, version: String) -> i64 {
+    let p: i64 = __mind_alloc(32);
+    __mind_store_i64(p, string_addr(name));
+    __mind_store_i64(p + 8, string_len(name));
+    __mind_store_i64(p + 16, string_addr(version));
+    __mind_store_i64(p + 24, string_len(version));
+    p
+}
+
+// Two words: offset of four-byte displacement in FF 15 disp32, input import index.
+pub fn nd_patch(displacement: i64, import_index: i64) -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, displacement);
+    __mind_store_i64(p + 8, import_index);
+    p
+}
+
+pub fn nd_word(row: i64, k: i64) -> i64 { __mind_load_i64(row + k * 8) }
+pub fn nd_byte(p: i64, i: i64) -> i64 { __mind_load_i8(p + i) }
+
+pub fn nd_alpha(b: i64) -> i64 {
+    if b >= 65 { if b <= 90 { return 1; } }
+    if b >= 97 { if b <= 122 { return 1; } }
+    if b == 95 { return 1; }
+    0
+}
+
+// mode 0: C symbol, 1: version/SONAME, 2: absolute interpreter pathname.
+pub fn nd_text_ok(p: i64, n: i64, mode: i64) -> i64 {
+    if n < 1 { return 0; }
+    if n > 255 { return 0; }
+    if p <= 0 { return 0; }
+    if p > 9223372036854775551 { return 0; }
+    if mode == 0 { if nd_alpha(nd_byte(p, 0)) == 0 { return 0; } }
+    if mode == 2 { if nd_byte(p, 0) != 47 { return 0; } }
+    let mut i: i64 = 0;
+    while i < n {
+        let b: i64 = nd_byte(p, i);
+        let mut ok: i64 = nd_alpha(b);
+        if b >= 48 { if b <= 57 { ok = 1; } }
+        if mode > 0 {
+            if b == 46 { ok = 1; }
+            if b == 45 { ok = 1; }
+        }
+        if mode == 2 { if b == 47 { ok = 1; } }
+        if ok == 0 { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+pub fn nd_compare(a: i64, an: i64, b: i64, bn: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < an {
+        if i >= bn { return 1; }
+        let av: i64 = nd_byte(a, i);
+        let bv: i64 = nd_byte(b, i);
+        if av < bv { return 0 - 1; }
+        if av > bv { return 1; }
+        i = i + 1;
+    }
+    if an < bn { return 0 - 1; }
+    0
+}
+
+pub fn nd_row_compare(a: i64, b: i64, field: i64) -> i64 {
+    nd_compare(nd_word(a, field), nd_word(a, field + 1), nd_word(b, field), nd_word(b, field + 1))
+}
+
+// Status: 1 code/entry, 2 counts, 3 interpreter/SONAME, 4 import text,
+// 5 duplicate symbol, 6 patch bounds/index, 7 non-call/nonzero placeholder,
+// 8 overlapping patches, 9 unused import. Zero means structurally valid inputs.
+pub fn nd_validate(code: String, entry_off: i64, imports: Vec, patches: Vec, interpreter: String, soname: String) -> i64 {
+    let ncode: i64 = string_len(code);
+    if ncode < 1 { return 1; }
+    if ncode > 1048576 { return 1; }
+    if ncode > string_cap(code) { return 1; }
+    if entry_off < 0 { return 1; }
+    if entry_off >= ncode { return 1; }
+    if string_addr(code) <= 0 { return 1; }
+    if string_addr(code) > 9223372036853727231 { return 1; }
+    let ni: i64 = vec_len(imports);
+    let np: i64 = vec_len(patches);
+    if ni < 1 { return 2; }
+    if ni > 256 { return 2; }
+    if np < 1 { return 2; }
+    if np > 4096 { return 2; }
+    if ni > vec_cap(imports) { return 2; }
+    if np > vec_cap(patches) { return 2; }
+    if vec_addr(imports) <= 0 { return 2; }
+    if vec_addr(patches) <= 0 { return 2; }
+    if vec_addr(imports) > 9223372036854773759 { return 2; }
+    if vec_addr(patches) > 9223372036854743039 { return 2; }
+    if nd_text_ok(string_addr(interpreter), string_len(interpreter), 2) == 0 { return 3; }
+    if nd_text_ok(string_addr(soname), string_len(soname), 1) == 0 { return 3; }
+    let mut i: i64 = 0;
+    while i < ni {
+        let row: i64 = vec_get(imports, i);
+        if row <= 0 { return 4; }
+        if row > 9223372036854775775 { return 4; }
+        if nd_text_ok(nd_word(row, 0), nd_word(row, 1), 0) == 0 { return 4; }
+        if nd_text_ok(nd_word(row, 2), nd_word(row, 3), 1) == 0 { return 4; }
+        let mut j: i64 = 0;
+        while j < i {
+            if nd_row_compare(row, vec_get(imports, j), 0) == 0 { return 5; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < np {
+        let row: i64 = vec_get(patches, i);
+        if row <= 0 { return 6; }
+        if row > 9223372036854775791 { return 6; }
+        let off: i64 = nd_word(row, 0);
+        let idx: i64 = nd_word(row, 1);
+        if off < 2 { return 6; }
+        if off > ncode - 4 { return 6; }
+        if idx < 0 { return 6; }
+        if idx >= ni { return 6; }
+        let cp: i64 = string_addr(code);
+        if nd_byte(cp, off - 2) != 255 { return 7; }
+        if nd_byte(cp, off - 1) != 21 { return 7; }
+        let mut k: i64 = 0;
+        while k < 4 {
+            if nd_byte(cp, off + k) != 0 { return 7; }
+            k = k + 1;
+        }
+        let mut j: i64 = 0;
+        while j < i {
+            let prev: i64 = nd_word(vec_get(patches, j), 0);
+            if off < prev + 4 { if prev < off + 4 { return 8; } }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < ni {
+        let mut used: i64 = 0;
+        let mut j: i64 = 0;
+        while j < np {
+            if nd_word(vec_get(patches, j), 1) == i { used = 1; }
+            j = j + 1;
+        }
+        if used == 0 { return 9; }
+        i = i + 1;
+    }
+    0
+}
+
+pub fn nd_round(n: i64, align: i64) -> i64 { ((n + align - 1) / align) * align }
+pub fn nd_zero(out: String, n: i64) -> String {
+    let mut s: String = out;
+    let mut i: i64 = 0;
+    while i < n { s = nb_push(s, 0); i = i + 1; }
+    s
+}
+pub fn nd_to(out: String, position: i64) -> String { nd_zero(out, position - string_len(out)) }
+pub fn nd_bytes(out: String, p: i64, n: i64) -> String {
+    let mut s: String = out;
+    let mut i: i64 = 0;
+    while i < n { s = nb_push(s, nd_byte(p, i)); i = i + 1; }
+    s
+}
+pub fn nd_ztext(out: String, p: i64, n: i64) -> String { nb_push(nd_bytes(out, p, n), 0) }
+
+// Original import indices, sorted by symbol spelling, without changing input.
+pub fn nd_order(imports: Vec) -> Vec {
+    let mut order: Vec = vec_new();
+    let mut i: i64 = 0;
+    while i < vec_len(imports) {
+        order = vec_push(order, i);
+        let mut j: i64 = i;
+        while j > 0 {
+            let a: i64 = vec_get(order, j - 1);
+            let b: i64 = vec_get(order, j);
+            if nd_row_compare(vec_get(imports, a), vec_get(imports, b), 0) <= 0 { break; }
+            vec_set(order, j - 1, b);
+            vec_set(order, j, a);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    order
+}
+
+// One representative import per version, sorted by version spelling.
+pub fn nd_versions(imports: Vec, order: Vec) -> Vec {
+    let mut versions: Vec = vec_new();
+    let mut i: i64 = 0;
+    while i < vec_len(order) {
+        let idx: i64 = vec_get(order, i);
+        let mut found: i64 = 0;
+        let mut j: i64 = 0;
+        while j < vec_len(versions) {
+            if nd_row_compare(vec_get(imports, idx), vec_get(imports, vec_get(versions, j)), 2) == 0 { found = 1; }
+            j = j + 1;
+        }
+        if found == 0 { versions = vec_push(versions, idx); }
+        i = i + 1;
+    }
+    i = 1;
+    while i < vec_len(versions) {
+        let mut j: i64 = i;
+        while j > 0 {
+            let a: i64 = vec_get(versions, j - 1);
+            let b: i64 = vec_get(versions, j);
+            if nd_row_compare(vec_get(imports, a), vec_get(imports, b), 2) <= 0 { break; }
+            vec_set(versions, j - 1, b);
+            vec_set(versions, j, a);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    versions
+}
+
+pub fn nd_version_id(imports: Vec, versions: Vec, row: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vec_len(versions) {
+        if nd_row_compare(row, vec_get(imports, vec_get(versions, i)), 2) == 0 { return i + 2; }
+        i = i + 1;
+    }
+    0
+}
+
+// ELF hash uses 32-bit unsigned arithmetic; masking bounds every intermediate.
+pub fn nd_hash(p: i64, n: i64) -> i64 {
+    let mut h: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        h = ((h * 16) + nd_byte(p, i)) & 4294967295;
+        let g: i64 = h & 4026531840;
+        h = (h ^ (g / 16777216)) & (4294967295 ^ g);
+        i = i + 1;
+    }
+    h
+}
+
+pub fn nd_ph(out: String, typ: i64, flags: i64, off: i64, va: i64, filesz: i64, memsz: i64, align: i64) -> String {
+    let a: String = nb_u32(nb_u32(out, typ), flags);
+    let b: String = nb_i64le(nb_i64le(a, off), va);
+    let c: String = nb_i64le(nb_i64le(b, va), filesz);
+    nb_i64le(nb_i64le(c, memsz), align)
+}
+
+pub fn nd_dynamic(out: String, tag: i64, value: i64) -> String { nb_i64le(nb_i64le(out, tag), value) }
+
+pub fn nd_ehdr(entry: i64) -> String {
+    let a: String = nb_push(nb_push(nb_push(nb_push(string_new(), 127), 69), 76), 70);
+    let b: String = nd_zero(nb_push(nb_push(nb_push(a, 2), 1), 1), 9);
+    let c: String = nb_u32(nb_u16(nb_u16(b, 2), 62), 1);
+    let d: String = nb_i64le(nb_i64le(nb_i64le(c, entry), 64), 0);
+    let e: String = nb_u16(nb_u16(nb_u16(nb_u32(d, 0), 64), 56), 9);
+    nb_u16(nb_u16(nb_u16(e, 0), 0), 0)
+}
+
+// Checked bounded layout: code <=1MiB, <=256 imports and <=4096 call patches.
+// All products/sums below are then <2MiB, all displacements fit signed rel32.
+// Output: R headers, RX code, R lookup tables, RW relocation area; full RELRO
+// seals the complete last area. No stack/arena switching, constructors or MIND
+// arena payload is implemented here. Startup bytes are a caller obligation.
+pub fn nd_write_elf(code: String, entry_off: i64, imports: Vec, patches: Vec, interpreter: String, soname: String) -> String {
+    if nd_validate(code, entry_off, imports, patches, interpreter, soname) != 0 { return string_new(); }
+    let n: i64 = vec_len(imports);
+    let order: Vec = nd_order(imports);
+    let versions: Vec = nd_versions(imports, order);
+    let nv: i64 = vec_len(versions);
+    let mut names: Vec = vec_new();
+    let mut vers: Vec = vec_new();
+    let mut strings: String = nb_push(string_new(), 0);
+    strings = nd_ztext(strings, string_addr(soname), string_len(soname));
+    let mut i: i64 = 0;
+    while i < n {
+        let row: i64 = vec_get(imports, vec_get(order, i));
+        names = vec_push(names, string_len(strings));
+        strings = nd_ztext(strings, nd_word(row, 0), nd_word(row, 1));
+        i = i + 1;
+    }
+    i = 0;
+    while i < nv {
+        let row: i64 = vec_get(imports, vec_get(versions, i));
+        vers = vec_push(vers, string_len(strings));
+        strings = nd_ztext(strings, nd_word(row, 2), nd_word(row, 3));
+        i = i + 1;
+    }
+    let strsz: i64 = string_len(strings);
+    let symoff: i64 = nd_round(strsz, 8);
+    let hashoff: i64 = symoff + (n + 1) * 24;
+    let relaoff: i64 = nd_round(hashoff + (n + 4) * 4, 8);
+    let vsymoff: i64 = relaoff + n * 24;
+    let needoff: i64 = nd_round(vsymoff + (n + 1) * 2, 8);
+    let metasz: i64 = needoff + 16 + nv * 16;
+    let metaoff: i64 = nd_round(4096 + string_len(code), 4096);
+    let rwoff: i64 = nd_round(metaoff + metasz, 4096);
+    let dynoff: i64 = nd_round(rwoff + n * 8, 16);
+    let fileend: i64 = nd_round(dynoff + 256, 4096);
+    let mv: i64 = nd_base() + metaoff;
+    let gv: i64 = nd_base() + rwoff;
+
+    let mut meta: String = nd_to(strings, symoff + 24);
+    i = 0;
+    while i < n {
+        meta = nb_u32(meta, vec_get(names, i));
+        meta = nb_u16(nb_push(nb_push(meta, 18), 0), 0);
+        meta = nb_i64le(nb_i64le(meta, 0), 0);
+        i = i + 1;
+    }
+    // One hash bucket, n+1 chains. Every non-null symbol is reachable.
+    meta = nb_u32(nb_u32(nb_u32(nb_u32(meta, 1), n + 1), 1), 0);
+    i = 1;
+    while i <= n {
+        let next: i64 = if i < n { i + 1 } else { 0 };
+        meta = nb_u32(meta, next);
+        i = i + 1;
+    }
+    meta = nd_to(meta, relaoff);
+    i = 0;
+    while i < n {
+        meta = nb_i64le(meta, gv + i * 8);
+        // R_X86_64_GLOB_DAT, symbol i+1; eager relocation of a function address.
+        meta = nb_i64le(meta, (i + 1) * 4294967296 + 6);
+        meta = nb_i64le(meta, 0);
+        i = i + 1;
+    }
+    meta = nb_u16(meta, 0);
+    i = 0;
+    while i < n {
+        let id: i64 = nd_version_id(imports, versions, vec_get(imports, vec_get(order, i)));
+        if id < 2 { return string_new(); }
+        meta = nb_u16(meta, id);
+        i = i + 1;
+    }
+    meta = nd_to(meta, needoff);
+    // Elf64_Verneed: version1, count nv, SONAME offset1, aux offset16, next0.
+    meta = nb_u32(nb_u32(nb_u32(nb_u16(nb_u16(meta, 1), nv), 1), 16), 0);
+    i = 0;
+    while i < nv {
+        let row: i64 = vec_get(imports, vec_get(versions, i));
+        meta = nb_u32(meta, nd_hash(nd_word(row, 2), nd_word(row, 3)));
+        meta = nb_u16(nb_u16(meta, 0), i + 2);
+        meta = nb_u32(meta, vec_get(vers, i));
+        let next: i64 = if i + 1 < nv { 16 } else { 0 };
+        meta = nb_u32(meta, next);
+        i = i + 1;
+    }
+    if string_len(meta) != metasz { return string_new(); }
+
+    let mut out: String = nd_ehdr(nd_code_addr() + entry_off);
+    out = nd_ph(out, 6, 4, 64, nd_base() + 64, 504, 504, 8);
+    out = nd_ph(out, 3, 4, 568, nd_base() + 568, string_len(interpreter) + 1, string_len(interpreter) + 1, 1);
+    out = nd_ph(out, 1, 4, 0, nd_base(), 4096, 4096, 4096);
+    out = nd_ph(out, 1, 5, 4096, nd_code_addr(), string_len(code), string_len(code), 4096);
+    out = nd_ph(out, 1, 4, metaoff, mv, metasz, metasz, 4096);
+    out = nd_ph(out, 1, 6, rwoff, gv, fileend - rwoff, fileend - rwoff, 4096);
+    out = nd_ph(out, 2, 6, dynoff, nd_base() + dynoff, 256, 256, 8);
+    out = nd_ph(out, 1685382481, 6, 0, 0, 0, 0, 16);
+    out = nd_ph(out, 1685382482, 4, rwoff, gv, fileend - rwoff, fileend - rwoff, 1);
+    if string_len(out) != 568 { return string_new(); }
+    out = nd_to(nd_ztext(out, string_addr(interpreter), string_len(interpreter)), 4096);
+    out = nd_bytes(out, string_addr(code), string_len(code));
+    out = nd_bytes(nd_to(out, metaoff), string_addr(meta), string_len(meta));
+    out = nd_to(out, dynoff);
+    out = nd_dynamic(out, 1, 1);
+    out = nd_dynamic(out, 4, mv + hashoff);
+    out = nd_dynamic(out, 5, mv);
+    out = nd_dynamic(out, 6, mv + symoff);
+    out = nd_dynamic(out, 10, strsz);
+    out = nd_dynamic(out, 11, 24);
+    out = nd_dynamic(out, 7, mv + relaoff);
+    out = nd_dynamic(out, 8, n * 24);
+    out = nd_dynamic(out, 9, 24);
+    out = nd_dynamic(out, 1879048176, mv + vsymoff);
+    out = nd_dynamic(out, 1879048190, mv + needoff);
+    out = nd_dynamic(out, 1879048191, 1);
+    out = nd_dynamic(out, 30, 8);
+    out = nd_dynamic(out, 1879048187, 1);
+    out = nd_dynamic(out, 21, 0);
+    out = nd_dynamic(out, 0, 0);
+    out = nd_to(out, fileend);
+    if string_len(out) != fileend { return string_new(); }
+
+    // Patch only the newly owned output, after all layout checks. Input code is
+    // unchanged and can be reused for byte-identical repeated builds.
+    i = 0;
+    while i < vec_len(patches) {
+        let row: i64 = vec_get(patches, i);
+        let off: i64 = nd_word(row, 0);
+        let original: i64 = nd_word(row, 1);
+        let mut rank: i64 = 0;
+        while rank < n {
+            if vec_get(order, rank) == original { break; }
+            rank = rank + 1;
+        }
+        if rank >= n { return string_new(); }
+        let disp: i64 = gv + rank * 8 - (nd_code_addr() + off + 4);
+        if disp < 0 { return string_new(); }
+        if disp > 2147483647 { return string_new(); }
+        let mut d: i64 = disp;
+        let mut k: i64 = 0;
+        while k < 4 {
+            __mind_store_i8(string_addr(out) + 4096 + off + k, d & 255);
+            d = d / 256;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    out
+}

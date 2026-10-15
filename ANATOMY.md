@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2107 | **Est. tokens:** ~3926990
-**Generated:** 2026-10-15 09:12 UTC
+**Files:** 2111 | **Est. tokens:** ~3939045
+**Generated:** 2026-10-15 09:52 UTC
 
 ## Token Budget Guide
 
@@ -49,7 +49,7 @@
 | `docs/` | 39 | ~114748 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
-| `docs/compiler/` | 1 | ~928 |
+| `docs/compiler/` | 2 | ~3577 |
 | `docs/design/` | 4 | ~11498 |
 | `docs/gates/` | 1 | ~4020 |
 | `docs/mindcraft/` | 3 | ~7086 |
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 192 | ~555451 |
+| `examples/mindc_mind/` | 195 | ~564857 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -492,6 +492,7 @@
 - `cli.md` (~1310 tok, large) — MIND CLI Reference
 ### `docs/compiler/`
 
+- `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
 - `NATIVE_LANE_PROFILE.md` (~928 tok, large) — Typed scalar delivery profile
 ### `docs/design/`
 
@@ -736,6 +737,9 @@
 - `mindfuzz_self_host.py` (~16538 tok, huge)
 - `mod_operator_smoke.py` (~2871 tok, huge)
 - `multi_let_smoke.py` (~1539 tok, huge)
+- `native_dynamic.mind` (~4030 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_posix.md` (~2111 tok, huge) — Linux x86-64 POSIX substrate
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
