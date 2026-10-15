@@ -102,8 +102,27 @@ streams, status codes and diagnostic fixture sources are retained by the
 harness. The case catalogue SHA-256 is
 `e16d94d16157fd9d53391e026b1133bae5c7092879df32370c0065e026555e8e`.
 
-Independent implementation review is pending. This component is not production
-C FFI qualification. Dynamic startup, complete source/library binding, runtime
+Independent implementation review completed on the unchanged emitter source
+`1c87d54c1fd608e44efb6187f3b74de7b4fe1f44bbfecc6751f109553110cf00`
+with verdict `PASS_WITH_NOTES` for this standalone contract. A separately
+written, predeclared 69-case catalogue passed 138 native/MLIR observations,
+including 92 actual ABI calls. It checked reordered frame slots, both register
+pools and spills, narrow results with unspecified excess bits, f64 payloads,
+destination aliasing, caller-register clobbers, stack restoration, frame
+canaries and exact refusal precedence. Both drivers were freshly built from
+the checked source. Peak aggregate memory was 86,892,544 bytes under 2 GiB,
+with no OOM events or swap.
+
+The independent catalogue SHA-256 is
+`85e471c5eed7c4912c8e38d05f0efc66097ce737bcc49c46f8b6e61a62b70985`;
+the result SHA-256 is
+`25ccbf0031a64c35190ff21da76871f57e30c04f6269f76d788eac117b54f976`.
+Review also inspected the author's three actual mutation receipts; it did not
+independently rerun those mutations. This was a separate review/execution
+session on the same host, not external human certification or a universal
+memory-safety proof.
+
+This component is not production C FFI qualification. Dynamic startup, complete source/library binding, runtime
 ownership and errno semantics, relocations in the complete executable, and the
 unchanged downstream qualification remain separate obligations. Existing local
 call emission and frozen compiler seeds are unchanged.
