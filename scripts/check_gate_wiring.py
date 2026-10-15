@@ -130,10 +130,11 @@ GATED_EVENTS = ("push", "pull_request")
 # -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
 # Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
 # not hide this growth by changing the pathspec or classifying files out of it.
-# 285 -> 286 adds native_dynamic_writer_check.py, an explicit-instrument
-# diagnostic for the isolated ELF component. Production integration and CI
-# execution remain open; SMOKE_WIRING records it as unwired work in progress.
-HARNESS_CEILING = 286  # Exact reviewed integration inventory; no spare allowance.
+# 285 -> 287 adds native_dynamic_writer_check.py and
+# native_cabi_registry_smoke.py. These standalone diagnostics require explicit
+# compiler/native/oracle artifacts. Their production integration and CI runner
+# dependencies remain open and are recorded in SMOKE_WIRING.
+HARNESS_CEILING = 287  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

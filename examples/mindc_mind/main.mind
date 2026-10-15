@@ -65723,3 +65723,848 @@ pub fn selftest_native_elf_narrow_sub_i32(a: i64, b: i64) -> EmitState {
 pub fn selftest_native_elf_narrow_mul_i32(a: i64, b: i64) -> EmitState {
     selftest_native_elf_narrow_arith(a, b, op_mul(), 32)
 }
+
+// ===========================================================================
+// SOURCE-TYPED C ABI REGISTRY (MCABI001, metadata only; no native admission).
+// Author: STARGA Inc.
+// Historical extern AST placeholders and MIC bytes remain untouched. The
+// registry reparses ORIGINAL extern item spans; integer widths must never be
+// recovered from the old MIC parameter categories (which erase them).
+// Registry words: source, length, row pointers, row count, error, error offset.
+// Row words: name lo/hi, callconv, unsafe, varargs, count, params, return type.
+// Each owned type is 48 bytes: length word + at most 33 prefix-code bytes.
+// Source remains borrowed and immutable until nb_cabi_free. No returned object
+// is a callable symbol, runtime proof, or validated dynamic-link capability.
+
+pub fn nb_cabi_error(r: i64, code: i64, pos: i64) -> i64 {
+    if __mind_load_i64(r + 32) == 0 {
+        __mind_store_i64(r + 32, code);
+        __mind_store_i64(r + 40, pos)
+    }
+    0
+}
+pub fn nb_cabi_kind(t: Vec, p: i64) -> i64 {
+    if p < 0 {
+        return tk_eof();
+    }
+    if p >= tok_count(t) {
+        return tk_eof();
+    }
+    tok_kind(t, p)
+}
+pub fn nb_cabi_pos(t: Vec, p: i64, end: i64) -> i64 {
+    if p < 0 {
+        return end;
+    }
+    if p >= tok_count(t) {
+        return end;
+    }
+    tok_lo(t, p)
+}
+pub fn nb_cabi_word(src: i64, t: Vec, p: i64, n: i64, word: i64) -> i64 {
+    if nb_cabi_kind(t, p) == tk_eof() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(t, p);
+    if tok_hi(t, p) - lo != n {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    let mut equal: i64 = 1;
+    while i < n {
+        if __mind_load_i8(src + lo + i) != ((word >> (i * 8)) & 255) {
+            equal = 0;
+        }
+        i = i + 1;
+    }
+    equal
+}
+
+pub fn nb_cabi_scalar(src: i64, t: Vec, p: i64) -> i64 {
+    if nb_cabi_word(src, t, p, 2, 14441) == 1 {
+        return 1;
+    }
+    if nb_cabi_word(src, t, p, 2, 14453) == 1 {
+        return 2;
+    }
+    if nb_cabi_word(src, t, p, 3, 3551593) == 1 {
+        return 3;
+    }
+    if nb_cabi_word(src, t, p, 3, 3551605) == 1 {
+        return 4;
+    }
+    if nb_cabi_word(src, t, p, 3, 3289961) == 1 {
+        return 5;
+    }
+    if nb_cabi_word(src, t, p, 3, 3289973) == 1 {
+        return 6;
+    }
+    if nb_cabi_word(src, t, p, 3, 3421801) == 1 {
+        return 7;
+    }
+    if nb_cabi_word(src, t, p, 3, 3421813) == 1 {
+        return 8;
+    }
+    if nb_cabi_word(src, t, p, 5, 435845428073) == 1 {
+        return 9;
+    }
+    if nb_cabi_word(src, t, p, 5, 435845428085) == 1 {
+        return 10;
+    }
+    if nb_cabi_word(src, t, p, 3, 3289958) == 1 {
+        return 11;
+    }
+    if nb_cabi_word(src, t, p, 3, 3421798) == 1 {
+        return 12;
+    }
+    if nb_cabi_word(src, t, p, 4, 1819242338) == 1 {
+        return 13;
+    }
+    0 - 1
+}
+pub fn nb_cabi_ident_byte(c: i64, i: i64) -> i64 {
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c == 95 {
+        return 1;
+    }
+    if i > 0 {
+        if c >= 48 {
+            if c <= 57 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+pub fn nb_cabi_ident(src: i64, t: Vec, p: i64) -> i64 {
+    if nb_cabi_kind(t, p) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(t, p);
+    let n: i64 = tok_hi(t, p) - lo;
+    if n < 1 {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    let mut valid: i64 = 1;
+    while i < n {
+        valid = valid * nb_cabi_ident_byte(__mind_load_i8(src + lo + i), i);
+        i = i + 1;
+    }
+    valid
+}
+
+pub fn nb_cabi_name(src: i64, t: Vec, p: i64) -> i64 {
+    if nb_cabi_ident(src, t, p) == 0 {
+        return 0;
+    }
+    if tok_hi(t, p) - tok_lo(t, p) > 255 {
+        return 0;
+    }
+    1
+}
+// Write type bytes to caller-owned dst and return the following token index.
+// A negative return is a refusal, never a pointer to an incomplete descriptor.
+pub fn nb_cabi_type_more(t: Vec, p: i64) -> i64 {
+    if p < 0 {
+        return 0;
+    }
+    if nb_cabi_kind(t, p) == tk_star() {
+        return 1;
+    }
+    0
+}
+pub fn nb_cabi_type_step(r: i64, t: Vec, start: i64, dst: i64, depth: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let p: i64 = start;
+
+    if depth >= 32 {
+        let _e: i64 = nb_cabi_error(r, 10, tok_lo(t, p));
+        return 0 - 1;
+    }
+    let p: i64 = start + 1;
+    let mut tag: i64 = 0;
+    if nb_cabi_word(src, t, p, 5, 500152823651) == 1 {
+        tag = 32;
+    }
+    if nb_cabi_word(src, t, p, 3, 7632237) == 1 {
+        tag = 33;
+    }
+    if tag == 0 {
+        let _e: i64 = nb_cabi_error(r, 3, nb_cabi_pos(t, p, __mind_load_i64(r + 8)));
+        return 0 - 1;
+    }
+    __mind_store_i8(dst + 8 + depth, tag);
+    p + 1
+
+}
+pub fn nb_cabi_type(r: i64, t: Vec, start: i64, dst: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let mut p: i64 = start;
+    let mut depth: i64 = 0;
+    while nb_cabi_type_more(t, p) == 1 {
+        p = nb_cabi_type_step(r, t, p, dst, depth);
+        depth = depth + 1;
+    }
+    if p < 0 {
+        return p;
+    }
+    let scalar: i64 = nb_cabi_scalar(src, t, p);
+    if scalar < 0 {
+        let _e: i64 = nb_cabi_error(r, 3, nb_cabi_pos(t, p, __mind_load_i64(r + 8)));
+        return 0 - 1;
+    }
+    __mind_store_i8(dst + 8 + depth, scalar);
+    __mind_store_i64(dst, depth + 1);
+    p + 1
+}
+
+pub fn nb_cabi_duplicate(r: i64, lo: i64, hi: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let rows: i64 = __mind_load_i64(r + 16);
+    let n: i64 = __mind_load_i64(r + 24);
+    let mut i: i64 = 0;
+    let mut found: i64 = 0;
+    while i < n {
+        let row: i64 = __mind_load_i64(rows + i * 8);
+        if span_bytes_equal2(src, lo, hi, src, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
+            found = 1;
+        }
+        i = i + 1;
+    }
+    found
+}
+
+pub fn nb_cabi_param_more(t: Vec, p: i64) -> i64 {
+    if p < 0 {
+        return 0;
+    }
+    if nb_cabi_kind(t, p) == tk_rparen() {
+        return 0;
+    }
+    1
+}
+pub fn nb_cabi_vararg(r: i64, t: Vec, p: i64, row: i64) -> i64 {
+    let end: i64 = __mind_load_i64(r + 8);
+    if nb_cabi_kind(t, p + 1) != tk_dot() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    if nb_cabi_kind(t, p + 2) != tk_dot() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    if tok_hi(t, p) != tok_lo(t, p + 1) {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    if tok_hi(t, p + 1) != tok_lo(t, p + 2) {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    __mind_store_i64(row + 32, 1);
+    if nb_cabi_kind(t, p + 3) == tk_rparen() {
+        return p + 3;
+    }
+    let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p + 3, end));
+    0 - 1
+}
+pub fn nb_cabi_param(r: i64, t: Vec, start: i64, row: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let end: i64 = __mind_load_i64(r + 8);
+    let params: i64 = __mind_load_i64(row + 48);
+    let mut p: i64 = start;
+
+    if nb_cabi_kind(t, p) == tk_dot() {
+        return nb_cabi_vararg(r, t, p, row);
+    }
+    if nb_cabi_ident(src, t, p) == 0 {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    if nb_cabi_kind(t, p + 1) != tk_colon() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p + 1, end));
+        return 0 - 1;
+    }
+    let np: i64 = __mind_load_i64(row + 40);
+    if np >= 256 {
+        let _e: i64 = nb_cabi_error(r, 10, tok_lo(t, p));
+        return 0 - 1;
+    }
+    // The first 256 words hold type pointers; the following 512 words
+    // retain parameter name spans solely for duplicate-name validation.
+    let mut prior: i64 = 0;
+    let mut duplicate: i64 = 0;
+    while prior < np {
+        let oldlo: i64 = __mind_load_i64(params + 2048 + prior * 16);
+        let oldhi: i64 = __mind_load_i64(params + 2056 + prior * 16);
+        if span_bytes_equal2(src, tok_lo(t, p), tok_hi(t, p), src, oldlo, oldhi) == 1 {
+            duplicate = 1;
+        }
+        prior = prior + 1;
+    }
+    if duplicate == 1 {
+        let _e: i64 = nb_cabi_error(r, 5, tok_lo(t, p));
+        return 0 - 1;
+    }
+    __mind_store_i64(params + 2048 + np * 16, tok_lo(t, p));
+    __mind_store_i64(params + 2056 + np * 16, tok_hi(t, p));
+    let ty: i64 = __mind_alloc(48);
+    if ty == 0 {
+        let _e: i64 = nb_cabi_error(r, 8, tok_lo(t, p));
+        return 0 - 1;
+    }
+    __mind_store_i64(params + np * 8, ty);
+    __mind_store_i64(row + 40, np + 1);
+    p = nb_cabi_type(r, t, p + 2, ty);
+    if p < 0 {
+        return p;
+    }
+    if nb_cabi_kind(t, p) == tk_comma() {
+        return p + 1;
+    }
+    if nb_cabi_kind(t, p) != tk_rparen() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+
+    p
+}
+
+pub fn nb_cabi_reserved(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 7 {
+        return 0;
+    }
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 7 {
+        if __mind_load_i8(src + lo + i) != ((26850548165467999 >> (i * 8)) & 255) {
+            same = 0;
+        }
+        i = i + 1;
+    }
+    same
+}
+pub fn nb_cabi_decl(r: i64, t: Vec, start: i64, cc: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let end: i64 = __mind_load_i64(r + 8);
+    let mut p: i64 = start;
+    let mut uns: i64 = 1;
+    if nb_cabi_word(src, t, p, 4, 1701208435) == 1 {
+        uns = 0;
+        p = p + 1;
+    }
+    if nb_cabi_word(src, t, start, 6, 111490396024437) == 1 {
+        p = start + 1;
+    }
+    if nb_cabi_kind(t, p) != tk_kw_fn() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    p = p + 1;
+    if nb_cabi_name(src, t, p) == 0 {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    let lo: i64 = tok_lo(t, p);
+    let hi: i64 = tok_hi(t, p);
+    if nb_cabi_reserved(src, lo, hi) == 1 {
+        let _e: i64 = nb_cabi_error(r, 6, lo);
+        return 0 - 1;
+    }
+    if nb_cabi_duplicate(r, lo, hi) == 1 {
+        let _e: i64 = nb_cabi_error(r, 5, lo);
+        return 0 - 1;
+    }
+    let n: i64 = __mind_load_i64(r + 24);
+    if n >= 4096 {
+        let _e: i64 = nb_cabi_error(r, 10, lo);
+        return 0 - 1;
+    }
+    if nb_cabi_kind(t, p + 1) != tk_lparen() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p + 1, end));
+        return 0 - 1;
+    }
+    let row: i64 = __mind_alloc(64);
+    if row == 0 {
+        let _e: i64 = nb_cabi_error(r, 8, lo);
+        return 0 - 1;
+    }
+    let params: i64 = __mind_alloc(256 * 24);
+    if params == 0 {
+        __mind_free(row);
+        let _e: i64 = nb_cabi_error(r, 8, lo);
+        return 0 - 1;
+    }
+    let ret: i64 = __mind_alloc(48);
+    if ret == 0 {
+        __mind_free(row);
+        __mind_free(params);
+        let _e: i64 = nb_cabi_error(r, 8, lo);
+        return 0 - 1;
+    }
+    __mind_store_i64(row, lo);
+    __mind_store_i64(row + 8, hi);
+    __mind_store_i64(row + 16, cc);
+    __mind_store_i64(row + 24, uns);
+    __mind_store_i64(row + 32, 0);
+    __mind_store_i64(row + 40, 0);
+    __mind_store_i64(row + 48, params);
+    __mind_store_i64(row + 56, ret);
+    __mind_store_i64(ret, 1);
+    __mind_store_i8(ret + 8, 0);
+    __mind_store_i64(__mind_load_i64(r + 16) + n * 8, row);
+    __mind_store_i64(r + 24, n + 1);
+    p = p + 2;
+    while nb_cabi_param_more(t, p) == 1 {
+        p = nb_cabi_param(r, t, p, row);
+    }
+    if p < 0 {
+        return p;
+    }
+    p = p + 1;
+    if nb_cabi_kind(t, p) == tk_arrow() {
+        p = nb_cabi_type(r, t, p + 1, ret);
+        if p < 0 {
+            return p;
+        }
+    }
+    if nb_cabi_kind(t, p) == tk_semi() {
+        p = p + 1;
+    }
+    p
+}
+
+pub fn nb_cabi_block_more(t: Vec, p: i64) -> i64 {
+    if p < 0 {
+        return 0;
+    }
+    if nb_cabi_kind(t, p) == tk_rbrace() {
+        return 0;
+    }
+    1
+}
+pub fn nb_cabi_block(r: i64, t: Vec, start: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let end: i64 = __mind_load_i64(r + 8);
+    let mut p: i64 = start + 1;
+    if nb_cabi_kind(t, p) != tk_str() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    if nb_cabi_word(src, t, p, 3, 2245410) == 0 {
+        let _e: i64 = nb_cabi_error(r, 4, tok_lo(t, p));
+        return 0 - 1;
+    }
+    p = p + 1;
+    let mut cc: i64 = 0;
+    if nb_cabi_word(src, t, p, 8, 8533880816725156195) == 1 {
+        if nb_cabi_kind(t, p + 1) != tk_lparen() {
+            let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p + 1, end));
+            return 0 - 1;
+        }
+        if nb_cabi_kind(t, p + 2) != tk_dot() {
+            let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p + 2, end));
+            return 0 - 1;
+        }
+        p = p + 3;
+        cc = 0 - 1;
+        if nb_cabi_word(src, t, p, 1, 99) == 1 {
+            cc = 0;
+        }
+        if nb_cabi_word(src, t, p, 4, 1987279219) == 1 {
+            cc = 1;
+        }
+        if nb_cabi_word(src, t, p, 5, 224251505015) == 1 {
+            cc = 2;
+        }
+        if nb_cabi_word(src, t, p, 5, 495589548385) == 1 {
+            cc = 3;
+        }
+        if cc < 0 {
+            let _e: i64 = nb_cabi_error(r, 4, nb_cabi_pos(t, p, end));
+            return 0 - 1;
+        }
+        p = p + 1;
+        if nb_cabi_kind(t, p) != tk_rparen() {
+            let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+            return 0 - 1;
+        }
+        p = p + 1;
+    }
+    if nb_cabi_kind(t, p) != tk_lbrace() {
+        let _e: i64 = nb_cabi_error(r, 2, nb_cabi_pos(t, p, end));
+        return 0 - 1;
+    }
+    p = p + 1;
+    while nb_cabi_block_more(t, p) == 1 {
+        p = nb_cabi_decl(r, t, p, cc);
+    }
+    if p < 0 {
+        return p;
+    }
+    p + 1
+}
+
+pub fn nb_cabi_uses_scalar(r: i64, tag: i64) -> i64 {
+    let rows: i64 = __mind_load_i64(r + 16);
+    let count: i64 = __mind_load_i64(r + 24);
+    let mut i: i64 = 0;
+    let mut found: i64 = 0;
+    while i < count {
+        let row: i64 = __mind_load_i64(rows + i * 8);
+        let ret: i64 = __mind_load_i64(row + 56);
+        if __mind_load_i8(ret + 7 + __mind_load_i64(ret)) == tag {
+            found = 1;
+        }
+        let mut j: i64 = 0;
+        while j < __mind_load_i64(row + 40) {
+            let ty: i64 = __mind_load_i64(__mind_load_i64(row + 48) + j * 8);
+            if __mind_load_i8(ty + 7 + __mind_load_i64(ty)) == tag {
+                found = 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    found
+}
+
+pub fn nb_cabi_import_more(t: Vec, p: i64) -> i64 {
+    let k: i64 = nb_cabi_kind(t, p);
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_eof() {
+        return 0;
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    1
+}
+pub fn nb_cabi_scan_more(r: i64, p: i64, count: i64) -> i64 {
+    if __mind_load_i64(r + 32) != 0 {
+        return 0;
+    }
+    if p >= count {
+        return 0;
+    }
+    1
+}
+pub fn nb_cabi_local_name_at(r: i64, t: Vec, p: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+
+    let mut importing: i64 = 0;
+    if nb_cabi_word(src, t, p, 6, 128034844732777) == 1 {
+        importing = 1;
+    }
+    if nb_cabi_word(src, t, p, 3, 6648693) == 1 {
+        importing = 1;
+    }
+    if importing == 1 {
+        // A syntactic import alias/path tail can shadow a primitive.
+        // Full resolved-import validation remains a separate contract.
+        let mut q: i64 = p + 1;
+        let mut tail: i64 = 0 - 1;
+        while nb_cabi_import_more(t, q) == 1 {
+            if nb_cabi_name(src, t, q) == 1 {
+                tail = q;
+            }
+            q = q + 1;
+        }
+        if tail >= 0 {
+            if nb_cabi_duplicate(r, tok_lo(t, tail), tok_hi(t, tail)) == 1 {
+                let _e: i64 = nb_cabi_error(r, 9, tok_lo(t, tail));
+                return 0;
+            }
+            let tag: i64 = nb_cabi_scalar(src, t, tail);
+            if tag > 0 {
+                if nb_cabi_uses_scalar(r, tag) == 1 {
+                    let _e: i64 = nb_cabi_error(r, 3, tok_lo(t, tail));
+                    return 0;
+                }
+            }
+        }
+    }
+    let mut type_decl: i64 = 0;
+    if nb_cabi_word(src, t, p, 4, 1701869940) == 1 {
+        type_decl = 1;
+    }
+    if nb_cabi_word(src, t, p, 6, 127970521019507) == 1 {
+        type_decl = 1;
+    }
+    if nb_cabi_word(src, t, p, 4, 1836412517) == 1 {
+        type_decl = 1;
+    }
+    let mut binding: i64 = type_decl;
+    if nb_cabi_word(src, t, p, 5, 500152823651) == 1 {
+        binding = 1;
+    }
+    if binding == 1 {
+        if nb_cabi_name(src, t, p + 1) == 1 {
+            if nb_cabi_duplicate(r, tok_lo(t, p + 1), tok_hi(t, p + 1)) == 1 {
+                let _e: i64 = nb_cabi_error(r, 9, tok_lo(t, p + 1));
+                return 0;
+            }
+            if type_decl == 1 {
+                let tag: i64 = nb_cabi_scalar(src, t, p + 1);
+                if tag > 0 {
+                    if nb_cabi_uses_scalar(r, tag) == 1 {
+                        let _e: i64 = nb_cabi_error(r, 3, tok_lo(t, p + 1));
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+
+    0
+}
+pub fn nb_cabi_local_name_depth(r: i64, t: Vec, p: i64, depth: i64) -> i64 {
+    if depth != 0 {
+        return 0;
+    }
+    nb_cabi_local_name_at(r, t, p)
+}
+pub fn nb_cabi_local_names(r: i64, t: Vec) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+    let mut depth: i64 = 0;
+    let mut p: i64 = 0;
+    while nb_cabi_scan_more(r, p, tok_count(t)) == 1 {
+        let k: i64 = tok_kind(t, p);
+        let _name: i64 = nb_cabi_local_name_depth(r, t, p, depth);
+        if k == tk_lbrace() {
+            depth = depth + 1;
+        }
+        if k == tk_rbrace() {
+            depth = depth - 1;
+        }
+        p = p + 1;
+    }
+    0
+}
+
+// Build metadata from top-level AST item spans. A second token census ensures
+// no nested/unresolved extern is silently hidden by an unsupported AST wrapper.
+
+pub fn nb_cabi_before(t: Vec, p: i64, lo: i64) -> i64 {
+    if p >= tok_count(t) {
+        return 0;
+    }
+    if tok_lo(t, p) >= lo {
+        return 0;
+    }
+    1
+}
+pub fn nb_cabi_add_item(r: i64, t: Vec, node: i64) -> i64 {
+    let src: i64 = __mind_load_i64(r);
+
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if hi - lo >= 6 {
+        if nb_item_is_extern(src, node) == 1 {
+            let mut p: i64 = 0;
+            while nb_cabi_before(t, p, lo) == 1 {
+                p = p + 1;
+            }
+            let next: i64 = nb_cabi_block(r, t, p);
+            if next < 0 {
+                return 0;
+            }
+            if tok_hi(t, next - 1) != hi {
+                let _e: i64 = nb_cabi_error(r, 7, lo);
+                return 0;
+            }
+            return 1;
+        }
+    }
+
+
+    0
+}
+pub fn nb_cabi_local_fn(r: i64, node: i64) -> i64 {
+    if ast_kind(node) != ast_fn_def() {
+        return 0;
+    }
+    let name: i64 = ast_child0(node);
+    if nb_cabi_duplicate(r, ast_span_lo(name), ast_span_hi(name)) == 1 {
+        let _e: i64 = nb_cabi_error(r, 9, ast_span_lo(name));
+    }
+    0
+}
+pub fn nb_cabi_build(src: i64, length: i64) -> i64 {
+    let r: i64 = __mind_alloc(48);
+    if r == 0 {
+        return 0;
+    }
+    __mind_store_i64(r, src);
+    __mind_store_i64(r + 8, length);
+    __mind_store_i64(r + 16, 0);
+    __mind_store_i64(r + 24, 0);
+    __mind_store_i64(r + 32, 0);
+    __mind_store_i64(r + 40, 0);
+    if length < 0 {
+        let _e: i64 = nb_cabi_error(r, 1, 0);
+        return r;
+    }
+    if src == 0 {
+        if length != 0 {
+            let _e: i64 = nb_cabi_error(r, 1, 0);
+            return r;
+        }
+    }
+    let rows: i64 = __mind_alloc(4096 * 8);
+    if rows == 0 {
+        let _e: i64 = nb_cabi_error(r, 8, 0);
+        return r;
+    }
+    __mind_store_i64(r + 16, rows);
+    let t: Vec = lex(src, length);
+    let root: i64 = parse(t, src);
+    let items: i64 = ast_child0(root);
+    let count: i64 = ast_aux(root);
+    let mut i: i64 = 0;
+    let mut ext: i64 = 0;
+    while nb_cabi_scan_more(r, i, count) == 1 {
+        ext = ext + nb_cabi_add_item(r, t, __mind_load_i64(items + i * 8));
+        i = i + 1;
+    }
+    if __mind_load_i64(r + 32) != 0 {
+        return r;
+    }
+    let mut seen: i64 = 0;
+    i = 0;
+    while i < tok_count(t) {
+        if nb_cabi_word(src, t, i, 6, 121437607458917) == 1 {
+            seen = seen + 1;
+        }
+        i = i + 1;
+    }
+    if seen != ext {
+        let _e: i64 = nb_cabi_error(r, 7, 0);
+        return r;
+    }
+    // Reject a foreign declaration which is also a locally defined function.
+    i = 0;
+    while nb_cabi_scan_more(r, i, count) == 1 {
+        let _fn: i64 = nb_cabi_local_fn(r, __mind_load_i64(items + i * 8));
+        i = i + 1;
+    }
+    if __mind_load_i64(r + 32) != 0 {
+        return r;
+    }
+    let _names: i64 = nb_cabi_local_names(r, t);
+    r
+}
+
+pub fn nb_cabi_u32(s: String, n: i64) -> String {
+    let a: String = string_push_byte(s, n & 255);
+    let b: String = string_push_byte(a, (n >> 8) & 255);
+    let c: String = string_push_byte(b, (n >> 16) & 255);
+    string_push_byte(c, (n >> 24) & 255)
+}
+pub fn nb_cabi_type_bytes(s: String, ty: i64) -> String {
+    let mut out: String = s;
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(ty) {
+        out = string_push_byte(out, __mind_load_i8(ty + 8 + i));
+        i = i + 1;
+    }
+    out
+}
+pub fn nb_cabi_encode(r: i64) -> String {
+    let mut s: String = string_new();
+    if r == 0 {
+        return s;
+    }
+    if __mind_load_i64(r + 32) != 0 {
+        return s;
+    }
+    let mut i: i64 = 0;
+    while i < 8 {
+        s = string_push_byte(s, (3544385997942899533 >> (i * 8)) & 255);
+        i = i + 1;
+    }
+    let count: i64 = __mind_load_i64(r + 24);
+    s = nb_cabi_u32(s, count);
+    let src: i64 = __mind_load_i64(r);
+    i = 0;
+    while i < count {
+        let row: i64 = __mind_load_i64(__mind_load_i64(r + 16) + i * 8);
+        let lo: i64 = __mind_load_i64(row);
+        let hi: i64 = __mind_load_i64(row + 8);
+        s = nb_cabi_u32(s, hi - lo);
+        let mut j: i64 = lo;
+        while j < hi {
+            s = string_push_byte(s, __mind_load_i8(src + j));
+            j = j + 1;
+        }
+        s = string_push_byte(s, __mind_load_i64(row + 16));
+        s = string_push_byte(s, __mind_load_i64(row + 24));
+        s = string_push_byte(s, __mind_load_i64(row + 32));
+        let np: i64 = __mind_load_i64(row + 40);
+        s = nb_cabi_u32(s, np);
+        s = nb_cabi_type_bytes(s, __mind_load_i64(row + 56));
+        j = 0;
+        while j < np {
+            s = nb_cabi_type_bytes(s, __mind_load_i64(__mind_load_i64(row + 48) + j * 8));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    s
+}
+pub fn nb_cabi_free(r: i64) -> i64 {
+    if r == 0 {
+        return 0;
+    }
+    let rows: i64 = __mind_load_i64(r + 16);
+    let count: i64 = __mind_load_i64(r + 24);
+    let mut i: i64 = 0;
+    while i < count {
+        let row: i64 = __mind_load_i64(rows + i * 8);
+        let params: i64 = __mind_load_i64(row + 48);
+        let mut j: i64 = 0;
+        while j < __mind_load_i64(row + 40) {
+            __mind_free(__mind_load_i64(params + j * 8));
+            j = j + 1;
+        }
+        __mind_free(params);
+        __mind_free(__mind_load_i64(row + 56));
+        __mind_free(row);
+        i = i + 1;
+    }
+    __mind_free(rows);
+    __mind_free(r);
+    0
+}
+// out: [wire address, wire length, error code, source byte offset]. Caller owns
+// wire bytes; zero bytes on every refusal. Return0 only for a complete registry.
+pub fn selftest_nb_cabi(src: i64, length: i64, out: i64) -> i64 {
+    let r: i64 = nb_cabi_build(src, length);
+    __mind_store_i64(out, 0);
+    __mind_store_i64(out + 8, 0);
+    __mind_store_i64(out + 16, 8);
+    __mind_store_i64(out + 24, 0);
+    if r == 0 {
+        return 8;
+    }
+    let wire: String = nb_cabi_encode(r);
+    let error: i64 = __mind_load_i64(r + 32);
+    __mind_store_i64(out, string_addr(wire));
+    __mind_store_i64(out + 8, string_len(wire));
+    __mind_store_i64(out + 16, error);
+    __mind_store_i64(out + 24, __mind_load_i64(r + 40));
+    let _f: i64 = nb_cabi_free(r);
+    error
+}
