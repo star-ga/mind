@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2120 | **Est. tokens:** ~3956834
-**Generated:** 2026-10-15 10:37 UTC
+**Files:** 2125 | **Est. tokens:** ~3967035
+**Generated:** 2026-10-15 10:43 UTC
 
 ## Token Budget Guide
 
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 200 | ~572444 |
+| `examples/mindc_mind/` | 205 | ~582607 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -101,7 +101,7 @@
 | `experiments/global-vs-local/` | 7 | ~6487 |
 | `mind/std/cognitive/` | 4 | ~3529 |
 | `runtime-support/` | 1 | ~23216 |
-| `scripts/` | 31 | ~117359 |
+| `scripts/` | 31 | ~117397 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2372 |
 | `scripts/sdlc/` | 2 | ~2845 |
@@ -695,7 +695,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
-- `SMOKE_WIRING.tsv` (~4741 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~4829 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
@@ -745,6 +745,11 @@
 - `native_cabi_registry_smoke.py` (~1991 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
 - `native_dynamic.mind` (~4030 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_layout.md` (~2529 tok, huge) — Checked dynamic MIND image layout, version 1
+- `native_dynamic_layout.mind` (~1459 tok, large) — Copyright 2026 STARGA Inc.
+- `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
+- `native_dynamic_layout_check.py` (~2972 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
+- `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_posix.md` (~2111 tok, huge) — Linux x86-64 POSIX substrate
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
@@ -1280,7 +1285,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9788 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9826 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the

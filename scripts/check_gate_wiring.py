@@ -136,7 +136,9 @@ GATED_EVENTS = ("push", "pull_request")
 # dependencies remain open and are recorded in SMOKE_WIRING.
 # 287 -> 288 adds self_host_source_note_smoke.py: native PT_NOTE bounds/identity
 # refusals and exact HOME-lowered string bytes/source digest, wired in ci.yml.
-HARNESS_CEILING = 288  # Exact reviewed integration inventory; no spare allowance.
+# 288 -> 289 adds the standalone native_dynamic_layout_check.py transport.
+# Its explicit native/MLIR prerequisites and manual execution remain visible.
+HARNESS_CEILING = 289  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
