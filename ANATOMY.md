@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2132 | **Est. tokens:** ~3,982,248
-**Generated:** 2026-10-15 11:29 UTC
+**Files:** 2132 | **Est. tokens:** ~3,983,232
+**Generated:** 2026-10-15 11:34 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 212 | ~597,702 |
+| `examples/mindc_mind/` | 212 | ~598,686 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -698,11 +698,11 @@
 - `native_cabi_registry_smoke.py` (~1991 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_cases.tsv` (~760 tok, large) — id	name	category	runtime_exit	stdout_hex
-- `native_dynamic_image_check.py` (~4745 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
+- `native_dynamic_image_check.py` (~5110 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
 - `native_dynamic_image_expectation_corrections.tsv` (~44 tok, tiny) — id	field	original	corrected	reason
 - `native_dynamic_image_fixture.mind` (~3446 tok, huge) — Copyright 2026 STARGA Inc.
-- `native_dynamic_image.md` (~2733 tok, huge) — Dynamic image writer with checked runtime mappings
-- `native_dynamic_image.mind` (~3193 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_image.md` (~3075 tok, huge) — Dynamic image writer with checked runtime mappings
+- `native_dynamic_image.mind` (~3470 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_mutations.tsv` (~74 tok, small) — name	case	expected_detection
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
 - `native_dynamic_layout_check.py` (~2972 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.

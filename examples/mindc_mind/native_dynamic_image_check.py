@@ -161,6 +161,8 @@ def main():
     p.add_argument('--seed-sha256', required=True)
     p.add_argument('--mindc', type=Path, required=True)
     p.add_argument('--mindc-sha256', required=True)
+    p.add_argument('--mic-oracle', type=Path, required=True)
+    p.add_argument('--mic-oracle-sha256', required=True)
     p.add_argument('--evidence', type=Path, required=True)
     args = p.parse_args()
     e = args.evidence.resolve()
@@ -168,6 +170,8 @@ def main():
     seed, mindc = args.seed.resolve(), args.mindc.resolve()
     assert digest(seed.read_bytes()) == args.seed_sha256
     assert digest(mindc.read_bytes()) == args.mindc_sha256
+    oracle = args.mic_oracle.resolve()
+    assert digest(oracle.read_bytes()) == args.mic_oracle_sha256
     packet = (HERE / 'native_dynamic_image_cases.tsv').read_bytes()
     assert digest(packet) == CASES_SHA
     cases = list(csv.DictReader(packet.decode().splitlines(), delimiter='\t'))
@@ -223,6 +227,30 @@ def main():
     (e / 'assembled.mind').write_bytes(combined)
     source_files = ['main.mind', 'native_dynamic.mind', 'native_dynamic_layout.mind', 'native_dynamic_image.mind', 'native_dynamic_image_fixture.mind', 'native_dynamic_image_cases.tsv', 'native_dynamic_image_expectation_corrections.tsv', 'native_dynamic_image_mutations.tsv', 'native_dynamic_image_check.py']
     (e / 'INPUT_HASHES.txt').write_text(''.join(f'{digest((HERE / f).read_bytes())}  {f}\n' for f in source_files) + f'{digest(prefix)}  stdlib_prefix\n{digest(combined)}  assembled\n{args.seed_sha256}  {seed}\n{args.mindc_sha256}  {mindc}\n')
+    with (e / 'INPUT_HASHES.txt').open('a') as f:
+        f.write(f'{args.mic_oracle_sha256}  {oracle}\n')
+    # Per-function MIC emission is a source-compatibility obligation distinct
+    # from runtime parity. This does not certify whole-compiler closure.
+    import ctypes as ct
+    import re
+    lib = ct.CDLL(str(oracle))
+    emit = lib.selftest_nfn_emit_nth
+    emit.argtypes = [ct.c_int64] * 6
+    emit.restype = ct.c_int64
+    mic_source = (HERE / 'native_dynamic_image.mind').read_bytes()
+    mic_names = re.findall(rb'^pub fn (\w+)\(', mic_source, re.M)
+    assert mic_names
+    mic_rows = []
+    for index, name in enumerate(mic_names):
+        sc = ct.create_string_buffer(mic_source + b'\0' * 8)
+        buf = ct.create_string_buffer(1 << 18)
+        offsets = (ct.c_int64 * 8192)()
+        count = ct.c_int64()
+        rc = emit(ct.addressof(sc), len(mic_source), ct.addressof(buf), ct.addressof(offsets), ct.addressof(count), index)
+        mic_rows.append(f'{index}\t{name.decode()}\t{rc}\n')
+        (e / 'mic-functions.tsv').write_text('index\tname\temitted\n' + ''.join(mic_rows))
+        assert rc == 1, ('module function cannot emit MIC', name, rc)
+    print('MIC module functions PASS', len(mic_names), flush=True)
     image = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(combined)) + combined
     (e / 'input.packet').write_bytes(image)
     nb = run('native-build', [seed], image, timeout=240)

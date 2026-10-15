@@ -96,6 +96,13 @@ output allocation before appending; it never aliases a String that can be
 reallocated during append. Final validation failure additionally frees that
 new output. A successful caller owns the returned String buffer.
 
+The final segment traversal owns a separate 32-byte state buffer and releases
+it before every post-traversal exit. A failed segment makes the validity flag
+absorbing; later iterations do not read another segment or overwrite the state.
+The bounded loop always advances, avoiding early-return loop shapes that the
+current MIC emitter cannot represent. Plan equality similarly folds all 32
+checked word comparisons without returning from inside the loop.
+
 The unchanged original writer's existing internal temporary-allocation behavior
 is inherited, not silently redesigned by this wrapper. Arbitrary allocation
 failure handling across that existing code is outside this component's claim.
@@ -143,6 +150,7 @@ Run with exact instrument hashes and supported LLVM/MLIR tools on PATH:
 python3 examples/mindc_mind/native_dynamic_image_check.py \
   --seed /path/to/source-bound-native --seed-sha256 VERIFIED_SHA256 \
   --mindc /path/to/official-mindc --mindc-sha256 VERIFIED_SHA256 \
+  --mic-oracle /path/to/source-bound-oracle.so --mic-oracle-sha256 VERIFIED_SHA256 \
   --evidence /fresh/absolute/evidence-directory
 ```
 
@@ -151,6 +159,9 @@ bounded scheduling. Each child also has a 2 GiB address-space cap. The harness
 retains source/toolchain/dependency hashes, exact native input, commands and raw
 stdout/stderr/exit receipts; it removes LD_* and GLIBC_TUNABLES overrides and
 requires no system preloads. It makes no compiler-pin, CI or cross-host claim.
+The explicitly hashed oracle also checks nonempty MIC emission for every
+extension function. This is separate from native/MLIR runtime parity and does
+not by itself establish MIC closure for dependencies or the whole compiler.
 
 ### Observed component run, 2026-10-15
 
@@ -160,7 +171,7 @@ the exact normal refusal, and 44 loader/runtime executions matched their expecte
 outcomes. All three compiled source mutants produced normal wrong results that
 the checks detected. The unchanged original writer gate passed; the baseline
 linked payload after offset 4096 remained byte-identical. Peak aggregate memory
-was 625,262,592 bytes under a 2 GiB limit, with zero swap and no OOM events.
+was 631,611,392 bytes under a 2 GiB limit, with zero swap and no OOM events.
 
 The native diagnostic compiler SHA-256 was
 `7f223c1ac82401fac84b490797d1770b394b05b6e525e92586c989362c139811`;
@@ -177,3 +188,12 @@ literals, and the single incorrect loader-exit expectation. Those failed runs
 are not counted as passing evidence. No frozen compiler seed or consumer pin
 was changed. Production libc startup, allocator initialization, typed C calls,
 full compiler integration and ten-program qualification remain separate work.
+
+Independent review subsequently identified two extension functions that passed
+runtime checks but could not emit MIC because of early loop returns. The
+refactor above passes emission for all 14 extension functions using oracle
+SHA-256 `bab5c02ec407ec7c1b429f5befb39ec49d997d75dd7f1392f83ab364cb4a48ae`.
+The same 82 cases and three mutations pass again, with all 164 emitted stdout/
+stderr pairs unchanged from the prior runtime run. Seven functions in the
+unchanged underlying writer still lack MIC compatibility; that pre-existing
+dependency obligation is not hidden by this extension-level result.

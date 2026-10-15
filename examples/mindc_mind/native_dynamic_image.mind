@@ -136,13 +136,19 @@ pub fn ndx_plan(code: String, entry: i64, imports: Vec, patches: Vec, interprete
     result
 }
 
+pub fn ndx_word_equal(a: i64, b: i64, i: i64) -> i64 {
+    if nd_word(a, i) != nd_word(b, i) { return 0; }
+    1
+}
+
 pub fn ndx_same_plan(a: i64, b: i64) -> i64 {
     let mut i: i64 = 0;
+    let mut same: i64 = 1;
     while i < 32 {
-        if nd_word(a, i) != nd_word(b, i) { return 0; }
+        same = same * ndx_word_equal(a, b, i);
         i = i + 1;
     }
-    1
+    same
 }
 
 // Emit complete ordered headers. Existing base payload remains unchanged.
@@ -178,6 +184,61 @@ pub fn ndx_headers(base: String, plan: i64, entry: i64, code_len: i64, literal_l
     nd_ph(out, 4, 4, no, nd_base() + no, 52, 52, 4)
 }
 
+// Absorbing invalid flag: once a segment fails, later steps perform no reads.
+// State holds previous LOAD end, previous file end, LOAD count and NOTE count.
+pub fn ndx_segment_step(valid: i64, out: String, plan: i64, note: String, state: i64, i: i64) -> i64 {
+    if valid == 0 { return 0; }
+    let n: i64 = string_len(out);
+    let p: i64 = string_addr(out);
+    let mut previous_end: i64 = nd_word(state, 0);
+    let mut previous_file_end: i64 = nd_word(state, 1);
+    let mut loads: i64 = nd_word(state, 2);
+    let mut notes: i64 = nd_word(state, 3);
+    let h: i64 = p + 64 + i * 56;
+    let typ: i64 = __mind_load_i32(h);
+    let off: i64 = __mind_load_i64(h + 8);
+    let va: i64 = __mind_load_i64(h + 16);
+    let fs: i64 = __mind_load_i64(h + 32);
+    let ms: i64 = __mind_load_i64(h + 40);
+    if off < 0 { return 0; }
+    if fs < 0 { return 0; }
+    if fs > n { return 0; }
+    if off > n - fs { return 0; }
+    if typ == 1 {
+        let flags: i64 = __mind_load_i32(h + 4);
+        if (flags & 3) == 3 { return 0; }
+        if __mind_load_i64(h + 48) != 4096 { return 0; }
+        if off % 4096 != va % 4096 { return 0; }
+        if ms < 1 { return 0; }
+        if fs > ms { return 0; }
+        if va < previous_end { return 0; }
+        let end: i64 = ndl_add(va, ndl_round(ms, 4096));
+        if end < 0 { return 0; }
+        previous_end = end;
+        if fs > 0 {
+            if off < previous_file_end { return 0; }
+            previous_file_end = ndl_add(off, ndl_round(fs, 4096));
+            if previous_file_end < 0 { return 0; }
+        }
+        loads = loads + 1;
+    }
+    if typ == 4 {
+        if off != nd_word(plan, 31) { return 0; }
+        if off % 4 != 0 { return 0; }
+        if fs != 52 { return 0; }
+        if ms != 52 { return 0; }
+        if off + fs > 4096 { return 0; }
+        if off < nd_word(plan, 30) + 256 { return 0; }
+        if nd_compare(p + off, 52, string_addr(note), 52) != 0 { return 0; }
+        notes = notes + 1;
+    }
+    __mind_store_i64(state, previous_end);
+    __mind_store_i64(state + 8, previous_file_end);
+    __mind_store_i64(state + 16, loads);
+    __mind_store_i64(state + 24, notes);
+    1
+}
+
 // Final independent traversal checks complete ordered LOAD geometry and note
 // containment, not merely that header construction returned a nonempty String.
 pub fn ndx_final_ok(out: String, headers: String, plan: i64, note: String, literal_len: i64) -> i64 {
@@ -191,52 +252,23 @@ pub fn ndx_final_ok(out: String, headers: String, plan: i64, note: String, liter
     if string_len(headers) != 64 + count * 56 { return 0; }
     if nd_compare(p, string_len(headers), string_addr(headers), string_len(headers)) != 0 { return 0; }
     if ndx_u16(p + 56) != count { return 0; }
+    let state: i64 = __mind_alloc(32);
+    __mind_store_i64(state, 0);
+    __mind_store_i64(state + 8, 0);
+    __mind_store_i64(state + 16, 0);
+    __mind_store_i64(state + 24, 0);
     let mut i: i64 = 0;
-    let mut previous_end: i64 = 0;
-    let mut previous_file_end: i64 = 0;
-    let mut loads: i64 = 0;
-    let mut notes: i64 = 0;
+    let mut valid: i64 = 1;
     while i < count {
-        let h: i64 = p + 64 + i * 56;
-        let typ: i64 = __mind_load_i32(h);
-        let off: i64 = __mind_load_i64(h + 8);
-        let va: i64 = __mind_load_i64(h + 16);
-        let fs: i64 = __mind_load_i64(h + 32);
-        let ms: i64 = __mind_load_i64(h + 40);
-        if off < 0 { return 0; }
-        if fs < 0 { return 0; }
-        if fs > n { return 0; }
-        if off > n - fs { return 0; }
-        if typ == 1 {
-            let flags: i64 = __mind_load_i32(h + 4);
-            if (flags & 3) == 3 { return 0; }
-            if __mind_load_i64(h + 48) != 4096 { return 0; }
-            if off % 4096 != va % 4096 { return 0; }
-            if ms < 1 { return 0; }
-            if fs > ms { return 0; }
-            if va < previous_end { return 0; }
-            let end: i64 = ndl_add(va, ndl_round(ms, 4096));
-            if end < 0 { return 0; }
-            previous_end = end;
-            if fs > 0 {
-                if off < previous_file_end { return 0; }
-                previous_file_end = ndl_add(off, ndl_round(fs, 4096));
-                if previous_file_end < 0 { return 0; }
-            }
-            loads = loads + 1;
-        }
-        if typ == 4 {
-            if off != nd_word(plan, 31) { return 0; }
-            if off % 4 != 0 { return 0; }
-            if fs != 52 { return 0; }
-            if ms != 52 { return 0; }
-            if off + fs > 4096 { return 0; }
-            if off < nd_word(plan, 30) + 256 { return 0; }
-            if nd_compare(p + off, 52, string_addr(note), 52) != 0 { return 0; }
-            notes = notes + 1;
-        }
+        valid = ndx_segment_step(valid, out, plan, note, state, i);
         i = i + 1;
     }
+    let previous_end: i64 = nd_word(state, 0);
+    let previous_file_end: i64 = nd_word(state, 1);
+    let loads: i64 = nd_word(state, 2);
+    let notes: i64 = nd_word(state, 3);
+    __mind_free(state);
+    if valid == 0 { return 0; }
     if notes != 1 { return 0; }
     if loads != count - 6 { return 0; }
     if previous_end != nd_word(plan, 21) { return 0; }
