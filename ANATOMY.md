@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2071 | **Est. tokens:** ~3,859,522
-**Generated:** 2026-10-15 05:58 UTC
+**Files:** 2071 | **Est. tokens:** ~3,864,233
+**Generated:** 2026-10-15 06:01 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 187 | ~514,583 |
+| `examples/mindc_mind/` | 187 | ~518,027 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -156,7 +156,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,109 |
-| `tests/` | 422 | ~873,019 |
+| `tests/` | 422 | ~874,286 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -706,7 +706,7 @@
 - `self_host_carry_cap_smoke.py` (~1169 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_cast_mic3_smoke.py` (~4740 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
-- `self_host_continue_smoke.py` (~1384 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
+- `self_host_continue_smoke.py` (~4680 tok, huge) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
 - `selfhost_driver.mind` (~4772 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
@@ -823,7 +823,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~4174 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~4322 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -2196,7 +2196,7 @@
 - `fmt_surface_spelling_roundtrip.rs` (~2864 tok, huge) — Copyright 2025 STARGA Inc.
 - `fn_value_call_reject.rs` (~761 tok, large) — Copyright 2025 STARGA Inc.
 - `for_body_redeclares_var_run.rs` (~1321 tok, large) — Copyright 2026 STARGA Inc.
-- `for_continue_advances_run.rs` (~1504 tok, huge) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
+- `for_continue_advances_run.rs` (~2771 tok, huge) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `for_continue_step_injection.rs` (~1306 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `for_each_run.rs` (~805 tok, large) — Copyright 2025 STARGA Inc.
 - `for_hygiene_run.rs` (~1424 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
