@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -474 +474 @@
+-    __mind_store_i8(buf + in_len, 128);
++    __mind_store_i8(buf + in_len, 0);

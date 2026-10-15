@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2208 | **Est. tokens:** ~4,172,483
-**Generated:** 2026-10-15 17:10 UTC
+**Files:** 2224 | **Est. tokens:** ~4,184,082
+**Generated:** 2026-10-15 17:30 UTC
 
 ## Token Budget Guide
 
@@ -164,7 +164,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 43 | ~207,307 |
+| `std/` | 43 | ~207,652 |
 | `tests/` | 423 | ~876,546 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -231,6 +231,8 @@
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 163 | ~10,627 |
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
+| `tests/sha256_lifetime/` | 8 | ~11,013 |
+| `tests/sha256_lifetime/mutants/` | 8 | ~241 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/std_process_wait/` | 5 | ~7,294 |
@@ -1933,7 +1935,7 @@
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
 - `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
-- `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `sha256.mind` (~3988 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `sha512.mind` (~5100 tok, huge) — std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
 - `string.mind` (~2923 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
@@ -2864,6 +2866,30 @@
 - `_self_host_loop_advance_support.py` (~1643 tok, huge) — Shared fixtures for the self-host loop advancement controls.
 - `self_host_loop_advance_test.py` (~335 tok, medium) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/sha256_lifetime/`
+
+- `assemble.sh` (~709 tok, large) — Author: STARGA Inc. Source assembly only; executable assertions are MIND.
+- `cases.json` (~4371 tok, huge) — Keys: cases, real_count, observer_count, mutations, builds
+- `driver.mind` (~1555 tok, huge) — Author: STARGA Inc. All digest, ownership and refusal verdicts execute in MIND.
+### `tests/sha256_lifetime/mutants/`
+
+- `M01.patch` (~30 tok, tiny) — --- sha256.mind
+- `M02.patch` (~31 tok, tiny) — --- sha256.mind
+- `M03.patch` (~31 tok, tiny) — --- sha256.mind
+- `M04.patch` (~31 tok, tiny) — --- sha256.mind
+- `M05.patch` (~31 tok, tiny) — --- sha256.mind
+- `M06.patch` (~32 tok, tiny) — --- sha256.mind
+- `M07.patch` (~22 tok, tiny) — --- sha256.mind
+- `M08.patch` (~33 tok, tiny) — --- sha256.mind
+### `tests/sha256_lifetime/`
+
+- `observer.mind` (~569 tok, large) — Author: STARGA Inc. Test-only allocation observer; never a product allocator.
+- `raw_driver.mind` (~386 tok, medium) — Author: STARGA Inc. Additive raw-only diagnostic; does not replace full suite.
+- `raw_observed_driver.mind` (~507 tok, large) — Author: STARGA Inc. Additive raw allocation-observer diagnostic; does not replace full suite.
+- `README.md` (~1104 tok, large) — SHA-256 lifetime and refusal controls
+- `vectors.mind` (~1812 tok, huge) — Author: STARGA Inc. Frozen known answers; preparation is not subject execution.
+### `tests/`
+
 - `sha256_smoke.rs` (~1586 tok, huge) — Copyright 2025 STARGA Inc.
 - `sha512_smoke.rs` (~1721 tok, huge) — Copyright 2025 STARGA Inc.
 - `shape_integration.rs` (~416 tok, medium)

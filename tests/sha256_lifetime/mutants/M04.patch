@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -571 +571 @@
+-    __mind_free(scratch);
++    // MUTATION: omitted conversion release.

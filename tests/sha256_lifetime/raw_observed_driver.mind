@@ -1,0 +1,33 @@
+// Author: STARGA Inc. Additive raw allocation-observer diagnostic; does not replace full suite.
+pub fn main()->i64 {
+    let s:i64=__mind_alloc(4096);let p:i64=__mind_alloc(4194304);
+    let out:i64=__mind_alloc(64);let want:i64=__mind_alloc(32);
+    if s==0 || p==0 || out==0 || want==0 { return 70; }
+    let mut checks:i64=0;let mut id:i64=1;
+    while id<=14 {
+        let n:i64=st_vector_input(id,p);st_vector_digest(id,want);
+        if st_raw_kat(s,if id==1 { 0 } else { p },n,want,out)!=1 { return id; }
+        if st_vector_unchanged(id,p,n)!=1 { return id; }
+        checks=checks+1;id=id+1;
+    }
+    st_vector_input(15,p);st_vector_digest(15,want);let mut repeat:i64=0;
+    while repeat<32 { if st_raw_kat(s,p,4096,want,out)!=1 { return 15; }repeat=repeat+1; }checks=checks+1;
+    if st_raw_refuse(s,p,0-1,out+16,out,1,0)!=1 { return 16; }checks=checks+1;
+    if st_raw_refuse(s,p,1152921504606846976,out+16,out,1,0)!=1 { return 17; }checks=checks+1;
+    if st_raw_refuse(s,0-1,0,out+16,out,1,0)!=1 { return 18; }checks=checks+1;
+    if st_raw_refuse(s,0,1,out+16,out,1,0)!=1 { return 19; }checks=checks+1;
+    if st_raw_refuse(s,9223372036854775807,2,out+16,out,1,0)!=1 { return 20; }checks=checks+1;
+    if st_raw_refuse(s,p,1,0,out,1,0)!=1 { return 21; }checks=checks+1;
+    if st_raw_refuse(s,p,1,0-1,out,1,0)!=1 { return 22; }checks=checks+1;
+    if st_raw_refuse(s,p,1,9223372036854775777,out,1,0)!=1 { return 23; }checks=checks+1;
+    if st_raw_refuse(s,1,1152921504606846975,out+16,out,2,1)!=1 { return 24; }checks=checks+1;
+    if st_raw_refuse(s,9223372036854775806,2,out+16,out,2,1)!=1 { return 25; }checks=checks+1;
+    if st_raw_refuse(s,p,1,9223372036854775776,out,2,1)!=1 { return 26; }checks=checks+1;
+    __mind_store_i64(p,6513249);let mut fail:i64=1;
+    while fail<=3 {
+        if st_raw_refuse(s,p,3,out+16,out,2,fail)!=1 { return 36+fail; }
+        checks=checks+1;fail=fail+1;
+    }
+    if checks!=29 { return 65; }
+    __mind_free(s);__mind_free(p);__mind_free(out);__mind_free(want);0
+}
