@@ -134,7 +134,7 @@ def run_elf(elf_path: pathlib.Path, stdin_image: bytes) -> bytes:
     Raises on non-zero exit or empty output (fail-closed)."""
     r = subprocess.run(
         [str(elf_path)], input=stdin_image, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, timeout=120,
+        stderr=subprocess.PIPE, timeout=int(os.environ.get("MIND_SELFHOST_TIMEOUT_SECS", "120")),
     )
     if r.returncode != 0:
         raise RuntimeError(

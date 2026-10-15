@@ -4500,6 +4500,11 @@ pub fn check_module_types_in_file(
     env: &TypeEnv,
 ) -> Vec<Pretty> {
     crate::diagnostics::reset_line_index_cache();
+    // File-local: std.posix exports enter the visible set only when this
+    // module imports them, and a local extern name never does. Body
+    // recursion goes through `_impl`, so this guard covers the walk.
+    #[cfg(feature = "cross-module-imports")]
+    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]

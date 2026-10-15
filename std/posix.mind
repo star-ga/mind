@@ -1,0 +1,227 @@
+// std.posix — Linux x86-64 filesystem surface, with no libc in native builds.
+// All arguments and results use i64; pointers address caller-owned storage.
+// Paths must be NUL-terminated. stat buffers must hold the Linux x86-64
+// struct stat (144 bytes, 8-byte alignment); its st_size is at byte offset 48.
+// Flags, modes, commands and whence use the platform's POSIX integer values.
+// open/openat always take mode (ignored unless flags require it).
+// Every failure returns -errno directly; no thread-local errno is consulted by
+// MIND. Success returns the C result (fd, offset, old mask, uid, or zero).
+// Existing std.io read/write retain their separate -1 error-sentinel contract.
+
+pub fn open(path_ptr: i64, flags: i64, mode: i64) -> i64 {
+    __mind_sys_openat(0 - 100, path_ptr, flags, mode)
+}
+
+pub fn openat(dirfd: i64, path_ptr: i64, flags: i64, mode: i64) -> i64 {
+    __mind_sys_openat(dirfd, path_ptr, flags, mode)
+}
+
+pub fn close(fd: i64) -> i64 {
+    __mind_sys_close(fd)
+}
+
+pub fn fstat(fd: i64, buf: i64) -> i64 {
+    __mind_sys_fstat(fd, buf)
+}
+
+pub fn fstatat(dirfd: i64, path: i64, buf: i64, flags: i64) -> i64 {
+    __mind_sys_newfstatat(dirfd, path, buf, flags)
+}
+
+pub fn fsync(fd: i64) -> i64 {
+    __mind_sys_fsync(fd)
+}
+
+pub fn flock(fd: i64, op: i64) -> i64 {
+    __mind_sys_flock(fd, op)
+}
+
+pub fn fcntl(fd: i64, cmd: i64, arg: i64) -> i64 {
+    __mind_sys_fcntl(fd, cmd, arg)
+}
+
+pub fn lseek(fd: i64, off: i64, whence: i64) -> i64 {
+    __mind_sys_lseek(fd, off, whence)
+}
+
+pub fn unlinkat(dirfd: i64, path: i64, flags: i64) -> i64 {
+    __mind_sys_unlinkat(dirfd, path, flags)
+}
+
+pub fn renameat(olddirfd: i64, old: i64, newdirfd: i64, new: i64) -> i64 {
+    __mind_sys_renameat(olddirfd, old, newdirfd, new)
+}
+
+pub fn umask(mask: i64) -> i64 {
+    __mind_sys_umask(mask)
+}
+
+pub fn getuid() -> i64 {
+    __mind_sys_getuid()
+}
+
+// Return the positive errno on failure, or zero for any successful result.
+pub fn posix_errno(r: i64) -> i64 {
+    if r < 0 {
+        return 0 - r;
+    }
+    0
+}
+
+// Process, clock and directory surface. Linux x86-64 word ABI.
+pub fn fork() -> i64 {
+    __mind_sys_fork()
+}
+
+pub fn pipe2(pipefd: i64, flags: i64) -> i64 {
+    __mind_sys_pipe2(pipefd, flags)
+}
+
+pub fn dup2(oldfd: i64, newfd: i64) -> i64 {
+    __mind_sys_dup2(oldfd, newfd)
+}
+
+pub fn close_range(first: i64, last: i64, flags: i64) -> i64 {
+    __mind_sys_close_range(first, last, flags)
+}
+
+pub fn kill(pid: i64, number: i64) -> i64 {
+    __mind_sys_kill(pid, number)
+}
+
+pub fn setpgid(pid: i64, group: i64) -> i64 {
+    __mind_sys_setpgid(pid, group)
+}
+
+pub fn getpgid(pid: i64) -> i64 {
+    __mind_sys_getpgid(pid)
+}
+
+pub fn prctl(option: i64, value: i64, a: i64, b: i64, c: i64) -> i64 {
+    __mind_sys_prctl(option, value, a, b, c)
+}
+
+pub fn getrlimit(resource: i64, limits: i64) -> i64 {
+    __mind_sys_getrlimit(resource, limits)
+}
+
+pub fn setrlimit(resource: i64, limits: i64) -> i64 {
+    __mind_sys_setrlimit(resource, limits)
+}
+
+pub fn nanosleep(value: i64, remainder: i64) -> i64 {
+    __mind_sys_nanosleep(value, remainder)
+}
+
+pub fn clock_gettime(clock: i64, value: i64) -> i64 {
+    __mind_sys_clock_gettime(clock, value)
+}
+
+pub fn memfd_create(name: i64, flags: i64) -> i64 {
+    __mind_sys_memfd_create(name, flags)
+}
+
+pub fn fchdir(fd: i64) -> i64 {
+    __mind_sys_fchdir(fd)
+}
+
+// execveat with AT_EMPTY_PATH implements fexecve without /proc or libc.
+pub fn fexecve(fd: i64, argv: i64, envp: i64) -> i64 {
+    let empty: i64 = __mind_alloc(8);
+    __mind_store_i64(empty, 0);
+    let r: i64 = __mind_sys_execveat(fd, empty, argv, envp, 4096);
+    __mind_free(empty);
+    r
+}
+
+pub fn waitpid(pid: i64, status: i64, options: i64) -> i64 {
+    __mind_sys_wait4(pid, status, options, 0)
+}
+
+pub fn waitid(kind: i64, pid: i64, info: i64, options: i64) -> i64 {
+    __mind_sys_waitid(kind, pid, info, options, 0)
+}
+
+// Campaign only installs SIG_DFL. SIG_IGN is also supported. Function handlers
+// require a signal restorer trampoline and are deliberately refused (-EINVAL).
+pub fn signal(number: i64, handler: i64) -> i64 {
+    if handler < 0 {
+        return 0 - 22;
+    }
+    if handler > 1 {
+        return 0 - 22;
+    }
+    let act: i64 = __mind_alloc(64);
+    __mind_store_i64(act, handler);
+    __mind_store_i64(act + 8, 0);
+    __mind_store_i64(act + 16, 0);
+    __mind_store_i64(act + 24, 0);
+    let r: i64 = __mind_sys_rt_sigaction(number, act, act + 32, 8);
+    let mut previous: i64 = r;
+    if r == 0 {
+        previous = __mind_load_i64(act + 32);
+    }
+    __mind_free(act);
+    previous
+}
+
+pub fn _exit(code: i64) -> i64 {
+    __mind_sys_exit_group(code)
+}
+
+// DIR owns fd after success. Header: fd, cursor, end; then a 4096-byte
+// getdents64 buffer. Linux dirent64 shares the libc dirent layout on x86-64:
+// ino@0, off@8, reclen@16 (u16), type@18, NUL-terminated name@19.
+pub fn fdopendir(fd: i64) -> i64 {
+    let stat: i64 = __mind_alloc(144);
+    let r: i64 = __mind_sys_fstat(fd, stat);
+    if r < 0 {
+        __mind_free(stat);
+        return r;
+    }
+    let mode: i64 = __mind_load_i32(stat + 24);
+    __mind_free(stat);
+    if (mode & 61440) != 16384 {
+        return 0 - 20;
+    }
+    let d: i64 = __mind_alloc(4120);
+    __mind_store_i64(d, fd);
+    __mind_store_i64(d + 8, 0);
+    __mind_store_i64(d + 16, 0);
+    d
+}
+
+pub fn readdir(d: i64) -> i64 {
+    if d <= 0 {
+        return 0 - 9;
+    }
+    let mut cursor: i64 = __mind_load_i64(d + 8);
+    let mut end: i64 = __mind_load_i64(d + 16);
+    if cursor >= end {
+        end = __mind_sys_getdents64(__mind_load_i64(d), d + 24, 4096);
+        if end <= 0 {
+            return end;
+        }
+        cursor = 0;
+        __mind_store_i64(d + 16, end)
+    }
+    let entry: i64 = d + 24 + cursor;
+    let size: i64 = __mind_load_i8(entry + 16) + 256 * __mind_load_i8(entry + 17);
+    if size < 20 {
+        return 0 - 5;
+    }
+    if cursor + size > end {
+        return 0 - 5;
+    }
+    __mind_store_i64(d + 8, cursor + size);
+    entry
+}
+
+pub fn closedir(d: i64) -> i64 {
+    if d <= 0 {
+        return 0 - 9;
+    }
+    let r: i64 = __mind_sys_close(__mind_load_i64(d));
+    __mind_free(d);
+    r
+}

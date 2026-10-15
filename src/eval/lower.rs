@@ -1243,7 +1243,7 @@ pub fn lower_to_ir_with_limits(
     limits: MaterializationLimits,
 ) -> Result<IRModule, MaterializationRefusal> {
     let mut context = LoweringContext::new(limits);
-    let ir = lower_to_ir_inner(module, &mut context);
+    let ir = lower_entry::lower_module(module, &mut context);
     context.refusal.map_or(Ok(ir), Err)
 }
 
@@ -6566,8 +6566,8 @@ pub(super) fn lower_expr_inner(
             let canonical_semantic = context.canonical_finish_function(ret_id);
 
             // Add function definition to IR, propagating the REAP threshold
-            // from the AST attribute if present.
-            ir.instrs.push(Instr::FnDef {
+            // from the AST attribute if present (std.posix: under its link name).
+            ir.push_fn_def(Instr::FnDef {
                 name: name.clone(),
                 params: param_pairs,
                 ret_id,
@@ -8052,9 +8052,9 @@ pub(super) fn lower_expr_inner(
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types, context))
                 .collect();
             // mangled instance (`id$i64`) and queue that instance for emission.
-            // A non-generic callee (or a shape outside the bounded slice) keeps
-            // the original name, so non-generic call lowering is byte-identical.
-            let name = try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
+            // A non-generic callee (or a shape outside the bounded slice) keeps its
+            // name (std.posix: its link name), so other call lowering is byte-identical.
+            let name = lower_entry::call_name(ir, callee, args, *span);
             let dst = ir.fresh();
             #[cfg(feature = "cross-module-imports")]
             context.canonical_record_call(*span, canonical_identity.as_ref(), &arg_ids, dst);
