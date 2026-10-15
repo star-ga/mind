@@ -1,0 +1,44 @@
+// Author: STARGA Inc. Diagnostic stdin wrapper; no C imports or lane admission.
+// Input: u64LE length followed by source. Output: MCABI001 or an empty stdout;
+// on refusal stderr is [u64 error,u64 source offset], exit is the error code.
+fn cabi_read_exact(p: i64, n: i64) -> i64 {
+    let mut got: i64 = 0;
+    while got < n {
+        let k: i64 = __mind_read(0, p + got, n - got, 0 - 1);
+        if k <= 0 {
+            return 0;
+        }
+        got = got + k;
+    }
+    1
+}
+fn main() -> i64 {
+    let head: i64 = __mind_alloc(8);
+    if cabi_read_exact(head, 8) == 0 {
+        return 111;
+    }
+    let n: i64 = __mind_load_i64(head);
+    if n < 0 {
+        return 112;
+    }
+    if n > 4194304 {
+        return 112;
+    }
+    let src: i64 = __mind_alloc(n + 8);
+    if cabi_read_exact(src, n) == 0 {
+        return 113;
+    }
+    __mind_store_i64(src + n, 0);
+    let out: i64 = __mind_alloc(32);
+    let error: i64 = selftest_nb_cabi(src, n, out);
+    if error != 0 {
+        __mind_write(2, out + 16, 16, 0 - 1);
+        return error;
+    }
+    let size: i64 = __mind_load_i64(out + 8);
+    let written: i64 = __mind_write(1, __mind_load_i64(out), size, 0 - 1);
+    if written != size {
+        return 114;
+    }
+    0
+}

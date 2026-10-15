@@ -130,7 +130,10 @@ GATED_EVENTS = ("push", "pull_request")
 # -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
 # Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
 # not hide this growth by changing the pathspec or classifying files out of it.
-HARNESS_CEILING = 285  # Exact reviewed integration inventory; no spare allowance.
+# 285 -> 286: native_cabi_registry_smoke.py is the standalone diagnostic gate
+# for the source-typed MCABI001 metadata slice. It requires separately built
+# native/oracle artifacts; SMOKE_WIRING records the deferred CI integration.
+HARNESS_CEILING = 286  # One explicitly classified metadata gate; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
