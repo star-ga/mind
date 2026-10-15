@@ -1,5 +1,10 @@
 # Self-host LOOP gate contract
 
+The default source bytes are now captured through the internal
+[compiler source bundle](selfhost_source_bundle.md). With no extra components,
+the library, native source and stdin image remain byte-identical to the
+historical construction. Explicit component bundles have a separate captured
+CPU-oracle API; they do not alter the normal seed/advance/reseed contract.
 
 Self-host LOOP gate (Rust-independence #14, roadmap A7 + RI-E1) — the PERMANENT proof
 that MIND reproduces its own compiler with Rust+LLVM out of the loop, for the scalar-i64

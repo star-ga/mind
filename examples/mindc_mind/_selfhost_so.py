@@ -51,6 +51,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import struct
 
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
@@ -340,3 +341,97 @@ def resolve_mindc() -> str:
             "point $MINDC_BIN at the binary under test."
         )
     return str(p)
+
+
+def build_captured_so(bundle, compiler: pathlib.Path, compiler_sha256: str,
+                      cache_dir: pathlib.Path, *, timeout: int = 180,
+                      dependency_files: tuple[pathlib.Path, ...] = (),
+                      reuse: bool = False) -> ResolvedSo:
+    """Build the captured library, never rereading its original source tree.
+
+    Strict opt-in companion to resolve_so: no environment oracle override or
+    mtime fallback. Fresh build is the default. Cache reuse additionally requires
+    the caller's complete, pinned CPU toolchain file list; its exact bytes enter
+    the key. This list is a caller obligation, not automatic dependency discovery
+    or mathematical authority. The cache and toolchain are trusted owner inputs.
+    Linux CPU bootstrap orchestration only; ordinary project builds are unchanged.
+    """
+    import fcntl
+    from _selfhost_sources import SourceBundle
+
+    if not isinstance(bundle, SourceBundle):
+        raise ValueError("expected captured SourceBundle")
+    if timeout <= 0:
+        raise ValueError("CPU build timeout must be positive")
+    if reuse and not dependency_files:
+        raise ValueError("cache reuse requires an explicit pinned CPU dependency closure")
+    compiler = pathlib.Path(compiler).resolve(strict=True)
+
+    def file_hash(path):
+        with pathlib.Path(path).open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()
+
+    actual_compiler = file_hash(compiler)
+    if actual_compiler != compiler_sha256:
+        raise ValueError("captured CPU compiler hash mismatch")
+    dependencies = tuple((pathlib.Path(path).resolve(strict=True), file_hash(path))
+                         for path in dependency_files)
+    identity = hashlib.sha256(b"MIND_CAPTURED_CPU_BUILD_v1\0")
+    fields = (bundle.identity, actual_compiler, "build --release --emit=cdylib --out=library.so")
+    for value in fields + tuple(str(path) + "\0" + digest for path, digest in dependencies):
+        encoded = value.encode("utf-8")
+        identity.update(struct.pack("<Q", len(encoded)) + encoded)
+    key = identity.hexdigest()
+    cache_dir = pathlib.Path(cache_dir).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    artifact = cache_dir / (key + ".so")
+    receipt = cache_dir / (key + ".sha256")
+    with (cache_dir / (key + ".lock")).open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if reuse and artifact.is_file() and receipt.is_file():
+            expected = receipt.read_text().splitlines()
+            if expected != [key, file_hash(artifact)]:
+                raise ValueError("captured CPU cache artifact identity mismatch")
+            return ResolvedSo(artifact, provenance=FRESH_BUILD,
+                              detail="captured source/compiler/dependency key and artifact hash verified")
+        work = pathlib.Path(tempfile.mkdtemp(prefix=key[:16] + "-", dir=cache_dir))
+        source_root = work / "source"
+        bundle.materialize_cpu(source_root)
+        output = work / "library.so"
+        env = dict(os.environ)
+        env["MIND_STDLIB_PATH"] = str(source_root / "std")
+        command = [str(compiler), "build", "--release", "--emit=cdylib", f"--out={output}"]
+        try:
+            result = subprocess.run(command, cwd=source_root, env=env, capture_output=True,
+                                    timeout=timeout, check=False)
+        except subprocess.TimeoutExpired as error:
+            (work / "build.stdout").write_bytes(error.stdout or b"")
+            (work / "build.stderr").write_bytes(error.stderr or b"")
+            (work / "build.exit").write_text("124\n")
+            (work / "command.txt").write_text("\n".join(command) + "\n")
+            (work / "source.identity").write_text(bundle.identity + "\n")
+            raise RuntimeError(f"captured CPU build timed out; evidence: {work}") from error
+        (work / "build.stdout").write_bytes(result.stdout)
+        (work / "build.stderr").write_bytes(result.stderr)
+        (work / "build.exit").write_text(str(result.returncode) + "\n")
+        (work / "command.txt").write_text("\n".join(command) + "\n")
+        (work / "source.identity").write_text(bundle.identity + "\n")
+        bundle.verify_cpu_materialization(source_root)
+        if file_hash(compiler) != actual_compiler:
+            raise ValueError("CPU compiler changed during captured build")
+        if any(file_hash(path) != digest for path, digest in dependencies):
+            raise ValueError("CPU toolchain dependency changed during captured build")
+        if result.returncode != 0:
+            raise RuntimeError(f"captured CPU build failed with exit {result.returncode}; evidence: {work}")
+        if not output.is_file() or output.stat().st_size < 64:
+            raise RuntimeError(f"captured CPU build produced no ELF library; evidence: {work}")
+        with output.open("rb") as binary:
+            if binary.read(4) != b"\x7fELF":
+                raise RuntimeError(f"captured CPU build produced a non-ELF library; evidence: {work}")
+        digest = file_hash(output)
+        os.replace(output, artifact)
+        staged_receipt = work / "artifact.sha256"
+        staged_receipt.write_text(key + "\n" + digest + "\n")
+        os.replace(staged_receipt, receipt)
+        return ResolvedSo(artifact, provenance=FRESH_BUILD,
+                          detail=f"built captured source closure {bundle.identity}; evidence: {work}")

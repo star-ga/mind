@@ -155,7 +155,9 @@ GATED_EVENTS = ("push", "pull_request")
 # 297 -> 298 adds the frozen string, binding and decoder-bounds gate.
 # 298 -> 299 adds string_borrowed_check.py with explicit MIND-body parity,
 # source mutations and a separately documented C sanitizer reference.
-HARNESS_CEILING = 299  # Exact reviewed integration inventory; no spare allowance.
+# 299 -> 301 adds the captured source-bundle helper and its explicit
+# orchestration/native/CPU gate. No additional product runtime or admission.
+HARNESS_CEILING = 301  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
