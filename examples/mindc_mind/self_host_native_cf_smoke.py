@@ -229,6 +229,13 @@ def capped():
     resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
 
 
+def refusal_result(rc: int, out: bytes, err: str):
+    """Only a diagnosed rc-3 exit with no emitted bytes is a clean refusal."""
+    if rc == 3 and (out or not err.strip()):
+        return ("invalid-refusal", rc, f"stdout={len(out)} B stderr={err.strip()[-120:]!r}")
+    return ("refused", rc, err.strip()[-120:])
+
+
 def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v2: bool = True,
                    cpu: int = 0):
     """Compile with the bounded compiler (v2 header, RLIMIT_AS 2 GiB) and run the
@@ -252,7 +259,7 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v
     if r.returncode < 0:
         return ("crash", -r.returncode)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
-        return ("refused", r.returncode, r.stderr.decode(errors="replace").strip()[-120:])
+        return refusal_result(r.returncode, r.stdout, r.stderr.decode(errors="replace"))
     p = td / "b.elf"
     p.write_bytes(r.stdout)
     p.chmod(0o755)
@@ -263,7 +270,7 @@ def native_compile(stage1: pathlib.Path, src: bytes, seeded: bool = True):
     r = exec_run([str(stage1)], input=image(src, seeded), capture_output=True, timeout=600,
                        preexec_fn=nice)
     ok = r.returncode == 0 and r.stdout[:4] == b"\x7fELF"
-    return ok, r.returncode, (r.stdout if ok else b""), r.stderr.decode(errors="replace")
+    return ok, r.returncode, r.stdout, r.stderr.decode(errors="replace")
 
 
 def run_bin(path: pathlib.Path, timeout: int = 60, preexec_fn=None):
@@ -277,7 +284,7 @@ def run_bin(path: pathlib.Path, timeout: int = 60, preexec_fn=None):
 def native(stage1, src: bytes, td: pathlib.Path, seeded: bool = True):
     ok, rc, elf, err = native_compile(stage1, src, seeded)
     if not ok:
-        return ("refused", rc, err.strip()[-160:]), None
+        return refusal_result(rc, elf, err), None
     p = td / "n.elf"
     p.write_bytes(elf)
     p.chmod(0o755)
@@ -386,6 +393,23 @@ def harness_checks(rep: Report, jobs: int, td: pathlib.Path) -> None:
     (Text file busy); a sibling thread's fork (subprocess with preexec_fn) holds
     copies of every descriptor open at fork time until its child execs. Both
     checks drive the gate's own helpers (run_bin, native_bounded's run)."""
+    print("[cf] harness: refusal requires rc 3, a diagnostic, and empty stdout")
+    for label, output, diagnostic, accepted in (
+        ("clean", "", "printf 'capacity refusal\\n' >&2", True),
+        ("silent", "", "", False),
+        ("whitespace", "", "printf ' \\n' >&2", False),
+        ("elf", "printf '\\177ELFjunkjunk'", "printf 'refused\\n' >&2", False),
+        ("text", "printf 'unexpected output'", "printf 'refused\\n' >&2", False),
+    ):
+        stub = td / f"refusal-{label}.sh"
+        stub.write_text(f"#!/bin/sh\ncat >/dev/null\n{output}\n{diagnostic}\nexit 3\n")
+        stub.chmod(0o755)
+        src = b"fn main() -> i64 { 0 }"
+        default, _ = native(stub, src, td)
+        bounded = native_bounded(stub, src, td)
+        for profile, got in (("default", default), ("bounded", bounded)):
+            rep.check((got[:2] == ("refused", 3)) == accepted,
+                      f"harness {profile} {label} refusal: {got[:2]}, accepted={accepted}")
     print("[cf] harness: exec of a freshly written ELF while a writer holds it (ETXTBSY)")
     h = write_elf(td / "held.elf", tiny_elf(7))
     for label, kw in (("run_bin", {}), ("bounded run", {"timeout": 120, "preexec_fn": capped})):

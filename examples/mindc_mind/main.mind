@@ -2594,13 +2594,10 @@ pub fn alias_skip_header(toks: Vec, pos: i64) -> i64 {
     alias_skip_header(toks, pos + 1)
 }
 
-pub fn alias_collect_scan(toks: Vec, src: i64, pos: i64, transparent: i64, tab: i64) -> i64 {
-    if alias_count(tab) < 0 {
-        return tab;
-    }
-    if at_eof(toks, pos) == 1 {
-        return tab;
-    }
+// Advance one alias-collection step, preserving the exact item grammar and
+// transparent-module depth. Flat declarations need no retained native frame.
+pub fn alias_collect_step(toks: Vec, src: i64, pos: i64, depth: i64, tab: i64) -> i64 {
+    let transparent: i64 = __mind_load_i64(depth);
     let k: i64 = tok_kind(toks, pos);
     if k == tk_ident() {
         let lo: i64 = tok_lo(toks, pos);
@@ -2618,7 +2615,7 @@ pub fn alias_collect_scan(toks: Vec, src: i64, pos: i64, transparent: i64, tab: 
                             } else {
                                 pos + 4
                             };
-                            return alias_collect_scan(toks, src, after, transparent, tab);
+                            return after;
                         }
                     }
                 }
@@ -2626,27 +2623,28 @@ pub fn alias_collect_scan(toks: Vec, src: i64, pos: i64, transparent: i64, tab: 
         }
         if is_module_kw(src, lo, hi) == 1 {
             if tok_kind(toks, pos + 2) == tk_lbrace() {
-                return alias_collect_scan(toks, src, pos + 3, transparent + 1, tab);
+                __mind_store_i64(depth, transparent + 1);
+                return pos + 3;
             }
         }
         if is_struct_kw(src, lo, hi) == 1 {
-            return alias_collect_scan(toks, src, alias_skip_header(toks, pos + 1), transparent, tab);
+            return alias_skip_header(toks, pos + 1);
         }
         if is_enum_kw(src, lo, hi) == 1 {
-            return alias_collect_scan(toks, src, alias_skip_header(toks, pos + 1), transparent, tab);
+            return alias_skip_header(toks, pos + 1);
         }
         if is_extern_kw(src, lo, hi) == 1 {
-            return alias_collect_scan(toks, src, alias_skip_header(toks, pos + 1), transparent, tab);
+            return alias_skip_header(toks, pos + 1);
         }
     }
     if k == tk_kw_fn() {
-        return alias_collect_scan(toks, src, alias_skip_header(toks, pos + 1), transparent, tab);
+        return alias_skip_header(toks, pos + 1);
     }
     if k == tk_lbrace() {
         if transparent == 0 {
-            return alias_collect_scan(toks, src, skip_balanced_brace(toks, pos + 1, 1), transparent, tab);
+            return skip_balanced_brace(toks, pos + 1, 1);
         }
-        return alias_collect_scan(toks, src, pos + 1, transparent, tab);
+        return pos + 1;
     }
     if k == tk_rbrace() {
         let next_transparent: i64 = if transparent > 0 {
@@ -2654,9 +2652,27 @@ pub fn alias_collect_scan(toks: Vec, src: i64, pos: i64, transparent: i64, tab: 
         } else {
             0
         };
-        return alias_collect_scan(toks, src, pos + 1, next_transparent, tab);
+        __mind_store_i64(depth, next_transparent);
+        return pos + 1;
     }
-    alias_collect_scan(toks, src, pos + 1, transparent, tab)
+    pos + 1
+}
+
+pub fn alias_collect_more(toks: Vec, pos: i64, tab: i64) -> i64 {
+    if alias_count(tab) < 0 {
+        return 0;
+    }
+    1 - at_eof(toks, pos)
+}
+
+pub fn alias_collect_scan(toks: Vec, src: i64, pos: i64, transparent: i64, tab: i64) -> i64 {
+    let depth: i64 = __mind_alloc(8);
+    __mind_store_i64(depth, transparent);
+    let mut p: i64 = pos;
+    while alias_collect_more(toks, p, tab) == 1 {
+        p = alias_collect_step(toks, src, p, depth, tab);
+    }
+    tab
 }
 
 pub fn alias_build_from_tokens(toks: Vec, src: i64) -> i64 {
@@ -8000,19 +8016,22 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 }
 
 pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
-    if at_eof(toks, pos) == 1 {
-        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
-        return pr_new(pos, s);
+    // A declaration list is flat. Recursing once per declaration retained
+    // a native frame per item; a wide source needs no such stack growth.
+    let mut p: i64 = pos;
+    let mut items: Vec = acc;
+    while at_eof(toks, p) == 0 {
+        let one: ParseResult = parse_item(toks, p, buf);
+        let nn: i64 = pr_node(one);
+        // Zero is the dropped-item sentinel: retain declaration order but no
+        // module slot for an export or an empty trait.
+        if nn != 0 {
+            items = vec_push(items, nn);
+        }
+        p = pr_pos(one);
     }
-    let one: ParseResult = parse_item(toks, pos, buf);
-    let nn: i64 = pr_node(one);
-    if nn == 0 {
-        // Dropped-item sentinel (empty-body `trait NAME { }`): the oracle emits
-        // NO module slot for the item, so it must not occupy one here either.
-        return parse_items_rest(toks, pr_pos(one), buf, acc);
-    }
-    let new_acc: Vec = vec_push(acc, nn);
-    parse_items_rest(toks, pr_pos(one), buf, new_acc)
+    let s: i64 = ast_new_block(0, 0, vec_addr(items), vec_len(items));
+    pr_new(p, s)
 }
 
 // True iff the whole token stream is a single bare top-level EXPRESSION (no
@@ -9752,6 +9771,12 @@ pub fn es_last_id(s: EmitState) -> i64 {
 
 pub fn es_push(s: EmitState, b: i64) -> EmitState {
     EmitState { buf: string_push_byte(s.buf, b), next_id: s.next_id, last_id: s.last_id, lets: s.lets }
+}
+
+// Append an already-emitted region without changing the enclosing ID/env
+// state. Region IDs were assigned at the caller's exact base; no relocation.
+pub fn es_append_region(s: EmitState, fragment: EmitState) -> EmitState {
+    EmitState { buf: string_push_str(s.buf, fragment.buf), next_id: s.next_id, last_id: s.last_id, lets: s.lets }
 }
 
 // ===== ASCII byte constants =====
@@ -25407,10 +25432,12 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     // NESTED-IF cond (the parse-time && / || desugar): the oracle lowers it as
     // ONE nested OP_IF in the cond region — cond_count=1, cond_id = the inner
     // if's dst, no synth const. Probe-emit the inner if into a scratch state to
-    // learn its dst (deterministic re-emit below), else the flat tree path.
+    // learn its dst, then append those exact bytes below. Re-emitting the
+    // nested region doubled work per level (2^depth) and exhausted the arena
+    // on a 15-arm integer match despite its tiny source.
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0 - 1);
-    let _cp: EmitState = if ast_kind(cond_expr) == ast_if() {
+    let cp: EmitState = if ast_kind(cond_expr) == ast_if() {
         emit_if_value_node(es_new(), cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, ccell)
     } else {
         es_new()
@@ -25440,7 +25467,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
     let s4: EmitState = if nested_cond >= 0 {
-        emit_if_value_node(s3, cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell)
+        es_append_region(s3, cp)
     } else {
         emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0)
     };
@@ -25456,7 +25483,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let then_synth: i64 = after_cond;
     let tcell: i64 = __mind_alloc(8);
     __mind_store_i64(tcell, 0 - 1);
-    let _tp: EmitState = if ast_kind(then_expr) == ast_if() {
+    let tp: EmitState = if ast_kind(then_expr) == ast_if() {
         emit_if_value_node(es_new(), then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, tcell)
     } else {
         es_new()
@@ -25480,7 +25507,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
     let s7: EmitState = if nested_then >= 0 {
-        emit_if_value_node(s6, then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, okcell)
+        es_append_region(s6, tp)
     } else {
         emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0)
     };
@@ -25496,7 +25523,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let else_synth: i64 = after_then;
     let ecell: i64 = __mind_alloc(8);
     __mind_store_i64(ecell, 0 - 1);
-    let _ep: EmitState = if ast_kind(else_expr) == ast_if() {
+    let ep: EmitState = if ast_kind(else_expr) == ast_if() {
         emit_if_value_node(es_new(), else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, ecell)
     } else {
         es_new()
@@ -25520,7 +25547,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
     let s11: EmitState = if nested_else >= 0 {
-        emit_if_value_node(s10, else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, okcell)
+        es_append_region(s10, ep)
     } else {
         emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0)
     };
@@ -44959,6 +44986,24 @@ pub fn nb_param_stk_rank(buf: i64, params_addr: i64, t: i64, k: i64, gp: i64, ss
     nb_param_stk_rank(buf, params_addr, t, k + 1, gp + 1, sse, nai)
 }
 
+// The two register counters already summarize all preceding parameters.
+// Each GP parameter after the sixth and SSE parameter after the eighth
+// contributes one stack slot, in source order. Avoid reclassifying a prefix
+// for every spill (quadratic work on a high-arity function).
+pub fn nb_param_stack_rank(gp: i64, sse: i64) -> i64 {
+    let ng: i64 = if gp > 6 {
+        gp - 6
+    } else {
+        0
+    };
+    let nf: i64 = if sse > 8 {
+        sse - 8
+    } else {
+        0
+    };
+    ng + nf
+}
+
 // Spill params 0..n_params-1 into their slots, classifying each per SysV AMD64:
 // integer/pointer params draw from the GP register pool (rdi/rsi/rdx/rcx/r8/r9,
 // counted by gp_k), FLOAT params from the SSE pool (xmm0..7, counted by sse_k). The
@@ -44986,7 +45031,7 @@ pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i:
         // copied into the float slot via rax (a float slot is just memory; downstream
         // uses re-load it with movsd). Advances sse_k only.
         let cf: String = if sse_k >= 8 {
-            let rank: i64 = nb_param_stk_rank(buf, params_addr, i, 0, 0, 0, 0);
+            let rank: i64 = nb_param_stack_rank(gp_k, sse_k);
             let ldf: String = nb_load_rax(st.code, 16 + 8 * rank);
             nb_store_rax(ldf, nb_slot_disp(i))
         } else {
@@ -45002,7 +45047,7 @@ pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i:
     // (either class) before this one; with no float overflow (n_float<=8) it equals
     // gp_k-6, so the all-integer emission is byte-for-byte unchanged.
     let c1: String = if gp_k >= 6 {
-        let rank: i64 = nb_param_stk_rank(buf, params_addr, i, 0, 0, 0, 0);
+        let rank: i64 = nb_param_stack_rank(gp_k, sse_k);
         let load_stack: String = nb_load_rax(st.code, 16 + 8 * rank);
         nb_store_rax(load_stack, nb_slot_disp(i))
     } else {
@@ -46971,11 +47016,8 @@ pub fn nb_replay_emit_bytes(s: EmitState, addr: i64, pos: i64, end: i64) -> Emit
     nb_replay_emit_bytes(s1, addr, pos + 1, end)
 }
 
-// Walk items in declaration order, emitting each item's instrs; fail closed via ok_cell.
-pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, ok_cell: i64, i: i64) -> EmitState {
-    if i >= items_len {
-        return s;
-    }
+// Emit one item and preserve the pre-checkpoint backing-store invariant.
+pub fn nb_emit_item_reclaimed(s: EmitState, src: i64, items_addr: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, ok_cell: i64, i: i64) -> EmitState {
     // Census X1 capacity: out of arena (nb_arena_low) -> the twin gives up.
     if nb_arena_low() == 1 {
         __mind_store_i64(ok_cell, 0);
@@ -47003,10 +47045,28 @@ pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, st
             let old_len: i64 = string_len(s.buf);
             let _ri: i64 = nb_arena_reclaim(item_ckpt);
             let kept_s: EmitState = nb_replay_emit_bytes(s, s1_addr, old_len, s1_len);
-            return nb_emit_items(kept_s, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1);
+            return kept_s;
         }
     }
-    nb_emit_items(s1, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1)
+    s1
+}
+
+// Walk items in declaration order with logarithmic native-stack depth.
+// Splitting the half-open range preserves emission order and each item's
+// checkpoint lifetime without carrying a record-valued loop accumulator.
+pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, ok_cell: i64, i: i64) -> EmitState {
+    if i >= items_len {
+        return s;
+    }
+    if items_len - i == 1 {
+        return nb_emit_item_reclaimed(s, src, items_addr, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i);
+    }
+    let mid: i64 = i + (items_len - i) / 2;
+    let left: EmitState = nb_emit_items(s, src, items_addr, mid, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i);
+    if __mind_load_i64(ok_cell) == 0 {
+        return left;
+    }
+    nb_emit_items(left, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, mid)
 }
 
 // FULL pruned-combined mic@3 build. Returns the EmitState whose .buf is the byte-exact
@@ -48425,13 +48485,22 @@ pub fn nb_dtype_tag_slot(tbl: i64, id: i64, dt: i64) -> i64 {
 pub fn nb_param_is_float(buf: i64, type_leaf: i64) -> i64 {
     let lo: i64 = ast_span_lo(type_leaf);
     let hi: i64 = ast_span_hi(type_leaf);
-    let f64_buf: i64 = make_byte_buf_3(102, 54, 52);
-    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 {
-        return nb_dtype_float();
-    }
-    let f32_buf: i64 = make_byte_buf_3(102, 51, 50);
-    if bytes_eq(buf, lo, hi, f32_buf, 0, 3) == 1 {
-        return nb_dtype_float();
+    // Classification must not allocate. Prefix rank scans used to allocate
+    // two three-byte comparison buffers per integer parameter inspected.
+    // A 20000-parameter function exhausted the native bump arena that way.
+    if hi - lo == 3 {
+        if load_byte(buf, lo) == 102 {
+            if load_byte(buf, lo + 1) == 54 {
+                if load_byte(buf, lo + 2) == 52 {
+                    return nb_dtype_float();
+                }
+            }
+            if load_byte(buf, lo + 1) == 51 {
+                if load_byte(buf, lo + 2) == 50 {
+                    return nb_dtype_float();
+                }
+            }
+        }
     }
     nb_dtype_int()
 }

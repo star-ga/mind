@@ -537,6 +537,72 @@ def balanced_sum_program(depth: int) -> tuple:
     return src, ((2 << depth) % 251, b"")
 
 
+def declaration_program(n: int, shape: str) -> tuple:
+    """Flat top-level declarations: their number must not grow the parser stack."""
+    if shape == "const":
+        declarations = "".join(f"const C{k}: i64 = 0;\n" for k in range(n))
+        return declarations + "fn main() -> i64 { 37 }\n", (37, b"")
+    if shape == "chain":
+        declarations = "const C0: i64 = 1;\n" + "".join(
+            f"const C{k}: i64 = C{k - 1} + 1;\n" for k in range(1, n))
+        return declarations + "fn main() -> i64 { 37 }\n", (37, b"")
+    if shape == "extern":
+        declarations = "".join(f'extern "C" {{ fn ex{k}(x: i64) -> i64; }}\n' for k in range(n))
+        return declarations + "fn main() -> i64 { 37 }\n", (37, b"")
+    raise ValueError(shape)
+
+
+def match_program(n: int) -> tuple:
+    """An integer match used to re-emit every nested arm twice (2**n work)."""
+    arms = "".join(f"        {k} => {k},\n" for k in range(n))
+    source = (f"fn f(a: i64) -> i64 {{\n    match a {{\n{arms}"
+              "        _ => 99,\n    }\n}\n"
+              f"fn main() -> i64 {{ (f(2) + f({n - 1}) + f({n + 1})) % 251 }}\n")
+    return source, (((2 if n > 2 else 99) + n - 1 + 99) % 251, b"")
+
+
+def parameter_program(n: int) -> tuple:
+    params = ", ".join(f"p{k}: i64" for k in range(n))
+    args = ", ".join(str(k % 251) for k in range(n))
+    return (f"fn f({params}) -> i64 {{ p0 + p{n - 1} }}\n"
+            f"fn main() -> i64 {{ f({args}) % 251 }}\n"), ((n - 1) % 251, b"")
+
+
+def unused_parameter_program(n: int):
+    params = ", ".join(f"p{k}: i64" for k in range(n))
+    return f"fn f({params}) -> i64 {{ 37 }}\nfn main() -> i64 {{ 37 }}\n", (37, b"")
+
+
+def mixed_parameter_program(order: str):
+    """Cross both SysV register limits in each overflow ordering."""
+    kinds = {"gp_first": "i" * 8 + "f" * 10,
+             "sse_first": "f" * 10 + "i" * 8,
+             "interleaved": "if" * 8 + "ff"}[order]
+    params = ",".join(f"p{k}:{'f64' if t == 'f' else 'i64'}" for k, t in enumerate(kinds))
+    args = ",".join(f"{k}.0" if t == "f" else str(k) for k, t in enumerate(kinds))
+    values = "+".join(f"(p{k} as i64)" if t == "f" else f"p{k}" for k, t in enumerate(kinds))
+    src = f"fn f({params})->i64{{{values}}}\nfn main()->i64{{f({args})}}\n"
+    return src, (sum(range(len(kinds))) % 256, b"")
+
+
+def recovery_capacity_cases():
+    """Regression inputs from the independent capacity review, no weakened controls."""
+    return [
+        ("40000 top-level const declarations", declaration_program(40000, "const"), False, True),
+        ("40000 top-level const chain declarations", declaration_program(40000, "chain"), True, True),
+        ("40000 top-level extern blocks", declaration_program(40000, "extern"), True, True),
+        ("integer match 14 arms", match_program(14), False, True),
+        ("integer match 15 arms", match_program(15), False, True),
+        ("integer match 40 arms", match_program(40), False, True),
+        ("mixed GP-first register overflow", mixed_parameter_program("gp_first"), False, True),
+        ("mixed SSE-first register overflow", mixed_parameter_program("sse_first"), False, True),
+        ("mixed interleaved register overflow", mixed_parameter_program("interleaved"), False, True),
+        ("128 function parameters and call arguments", parameter_program(128), False, True),
+        ("20000 unused function parameters", unused_parameter_program(20000), False, True),
+        ("20000 function parameters and call arguments", parameter_program(20000), True, True),
+    ]
+
+
 def capacity_cases():
     """(label, (source, expected), may_refuse, seeded): whole-program capacity in
     the bounded profile past the per-token stack budget: many functions, one
@@ -556,7 +622,7 @@ def capacity_cases():
         ("500 KB identifier (under the token-length budget)", long_token_program("ident", 500000), False, True),
         ("balanced 65536-leaf `+` tree in one expression", balanced_sum_program(16), True, True),
         ("balanced 1024-leaf `+` tree in one expression", balanced_sum_program(10), False, True),
-    ]
+    ] + recovery_capacity_cases()
 
 
 def default_capacity_cases():
@@ -569,4 +635,4 @@ def default_capacity_cases():
          many_fn_program(10000, "lets100"), True, True),
         ("1 MB string literal", long_token_program("str", 1000000), True, True),
         ("balanced 65536-leaf `+` tree in one expression", balanced_sum_program(16), True, True),
-    ]
+    ] + recovery_capacity_cases()
