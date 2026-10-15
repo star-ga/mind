@@ -1,0 +1,71 @@
+// Copyright 2026 STARGA Inc.
+// Single-request diagnostic transport for nce_emit, not source admission.
+pub fn nce_read(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_read(0, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn nce_write(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_write(1, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn main() -> i64 {
+    let row: i64 = __mind_alloc(64);
+    let opts: i64 = __mind_alloc(24);
+    let result: i64 = __mind_alloc(48);
+    let table: i64 = __mind_alloc(2048);
+    let types: i64 = __mind_alloc(12288);
+    let slots: i64 = __mind_alloc(2048);
+    let answer: i64 = __mind_alloc(48);
+    if nce_read(row + 16, 32) == 0 { return 71; }
+    if nce_read(opts, 24) == 0 { return 71; }
+    if nce_read(result, 48) == 0 { return 71; }
+    let n: i64 = __mind_load_i64(row + 40);
+    if n >= 0 {
+        if n <= 256 {
+            if nce_read(types, n * 48) == 0 { return 71; }
+            if nce_read(slots, n * 8) == 0 { return 71; }
+            let mut i: i64 = 0;
+            while i < n {
+                __mind_store_i64(table + i * 8, types + i * 48);
+                i = i + 1;
+            }
+        }
+    }
+    if __mind_read(0, answer, 1, 0 - 1) != 0 { return 72; }
+    __mind_store_i64(row, 0);
+    __mind_store_i64(row + 8, 0);
+    __mind_store_i64(row + 48, table);
+    __mind_store_i64(row + 56, result);
+    let frame: i64 = __mind_load_i64(opts);
+    let dst: i64 = __mind_load_i64(opts + 8);
+    let import_id: i64 = __mind_load_i64(opts + 16);
+    let error: i64 = nce_validate(row, slots, frame, dst, import_id);
+    __mind_store_i64(answer + 16, 777);
+    __mind_store_i64(answer + 24, 777);
+    __mind_store_i64(answer + 32, 777);
+    __mind_store_i64(answer + 40, 777);
+    let code: String = nce_emit(row, slots, frame, dst, import_id, answer + 16);
+    __mind_store_i64(answer, error);
+    __mind_store_i64(answer + 8, string_len(code));
+    if nce_write(answer, 48) == 0 { return 73; }
+    if nce_write(string_addr(code), string_len(code)) == 0 { return 73; }
+    __mind_free(string_addr(code));
+    __mind_free(answer);
+    __mind_free(slots);
+    __mind_free(types);
+    __mind_free(table);
+    __mind_free(result);
+    __mind_free(opts);
+    __mind_free(row);
+    0
+}
