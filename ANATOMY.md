@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2381 | **Est. tokens:** ~4,290,040
-**Generated:** 2026-10-15 18:23 UTC
+**Files:** 2383 | **Est. tokens:** ~4,298,410
+**Generated:** 2026-10-15 18:29 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/` | 39 | ~114,748 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 8 | ~17,425 |
+| `docs/compiler/` | 8 | ~17,804 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -71,7 +71,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
-| `examples/mindc_mind/testdata/native_c_variadic_plan/` | 145 | ~81,235 |
+| `examples/mindc_mind/testdata/native_c_variadic_plan/` | 147 | ~89,226 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_libc_binding/` | 1 | ~149 |
@@ -472,7 +472,7 @@
 - `NATIVE_C_ABI_CONTRACT.md` (~1832 tok, huge) — Source-derived native C ABI declaration contract
 - `NATIVE_C_CALL_EMISSION.md` (~1766 tok, huge) — Fixed scalar C call emission
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
-- `NATIVE_C_VARIADIC_PLAN.md` (~5296 tok, huge) — Scalar SysV variadic argument plan, version 2
+- `NATIVE_C_VARIADIC_PLAN.md` (~5675 tok, huge) — Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
 - `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
@@ -1235,6 +1235,8 @@
 - `C65.input` (~60 tok, small) — 
 - `CASES.json` (~6542 tok, huge)
 - `CASES.tsv` (~587 tok, large) — C01	baseline	0	proposal01-no-tail
+- `COMBINED_BUILD_HASHES.tsv` (~317 tok, medium) — variant	backend	executable_sha256
+- `COMBINED_OBSERVED.tsv` (~7674 tok, huge) — variant	case	backend	exit	stdout_sha256	stderr_sha256	receipt_sha256
 - `CUSTODY_OBSERVED.tsv` (~204 tok, medium) — control	exit	live_marker	captured_marker	stdout_sha256	stderr_sha256
 - `M01.patch` (~92 tok, small) — --- a/native_c_variadic_plan.mind
 - `M02.patch` (~31 tok, tiny) — --- a/native_c_variadic_plan.mind

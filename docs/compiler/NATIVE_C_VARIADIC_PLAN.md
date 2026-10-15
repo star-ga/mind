@@ -382,3 +382,29 @@ The reproduction report SHA-256 is
 `eb7434f90961e3f9557c0a5b9839949d9ce738c55bb1898d8dddd7ae78d2e9b5`;
 the raw 283-file evidence seal is
 `c9fff0e133d310dfa4603cd0180574b69f488cb2da8cc21dab0e06f05bdcf656`.
+
+## Combined compiler integration
+
+The exact reviewed feature commit was merged at `6c4cd38f7baca11d76e9245d82faffcd83a58ba6`.
+A fresh capture uses the integrated standard-library prefix
+`199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202`, including
+the separately reviewed SHA scratch-lifetime correction. All eight reconstructed
+MIND source variants, 65 inputs/expected receipts and mutation expectations were
+checked against the original frozen campaign before the completed execution.
+
+All 16 fresh builds and 142 expected runtime outcomes passed. Every exit,
+stdout, stderr and fd3 receipt also matches its original campaign counterpart.
+The baseline native ELF is
+`2e6f7bc3bf0955124598fd405297a093baeb6e967c68ec2c94d637ca6e192a8d`;
+the MLIR ELF remains `5934e4649b90ca48161f95af833e46c66db6f9796b5c30315b6c35be7c02fdca`.
+The changed native input prefix means its artifact is not asserted identical to
+the earlier frozen-prefix artifact. Peak memory was 73,109,504 bytes, with zero
+memory events and no swap under the same 2 GiB limits.
+
+`COMBINED_BUILD_HASHES.tsv`, `COMBINED_OBSERVED.tsv` and
+`COMBINED_RESULTS.tar.gz` retain the separate integration evidence; the earlier
+capsule is unchanged. The combined capsule SHA-256 is
+`98d335280fe38307b8bc7db61b068b5a90c25ad97857f834c0dc9d250c5db73e`.
+The exact combined harness census is 312, accounting for the other integrated
+components as well. No source-call admission, release reseed or consumer pin
+is qualified by this metadata-planner result.
