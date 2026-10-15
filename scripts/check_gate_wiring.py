@@ -144,7 +144,10 @@ GATED_EVENTS = ("push", "pull_request")
 # gate with explicit source-bound native and MLIR compiler prerequisites.
 # 291 -> 292 adds native_c_call_emit_check.py, the frozen ABI execution and
 # source-mutation gate for a standalone candidate MIND call emitter.
-HARNESS_CEILING = 292  # Exact reviewed integration inventory; no spare allowance.
+# 292 -> 294 adds native_dynamic_allocator_check.py and its diagnostic byte
+# generator testdata/native_dynamic_allocator/gen_mind.py. One manual gate;
+# the generator is development tooling, not a second runtime or admission path.
+HARNESS_CEILING = 294  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
