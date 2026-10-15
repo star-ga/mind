@@ -140,7 +140,9 @@ GATED_EVENTS = ("push", "pull_request")
 # Its explicit native/MLIR prerequisites and manual execution remain visible.
 # 289 -> 290 adds self_host_native_io_smoke.py, explicitly classified manual
 # pending source-bound bounded compiler construction in CI. No other allowance.
-HARNESS_CEILING = 290  # Exact reviewed integration inventory; no spare allowance.
+# 290 -> 291 adds native_c_call_plan_check.py: a frozen scalar ABI metadata
+# gate with explicit source-bound native and MLIR compiler prerequisites.
+HARNESS_CEILING = 291  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
