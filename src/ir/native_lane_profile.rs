@@ -66,8 +66,9 @@ pub(crate) fn intrinsic_arity(name: &str) -> Option<usize> {
 fn intrinsic_signature(name: &str) -> Option<Signature> {
     use Ty::{F64, I64};
     // Reuse canonical i64 ABI rows only for the explicitly supported names.
-    // Stores have no native destination write: preserve their DiscardOnly
-    // result policy. Positioned read/write is delivery-specific.
+    // Preserve the canonical DiscardOnly compatibility policy. The delivery
+    // emitter can materialize zero for value-position stores; that behavior
+    // does not broaden this profile. Positioned read/write is delivery-specific.
     let row = match name {
         "__mind_alloc" => Some("alloc"),
         "__mind_load_i64" => Some("load_i64"),

@@ -32,8 +32,11 @@ prove memory safety of that address. The predicate is a compiler feature fence,
 not a memory-safety or theorem verifier.
 
 Canonical intrinsic contracts supply the existing exact i64 ABI for allocation,
-loads, stores, read and write. Store destinations remain **discard-only**:
-native store instructions do not initialize a return-value slot. Additional
+loads, stores, read and write. Store results remain **discard-only** as a
+conservative compatibility contract. The delivery compiler's value-position
+store lowering explicitly writes zero; this profile still refuses use of store
+results. This restriction is not a claim that every native store leaves its
+destination uninitialized. Additional
 explicit contracts cover load/store i32, free/realloc, signed word conversion,
 f64 bit conversion, and the implemented raw Linux syscall family. The raw
 syscall surface takes word arguments and returns raw results, including negative

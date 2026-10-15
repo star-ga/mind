@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2107 | **Est. tokens:** ~3926990
-**Generated:** 2026-10-15 09:12 UTC
+**Files:** 2107 | **Est. tokens:** ~3927062
+**Generated:** 2026-10-15 09:16 UTC
 
 ## Token Budget Guide
 
@@ -49,7 +49,7 @@
 | `docs/` | 39 | ~114748 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
-| `docs/compiler/` | 1 | ~928 |
+| `docs/compiler/` | 1 | ~976 |
 | `docs/design/` | 4 | ~11498 |
 | `docs/gates/` | 1 | ~4020 |
 | `docs/mindcraft/` | 3 | ~7086 |
@@ -134,7 +134,7 @@
 | `src/fmt/` | 3 | ~25460 |
 | `src/fmt/printer/` | 1 | ~1878 |
 | `src/intrinsics/` | 1 | ~1398 |
-| `src/ir/` | 11 | ~105539 |
+| `src/ir/` | 11 | ~105563 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
 | `src/ir/compact/v3/` | 15 | ~76625 |
@@ -492,7 +492,7 @@
 - `cli.md` (~1310 tok, large) — MIND CLI Reference
 ### `docs/compiler/`
 
-- `NATIVE_LANE_PROFILE.md` (~928 tok, large) — Typed scalar delivery profile
+- `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
 ### `docs/design/`
 
 - `README.md` (~26 tok, tiny) — Design Docs
@@ -1600,7 +1600,7 @@
 - `frozen_profile.rs` (~7794 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~17735 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~5179 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_lane_profile.rs` (~7151 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_lane_profile.rs` (~7175 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
 - `tests.rs` (~2636 tok, huge) — Copyright 2026 STARGA Inc.
