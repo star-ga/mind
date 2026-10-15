@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2101 | **Est. tokens:** ~3907433
-**Generated:** 2026-10-15 08:17 UTC
+**Files:** 2101 | **Est. tokens:** ~3908251
+**Generated:** 2026-10-15 08:51 UTC
 
 ## Token Budget Guide
 
@@ -68,7 +68,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 192 | ~554633 |
+| `examples/mindc_mind/` | 192 | ~555451 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -688,8 +688,8 @@
 - `SMOKE_WIRING.tsv` (~4542 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
-- `_cf_giant.py` (~7998 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
-- `_cf_oracle.py` (~1375 tok, large) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
+- `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
+- `_cf_oracle.py` (~1752 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
 - `_diagnostic_project.py` (~376 tok, medium) — Owned CLI projects for diagnostic smoke fixtures."""
 - `_frozen_native_oracle.py` (~384 tok, medium) — Integrity-checked frozen references for the native ELF smoke."""
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
@@ -775,7 +775,7 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
-- `self_host_native_cf_smoke.py` (~9928 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
+- `self_host_native_cf_smoke.py` (~9900 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_div_trap_smoke.py` (~9537 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.

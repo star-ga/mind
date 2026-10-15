@@ -14,9 +14,9 @@ SIGABRT. Three checks:
                  the same function bound to a __mind_alloc(...) result; a table
                  nb_ntab built is released only through nb_ntab_free.
   heap_child     runs the oracle's stage and IR-note entries on every fixture
-                 and a corpus slice inside a child process whose glibc malloc
+                 and a corpus slice, one fresh child per entry pair. glibc
                  checks every free (libc_malloc_debug, glibc.malloc.check=3):
-                 an invalid free aborts the child at once, on any input size.
+                 an invalid free aborts its child at once, on any input size.
   self_emit      the oracle's selftest_native_elf_u on this tree's combined
                  self-host source (the self-host loop's oracle leg), in the same
                  checked child; the ELF must equal the stage1 the frozen seed
@@ -29,10 +29,20 @@ import glob
 import os
 import pathlib
 import re
+import resource
 import subprocess
 import sys
 
 MARK = "cf-oracle-child-ok"
+# Leave headroom for the parent inside its 2 GiB cgroup. An oracle allocation
+# failure is a failed check, never a reason to exceed the caller's memory cap.
+ORACLE_AS_LIMIT = 1536 << 20
+
+
+def child_limits():
+    os.nice(15)
+    resource.setrlimit(resource.RLIMIT_AS, (ORACLE_AS_LIMIT, ORACLE_AS_LIMIT))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def strip_comments(src: str) -> str:
@@ -76,7 +86,7 @@ def run_checked_child(smoke: pathlib.Path, mode: str, so: str, out: pathlib.Path
     env = dict(os.environ, LD_PRELOAD=lib, GLIBC_TUNABLES="glibc.malloc.check=3")
     try:
         r = subprocess.run([sys.executable, str(smoke), "--so-child", mode, so, str(out)], env=env,
-                           capture_output=True, timeout=timeout, preexec_fn=lambda: os.nice(15))
+                           capture_output=True, timeout=timeout, preexec_fn=child_limits)
     except subprocess.TimeoutExpired:
         return False, f"child timed out after {timeout} s"
     tail = (r.stdout + r.stderr).decode(errors="replace").strip().splitlines()[-3:]
@@ -105,14 +115,34 @@ def emit(so, entry: str, blob: bytes, src: bytes) -> bytes:
 
 def child(mode: str, so_path: str, out: str, blob: bytes, fixtures, corpus_srcs, self_src: bytes) -> int:
     """The child body (runs under the malloc check)."""
-    so = load_so(so_path)
+    programs = [f.read_bytes() for f in fixtures] + corpus_srcs
     if mode == "heap":
-        n = 0
-        for src in [f.read_bytes() for f in fixtures] + corpus_srcs:
-            emit(so, "selftest_native_elf_stage", blob, src)
-            emit(so, "selftest_native_elf_u", blob, src)
-            n += 1
-        print(f"{MARK} heap programs={n}", flush=True)
+        # The malloc-backed research oracle does not reclaim its native bump-
+        # allocator's scratch between requests. Preserve every listed case and
+        # both entry calls, but give each pair a fresh checked process. Keeping
+        # the whole corpus in one process exceeded the 2 GiB cgroup.
+        for i in range(len(programs)):
+            ok, why = run_checked_child(pathlib.Path(sys.argv[0]), f"heap:{i}", so_path,
+                                       pathlib.Path(out), timeout=120)
+            if not ok:
+                print(f"FAIL oracle heap case={i}: {why}", flush=True)
+                return 1
+        print(f"{MARK} heap programs={len(programs)} isolated=true", flush=True)
+        return 0
+    so = load_so(so_path)
+    if mode.startswith("heap:"):
+        i = int(mode.split(":", 1)[1])
+        if i < 0 or i >= len(programs):
+            raise SystemExit(f"invalid heap case index {i}")
+        emit(so, "selftest_native_elf_stage", blob, programs[i])
+        emit(so, "selftest_native_elf_u", blob, programs[i])
+        print(f"{MARK} heap case={i} entries=2", flush=True)
+        return 0
+    if mode == "stage-file":
+        src = pathlib.Path(out).with_suffix(".mind").read_bytes()
+        elf = emit(so, "selftest_native_elf_stage", blob, src)
+        pathlib.Path(out).write_bytes(elf)
+        print(f"{MARK} stage bytes={len(elf)}", flush=True)
         return 0
     if mode == "self":
         elf = emit(so, "selftest_native_elf_u", blob, self_src)
