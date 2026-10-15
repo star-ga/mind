@@ -1,0 +1,5 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -95 +95 @@
+-    if t == 11 { return 6; }
++    if t == 11 { return 0; }
