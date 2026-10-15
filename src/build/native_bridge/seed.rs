@@ -146,23 +146,40 @@ pub(super) struct CompilerElf {
 /// carries it; no earlier seed does, and those merge nested bindings by name.
 pub(super) const SCOPED_BINDINGS_MARK: &[u8] = b"\x48\xb8nbscope1";
 
+/// Versioned compiler compatibility marker for native-lane-v1 admission.
+/// Unlike `nbscope1`, it denotes the complete merged lane implementation.
+/// It is NOT a signature, a trusted compiler hash, or a qualified release pin.
+/// Explicit compiler overrides remain caller-supplied compiler executables;
+/// this marker only chooses which source/IR admission contract to apply.
+pub(super) const NATIVE_LANE_V1_MARK: &[u8] = b"\x48\xb8nblane01";
+
 /// True when the compiler `compiler_elf(bounded)` would run carries
 /// [`SCOPED_BINDINGS_MARK`]: the `MINDC_NATIVE_ELF` override when set (an
 /// unreadable file reads as unmarked), else the embedded seed of the profile.
 pub(super) fn compiler_scopes_nested_bindings(bounded: bool) -> bool {
-    let has_mark = |bytes: &[u8]| {
-        bytes
-            .windows(SCOPED_BINDINGS_MARK.len())
-            .any(|w| w == SCOPED_BINDINGS_MARK)
-    };
+    compiler_has_mark(bounded, SCOPED_BINDINGS_MARK)
+}
+
+pub(super) fn compiler_supports_native_lane_v1(bounded: bool) -> bool {
+    compiler_has_mark(bounded, NATIVE_LANE_V1_MARK)
+}
+
+fn has_mark(bytes: &[u8], mark: &[u8]) -> bool {
+    bytes.windows(mark.len()).any(|w| w == mark)
+}
+
+fn compiler_has_mark(bounded: bool, mark: &[u8]) -> bool {
     if let Some(p) = std::env::var_os("MINDC_NATIVE_ELF") {
-        return std::fs::read(p).is_ok_and(|b| has_mark(&b));
+        return std::fs::read(p).is_ok_and(|b| has_mark(&b, mark));
     }
-    has_mark(if bounded {
-        BOUNDED_SEED_ELF
-    } else {
-        DEFAULT_SEED_ELF
-    })
+    has_mark(
+        if bounded {
+            BOUNDED_SEED_ELF
+        } else {
+            DEFAULT_SEED_ELF
+        },
+        mark,
+    )
 }
 
 /// Resolve the compiler: `MINDC_NATIVE_ELF` when set (it must exist), otherwise
@@ -226,6 +243,21 @@ fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lane_marker_is_distinct_complete_and_not_memory_profile_authority() {
+        assert!(!has_mark(SCOPED_BINDINGS_MARK, NATIVE_LANE_V1_MARK));
+        assert!(!has_mark(b"nblane01", NATIVE_LANE_V1_MARK));
+        assert!(!has_mark(b"\x48\xb8nblane02", NATIVE_LANE_V1_MARK));
+        assert!(has_mark(
+            b"prefix\x48\xb8nblane01suffix",
+            NATIVE_LANE_V1_MARK
+        ));
+        // Neither a bounded-layout label nor the scoped-let marker alone
+        // activates new rules. Real pins may be refreshed later, so do not
+        // hardcode that every future committed seed must remain unmarked.
+        assert!(!has_mark(b"bounded\x48\xb8nbscope1", NATIVE_LANE_V1_MARK));
+    }
 
     #[test]
     fn the_embedded_default_and_bounded_seeds_match_their_pins() {

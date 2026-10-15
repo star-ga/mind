@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2104 | **Est. tokens:** ~3920662
-**Generated:** 2026-10-15 08:59 UTC
+**Files:** 2107 | **Est. tokens:** ~3926279
+**Generated:** 2026-10-15 09:04 UTC
 
 ## Token Budget Guide
 
@@ -46,7 +46,7 @@
 | `benchmarks/mojo/` | 8 | ~4276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4880 |
 | `config/` | 2 | ~3347 |
-| `docs/` | 38 | ~113519 |
+| `docs/` | 39 | ~114748 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
 | `docs/compiler/` | 1 | ~928 |
@@ -119,7 +119,7 @@
 | `src/bin/mindc/` | 1 | ~204 |
 | `src/build/` | 13 | ~53507 |
 | `src/build/cache/` | 3 | ~3150 |
-| `src/build/native_bridge/` | 7 | ~22830 |
+| `src/build/native_bridge/` | 8 | ~25757 |
 | `src/cache/` | 4 | ~3682 |
 | `src/check/` | 5 | ~12177 |
 | `src/deps/` | 1 | ~9388 |
@@ -159,7 +159,7 @@
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 43 | ~207109 |
-| `tests/` | 422 | ~875192 |
+| `tests/` | 423 | ~876653 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -525,6 +525,7 @@
 ### `docs/`
 
 - `mlir-lowering.md` (~286 tok, medium) — MLIR lowering pipeline (public)
+- `native-closure-lane.md` (~1229 tok, large) — Candidate native closure and namespace admission
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11775 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
@@ -1421,6 +1422,7 @@
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
+- `namespace.rs` (~2927 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 - `seed.rs` (~3369 tok, huge) — Copyright 2025 STARGA Inc.
 - `shadow.rs` (~3570 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2460,6 +2462,7 @@
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
 - `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
+- `native_lane_bridge_controls.rs` (~1461 tok, large) — Copyright 2025 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
