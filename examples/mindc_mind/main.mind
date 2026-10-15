@@ -4173,6 +4173,153 @@ pub fn for_acc_declares_var(acc: Vec, buf: i64, var_lo: i64, var_hi: i64, i: i64
     for_acc_declares_var(acc, buf, var_lo, var_hi, i + 1)
 }
 
+// 1 iff a top-level statement of the range-for body is an authored `let VAR`
+// (lower.rs body_redeclares; nested blocks scope their own lets).
+pub fn for_body_declares_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) == ast_let() {
+        if span_is_for_counter(buf, ast_span_lo(stmt), ast_span_hi(stmt)) == 0 {
+            let name: i64 = ast_child0(stmt);
+            if span_bytes_equal(buf, ast_span_lo(name), ast_span_hi(name), var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+    }
+    for_body_declares_var(sa, sl, buf, var_lo, var_hi, i + 1)
+}
+
+// 1 iff an if-branch at this loop level (descending nested ifs, not loops) holds an
+// authored `let VAR`.
+pub fn for_branch_declares_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if for_body_declares_var(ast_child0(tb), ast_aux(tb), buf, var_lo, var_hi, 0) == 1 {
+            return 1;
+        }
+        if for_branch_declares_var(ast_child0(tb), ast_aux(tb), buf, var_lo, var_hi, 0) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            if for_body_declares_var(ast_child0(eb), ast_aux(eb), buf, var_lo, var_hi, 0) == 1 {
+                return 1;
+            }
+            if for_branch_declares_var(ast_child0(eb), ast_aux(eb), buf, var_lo, var_hi, 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    for_branch_declares_var(sa, sl, buf, var_lo, var_hi, i + 1)
+}
+
+// 1 iff VAR is bound in a scope enclosing the token at `i` (scanning backward to
+// the start of the enclosing fn): a `let [mut] VAR` in the current or an
+// enclosing block before it, the `for VAR in` header of an enclosing loop, or a
+// parameter `VAR:` of the enclosing fn. `depth` counts the closed blocks being
+// skipped (their bindings are out of scope). Over-approximation only costs the
+// hidden-counter desugar where the byte-neutral one would also be right.
+pub fn for_var_visible(toks: Vec, buf: i64, i: i64, depth: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_rbrace() {
+        return for_var_visible(toks, buf, i - 1, depth + 1, var_lo, var_hi);
+    }
+    if k == tk_lbrace() {
+        if depth > 0 {
+            return for_var_visible(toks, buf, i - 1, depth - 1, var_lo, var_hi);
+        }
+        // An enclosing block opens here: its header binds VAR (a range-for) or
+        // ends the scan (the fn signature's parameters).
+        let h: i64 = for_header_start(toks, i - 1);
+        if for_tok_is_word3(toks, buf, h, 102, 111, 114) == 1 {
+            if span_bytes_equal(buf, tok_lo(toks, h + 1), tok_hi(toks, h + 1), var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+        if for_header_has_fn(toks, h, i) == 1 {
+            return for_params_bind(toks, buf, h, i, var_lo, var_hi);
+        }
+        return for_var_visible(toks, buf, i - 1, 0, var_lo, var_hi);
+    }
+    if depth == 0 {
+        if k == tk_kw_let() {
+            let n: i64 = if for_tok_is_word3(toks, buf, i + 1, 109, 117, 116) == 1 {
+                i + 2
+            } else {
+                i + 1
+            };
+            if span_bytes_equal(buf, tok_lo(toks, n), tok_hi(toks, n), var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+    }
+    for_var_visible(toks, buf, i - 1, depth, var_lo, var_hi)
+}
+// First token of the header ending at `j` (back to a `;`, `{` or `}`).
+pub fn for_header_start(toks: Vec, j: i64) -> i64 {
+    if j < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, j);
+    if k == tk_semi() {
+        return j + 1;
+    }
+    if k == tk_lbrace() {
+        return j + 1;
+    }
+    if k == tk_rbrace() {
+        return j + 1;
+    }
+    for_header_start(toks, j - 1)
+}
+pub fn for_header_has_fn(toks: Vec, h: i64, end: i64) -> i64 {
+    if h >= end {
+        return 0;
+    }
+    if tok_kind(toks, h) == tk_kw_fn() {
+        return 1;
+    }
+    for_header_has_fn(toks, h + 1, end)
+}
+// 1 iff a `VAR :` pair (a parameter) sits in the fn header tokens [h, end).
+pub fn for_params_bind(toks: Vec, buf: i64, h: i64, end: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if h + 1 >= end {
+        return 0;
+    }
+    if tok_kind(toks, h + 1) == tk_colon() {
+        if span_bytes_equal(buf, tok_lo(toks, h), tok_hi(toks, h), var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    for_params_bind(toks, buf, h + 1, end, var_lo, var_hi)
+}
+// 1 iff token `t` is the 3-byte word (c0 c1 c2).
+pub fn for_tok_is_word3(toks: Vec, buf: i64, t: i64, c0: i64, c1: i64, c2: i64) -> i64 {
+    let lo: i64 = tok_lo(toks, t);
+    if tok_hi(toks, t) - lo != 3 {
+        return 0;
+    }
+    if load_byte(buf, lo) != c0 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != c1 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != c2 {
+        return 0;
+    }
+    1
+}
+
 pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     let kw_lo: i64 = tok_lo(toks, pos);
     let var_lo: i64 = tok_lo(toks, pos + 1);
@@ -4245,7 +4392,15 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     // lowerer even when END is otherwise inline-safe. The parser already has
     // those statements in `acc`; keep the byte-neutral form off that path so
     // the body-local binder cannot overwrite the outer binding at loop exit.
-    let shadows_outer: i64 = for_acc_declares_var(acc, buf, var_lo, var_hi, 0);
+    // Mirror the rest of lower.rs's needs_hygiene: `env.contains_key(var)` (VAR is
+    // bound in ANY enclosing scope -- an enclosing block's `let`, an enclosing
+    // `for` header, a parameter; for_var_visible scans the tokens before `for`)
+    // and `body_redeclares` (a top-level body `let VAR`, which the trailing
+    // `VAR = VAR + 1` would step instead of the counter: a loop that never ends).
+    // Either one makes the byte-neutral desugar wrong (VAR leaks past the loop over
+    // the outer binding, or the counter never advances), so take the hidden-counter
+    // form, which scopes VAR to each iteration.
+    let shadows_outer: i64 = for_acc_declares_var(acc, buf, var_lo, var_hi, 0) + for_body_declares_var(sa, sl, buf, var_lo, var_hi, 0) + for_var_visible(toks, buf, pos - 1, 0, var_lo, var_hi);
     if has_cont == 0 {
         if body_writes == 0 {
             if end_is_inline == 1 {
@@ -4275,10 +4430,15 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     // Verified vs --emit-mic3: `for i in 0..5 { if i > 2 { continue; } s = s + i; }`
     // lowers exactly as `let i = 0; while i < 5 { if i > 2 { i = i + 1; continue; }
     // s = s + i; i = i + 1; }` (strtab has no `__for_i_N`).
+    // The continue form also splices `VAR = VAR + 1` into the if-branches holding a
+    // `continue` (for_inject_step); a branch `let VAR` before it would take that
+    // step instead of the counter, so any if-branch `let VAR` at this loop level
+    // takes the hidden-counter form too.
+    let branch_decl: i64 = for_branch_declares_var(sa, sl, buf, var_lo, var_hi, 0);
     if has_cont == 1 {
         if body_writes == 0 {
             if end_is_inline == 1 {
-                if shadows_outer == 0 {
+                if shadows_outer + branch_decl == 0 {
                     let vname_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
                     let let_var_c: i64 = ast_new_let(kw_lo, lo_hi, vname_c, ty, pr_node(lo_res));
                     let inj: Vec = for_inject_step(sa, sl, 0, vec_new(), var_lo, var_hi);
@@ -32843,6 +33003,19 @@ pub fn nb_emit_push_imm64(code: String, v: i64) -> String {
     nb_push(c3, 80)
 }
 
+// Capability mark: SCOPED NESTED BINDINGS. This compiler gives a `let` inside an
+// if/else block or a while body its own storage for that block's lifetime, so a
+// re-declared outer name (a `let` or a parameter) is untouched once the block
+// ends (self_host_native_shadow_scope_smoke.py checks it against a lexically
+// scoped model and the MLIR build). Compiled natively this body is
+// `movabs rax, imm64` whose little-endian immediate spells "nbscope1"; the Rust
+// native bridge (src/build/native_bridge/seed.rs, SCOPED_BINDINGS_MARK) admits
+// the proven shadow shapes only for a compiler ELF that carries those bytes.
+// Earlier seeds merge nested bindings by name and do not carry it.
+pub fn nb_cap_scoped_nested_bindings() -> i64 {
+    3559374704218432110
+}
+
 // emit_alloc(bytes_disp): round the requested size up to the 8-byte stride into
 // rsi, then bump. Leaves the data pointer in rax.
 //   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; add rsi,7 = 48 83 C6 07 ;
@@ -38132,6 +38305,11 @@ pub fn nb_loops_top_header(loops: i64, lpcell: i64) -> i64 {
 // Flush the innermost loop's carried vars at a break/continue: for each carried var
 // whose CURRENT let-env binding is not its post slot, `load cur ; store post`. No ids
 // are consumed (count side unchanged). No loop frame (or no carry) -> code unchanged.
+// Word 258 of the loop frame's break buffer is the let-env count at body entry
+// (after copy-in): `cur` is the carried binding's latest slot, found by
+// nb_lets_lookup_carried, which stops at a body-local `let` of the same name so a
+// shadow declared in the body (and still in scope at the exit) is never flushed in
+// place of the carried var.
 pub fn nb_exit_flush_carry(code: String, loops: i64, lpcell: i64, buf: i64, lets: i64, lcell: i64) -> String {
     let n: i64 = __mind_load_i64(lpcell);
     if n <= 0 {
@@ -38140,18 +38318,167 @@ pub fn nb_exit_flush_carry(code: String, loops: i64, lpcell: i64, buf: i64, lets
     let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
     let carry: i64 = __mind_load_i64(bb + 256 * 8);
     let ncarry: i64 = __mind_load_i64(bb + 257 * 8);
-    nb_exit_flush_rest(code, carry, ncarry, 0, buf, lets, lcell)
+    let body_scope: i64 = __mind_load_i64(bb + 258 * 8);
+    nb_exit_flush_rest(code, carry, ncarry, 0, buf, lets, lcell, body_scope)
 }
-pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, lets: i64, lcell: i64) -> String {
+pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, lets: i64, lcell: i64, body_scope: i64) -> String {
     if i >= ncarry {
         return code;
     }
     let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
     let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
     let post: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
-    let cur: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+    let cur: i64 = nb_lets_lookup_carried(lets, __mind_load_i64(lcell), buf, lo, hi, body_scope, 0, 0 - 1);
     let c1: String = nb_flush_one(code, cur, post);
-    nb_exit_flush_rest(c1, carry, ncarry, i + 1, buf, lets, lcell)
+    nb_exit_flush_rest(c1, carry, ncarry, i + 1, buf, lets, lcell, body_scope)
+}
+// Lexical scoping at a loop exit: the latest let-env slot of the name [lo,hi) bound
+// BEFORE the first entry at index >= body_scope that DECLARES that name (a `let` /
+// `for` binding made inside the loop body and still in scope -- block exits drop
+// the entries of bindings whose scope ended). Entries before body_scope and the
+// rebinds of an assignment, if-merge or nested-loop copy-in (spans of assignment
+// targets) all belong to the carried binding. No body-local declaration -> the
+// same answer as nb_lets_lookup (last match wins).
+// deferred: the byte-neutral range-for desugar's step `VAR = VAR + 1` (also spliced
+// before each `continue`) targets the header's VAR, which follows `for`, so
+// nb_decl_site reads it as a declaration; that loop shape (an if-branch assign then
+// `continue`) is refused by the native control-flow subset today, so no exit flush
+// sees it. Upgrade path when that shape is admitted: skip entries whose span is the
+// carried var's own carry-table span (an assignment by construction) before the
+// nb_decl_site test (fixture for_continue_step in self_host_native_shadow_scope_smoke.py).
+pub fn nb_lets_lookup_carried(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, body_scope: i64, i: i64, best: i64) -> i64 {
+    if i >= n {
+        return best;
+    }
+    let nlo: i64 = __mind_load_i64(lets + (i * 5 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 5 + 1) * 8);
+    if span_bytes_equal(buf, lo, hi, nlo, nhi) == 0 {
+        return nb_lets_lookup_carried(lets, n, buf, lo, hi, body_scope, i + 1, best);
+    }
+    if i >= body_scope {
+        if nb_decl_site(buf, nlo) == 1 {
+            return best;
+        }
+    }
+    nb_lets_lookup_carried(lets, n, buf, lo, hi, body_scope, i + 1, __mind_load_i64(lets + (i * 5 + 2) * 8))
+}
+// 1 iff the identifier starting at byte `lo` is a binding DECLARATION: the token
+// before it is `let`, `let mut` or `for`. An assignment target follows `;`, `{`
+// or `}` instead. Whitespace and `//` comments between the tokens are skipped
+// (nb_code_back), so a comment ending in one of those words before an assignment
+// is not read as a declaration, and one between `let` and the name hides nothing.
+pub fn nb_decl_site(buf: i64, lo: i64) -> i64 {
+    let p: i64 = nb_code_back(buf, lo - 1);
+    if nb_kw3_ends_at(buf, p, 108, 101, 116) == 1 {
+        return 1;
+    }
+    if nb_kw3_ends_at(buf, p, 102, 111, 114) == 1 {
+        return 1;
+    }
+    if nb_kw3_ends_at(buf, p, 109, 117, 116) == 1 {
+        return nb_kw3_ends_at(buf, nb_code_back(buf, p - 3), 108, 101, 116);
+    }
+    0
+}
+// Index of the last code byte at or before i (-1 when none): whitespace and `//`
+// line comments are skipped.
+pub fn nb_code_back(buf: i64, i: i64) -> i64 {
+    let p: i64 = nb_ws_back(buf, i);
+    if p < 0 {
+        return p;
+    }
+    let c: i64 = nb_line_comment_start(buf, nb_line_start(buf, p), p, 0);
+    if c >= 0 {
+        return nb_code_back(buf, c - 1);
+    }
+    p
+}
+// Index of the first byte of the line holding byte p.
+pub fn nb_line_start(buf: i64, p: i64) -> i64 {
+    if p <= 0 {
+        return 0;
+    }
+    if load_byte(buf, p - 1) == 10 {
+        return p;
+    }
+    nb_line_start(buf, p - 1)
+}
+// Index of the `//` opening a line comment at or before byte p, scanning the line
+// forward from j (string and char literals skipped), or -1 when byte p is code.
+pub fn nb_line_comment_start(buf: i64, j: i64, p: i64, in_str: i64) -> i64 {
+    if j > p {
+        return 0 - 1;
+    }
+    let c: i64 = load_byte(buf, j);
+    if in_str == 1 {
+        if c == 92 {
+            return nb_line_comment_start(buf, j + 2, p, 1);
+        }
+        if c == 34 {
+            return nb_line_comment_start(buf, j + 1, p, 0);
+        }
+        return nb_line_comment_start(buf, j + 1, p, 1);
+    }
+    if c == 34 {
+        return nb_line_comment_start(buf, j + 1, p, 1);
+    }
+    if c == 39 {
+        // a char literal ('x', '\x', a multi-byte scalar): resume after its close
+        if load_byte(buf, j + 1) == 92 {
+            return nb_line_comment_start(buf, nb_quote_at(buf, j + 3, p) + 1, p, 0);
+        }
+        return nb_line_comment_start(buf, nb_quote_at(buf, j + 2, p) + 1, p, 0);
+    }
+    if c == 47 {
+        if j < p {
+            if load_byte(buf, j + 1) == 47 {
+                return j;
+            }
+        }
+    }
+    nb_line_comment_start(buf, j + 1, p, 0)
+}
+// Index of the first `'` in [j, p], or p when there is none.
+pub fn nb_quote_at(buf: i64, j: i64, p: i64) -> i64 {
+    if j >= p {
+        return p;
+    }
+    if load_byte(buf, j) == 39 {
+        return j;
+    }
+    nb_quote_at(buf, j + 1, p)
+}
+// Index of the last non-whitespace byte at or before i (-1 when none).
+pub fn nb_ws_back(buf: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    if is_space(load_byte(buf, i)) == 1 {
+        return nb_ws_back(buf, i - 1);
+    }
+    i
+}
+// 1 iff the 3-byte keyword (c0 c1 c2) ends at byte p as a whole word.
+pub fn nb_kw3_ends_at(buf: i64, p: i64, c0: i64, c1: i64, c2: i64) -> i64 {
+    if p < 2 {
+        return 0;
+    }
+    if load_byte(buf, p - 2) != c0 {
+        return 0;
+    }
+    if load_byte(buf, p - 1) != c1 {
+        return 0;
+    }
+    if load_byte(buf, p) != c2 {
+        return 0;
+    }
+    if p == 2 {
+        return 1;
+    }
+    if is_alnum(load_byte(buf, p - 3)) == 1 {
+        return 0;
+    }
+    1
 }
 pub fn nb_flush_one(code: String, cur: i64, post: i64) -> String {
     if cur < 0 {
@@ -38163,55 +38490,6 @@ pub fn nb_flush_one(code: String, cur: i64, post: i64) -> String {
     let a: String = nb_load_rax(code, nb_slot_disp(cur));
     nb_store_rax(a, nb_slot_disp(post))
 }
-// 1 iff some carried name is re-declared by a `let` anywhere in block [sa,sl)
-// (descending if branches and while bodies).
-pub fn nb_carry_any_let_shadowed(carry: i64, ncarry: i64, i: i64, buf: i64, sa: i64, sl: i64) -> i64 {
-    if i >= ncarry {
-        return 0;
-    }
-    let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
-    let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
-    if nb_block_lets_name_deep(buf, sa, sl, 0, lo, hi) == 1 {
-        return 1;
-    }
-    nb_carry_any_let_shadowed(carry, ncarry, i + 1, buf, sa, sl)
-}
-pub fn nb_block_lets_name_deep(buf: i64, sa: i64, sl: i64, i: i64, lo: i64, hi: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_let() {
-        let nm: i64 = ast_child0(stmt);
-        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
-            return 1;
-        }
-    }
-    if nb_stmt_lets_name_region(buf, stmt, k, lo, hi) == 1 {
-        return 1;
-    }
-    nb_block_lets_name_deep(buf, sa, sl, i + 1, lo, hi)
-}
-pub fn nb_stmt_lets_name_region(buf: i64, stmt: i64, k: i64, lo: i64, hi: i64) -> i64 {
-    if k == ast_while() {
-        let wb: i64 = ast_child1(stmt);
-        return nb_block_lets_name_deep(buf, ast_child0(wb), ast_aux(wb), 0, lo, hi);
-    }
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        if nb_block_lets_name_deep(buf, ast_child0(tb), ast_aux(tb), 0, lo, hi) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb == 0 {
-            return 0;
-        }
-        return nb_block_lets_name_deep(buf, ast_child0(eb), ast_aux(eb), 0, lo, hi);
-    }
-    0
-}
-
 // Record a break jmp index (`which`) into the innermost loop's break list.
 pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
@@ -38714,17 +38992,13 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     // Push a loop frame (header + per-loop break list). Words 256/257 of the break
     // buffer carry this loop's carry table + count so a `break`/`continue` can flush
     // each carried var's CURRENT value into its post slot (nb_exit_flush_carry).
-    let breaks_buf: i64 = __mind_alloc(258 * 8);
+    // Word 258 is body_scope: an exit flush resolves each carried name to the
+    // binding made BEFORE any body-local `let` of that name (a per-iteration shadow
+    // still in scope at the break/continue), see nb_lets_lookup_carried.
+    let breaks_buf: i64 = __mind_alloc(259 * 8);
     __mind_store_i64(breaks_buf + 256 * 8, carry);
     __mind_store_i64(breaks_buf + 257 * 8, ncarry);
-    // An exit flush resolves each carried name through the let-env; a body `let`
-    // re-declaring a carried name would make that resolve the per-iteration SHADOW,
-    // not the carried var. Refuse that combination (fail closed, fn-wide poison).
-    if nb_block_loop_exit(buf, body_sa, body_sl, 0) == 1 {
-        if nb_carry_any_let_shadowed(carry, ncarry, 0, buf, body_sa, body_sl) == 1 {
-            __mind_store_i64(lcell + 80, 1)
-        }
-    }
+    __mind_store_i64(breaks_buf + 258 * 8, body_scope);
     let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf);
 
     // body.

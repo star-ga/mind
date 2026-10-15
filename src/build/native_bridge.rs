@@ -346,7 +346,13 @@ pub fn run_native_backend_bridge_profile(
     // `admit_merged_program` already proved the image is UTF-8, so this is exact.
     let fence_text = String::from_utf8_lossy(&fence_source);
     let origins = shadow_origins(&source_set, &paths[0]);
-    if let Err(msg) = admission::refuse_shadowing(&merged_ast, &fence_text, &origins) {
+    // A compiler carrying the scoped-nested-bindings mark gives each nested
+    // `let` its own storage; the proven shadow shapes are then admitted.
+    let bounded = layout.is_some();
+    let compiler_scopes = || seed::compiler_scopes_nested_bindings(bounded);
+    if let Err(msg) =
+        admission::refuse_shadowing(&merged_ast, &fence_text, &origins, &compiler_scopes)
+    {
         eprintln!("error[backend-native]: {msg}");
         process::exit(3);
     }

@@ -270,9 +270,77 @@ const LOOP_BODY_SHADOW_CASES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The cases above whose shape a compiler carrying the scoped-nested-bindings
+/// mark admits (a plain `let` over an outer `let` or parameter across `if`
+/// blocks and `while`/`loop` bodies only), with the exit code of the MLIR build
+/// of the same source (the comments above).
+const PROVEN_SHADOW_MLIR_EXIT: &[(&str, i32)] = &[
+    ("outer_let", 5),
+    ("outer_param", 5),
+    ("blind_review_fzh", 2),
+    ("nested_loop_body_let", 2),
+    ("shadow_then_outer_read_after_second_loop", 7),
+    ("if_inside_loop", 5),
+    ("loop_keyword", 5),
+    ("if_shadow_loop_in_nested_if", 5),
+    ("if_shadow_loop_in_nested_if_then_writes", 6),
+    ("if_shadow_write_in_nested_if", 5),
+    ("param_if_shadow_write_in_nested_if", 5),
+    ("helper_if_shadow_write_in_nested_if", 3),
+    ("loop_param_if_shadow_write_in_nested_if", 28),
+    ("if_block_shadow_outside_loop", 5),
+    ("if_block_param_shadow_outside_loop", 5),
+    ("imported_block_shadow", 3),
+];
+
+/// True when the compiler these builds run (`native_bridge_support`'s
+/// `MINDC_NATIVE_ELF`) carries the scoped-nested-bindings mark, the bytes
+/// `nb_cap_scoped_nested_bindings` in examples/mindc_mind/main.mind compiles to.
+/// Off x86-64 Linux the compiler is a drain fixture without it.
+fn compiler_scopes_nested_bindings() -> bool {
+    cfg!(all(target_os = "linux", target_arch = "x86_64"))
+        && std::fs::read(repo_path(
+            "examples/mindc_mind/testdata/selfhost_loop/stage1.elf",
+        ))
+        .is_ok_and(|b| b.windows(10).any(|w| w == b"\x48\xb8nbscope1"))
+}
+
+/// The MLIR exit of `name` when the compiler admits its (proven) shadow.
+fn admitted_shadow(name: &str) -> Option<i32> {
+    if !compiler_scopes_nested_bindings() {
+        return None;
+    }
+    PROVEN_SHADOW_MLIR_EXIT
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, e)| *e)
+}
+
+/// An admitted shadow is never refused for shadowing; if the compiler builds
+/// it, it exits with the MLIR value (a compiler refusal stays fail-closed).
+fn assert_admitted_shadow(p: &Project, entry: &str, name: &str, expected: i32) {
+    let (code, stderr, bytes) = p.build_native(entry);
+    assert!(
+        !stderr.contains("native.loop_body_shadow") && !stderr.contains("native.block_shadow"),
+        "{name}: a proven shadow was refused by a scoping compiler:\n{stderr}"
+    );
+    if code == 0 {
+        assert_native_result(p, &bytes.expect("artifact"), expected, name);
+    } else {
+        assert_eq!(code, 3, "{name}: neither built nor refused:\n{stderr}");
+        assert!(bytes.is_none(), "{name}: a refused build wrote an artifact");
+    }
+}
+
 #[test]
 fn a_loop_body_binding_shadowing_an_enclosing_name_is_refused() {
     for (name, src, shadowed) in LOOP_BODY_SHADOW_CASES {
+        if let Some(expected) = admitted_shadow(name) {
+            let p = Project::new(name);
+            p.write("src/main.mind", src);
+            assert_admitted_shadow(&p, "src/main.mind", name, expected);
+            continue;
+        }
         let stderr = assert_refused(name, src, "native.loop_body_shadow");
         assert!(
             stderr.contains(shadowed),
@@ -291,10 +359,13 @@ fn a_loop_body_binding_shadowing_an_enclosing_name_is_refused() {
 
 #[test]
 fn the_first_probe_names_the_inner_let_line() {
-    let (_, src, _) = LOOP_BODY_SHADOW_CASES[0];
+    // `for_body_let`: a `for` body is never a proven shape, so this stays a
+    // refusal whatever compiler runs.
+    let (name, src, _) = LOOP_BODY_SHADOW_CASES[4];
+    assert_eq!(name, "for_body_let");
     let stderr = assert_refused("outer_let_line", src, "native.loop_body_shadow");
     assert!(
-        stderr.contains("main.mind:6:"),
+        stderr.contains("main.mind:4:"),
         "inner `let` line:\n{stderr}"
     );
 }
@@ -465,6 +536,12 @@ const BLOCK_SHADOW_CASES: &[(&str, &str, &str)] = &[
 #[test]
 fn a_block_binding_shadowing_an_enclosing_name_is_refused() {
     for (name, src, shadowed) in BLOCK_SHADOW_CASES {
+        if let Some(expected) = admitted_shadow(name) {
+            let p = Project::new(name);
+            p.write("src/main.mind", src);
+            assert_admitted_shadow(&p, "src/main.mind", name, expected);
+            continue;
+        }
         let stderr = assert_refused(name, src, "native.block_shadow");
         assert!(
             stderr.contains(shadowed),
@@ -495,6 +572,10 @@ fn a_block_shadow_in_an_imported_module_is_refused() {
         "src/main.mind",
         "import helper;\n\nfn main() -> i64 {\n    return hv(3);\n}\n",
     );
+    if let Some(expected) = admitted_shadow("imported_block_shadow") {
+        assert_admitted_shadow(&p, "src/main.mind", "imported_block_shadow", expected);
+        return;
+    }
     let (code, stderr, bytes) = p.build_native("src/main.mind");
     assert_eq!(code, 3, "expected a refusal (exit 3):\n{stderr}");
     assert!(stderr.contains("native.block_shadow"), "{stderr}");

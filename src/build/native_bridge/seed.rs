@@ -139,6 +139,32 @@ pub(super) struct CompilerElf {
     _unpacked: Option<tempfile::TempDir>,
 }
 
+/// The bytes `nb_cap_scoped_nested_bindings` in `examples/mindc_mind/main.mind`
+/// compiles to: `movabs rax, imm64` whose little-endian immediate spells
+/// `nbscope1`. A compiler built from a `main.mind` that gives every nested `let`
+/// its own storage (checked by `self_host_native_shadow_scope_smoke.py`)
+/// carries it; no earlier seed does, and those merge nested bindings by name.
+pub(super) const SCOPED_BINDINGS_MARK: &[u8] = b"\x48\xb8nbscope1";
+
+/// True when the compiler `compiler_elf(bounded)` would run carries
+/// [`SCOPED_BINDINGS_MARK`]: the `MINDC_NATIVE_ELF` override when set (an
+/// unreadable file reads as unmarked), else the embedded seed of the profile.
+pub(super) fn compiler_scopes_nested_bindings(bounded: bool) -> bool {
+    let has_mark = |bytes: &[u8]| {
+        bytes
+            .windows(SCOPED_BINDINGS_MARK.len())
+            .any(|w| w == SCOPED_BINDINGS_MARK)
+    };
+    if let Some(p) = std::env::var_os("MINDC_NATIVE_ELF") {
+        return std::fs::read(p).is_ok_and(|b| has_mark(&b));
+    }
+    has_mark(if bounded {
+        BOUNDED_SEED_ELF
+    } else {
+        DEFAULT_SEED_ELF
+    })
+}
+
 /// Resolve the compiler: `MINDC_NATIVE_ELF` when set (it must exist), otherwise
 /// the verified embedded seed for the requested profile, written to a private
 /// temporary directory so it can be executed.
