@@ -23,6 +23,7 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 # stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import ResolvedSo, resolve_so  # noqa: E402
+from _selfhost_sources import NATIVE_STD_MODULES, SourceBundle, capture_bundle  # noqa: E402
 
 _SO: ResolvedSo | None = None
 
@@ -41,11 +42,7 @@ def so() -> ResolvedSo:
         _SO = resolve_so()
     return _SO
 
-_STDLIB_MODULES = [
-    "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
-    "json", "map", "net", "process", "reactor", "regex", "ring", "sha256",
-    "string", "time", "toml", "tui", "vec",
-]
+_STDLIB_MODULES = list(NATIVE_STD_MODULES)
 
 _FROZEN = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 _FROZEN_MANIFEST = _HERE / "testdata" / "selfhost_loop" / "MANIFEST.txt"
@@ -98,19 +95,12 @@ def mode_conflict(advance: list[str], reseed: list[str]) -> str | None:
     )
 
 
-def build_seed() -> tuple[bytes, bytes, int]:
+def build_seed(bundle: SourceBundle | None = None) -> tuple[bytes, bytes, int]:
     """Return (combined_source, stdin_image, user_lo). combined_source is the exact
     byte stream compiled; stdin_image is [8B user_lo][8B src_len][combined_source]."""
-    std_dir = _REPO / "std"
-    std_blob = b"\n".join(
-        (std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES
-    ) + b"\n"
-    main = (_HERE / "main.mind").read_bytes()
-    driver = (_HERE / "selfhost_driver.mind").read_bytes()
-    combined = std_blob + main + b"\n" + driver
-    user_lo = len(std_blob)
-    stdin_image = struct.pack("<qq", user_lo, len(combined)) + combined
-    return combined, stdin_image, user_lo
+    if bundle is None:
+        bundle = capture_bundle(_REPO, native_std_modules=tuple(_STDLIB_MODULES))
+    return bundle.native_bytes, bundle.stdin_image, bundle.user_lo
 
 
 def stage0_emit(combined: bytes, user_lo: int) -> bytes:

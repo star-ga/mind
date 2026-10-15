@@ -30,12 +30,14 @@ _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refus
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
 _selfhost_loop_reseed	none	helper	Focused legacy Rust-seeded publication path imported by self_host_loop_smoke.py; not a gate — running it directly is a no-op.
 _selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
+_selfhost_sources	none	helper	Immutable internal compiler source capture and library/native view materialization; imported bootstrap orchestration, not product runtime or native admission.
 _shadow_scope_lang	none	helper	Mini-language of self_host_native_shadow_scope_smoke (lexically scoped model interpreter, printer, seeded generator, alpha-renamer), imported by that smoke; not a gate - running it directly is a no-op.
 
 _stdlib_manifest	none	helper	Shared reader for testdata/stdlib_manifest.txt (seed_modules/bundled_modules/seed_blob), imported by the self-host smokes and the twin of mindc.rs::frozen_std_seed_modules; not a gate — running it directly is a no-op.
 _w8_native	none	helper	Shared harness of the W8 float smokes (self_host_native_f64_lit_smoke, self_host_native_f64_intrinsics_smoke): derives a stage1 compiler from main.mind with the frozen seed and compiles a program natively; imported by them, not a gate - running it directly is a no-op.
 backend_native_bridge_smoke	ci	gate	
 bootstrap_smoke	ci	gate	
+selfhost_source_bundle_check	none	gate	deferred: CI must provision exact reviewed native compiler and freshly rebuilt CPU shell hashes before wiring this captured component build gate. Explicit unit-only mode does not claim backend parity. No seed or admission change.
 branch_shadow_crossbackend_smoke	ci	gate	
 closure_netverify	ci,keystone	gate	
 collect_field_strings_smoke	ci	gate	
