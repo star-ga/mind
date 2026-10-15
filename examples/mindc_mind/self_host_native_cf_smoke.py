@@ -360,14 +360,14 @@ def check_fixture(f: pathlib.Path, stage1, mindc, so):
 
 
 def so_stage(so, src: bytes) -> bytes:
-    comb = BLOB + src
-    buf = ctypes.create_string_buffer(comb, len(comb))
-    es = so.selftest_native_elf_stage(ctypes.cast(buf, ctypes.c_void_p).value, len(comb), len(BLOB))
-    rd = lambda a, o=0: ctypes.cast(a + o, ctypes.POINTER(ctypes.c_int64))[0]  # noqa: E731
-    sh = rd(es, 0)
-    if not sh or rd(sh, 8) <= 0:
-        return b""
-    return ctypes.string_at(rd(sh, 0), rd(sh, 8))
+    """One independent oracle request per process; preserve the byte comparison."""
+    with tempfile.TemporaryDirectory() as tdn:
+        out = pathlib.Path(tdn) / "stage.elf"
+        out.with_suffix(".mind").write_bytes(src)
+        ok, why = O.run_checked_child(pathlib.Path(__file__), "stage-file", str(so), out)
+        if not ok:
+            raise RuntimeError(f"oracle stage failed: {why}")
+        return out.read_bytes()
 
 
 def tiny_elf(code: int) -> bytes:
@@ -653,9 +653,7 @@ def main() -> int:
         # twin leg is optional: without MINDC_SO it is skipped, never rebuilt.
         from _selfhost_so import resolve_so
         so_path = resolve_so()
-        so = ctypes.CDLL(str(so_path))
-        so.selftest_native_elf_stage.restype = ctypes.c_int64
-        so.selftest_native_elf_stage.argtypes = [ctypes.c_int64] * 3
+        so = so_path
     rep = Report()
     with tempfile.TemporaryDirectory() as tdn, ThreadPoolExecutor(1) as bex:
         td = pathlib.Path(tdn)
