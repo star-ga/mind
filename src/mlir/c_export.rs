@@ -38,13 +38,13 @@
 //! is the largest residual drift surface in the ecosystem (RFC 0002
 //! Motivation).
 //!
-//! Scope (mindc 0.3.0): the wrapper is a real exported C-ABI symbol with
-//! the correct prototype, returning rc=0 (`MIND_OK`). The unpack →
-//! dispatch-into-user-body → repack is RFC 0003 deliverable D3 (symbol
-//! versioning + AOT per-fn emission); the single-`@main` lowering this
-//! module sits on has no per-fn bodies to call into yet. Until then the
-//! symbol is link-time stable so downstream `dlsym` wiring (mind-nerve,
-//! MindLLM, rfn-mind) can be built and tested against a frozen ABI.
+//! Current scope: the wrapper is a real exported C-ABI symbol with the
+//! declared prototype, but returns rc=38 (`ENOSYS`) because dispatch is
+//! not implemented. Unpack → dispatch-into-user-body → repack remains
+//! RFC 0003 deliverable D3 (symbol versioning + AOT per-fn emission).
+//! The stable symbol supports downstream `dlsym` wiring tests; resolving
+//! it does not establish that a user function executed or outputs were
+//! populated. It must not report `MIND_OK` until dispatch is implemented.
 //!
 //! Gated entirely behind `feature = "ffi-c-user"`. The default build
 //! never compiles this file and emits byte-identical MLIR to before —
