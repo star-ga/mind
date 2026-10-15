@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stderr before reading stdin used to deadlock the bridge.
 - A compiler killed by a signal on the normal path is reported by signal and exits
   `128 + signal`, instead of "rejected the program (exit 1)".
+- These compiler-process failures now carry the stable code `E6011`
+  (`error[backend-native][E6011]: ...`, docs/errors.md). The code covers a stream
+  failure, a signal death, a child that could not be reaped, and a compiler ELF that
+  could not be spawned (the OS error is named). A compiler that read the whole image
+  and refused the program keeps its uncoded "rejected the program (exit N)" verdict.
+- The stderr report keeps the TAIL as well as the head: the first 16 KiB and the last
+  48 KiB, with the number of bytes left out between them. A compiler that logs a lot
+  and then dies no longer has its last lines cut off.
 
 ### Fixed — checked process wait and spawn_capture descriptors
 - `std.process.wait` retries `EINTR` and returns an error record when `waitpid`

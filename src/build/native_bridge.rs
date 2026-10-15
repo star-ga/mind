@@ -18,6 +18,8 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
+mod outcome;
+#[cfg(feature = "std-surface")]
 mod seed;
 #[cfg(feature = "std-surface")]
 mod shadow;
@@ -399,8 +401,14 @@ pub fn run_native_backend_bridge_profile(
     {
         Ok(c) => c,
         Err(e) => {
+            // execve failing before its point of no return (ENOMEM, EACCES,
+            // ENOEXEC, ...) surfaces here, not as a child status.
             drop(compiler);
-            eprintln!("error[backend-native]: failed to spawn compiler ELF '{elf}': {e}");
+            eprintln!(
+                "error[backend-native][{}]: failed to spawn compiler ELF '{elf}': {e}; no \
+                 artifact written (native backend is fail-closed — no MLIR fallback).",
+                child::CHILD_FAILURE_CODE
+            );
             process::exit(2);
         }
     };
@@ -410,7 +418,7 @@ pub fn run_native_backend_bridge_profile(
     let run = child::supervise(child, &image, child::REAP_GRACE);
     // Remove an unpacked embedded seed now: every later exit skips destructors.
     drop(compiler);
-    let elf_bytes = match finish_compiler_run(run) {
+    let elf_bytes = match outcome::finish_compiler_run(run) {
         Ok(bytes) => bytes,
         Err(code) => process::exit(code),
     };
@@ -477,79 +485,6 @@ pub fn run_native_backend_bridge_profile(
         out_path,
         elf_bytes.len()
     );
-}
-
-#[cfg(feature = "std-surface")]
-/// Turn a supervised compiler run into the artifact bytes, or print the real
-/// outcome and return the exit code. Fail-closed: no artifact on any failure,
-/// and never an MLIR fallback.
-fn finish_compiler_run(run: child::ChildRun) -> Result<Vec<u8>, i32> {
-    let ok_status = matches!(&run.reaped, child::Reaped::Exited(s) if s.success());
-    if run.failure.is_none() && ok_status {
-        // Both pipes reached EOF, so stdout is complete.
-        return Ok(run.stdout.unwrap_or_default());
-    }
-    if let Some(failure) = &run.failure {
-        eprintln!("error[backend-native]: {failure}");
-        eprintln!(
-            "  compiler process: {}",
-            child::describe_reaped(&run.reaped)
-        );
-    }
-    print_compiler_stderr(run.stderr.as_ref(), run.failure.is_some());
-    let code = match &run.reaped {
-        child::Reaped::Exited(s) | child::Reaped::KilledAfterGrace { status: s, .. } => {
-            // A stream failure is the bridge's own error when the child itself
-            // reported success: its input was incomplete.
-            child::exit_code_for(s, if run.failure.is_some() { 2 } else { 1 })
-        }
-        child::Reaped::WaitFailed(_) => 2,
-    };
-    match (&run.failure, &run.reaped) {
-        (None, child::Reaped::Exited(s)) if s.code().is_some() => eprintln!(
-            "error[backend-native]: pure-MIND compiler rejected the program (exit {code}); \
-             no artifact written (native backend is fail-closed — no MLIR fallback)."
-        ),
-        (None, reaped) => eprintln!(
-            "error[backend-native]: pure-MIND compiler {}; no artifact written (native \
-             backend is fail-closed — no MLIR fallback).",
-            child::describe_reaped(reaped)
-        ),
-        (Some(_), _) => eprintln!(
-            "error[backend-native]: no artifact written (native backend is fail-closed — \
-             no MLIR fallback)."
-        ),
-    }
-    Err(code)
-}
-
-#[cfg(feature = "std-surface")]
-/// Re-emit the child's captured stderr, stating truncation or unavailability.
-fn print_compiler_stderr(capture: Option<&child::BoundedCapture>, after_failure: bool) {
-    use std::io::Write as _;
-    match capture {
-        Some(cap) => {
-            if !cap.bytes.is_empty() {
-                let _ = std::io::stderr().write_all(&cap.bytes);
-                if !cap.bytes.ends_with(b"\n") {
-                    eprintln!();
-                }
-            } else if after_failure {
-                eprintln!("  compiler stderr: (empty)");
-            }
-            if cap.dropped > 0 {
-                eprintln!(
-                    "  [{} bytes of compiler stderr truncated after the first {}]",
-                    cap.dropped,
-                    cap.bytes.len()
-                );
-            }
-        }
-        None => eprintln!(
-            "  compiler stderr: unavailable (its pipe was still held open after the \
-             process was reaped)"
-        ),
-    }
 }
 
 /// Each user source's display path and its start offset in the composed user

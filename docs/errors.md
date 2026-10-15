@@ -95,7 +95,7 @@ An unimported sibling cannot supply the signature or symbol for an imported
 call. Legacy explicit multi-file checks retain their implicit project metadata
 when no manifest-captured import scope is available.
 
-Two E6xxx assignments distinguish host capability from compiler lowering:
+The E6xxx assignments distinguish host capability from compiler lowering:
 
 - `E6002`: the requested backend is unavailable on the current host or build.
 - `E6009`: a language-valid aggregate cannot be materialized into the runnable
@@ -106,9 +106,27 @@ Two E6xxx assignments distinguish host capability from compiler lowering:
   fixed-array struct fields with `i64` or `f64` scalar cells do.
 - `E6010`: a `Mind.toml [exports] c_abi` entry is invalid. This is a user
   configuration error and does not indicate backend capability.
+- `E6011`: the native backend's compiler process failed
+  (`error[backend-native][E6011]: ...`). `mindc build --backend native` streams
+  the source image into a child compiler. The code is used when that child
+  could not be started (the OS error is named, for example `Permission denied`
+  or `Cannot allocate memory`), when a pipe to it failed (for example
+  `Broken pipe` because the child died before reading its input), when it was
+  terminated by a signal, or when it could not be reaped. A loader failure
+  under an address-space cap (`RLIMIT_AS`) usually appears as termination by
+  `SIGSEGV` after a broken pipe. The bridge always reaps the child first. The
+  report then names the outcome on a `compiler process:` line: the exit
+  status, or the signal number and name. A child that keeps running after a
+  stream failure is killed with `SIGKILL` after 5 seconds and reported as
+  killed. The report also shows the child's stderr: the first 16 KiB and the
+  last 48 KiB, with the number of bytes left out in between. The exit status
+  is the child's own nonzero status, `128 + signal` for a signal, or 2. No
+  artifact is written. A child that read the whole image and exited nonzero has
+  rejected the program, not failed as a process. That keeps its own uncoded
+  message (`pure-MIND compiler rejected the program (exit N)`) and exit status.
 
-Both refusals exit nonzero. `E6009` is emitted before a runnable artifact is
-published and is not a type error.
+Every refusal above exits nonzero. `E6009` is emitted before a runnable artifact
+is published and is not a type error.
 
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.

@@ -24,7 +24,11 @@ fn spawn_sh(script: &str) -> Child {
 }
 
 fn stderr_text(run: &ChildRun) -> String {
-    String::from_utf8_lossy(&run.stderr.as_ref().expect("stderr captured").bytes).into_owned()
+    let cap = run.stderr.as_ref().expect("stderr captured");
+    assert_eq!(cap.dropped, 0, "a short stderr is kept whole");
+    let mut all = cap.head.clone();
+    all.extend_from_slice(&cap.tail);
+    String::from_utf8_lossy(&all).into_owned()
 }
 
 #[test]
@@ -104,8 +108,47 @@ fn stderr_is_bounded_and_the_excess_counted() {
     let run = supervise(child, &vec![b'a'; BIG], Duration::from_secs(5));
     assert!(run.failure.is_none(), "{:?}", run.failure);
     let cap = run.stderr.expect("stderr captured");
-    assert_eq!(cap.bytes.len(), STDERR_CAPTURE_LIMIT);
+    assert_eq!(cap.head.len(), STDERR_HEAD_LIMIT);
+    assert_eq!(cap.tail.len(), STDERR_TAIL_LIMIT);
     assert_eq!(cap.dropped, (200_000 - STDERR_CAPTURE_LIMIT) as u64);
+}
+
+#[test]
+fn stderr_keeps_the_head_and_the_tail_in_order() {
+    // 5000 numbered lines (28890 bytes) on each side of a 1 MiB flood:
+    // the first and the last lines survive, the middle is counted.
+    let child = spawn_sh(
+        "i=0; while [ $i -lt 5000 ]; do echo \"h$i\"; i=$((i+1)); done >&2; \
+         head -c 1048576 /dev/zero >&2; echo >&2; \
+         i=0; while [ $i -lt 5000 ]; do echo \"t$i\"; i=$((i+1)); done >&2; \
+         echo 'last words' >&2; cat >/dev/null; exit 1",
+    );
+    let run = supervise(child, &vec![b'a'; BIG], Duration::from_secs(5));
+    assert!(run.failure.is_none(), "{:?}", run.failure);
+    let cap = run.stderr.expect("stderr captured");
+    assert_eq!(cap.head.len(), STDERR_HEAD_LIMIT);
+    assert_eq!(cap.tail.len(), STDERR_TAIL_LIMIT);
+    assert!(cap.head.starts_with(b"h0\nh1\nh2\n"));
+    assert!(cap.tail.ends_with(b"t4998\nt4999\nlast words\n"));
+    let total = cap.head.len() as u64 + cap.dropped + cap.tail.len() as u64;
+    let mut written = 0u64;
+    for i in 0..5000u64 {
+        written += format!("h{i}\n").len() as u64 + format!("t{i}\n").len() as u64;
+    }
+    written += 1_048_576 + 1 + "last words\n".len() as u64;
+    assert_eq!(total, written, "every byte is kept or counted, none twice");
+    assert_eq!(cap.last_byte(), Some(b'\n'));
+}
+
+#[test]
+fn short_stderr_stays_in_the_head_with_nothing_dropped() {
+    let cap = drain_bounded(&b"one\ntwo\n"[..], 4, 16).expect("drain");
+    assert_eq!(cap.head, b"one\n");
+    assert_eq!(cap.tail, b"two\n");
+    assert_eq!(cap.dropped, 0);
+    let empty = drain_bounded(&b""[..], 4, 16).expect("drain");
+    assert!(empty.is_empty());
+    assert_eq!(empty.last_byte(), None);
 }
 
 #[test]
@@ -119,7 +162,7 @@ fn success_path_returns_the_complete_stdout() {
     };
     assert!(status.success());
     assert_eq!(run.stdout.as_deref(), Some(&image[..]));
-    assert_eq!(run.stderr.expect("stderr").bytes.len(), 0);
+    assert!(run.stderr.expect("stderr").is_empty());
 }
 
 #[test]

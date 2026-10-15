@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2006 | **Est. tokens:** ~3,796,810
-**Generated:** 2026-10-15 05:51 UTC
+**Files:** 2007 | **Est. tokens:** ~3,800,950
+**Generated:** 2026-10-15 05:52 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~110,799 |
+| `docs/` | 38 | ~111,140 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -112,9 +112,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,537 |
+| `src/build/` | 13 | ~53,884 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 5 | ~17,890 |
+| `src/build/native_bridge/` | 6 | ~19,852 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,579 |
-| `tests/` | 422 | ~868,863 |
+| `tests/` | 422 | ~871,353 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -460,7 +460,7 @@
 
 - `determinism.md` (~4368 tok, huge) — The Determinism Contract
 - `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
-- `errors.md` (~1338 tok, large) — MIND Core Error Model
+- `errors.md` (~1679 tok, huge) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
@@ -1311,11 +1311,12 @@
 ### `src/build/native_bridge/`
 
 - `admission.rs` (~6421 tok, huge) — Copyright 2025 STARGA Inc.
-- `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
-- `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
+- `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
+- `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
+- `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~9114 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~8461 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3018 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2357,7 +2358,7 @@
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
-- `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_child_status.rs` (~5870 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_bridge_refusals.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
