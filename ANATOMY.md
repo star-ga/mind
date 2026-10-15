@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2173 | **Est. tokens:** ~4056983
-**Generated:** 2026-10-15 12:36 UTC
+**Files:** 2173 | **Est. tokens:** ~4057055
+**Generated:** 2026-10-15 12:38 UTC
 
 ## Token Budget Guide
 
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 242 | ~657597 |
+| `examples/mindc_mind/` | 242 | ~657669 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -701,7 +701,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
-- `SMOKE_WIRING.tsv` (~5424 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~5496 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
