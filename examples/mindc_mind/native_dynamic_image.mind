@@ -1,0 +1,279 @@
+// Copyright 2026 STARGA Inc.
+// Checked-layout extension of nd_write_elf. Standalone; no compiler admission.
+// Borrowed inputs must be valid, immutable allocations. See accompanying .md.
+
+pub fn ndx_u16(p: i64) -> i64 {
+    __mind_load_i8(p) + __mind_load_i8(p + 1) * 256
+}
+
+pub fn ndx_drop(s: String) -> i64 {
+    if string_addr(s) != 0 { __mind_free(string_addr(s)); }
+    0
+}
+
+pub fn ndx_ph_ok(out: String, index: i64, typ: i64, flags: i64, off: i64, va: i64, filesz: i64, memsz: i64, align: i64) -> i64 {
+    let p: i64 = string_addr(out) + 64 + index * 56;
+    if __mind_load_i32(p) != typ { return 0; }
+    if __mind_load_i32(p + 4) != flags { return 0; }
+    if __mind_load_i64(p + 8) != off { return 0; }
+    if __mind_load_i64(p + 16) != va { return 0; }
+    if __mind_load_i64(p + 24) != va { return 0; }
+    if __mind_load_i64(p + 32) != filesz { return 0; }
+    if __mind_load_i64(p + 40) != memsz { return 0; }
+    if __mind_load_i64(p + 48) != align { return 0; }
+    1
+}
+
+// This is a constructor-invariant check, not a general foreign-ELF parser.
+// Only a fresh nd_write_elf return reaches it. Validate before reading payload.
+pub fn ndx_base_ok(base: String, code_len: i64, entry: i64, interp_len: i64) -> i64 {
+    let n: i64 = string_len(base);
+    if n < 16384 { return 0; }
+    if n > 2097152 { return 0; }
+    if n > string_cap(base) { return 0; }
+    if n % 4096 != 0 { return 0; }
+    let p: i64 = string_addr(base);
+    if p <= 0 { return 0; }
+    if __mind_load_i32(p) != 1179403647 { return 0; }
+    if ndx_u16(p + 54) != 56 { return 0; }
+    if ndx_u16(p + 56) != 9 { return 0; }
+    if __mind_load_i64(p + 24) != nd_code_addr() + entry { return 0; }
+    if __mind_load_i64(p + 32) != 64 { return 0; }
+    let mo: i64 = __mind_load_i64(p + 296);
+    let ms: i64 = __mind_load_i64(p + 320);
+    let ro: i64 = __mind_load_i64(p + 352);
+    let rs: i64 = __mind_load_i64(p + 376);
+    let dy: i64 = __mind_load_i64(p + 408);
+    if mo != nd_round(4096 + code_len, 4096) { return 0; }
+    if ms < 1 { return 0; }
+    if ms > n { return 0; }
+    if mo > n - ms { return 0; }
+    if ro != nd_round(mo + ms, 4096) { return 0; }
+    if rs < 4096 { return 0; }
+    if rs > n { return 0; }
+    if rs % 4096 != 0 { return 0; }
+    if ro != n - rs { return 0; }
+    if dy < ro { return 0; }
+    if dy > n - 256 { return 0; }
+    if dy % 16 != 0 { return 0; }
+    if ndx_ph_ok(base, 0, 6, 4, 64, nd_base() + 64, 504, 504, 8) == 0 { return 0; }
+    if ndx_ph_ok(base, 1, 3, 4, 568, nd_base() + 568, interp_len + 1, interp_len + 1, 1) == 0 { return 0; }
+    if ndx_ph_ok(base, 2, 1, 4, 0, nd_base(), 4096, 4096, 4096) == 0 { return 0; }
+    if ndx_ph_ok(base, 3, 1, 5, 4096, nd_code_addr(), code_len, code_len, 4096) == 0 { return 0; }
+    if ndx_ph_ok(base, 4, 1, 4, mo, nd_base() + mo, ms, ms, 4096) == 0 { return 0; }
+    if ndx_ph_ok(base, 5, 1, 6, ro, nd_base() + ro, rs, rs, 4096) == 0 { return 0; }
+    if ndx_ph_ok(base, 6, 2, 6, dy, nd_base() + dy, 256, 256, 8) == 0 { return 0; }
+    if ndx_ph_ok(base, 7, 1685382481, 6, 0, 0, 0, 0, 16) == 0 { return 0; }
+    if ndx_ph_ok(base, 8, 1685382482, 4, ro, nd_base() + ro, rs, rs, 1) == 0 { return 0; }
+    1
+}
+
+pub fn ndx_literals_ok(literals: String) -> i64 {
+    let n: i64 = string_len(literals);
+    if n < 0 { return 0; }
+    if n > 8388608 { return 0; }
+    if n > string_cap(literals) { return 0; }
+    if n == 0 { return 1; }
+    if string_addr(literals) <= 0 { return 0; }
+    if string_addr(literals) > 9223372036854775807 - n { return 0; }
+    1
+}
+
+// Structure only. A digest is copied, never authenticated or reclassified.
+pub fn ndx_note_ok(note: String) -> i64 {
+    if string_len(note) != 52 { return 0; }
+    if string_cap(note) < 52 { return 0; }
+    let p: i64 = string_addr(note);
+    if p <= 0 { return 0; }
+    if p > 9223372036854775755 { return 0; }
+    if __mind_load_i32(p) != 5 { return 0; }
+    if __mind_load_i32(p + 4) != 32 { return 0; }
+    let kind: i64 = __mind_load_i32(p + 8);
+    if kind != 1 { if kind != 2 { return 0; } }
+    if __mind_load_i32(p + 12) != 1145981261 { return 0; }
+    if __mind_load_i32(p + 16) != 0 { return 0; }
+    1
+}
+
+// Captures policy before touching output; policy/output overlap is supported.
+// The output must not overlap any other borrowed allocation.
+// 20 invalid literals, 21 constructor invariant, 31..37 planner refusals.
+pub fn ndx_plan_base(base: String, code_len: i64, entry: i64, interp_len: i64, literals: String, policy: i64, output: i64) -> i64 {
+    let version: i64 = nd_word(policy, 0);
+    let arena: i64 = nd_word(policy, 1);
+    let overflow: i64 = nd_word(policy, 2);
+    let stack: i64 = nd_word(policy, 3);
+    let guard: i64 = nd_word(policy, 4);
+    let reserve: i64 = nd_word(policy, 5);
+    let _z: i64 = ndl_zero(output);
+    if ndx_literals_ok(literals) == 0 { return 20; }
+    if ndx_base_ok(base, code_len, entry, interp_len) == 0 { return 21; }
+    let request: i64 = __mind_alloc(80);
+    __mind_store_i64(request, version);
+    __mind_store_i64(request + 8, code_len);
+    __mind_store_i64(request + 16, __mind_load_i64(string_addr(base) + 320));
+    __mind_store_i64(request + 24, __mind_load_i64(string_addr(base) + 376));
+    __mind_store_i64(request + 32, string_len(literals));
+    __mind_store_i64(request + 40, arena);
+    __mind_store_i64(request + 48, overflow);
+    __mind_store_i64(request + 56, stack);
+    __mind_store_i64(request + 64, guard);
+    __mind_store_i64(request + 72, reserve);
+    let result: i64 = ndl_plan(request, output);
+    __mind_free(request);
+    if result != 0 { return 30 + result; }
+    0
+}
+
+// Successful layout is caller-owned scalar data, not an authenticated token.
+// 11..19 are existing writer input refusals. Every failure clears all32 words.
+pub fn ndx_plan(code: String, entry: i64, imports: Vec, patches: Vec, interpreter: String, soname: String, literals: String, policy: i64, output: i64) -> i64 {
+    let valid: i64 = nd_validate(code, entry, imports, patches, interpreter, soname);
+    if valid != 0 { let _z: i64 = ndl_zero(output); return 10 + valid; }
+    let base: String = nd_write_elf(code, entry, imports, patches, interpreter, soname);
+    let result: i64 = ndx_plan_base(base, string_len(code), entry, string_len(interpreter), literals, policy, output);
+    let _d: i64 = ndx_drop(base);
+    result
+}
+
+pub fn ndx_same_plan(a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        if nd_word(a, i) != nd_word(b, i) { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+// Emit complete ordered headers. Existing base payload remains unchanged.
+pub fn ndx_headers(base: String, plan: i64, entry: i64, code_len: i64, literal_len: i64, interp_len: i64) -> String {
+    let count: i64 = nd_word(plan, 28);
+    let io: i64 = nd_word(plan, 30);
+    let no: i64 = nd_word(plan, 31);
+    let mo: i64 = nd_word(plan, 5);
+    let mv: i64 = nd_word(plan, 6);
+    let ms: i64 = __mind_load_i64(string_addr(base) + 320);
+    let ro: i64 = nd_word(plan, 8);
+    let rv: i64 = nd_word(plan, 9);
+    let rs: i64 = nd_word(plan, 10);
+    let dy: i64 = __mind_load_i64(string_addr(base) + 408);
+    let mut out: String = nd_ehdr(nd_word(plan, 3) + entry);
+    __mind_store_i8(string_addr(out) + 56, count);
+    __mind_store_i8(string_addr(out) + 57, 0);
+    out = nd_ph(out, 6, 4, 64, nd_base() + 64, count * 56, count * 56, 8);
+    out = nd_ph(out, 3, 4, io, nd_base() + io, interp_len + 1, interp_len + 1, 1);
+    out = nd_ph(out, 1, 4, 0, nd_base(), 4096, 4096, 4096);
+    out = nd_ph(out, 1, 5, 4096, nd_word(plan, 3), code_len, code_len, 4096);
+    out = nd_ph(out, 1, 4, mo, mv, ms, ms, 4096);
+    out = nd_ph(out, 1, 6, ro, rv, rs, rs, 4096);
+    out = nd_ph(out, 1, 6, 0, nd_word(plan, 11), 0, 4096, 4096);
+    if literal_len > 0 {
+        out = nd_ph(out, 1, 4, nd_word(plan, 12), nd_word(plan, 13), literal_len, literal_len, 4096);
+    }
+    out = nd_ph(out, 1, 6, 0, nd_word(plan, 15), 0, nd_word(plan, 16), 4096);
+    out = nd_ph(out, 1, 6, 0, nd_word(plan, 20), 0, nd_word(plan, 21) - nd_word(plan, 20), 4096);
+    out = nd_ph(out, 2, 6, dy, nd_base() + dy, 256, 256, 8);
+    out = nd_ph(out, 1685382481, 6, 0, 0, 0, 0, 16);
+    out = nd_ph(out, 1685382482, 4, ro, rv, rs, rs, 1);
+    nd_ph(out, 4, 4, no, nd_base() + no, 52, 52, 4)
+}
+
+// Final independent traversal checks complete ordered LOAD geometry and note
+// containment, not merely that header construction returned a nonempty String.
+pub fn ndx_final_ok(out: String, headers: String, plan: i64, note: String, literal_len: i64) -> i64 {
+    let n: i64 = string_len(out);
+    if n != nd_word(plan, 27) { return 0; }
+    if n > string_cap(out) { return 0; }
+    let p: i64 = string_addr(out);
+    let count: i64 = nd_word(plan, 28);
+    let expected_count: i64 = if literal_len > 0 { 14 } else { 13 };
+    if count != expected_count { return 0; }
+    if string_len(headers) != 64 + count * 56 { return 0; }
+    if nd_compare(p, string_len(headers), string_addr(headers), string_len(headers)) != 0 { return 0; }
+    if ndx_u16(p + 56) != count { return 0; }
+    let mut i: i64 = 0;
+    let mut previous_end: i64 = 0;
+    let mut previous_file_end: i64 = 0;
+    let mut loads: i64 = 0;
+    let mut notes: i64 = 0;
+    while i < count {
+        let h: i64 = p + 64 + i * 56;
+        let typ: i64 = __mind_load_i32(h);
+        let off: i64 = __mind_load_i64(h + 8);
+        let va: i64 = __mind_load_i64(h + 16);
+        let fs: i64 = __mind_load_i64(h + 32);
+        let ms: i64 = __mind_load_i64(h + 40);
+        if off < 0 { return 0; }
+        if fs < 0 { return 0; }
+        if fs > n { return 0; }
+        if off > n - fs { return 0; }
+        if typ == 1 {
+            let flags: i64 = __mind_load_i32(h + 4);
+            if (flags & 3) == 3 { return 0; }
+            if __mind_load_i64(h + 48) != 4096 { return 0; }
+            if off % 4096 != va % 4096 { return 0; }
+            if ms < 1 { return 0; }
+            if fs > ms { return 0; }
+            if va < previous_end { return 0; }
+            let end: i64 = ndl_add(va, ndl_round(ms, 4096));
+            if end < 0 { return 0; }
+            previous_end = end;
+            if fs > 0 {
+                if off < previous_file_end { return 0; }
+                previous_file_end = ndl_add(off, ndl_round(fs, 4096));
+                if previous_file_end < 0 { return 0; }
+            }
+            loads = loads + 1;
+        }
+        if typ == 4 {
+            if off != nd_word(plan, 31) { return 0; }
+            if off % 4 != 0 { return 0; }
+            if fs != 52 { return 0; }
+            if ms != 52 { return 0; }
+            if off + fs > 4096 { return 0; }
+            if off < nd_word(plan, 30) + 256 { return 0; }
+            if nd_compare(p + off, 52, string_addr(note), 52) != 0 { return 0; }
+            notes = notes + 1;
+        }
+        i = i + 1;
+    }
+    if notes != 1 { return 0; }
+    if loads != count - 6 { return 0; }
+    if previous_end != nd_word(plan, 21) { return 0; }
+    if previous_file_end != n { return 0; }
+    1
+}
+
+pub fn ndx_write_elf(code: String, entry: i64, imports: Vec, patches: Vec, interpreter: String, soname: String, literals: String, policy: i64, note: String, expected: i64) -> String {
+    if ndx_note_ok(note) == 0 { return string_new(); }
+    let base: String = nd_write_elf(code, entry, imports, patches, interpreter, soname);
+    let plan: i64 = __mind_alloc(256);
+    let result: i64 = ndx_plan_base(base, string_len(code), entry, string_len(interpreter), literals, policy, plan);
+    if result != 0 {
+        let _d: i64 = ndx_drop(base);
+        __mind_free(plan);
+        return string_new();
+    }
+    if ndx_same_plan(plan, expected) == 0 {
+        let _d: i64 = ndx_drop(base);
+        __mind_free(plan);
+        return string_new();
+    }
+    let headers: String = ndx_headers(base, plan, entry, string_len(code), string_len(literals), string_len(interpreter));
+    // Make a distinct owned copy. nd_to/nd_bytes may realloc; never append to
+    // headers or base, whose pointers remain live for final checks and cleanup.
+    let mut out: String = nd_bytes(string_new(), string_addr(headers), string_len(headers));
+    out = nd_ztext(out, string_addr(interpreter), string_len(interpreter));
+    out = nd_to(out, nd_word(plan, 31));
+    out = nd_bytes(out, string_addr(note), 52);
+    out = nd_to(out, 4096);
+    out = nd_bytes(out, string_addr(base) + 4096, string_len(base) - 4096);
+    out = nd_bytes(out, string_addr(literals), string_len(literals));
+    out = nd_to(out, nd_word(plan, 27));
+    let valid: i64 = ndx_final_ok(out, headers, plan, note, string_len(literals));
+    let _h: i64 = ndx_drop(headers);
+    let _b: i64 = ndx_drop(base);
+    __mind_free(plan);
+    if valid == 0 { let _o: i64 = ndx_drop(out); return string_new(); }
+    out
+}
