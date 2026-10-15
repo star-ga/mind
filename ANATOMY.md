@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2208 | **Est. tokens:** ~4,172,483
-**Generated:** 2026-10-15 17:10 UTC
+**Files:** 2357 | **Est. tokens:** ~4,263,546
+**Generated:** 2026-10-15 18:15 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/` | 39 | ~114,748 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 7 | ~12,129 |
+| `docs/compiler/` | 8 | ~17,425 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 269 | ~757,244 |
+| `examples/mindc_mind/` | 272 | ~761,719 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -71,6 +71,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
+| `examples/mindc_mind/testdata/native_c_variadic_plan/` | 145 | ~81,235 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_libc_binding/` | 1 | ~149 |
@@ -106,7 +107,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 31 | ~117,943 |
+| `scripts/` | 31 | ~118,000 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -468,6 +469,7 @@
 - `NATIVE_C_ABI_CONTRACT.md` (~1832 tok, huge) — Source-derived native C ABI declaration contract
 - `NATIVE_C_CALL_EMISSION.md` (~1766 tok, huge) — Fixed scalar C call emission
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
+- `NATIVE_C_VARIADIC_PLAN.md` (~5296 tok, huge) — Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
 - `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
@@ -710,6 +712,9 @@
 - `native_c_call_plan_check.py` (~2833 tok, huge) — Frozen scalar SysV plan cases, compared with native and fresh MLIR drivers.
 - `native_c_call_plan_driver.mind` (~499 tok, medium) — Copyright 2026 STARGA Inc.
 - `native_c_call_plan.mind` (~1394 tok, large) — Copyright 2026 STARGA Inc.
+- `native_c_variadic_plan_check.py` (~1115 tok, large) — Capture bytes or delegate transport. All plan assertions execute in MIND."""
+- `native_c_variadic_plan_driver.mind` (~1656 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_c_variadic_plan.mind` (~1624 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator_cases.tsv` (~336 tok, medium) — # Frozen before implementation/build; exact expected stdout is empty. exit70 std
 - `native_dynamic_allocator_check.py` (~3430 tok, huge) — External diagnostic transport for the MIND allocator emitter/runtime.
 - `native_dynamic_allocator_driver.mind` (~176 tok, small) — Copyright 2026 STARGA Inc. Standalone diagnostic, no compiler admission.
@@ -920,7 +925,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~5994 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~6074 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
@@ -1087,6 +1092,153 @@
 - `o_if_else_merges.mind` (~332 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
 - `shadow_scopes.mind` (~602 tok, large) — Lets that shadow an outer name inside loop bodies and if branches, on the
 - `shadow_scopes_ssa.mind` (~401 tok, medium) — The same shadow scoping on the SSA lowering (no return inside a loop, so the
+### `examples/mindc_mind/testdata/native_c_variadic_plan/`
+
+- `allocation-zero.patch` (~29 tok, tiny) — --- a/native_c_variadic_plan.mind
+- `BUILD_HASHES.tsv` (~327 tok, medium) — variant	backend	exit	executable_sha256
+- `C01.expected` (~68 tok, small) — 
+- `C01.input` (~124 tok, small) — 
+- `C02.expected` (~108 tok, small) — �
+- `C02.input` (~176 tok, small) — 
+- `C03.expected` (~108 tok, small) — �
+- `C03.input` (~176 tok, small) — 
+- `C04.expected` (~148 tok, small) — @
+- `C04.input` (~228 tok, medium) — 
+- `C05.expected` (~148 tok, small) — @
+- `C05.input` (~228 tok, medium) — 
+- `C06.expected` (~108 tok, small) — �
+- `C06.input` (~176 tok, small) — 
+- `C07.expected` (~108 tok, small) — �
+- `C07.input` (~176 tok, small) — 
+- `C08.expected` (~308 tok, medium) — �
+- `C08.input` (~436 tok, medium) — 
+- `C09.expected` (~348 tok, medium) — `
+- `C09.input` (~488 tok, medium) — 
+- `C10.expected` (~468 tok, medium) — @
+- `C10.input` (~644 tok, large) — 
+- `C11.expected` (~708 tok, large) —  
+- `C11.input` (~956 tok, large) — 
+- `C12.expected` (~4 tok, tiny)
+- `C12.input` (~60 tok, small) — 
+- `C13.expected` (~108 tok, small) — �
+- `C13.input` (~176 tok, small) — 
+- `C14.expected` (~4 tok, tiny) — 
+- `C14.input` (~60 tok, small) — 
+- `C15.expected` (~4 tok, tiny) — 	
+- `C15.input` (~72 tok, small) — 	
+- `C16.expected` (~4 tok, tiny) — 
+- `C16.input` (~60 tok, small) — 
+- `C17.expected` (~4 tok, tiny) — 
+- `C17.input` (~60 tok, small) — 
+- `C18.expected` (~4 tok, tiny) — 
+- `C18.input` (~60 tok, small) — 
+- `C19.expected` (~4 tok, tiny) — 
+- `C19.input` (~60 tok, small) — 
+- `C20.expected` (~4 tok, tiny) — 
+- `C20.input` (~60 tok, small) — 
+- `C21.expected` (~4 tok, tiny) — 
+- `C21.input` (~60 tok, small) — 
+- `C22.expected` (~4 tok, tiny) — 
+- `C22.input` (~60 tok, small) — 
+- `C23.expected` (~4 tok, tiny) — 
+- `C23.input` (~60 tok, small) — ��������
+- `C24.expected` (~4 tok, tiny) — 
+- `C24.input` (~60 tok, small) — 
+- `C25.expected` (~4 tok, tiny) — 
+- `C25.input` (~60 tok, small) — ��������
+- `C26.expected` (~4 tok, tiny) — 
+- `C26.input` (~60 tok, small) — 
+- `C27.expected` (~4 tok, tiny) — 
+- `C27.input` (~60 tok, small) — �������
+- `C28.expected` (~4 tok, tiny) — 
+- `C28.input` (~60 tok, small) — 
+- `C29.expected` (~4 tok, tiny) — 
+- `C29.input` (~60 tok, small) — 
+- `C30.expected` (~4 tok, tiny) — 
+- `C30.input` (~60 tok, small) — 
+- `C31.expected` (~4 tok, tiny) — 
+- `C31.input` (~60 tok, small) — 
+- `C32.expected` (~4 tok, tiny) — 	
+- `C32.input` (~60 tok, small) —  	
+- `C33.expected` (~4 tok, tiny) — 
+- `C33.input` (~60 tok, small) — 
+- `C34.expected` (~4 tok, tiny) — 
+- `C34.input` (~60 tok, small) — 
+- `C35.expected` (~4 tok, tiny) — 
+- `C35.input` (~60 tok, small) — 
+- `C36.expected` (~4 tok, tiny) — 
+- `C36.input` (~60 tok, small) — 
+- `C37.expected` (~4 tok, tiny) — 
+- `C37.input` (~60 tok, small) — 
+- `C38.expected` (~4 tok, tiny) — 
+- `C38.input` (~60 tok, small) — 
+- `C39.expected` (~4 tok, tiny) — 	
+- `C39.input` (~72 tok, small) — 	
+- `C40.expected` (~4 tok, tiny) — 	
+- `C40.input` (~72 tok, small) — 	
+- `C41.expected` (~4 tok, tiny) — 	
+- `C41.input` (~72 tok, small) — 	
+- `C42.expected` (~4 tok, tiny) — 	
+- `C42.input` (~72 tok, small) — 	
+- `C43.expected` (~4 tok, tiny) — 	
+- `C43.input` (~72 tok, small) — 	
+- `C44.expected` (~4 tok, tiny) — 	
+- `C44.input` (~72 tok, small) — 	
+- `C45.expected` (~4 tok, tiny) — 	
+- `C45.input` (~72 tok, small) — 	
+- `C46.expected` (~4 tok, tiny)
+- `C46.input` (~60 tok, small) — 
+- `C47.expected` (~4 tok, tiny)
+- `C47.input` (~60 tok, small) — 
+- `C48.expected` (~4 tok, tiny)
+- `C48.input` (~60 tok, small) — 
+- `C49.expected` (~4 tok, tiny)
+- `C49.input` (~60 tok, small) — 
+- `C50.expected` (~4 tok, tiny)
+- `C50.input` (~60 tok, small) — 
+- `C51.expected` (~68 tok, small) — 
+- `C51.input` (~124 tok, small) — 
+- `C52.expected` (~108 tok, small) — �
+- `C52.input` (~176 tok, small) — 
+- `C53.expected` (~10268 tok, huge) — `���
+- `C53.input` (~13384 tok, huge) — 
+- `C54.expected` (~10268 tok, huge) — `���
+- `C54.input` (~16444 tok, huge) — 
+- `C55.expected` (~68 tok, small) — 
+- `C55.input` (~124 tok, small) — 
+- `C56.expected` (~68 tok, small) — 
+- `C56.input` (~124 tok, small) — 
+- `C57.expected` (~68 tok, small) — 
+- `C57.input` (~124 tok, small) — 
+- `C58.expected` (~68 tok, small) — 
+- `C58.input` (~124 tok, small) — 
+- `C59.expected` (~668 tok, large) — `
+- `C59.input` (~1060 tok, large) — 
+- `C60.expected` (~268 tok, medium) —  
+- `C60.input` (~444 tok, medium) — 
+- `C61.expected` (~108 tok, small) — �
+- `C61.input` (~176 tok, small) — 
+- `C62.expected` (~4 tok, tiny) — 
+- `C62.input` (~84 tok, small) — 
+- `C63.expected` (~4 tok, tiny) — 
+- `C63.input` (~84 tok, small) — 
+- `C64.expected` (~4 tok, tiny)
+- `C64.input` (~72 tok, small) — 
+- `C65.expected` (~4 tok, tiny)
+- `C65.input` (~60 tok, small) — 
+- `CASES.json` (~6542 tok, huge)
+- `CASES.tsv` (~587 tok, large) — C01	baseline	0	proposal01-no-tail
+- `CUSTODY_OBSERVED.tsv` (~204 tok, medium) — control	exit	live_marker	captured_marker	stdout_sha256	stderr_sha256
+- `M01.patch` (~92 tok, small) — --- a/native_c_variadic_plan.mind
+- `M02.patch` (~31 tok, tiny) — --- a/native_c_variadic_plan.mind
+- `M03.patch` (~36 tok, tiny) — --- a/native_c_variadic_plan.mind
+- `M04.patch` (~134 tok, small) — --- a/native_c_variadic_plan.mind
+- `M05.patch` (~130 tok, small) — --- a/native_c_variadic_plan.mind
+- `M06.patch` (~31 tok, tiny) — --- a/native_c_variadic_plan.mind
+- `MUTATIONS.json` (~597 tok, large)
+- `MUTATIONS.tsv` (~21 tok, tiny) — M01	C12	1
+- `OBSERVED.tsv` (~7674 tok, huge) — variant	case	backend	exit	stdout_sha256	stderr_sha256	receipt_sha256
+- `run.sh` (~904 tok, large) — Copyright 2026 STARGA Inc. Transport only; MIND performs every assertion.
 ### `examples/mindc_mind/testdata/native_dynamic_allocator/`
 
 - `allocator.s` (~4044 tok, huge) — .intel_syntax noprefix
@@ -1389,7 +1541,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~10372 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10429 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the

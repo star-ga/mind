@@ -1,0 +1,181 @@
+// Copyright 2026 STARGA Inc.
+// Frozen-fixture assertions are MIND. This is a diagnostic, not call admission.
+pub fn ncv_test_read(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let count: i64 = __mind_read(0, a + done, n - done, 0 - 1);
+        if count <= 0 { return 0; }
+        if count > n - done { return 0; }
+        done = done + count;
+    }
+    1
+}
+pub fn ncv_test_write(fd: i64, a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let count: i64 = __mind_write(fd, a + done, n - done, 0 - 1);
+        if count <= 0 { return 0; }
+        if count > n - done { return 0; }
+        done = done + count;
+    }
+    1
+}
+pub fn ncv_test_equal(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if __mind_load_i8(a + i) != __mind_load_i8(b + i) { return 0; }
+        i = i + 1;
+    }
+    1
+}
+pub fn ncv_test_copy(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(a + i, __mind_load_i8(b + i));
+        i = i + 1;
+    }
+    0
+}
+pub fn ncv_test_fill(a: i64, n: i64, value: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(a + i, value);
+        i = i + 1;
+    }
+    0
+}
+pub fn ncv_test_ptr(a: i64, flags: i64, bit: i64) -> i64 {
+    if (flags / bit) % 2 == 1 { return 0; }
+    a
+}
+pub fn ncv_test_padding(a: i64, n: i64) -> i64 {
+    let mut row: i64 = 0;
+    while row < n {
+        let base: i64 = a + row * 48;
+        let count: i64 = __mind_load_i64(base);
+        let _filled: i64 = ncv_test_fill(base + 8 + count, 40 - count, 91);
+        row = row + 1;
+    }
+    0
+}
+pub fn ncv_test_main() -> i64 {
+    let buffer: i64 = __mind_alloc(131072);
+    let backup: i64 = __mind_alloc(24768);
+    let decl: i64 = __mind_alloc(64);
+    let fixed_table: i64 = __mind_alloc(2048);
+    let actual_table: i64 = __mind_alloc(2048);
+    let receipt: i64 = __mind_alloc(16);
+    if buffer == 0 { return 70; }
+    if backup == 0 { return 70; }
+    if decl == 0 { return 70; }
+    if fixed_table == 0 { return 70; }
+    if actual_table == 0 { return 70; }
+    if receipt == 0 { return 70; }
+    if ncv_test_read(buffer, 96) == 0 { return 71; }
+    if __mind_load_i64(buffer) != 1 { return 72; }
+    let nf: i64 = __mind_load_i64(buffer + 48);
+    let na: i64 = __mind_load_i64(buffer + 56);
+    let flags: i64 = __mind_load_i64(buffer + 64);
+    let expected_error: i64 = __mind_load_i64(buffer + 72);
+    let expected_size: i64 = __mind_load_i64(buffer + 80);
+    let fault: i64 = __mind_load_i64(buffer + 88);
+    if nf < 0 { return 72; }
+    if nf > 256 { return 72; }
+    if na < 0 { return 72; }
+    if na > 256 { return 72; }
+    if flags < 0 { return 72; }
+    if flags > 63 { return 72; }
+    if expected_error < 0 { return 72; }
+    if expected_error > 10 { return 72; }
+    if expected_size < 0 { return 72; }
+    if expected_size > 41056 { return 72; }
+    if fault < 0 { return 72; }
+    if fault > 1 { return 72; }
+    let count: i64 = 48 + (nf + na) * 48;
+    if ncv_test_read(buffer + 96, count + expected_size) == 0 { return 71; }
+    if __mind_read(0, receipt, 1, 0 - 1) != 0 { return 72; }
+    let result: i64 = buffer + 96;
+    let fixed: i64 = result + 48;
+    let actual: i64 = fixed + nf * 48;
+    let expected: i64 = actual + na * 48;
+    let _saved: i64 = ncv_test_copy(backup, result, count);
+    let _zero_decl: i64 = ncv_test_fill(decl, 64, 0);
+    let _zero_fixed: i64 = ncv_test_fill(fixed_table, 2048, 0);
+    let _zero_actual: i64 = ncv_test_fill(actual_table, 2048, 0);
+    let mut i: i64 = 0;
+    while i < nf {
+        __mind_store_i64(fixed_table + i * 8, fixed + i * 48);
+        i = i + 1;
+    }
+    i = 0;
+    while i < na {
+        __mind_store_i64(actual_table + i * 8, actual + i * 48);
+        i = i + 1;
+    }
+    __mind_store_i64(fixed_table, ncv_test_ptr(__mind_load_i64(fixed_table), flags, 16));
+    __mind_store_i64(actual_table, ncv_test_ptr(__mind_load_i64(actual_table), flags, 32));
+    __mind_store_i64(decl + 16, __mind_load_i64(buffer + 8));
+    __mind_store_i64(decl + 24, __mind_load_i64(buffer + 16));
+    __mind_store_i64(decl + 32, __mind_load_i64(buffer + 24));
+    __mind_store_i64(decl + 40, __mind_load_i64(buffer + 32));
+    __mind_store_i64(decl + 48, ncv_test_ptr(fixed_table, flags, 2));
+    __mind_store_i64(decl + 56, ncv_test_ptr(result, flags, 8));
+    let d: i64 = ncv_test_ptr(decl, flags, 1);
+    let a: i64 = ncv_test_ptr(actual_table, flags, 4);
+    let total: i64 = __mind_load_i64(buffer + 40);
+    let error: i64 = ncv_validate(d, a, total);
+    let plan: i64 = ncv_plan(d, a, total);
+    let mut size: i64 = 0;
+    if plan != 0 { size = 96 + total * 160; }
+    __mind_store_i64(receipt, error);
+    __mind_store_i64(receipt + 8, size);
+    if ncv_test_write(3, receipt, 16) == 0 { return 73; }
+    if size > 0 {
+        if size > 41056 { return 74; }
+        if ncv_test_write(3, plan, size) == 0 { return 73; }
+    }
+    if error != expected_error { return 1; }
+    if size != expected_size { return 1; }
+    if ncv_test_equal(result, backup, count) == 0 { return 1; }
+    if error != 0 {
+        if plan != 0 { return 1; }
+    } else {
+        if fault == 1 {
+            if plan != 0 { return 1; }
+        } else {
+            if plan == 0 { return 1; }
+            if ncv_test_equal(plan, expected, size) == 0 { return 1; }
+            let _poisoned: i64 = ncv_test_fill(result, count, 222);
+            if ncv_test_equal(plan, expected, size) == 0 { return 1; }
+            let _restored: i64 = ncv_test_copy(result, backup, count);
+            let _pad_r: i64 = ncv_test_padding(result, 1);
+            let _pad_f: i64 = ncv_test_padding(fixed, nf);
+            let _pad_a: i64 = ncv_test_padding(actual, na);
+            let plan2: i64 = ncv_plan(d, a, total);
+            if plan2 == 0 { return 1; }
+            if plan2 == plan { return 1; }
+            if ncv_test_equal(plan2, expected, size) == 0 { return 1; }
+            if ncv_test_equal(plan, plan2, size) == 0 { return 1; }
+            __mind_free(plan2);
+        }
+    }
+    __mind_free(plan);
+    __mind_free(receipt);
+    __mind_free(actual_table);
+    __mind_free(fixed_table);
+    __mind_free(decl);
+    __mind_free(backup);
+    __mind_free(buffer);
+    0
+}
+pub fn main() -> i64 {
+    let status: i64 = ncv_test_main();
+    if status > 1 { return status; }
+    let answer: i64 = __mind_alloc(8);
+    if answer == 0 { return 70; }
+    __mind_store_i8(answer, 49 - status);
+    __mind_store_i8(answer + 1, 10);
+    if ncv_test_write(1, answer, 2) == 0 { return 73; }
+    __mind_free(answer);
+    status
+}
