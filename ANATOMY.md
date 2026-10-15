@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2131 | **Est. tokens:** ~3978143
-**Generated:** 2026-10-15 10:57 UTC
+**Files:** 2140 | **Est. tokens:** ~3993709
+**Generated:** 2026-10-15 11:59 UTC
 
 ## Token Budget Guide
 
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 210 | ~591616 |
+| `examples/mindc_mind/` | 216 | ~605585 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -78,6 +78,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5978 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
+| `examples/mindc_mind/testdata/native_libc_startup/` | 3 | ~1539 |
 | `examples/mindc_mind/testdata/native_misc/` | 37 | ~4969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2127 |
@@ -101,7 +102,7 @@
 | `experiments/global-vs-local/` | 7 | ~6487 |
 | `mind/std/cognitive/` | 4 | ~3529 |
 | `runtime-support/` | 1 | ~23216 |
-| `scripts/` | 31 | ~117474 |
+| `scripts/` | 31 | ~117532 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2372 |
 | `scripts/sdlc/` | 2 | ~2845 |
@@ -696,7 +697,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
-- `SMOKE_WIRING.tsv` (~4991 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~5075 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
@@ -756,6 +757,12 @@
 - `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
+- `native_libc_startup.md` (~2584 tok, huge) — Standalone libc startup adapter
+- `native_libc_startup.mind` (~1864 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_libc_startup_cases.tsv` (~362 tok, medium) — # Predeclared standalone startup contract. stderr empty except documented loader
+- `native_libc_startup_check.py` (~6391 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
+- `native_libc_startup_fixture.mind` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_libc_startup_mutations.tsv` (~134 tok, small) — id	change	case	expected_detection
 - `native_posix.md` (~1979 tok, huge) — Linux x86-64 POSIX substrate
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
@@ -1063,6 +1070,11 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/native_libc_startup/`
+
+- `gen_mind.py` (~480 tok, medium) — Emit MIND byte constructors from the independently assembled ABI reference.
+- `preload.c` (~285 tok, medium)
+- `startup.s` (~774 tok, large) — # Copyright 2026 STARGA Inc.
 ### `examples/mindc_mind/testdata/native_misc/`
 
 - `a2_ptrcast_ok.mind` (~350 tok, medium) — A2: pointer casts between PROVEN 64-bit integers and pointers are
@@ -1291,7 +1303,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9903 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9961 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
