@@ -108,11 +108,22 @@ SUPPORTED = [
      M("let f:f64=9007199254740992.0; let g:f64=f/70368744177664.0; return (g as i64);"), 128),
 ]
 
+# W8b: literals the dyadic-only builder used to refuse now lower to their
+# correctly rounded binary64 bits (exact bignum dec2flt in nb_float_lit_bits), so
+# they moved from REFUSED to value-checked: 0.1 truncates to 0; >= 2^63 saturates
+# to INT64_MAX (exit 255); the compare reads the exact 2^63 value.
+SUPPORTED += [
+    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), 0),
+    ("2^63 literal", M("let f:f64=9223372036854775808.0; return (f as i64);"), 9223372036854775807),
+    ("2^64 literal", M("let f:f64=18446744073709551616.0; return (f as i64);"), 9223372036854775807),
+    ("1e19 literal", M("let f:f64=1e19; return (f as i64);"), 9223372036854775807),
+    ("2^63 literal in compare", M("let f:f64=9223372036854775808.0; if f > 1.0 { return 7; } return 8;"), 7),
+]
+
 # (label, source) — float shapes OUTSIDE the sound tier MUST refuse 0B.
 REFUSED = [
     ("mixed float+int binop", M("let f:f64=2.0; return f + 5;")),
     ("f32 let", M("let f:f32=1.5; return 1;")),
-    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);")),
     ("float % float", M("let f:f64=5.0; let g:f64=f % 2.0; return 0;")),
     ("narrowing cast of float", M("let f:f64=2.5; return f as i8;")),
     ("bare float if cond", M("let f:f64=1.5; if f { return 1; } return 2;")),
@@ -121,14 +132,6 @@ REFUSED = [
     # refusal is `as f64` on a FLOAT source, which would cvtsi2sd raw IEEE-754
     # bits — a silent miscompile — so the emit arm poisons it 0B.
     ("as f64 of float source", M("let f:f64=1.5; let g:f64=f as f64; return 0;")),
-    # HUGE literals (>= 2^63): the i64 numerator in the literal builder WRAPS
-    # (2^64 wraps num to exactly 0) and the wrapped value could pass the dyadic
-    # test while the bits builder emitted ~0.0 — the blind-review fail-OPEN.
-    # The 18-digit-content guard in nb_float_lit_is_dyadic refuses them 0B.
-    ("2^63 literal", M("let f:f64=9223372036854775808.0; return (f as i64);")),
-    ("2^64 literal (num wraps to 0)", M("let f:f64=18446744073709551616.0; return (f as i64);")),
-    ("1e19 literal", M("let f:f64=1e19; return (f as i64);")),
-    ("2^63 literal in compare", M("let f:f64=9223372036854775808.0; if f > 1.0 { return 7; } return 8;")),
 ]
 
 
