@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2101 | **Est. tokens:** ~3907433
-**Generated:** 2026-10-15 08:12 UTC
+**Files:** 2104 | **Est. tokens:** ~3920662
+**Generated:** 2026-10-15 08:59 UTC
 
 ## Token Budget Guide
 
@@ -49,6 +49,7 @@
 | `docs/` | 38 | ~113519 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
+| `docs/compiler/` | 1 | ~928 |
 | `docs/design/` | 4 | ~11498 |
 | `docs/gates/` | 1 | ~4020 |
 | `docs/mindcraft/` | 3 | ~7086 |
@@ -116,9 +117,9 @@
 | `src/autodiff/` | 3 | ~6624 |
 | `src/bin/` | 1 | ~9878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53000 |
+| `src/build/` | 13 | ~53507 |
 | `src/build/cache/` | 3 | ~3150 |
-| `src/build/native_bridge/` | 7 | ~22479 |
+| `src/build/native_bridge/` | 7 | ~22830 |
 | `src/cache/` | 4 | ~3682 |
 | `src/check/` | 5 | ~12177 |
 | `src/deps/` | 1 | ~9388 |
@@ -133,11 +134,12 @@
 | `src/fmt/` | 3 | ~25460 |
 | `src/fmt/printer/` | 1 | ~1878 |
 | `src/intrinsics/` | 1 | ~1398 |
-| `src/ir/` | 10 | ~97464 |
+| `src/ir/` | 11 | ~105539 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
 | `src/ir/compact/v3/` | 15 | ~76625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13696 |
+| `src/ir/native_lane_profile/` | 1 | ~2636 |
 | `src/lint/` | 2 | ~4001 |
 | `src/lint/rules/` | 6 | ~10129 |
 | `src/mlir/` | 7 | ~16472 |
@@ -157,7 +159,7 @@
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 43 | ~207109 |
-| `tests/` | 422 | ~874460 |
+| `tests/` | 422 | ~875192 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -488,6 +490,9 @@
 
 - `byte-store-migration.md` (~3357 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~1310 tok, large) — MIND CLI Reference
+### `docs/compiler/`
+
+- `NATIVE_LANE_PROFILE.md` (~928 tok, large) — Typed scalar delivery profile
 ### `docs/design/`
 
 - `README.md` (~26 tok, tiny) — Design Docs
@@ -1409,7 +1414,7 @@
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge.rs` (~7577 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~8084 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `admission.rs` (~6839 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1417,7 +1422,7 @@
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
-- `seed.rs` (~3018 tok, huge) — Copyright 2025 STARGA Inc.
+- `seed.rs` (~3369 tok, huge) — Copyright 2025 STARGA Inc.
 - `shadow.rs` (~3570 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
@@ -1591,8 +1596,14 @@
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~7794 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17735 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure.rs` (~5179 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_lane_profile.rs` (~7151 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/ir/native_lane_profile/`
+
+- `tests.rs` (~2636 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/ir/`
+
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2438,14 +2449,14 @@
 - `narrow_unsigned_div_zero_run.rs` (~1413 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `native_bridge_child_status.rs` (~5870 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge_refusals.rs` (~6436 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~6543 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
 - `mod.rs` (~2274 tok, huge) — Shared harness for the native module-bridge integration controls.
 ### `tests/`
 
-- `native_closure_admission.rs` (~3941 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure_admission.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
 - `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
