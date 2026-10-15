@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2107 | **Est. tokens:** ~3,927,064
-**Generated:** 2026-10-15 09:23 UTC
+**Files:** 2110 | **Est. tokens:** ~3,936,027
+**Generated:** 2026-10-15 09:45 UTC
 
 ## Token Budget Guide
 
@@ -41,11 +41,11 @@
 | `benchmarks/mojo/` | 8 | ~4,276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 2 | ~3,347 |
+| `config/` | 2 | ~3,341 |
 | `docs/` | 39 | ~114,748 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 1 | ~976 |
+| `docs/compiler/` | 2 | ~2,808 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -134,11 +134,12 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 11 | ~105,563 |
+| `src/ir/` | 12 | ~108,965 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
+| `src/ir/native_c_abi/` | 1 | ~3,735 |
 | `src/ir/native_lane_profile/` | 1 | ~2,636 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
@@ -430,7 +431,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~2375 tok, huge) — [ir]
+- `capabilities.toml` (~2369 tok, huge) — [ir]
 - `token_pricing.toml` (~972 tok, large) — [pricing]
 ### `docs/`
 
@@ -459,6 +460,7 @@
 - `cli.md` (~1310 tok, large) — MIND CLI Reference
 ### `docs/compiler/`
 
+- `NATIVE_C_ABI_CONTRACT.md` (~1832 tok, huge) — Source-derived native C ABI declaration contract
 - `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
 ### `docs/design/`
 
@@ -1606,7 +1608,13 @@
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~7794 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17735 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17749 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_c_abi.rs` (~3388 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/ir/native_c_abi/`
+
+- `tests.rs` (~3735 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/ir/`
+
 - `native_closure.rs` (~5179 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_lane_profile.rs` (~7175 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`

@@ -126,7 +126,7 @@ surface_tolerance = 25
 note              = 'floor over tests/**/*.rs (378 in the composed native-module bridge source tree); the README floor may lag the tree by at most 25 files before the gate demands a refresh.'
 
 [counts.rust_test_fns]
-declared          = 3081
+declared          = 3290
 mode              = "floor"
 floor_tolerance   = 200
 kind              = "regex_count"
@@ -136,7 +136,7 @@ surface           = "README.md"
 surface_regex     = '([\d,]+)\+ tests\b'
 surface_mode      = "floor"
 surface_tolerance = 200
-note              = 'floor over #[test] / #[tokio::test] across src/ + tests/ (recounted from the combined tree at the native-module bridge integration: 2880); README prints "2,880+ tests" and may lag by at most 200.'
+note              = 'floor over #[test] / #[tokio::test] across src/ + tests/ (recounted at the native C ABI contract addition: 3290); README prints "3,290+ tests" and may lag by at most 200.'
 
 [counts.pytorch_bridge_tests]
 declared          = 11
