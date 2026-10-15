@@ -573,16 +573,34 @@ def unused_parameter_program(n: int):
     return f"fn f({params}) -> i64 {{ 37 }}\nfn main() -> i64 {{ 37 }}\n", (37, b"")
 
 
-def mixed_parameter_program(order: str):
+def mixed_parameter_program(order: str, weighted: bool = False):
     """Cross both SysV register limits in each overflow ordering."""
     kinds = {"gp_first": "i" * 8 + "f" * 10,
              "sse_first": "f" * 10 + "i" * 8,
              "interleaved": "if" * 8 + "ff"}[order]
     params = ",".join(f"p{k}:{'f64' if t == 'f' else 'i64'}" for k, t in enumerate(kinds))
     args = ",".join(f"{k}.0" if t == "f" else str(k) for k, t in enumerate(kinds))
-    values = "+".join(f"(p{k} as i64)" if t == "f" else f"p{k}" for k, t in enumerate(kinds))
+    terms = [f"(p{k} as i64)" if t == "f" else f"p{k}" for k, t in enumerate(kinds)]
+    if weighted:
+        # Distinct weights catch a swap that a plain sum cannot observe.
+        terms = [f"({k + 1} * {term})" for k, term in enumerate(terms)]
+    values = "+".join(terms)
     src = f"fn f({params})->i64{{{values}}}\nfn main()->i64{{f({args})}}\n"
-    return src, (sum(range(len(kinds))) % 256, b"")
+    expected = sum(k * (k + 1 if weighted else 1) for k in range(len(kinds)))
+    return src, (expected % 256, b"")
+
+
+def exact_mixed_parameter_program(order: str):
+    """Check each positional value, avoiding exit-byte checksum collisions."""
+    kinds = {"gp_first": "i" * 8 + "f" * 10,
+             "sse_first": "f" * 10 + "i" * 8,
+             "interleaved": "if" * 8 + "ff"}[order]
+    params = ",".join(f"p{k}:{'f64' if t == 'f' else 'i64'}" for k, t in enumerate(kinds))
+    args = ",".join(f"{k}.0" if t == "f" else str(k) for k, t in enumerate(kinds))
+    guards = "".join(f"if p{k} != {k}.0 {{ return {k + 1}; }}" if t == "f"
+                     else f"if p{k} != {k} {{ return {k + 1}; }}" for k, t in enumerate(kinds))
+    src = f"fn f({params})->i64{{{guards}return 0;}}\nfn main()->i64{{f({args})}}\n"
+    return src, (0, b"")
 
 
 def recovery_capacity_cases():
@@ -594,9 +612,18 @@ def recovery_capacity_cases():
         ("integer match 14 arms", match_program(14), False, True),
         ("integer match 15 arms", match_program(15), False, True),
         ("integer match 40 arms", match_program(40), False, True),
+        ("integer match 512 arms", match_program(512), True, True),
+        ("integer match 1024 arms", match_program(1024), True, True),
+        ("integer match 4096 arms", match_program(4096), True, True),
         ("mixed GP-first register overflow", mixed_parameter_program("gp_first"), False, True),
         ("mixed SSE-first register overflow", mixed_parameter_program("sse_first"), False, True),
         ("mixed interleaved register overflow", mixed_parameter_program("interleaved"), False, True),
+        ("weighted mixed GP-first register overflow", mixed_parameter_program("gp_first", True), False, True),
+        ("weighted mixed SSE-first register overflow", mixed_parameter_program("sse_first", True), False, True),
+        ("weighted mixed interleaved register overflow", mixed_parameter_program("interleaved", True), False, True),
+        ("exact mixed GP-first register overflow", exact_mixed_parameter_program("gp_first"), False, True),
+        ("exact mixed SSE-first register overflow", exact_mixed_parameter_program("sse_first"), False, True),
+        ("exact mixed interleaved register overflow", exact_mixed_parameter_program("interleaved"), False, True),
         ("128 function parameters and call arguments", parameter_program(128), False, True),
         ("20000 unused function parameters", unused_parameter_program(20000), False, True),
         ("20000 function parameters and call arguments", parameter_program(20000), True, True),

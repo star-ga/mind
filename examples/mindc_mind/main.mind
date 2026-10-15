@@ -21855,6 +21855,15 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
             let env: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
             let nlets_cell: i64 = __mind_alloc(8);
             let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, strbuf, offs, ncount, ok_cell);
+            // These arrays are borrowed only for this completed emission. The
+            // result owns serialized bytes and retains s.lets, never this raw
+            // scratch. Release on success AND rejection, before the next
+            // function's tables, for malloc and free-capable native runtimes.
+            let _f_nodes2: i64 = nb_ntab_free(nodes2);
+            let _f_cursor2: i64 = __mind_free(cursor2);
+            let _f_vidbuf2: i64 = __mind_free(vidbuf2);
+            let _f_env: i64 = __mind_free(env);
+            let _f_nlets: i64 = __mind_free(nlets_cell);
             if __mind_load_i64(ok_cell) == 1 {
                 return slet;
             }
@@ -21933,6 +21942,16 @@ pub fn emit_mic3_module_fndef_run(s: EmitState, src: i64, fn_node: i64, strbuf: 
                 let hplan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
                 let hnplan: i64 = __mind_alloc(8);
                 let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
+                // The planner has finished borrowing these caller-owned
+                // tables. Keep AST/source payloads and returned bytes alive;
+                // release only the allocation bases, as on the let-chain path.
+                let _f_hnodes: i64 = nb_ntab_free(hnodes);
+                let _f_hcursor: i64 = __mind_free(hcursor);
+                let _f_hvidbuf: i64 = __mind_free(hvidbuf);
+                let _f_henv: i64 = __mind_free(henv);
+                let _f_hnlets: i64 = __mind_free(hnlets);
+                let _f_hplan: i64 = __mind_free(hplan);
+                let _f_hnplan: i64 = __mind_free(hnplan);
                 if __mind_load_i64(ok_cell) == 1 {
                     return sseq;
                 }
@@ -25428,6 +25447,13 @@ pub fn emit_if_value_node(s: EmitState, if_node: i64, buf: i64, params_addr: i64
 }
 
 pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
+    // Match arms introduce nested AST regions even when source braces are flat.
+    // Apply the existing arena reserve at entry and unwind before another
+    // region copy; a budget refusal must propagate without further emission.
+    if nb_arena_low() == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
     // --- cond ---
     // NESTED-IF cond (the parse-time && / || desugar): the oracle lowers it as
     // ONE nested OP_IF in the cond region — cond_count=1, cond_id = the inner
@@ -25442,6 +25468,10 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     } else {
         es_new()
     };
+    if nb_arena_low() == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
     let nested_cond: i64 = __mind_load_i64(ccell);
     let flat_cond: i64 = if nested_cond >= 0 {
         0 - 1
@@ -25488,6 +25518,10 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     } else {
         es_new()
     };
+    if nb_arena_low() == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
     let nested_then: i64 = __mind_load_i64(tcell);
     let then_root: i64 = if nested_then >= 0 {
         nested_then
@@ -25528,6 +25562,10 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     } else {
         es_new()
     };
+    if nb_arena_low() == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
     let nested_else: i64 = __mind_load_i64(ecell);
     let else_root: i64 = if nested_else >= 0 {
         nested_else
@@ -41124,6 +41162,13 @@ pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i:
 // value_if fixtures never bind a struct, so clets stays empty and their counts are
 // unchanged. Reuses the 4-word nb_lets_* helpers (only the slit word is read here).
 pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+    // The count-only walk also allocates merge-name scratch. Deep matches
+    // revisit it while placing branch destinations; stop before allocation
+    // exhaustion, poison the function, and let the stage report its budget.
+    if nb_arena_low() == 1 {
+        __mind_store_i64(clcell + 80, 1);
+        return next_id;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
         return next_id + 1;
@@ -41488,6 +41533,13 @@ pub fn nb_name_record(names: i64, n: i64, lo: i64, hi: i64) -> i64 {
 }
 
 pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64) -> i64 {
+    // The count-only walk also allocates merge-name scratch. Deep matches
+    // revisit it while placing branch destinations; stop before allocation
+    // exhaustion, poison the function, and let the stage report its budget.
+    if nb_arena_low() == 1 {
+        __mind_store_i64(clcell + 80, 1);
+        return next_id;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_return() {
         return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
