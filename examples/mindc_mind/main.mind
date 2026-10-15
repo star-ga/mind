@@ -1445,9 +1445,9 @@ pub fn ast_index_assign() -> i64 {
     29
 }
 // `"..."` string literal: span covers both quotes (content is [lo+1, hi-1)).
-// Only the print-statement desugar consumes this node (print("…") lowers to the
-// alloc/store_i8/record/print_bytes chain); every other surface fails closed on
-// the unknown kind — a string in any other position is an honest 0-byte refusal.
+// The print-statement desugar consumes this node; native value emission also
+// decodes the lexer-approved escapes into a borrowed read-only String. Other
+// emitters must explicitly support this node or refuse it.
 pub fn ast_str_lit() -> i64 {
     34
 }
@@ -3204,14 +3204,9 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         return parse_if(toks, pos, buf);
     }
 
-    // `"..."` string literal: one ast_str_lit leaf carrying the token span. The
-    // general native emitter still copies literal source bytes verbatim, so keep
-    // escaped value expressions poisoned until that emitter shares the decoder.
-    // Bimap consumes its table tokens directly and is validated separately.
+    // The lexer validates the shared seven-escape table; the native literal
+    // emitter decodes that same table before sizing and writing read-only data.
     if k == tk_str() {
-        if string_span_has_escape(buf, lo + 1, hi - 1) == 1 {
-            return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
-        }
         return pr_new(pos + 1, ast_new_leaf(ast_str_lit(), lo, hi));
     }
 
@@ -3426,16 +3421,16 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                 return pr_new(pos + 1, mk_syn_intlit(cv));
             }
         }
-        // deferred: a top-level STRING const (`const NAME: str = "..."`) is NOT
-        // inlined, so its use stays an unresolved ident and fails closed. Native
-        // stage1 cannot yet lower ANY string literal: the self-computed trace
-        // note (nb_trace_hash -> nb_build_mic3) has no twin of mindc-Rust's
-        // Literal::Str expansion (alloc + per-byte __mind_store_i8 + a 24-byte
-        // {addr, len, cap = len} record), and the native rodata handle carries
-        // cap = 0 where MLIR's carries cap = len. Upgrade path: port that
-        // expansion into the mic@3 twin and align the native handle's cap word,
-        // then inline the decl's literal leaf here (local-wins + escape guards
-        // as for the int const above).
+        // The same local-wins rule applies to one exact String literal const.
+        // Keep its original quoted source span so the common decoder handles
+        // validation, decoded length and bytes. This grants no MIC trace claim:
+        // native rodata handles remain borrowed, with the existing cap=0 ABI.
+        let cs: i64 = const_string_token(toks, buf, lo, hi);
+        if cs >= 0 {
+            if const_name_bound(toks, buf, lo, hi) == 0 {
+                return pr_new(pos + 1, ast_new_leaf(ast_str_lit(), tok_lo(toks, cs), tok_hi(toks, cs)));
+            }
+        }
         let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
         return pr_new(pos + 1, n);
     }
@@ -5649,7 +5644,7 @@ pub fn ent_syn_node(v: i64, lo: i64, hi: i64) -> i64 {
 // PRECEDENCE (local/param WINS over const, matching mindc-Rust's env-before-
 // const order). parse_primary_ns is scope-blind, so an UNCONDITIONAL parse-time
 // inline would wrongly resolve `const N=5; fn f(){ let N=3; return N }` to 5.
-// Guard: a bare ident that ALSO names a `let` binding OR a param ANYWHERE in the
+// Guard: a bare ident that ALSO names a local/pattern binding or param ANYWHERE in the
 // source (const_name_bound) is NOT inlined — it stays an ast_ident, so the
 // emitter's let-env/param lookup resolves it (the local wins where in scope). A
 // genuine const use whose name is never a local resolves to the value; a const
@@ -5731,6 +5726,35 @@ pub fn const_type_is_int(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+pub fn const_type_is_string(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 6 { return 0; }
+    if load_byte(buf, lo) != 83 { return 0; }
+    if load_byte(buf, lo + 1) != 116 { return 0; }
+    if load_byte(buf, lo + 2) != 114 { return 0; }
+    if load_byte(buf, lo + 3) != 105 { return 0; }
+    if load_byte(buf, lo + 4) != 110 { return 0; }
+    if load_byte(buf, lo + 5) != 103 { return 0; }
+    1
+}
+
+// Like const_resolve, admit uppercase names only, reject duplicate declarations
+// and composite initializers. Return a token index, never an unchecked pointer.
+pub fn const_string_token(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
+    let b: i64 = load_byte(buf, nlo);
+    if b < 65 { return 0 - 1; }
+    if b > 90 { return 0 - 1; }
+    let np: i64 = const_find_from(toks, buf, 0, nlo, nhi);
+    if np < 0 { return 0 - 1; }
+    if const_find_from(toks, buf, np + 1, nlo, nhi) >= 0 { return 0 - 1; }
+    if tok_kind(toks, np + 1) != tk_colon() { return 0 - 1; }
+    if tok_kind(toks, np + 2) != tk_ident() { return 0 - 1; }
+    if const_type_is_string(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 { return 0 - 1; }
+    if tok_kind(toks, np + 3) != tk_eq() { return 0 - 1; }
+    if tok_kind(toks, np + 4) != tk_str() { return 0 - 1; }
+    if const_init_ends(toks, buf, np + 5) == 0 { return 0 - 1; }
+    np + 4
+}
+
 // 1 iff the token at `pos` terminates a single-int const initializer: a `;`,
 // EOF, or the start of the next top-level item (the `;`-less form).
 pub fn const_init_ends(toks: Vec, buf: i64, pos: i64) -> i64 {
@@ -5774,24 +5798,58 @@ pub fn const_resolve(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
     const_read_init(toks, buf, np)
 }
 
-// True (1) if buf[nlo..nhi) names a `let` binding ANYWHERE (scanning from `pos`):
-// `let NAME` or `let mut NAME`. `let` is a keyword token (tk_kw_let); `mut`
-// lexes as a plain ident (is_ident_mut), mirroring parse_let's offset shift.
+// True (1) if buf[nlo..nhi) names a `let` binding ANYWHERE (scanning from `pos`).
+// Share the existing simple/mut/tuple pattern scanner. A conservative positive
+// disables substitution; missing an admitted binding would silently replace it.
 pub fn const_bound_let(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
     if at_eof(toks, pos) == 1 {
         return 0;
     }
     if tok_kind(toks, pos) == tk_kw_let() {
-        let np: i64 = if is_ident_mut(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
-            pos + 2
-        } else {
-            pos + 1
-        };
-        if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, np), tok_hi(toks, np)) == 1 {
+        if for_let_binds(toks, buf, pos + 1, nlo, nhi) == 1 {
             return 1;
         }
     }
     const_bound_let(toks, buf, pos + 1, nlo, nhi)
+}
+
+// Range-for desugaring creates a binding after parse-time constant lookup.
+// Recognize `for NAME` conservatively, just as parse_block_stmts recognizes
+// `for`: do not require the skipped `in` token to prove absence of a binding.
+pub fn const_bound_for(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_ident_for(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            if tok_kind(toks, pos + 1) == tk_ident() {
+                if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                    return 1;
+                }
+            }
+        }
+    }
+    const_bound_for(toks, buf, pos + 1, nlo, nhi)
+}
+
+// The only admitted match binding is `Name::Variant(NAME) =>`. Reuse its
+// parser shape checks; require the arrow so a constructor expression does not
+// suppress an actual global constant. Any widening of parse_match_chain's
+// accepted binding grammar must extend this guard and its regression cases.
+pub fn const_bound_match(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if mt_pat_kind(toks, buf, pos) == 3 {
+        if mt_bind_ok(toks, buf, pos) == 1 {
+            if mt_pat_arrow_ok(toks, pos, 3) == 1 {
+                if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, pos + 5), tok_hi(toks, pos + 5)) == 1 {
+                    return 1;
+                }
+            }
+        }
+    }
+    const_bound_match(toks, buf, pos + 1, nlo, nhi)
 }
 
 // True (1) if the token at `pos-1` opens a parameter slot (`(` or `,`). Guards
@@ -5830,15 +5888,21 @@ pub fn const_bound_param(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i
     const_bound_param(toks, buf, pos + 1, nlo, nhi)
 }
 
-// True (1) if buf[nlo..nhi) is bound as a local (`let`) or a parameter anywhere
+// True (1) if buf[nlo..nhi) is bound as a local, pattern or parameter anywhere
 // in the source — a const of the same name is then NOT inlined (the local/param
-// must win, matching mindc-Rust's env-before-const precedence). Two top-level
-// sibling early-returns (the proven ent_resolve shape).
+// must win, matching mindc-Rust's env-before-const precedence). Diagnostic scope
+// absence is not used here: ambiguity there is not proof of no local binding.
 pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
     if const_bound_let(toks, buf, 0, nlo, nhi) == 1 {
         return 1;
     }
     if const_bound_param(toks, buf, 0, nlo, nhi) == 1 {
+        return 1;
+    }
+    if const_bound_for(toks, buf, 0, nlo, nhi) == 1 {
+        return 1;
+    }
+    if const_bound_match(toks, buf, 0, nlo, nhi) == 1 {
         return 1;
     }
     0
@@ -6721,6 +6785,20 @@ pub fn mt_bind_ok(toks: Vec, buf: i64, pat_pos: i64) -> i64 {
     1
 }
 
+// Every admitted pattern must have an actual `=>`, not two skipped tokens.
+// The constant binder guard shares this predicate so a constructor call is
+// never mistaken for a binding and malformed arrows cannot evade the guard.
+pub fn mt_pat_arrow_ok(toks: Vec, pat_pos: i64, kind: i64) -> i64 {
+    if kind < 0 { return 0; }
+    if kind > 3 { return 0; }
+    let skip: i64 = if kind == 3 { 7 } else { if kind == 2 { 4 } else { 1 } };
+    let pos: i64 = pat_pos + skip;
+    if at_eof(toks, pos + 1) == 1 { return 0; }
+    if tok_kind(toks, pos) != tk_eq() { return 0; }
+    if tok_kind(toks, pos + 1) != tk_gt() { return 0; }
+    1
+}
+
 // Skip an optional `,` or `;` arm separator (block arms usually have none).
 pub fn mt_skip_sep(toks: Vec, p: i64) -> i64 {
     if tok_kind(toks, p) == tk_comma() {
@@ -6865,6 +6943,9 @@ pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw
     // pattern token REFUSES.
     let pk: i64 = mt_pat_kind(toks, buf, pat_pos);
     if pk < 0 {
+        return pr_new(pat_pos + 1, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    if mt_pat_arrow_ok(toks, pat_pos, pk) == 0 {
         return pr_new(pat_pos + 1, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
     }
     if pk == 1 {
@@ -38905,7 +38986,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     }
     if k == ast_str_lit() {
         // NATIVE-ELF STRING LITERAL (rodata PT_LOAD slice): append the literal's
-        // raw bytes to the module rodata accumulator (rod, stashed at lcell+104 by
+        // decoded bytes to the module rodata accumulator (rod, stashed at lcell+104 by
         // nb_lower_fn) and materialize a BORROWED String handle
         // { addr = nb_rodata_addr()+off, len, cap = 0 } — three COMPILE-TIME
         // constants — into this expr's SSA slot, exactly the way ast_struct_lit
@@ -38919,16 +39000,13 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         // Content span is [span_lo+1, span_hi-1) — the token span covers both
         // quotes (lexer scan_string_end + parse_primary_ns's ast_str_lit leaf).
-        // deferred: ESCAPE-FREE literals only. The self-host lexer REFUSES any
-        // backslash (scan_string_end returns -1 -> tk_unsupported -> whole-compile
-        // fail-closed), so no escape byte can reach this arm; copy raw bytes
-        // verbatim. Upgrade path: when the lexer decodes escapes, un-escape
-        // (\n \t \\ \" ...) into the rodata buffer before the copy below.
+        // Decode only the lexer's supported escape table. Unknown/trailing
+        // escapes remain refused. Capacity is measured in DECODED bytes.
         let lo: i64 = ast_span_lo(node) + 1;
         let hi: i64 = ast_span_hi(node) - 1;
-        let slen: i64 = hi - lo;
+        let slen: i64 = nb_string_decoded_length(buf, lo, hi);
         // off = current accumulator length = THIS literal's compile-time rodata
-        // offset. Append the raw bytes at (rod + 8 + off), then bump the header.
+        // offset. Append decoded bytes at (rod + 8 + off), then bump the header.
         let off: i64 = __mind_load_i64(rod);
         // FAIL-CLOSED rodata-window bound: the rodata segment occupies the fixed
         // VADDR window [nb_rodata_addr(), nb_arena_addr()) = 8 MiB. If the total
@@ -38937,11 +39015,11 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // reproduces and passes every hash gate. Refuse (0-byte) instead, mirroring
         // the arm's rod==0 poison. deferred: widen the window / page-relative rodata
         // layout to lift the 8 MiB per-module literal cap.
-        if off + slen > nb_arena_addr() - nb_rodata_addr() {
+        if nb_rod_room(off, slen) == 0 {
             __mind_store_i64(lcell + 80, 1);
             return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
         }
-        let _cp: i64 = nb_rod_copy(rod, 8 + off, buf, lo, 0, slen);
+        let _cp: i64 = nb_rod_decoded_copy(rod, 8 + off, buf, lo, hi);
         __mind_store_i64(rod, off + slen);
         let addr: i64 = nb_rodata_addr() + off;
         // Mirror ast_struct_lit: CONST 8 ; CONST 3 ; MUL -> size ;
@@ -40893,10 +40971,71 @@ pub fn nb_u8_field_index_read(st: NbState, buf: i64, field_node: i64, idx: i64, 
     NbState { code: l2, next_id: dst_id + 1, last_id: dst_id, ncalls: s_idx.ncalls }
 }
 
+// Source spans have already been bounded by the lexer. Return the width of one
+// validated source character, or zero for an invalid/trailing escape.
+pub fn nb_string_step(buf: i64, pos: i64, hi: i64) -> i64 {
+    if pos < 0 { return 0; }
+    if pos >= hi { return 0; }
+    if load_byte(buf, pos) != 92 { return 1; }
+    if pos + 1 >= hi { return 0; }
+    if string_escape_value(load_byte(buf, pos + 1)) < 0 { return 0; }
+    2
+}
+pub fn nb_string_step_good(step: i64) -> i64 {
+    if step == 0 { return 0; }
+    1
+}
+pub fn nb_string_step_advance(step: i64) -> i64 {
+    if step == 2 { return 2; }
+    1
+}
+pub fn nb_string_decoded_length(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo < 0 { return 0 - 1; }
+    if hi < lo { return 0 - 1; }
+    let mut pos: i64 = lo;
+    let mut n: i64 = 0;
+    let mut ok: i64 = 1;
+    while pos < hi {
+        let step: i64 = nb_string_step(buf, pos, hi);
+        ok = ok * nb_string_step_good(step);
+        pos = pos + nb_string_step_advance(step);
+        n = n + 1;
+    }
+    if ok == 0 { return 0 - 1; }
+    n
+}
+pub fn nb_string_decoded_byte(buf: i64, pos: i64) -> i64 {
+    let b: i64 = load_byte(buf, pos);
+    if b == 92 { return string_escape_value(load_byte(buf, pos + 1)); }
+    b
+}
+pub fn nb_rod_room(off: i64, n: i64) -> i64 {
+    if off < 0 { return 0; }
+    if n < 0 { return 0; }
+    let cap: i64 = nb_arena_addr() - nb_rodata_addr();
+    if off > cap { return 0; }
+    if n > cap - off { return 0; }
+    1
+}
+// Only called after complete decoding validation and a decoded-byte capacity
+// check. Source storage is immutable. Constant call depth also handles long
+// valid literals without a per-byte recursive stack cost.
+pub fn nb_rod_decoded_copy(rod: i64, base: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    let mut pos: i64 = lo;
+    let mut n: i64 = 0;
+    while pos < hi {
+        let step: i64 = nb_string_step(buf, pos, hi);
+        __mind_store_i8(rod + base + n, nb_string_decoded_byte(buf, pos));
+        pos = pos + nb_string_step_advance(step);
+        n = n + 1;
+    }
+    n
+}
+
 // Append `n` raw source bytes buf[lo..lo+n) into the module rodata accumulator
 // at (rod + base + j). `base` = 8 + off (the 8-byte length header + this literal's
 // compile-time rodata offset). Recursive leaf (self-host subset — no `while`
-// needed); returns 0. Used by nb_expr's ast_str_lit arm.
+// needed); returns 0. Retained raw-copy helper; string values use the decoder.
 pub fn nb_rod_copy(rod: i64, base: i64, buf: i64, lo: i64, j: i64, n: i64) -> i64 {
     if j >= n {
         return 0;

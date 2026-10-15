@@ -152,7 +152,8 @@ GATED_EVENTS = ("push", "pull_request")
 # 295 -> 297 adds native_libc_startup_check.py and its development byte
 # generator testdata/native_libc_startup/gen_mind.py. Explicit manual gate
 # prerequisites remain; no production admission or CI success is implied.
-HARNESS_CEILING = 297  # Exact reviewed integration inventory; no spare allowance.
+# 297 -> 298 adds the frozen string, binding and decoder-bounds gate.
+HARNESS_CEILING = 298  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
