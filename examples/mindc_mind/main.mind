@@ -4151,13 +4151,18 @@ pub fn for_inject_step_if(node: i64, var_lo: i64, var_hi: i64) -> i64 {
     ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, neb)
 }
 
-// Does the loop BODY assign the loop variable VAR (`VAR = ...`) at this loop
-// level? Descends if then/else blocks (same loop level); stops at nested loops
-// (already lowered to `while`). Mirrors the oracle's `body_assigns_var` gate
-// (src/eval/lower.rs): when the body writes VAR the Rust For arm switches to the
-// HYGIENIC desugar (a per-iteration `let mut VAR = __for_i_N` copy), which the
-// self-host cannot reproduce byte-for-byte, so this steers such shapes onto the
-// fail-closed hidden-counter form instead of a wrong-bytes byte-neutral emit.
+// Does the loop BODY assign the name VAR (`VAR = ...`) anywhere? Descends if
+// then/else blocks AND nested loop bodies (a nested range-for is already a
+// `while` here) — the exact reach of the oracle's collect_assign_targets
+// (src/eval/lower.rs), which feeds both its `body_assigns_var` and its
+// `end_reads_body_assigned` gates, and so both callers here. A write in a nested
+// loop still hits the byte-neutral form's counter (`for i in 0..3 { while k < 2 {
+// i = i + 1; .. } }` ran once instead of three times), and a bound written there
+// is re-read every iteration (`for i in 0..n { while .. { n = n + 1; } }` hung).
+// When the body writes VAR the Rust For arm switches to the HYGIENIC desugar (a
+// per-iteration `let mut VAR = __for_i_N` copy), so this steers such shapes onto
+// the hidden-counter form. A nested same-name range-for is hygienic itself
+// (for_var_in_scope), so its desugar assigns its hidden counter, never VAR.
 pub fn for_body_assigns_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
     if i >= sl {
         return 0;
@@ -4172,6 +4177,12 @@ pub fn for_body_assigns_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64
     }
     if k == ast_if() {
         if for_if_assigns_var(s, buf, var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_while() {
+        let wb: i64 = ast_child1(s);
+        if for_body_assigns_var(ast_child0(wb), ast_aux(wb), buf, var_lo, var_hi, 0) == 1 {
             return 1;
         }
     }
@@ -4312,17 +4323,51 @@ pub fn for_var_visible(toks: Vec, buf: i64, i: i64, depth: i64, var_lo: i64, var
     }
     if depth == 0 {
         if k == tk_kw_let() {
-            let n: i64 = if for_tok_is_word3(toks, buf, i + 1, 109, 117, 116) == 1 {
-                i + 2
-            } else {
-                i + 1
-            };
-            if span_bytes_equal(buf, tok_lo(toks, n), tok_hi(toks, n), var_lo, var_hi) == 1 {
+            if for_let_binds(toks, buf, i + 1, var_lo, var_hi) == 1 {
                 return 1;
             }
         }
     }
     for_var_visible(toks, buf, i - 1, depth, var_lo, var_hi)
+}
+// The names a `let` binds, `p` = the token after `let`: `NAME`, `mut NAME`, or a
+// `( .. )` tuple of them.
+pub fn for_let_binds(toks: Vec, buf: i64, p: i64, var_lo: i64, var_hi: i64) -> i64 {
+    let k: i64 = tok_kind(toks, p);
+    if k == tk_lparen() {
+        return for_tuple_binds(toks, buf, p + 1, 1, var_lo, var_hi);
+    }
+    if k != tk_ident() {
+        return 0;
+    }
+    if is_ident_mut(buf, tok_lo(toks, p), tok_hi(toks, p)) == 1 {
+        if tok_kind(toks, p + 1) == tk_ident() {
+            return span_bytes_equal(buf, tok_lo(toks, p + 1), tok_hi(toks, p + 1), var_lo, var_hi);
+        }
+    }
+    span_bytes_equal(buf, tok_lo(toks, p), tok_hi(toks, p), var_lo, var_hi)
+}
+// Identifiers inside a tuple-let pattern (any nesting) up to its closing `)`.
+pub fn for_tuple_binds(toks: Vec, buf: i64, p: i64, pd: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if at_eof(toks, p) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, p);
+    if k == tk_lparen() {
+        return for_tuple_binds(toks, buf, p + 1, pd + 1, var_lo, var_hi);
+    }
+    if k == tk_rparen() {
+        if pd <= 1 {
+            return 0;
+        }
+        return for_tuple_binds(toks, buf, p + 1, pd - 1, var_lo, var_hi);
+    }
+    if k == tk_ident() {
+        if span_bytes_equal(buf, tok_lo(toks, p), tok_hi(toks, p), var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    for_tuple_binds(toks, buf, p + 1, pd, var_lo, var_hi)
 }
 // First token of the header ending at `j` (back to a `;`, `{` or `}`).
 pub fn for_header_start(toks: Vec, j: i64) -> i64 {
@@ -4518,8 +4563,8 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
 
     // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
     // Reached when NEITHER byte-neutral form above applies: a body write to VAR,
-    // or a non-literal END (an own-`continue` alone now takes the inject form
-    // above). The oracle emits its hygienic
+    // a non-inline END, VAR bound in an enclosing scope, or a body `let VAR` (an
+    // own-`continue` alone now takes the inject form above). The oracle emits its hygienic
     // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
     // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here. These desugars
     // remain VALID for the native-ELF / MLIR backends
@@ -4528,22 +4573,35 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     // unchanged: the fixes above only ADD byte-neutral fast paths in front.
     let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
     let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
+    // The hidden counter's NAME spans the whole `for` statement, `for` through the
+    // body's closing `}`. Every backend resolves a name by its span BYTES, so two
+    // NESTED loops with the same header text (`for i in 0..n { for i in 0..n {..} }`
+    // under a param `i`, or a call END on both) named one counter when it spanned the
+    // header alone: the inner `let CTR` shadowed the outer for the rest of the outer
+    // body, so the outer step advanced the inner counter (wrong count, or a hang
+    // under `break`). A nested statement is a strict substring of its parent, so the
+    // full span differs from every counter it can see; the oracle gets the same
+    // uniqueness from `__for_i_{span.start()}`. mic@3 interns a counter by its span
+    // START (for_counter_name), so the emitted `__for_i_N` is unchanged. A same-text
+    // SIBLING loop still reuses the name, which is harmless: its let comes after the
+    // earlier loop has finished, and nothing reads the earlier counter again.
+    let ctr_hi: i64 = close_hi;
 
     if has_cont == 1 {
         // Form (B): TOP-increment on the hidden counter (standard for-continue
         // semantics — a `continue` jumps to the header, which re-runs the cond then
         // the top increment, so the counter still advances).
         // let CTR = LO - 1
-        let ctr_name_b: i64 = ast_new_leaf(ast_ident(), kw_lo, hi_hi);
+        let ctr_name_b: i64 = ast_new_leaf(ast_ident(), kw_lo, ctr_hi);
         let init_b: i64 = ast_new_binop(var_lo, lo_hi, pr_node(lo_res), mk_syn_intlit(1), op_sub());
         let let_ctr_b: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_b, ty, init_b);
         // body = [ CTR = CTR + 1 ; let VAR = CTR ; BODY... ]
-        let tb0: Vec = vec_push(vec_new(), for_make_incr(kw_lo, hi_hi));
-        let tb1: Vec = vec_push(tb0, for_make_var_copy(var_lo, var_hi, kw_lo, hi_hi));
+        let tb0: Vec = vec_push(vec_new(), for_make_incr(kw_lo, ctr_hi));
+        let tb1: Vec = vec_push(tb0, for_make_var_copy(var_lo, var_hi, kw_lo, ctr_hi));
         let tb2: Vec = for_append_stmts(sa, sl, 0, tb1);
         let wbody_b: i64 = ast_new_block(body_open, close_hi, vec_addr(tb2), vec_len(tb2));
         // cond = (CTR + 1) < BND
-        let cplus: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, hi_hi), mk_syn_intlit(1), op_add());
+        let cplus: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, ctr_hi), mk_syn_intlit(1), op_add());
         let cond_b: i64 = ast_new_binop(var_lo, hi_hi, cplus, ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
         let while_b: i64 = ast_new_while(kw_lo, close_hi, cond_b, wbody_b);
         __mind_store_i64(out + 0, let_ctr_b);
@@ -4554,15 +4612,15 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
 
     // Form (A): BOTTOM-increment on the hidden counter.
     // let CTR = LO
-    let ctr_name_a: i64 = ast_new_leaf(ast_ident(), kw_lo, hi_hi);
+    let ctr_name_a: i64 = ast_new_leaf(ast_ident(), kw_lo, ctr_hi);
     let let_ctr_a: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_a, ty, pr_node(lo_res));
     // body = [ let VAR = CTR ; BODY... ; CTR = CTR + 1 ]
-    let ab0: Vec = vec_push(vec_new(), for_make_var_copy(var_lo, var_hi, kw_lo, hi_hi));
+    let ab0: Vec = vec_push(vec_new(), for_make_var_copy(var_lo, var_hi, kw_lo, ctr_hi));
     let ab1: Vec = for_append_stmts(sa, sl, 0, ab0);
-    let ab2: Vec = vec_push(ab1, for_make_incr(kw_lo, hi_hi));
+    let ab2: Vec = vec_push(ab1, for_make_incr(kw_lo, ctr_hi));
     let wbody_a: i64 = ast_new_block(body_open, close_hi, vec_addr(ab2), vec_len(ab2));
     // cond = CTR < BND
-    let cond_a: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, hi_hi), ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
+    let cond_a: i64 = ast_new_binop(kw_lo, hi_hi, ast_new_leaf(ast_ident(), kw_lo, ctr_hi), ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
     let while_a: i64 = ast_new_while(kw_lo, close_hi, cond_a, wbody_a);
     __mind_store_i64(out + 0, let_ctr_a);
     __mind_store_i64(out + 8, let_bnd);
@@ -40761,6 +40819,11 @@ pub fn nb_exit_flush_carry(code: String, loops: i64, lpcell: i64, buf: i64, lets
     let body_scope: i64 = __mind_load_i64(bb + 258 * 8);
     nb_exit_flush_rest(code, carry, ncarry, 0, buf, lets, lcell, body_scope)
 }
+// Carry record i pushes its live source, recurses, then pops into its loop slot,
+// so every read happens before any write and the pops run in reverse push order:
+// a correct PARALLEL copy even when one carried var's source is another's
+// destination (an aliasing bare `t = a` rebind). Frame slots only — a fn with a
+// loop never gets DTK register homes (nb_dtk_scan_stmt admits no while).
 pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, lets: i64, lcell: i64, body_scope: i64) -> String {
     if i >= ncarry {
         return code;
@@ -40769,8 +40832,27 @@ pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i6
     let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
     let post: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
     let cur: i64 = nb_lets_lookup_carried(lets, __mind_load_i64(lcell), buf, lo, hi, body_scope, 0, 0 - 1);
-    let c1: String = nb_flush_one(code, cur, post);
-    nb_exit_flush_rest(c1, carry, ncarry, i + 1, buf, lets, lcell, body_scope)
+    if cur < 0 {
+        return nb_exit_flush_rest(code, carry, ncarry, i + 1, buf, lets, lcell, body_scope);
+    }
+    if cur == post {
+        return nb_exit_flush_rest(code, carry, ncarry, i + 1, buf, lets, lcell, body_scope);
+    }
+    let c1: String = nb_push_slot(code, nb_slot_disp(cur));
+    let c2: String = nb_exit_flush_rest(c1, carry, ncarry, i + 1, buf, lets, lcell, body_scope);
+    nb_pop_slot(c2, nb_slot_disp(post))
+}
+// push qword [rbp+disp32] = FF B5 <disp32>
+pub fn nb_push_slot(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 255);
+    let c2: String = nb_push(c1, 181);
+    nb_i32le_signed(c2, disp)
+}
+// pop qword [rbp+disp32] = 8F 85 <disp32>
+pub fn nb_pop_slot(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 143);
+    let c2: String = nb_push(c1, 133);
+    nb_i32le_signed(c2, disp)
 }
 // Lexical scoping at a loop exit: the latest let-env slot of the name [lo,hi) bound
 // BEFORE the first entry at index >= body_scope that DECLARES that name (a `let` /
@@ -40779,13 +40861,13 @@ pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i6
 // rebinds of an assignment, if-merge or nested-loop copy-in (spans of assignment
 // targets) all belong to the carried binding. No body-local declaration -> the
 // same answer as nb_lets_lookup (last match wins).
-// deferred: the byte-neutral range-for desugar's step `VAR = VAR + 1` (also spliced
-// before each `continue`) targets the header's VAR, which follows `for`, so
-// nb_decl_site reads it as a declaration; that loop shape (an if-branch assign then
-// `continue`) is refused by the native control-flow subset today, so no exit flush
-// sees it. Upgrade path when that shape is admitted: skip entries whose span is the
-// carried var's own carry-table span (an assignment by construction) before the
-// nb_decl_site test (fixture for_continue_step in self_host_native_shadow_scope_smoke.py).
+// The byte-neutral range-for desugar's step `VAR = VAR + 1` (also spliced before
+// each `continue`) targets the header's VAR, which follows `for`, so nb_decl_site
+// reads it as a declaration. An entry AT the carried var's own carry-table span is
+// that step — an assignment by construction (the carry record of a byte-neutral
+// range-for's VAR is the step's name; the user never writes VAR in that form) — so
+// it is never treated as a body-local declaration (fixture for_continue_step in
+// self_host_native_shadow_scope_smoke.py).
 pub fn nb_lets_lookup_carried(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, body_scope: i64, i: i64, best: i64) -> i64 {
     if i >= n {
         return best;
@@ -40796,8 +40878,10 @@ pub fn nb_lets_lookup_carried(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, bod
         return nb_lets_lookup_carried(lets, n, buf, lo, hi, body_scope, i + 1, best);
     }
     if i >= body_scope {
-        if nb_decl_site(buf, nlo) == 1 {
-            return best;
+        if nlo != lo {
+            if nb_decl_site(buf, nlo) == 1 {
+                return best;
+            }
         }
     }
     nb_lets_lookup_carried(lets, n, buf, lo, hi, body_scope, i + 1, __mind_load_i64(lets + (i * 5 + 2) * 8))
@@ -40919,16 +41003,6 @@ pub fn nb_kw3_ends_at(buf: i64, p: i64, c0: i64, c1: i64, c2: i64) -> i64 {
         return 0;
     }
     1
-}
-pub fn nb_flush_one(code: String, cur: i64, post: i64) -> String {
-    if cur < 0 {
-        return code;
-    }
-    if cur == post {
-        return code;
-    }
-    let a: String = nb_load_rax(code, nb_slot_disp(cur));
-    nb_store_rax(a, nb_slot_disp(post))
 }
 // Record a break jmp index (`which`) into the innermost loop's break list.
 pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
@@ -44737,10 +44811,10 @@ pub fn nb_region_reassigns_narrow(buf: i64, sa: i64, sl: i64, i: i64, params_add
 // Sub-step C landed, so it was kept fail-closed); Sub-step C fixed that shape at the
 // machinery level, so the recursive descent (nb_region_reassigns_narrow) now permits it.
 //
-// The ONLY narrow loop-carry shape still genuinely broken (a write on a `break`/
-// `continue` exit edge) is refused by the SEPARATE nb_fns_branch_exit_carry guard, so it
-// stays fail-closed even though this scanner permits it. A read-only narrow param merely
-// present while a loop runs (never reassigned) yields 0 here and stays fail-closed.
+// A narrow write on a `break`/`continue` exit edge is carried like any other: the
+// exit edge moves the already-wrapped live value into the loop slot
+// (nb_exit_flush_carry). A read-only narrow param merely present while a loop runs
+// (never reassigned) yields 0 here and stays fail-closed.
 //
 // No self-host fn has a narrow param, so this never fires during self-compile and the
 // byte-identical loop is unaffected.
@@ -44793,8 +44867,8 @@ pub fn nb_region_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64,
 //     read-only narrow param carried across a loop then read post-loop. The narrow
 //     loop-carry machinery records only a REASSIGNED carry slot; a read-only narrow
 //     param threaded across a loop is not yet handled. Refused until that lands.
-//   (A `break`/`continue` write-on-exit-edge shape is reassigned so it is permitted
-//   HERE, but the SEPARATE nb_fns_branch_exit_carry guard refuses it — see below.)
+//   (A `break`/`continue` write-on-exit-edge shape is reassigned, so it is permitted
+//   here; the exit edge carries the write — nb_exit_flush_carry.)
 //
 // Body-having fns only (the narrow-typed std sigs are extern `unsafe fn`, no body).
 // No self-host fn has a narrow param, so this never fires during self-compile and the
@@ -44827,151 +44901,6 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
         }
     }
     nb_fns_reassign_narrow_param(buf, ordered, n_fns, k + 1)
-}
-
-// ===== SUB-STEP C FAIL-CLOSED GUARD: branch-exit carry bypass =====
-// A `break`/`continue` inside an if-branch that ALSO assigns a variable bypasses
-// the if's merge-phi stores when taken (the exit jumps straight out of the
-// region), so every write on that path is DROPPED from the merge/carry — a
-// running ELF with a WRONG value (`while{ if a==2 {x=x+100; break;} else {x+=1}
-// }` returned 2 want 102; bare-`=`+break returned 0 want 100; write+continue
-// dropped too). `return` is EXCLUDED: a return computes its value from the live
-// env at the return site (the branch's writes are bound), proven correct
-// empirically (write+return in branch -> 102 == ref), and main.mind's
-// early-return style depends on it. An exit-ONLY branch (no assign) is ALSO
-// correct — the merge slot retains the pre-region value, which is the var's true
-// value on that path — and stays permitted. Refuse loudly (0B) rather than emit
-// the drop; carrying writes through an exit edge properly (mirror lower.rs's
-// break-edge rebindings) is a follow-up. main.mind's own source contains ZERO
-// `break`/`continue` statements, so this never fires during self-compile and the
-// loop stays byte-identical.
-
-// 1 iff block [sa,sl) contains a `break`/`continue` binding to the ENCLOSING
-// loop: descends nested `if` branches but NOT nested `while` bodies (an exit
-// inside a nested while binds to that inner loop and the outer region's merge
-// stores still run after it completes).
-pub fn nb_block_loop_exit(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_break() {
-        return 1;
-    }
-    if k == ast_continue() {
-        return 1;
-    }
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        if nb_block_loop_exit(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            if nb_block_loop_exit(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    nb_block_loop_exit(buf, sa, sl, i + 1)
-}
-
-// 1 iff block [sa,sl) contains ANY name-assign statement at ANY depth (descends
-// nested if branches AND while bodies): a name write anywhere in the branch is
-// merged/carried via the phi slots the exit edge bypasses. Memory stores
-// (index/deref assigns) are NOT phi-merged and persist across the exit, so only
-// ast_assign counts.
-pub fn nb_block_any_assign(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_assign() {
-        return 1;
-    }
-    if k == ast_while() {
-        let wb: i64 = ast_child1(stmt);
-        if nb_block_any_assign(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
-            return 1;
-        }
-    }
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        if nb_block_any_assign(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            if nb_block_any_assign(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    nb_block_any_assign(buf, sa, sl, i + 1)
-}
-
-// Region walk: 1 iff any if-branch in [sa,sl) — recursing into if branches and
-// while bodies so the check re-applies inside every nested loop context — has
-// BOTH a loop-level exit (nb_block_loop_exit) and a name assign
-// (nb_block_any_assign). Per-BRANCH: a branch that only exits (H5-class) or only
-// writes stays permitted.
-pub fn nb_stmts_branch_exit_carry(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        let tsa: i64 = ast_child0(tb);
-        let tsl: i64 = ast_aux(tb);
-        if nb_block_loop_exit(buf, tsa, tsl, 0) == 1 {
-            if nb_block_any_assign(buf, tsa, tsl, 0) == 1 {
-                return 1;
-            }
-        }
-        if nb_stmts_branch_exit_carry(buf, tsa, tsl, 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            let esa: i64 = ast_child0(eb);
-            let esl: i64 = ast_aux(eb);
-            if nb_block_loop_exit(buf, esa, esl, 0) == 1 {
-                if nb_block_any_assign(buf, esa, esl, 0) == 1 {
-                    return 1;
-                }
-            }
-            if nb_stmts_branch_exit_carry(buf, esa, esl, 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    if k == ast_while() {
-        let wb: i64 = ast_child1(stmt);
-        if nb_stmts_branch_exit_carry(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
-            return 1;
-        }
-    }
-    nb_stmts_branch_exit_carry(buf, sa, sl, i + 1)
-}
-
-// Per-fn driver over the pruned `ordered` set (mirror nb_fns_reassign_narrow_param):
-// 1 iff any body-having fn contains the branch-exit carry-bypass shape.
-pub fn nb_fns_branch_exit_carry(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
-    if k >= n_fns {
-        return 0;
-    }
-    let node: i64 = __mind_load_i64(ordered + k * 8);
-    if ast_child2(node) != 0 {
-        let body: i64 = ast_child2(node);
-        if nb_stmts_branch_exit_carry(buf, ast_child0(body), ast_aux(body), 0) == 1 {
-            return 1;
-        }
-    }
-    nb_fns_branch_exit_carry(buf, ordered, n_fns, k + 1)
 }
 
 // round_up(x, 16)
@@ -48696,14 +48625,6 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // self-compile (no body-having self-host fn reassigns a narrow param), so the
     // loop stays byte-identical.
     if nb_fns_reassign_narrow_param(src_addr, ordered, n_fns, 0) == 1 {
-        return es_new();
-    }
-    // SUB-STEP C FAIL-CLOSED: a `break`/`continue` inside an if-branch that also
-    // assigns bypasses the branch's merge-phi stores when taken (the writes are
-    // silently DROPPED — wrong running value). Refuse the whole module (0B).
-    // `return`-in-branch and exit-only branches are permitted (proven correct).
-    // Never fires during self-compile (main.mind has zero break/continue).
-    if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
         return es_new();
     }
     // B0 f32 fail-closed pre-gate (see nb_user_float_tok above — NARROWED from
