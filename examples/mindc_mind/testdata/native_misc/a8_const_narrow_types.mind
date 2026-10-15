@@ -1,5 +1,7 @@
 // A8: consts declared with each narrow, unsigned and pointer-sized integer
-// type inline as their plain decimal value, `;`-terminated and `;`-less.
+// type inline as their plain decimal value, `;`-terminated and `;`-less. No `/`
+// or `%`: a fn that reads a u64/usize const fences division natively (see
+// a8_refuse_u64_const_div.mind), and this fixture pins the inlining alone.
 // Expected exit 181: 100 + 50 + 28 - 9 + 6 + 1 + 5.
 const A: u8 = 100;
 const B: u16 = 7
@@ -12,5 +14,5 @@ const H: i16 = 1
 const I: u32 = 5;
 
 fn main() -> i64 {
-    (C - 69900) + A / 2 + B * E - D + F * G + H + I
+    (C - 69900) + (A - 50) + B * E - D + F * G + H + I
 }

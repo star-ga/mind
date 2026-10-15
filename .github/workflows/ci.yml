@@ -842,6 +842,16 @@ jobs:
         run: python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native intrinsic id table contract (intrinsic_id_table_lint.py)
+        # nb_intrinsic_id / nb_sys_intrinsic_id map each `__mind_*` callee to an id
+        # and nb_emit_intrinsic selects its code by `if kind == ID`; an id with no
+        # arm falls through to the `__mind_read` sequence. Two lanes appending ids
+        # from the same "next free" number merge as CLEAN text and still collide
+        # (it happened: two blocks both claimed 20 and 21). Pure text analysis with
+        # an in-memory mutation self-test, so it runs early next to the other lints.
+        run: python3 scripts/run_gate.py --min-asserted 4 examples/mindc_mind/intrinsic_id_table_lint.py
+        working-directory: ${{ github.workspace }}
+
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
@@ -1403,6 +1413,8 @@ jobs:
             self_host_native_blas_dot_i16_smoke \
             self_host_native_blas_dot_q16_smoke \
             self_host_native_elf_alignment_smoke \
+            self_host_native_f64_intrinsics_smoke \
+            self_host_native_f64_lit_smoke \
             self_host_native_fp_binop_smoke \
             self_host_native_fp_let_smoke \
             self_host_native_fp_param_smoke \

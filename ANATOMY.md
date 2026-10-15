@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2071 | **Est. tokens:** ~3,872,456
-**Generated:** 2026-10-15 06:04 UTC
+**Files:** 2073 | **Est. tokens:** ~3,873,682
+**Generated:** 2026-10-15 06:20 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 187 | ~526,250 |
+| `examples/mindc_mind/` | 188 | ~527,315 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -70,7 +70,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
-| `examples/mindc_mind/testdata/native_misc/` | 36 | ~4,808 |
+| `examples/mindc_mind/testdata/native_misc/` | 37 | ~4,969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
@@ -668,6 +668,7 @@
 - `gap_corpus_smoke.py` (~5694 tok, huge)
 - `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
+- `intrinsic_id_table_lint.py` (~947 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
 - `method_callee_smoke.py` (~1390 tok, large)
@@ -757,7 +758,7 @@
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_main_args_smoke.py` (~2417 tok, huge)
 - `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
-- `self_host_native_misc_census_smoke.py` (~2948 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
+- `self_host_native_misc_census_smoke.py` (~2963 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
 - `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
@@ -823,7 +824,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~4232 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~4335 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -982,7 +983,7 @@
 - `a2_refuse_src_u32let.mind` (~71 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
 - `a2_refuse_src_unannotated.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
 - `a8_const_mixed.mind` (~91 tok, small) — A8: `;`-terminated and `;`-less consts interleaved with fns, a const
-- `a8_const_narrow_types.mind` (~111 tok, small) — A8: consts declared with each narrow, unsigned and pointer-sized integer
+- `a8_const_narrow_types.mind` (~151 tok, small) — A8: consts declared with each narrow, unsigned and pointer-sized integer
 - `a8_const_narrow_u8.mind` (~72 tok, small) — A8: a narrow-typed const inlines exactly like an i64 one. mindc-Rust neither
 - `a8_const_nosemi.mind` (~331 tok, medium) — A8: top-level `const` items WITHOUT a trailing `;` (the `SX_*` table
 - `a8_const_usize.mind` (~30 tok, tiny) — A8: the common `const N: usize = ...;` shape. Expected exit 8.
@@ -991,6 +992,7 @@
 - `a8_refuse_const_compound.mind` (~59 tok, small) — A8 refusal: compound assignment to a top-level const. MLIR: K += 2 on the
 - `a8_refuse_constexpr.mind` (~64 tok, small) — A8 fail-closed: a `;`-less const whose initializer is an EXPRESSION. The
 - `a8_refuse_float_const.mind` (~61 tok, small) — A8 fail-closed: an int initializer on an f64 const is a type error in
+- `a8_refuse_u64_const_div.mind` (~121 tok, small) — A8 x W2-trap: a fn that reads a u64 (or usize) const can hold a u64 value
 - `a8_str_const.mind` (~300 tok, medium) — A8 refusal (deferred): string consts `const NAME: str|&str|String = "..."`,
 - `a8_str_refuse_i64type.mind` (~74 tok, small) — A8 refusal: a string initializer under an `i64` declared type. mindc-Rust
 - `st_cond_use.mind` (~237 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for

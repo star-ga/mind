@@ -62,6 +62,7 @@ CASES = [
     ("a8_refuse_float_const", REFUSE, None, "build-fail"),
     ("a8_const_narrow_u8", RUN, (150, b""), (150, b"")),
     ("a8_const_narrow_types", RUN, (181, b""), (181, b"")),
+    ("a8_refuse_u64_const_div", REFUSE, None, (4, b"")),
     ("a8_const_usize", RUN, (8, b""), (8, b"")),
     ("a8_refuse_bool_const", REFUSE, None, "build-fail"),
     ("a8_refuse_const_assign", REFUSE, None, (7, b"")),

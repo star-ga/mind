@@ -33079,6 +33079,23 @@ pub fn nb_div_unsigned_fenced(op: i64, lcell: i64, pos: i64) -> i64 {
     u64x_span_contains(spans, pos, 0)
 }
 
+// A source position inside binop `node` for nb_div_unsigned_fenced: its span start,
+// or -- when the LEFT operand is a synthetic leaf with no source position (an
+// inlined top-level const, a folded negative literal) and the binop's span starts
+// at 0 -- the last byte of its span, which lies in the right operand. Only when
+// neither end is a real position does the fence see pos <= 0 and fail closed.
+pub fn nb_div_site_pos(node: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    if lo > 0 {
+        return lo;
+    }
+    let hi: i64 = ast_span_hi(node);
+    if hi > 0 {
+        return hi - 1;
+    }
+    0
+}
+
 // The narrow type of a binop's integer result, or 0 when the result is used at
 // 64 bits: the alias annotation pass caches the lattice code (signed +8/+16/+32,
 // unsigned -8/-16/-32) on every arithmetic binop it visits
@@ -38389,7 +38406,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
         // W2-trap unsigned fence: a `/` or `%` inside a fn that can hold a u64
         // value poisons the module (fail-closed) instead of emitting signed idiv.
-        if nb_div_unsigned_fenced(op, lcell, ast_span_lo(node)) == 1 {
+        if nb_div_unsigned_fenced(op, lcell, nb_div_site_pos(node)) == 1 {
             __mind_store_i64(lcell + 80, 1)
         }
         if nb_div_unsafe(op, node, buf, lets, lcell) == 1 {
