@@ -4,7 +4,7 @@ Author: STARGA Inc.
 
 `native_source_image.mind` combines the source-lowering path described in
 [`native_emission_context.md`](native_emission_context.md) with the checked
-dynamic layout, allocator, libc startup and ELF writer. It is a development
+dynamic layout, allocator, libc startup, stream I/O and ELF writer. It is a development
 component, not a production CLI mode or a qualified compiler pin. Pointer
 provenance review and whole-compiler regression checks remain open.
 
@@ -28,7 +28,7 @@ The policy contains version, arena size, overflow allowance, stack size,
 guard size and reserve size, in that order. Its interpretation and permitted
 bounds come from [`native_dynamic_layout.md`](native_dynamic_layout.md).
 The source length is positive and at most 64 MiB. Emitted startup, allocator
-and source-body code together must fit the writer's 1 MiB code limit.
+and source-body code, including any generated I/O thunks, must fit the writer's 1 MiB code limit.
 Other parser, registry, literal and image limits still apply.
 
 Success returns an independently owned ELF String. The caller releases its
@@ -50,6 +50,7 @@ of in-process compilations.
 | 6 | Final image planning refused |
 | 7 | Final layout changed a source-emission address |
 | 8 | Final ELF writer refused |
+| 9 | Stream-use, context or checked I/O recipe binding refused |
 
 The remaining diagnostic words are reserved zero. The caller must inspect the
 returned image as well as the diagnostic: a supplied or printed success flag
@@ -63,6 +64,8 @@ is never the input to code generation or proof verification.
    Validate the main signature and all source-derived local relocations.
 4. Patch local relative calls in the unprefixed body. Adding the same prefix
    to every local function preserves those displacements.
+   If reachable source uses stream I/O, construct and recheck the fixed NIO
+   recipe, then derive its imports and fixups from that owned checked bundle.
 5. Plan the image using the actual code, literal, note and import sizes.
    Recompute the final context and compare every address used by source
    emission. Refuse a geometry mismatch instead of rewriting arbitrary bytes.
@@ -83,11 +86,50 @@ This candidate targets Linux x86-64 LP64 with the interpreter
 recorded when reproducing an execution. The returning-main adapter uses the
 source main's checked argument count and normal libc return semantics.
 
-The only generated foreign import is `__libc_start_main`. Dormant checked
-extern declarations do not create imports. Reachable foreign calls, stream
-I/O, raw process calls and unsupported intrinsics still refuse. The separate
-libc I/O and fixed-scalar C-call components are not admitted by this interface
-merely because their isolated tests pass.
+Without reachable stream calls, the only generated foreign import is
+`__libc_start_main`. With stream calls, the image also imports `read`, `pread`,
+`write` and `pwrite`, each at `GLIBC_2.2.5`. Both operations share the complete
+checked 100-byte NIO bundle; the import set is deterministic, not a link-time
+guess based on arbitrary external names. Dormant checked extern declarations
+do not create imports. Reachable user foreign calls, raw process calls and
+unsupported intrinsics still refuse. The fixed-scalar C-call component remains
+a separate integration obligation.
+
+## Source stream-I/O contract
+
+The source operations are `__mind_read(fd, buffer, count, offset)` and
+`__mind_write(fd, buffer, count, offset)`. A negative offset selects sequential
+I/O; a nonnegative offset selects positioned I/O. The descriptor uses its low
+32 bits. A null buffer or nonpositive count returns zero before calling libc.
+Otherwise libc returns the actual byte count or `-1`; it owns TLS errno. These
+semantics are separate from the raw `std.posix` negative-errno syscall contract.
+
+The compiler checks four operands at the actual call site, integer register
+class, no retained raw-pointer origin and no aggregate descriptor. This initial
+source-domain check accepts signed i32/i64 declarations and explicit signed
+casts, with the existing frontend's folded integer constants and bare literals.
+Typed bool, unsigned/narrow variables and floating values require the supported
+explicit conversion; unknown inferred binding types are conservatively refused.
+These restrictions do not establish a complete source type system. Buffer
+addresses remain explicit integer bit views with the normal live-memory
+obligation; a zero or invalid process address is not made safe by compilation.
+
+Reserved intrinsic spellings must be unambiguous bare calls. Local functions,
+bindings, imports or member references using those spellings cause source
+refusal when the reachable image uses stream I/O. Runtime generation uses
+source-derived usage, checked local-body ownership and the NIO recipe; no user
+`PASS` flag or purported generated-origin marker selects it.
+
+The schema-2 context binds the thunk base to code base plus the actual startup
+and allocator sizes. Source calls use fixed SysV argument registers and a
+checked thunk entry; final import relocations are rebased through the writer's
+canonical symbol ordering. Final geometry is recomputed before emission. A
+no-I/O source omits the bundle entirely and retains its prior image bytes.
+
+Direct source-image tests observe return codes, byte streams, file contents,
+file cursors and pipe state. They cannot yet observe TLS errno through the
+admitted source API. The separate NIO component's errno tests are evidence for
+that runtime component, not newly measured source-call errno results.
 
 ## Reproduction and acceptance
 
@@ -104,6 +146,18 @@ fixture collides with a different standard-library `Box`; its original refusal
 is retained. Renaming only the fixture's three type identifiers tests the
 intended array-field operation without that collision. This does not modify
 the frozen downstream qualification corpus.
+
+`native_stream_io_check.py` consumes the exact two built diagnostic drivers and
+captured source prefix. Its original `native_stream_io_cases.json` remains
+unchanged. `native_stream_io_cases_v2.json` and
+`native_stream_io_case_corrections.json` separately record a mistaken test byte
+constant and reference-checked literal folding. Version 3 additionally renames
+the fixture helper `send` to `sio_i32_send`: the former collides with an existing
+standard-library extern declaration. Only its two identifier occurrences
+change; the expected exit code and bytes do not. The original collision is
+separately tested as a required refusal. Selecting a newer catalogue
+does not turn the retained original failed observations into passes. Every run
+records the selected catalogue and packet hashes before executing either side.
 
 Successful component images, matching backend bytes and mutation detections
 do not qualify the compiler. Required next gates include corrected pointer

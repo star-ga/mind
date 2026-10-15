@@ -164,7 +164,10 @@ GATED_EVENTS = ("push", "pull_request")
 # source-lowering/context and source-image candidate gate with explicit current
 # compiler prerequisites. Retained failures and independent review obligations
 # remain visible; counting the harness does not claim CI execution or admission.
-HARNESS_CEILING = 304  # Exact reviewed integration inventory; no spare allowance.
+# 304 -> 305 adds native_stream_io_check.py: exact-source stream image runtime
+# transport. The manually invoked gate retains original and versioned catalogues;
+# it does not qualify the production CLI or a consumer compiler pin.
+HARNESS_CEILING = 305  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
