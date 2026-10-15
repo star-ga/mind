@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2183 | **Est. tokens:** ~4,095,455
-**Generated:** 2026-10-15 13:28 UTC
+**Files:** 2194 | **Est. tokens:** ~4,123,639
+**Generated:** 2026-10-15 14:07 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 251 | ~695,866 |
+| `examples/mindc_mind/` | 255 | ~708,793 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -74,6 +74,7 @@
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_libc_binding/` | 1 | ~149 |
+| `examples/mindc_mind/testdata/native_libc_io/` | 7 | ~15,200 |
 | `examples/mindc_mind/testdata/native_libc_startup/` | 3 | ~1,539 |
 | `examples/mindc_mind/testdata/native_misc/` | 37 | ~4,969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -105,7 +106,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 31 | ~117,768 |
+| `scripts/` | 31 | ~117,825 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -743,6 +744,10 @@
 - `native_libc_binding.md` (~3820 tok, huge) — Source-bound libc declaration metadata
 - `native_libc_binding.mind` (~16138 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_binding_mutations.tsv` (~147 tok, small) — name	source_change	required_detection
+- `native_libc_io_check.py` (~5500 tok, huge) — Source-bound fixed libc I/O thunk diagnostics; no production admission."""
+- `native_libc_io_fixture.mind` (~2121 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_libc_io.md` (~2089 tok, huge) — Fixed libc intrinsic I/O component
+- `native_libc_io.mind` (~3126 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_startup_cases.tsv` (~362 tok, medium) — # Predeclared standalone startup contract. stderr empty except documented loader
 - `native_libc_startup_check.py` (~6391 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
 - `native_libc_startup_fixture.mind` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
@@ -901,7 +906,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~5702 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~5793 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
@@ -1085,6 +1090,15 @@
 ### `examples/mindc_mind/testdata/native_libc_binding/`
 
 - `views.c` (~149 tok, small)
+### `examples/mindc_mind/testdata/native_libc_io/`
+
+- `generated_source.mind` (~55 tok, small)
+- `metadata_cases.json` (~1292 tok, large)
+- `mutations.json` (~102 tok, small)
+- `reference.mind` (~412 tok, medium) — Copyright 2026 STARGA Inc.
+- `runtime_cases.json` (~12563 tok, huge)
+- `runtime_main.s` (~514 tok, large) — # Copyright 2026 STARGA Inc.
+- `thunks.s` (~262 tok, medium) — # Copyright 2026 STARGA Inc.
 ### `examples/mindc_mind/testdata/native_libc_startup/`
 
 - `gen_mind.py` (~480 tok, medium) — Emit MIND byte constructors from the independently assembled ABI reference.
@@ -1361,7 +1375,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~10197 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10254 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the

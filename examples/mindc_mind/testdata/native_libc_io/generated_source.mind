@@ -1,0 +1,1 @@
+extern "C" { fn read(fd:i32,buf:*mut u8,count:u64)->i64; fn pread(fd:i32,buf:*mut u8,count:u64,offset:i64)->i64; fn write(fd:i32,buf:*const u8,count:u64)->i64; fn pwrite(fd:i32,buf:*const u8,count:u64,offset:i64)->i64; }
