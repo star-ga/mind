@@ -51004,18 +51004,39 @@ pub fn hm_source_note_offset(buf: String) -> i64 {
     if __mind_load_i32(a) != 1179403647 {
         return 0 - 1;
     }
-    if __mind_load_i8(a + 4) != 2 || __mind_load_i8(a + 5) != 1 || __mind_load_i8(a + 6) != 1 {
+    if __mind_load_i8(a + 4) != 2 {
         return 0 - 1;
     }
-    if __mind_load_i16(a + 16) != 2 || __mind_load_i16(a + 18) != 62 || __mind_load_i32(a + 20) != 1 {
+    if __mind_load_i8(a + 5) != 1 {
         return 0 - 1;
     }
-    if __mind_load_i16(a + 52) != 64 || __mind_load_i16(a + 54) != 56 {
+    if __mind_load_i8(a + 6) != 1 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 16) != 2 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 18) != 62 {
+        return 0 - 1;
+    }
+    if __mind_load_i32(a + 20) != 1 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 52) != 64 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 54) != 56 {
         return 0 - 1;
     }
     let phoff: i64 = __mind_load_i64(a + 32);
     let count: i64 = __mind_load_i16(a + 56);
-    if phoff < 64 || phoff > n || count <= 0 {
+    if phoff < 64 {
+        return 0 - 1;
+    }
+    if phoff > n {
+        return 0 - 1;
+    }
+    if count <= 0 {
         return 0 - 1;
     }
     // Divide the remaining size before multiplying untrusted header fields.
@@ -51023,38 +51044,80 @@ pub fn hm_source_note_offset(buf: String) -> i64 {
         return 0 - 1;
     }
     let headers_end: i64 = phoff + count * 56;
+    // Keep the bootstrap MIC emitter's loop body unconditional. The checked
+    // step encodes none=-1, invalid=-2, or a validated nonnegative note offset.
+    // Invalid is absorbing, so a later valid record cannot erase a refusal.
     let mut found: i64 = 0 - 1;
     let mut i: i64 = 0;
     while i < count {
-        let p: i64 = a + phoff + i * 56;
-        if __mind_load_i32(p) == 4 {
-            if found >= 0 {
-                return 0 - 1;
-            }
-            let off: i64 = __mind_load_i64(p + 8);
-            if off < headers_end || off > n - 52 {
-                return 0 - 1;
-            }
-            if __mind_load_i64(p + 32) != 52 || __mind_load_i64(p + 40) != 52 || __mind_load_i64(p + 48) != 4 {
-                return 0 - 1;
-            }
-            let note: i64 = a + off;
-            if __mind_load_i32(note) != 5 || __mind_load_i32(note + 4) != 32 {
-                return 0 - 1;
-            }
-            let kind: i64 = __mind_load_i32(note + 8);
-            if kind != 1 && kind != 2 {
-                return 0 - 1;
-            }
-            // Owner name plus padding: M I N D NUL NUL NUL NUL.
-            if __mind_load_i32(note + 12) != 1145981261 || __mind_load_i32(note + 16) != 0 {
-                return 0 - 1;
-            }
-            found = off;
-        }
+        found = hm_source_note_step(a, n, headers_end, a + phoff + i * 56, found);
         i = i + 1;
     }
+    if found < 0 {
+        return 0 - 1;
+    }
     found
+}
+
+// Called only after the program-header table has been bounds checked. Keep
+// compound guards as sequential checks for historical MIC bootstrap support.
+pub fn hm_checked_note_record(a: i64, n: i64, headers_end: i64, p: i64) -> i64 {
+    let off: i64 = __mind_load_i64(p + 8);
+    if off < headers_end {
+        return 0 - 1;
+    }
+    if off > n - 52 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(p + 32) != 52 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(p + 40) != 52 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(p + 48) != 4 {
+        return 0 - 1;
+    }
+    let note: i64 = a + off;
+    if __mind_load_i32(note) != 5 {
+        return 0 - 1;
+    }
+    if __mind_load_i32(note + 4) != 32 {
+        return 0 - 1;
+    }
+    let kind: i64 = __mind_load_i32(note + 8);
+    if kind != 1 {
+        if kind != 2 {
+            return 0 - 1;
+        }
+    }
+    // Owner name plus padding: M I N D NUL NUL NUL NUL.
+    if __mind_load_i32(note + 12) != 1145981261 {
+        return 0 - 1;
+    }
+    if __mind_load_i32(note + 16) != 0 {
+        return 0 - 1;
+    }
+    off
+}
+
+// One nonrecursive header step. The caller supplies a checked table entry and
+// one of the states above. No mutation or allocation occurs during validation.
+pub fn hm_source_note_step(a: i64, n: i64, headers_end: i64, p: i64, found: i64) -> i64 {
+    if found == 0 - 2 {
+        return found;
+    }
+    if __mind_load_i32(p) != 4 {
+        return found;
+    }
+    if found >= 0 {
+        return 0 - 2;
+    }
+    let off: i64 = hm_checked_note_record(a, n, headers_end, p);
+    if off < 0 {
+        return 0 - 2;
+    }
+    off
 }
 
 // Tag a source-hash note as type 2; leave the digest and all other bytes intact.

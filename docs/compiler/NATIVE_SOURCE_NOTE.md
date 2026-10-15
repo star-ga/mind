@@ -20,6 +20,19 @@ checked with division before multiplication; record offsets are checked before
 reading. This is a deliberately narrow validator of this emitter's layout,
 not a general ELF validator. Other valid ELF note arrangements are unsupported.
 
+The table walk uses a fixed-depth helper call per entry, without recursive
+traversal or allocation. Its state is -1 for no note, -2 for invalid, or a
+validated nonnegative note offset. Invalid is absorbing: neither a later valid
+record nor a non-note header can erase a prior refusal. A second note is always
+invalid. The checked step assumes the caller has already bounded the table.
+
+The compiler's own source must remain representable by the historical MIC3
+bootstrap emitter. Validation guards are therefore sequential checks (nested
+checks for conjunction), and the loop updates its state unconditionally through
+the step helper. The earlier compound guards and conditional loop assignments
+were accepted by MLIR but refused by that MIC3 emitter; MLIR-only success did
+not establish bootstrap compatibility. No guard or frozen-seed check is removed.
+
 `hm_mark_source_note` performs the write only after those checks. It changes
 the type to 2 while preserving the digest and every other byte; tagging a type-2
 record again is idempotent. A refusal returns an empty `EmitState` with negative
@@ -46,3 +59,11 @@ with `--compiler /path/to/compiler.elf`; `--evidence-dir /new/path` retains the
 input hashes, commands, outputs and exit statuses. Children have a 2 GiB address
 space limit. Compiler qualification, a cgroup memory limit and independent
 source review remain separate obligations.
+
+The original contract remains 37 record controls, recorded in `CASES.json`,
+plus the gate's three literal regressions. Six additional controls are separately enumerated in
+`SUPPLEMENTAL_CASES.json`: invalid/valid record ordering and full 65535-entry
+tables with a first, last, absent, or duplicate note. Both inventories are
+written before execution. The diagnostic input bound is 4 MiB so those tables
+can be tested; it does not change the compiler's validation API. Rejection must
+be a normal exit with negative status, empty result, and every input byte intact.

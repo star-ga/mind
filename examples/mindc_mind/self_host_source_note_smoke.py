@@ -92,6 +92,44 @@ def cases() -> list[tuple[str, bytes, bytes, int, int]]:
     return rows
 
 
+def supplemental_cases() -> list[tuple[str, bytes, bytes, int, int]]:
+    """Additional traversal controls; the original cases() contract stays fixed."""
+    rows = []
+    good, _ = fixture(trailing=True)
+    ph = 64 + 3 * 56
+    for name, malformed in (('invalid-before-valid', 64),
+                             ('valid-before-invalid', ph)):
+        data = bytearray(good)
+        data[64:120] = data[ph:ph+56]
+        struct.pack_into('<Q', data, malformed + 32, 51)
+        rows.append((name, bytes(data), bytes(data), 0, -1))
+
+    # Exercise the complete u16 count with constant-depth iteration. No hidden
+    # recursion budget may limit a structurally valid table of this size.
+    count = 65535
+    note = 64 + count * 56
+    large = bytearray(note + 52)
+    large[:64] = good[:64]
+    struct.pack_into('<H', large, 56, count)
+    large[note:] = struct.pack('<III', 5, 32, 1) + b'MIND\0\0\0\0' + bytes(range(32))
+    header = struct.pack('<IIQQQQQQ', 4, 4, note, 0x400000 + note,
+                         0x400000 + note, 52, 52, 4)
+    for name, pos in (('max-count-note-first', 64),
+                      ('max-count-note-last', 64 + (count - 1) * 56)):
+        data = bytearray(large)
+        data[pos:pos+56] = header
+        expected = bytearray(data)
+        struct.pack_into('<I', expected, note + 8, 2)
+        rows.append((name, bytes(data), bytes(expected), len(data), 19))
+    rows.append(('max-count-note-absent', bytes(large), bytes(large), 0, -1))
+    duplicate = bytearray(large)
+    duplicate[64:120] = header
+    last = 64 + (count - 1) * 56
+    duplicate[last:last+56] = header
+    rows.append(('max-count-duplicate-last', bytes(duplicate), bytes(duplicate), 0, -1))
+    return rows
+
+
 def limits() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -108,12 +146,18 @@ def main() -> int:
     compiler = (args.compiler or (HERE / 'testdata/selfhost_loop_bounded/stage1.elf')).resolve()
     compiler_hash = digest(compiler.read_bytes())
     source_hash = digest((HERE / 'main.mind').read_bytes())
-    all_cases = cases()
+    original_cases = cases()
+    added_cases = supplemental_cases()
+    all_cases = original_cases + added_cases
     # Enumerate and hash every contract before building or executing either side.
     contract = [{'name': n, 'input_sha256': digest(i), 'output_sha256': digest(o),
-                 'length': l, 'status': s} for n, i, o, l, s in all_cases]
+                 'length': l, 'status': s} for n, i, o, l, s in original_cases]
     (out / 'CASES.json').write_text(json.dumps(contract, indent=2) + '\n')
     (out / 'CASES.json').chmod(0o444)
+    supplement = [{'name': n, 'input_sha256': digest(i), 'output_sha256': digest(o),
+                   'length': l, 'status': s} for n, i, o, l, s in added_cases]
+    (out / 'SUPPLEMENTAL_CASES.json').write_text(json.dumps(supplement, indent=2) + '\n')
+    (out / 'SUPPLEMENTAL_CASES.json').chmod(0o444)
     records = []
 
     def run(name: str, exe: Path, data: bytes) -> subprocess.CompletedProcess:
@@ -155,6 +199,7 @@ def main() -> int:
         'bootstrap_sha256': bootstrap_hash,
         'combined_sha256': digest(combined), 'packet_sha256': digest(packet),
         'cases_sha256': digest((out / 'CASES.json').read_bytes()),
+        'supplemental_cases_sha256': digest((out / 'SUPPLEMENTAL_CASES.json').read_bytes()),
     }, indent=2) + '\n')
     build = run('build', compiler, packet)
     assert build.returncode == 0 and not build.stderr and build.stdout.startswith(b'\x7fELF'), 'BUILD_FAILED'
@@ -193,7 +238,8 @@ def main() -> int:
         result = run(f'literal-{size}-run', exe, b'')
         assert (result.returncode, result.stdout, result.stderr) == (0, literal, b'')
         print(f'[PASS] literal-{size}-bytes-and-source-note', flush=True)
-    print(f'SDLC-GATE source_note ran={len(all_cases) + 3} fail=0', flush=True)
+    print(f'SDLC-GATE source_note ran={len(all_cases) + 3} fail=0 '
+          f'original={len(original_cases) + 3} supplemental={len(added_cases)}', flush=True)
     return 0
 
 
