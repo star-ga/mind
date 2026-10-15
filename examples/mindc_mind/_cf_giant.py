@@ -556,3 +556,16 @@ def capacity_cases():
         ("balanced 65536-leaf `+` tree in one expression", balanced_sum_program(16), True, True),
         ("balanced 1024-leaf `+` tree in one expression", balanced_sum_program(10), False, True),
     ]
+
+
+def default_capacity_cases():
+    """(label, (source, expected), may_refuse, seeded) for the DEFAULT-profile
+    compiler (1 GiB arena, 4 GiB stack): its stack budget admits ~6.7M tokens,
+    so the arena binds first; the default layout traps an exhausted arena with
+    ud2 (SIGILL), so the stage must refuse before it gets there."""
+    return [
+        ("10000 functions x 100 lets (27 MB): the lexer ran the arena out (SIGILL)",
+         many_fn_program(10000, "lets100"), True, True),
+        ("1 MB string literal", long_token_program("str", 1000000), True, True),
+        ("balanced 65536-leaf `+` tree in one expression", balanced_sum_program(16), True, True),
+    ]

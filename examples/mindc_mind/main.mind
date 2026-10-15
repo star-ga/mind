@@ -32812,6 +32812,31 @@ pub fn nb_own_arena_ph(ph: i64, n: i64, i: i64) -> i64 {
 pub fn nb_stack_tok_cap() -> i64 {
     (nb_own_stack_bytes() - 16777216) / 640 + 1
 }
+// Tokens the RUNNING compiler's arena can lex and parse before any per-item
+// arena check runs: ~512 B each (measured: the token stream ~160 B and the AST
+// ~260 B per token) out of what is left above nb_arena_reserve(). The default
+// compiler's 1 GiB arena binds here (a 27 MB program's 9M tokens ran it out
+// while lexing: SIGILL on the default layout's ud2 trap); in the bounded
+// compiler the stack budget binds first. The .so has no arena: no cap.
+pub fn nb_arena_tok_cap() -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() {
+        return 4611686018427387904;
+    }
+    let left: i64 = nb_own_arena_end() - probe - nb_arena_reserve();
+    if left <= 0 {
+        return 0;
+    }
+    left / 512
+}
+// A stage refusal for the arena budget (refusal reason 2, see nb_arena_low).
+pub fn nb_refuse_arena() -> EmitState {
+    let c: i64 = nb_xcell(5);
+    if c != 0 {
+        __mind_store_i64(c, 2)
+    }
+    es_new()
+}
 // Longest token of tokens [lo, hi) in bytes (halving: depth log2(n)).
 pub fn nb_tok_max_len(toks: Vec, lo: i64, hi: i64) -> i64 {
     if hi - lo > 64 {
@@ -47331,8 +47356,23 @@ pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> E
     // token like that many more tokens: the walks over one token's bytes (a
     // string literal, an identifier) recurse once per byte, and one 1 MB
     // literal overflowed the bounded stack while the token count was tiny.
-    let tokens: Vec = lex_capped(src_addr, src_len, nb_stack_tok_cap());
+    // The arena caps the stream too (nb_arena_tok_cap): a lex that stopped
+    // early is a truncated stream, refused for whichever budget stopped it.
+    let scap: i64 = nb_stack_tok_cap();
+    let acap: i64 = nb_arena_tok_cap();
+    let cap: i64 = if acap < scap {
+        acap
+    } else {
+        scap
+    };
+    let tokens: Vec = lex_capped(src_addr, src_len, cap);
     let ntok: i64 = tok_count(tokens);
+    if ntok > cap {
+        if acap < scap {
+            return nb_refuse_arena();
+        }
+        return nb_refuse_capacity();
+    }
     if nb_stack_short(ntok + nb_tok_max_len(tokens, 0, ntok)) == 1 {
         return nb_refuse_capacity();
     }

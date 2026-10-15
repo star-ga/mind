@@ -123,6 +123,7 @@ from _cf_giant import (  # noqa: E402
     deep_cases,
     deep_default_cases,
     deep_v1_cases,
+    default_capacity_cases,
     extreme_cases,
     flat_cases,
     flat_matrix_cases,
@@ -515,7 +516,7 @@ def deep_extra_sections(rep: Report, stage1b, stage1, td: pathlib.Path) -> None:
                                    f" [{time.time() - t0:.0f} s]")
     if stage1 is None:
         return
-    for label, (dsrc, dexp), may_refuse, seeded in deep_default_cases():
+    for label, (dsrc, dexp), may_refuse, seeded in deep_default_cases() + default_capacity_cases():
         t0 = time.time()
         try:
             got, _ = native(stage1, dsrc.encode(), td, seeded)
