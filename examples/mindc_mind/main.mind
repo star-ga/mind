@@ -7002,6 +7002,12 @@ pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw
 
 pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
     let fn_lo: i64 = tok_lo(toks, pos);
+    if tok_kind(toks, pos + 1) != tk_ident() {
+        return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), fn_lo, tok_hi(toks, pos)));
+    }
+    if tok_kind(toks, pos + 2) != tk_lparen() {
+        return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), fn_lo, tok_hi(toks, pos + 1)));
+    }
     let name_lo: i64 = tok_lo(toks, pos + 1);
     let name_hi: i64 = tok_hi(toks, pos + 1);
     let name: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
@@ -7010,6 +7016,12 @@ pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
     let params_res: ParseResult = parse_params_rest(toks, pos + 3, buf, params_acc);
     let after_params: i64 = pr_pos(params_res);
     let params_node: i64 = pr_node(params_res);
+    if ast_kind(params_node) == ast_unsupported() {
+        return params_res;
+    }
+    if tok_kind(toks, after_params) != tk_rparen() {
+        return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), fn_lo, tok_hi(toks, after_params)));
+    }
     let params_addr: i64 = ast_child0(params_node);
     let params_len: i64 = ast_aux(params_node);
 
@@ -7079,8 +7091,31 @@ pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
     }
     let n_lo: i64 = tok_lo(toks, pos);
     let n_hi: i64 = tok_hi(toks, pos);
+    // Parameter boundaries are grammar, not hints. Never reinterpret a missing
+    // colon or closing parenthesis as a type/body continuation.
+    if tok_kind(toks, pos) != tk_ident() {
+        return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), n_lo, n_hi));
+    }
+    if tok_kind(toks, pos + 1) != tk_colon() {
+        return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), n_lo, n_hi));
+    }
     let n_name: i64 = ast_new_leaf(ast_ident(), n_lo, n_hi);
-    let t_end: i64 = param_type_end(toks, pos + 2);
+    let t_end: i64 = if tok_kind(toks, pos + 2) == tk_star() {
+        ptr_type_end(toks, buf, pos + 2)
+    } else {
+        param_type_end(toks, pos + 2)
+    };
+    if t_end < 0 {
+        // Keep a malformed pointer declaration as a poisoned whole item. Do
+        // not resume at const/mut and mistake its remaining type for a body.
+        let after: i64 = skip_unknown_item(toks, pos);
+        return pr_new(after, ast_new_leaf(ast_unsupported(), n_lo, n_hi));
+    }
+    if tok_kind(toks, t_end) != tk_comma() {
+        if tok_kind(toks, t_end) != tk_rparen() {
+            return pr_new(skip_unknown_item(toks, pos), ast_new_leaf(ast_unsupported(), n_lo, n_hi));
+        }
+    }
     let t_lo: i64 = tok_lo(toks, pos + 2);
     let t_hi: i64 = tok_hi(toks, t_end - 1);
     let n_ty: i64 = ast_new_leaf(ast_ident(), t_lo, t_hi);
@@ -20542,14 +20577,67 @@ pub fn fixed_field_recv_owner_ok(fn_node: i64, src: i64, recv: i64, declared_ty:
 //   ArrayLoad bounds-check call, then delete this precondition at BOTH consumers
 //   and flip examples/mindc_mind/testdata/native_record_trace's blocked and
 //   construction-only fixtures to byte-equal positives.
-pub fn srt_canonical_layout_modelled(t: i64, k: i64, j: i64) -> i64 {
+// Match the reference record ABI's non-word scalar names. Its other
+// named/handle/pointer/floating fields occupy one 8-byte cell; fixed arrays
+// are rejected separately. This gate describes representable MIC layout,
+// not validity of a field's runtime value or full source-language typing.
+pub fn srt_canonical_word_field(t: i64, src: i64, k: i64, j: i64) -> i64 {
+    let lo: i64 = srt_field_type_lo(t, k, j);
+    let hi: i64 = srt_field_type_hi(t, k, j);
+    let n: i64 = hi - lo;
+    if n == 4 {
+        if load_byte(src, lo) == 98 {
+            if load_byte(src, lo + 1) == 111 {
+                if load_byte(src, lo + 2) == 111 {
+                    if load_byte(src, lo + 3) == 108 {
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    if n < 2 {
+        return 1;
+    }
+    let first: i64 = load_byte(src, lo);
+    if first != 105 {
+        if first != 117 {
+            return 1;
+        }
+    }
+    if n == 2 {
+        if load_byte(src, lo + 1) == 56 {
+            return 0;
+        }
+    }
+    if n == 3 {
+        let second: i64 = load_byte(src, lo + 1);
+        let third: i64 = load_byte(src, lo + 2);
+        if second == 49 {
+            if third == 54 {
+                return 0;
+            }
+        }
+        if second == 51 {
+            if third == 50 {
+                return 0;
+            }
+        }
+    }
+    1
+}
+
+pub fn srt_canonical_layout_modelled(t: i64, src: i64, k: i64, j: i64) -> i64 {
     if j >= srt_field_count(t, k) {
         return 1;
     }
     if srt_field_array_kind(t, k, j) == 1 {
         return 0;
     }
-    srt_canonical_layout_modelled(t, k, j + 1)
+    if srt_canonical_word_field(t, src, k, j) == 0 {
+        return 0;
+    }
+    srt_canonical_layout_modelled(t, src, k, j + 1)
 }
 
 // Layout agreement for a field RECEIVER: the declared owner must be a record the
@@ -20565,7 +20653,7 @@ pub fn field_owner_layout_modelled(fn_node: i64, src: i64, srt: i64, recv_lo: i6
     if k < 0 {
         return 0;
     }
-    srt_canonical_layout_modelled(srt, k, 0)
+    srt_canonical_layout_modelled(srt, src, k, 0)
 }
 
 // Layout agreement for a struct-literal CONSTRUCTION: the registry key of the
@@ -20591,7 +20679,7 @@ pub fn slit_ctor_layout_key(srt: i64, src: i64, tlo: i64, thi: i64) -> i64 {
     if k < 0 {
         return 0 - 1;
     }
-    if srt_canonical_layout_modelled(srt, k, 0) == 0 {
+    if srt_canonical_layout_modelled(srt, src, k, 0) == 0 {
         return 0 - 1;
     }
     k
@@ -20620,7 +20708,7 @@ pub fn fixed_field_array_key(fn_node: i64, src: i64, srt: i64, field: i64) -> i6
     if sk < 0 {
         return 0 - 1;
     }
-    if srt_canonical_layout_modelled(srt, sk, 0) == 0 {
+    if srt_canonical_layout_modelled(srt, src, sk, 0) == 0 {
         return 0 - 1;
     }
     let fi: i64 = srt_field_index(srt, sk, src, ast_child1(field), ast_child2(field), 0);
@@ -20720,7 +20808,7 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
                     let ok: i64 = srt_find_by_name(srt, src, ast_span_lo(oty), ast_span_hi(oty), 0);
                     if ok >= 0 {
                         // Same canonical-layout precondition as the direct read below.
-                        if srt_canonical_layout_modelled(srt, ok, 0) == 0 {
+                        if srt_canonical_layout_modelled(srt, src, ok, 0) == 0 {
                             return node;
                         }
                         let cidx: i64 = srt_field_index(srt, ok, src, ast_child1(node), ast_child2(node), 0);
@@ -21808,23 +21896,49 @@ pub fn slit_copy_source_values(out: i64, fields_addr: i64, nf: i64, j: i64) -> i
     __mind_store_i64(out + j * 8, __mind_load_i64(fields_addr + (j * 3 + 2) * 8));
     slit_copy_source_values(out, fields_addr, nf, j + 1)
 }
+// Conservative boundary for the explicit MIC opaque-record mode. A full
+// registry may have truncated declarations, and qualified names may resolve a
+// known canonical schema in the reference; neither permits a guessed layout.
+// This is serialization compatibility, not native source admission or typing.
+pub fn slit_mic_unknown_schema(node: i64, src: i64, srt: i64) -> i64 {
+    if srt_count(srt) >= srt_struct_cap() {
+        return 0;
+    }
+    let lo: i64 = ast_child0(node);
+    let hi: i64 = ast_child2(node);
+    if hi <= lo {
+        return 0;
+    }
+    if is_alpha(load_byte(src, lo)) == 0 {
+        return 0;
+    }
+    if scan_ident_end(src, lo, hi) != hi {
+        return 0;
+    }
+    if srt_find_by_name(srt, src, lo, hi, 0) >= 0 {
+        return 0;
+    }
+    1
+}
+
 pub fn slit_set_annotation(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    slit_set_annotation_mode(node, src, srt, alo, ahi, slo, shi, 0)
+}
+
+pub fn slit_set_annotation_mode(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, mic_unknown: i64) -> i64 {
     let k: i64 = slit_ctor_layout_key(srt, src, ast_child0(node), ast_child2(node));
     if k < 0 {
-        // SOURCE-ORDER FALLBACK. When the module defines NO structs, the Rust
-        // oracle's struct registry is likewise empty, so it lowers every
-        // struct-lit in its AS-WRITTEN field order with n = written field count
-        // (verified byte-identical vs --emit-mic3 on bare constructor fns).
-        // Registry-independent, so no srt/decl-order threading. Gated on
-        // srt_count==0: a module WITH struct defs keeps the fail-closed path for a
-        // genuinely-unresolved type, so a decl-order divergence can never open.
-        // The same gate carries the CONSTRUCTION layout precondition: a type that
-        // resolves but whose layout slit_ctor_layout_key does not model also
-        // answers -1 here, and a module holding such a struct necessarily has
-        // srt_count != 0, so it lands on the fail-closed return below and can
-        // never reach the no-registry source-order shape.
+        // MIC-only extension: an absent simple-name schema uses the oracle's
+        // source-order opaque-record layout even when unrelated schemas exist.
+        // A KNOWN but unmodelled layout must never enter this branch. Legacy
+        // callers retain the exact no-registry-only policy (mic_unknown == 0).
         if srt_count(srt) != 0 {
-            return 0;
+            if mic_unknown != 1 {
+                return 0;
+            }
+            if slit_mic_unknown_schema(node, src, srt) == 0 {
+                return 0;
+            }
         }
         let nfw: i64 = ast_aux(node);
         let valsrc: i64 = __mind_alloc(nfw * 8 + 8);
@@ -21869,49 +21983,53 @@ pub fn slit_fill_defvalues(values: i64, fields: i64, ntriples: i64, src: i64, sr
     slit_fill_defvalues(values, fields, ntriples, src, srt, k, nf, j + 1)
 }
 pub fn slit_annotate_expr(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    slit_annotate_expr_mode(node, src, srt, alo, ahi, slo, shi, 0)
+}
+
+pub fn slit_annotate_expr_mode(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, mic_unknown: i64) -> i64 {
     if node == 0 {
         return 0;
     }
     let k: i64 = ast_kind(node);
     if k == ast_struct_lit() {
-        let _fv: i64 = slit_annotate_fieldvals(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
-        let _sa: i64 = slit_set_annotation(node, src, srt, alo, ahi, slo, shi);
+        let _fv: i64 = slit_annotate_fieldvals_mode(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
+        let _sa: i64 = slit_set_annotation_mode(node, src, srt, alo, ahi, slo, shi, mic_unknown);
         return 0;
     }
     if k == ast_paren() {
-        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        return slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_neg() {
-        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        return slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_not() {
-        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        return slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_binop() {
-        let _l: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
-        return slit_annotate_expr(ast_child1(node), src, srt, alo, ahi, slo, shi);
+        let _l: i64 = slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
+        return slit_annotate_expr_mode(ast_child1(node), src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_field() {
-        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        return slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_call() {
-        return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+        return slit_annotate_args_mode(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     // Array literals: annotate each struct-lit ELEMENT too, so a `[P{..}]` element
     // can emit its construction inline (flatten_struct_lit_lv reads node+56).
     if k == ast_array_lit() {
-        return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+        return slit_annotate_args_mode(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
     }
     if k == ast_if() {
-        let _c: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        let _c: i64 = slit_annotate_expr_mode(ast_child0(node), src, srt, alo, ahi, slo, shi, mic_unknown);
         let tb: i64 = ast_child1(node);
         if ast_kind(tb) == ast_block() {
-            let _t: i64 = slit_annotate_stmts(ast_child0(tb), ast_aux(tb), 0, src, srt, alo, ahi, slo, shi);
+            let _t: i64 = slit_annotate_stmts_mode(ast_child0(tb), ast_aux(tb), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
         }
         let eb: i64 = ast_child2(node);
         if eb != 0 {
             if ast_kind(eb) == ast_block() {
-                let _e: i64 = slit_annotate_stmts(ast_child0(eb), ast_aux(eb), 0, src, srt, alo, ahi, slo, shi);
+                let _e: i64 = slit_annotate_stmts_mode(ast_child0(eb), ast_aux(eb), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
             }
         }
         return 0;
@@ -21919,41 +22037,57 @@ pub fn slit_annotate_expr(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo
     0
 }
 pub fn slit_annotate_args(args_addr: i64, args_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    slit_annotate_args_mode(args_addr, args_len, i, src, srt, alo, ahi, slo, shi, 0)
+}
+
+pub fn slit_annotate_args_mode(args_addr: i64, args_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, mic_unknown: i64) -> i64 {
     if i >= args_len {
         return 0;
     }
-    let _a: i64 = slit_annotate_expr(__mind_load_i64(args_addr + i * 8), src, srt, alo, ahi, slo, shi);
-    slit_annotate_args(args_addr, args_len, i + 1, src, srt, alo, ahi, slo, shi)
+    let _a: i64 = slit_annotate_expr_mode(__mind_load_i64(args_addr + i * 8), src, srt, alo, ahi, slo, shi, mic_unknown);
+    slit_annotate_args_mode(args_addr, args_len, i + 1, src, srt, alo, ahi, slo, shi, mic_unknown)
 }
 pub fn slit_annotate_fieldvals(fields: i64, ntriples: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    slit_annotate_fieldvals_mode(fields, ntriples, i, src, srt, alo, ahi, slo, shi, 0)
+}
+
+pub fn slit_annotate_fieldvals_mode(fields: i64, ntriples: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, mic_unknown: i64) -> i64 {
     if i >= ntriples {
         return 0;
     }
-    let _v: i64 = slit_annotate_expr(__mind_load_i64(fields + (i * 3 + 2) * 8), src, srt, alo, ahi, slo, shi);
-    slit_annotate_fieldvals(fields, ntriples, i + 1, src, srt, alo, ahi, slo, shi)
+    let _v: i64 = slit_annotate_expr_mode(__mind_load_i64(fields + (i * 3 + 2) * 8), src, srt, alo, ahi, slo, shi, mic_unknown);
+    slit_annotate_fieldvals_mode(fields, ntriples, i + 1, src, srt, alo, ahi, slo, shi, mic_unknown)
 }
 pub fn slit_annotate_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    slit_annotate_stmts_mode(stmts_addr, stmts_len, i, src, srt, alo, ahi, slo, shi, 0)
+}
+
+pub fn slit_annotate_stmts_mode(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, mic_unknown: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let k: i64 = ast_kind(stmt);
     if k == ast_let() {
-        let _i: i64 = slit_annotate_expr(ast_child2(stmt), src, srt, alo, ahi, slo, shi);
+        let _i: i64 = slit_annotate_expr_mode(ast_child2(stmt), src, srt, alo, ahi, slo, shi, mic_unknown);
     } else {
         if k == ast_return() {
-            let _r: i64 = slit_annotate_expr(ast_child0(stmt), src, srt, alo, ahi, slo, shi);
+            let _r: i64 = slit_annotate_expr_mode(ast_child0(stmt), src, srt, alo, ahi, slo, shi, mic_unknown);
         } else {
             if k == ast_if() {
-                let _x: i64 = slit_annotate_expr(stmt, src, srt, alo, ahi, slo, shi);
+                let _x: i64 = slit_annotate_expr_mode(stmt, src, srt, alo, ahi, slo, shi, mic_unknown);
             } else {
-                let _e: i64 = slit_annotate_expr(stmt, src, srt, alo, ahi, slo, shi);
+                let _e: i64 = slit_annotate_expr_mode(stmt, src, srt, alo, ahi, slo, shi, mic_unknown);
             }
         }
     }
-    slit_annotate_stmts(stmts_addr, stmts_len, i + 1, src, srt, alo, ahi, slo, shi)
+    slit_annotate_stmts_mode(stmts_addr, stmts_len, i + 1, src, srt, alo, ahi, slo, shi, mic_unknown)
 }
 pub fn slit_annotate_module(src: i64, items_addr: i64, items_len: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    slit_annotate_module_mode(src, items_addr, items_len, srt, alo, ahi, slo, shi, i, 0)
+}
+
+pub fn slit_annotate_module_mode(src: i64, items_addr: i64, items_len: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64, mic_unknown: i64) -> i64 {
     if i >= items_len {
         return 0;
     }
@@ -21961,10 +22095,10 @@ pub fn slit_annotate_module(src: i64, items_addr: i64, items_len: i64, srt: i64,
     if ast_kind(item) == ast_fn_def() {
         let body: i64 = ast_child2(item);
         if ast_kind(body) == ast_block() {
-            let _b: i64 = slit_annotate_stmts(ast_child0(body), ast_aux(body), 0, src, srt, alo, ahi, slo, shi);
+            let _b: i64 = slit_annotate_stmts_mode(ast_child0(body), ast_aux(body), 0, src, srt, alo, ahi, slo, shi, mic_unknown);
         }
     }
-    slit_annotate_module(src, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1)
+    slit_annotate_module_mode(src, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1, mic_unknown)
 }
 
 // Recursively detect whether an AST subtree contains a function CALL (or a struct
@@ -22593,7 +22727,7 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
         src_len + 43
     };
     let _pf: i64 = field_prefold_module(src_use, prefold_len, items_addr, items_len, 0, srt);
-    let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    let _an: i64 = slit_annotate_module_mode(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0, 1);
     // PRINT STATEMENT DESUGAR: expand every direct fn-body `print(x)` — numeric
     // args into [printI64(x); printNewline(); 0], string literals into the
     // alloc/store_i8/record/print_bytes chain — BEFORE the strtab pass, so the
@@ -22695,7 +22829,7 @@ pub fn selftest_nfn_fail_span(src_addr: i64, src_len: i64, strbuf: i64, offs: i6
     let sa_scell: i64 = __mind_alloc(16);
     if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
         if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
-            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+            let _an: i64 = slit_annotate_module_mode(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0, 1);
         }
     }
     __mind_store_i64(ccell, 0);
@@ -22744,7 +22878,7 @@ pub fn selftest_nfn_emit_nth(src_addr: i64, src_len: i64, strbuf: i64, offs: i64
     let sa_scell: i64 = __mind_alloc(16);
     if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
         if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
-            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+            let _an: i64 = slit_annotate_module_mode(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0, 1);
         }
     }
     __mind_store_i64(ccell, 0);
@@ -22795,7 +22929,7 @@ pub fn selftest_nfn_fail_count(src_addr: i64, src_len: i64, strbuf: i64, offs: i
     let sa_scell: i64 = __mind_alloc(16);
     if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
         if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
-            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+            let _an: i64 = slit_annotate_module_mode(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0, 1);
         }
     }
     __mind_store_i64(ccell, 0);
@@ -24545,6 +24679,50 @@ pub fn slit_emit_field_stores(buf: i64, params_addr: i64, n_params: i64, nodes: 
     slit_emit_field_stores(buf, params_addr, n_params, nodes, cursor, lvenv, nlv, values, nf, alloc_slot, slo, shi, j + 1)
 }
 
+// Descriptor-slot environment counterpart. This environment records descriptor roots,
+// not SSA value IDs: resolve each field with flatten_expr_env so let-call results are
+// reused through the descriptor cache. Passing this environment to flatten_ast_lv
+// would encode a descriptor index as an SSA ID and silently produce wrong MIC bytes.
+// The resolved-ID flatten_struct_lit_lv path remains separate for its own callers.
+pub fn flatten_struct_lit_env(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets: i64) -> i64 {
+    let ann: i64 = __mind_load_i64(node + 56);
+    if ann == 0 {
+        return 0 - 1;
+    }
+    let alo: i64 = __mind_load_i64(ann + 0);
+    let ahi: i64 = __mind_load_i64(ann + 8);
+    let slo: i64 = __mind_load_i64(ann + 16);
+    let shi: i64 = __mind_load_i64(ann + 24);
+    let values: i64 = __mind_load_i64(ann + 32);
+    let nf: i64 = ast_aux(node);
+    let c8: i64 = desc_emit_const(nodes, cursor, 8);
+    let cnf: i64 = desc_emit_const(nodes, cursor, nf);
+    let mul: i64 = desc_emit_binop(nodes, cursor, binop_to_byte(op_mul()), c8, cnf);
+    let alloc_slot: i64 = desc_emit_call1(nodes, cursor, alo, ahi, mul);
+    let ok: i64 = slit_emit_field_stores_env(buf, params_addr, n_params, nodes, cursor, env, nlets, values, nf, alloc_slot, slo, shi, 0);
+    if ok == 0 {
+        return 0 - 1;
+    }
+    alloc_slot
+}
+pub fn slit_emit_field_stores_env(buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets: i64, values: i64, nf: i64, alloc_slot: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 1;
+    }
+    let val_slot: i64 = flatten_expr_env(__mind_load_i64(values + j * 8), buf, params_addr, n_params, nodes, cursor, env, nlets);
+    if val_slot < 0 {
+        return 0;
+    }
+    let addr_slot: i64 = if j == 0 {
+        alloc_slot
+    } else {
+        let coff: i64 = desc_emit_const(nodes, cursor, j * 8);
+        desc_emit_binop(nodes, cursor, binop_to_byte(op_add()), alloc_slot, coff)
+    };
+    let _st: i64 = desc_emit_call2(nodes, cursor, slo, shi, addr_slot, val_slot);
+    slit_emit_field_stores_env(buf, params_addr, n_params, nodes, cursor, env, nlets, values, nf, alloc_slot, slo, shi, j + 1)
+}
+
 // Exactly flatten_ast, except an ident found in the lv-env (lvenv_lookup >= 0) emits
 // a KIND-0 leaf carrying the let's vid in +8 (mirroring the param-leaf shape). All
 // other arms identical, recursing via flatten_ast_lv.
@@ -25258,13 +25436,10 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
-    // Struct-lit CONSTRUCTION in trailing / seq expression position: emit the
-    // alloc + per-field stores inline via flatten_struct_lit_lv (reads the node+56
-    // annotation; fails closed with -1 when unannotated). Same call the array-element
-    // path (flatten_arr_pushes) already makes, threading env/nlets as the lv-env, so
-    // a constructor fn whose body is a single `T { ... }` lowers byte-exact.
+    // Struct construction with a descriptor-slot let environment. Keep this distinct
+    // from the resolved-SSA-ID lv environment used by flatten_ast_lv.
     if k == ast_struct_lit() {
-        return flatten_struct_lit_lv(node, src, params_addr, n_params, nodes, cursor, env, nlets);
+        return flatten_struct_lit_env(node, src, params_addr, n_params, nodes, cursor, env, nlets);
     }
     0 - 1
 }
@@ -25282,10 +25457,10 @@ pub fn flatten_arr_pushes(elems_addr: i64, count: i64, j: i64, prev_slot: i64, s
     }
     let elem: i64 = __mind_load_i64(elems_addr + j * 8);
     // Struct-lit element with a recorded construction (node+56 annotation):
-    // emit alloc + field stores inline (flatten_struct_lit_lv), then push the
+    // emit alloc + field stores with descriptor-slot bindings, then push the
     // handle — the oracle's vec_new → construct → vec_push interleave.
     let eslot: i64 = if ast_kind(elem) == ast_struct_lit() {
-        flatten_struct_lit_lv(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
+        flatten_struct_lit_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
     } else {
         flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
     };
@@ -33157,6 +33332,101 @@ pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
 // ===========================================================================
 
 // ---- native ABI / layout constants (mirror src/native/mod.rs) ----
+// Explicit emission context. This is compiler-owned, live immutable storage,
+// constructed and rechecked by native_emission_context.mind, never a serialized
+// authorization token. Zero preserves the original static backend exactly.
+// Context geometry describes the EMITTED program. The running compiler's
+// nb_arena_low/short/checkpoint resource guards remain independent.
+pub fn nb_ctx_shape_ok(ctx: i64) -> i64 {
+    if ctx == 0 { return 1; }
+    if __mind_load_i64(ctx) != 1 { return 0; }
+    if __mind_load_i64(ctx + 8) != 1 { return 0; }
+    if __mind_load_i64(ctx + 72) != 0 { return 0; }
+    if __mind_load_i64(ctx + 80) != 1 { return 0; }
+    let arena_bytes: i64 = __mind_load_i64(ctx + 120);
+    if arena_bytes < 8192 { return 0; }
+    if arena_bytes > 2147483648 { return 0; }
+    if arena_bytes % 4096 != 0 { return 0; }
+    if __mind_load_i64(ctx + 16) != 16777216 + arena_bytes - 4096 { return 0; }
+    if __mind_load_i64(ctx + 24) != 16777224 { return 0; }
+    if __mind_load_i64(ctx + 32) != 16777232 { return 0; }
+    if __mind_load_i64(ctx + 40) != 8388608 { return 0; }
+    if __mind_load_i64(ctx + 48) != 8388608 { return 0; }
+    if __mind_load_i64(ctx + 56) != 16777216 { return 0; }
+    1
+}
+pub fn nb_ctx_entry_kind(ctx: i64, entry: i64) -> i64 {
+    if ctx == 0 { return entry; }
+    if entry == 1 { return 2; }
+    entry
+}
+pub fn nb_ctx_entry_ok(ctx: i64, entry: i64) -> i64 {
+    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
+    if entry < 0 { return 0; }
+    if entry > 2 { return 0; }
+    if ctx == 0 {
+        if entry == 2 { return 0; }
+        return 1;
+    }
+    if entry == 1 { return 0; }
+    1
+}
+pub fn nb_ctx_literal_base(ctx: i64) -> i64 {
+    if ctx == 0 { return nb_rodata_addr(); }
+    __mind_load_i64(ctx + 40)
+}
+pub fn nb_ctx_literal_capacity(ctx: i64) -> i64 {
+    if ctx == 0 { return nb_arena_addr() - nb_rodata_addr(); }
+    __mind_load_i64(ctx + 48)
+}
+pub fn nb_ctx_arg_addr(ctx: i64, field: i64) -> i64 {
+    if ctx != 0 { return __mind_load_i64(ctx + field); }
+    if field == 24 { return nb_arena_addr() + 8; }
+    nb_arena_addr() + 16
+}
+// The first dynamic slice has no I/O or process interface. Raw Linux syscall
+// contracts remain separate from libc errno/stream semantics. Unknown kinds
+// and either three- or four-argument stream I/O refuse before emission.
+pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
+    if ctx == 0 { return 1; }
+    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
+    if kind >= 1 {
+        if kind <= 7 { return 1; }
+    }
+    if kind == 10 { return 1; }
+    if kind == 11 { return 1; }
+    if kind >= 13 {
+        if kind <= 19 { return 1; }
+    }
+    if kind >= 51 {
+        if kind <= 53 { return 1; }
+    }
+    0
+}
+// Explicit runtime-state variants preserve the reviewed allocator register ABI.
+// The caller has validated the immutable context and the runtime's entry slots.
+pub fn nb_emit_rt_call_at(code: String, slot: i64, state: i64) -> String {
+    let c1: String = nb_le(code, 47945, 2);
+    let c2: String = nb_i64le(c1, state + slot);
+    nb_le(c2, 1310529, 3)
+}
+pub fn nb_emit_alloc_at(code: String, bytes_disp: i64, state: i64) -> String {
+    let c1: String = nb_le(code, 11897672, 3);
+    let c2: String = nb_i32le_signed(c1, bytes_disp);
+    nb_emit_rt_call_at(c2, 536, state)
+}
+pub fn nb_emit_free_at(code: String, addr_disp: i64, state: i64) -> String {
+    let c1: String = nb_le(code, 12421960, 3);
+    let c2: String = nb_i32le_signed(c1, addr_disp);
+    nb_emit_rt_call_at(c2, 544, state)
+}
+pub fn nb_emit_realloc_at(code: String, addr_disp: i64, bytes_disp: i64, state: i64) -> String {
+    let c1: String = nb_le(code, 12421960, 3);
+    let c2: String = nb_i32le_signed(c1, addr_disp);
+    let c3: String = nb_le(c2, 11897672, 3);
+    let c4: String = nb_i32le_signed(c3, bytes_disp);
+    nb_emit_rt_call_at(c4, 552, state)
+}
 pub fn nb_load_addr() -> i64 {
     // LOAD_ADDR = 0x40_0000 (4 MiB)
     4194304
@@ -35770,6 +36040,11 @@ pub fn nb_cap_scoped_nested_bindings() -> i64 {
 //   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; add rsi,7 = 48 83 C6 07 ;
 //   and rsi,-8 = 48 83 E6 F8 ; emit_alloc_core.
 pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
+    nb_emit_alloc_ctx(code, bytes_disp, 0)
+}
+
+pub fn nb_emit_alloc_ctx(code: String, bytes_disp: i64, ctx: i64) -> String {
+    if ctx != 0 { return nb_emit_alloc_at(code, bytes_disp, __mind_load_i64(ctx + 16)); }
     if nb_layout_explicit() == 1 {
         return nb_emit_alloc_explicit(code, bytes_disp);
     }
@@ -36399,9 +36674,13 @@ pub fn nb_emit_realloc(code: String, addr_disp: i64, bytes_disp: i64) -> String 
 
 // argc capture reader: movabs rax,ARENA_ADDR+8 ; mov rax,[rax] ; store rax -> dst.
 pub fn nb_emit_argc(code: String, dst_disp: i64) -> String {
+    nb_emit_argc_ctx(code, dst_disp, 0)
+}
+
+pub fn nb_emit_argc_ctx(code: String, dst_disp: i64, ctx: i64) -> String {
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 184);
-    let c3: String = nb_i64le(c2, nb_arena_addr() + 8);
+    let c3: String = nb_i64le(c2, nb_ctx_arg_addr(ctx, 24));
     let c4: String = nb_push(c3, 72);
     let c5: String = nb_push(c4, 139);
     let c6: String = nb_push(c5, 0);
@@ -36424,9 +36703,13 @@ pub fn nb_emit_argc(code: String, dst_disp: i64) -> String {
 // behavior. Bounds-checking here would depart from the raw-intrinsic contract
 // every sibling __mind_* emitter shares — this documents it instead.
 pub fn nb_emit_argv(code: String, idx_disp: i64, dst_disp: i64) -> String {
+    nb_emit_argv_ctx(code, idx_disp, dst_disp, 0)
+}
+
+pub fn nb_emit_argv_ctx(code: String, idx_disp: i64, dst_disp: i64, ctx: i64) -> String {
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 184);
-    let c3: String = nb_i64le(c2, nb_arena_addr() + 16);
+    let c3: String = nb_i64le(c2, nb_ctx_arg_addr(ctx, 32));
     let c4: String = nb_push(c3, 72);
     let c5: String = nb_push(c4, 139);
     let c6: String = nb_push(c5, 0);
@@ -36529,7 +36812,7 @@ pub fn nb_emit_main_params(code: String, n_params: i64) -> String {
 // returns 0 and the caller refuses the whole module (0 bytes), never a program
 // whose parameters hold garbage. Non-entry fns always return 1.
 pub fn nb_entry_params_ok(is_entry: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
-    if is_entry != 1 {
+    if is_entry == 0 {
         return 1;
     }
     if n_params > 2 {
@@ -37148,6 +37431,11 @@ pub fn nb_emit_sqrt(code: String, a0: i64, dst_id: i64) -> String {
 // store rax -> dst slot; the two store intrinsics leave dst untouched (the front-
 // end never reads a store's dst). A pure function of the IR.
 pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> String {
+    nb_emit_intrinsic_ctx(code, kind, ids, dst_id, 0)
+}
+
+pub fn nb_emit_intrinsic_ctx(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if nb_ctx_intrinsic_ok(ctx, kind) == 0 { return string_new(); }
     if kind >= 1008 {
         // THREE-argument __mind_write (1008) / __mind_read (1009): the legacy
         // raw stream sequence, byte-identical to the bootstrap seed.
@@ -37165,7 +37453,7 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
     if kind == 1 {
         // __mind_alloc(bytes) -> addr
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
-        let c1: String = nb_emit_alloc(code, nb_slot_disp(a0));
+        let c1: String = nb_emit_alloc_ctx(code, nb_slot_disp(a0), ctx);
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     if kind == 2 {
@@ -37196,6 +37484,10 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         // __mind_realloc(addr, new_bytes) -> new_addr
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
         let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        if ctx != 0 {
+            let ec: String = nb_emit_realloc_at(code, nb_slot_disp(a0), nb_slot_disp(a1), __mind_load_i64(ctx + 16));
+            return nb_store_rax(ec, nb_slot_disp(dst_id));
+        }
         if nb_layout_explicit() == 1 {
             let e1: String = nb_emit_realloc_explicit(code, nb_slot_disp(a0), nb_slot_disp(a1));
             return nb_store_rax(e1, nb_slot_disp(dst_id));
@@ -37205,6 +37497,11 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
     }
     if kind == 7 {
         // __mind_free(ptr) -> 0 (a free-list release in explicit-layout images)
+        if ctx != 0 {
+            let ac: i64 = __mind_load_i64(ids);
+            let ec: String = nb_emit_free_at(code, nb_slot_disp(ac), __mind_load_i64(ctx + 16));
+            return nb_store_rax(ec, nb_slot_disp(dst_id));
+        }
         if nb_layout_explicit() == 1 {
             let a0: i64 = __mind_load_i64(ids + 0 * 8);
             let e1: String = nb_emit_free_explicit(code, nb_slot_disp(a0));
@@ -37224,12 +37521,12 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
     }
     if kind == 10 {
         // __mind_argc() -> argc (RI-C; 0 args, reads reserved arena slot)
-        return nb_emit_argc(code, nb_slot_disp(dst_id));
+        return nb_emit_argc_ctx(code, nb_slot_disp(dst_id), ctx);
     }
     if kind == 11 {
         // __mind_argv(i) -> raw i64 pointer to argv[i] (RI-C)
         let av0: i64 = __mind_load_i64(ids + 0 * 8);
-        return nb_emit_argv(code, nb_slot_disp(av0), nb_slot_disp(dst_id));
+        return nb_emit_argv_ctx(code, nb_slot_disp(av0), nb_slot_disp(dst_id), ctx);
     }
     if kind == 12 {
         // __mind_open(path) -> fd (RI-C task #228; O_RDONLY, path = NUL-term C string)
@@ -38531,8 +38828,10 @@ pub fn nb_record_index_expr(st: NbState, buf: i64, node: i64, params_addr: i64, 
     }
     let s_xb: NbState = nb_expr(st, buf, ix_base, params_addr, n_params, calls, lets, lcell);
     let xb_id: i64 = s_xb.last_id;
+    let _ob: i64 = nb_origin_require_scalar(lcell, xb_id);
     let s_xi: NbState = nb_expr(s_xb, buf, ix_idx, params_addr, n_params, calls, lets, lcell);
     let xi_id: i64 = s_xi.last_id;
+    let _oi: i64 = nb_origin_require_scalar(lcell, xi_id);
     if nb_index_oob(ix_base, ix_idx, buf, lets, lcell) == 1 {
         __mind_store_i64(lcell + 80, 1)
     }
@@ -38631,8 +38930,7 @@ pub fn ast_cast_is_ptr(buf: i64, node: i64) -> i64 {
 }
 
 // 1 iff `node` is pointer-valued by shape: a pointer cast, through parens.
-// (Pointer-ANNOTATED lets/params are not parsed by this port — they refuse —
-// so a pointer value can only reach an expression through a pointer cast.)
+// Parameter annotations are handled separately by nb_ptrc_value_is_ptr.
 pub fn nb_ptrc_is_ptr(buf: i64, node: i64) -> i64 {
     let k: i64 = ast_kind(node);
     if k == ast_paren() {
@@ -38793,6 +39091,23 @@ pub fn nb_ptrc_param_ty(buf: i64, params_addr: i64, n_params: i64, lo: i64, hi: 
         return ast_child1(p);
     }
     nb_ptrc_param_ty(buf, params_addr, n_params, lo, hi, i + 1)
+}
+
+// Legacy conservative predicate for diagnostics without a value-origin table.
+// Real lowering uses nb_origin_cast_operand_is_ptr and actual let-first slots,
+// so a same-named scalar shadow is not misclassified as the original pointer.
+// This fallback is not a full type resolver.
+pub fn nb_ptrc_value_is_ptr(buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_ptrc_value_is_ptr(buf, ast_child0(node), params_addr, n_params);
+    }
+    if nb_ptrc_is_ptr(buf, node) == 1 { return 1; }
+    if ast_kind(node) != ast_ident() { return 0; }
+    let ty: i64 = nb_ptrc_param_ty(buf, params_addr, n_params, ast_span_lo(node), ast_span_hi(node), 0);
+    if ty == 0 { return 0; }
+    if ast_span_hi(ty) <= ast_span_lo(ty) { return 0; }
+    if load_byte(buf, ast_span_lo(ty)) == 42 { return 1; }
+    0
 }
 
 // 1 iff the identifier `node` is PROVEN 64-bit: a let-bound name whose every
@@ -39015,13 +39330,13 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // reproduces and passes every hash gate. Refuse (0-byte) instead, mirroring
         // the arm's rod==0 poison. deferred: widen the window / page-relative rodata
         // layout to lift the 8 MiB per-module literal cap.
-        if nb_rod_room(off, slen) == 0 {
+        if nb_rod_room_ctx(off, slen, __mind_load_i64(lcell + 120)) == 0 {
             __mind_store_i64(lcell + 80, 1);
             return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
         }
         let _cp: i64 = nb_rod_decoded_copy(rod, 8 + off, buf, lo, hi);
         __mind_store_i64(rod, off + slen);
-        let addr: i64 = nb_rodata_addr() + off;
+        let addr: i64 = nb_ctx_literal_base(__mind_load_i64(lcell + 120)) + off;
         // Mirror ast_struct_lit: CONST 8 ; CONST 3 ; MUL -> size ;
         // __mind_alloc(size) -> ptr ; 3 constant field stores. VALUE = ptr slot.
         let sz_id: i64 = st.next_id;
@@ -39039,7 +39354,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let m2: String = nb_arith_rax_mem(m1, op_mul(), nb_slot_disp(nf_id));
         let m3: String = nb_store_rax(m2, nb_slot_disp(mul_id));
         let ptr_id: i64 = mul_id + 1;
-        let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
+        let al1: String = nb_emit_alloc_ctx(m3, nb_slot_disp(mul_id), __mind_load_i64(lcell + 120));
         let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
         let s_alloc: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
         // Field 0 = addr (borrowed rodata vaddr), field 1 = len, field 2 = cap (0).
@@ -39094,7 +39409,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let m3: String = nb_store_rax(m2, nb_slot_disp(mul_id));
         // __mind_alloc(size) -> ptr (the struct base).
         let ptr_id: i64 = mul_id + 1;
-        let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
+        let al1: String = nb_emit_alloc_ctx(m3, nb_slot_disp(mul_id), __mind_load_i64(lcell + 120));
         let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
         let s_alloc: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
         // FAIL CLOSED: a literal that is not exactly the declared field set
@@ -39143,7 +39458,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let am3: String = nb_store_rax(am2, nb_slot_disp(amul_id));
         // __mind_alloc(size) -> base pointer.
         let aptr_id: i64 = amul_id + 1;
-        let aal1: String = nb_emit_alloc(am3, nb_slot_disp(amul_id));
+        let aal1: String = nb_emit_alloc_ctx(am3, nb_slot_disp(amul_id), __mind_load_i64(lcell + 120));
         let aal2: String = nb_store_rax(aal1, nb_slot_disp(aptr_id));
         let s_aalloc: NbState = NbState { code: aal2, next_id: aptr_id + 1, last_id: aptr_id, ncalls: st.ncalls };
         // Per-element stores, in SOURCE order. child0 (tuple marker: 1 for a
@@ -39208,7 +39523,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if array_status == 1 {
             let n: i64 = nb_field_array_len_r(recv, node, buf, lets, lcell);
             let rep: i64 = nb_field_array_rep_r(recv, node, buf, lets, lcell);
-            return nb_materialize_field_array(s_recv, ptr_id, off, n, rep);
+            return nb_materialize_field_array_ctx(s_recv, ptr_id, off, n, rep, __mind_load_i64(lcell + 120));
         }
         // RI-D2 S-D: an f64/f32 struct field READ returns a FLOAT-tagged value. Classify
         // the field's dtype from the struct binding (nb_field_dtype, value-node based for
@@ -39245,6 +39560,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // like a regular call, so downstream slot ids are unchanged.
         let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
         if intr >= 0 {
+            let _op: i64 = nb_origin_scalar_args(lcell, ids, args_len, 0);
             // W8c fail-closed: the bit reinterprets take exactly ONE operand of the
             // opposite view. Any other arity or operand dtype poisons the module (0B)
             // instead of reinterpreting a stale or wrong-register-file slot.
@@ -39258,7 +39574,11 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 __mind_store_i64(lcell + 80, 1);
                 return sa;
             }
-            let c_intr: String = nb_emit_intrinsic(sa.code, site_kind, ids, id);
+            if nb_ctx_intrinsic_ok(__mind_load_i64(lcell + 120), site_kind) == 0 {
+                __mind_store_i64(lcell + 80, 1);
+                return sa;
+            }
+            let c_intr: String = nb_emit_intrinsic_ctx(sa.code, site_kind, ids, id, __mind_load_i64(lcell + 120));
             if intr == 52 {
                 let _tb: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), id, nb_dtype_float());
             }
@@ -39292,6 +39612,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // the count nb_count_expr's matching arm reserved. main.mind never calls this
         // extern, so the branch is not self-taken and the integer oracles are unchanged.
         if nb_is_blas_dot_q16_v(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            let _op: i64 = nb_origin_scalar_args(lcell, ids, args_len, 0);
             let c_bd: String = nb_emit_blas_dot_q16(sa.code, __mind_load_i64(ids + 0 * 8), __mind_load_i64(ids + 1 * 8), __mind_load_i64(ids + 2 * 8), id);
             return NbState { code: c_bd, next_id: id + 11, last_id: id, ncalls: sa.ncalls };
         }
@@ -39303,6 +39624,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // the count nb_count_expr's matching arm reserved. main.mind never calls this extern,
         // so the branch is not self-taken and the integer oracles are unchanged.
         if nb_is_blas_dot_i16_v(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            let _op: i64 = nb_origin_scalar_args(lcell, ids, args_len, 0);
             let c_bi: String = nb_emit_blas_dot_i16(sa.code, __mind_load_i64(ids + 0 * 8), __mind_load_i64(ids + 1 * 8), __mind_load_i64(ids + 2 * 8), id);
             return NbState { code: c_bi, next_id: id + 10, last_id: id, ncalls: sa.ncalls };
         }
@@ -39314,6 +39636,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_call_record_owner_args_ok(callee, args_addr, args_len, buf, lets, lcell, 0) == 0 {
             __mind_store_i64(lcell + 80, 1)
         }
+        if nb_origin_args_ok(callee, ids, args_len, buf, lcell) == 0 { __mind_store_i64(lcell + 80, 1); }
         // Caller-side System-V sequence for args_len args (mirror src/native/mod.rs
         // Call arm, lines 929-955), in EXACT byte order:
         //   1. `sub rsp,8` pad when an odd count of 7th+ args would misalign rsp;
@@ -39365,6 +39688,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // oracle stays byte-identical.
         let ns1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
         let op_id: i64 = ns1.last_id;
+        let _op: i64 = nb_origin_require_scalar(lcell, op_id);
         let nid: i64 = ns1.next_id;
         let ndtbl: i64 = __mind_load_i64(lcell + 8);
         let op_dt: i64 = nb_node_dtype_tbl(ast_child0(node), ndtbl, lets, lcell, buf, params_addr, n_params);
@@ -39420,6 +39744,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             __mind_store_i64(lcell + 80, 1)
         }
         let nn_op: i64 = nn1.last_id;
+        let _op: i64 = nb_origin_require_scalar(lcell, nn_op);
         let nn_zid: i64 = nn1.next_id;
         let z1: String = nb_push(nn1.code, 72);
         let z2: String = nb_push(z1, 184);
@@ -39497,7 +39822,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // cw==64 arm). Any other source refuses (fail-closed poison).
         if ast_cast_is_ptr(buf, node) == 1 {
             let pok: i64 = if cop_dt == nb_dtype_int() {
-                nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell)
+                if nb_origin_get(__mind_load_i64(lcell + 8), cop) == 1 { 1 } else { nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell) }
             } else {
                 0
             };
@@ -39509,7 +39834,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // A narrowing / unsigned / f64 cast of a POINTER value is not a 64-bit
         // reinterpretation: refuse it (fail-closed) rather than truncate.
         if cw != 64 {
-            if nb_ptrc_is_ptr(buf, ast_child0(node)) == 1 {
+            if nb_origin_cast_operand_is_ptr(lcell, cop, buf, ast_child0(node), params_addr, n_params) == 1 {
                 __mind_store_i64(lcell + 80, 1);
                 return NbState { code: cs1.code, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
             }
@@ -39553,6 +39878,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             }
             let ci1: String = nb_load_rax(cs1.code, nb_slot_disp(cop));
             let ci2: String = nb_store_rax(ci1, nb_slot_disp(cid + 4));
+            let _o: i64 = nb_origin_set(__mind_load_i64(lcell + 8), cid + 4, ast_cast_is_ptr(buf, node));
             return NbState { code: ci2, next_id: cid + 5, last_id: cid + 4, ncalls: cs1.ncalls };
         }
         // NARROWING cast of a FLOAT source (`f as i8/i16/i32`): the movsx path below
@@ -39591,6 +39917,8 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let lhs_id: i64 = s1.last_id;
         let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls, lets, lcell);
         let rhs_id: i64 = s2.last_id;
+        let _ol: i64 = nb_origin_require_scalar(lcell, lhs_id);
+        let _or: i64 = nb_origin_require_scalar(lcell, rhs_id);
         let id: i64 = s2.next_id;
         let op: i64 = ast_aux(node);
         // RI-B1 FLOAT-op-FLOAT arm: when BOTH operands classify FLOAT (nb_node_dtype,
@@ -39739,6 +40067,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             __mind_store_i64(lcell + 80, 1)
         }
         let a_tbl: i64 = __mind_load_i64(lcell + 8);
+        let _op: i64 = nb_origin_require_scalar(lcell, a_slot);
         if a_tbl != 0 {
             if nb_dtype_get(a_tbl, a_slot) == nb_dtype_float() {
                 __mind_store_i64(lcell + 80, 1)
@@ -39775,6 +40104,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             d_pslot
         };
         let d_id: i64 = st.next_id;
+        let _op: i64 = nb_origin_require_scalar(lcell, d_slot);
         let d_c1: String = nb_emit_load_i64(st.code, nb_slot_disp(d_slot));
         let d_c2: String = nb_store_rax(d_c1, nb_slot_disp(d_id));
         return NbState { code: d_c2, next_id: d_id + 1, last_id: d_id, ncalls: st.ncalls };
@@ -40787,6 +41117,7 @@ pub fn nb_struct_fields(st: NbState, buf: i64, snode: i64, fields_addr: i64, nfi
     };
     let _fb: i64 = nb_bless_bound_div(value_node, fcode);
     let sv0: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    let _oa: i64 = nb_origin_require_scalar(lcell, sv0.last_id);
     let sv: NbState = nb_wrap_bound_w(sv0, value_node, fcode, lcell);
     let val_id: i64 = sv.last_id;
     let val_nc: i64 = sv.ncalls;
@@ -40870,6 +41201,10 @@ pub fn nb_copy_array_to_record_cells(st: NbState, src_ptr: i64, src_base: i64, d
 // Copy an inline fixed-array field out to a fresh value block. The returned
 // pointer owns independent cells, matching reference evaluator value semantics.
 pub fn nb_materialize_field_array(st: NbState, src_ptr: i64, src_off: i64, n: i64, rep: i64) -> NbState {
+    nb_materialize_field_array_ctx(st, src_ptr, src_off, n, rep, 0)
+}
+
+pub fn nb_materialize_field_array_ctx(st: NbState, src_ptr: i64, src_off: i64, n: i64, rep: i64, ctx: i64) -> NbState {
     let sz_id: i64 = st.next_id;
     let a1: String = nb_push(st.code, 72);
     let a2: String = nb_push(a1, 184);
@@ -40885,7 +41220,7 @@ pub fn nb_materialize_field_array(st: NbState, src_ptr: i64, src_off: i64, n: i6
     let m2: String = nb_arith_rax_mem(m1, op_mul(), nb_slot_disp(n_id));
     let m3: String = nb_store_rax(m2, nb_slot_disp(mul_id));
     let ptr_id: i64 = mul_id + 1;
-    let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
+    let al1: String = nb_emit_alloc_ctx(m3, nb_slot_disp(mul_id), ctx);
     let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
     let allocated: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
     let copied: NbState = nb_copy_record_to_array_cells(allocated, src_ptr, src_off, ptr_id, 0, n, 0, rep);
@@ -40948,6 +41283,7 @@ pub fn nb_u8_field_index_read(st: NbState, buf: i64, field_node: i64, idx: i64, 
     let s_recv: NbState = nb_expr(st, buf, recv, params_addr, n_params, calls, lets, lcell);
     let s_field: NbState = nb_field_addr(s_recv.code, s_recv.next_id, s_recv.last_id, off, s_recv.ncalls);
     let s_idx: NbState = nb_expr(s_field, buf, idx, params_addr, n_params, calls, lets, lcell);
+    let _oi: i64 = nb_origin_require_scalar(lcell, s_idx.last_id);
     if nb_index_oob(field_node, idx, buf, lets, lcell) == 1 {
         __mind_store_i64(lcell + 80, 1)
     }
@@ -41010,9 +41346,13 @@ pub fn nb_string_decoded_byte(buf: i64, pos: i64) -> i64 {
     b
 }
 pub fn nb_rod_room(off: i64, n: i64) -> i64 {
+    nb_rod_room_ctx(off, n, 0)
+}
+
+pub fn nb_rod_room_ctx(off: i64, n: i64, ctx: i64) -> i64 {
     if off < 0 { return 0; }
     if n < 0 { return 0; }
-    let cap: i64 = nb_arena_addr() - nb_rodata_addr();
+    let cap: i64 = nb_ctx_literal_capacity(ctx);
     if off > cap { return 0; }
     if n > cap - off { return 0; }
     1
@@ -41103,6 +41443,7 @@ pub fn nb_array_elems(st: NbState, buf: i64, elems_addr: i64, nelems: i64, i: i6
     }
     let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
     let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    let _oa: i64 = nb_origin_require_scalar(lcell, sv.last_id);
     // f64-element ARRAYS now emit (roadmap: f64 element tier). HOMOGENEITY gate
     // (fail-closed B0): an element whose dtype differs from element 0's poisons
     // the whole compile (0B) — a MIXED array (`[1.0, 2]`) is a type error the
@@ -42420,6 +42761,7 @@ pub fn nb_while_copyin(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, 
         nb_dtype_int()
     };
     let _dt: i64 = nb_dtype_tag_slot(dtbl, post_id, src_dt);
+    let _o: i64 = nb_origin_copy(dtbl, post_id, init_slot);
     nb_while_copyin(c1, carry, ncarry, i + 1, buf, lets, lcell)
 }
 
@@ -42958,6 +43300,8 @@ pub fn nb_record_index_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     let wb_id: i64 = s_wb.last_id;
     let s_wi: NbState = nb_expr(s_wb, buf, w_idx, params_addr, n_params, calls, lets, lcell);
     let wi_id: i64 = s_wi.last_id;
+    let _ob: i64 = nb_origin_require_scalar(lcell, wb_id);
+    let _oi: i64 = nb_origin_require_scalar(lcell, wi_id);
     if nb_index_oob(w_base, w_idx, buf, lets, lcell) == 1 {
         __mind_store_i64(lcell + 80, 1)
     }
@@ -43004,6 +43348,7 @@ pub fn nb_record_index_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     let wa3: String = nb_store_rax(wa2, nb_slot_disp(waddr_id));
     // RHS -> value slot.
     let s_wv: NbState = nb_expr(NbState { code: wa3, next_id: waddr_id + 1, last_id: waddr_id, ncalls: s_wi.ncalls }, buf, w_rhs, params_addr, n_params, calls, lets, lcell);
+    let _ov: i64 = nb_origin_require_scalar(lcell, s_wv.last_id);
     if nb_node_dtype_tbl(w_rhs, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
         __mind_store_i64(lcell + 80, 1)
     }
@@ -43071,6 +43416,7 @@ pub fn nb_record_field_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     };
     let _fab: i64 = nb_bless_bound_div(fa_v, fa_w);
     let s_fv0: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+    let _ov: i64 = nb_origin_require_scalar(lcell, s_fv0.last_id);
     let s_fv: NbState = nb_wrap_bound_w(s_fv0, fa_v, fa_w, lcell);
     let fdtbl: i64 = __mind_load_i64(lcell + 8);
     if nb_node_dtype_tbl(fa_v, fdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
@@ -43132,7 +43478,8 @@ pub fn nb_store_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, arg_dts, lets, lcell);
     let id: i64 = sa.next_id;
     let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
-    let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+    let _op: i64 = nb_origin_scalar_args(lcell, ids, args_len, 0);
+    let c_intr: String = nb_emit_intrinsic_ctx(sa.code, intr, ids, id, __mind_load_i64(lcell + 120));
     NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls }
 }
 
@@ -43409,6 +43756,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if is_any_value_if_expr(ret_operand) == 1 {
             let _mo: i64 = nb_if_mark_obs(ret_operand);
             let sv: NbState = nb_if_value(st, buf, ret_operand, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+            let _or: i64 = nb_origin_require_scalar(lcell, sv.last_id);
             let rvdt: i64 = nb_node_dtype_tbl(ret_operand, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
             let cv: String = if rvdt == nb_dtype_float() {
                 nb_ret_float_load(sv.code, nb_slot_disp(sv.last_id), is_entry)
@@ -43423,6 +43771,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         let _rb: i64 = nb_bless_bound_div(ret_operand, __mind_load_i64(lcell + 72));
         let s1: NbState = nb_expr(st, buf, ret_operand, params_addr, n_params, calls, lets, lcell);
+        let _or: i64 = nb_origin_require_scalar(lcell, s1.last_id);
         // FIX #166: SysV return-register selection by the RETURNED VALUE's dtype. An
         // explicit `return <float>` must place its result in xmm0 (movsd), NOT rax — the
         // implicit tail-return path (nb_finish_body) already does this, and an explicit
@@ -43485,6 +43834,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // non-float let). main.mind declares no f64/f32 lets, so ann_dt is always INT there
         // and init_dt is used unchanged — byte-identical.
         let type_leaf: i64 = ast_child1(node);
+        let _oa: i64 = nb_origin_ann_ok(lcell, buf, type_leaf, s1.last_id);
         let ann_dt: i64 = if type_leaf != 0 {
             nb_param_is_float(buf, type_leaf)
         } else {
@@ -43516,6 +43866,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let cw3: String = nb_store_rax(cw2, nb_slot_disp(wid));
             let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16), lets, lcell), declw);
             let _dtw: i64 = nb_dtype_tag_slot(dtbl, wid, init_dt);
+            let _ow: i64 = nb_origin_copy(dtbl, wid, s1.last_id);
             return NbState { code: cw3, next_id: wid + 1, last_id: wid, ncalls: s1.ncalls };
         }
         // i64-REFERENCES capture-copy (let form): `let Y = X` where X is
@@ -43532,6 +43883,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let cc2: String = nb_store_rax(cc1, nb_slot_disp(cid));
                 let _bc: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), cid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16), lets, lcell), declw);
                 let _dtc: i64 = nb_dtype_tag_slot(dtbl, cid, init_dt);
+                let _oc: i64 = nb_origin_copy(dtbl, cid, s1.last_id);
                 return NbState { code: cc2, next_id: cid + 1, last_id: cid, ncalls: s1.ncalls };
             }
         }
@@ -43572,9 +43924,11 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // dtype. Early-return statement form (the mis-lower trap). main.mind never assigns a
         // value-if, so this branch is inert during self-compile — byte-identical.
         let rhs_node: i64 = ast_child2(node);
+        let origin_old: i64 = nb_origin_resolve(buf, name_leaf, params_addr, n_params, lets, lcell);
         if is_any_value_if_expr(rhs_node) == 1 {
             let _mo: i64 = nb_if_mark_obs(rhs_node);
             let sv: NbState = nb_if_value(st, buf, rhs_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+            let _oa: i64 = nb_origin_assignment(lcell, origin_old, sv.last_id);
             let dtblv: i64 = __mind_load_i64(lcell + 8);
             let rhsdtv: i64 = nb_node_dtype_tbl(rhs_node, dtblv, lets, lcell, buf, params_addr, n_params);
             // C2 declared-width driver: a value-if RHS assigned to a narrow-declared
@@ -43590,6 +43944,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let cv3: String = nb_store_rax(cv2, nb_slot_disp(widv));
                 let _bwv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), widv, 0, pwv);
                 let _dtwv: i64 = nb_dtype_tag_slot(dtblv, widv, rhsdtv);
+                let _oa_copy: i64 = nb_origin_copy(__mind_load_i64(lcell + 8), widv, sv.last_id);
                 return NbState { code: cv3, next_id: widv + 1, last_id: widv, ncalls: sv.ncalls };
             }
             let _bv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), sv.last_id, 0, 64);
@@ -43598,6 +43953,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         let _ab: i64 = nb_bless_bound_div(ast_child2(node), nb_lets_lookup_width(lets, lcell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf)));
         let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
+        let _oa: i64 = nb_origin_assignment(lcell, origin_old, s1.last_id);
         // FIX #167: propagate the RHS dtype onto the REBOUND slot, mirroring the let-INIT
         // arm (22258-22260). Without this a `y = 3.0 * 2.0` rebind leaves y's slot reading
         // INT (nb_dtype_get defaults INT), so a later `g(y)` marshals the float arg in the
@@ -43622,6 +43978,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let ca3: String = nb_store_rax(ca2, nb_slot_disp(wida));
             let _bwa: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wida, 0, pw);
             let _dtwa: i64 = nb_dtype_tag_slot(dtbl167, wida, rhs_dt167);
+                let _oa_copy: i64 = nb_origin_copy(__mind_load_i64(lcell + 8), wida, s1.last_id);
             return NbState { code: ca3, next_id: wida + 1, last_id: wida, ncalls: s1.ncalls };
         }
         // i64-REFERENCES capture-copy (assign form): `Y = X` where X is
@@ -43637,6 +43994,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let cr2: String = nb_store_rax(cr1, nb_slot_disp(widr));
                 let _bwr: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), widr, 0, 64);
                 let _dtwr: i64 = nb_dtype_tag_slot(dtbl167, widr, rhs_dt167);
+                let _oa_copy: i64 = nb_origin_copy(__mind_load_i64(lcell + 8), widr, s1.last_id);
                 return NbState { code: cr2, next_id: widr + 1, last_id: widr, ncalls: s1.ncalls };
             }
         }
@@ -43658,6 +44016,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let da_t: i64 = ast_child0(node);
         let da_v: i64 = ast_child2(node);
         let s_dv: NbState = nb_expr(st, buf, da_v, params_addr, n_params, calls, lets, lcell);
+        let _ov: i64 = nb_origin_require_scalar(lcell, s_dv.last_id);
         if ast_kind(da_t) != ast_ident() {
             __mind_store_i64(lcell + 80, 1);
             return s_dv;
@@ -43676,6 +44035,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             da_pslot
         };
         let da_tbl: i64 = __mind_load_i64(lcell + 8);
+        let _ot: i64 = nb_origin_require_scalar(lcell, da_slot);
         if nb_node_dtype_tbl(da_v, da_tbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
             __mind_store_i64(lcell + 80, 1)
         }
@@ -43958,6 +44318,7 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     let dst_id: i64 = after_else_stmts + n_else_ph;
     let merge_base: i64 = dst_id + 1;
     let _a: i64 = nb_merge_assign_slots(mt, nmerged, 0, then_ph_base, else_ph_base, merge_base);
+    let _oi: i64 = nb_origin_merge_init(__mind_load_i64(lcell + 8), mt, nmerged, 0);
 
     // then edge (only when then falls through): placeholders + merge stores +
     // dst-copy + join jmp.
@@ -44159,6 +44520,7 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // else fall-through: load else_result; store dst (no jmp; it falls to end) —
     // skipped when the else-branch diverges (its `return` already exited the fn).
     let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
+    let _oj: i64 = nb_origin_join(lcell, dst_id, then_result, else_result, 1 - then_diverges, 1 - else_diverges);
 
     // end target = current length: patch the join jmp (if one was emitted).
     let s_ej_code: String = s_ej.code;
@@ -44249,6 +44611,7 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let merge_base: i64 = dst_id + 1;
     // Stamp the placeholder slots (per side) + merge slot into the table.
     let _a: i64 = nb_merge_assign_slots(mt, nmerged, 0, then_ph_base, else_ph_base, merge_base);
+    let _oi: i64 = nb_origin_merge_init(__mind_load_i64(lcell + 8), mt, nmerged, 0);
 
     // then side: emit then-placeholder const0s (in-branch slots), then per-merge
     // `load then_val ; store merge`. then_val = placeholder slot (then lacks) or the
@@ -44288,6 +44651,7 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // else fall-through: load else_result ; store dst (falls straight to end).
     let c_ej1: String = nb_load_rax(c_ems, nb_slot_disp(else_result));
     let c_ej: String = nb_store_rax(c_ej1, nb_slot_disp(dst_id));
+    let _oj: i64 = nb_origin_join(lcell, dst_id, then_result, else_result, 1, 1);
 
     // end target = current length: patch the join jmp.
     let end_at: i64 = string_len(c_ej);
@@ -44459,6 +44823,8 @@ pub fn nb_emit_merge_stores_s(code: String, buf: i64, mt: i64, nmerged: i64, i: 
         }
     };
     let c1: String = nb_load_rax(code, nb_slot_disp(val));
+    let tbl: i64 = __mind_load_i64(lcell + 8);
+    let _o: i64 = nb_origin_merge_edge(lcell, tbl, merge_slot, val);
     let c2: String = nb_store_rax(c1, nb_slot_disp(merge_slot));
     nb_emit_merge_stores_s(c2, buf, mt, nmerged, i + 1, side, lets, lcell, sa, sl, outer_n, snaps)
 }
@@ -46835,7 +47201,7 @@ pub fn nb_dtk_select(uses: i64, defs: i64, nb: i64) -> i64 {
 // gates (§3): entry fn, any address-taken name (atab>0), nslots>64, any narrow
 // param, any float param. Then the whitelist scan; any refusal => 0.
 pub fn nb_dtk_plan(buf: i64, stmts_addr: i64, stmts_len: i64, params_addr: i64, n_params: i64, atab: i64, srt: i64, is_entry: i64, nslots: i64) -> i64 {
-    if is_entry == 1 {
+    if is_entry != 0 {
         return 0;
     }
     if __mind_load_i64(atab) > 0 {
@@ -47188,6 +47554,7 @@ pub fn hm_copy_slot(st: NbState, src: i64, lcell: i64) -> NbState {
     let c2: String = nb_store_rax(c1, nb_slot_disp(id));
     let tbl: i64 = __mind_load_i64(lcell + 8);
     let _t: i64 = nb_dtype_tag_slot(tbl, id, nb_dtype_get(tbl, src));
+    let _o: i64 = nb_origin_copy(tbl, id, src);
     NbState { code: c2, next_id: id + 1, last_id: id, ncalls: st.ncalls }
 }
 
@@ -47352,6 +47719,7 @@ pub fn hm_let(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64,
         return st;
     }
     let s1: NbState = nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell);
+    let _oa: i64 = nb_origin_ann_ok(lcell, buf, type_leaf, s1.last_id);
     let dtbl: i64 = __mind_load_i64(lcell + 8);
     let ann_dt: i64 = if type_leaf != 0 {
         nb_param_is_float(buf, type_leaf)
@@ -47372,6 +47740,7 @@ pub fn hm_let(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64,
     let desc: i64 = nb_let_descriptor(init, type_leaf, buf, srt, __mind_load_i64(lcell + 16), lets, lcell);
     let _b: i64 = hm_bind(lets, lcell, hc, ast_span_lo(name_leaf), ast_span_hi(name_leaf), h, desc, declw);
     let _t: i64 = nb_dtype_tag_slot(dtbl, h, init_dt);
+    let _o: i64 = nb_origin_copy(dtbl, h, s1.last_id);
     NbState { code: c3, next_id: h + 1, last_id: h, ncalls: s1.ncalls }
 }
 
@@ -47386,6 +47755,8 @@ pub fn hm_assign(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i
         let _p: i64 = hm_poison(lcell);
     }
     let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
+    let old_origin_slot: i64 = nb_origin_resolve(buf, name_leaf, params_addr, n_params, lets, lcell);
+    let _oa: i64 = nb_origin_assignment(lcell, old_origin_slot, s1.last_id);
     let home: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
     if home < 0 {
         let _p2: i64 = hm_poison(lcell);
@@ -47419,12 +47790,14 @@ pub fn hm_if(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, 
     let then_sl: i64 = ast_aux(then_blk);
     let s_t: NbState = hm_stmts(NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls }, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
     let t_dt: i64 = hm_block_tail_dtype(then_sa, then_sl, buf, params_addr, n_params, lets, lcell);
+    let then_live: i64 = hm_block_has_tail(then_sa, then_sl);
     __mind_store_i64(lcell, mark);
     let c_t: String = hm_copy_tail(s_t.code, then_sa, then_sl, s_t.last_id, r);
     if else_blk == 0 {
         let end0: i64 = string_len(c_t);
         let _pe0: i64 = hm_set(jmps, je_which, end0);
         let _t0: i64 = nb_dtype_tag_slot(dtbl, r, t_dt);
+        if then_live == 1 { let _o0: i64 = nb_origin_copy(dtbl, r, s_t.last_id); }
         return NbState { code: c_t, next_id: s_t.next_id, last_id: r, ncalls: s_t.ncalls };
     }
     let nj1: i64 = __mind_load_i64(jcell);
@@ -47444,6 +47817,7 @@ pub fn hm_if(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, 
         e_dt
     };
     let _t: i64 = nb_dtype_tag_slot(dtbl, r, r_dt);
+    let _oj: i64 = nb_origin_join(lcell, r, s_t.last_id, s_e.last_id, then_live, hm_block_has_tail(else_sa, else_sl));
     NbState { code: c_e, next_id: s_e.next_id, last_id: r, ncalls: s_e.ncalls }
 }
 
@@ -47538,6 +47912,7 @@ pub fn hm_return(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i
         let _p2: i64 = hm_poison(lcell);
     }
     let s1: NbState = nb_expr(st, buf, v, params_addr, n_params, calls, lets, lcell);
+    let _or: i64 = nb_origin_require_scalar(lcell, s1.last_id);
     let dt: i64 = nb_node_dtype_tbl(v, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
     let c1: String = if dt == nb_dtype_float() {
         nb_ret_float_load(s1.code, nb_slot_disp(s1.last_id), is_entry)
@@ -47578,8 +47953,18 @@ pub fn hm_patch_frame(code: String, off: i64, frame: i64) -> i64 {
 // HOME twin of nb_lower_fn: same entry prefix, prologue, parameter spill and
 // tail return, a HOME body, and a frame sized from the final value count.
 pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64) -> NbState {
+    nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, 0)
+}
+
+pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, ctx: i64) -> NbState {
+    if nb_ctx_entry_ok(ctx, is_entry) == 0 { return nb_poison_state(ncalls0); }
+    if nb_origin_return_shape_ok(buf, node, frt) == 0 { return nb_poison_state(ncalls0); }
+    if is_entry == 2 {
+        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() { return nb_poison_state(ncalls0); }
+    }
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
+    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 { return nb_poison_state(ncalls0); }
     // The routed path has the same entry ABI as SSA lowering.
     if nb_entry_params_ok(is_entry, buf, params_addr, n_params) == 0 {
         return nb_poison_state(ncalls0);
@@ -47633,7 +48018,8 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(lcap * 5 * 8 + 40);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, ctx);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 112, lcap + 1);
     __mind_store_i64(lcell + 104, rod);
@@ -47641,6 +48027,7 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
     __mind_store_i64(lcell + 88, atab);
     __mind_store_i64(lcell + 80, 0);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(idcap));
+    if __mind_load_i64(lcell + 8) == 0 { return nb_poison_state(ncalls0); }
     __mind_store_i64(lcell + 16, frt);
     let _tfp: i64 = nb_tag_float_params(__mind_load_i64(lcell + 8), buf, params_addr, n_params, 0);
     let _erp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, lets, lcell, 0);
@@ -47672,6 +48059,7 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
         }
     }
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
+    if nb_last_emits_return(stmts_addr, stmts_len) == 0 { let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id); }
     let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), hc);
     if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 {
         let _po: i64 = hm_poison(lcell);
@@ -48098,20 +48486,34 @@ pub fn hm_route_home(buf: i64, node: i64, route: i64) -> i64 {
 // on the HOME path (which keeps every expression-level refusal, so a construct
 // unsupported by both still refuses).
 pub fn nb_lower_fn_routed(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, route: i64, fobs: i64) -> NbState {
+    nb_lower_fn_routed_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, route, fobs, 0)
+}
+
+pub fn nb_lower_fn_routed_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, route: i64, fobs: i64, ctx: i64) -> NbState {
     if hm_route_home(buf, node, route) == 1 {
-        return nb_lower_fn_home(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+        return nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, ctx);
     }
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, fobs);
+    let fr: NbState = nb_lower_fn_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, fobs, ctx);
     let frn: i64 = fr.next_id;
     if frn < 0 {
-        return nb_lower_fn_home(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+        return nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, ctx);
     }
     fr
 }
 
 pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, fobs: i64) -> NbState {
+    nb_lower_fn_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, fobs, 0)
+}
+
+pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, fobs: i64, ctx: i64) -> NbState {
+    if nb_ctx_entry_ok(ctx, is_entry) == 0 { return nb_poison_state(ncalls0); }
+    if nb_origin_return_shape_ok(buf, node, frt) == 0 { return nb_poison_state(ncalls0); }
+    if is_entry == 2 {
+        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() { return nb_poison_state(ncalls0); }
+    }
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
+    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 { return nb_poison_state(ncalls0); }
     let body: i64 = ast_child2(node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
@@ -48163,7 +48565,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // (string-literal slice): the count walk emits no bytes so it needs no rodata
     // channel, but a pre-walk that ALIASES a count cell as an emit lcell would read
     // +104 — store 0 here so any such read fail-closes (poison), never OOB garbage.
-    let clcell0: i64 = __mind_alloc(120);
+    let clcell0: i64 = __mind_alloc(128);
+    __mind_store_i64(clcell0 + 120, ctx);
     __mind_store_i64(clcell0, 0);
     __mind_store_i64(clcell0 + 112, 512);
     __mind_store_i64(clcell0 + 104, 0);
@@ -48280,7 +48683,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // there and builds the borrowed {rodata_va, len, 0} handle. 0 => no rodata
     // channel => a string literal fail-closes (poison). main.mind's native-emitted
     // source has no string literals, so this is inert during self-compile.
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, ctx);
     __mind_store_i64(lcell + 112, 512);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 104, rod);
@@ -48299,6 +48703,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // slot defaults INT, and main.mind's float-free source never tags one FLOAT, so the
     // integer native-ELF oracle stays byte-identical.
     __mind_store_i64(lcell + 8, nb_dtype_table_new(nslots + 64));
+    if __mind_load_i64(lcell + 8) == 0 { return nb_poison_state(ncalls0); }
     // RI-D2 S-C1: stash the whole-module return-type registry (frt) at lcell+16, so the
     // body-lowering path (which already threads lcell) can classify a CALL by its callee's
     // declared return dtype without a separate frt parameter: nb_node_dtype_tbl's ast_call
@@ -48389,7 +48794,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // The fn's RESULT is read (entry exit code, or a value-position call found
     // by nb_obs_build): a trailing store must then yield 0, and a trailing
     // value-if is observed. An unread result keeps the historical bytes.
-    let res_obs: i64 = if is_entry == 1 {
+    let res_obs: i64 = if is_entry != 0 {
         1
     } else {
         fobs
@@ -48397,6 +48802,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let _mtf: i64 = nb_mark_tail_if_when(res_obs, stmts_addr, stmts_len);
     let st_body0s: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let st_body0: NbState = nb_block_tail_store_zero_if(res_obs, st_body0s, buf, stmts_addr, stmts_len);
+    if nb_last_emits_return(stmts_addr, stmts_len) == 0 { let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id); }
 
     // Validate the implicit trailing return after the body walk has populated
     // the let/parameter descriptor environment. Explicit returns are checked
@@ -48418,6 +48824,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // nb_finish_body (xmm0 for a float return, rax otherwise). INT for every main.mind fn.
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
     let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), plan);
+
+    if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 { __mind_store_i64(lcell + 80, 1); }
 
     // SYSTEMIC FAIL-CLOSED gate: if any node in this fn's body was REFUSED
     // (nb_expr/nb_stmt default arm, unbound ident, unsupported field shape —
@@ -49820,7 +50228,8 @@ pub fn selftest_dtk_plan(src_addr: i64, src_len: i64, out_addr: i64) -> i64 {
     // nb_lower_fn path does — no behavior change, just a valid (non-null) table.
     let srt: i64 = srt_build_from_tokens(tokens, src_addr);
     let clets: i64 = __mind_alloc(512 * 5 * 8);
-    let clcell: i64 = __mind_alloc(120);
+    let clcell: i64 = __mind_alloc(128);
+    __mind_store_i64(clcell + 120, 0);
     __mind_store_i64(clcell + 112, 512);
     let _zc: i64 = nb_dtk_zero(clcell, 13, 0);
     __mind_store_i64(clcell + 88, atab);
@@ -51404,7 +51813,287 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
 
 // The native emit with per-function routing: `route` (0 = none) lists fn-name
 // span_lo values to lower on the HOME path (see nb_lower_fn_routed).
-pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64) -> EmitState {
+// Context-sensitive parts retain one parser/reachability/alias/lowering path.
+// These raw-address helpers are internal compiler APIs, not certificate parsers.
+pub fn nb_parts_put_string(dst: i64, s: String) -> i64 {
+    __mind_store_i64(dst, string_addr(s));
+    __mind_store_i64(dst + 8, string_len(s));
+    __mind_store_i64(dst + 16, string_cap(s));
+    0
+}
+pub fn nb_parts_string(src: i64) -> String {
+    let addr: i64 = __mind_load_i64(src);
+    let len: i64 = __mind_load_i64(src + 8);
+    let cap: i64 = __mind_load_i64(src + 16);
+    String { addr: addr, len: len, cap: cap }
+}
+// Exactly-once destruction of an unconsumed compiler-owned parts record.
+// Taking a String for destructive concatenation must first clear its three
+// words, or update them with the new owned String before calling this helper.
+pub fn nb_parts_free(parts: i64) -> i64 {
+    if parts == 0 { return 0; }
+    __mind_free(__mind_load_i64(parts + 8));
+    __mind_free(__mind_load_i64(parts + 32));
+    __mind_free(__mind_load_i64(parts + 56));
+    __mind_free(__mind_load_i64(parts + 80));
+    __mind_free(__mind_load_i64(parts + 88));
+    __mind_free(__mind_load_i64(parts + 96));
+    __mind_free(__mind_load_i64(parts + 104));
+    if __mind_load_i64(parts + 160) == 1 {
+        __mind_free(__mind_load_i64(parts + 144));
+    }
+    __mind_free(__mind_load_i64(parts + 176));
+    __mind_free(parts);
+    0
+}
+pub fn nb_dynamic_param_tag_ok(tag: i64) -> i64 {
+    if tag < 1 { return 0; }
+    if tag <= 10 { return 1; }
+    if tag == 32 { return 1; }
+    if tag == 33 { return 1; }
+    0
+}
+pub fn nb_dynamic_signature_record_ok(record: i64, tokens: Vec, end: i64) -> i64 {
+    if end < 0 { return 0; }
+    if __mind_load_i64(record + 32) != 0 { return 0; }
+    if __mind_load_i64(record + 24) != 1 { return 0; }
+    if nb_cabi_kind(tokens, end) != tk_lbrace() { return 0; }
+    let row: i64 = __mind_load_i64(__mind_load_i64(record + 16));
+    let ret: i64 = __mind_load_i64(row + 56);
+    if __mind_load_i64(ret) != 1 { return 0; }
+    if __mind_load_i8(ret + 8) != 7 { return 0; }
+    if __mind_load_i64(row + 32) != 0 { return 0; }
+    let count: i64 = __mind_load_i64(row + 40);
+    if count > 2 { return 0; }
+    let params: i64 = __mind_load_i64(row + 48);
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < count {
+        let ty: i64 = __mind_load_i64(params + i * 8);
+        ok = ok * nb_dynamic_param_tag_ok(__mind_load_i8(ty + 8));
+        i = i + 1;
+    }
+    ok
+}
+pub fn nb_free_zero(p: i64) -> i64 {
+    __mind_free(p);
+    0
+}
+pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
+    let mut pos: i64 = 0;
+    while nb_cabi_before(tokens, pos, ast_span_lo(node)) == 1 { pos = pos + 1; }
+    if nb_cabi_kind(tokens, pos) != tk_kw_fn() { return 0; }
+    // Reuse the checked declaration type grammar, then require the function
+    // body token. This first slice admits only an explicit i64 result, no
+    // aliases, aggregate results, unit, floats, callbacks or variadics.
+    let record: i64 = __mind_alloc(48);
+    if record == 0 { return 0; }
+    let rows: i64 = __mind_alloc(8);
+    if rows == 0 { return nb_free_zero(record); }
+    __mind_store_i64(record, src);
+    __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
+    __mind_store_i64(record + 16, rows);
+    __mind_store_i64(record + 24, 0);
+    __mind_store_i64(record + 32, 0);
+    __mind_store_i64(record + 40, 0);
+    let end: i64 = nb_cabi_decl(record, tokens, pos, 1);
+    // The declaration grammar alone cannot distinguish a primitive spelling
+    // from a source-level type/import shadow. Preserve that binding check.
+    let _names: i64 = nb_cabi_local_names(record, tokens);
+    let ok: i64 = nb_dynamic_signature_record_ok(record, tokens, end);
+    let _free: i64 = nb_cabi_free(record);
+    ok
+}
+// Dormant declarations do not create executable imports. Validate each block
+// independently: the historical flattened standard-library prefix repeats
+// declarations across bricks, sometimes with different opaque pointer views.
+// No cross-block ABI resolution is inferred here. Every reachable nonintrinsic
+// call still must resolve to a local body before parts can be returned.
+pub fn nb_dynamic_extern_item(tokens: Vec, src: i64, node: i64, fns: i64, n: i64) -> i64 {
+    if nb_item_is_extern(src, node) == 0 { return 1; }
+    let record: i64 = __mind_alloc(48);
+    if record == 0 { return 0; }
+    let rows: i64 = __mind_alloc(4096 * 8);
+    if rows == 0 { return nb_free_zero(record); }
+    __mind_store_i64(record, src);
+    __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
+    __mind_store_i64(record + 16, rows);
+    __mind_store_i64(record + 24, 0);
+    __mind_store_i64(record + 32, 0);
+    __mind_store_i64(record + 40, 0);
+    let parsed: i64 = nb_cabi_add_item(record, tokens, node);
+    // A local body or binding must not silently override a foreign declaration.
+    let mut i: i64 = 0;
+    while nb_cabi_scan_more(record, i, n) == 1 {
+        let _fn: i64 = nb_cabi_local_fn(record, __mind_load_i64(fns + i * 8));
+        i = i + 1;
+    }
+    let _names: i64 = nb_cabi_local_names(record, tokens);
+    let error: i64 = __mind_load_i64(record + 32);
+    let _free: i64 = nb_cabi_free(record);
+    if parsed != 1 { return 0; }
+    if error != 0 { return 0; }
+    1
+}
+pub fn nb_dynamic_externs_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut blocks: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < count {
+        let node: i64 = __mind_load_i64(items + i * 8);
+        blocks = blocks + nb_item_is_extern(src, node);
+        ok = ok * nb_dynamic_extern_item(tokens, src, node, fns, n);
+        i = i + 1;
+    }
+    // A token not represented by one checked top-level block is unsupported;
+    // a wrapper or function cannot conceal a nested extern declaration.
+    let mut seen: i64 = 0;
+    i = 0;
+    while i < tok_count(tokens) {
+        seen = seen + nb_cabi_word(src, tokens, i, 6, 121437607458917);
+        i = i + 1;
+    }
+    if seen != blocks { return 0; }
+    ok
+}
+pub fn nb_dynamic_items_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut mains: i64 = 0;
+    let mut main_node: i64 = 0;
+    while i < n {
+        let node: i64 = __mind_load_i64(fns + i * 8);
+        let name: i64 = ast_child0(node);
+        if nb_name_is_main(src, ast_span_lo(name), ast_span_hi(name)) == 1 {
+            mains = mains + 1;
+            main_node = node;
+        }
+        i = i + 1;
+    }
+    if mains != 1 { return 0; }
+    if nb_dynamic_externs_ok(tokens, src, fns, n, items, count) == 0 { return 0; }
+    nb_dynamic_main_signature(tokens, src, main_node)
+}
+
+// Validate every local E8 record before changing any code. Offsets refer to the
+// unprefixed module image, so later uniform startup placement cancels from both
+// ends of the rel32. Original emitter provenance is still required: checking an
+// opcode byte does not establish arbitrary x86 instruction boundaries.
+pub fn nb_parts_start_ok(parts: i64, i: i64, previous: i64) -> i64 {
+    let length: i64 = __mind_load_i64(parts + 16);
+    let starts: i64 = __mind_load_i64(parts + 80);
+    let names: i64 = __mind_load_i64(parts + 88);
+    let src_len: i64 = __mind_load_i64(parts + 152);
+    let at: i64 = __mind_load_i64(starts + i * 8);
+    if at < 0 { return 0; }
+    if at >= length { return 0; }
+    if at <= previous { return 0; }
+    let lo: i64 = __mind_load_i64(names + i * 16);
+    let hi: i64 = __mind_load_i64(names + i * 16 + 8);
+    if lo < 0 { return 0; }
+    if hi <= lo { return 0; }
+    if hi > src_len { return 0; }
+    1
+}
+pub fn nb_parts_function_end(parts: i64, owner: i64) -> i64 {
+    if owner + 1 < __mind_load_i64(parts + 112) {
+        return __mind_load_i64(__mind_load_i64(parts + 80) + (owner + 1) * 8);
+    }
+    __mind_load_i64(parts + 16)
+}
+pub fn nb_parts_call_ok(valid: i64, parts: i64, i: i64) -> i64 {
+    // Absorbing refusal prevents any later record-dependent read after failure.
+    if valid == 0 { return 0; }
+    let code: i64 = __mind_load_i64(parts + 8);
+    let starts: i64 = __mind_load_i64(parts + 80);
+    let names: i64 = __mind_load_i64(parts + 88);
+    let calls: i64 = __mind_load_i64(parts + 96);
+    let owners: i64 = __mind_load_i64(parts + 104);
+    let n: i64 = __mind_load_i64(parts + 112);
+    let src: i64 = __mind_load_i64(parts + 144);
+    let src_len: i64 = __mind_load_i64(parts + 152);
+    let owner: i64 = __mind_load_i64(owners + i * 8);
+    if owner < 0 { return 0; }
+    if owner >= n { return 0; }
+    let begin: i64 = __mind_load_i64(starts + owner * 8);
+    let end: i64 = nb_parts_function_end(parts, owner);
+    let off: i64 = __mind_load_i64(calls + i * 24);
+    if off < 1 { return 0; }
+    if off > end - begin - 4 { return 0; }
+    if __mind_load_i8(code + begin + off - 1) != 232 { return 0; }
+    let lo: i64 = __mind_load_i64(calls + i * 24 + 8);
+    let hi: i64 = __mind_load_i64(calls + i * 24 + 16);
+    if lo < 0 { return 0; }
+    if hi <= lo { return 0; }
+    if hi > src_len { return 0; }
+    let callee: i64 = nb_resolve_callee(src, names, n, lo, hi, 0);
+    if callee < 0 { return 0; }
+    if callee >= n { return 0; }
+    let delta: i64 = __mind_load_i64(starts + callee * 8) - (begin + off + 4);
+    if delta < 0 - 2147483648 { return 0; }
+    if delta > 2147483647 { return 0; }
+    1
+}
+pub fn nb_parts_local_calls_ok(parts: i64) -> i64 {
+    if parts == 0 { return 0; }
+    if __mind_load_i64(parts) != 1 { return 0; }
+    let length: i64 = __mind_load_i64(parts + 16);
+    let starts: i64 = __mind_load_i64(parts + 80);
+    let n: i64 = __mind_load_i64(parts + 112);
+    let nc: i64 = __mind_load_i64(parts + 120);
+    if length <= 0 { return 0; }
+    if length > 4194304 { return 0; }
+    if n <= 0 { return 0; }
+    if nc < 0 { return 0; }
+    let mut i: i64 = 0;
+    let mut previous: i64 = 0 - 1;
+    let mut ok: i64 = 1;
+    while i < n {
+        ok = ok * nb_parts_start_ok(parts, i, previous);
+        previous = __mind_load_i64(starts + i * 8);
+        i = i + 1;
+    }
+    if ok == 0 { return 0; }
+    i = 0;
+    while i < nc {
+        ok = nb_parts_call_ok(ok, parts, i);
+        i = i + 1;
+    }
+    ok
+}
+pub fn nb_parts_patch_local(parts: i64) -> i64 {
+    if nb_parts_local_calls_ok(parts) == 0 { return 0; }
+    let _patch: i64 = nb_patch_all(__mind_load_i64(parts + 8), __mind_load_i64(parts + 96), __mind_load_i64(parts + 120), __mind_load_i64(parts + 104), __mind_load_i64(parts + 80), __mind_load_i64(parts + 88), __mind_load_i64(parts + 112), __mind_load_i64(parts + 144), 0);
+    __mind_store_i64(parts + 168, 1);
+    1
+}
+
+// Internal shared lowering. The ctx0 path preserves the historical source
+// contract. Nonzero ctx is an owned/rechecked nec context supplied by the
+// component orchestrator. Returned tables own their storage; dynamic parts also
+// own a source copy, so span records never depend on caller lifetime.
+pub fn nb_dynamic_function_capacity_ok(tokens: Vec) -> i64 {
+    // frt_collect inserts at most one entry per fn token. Its historical
+    // overflow behavior drops entries; that must never turn a declared name
+    // into an apparently absent builtin in the dynamic path. Count the entire
+    // captured source, including dormant declarations and the standard prefix.
+    let mut i: i64 = 0;
+    let mut count: i64 = 0;
+    while i < tok_count(tokens) {
+        if tok_kind(tokens, i) == tk_kw_fn() { count = count + 1; }
+        i = i + 1;
+    }
+    if count > frt_cap() { return 0; }
+    1
+}
+pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64, ctx: i64) -> i64 {
+    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
+    if tok_count(tokens) == 0 { return 0; }
+    let src_len: i64 = tok_lo(tokens, tok_count(tokens) - 1);
+    if ctx != 0 {
+        if src_len < 0 { return 0; }
+        if src_len > 67108864 { return 0; }
+        if nb_dynamic_function_capacity_ok(tokens) == 0 { return 0; }
+    }
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
@@ -51416,7 +52105,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // Never fires during self-compile (main.mind's top-level items are all
     // recognized), so the byte-identity loop is unchanged.
     if nb_items_any_unsupported(items_addr, items_len, 0) == 1 {
-        return es_new();
+        return 0;
     }
 
     // Collect ALL fn_def items in combined source order (std bricks first, then
@@ -51432,6 +52121,11 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     let fns: i64 = __mind_alloc((nb_all + 1) * 8);
     let n_fns: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, fns, 0, 0);
     let entry_idx: i64 = nb_find_main(src_addr, fns, n_fns, 0);
+
+    if ctx != 0 {
+        if nb_dynamic_items_ok(tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+        if entry_idx < 0 { return 0; }
+    }
 
     // Lay out: entry (main) FIRST, then the rest in source order.
     // ordered[] = the fn nodes in emission order.
@@ -51466,6 +52160,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // frt lexes overflowed it on the whole-compiler source (native stage1 segfault while
     // the unlimited-heap .so passed). Reusing `tokens` yields byte-identical registries.
     let srt: i64 = srt_build_from_tokens(tokens, src_addr);
+    if nb_origin_records_ok(srt, src_addr) == 0 { return 0; }
     // RI-D2 S-C1: whole-module return-type registry (fn name -> declared-return-dtype),
     // built once and threaded through nb_lower_all like srt, so a call is spilled from the
     // right register file (xmm0 for a float-returning callee) and classified by its
@@ -51473,7 +52168,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     let frt: i64 = frt_build_from_tokens(tokens, src_addr);
     let alias_status: i64 = alias_prepare_native_module(tokens, src_addr, frt);
     if alias_status < 0 {
-        return es_new();
+        return 0;
     }
     let _nrw: i64 = nrw_prepare(frt, alias_status);
     let _ap: i64 = alias_annotate_params(src_addr, alias_status, ordered, n_fns, 0);
@@ -51485,7 +52180,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // unreachable function's alias budget from refusing the whole module.
     let alias_rc: i64 = alias_annotate_call_module(src_addr, alias_status, frt, ordered, n_fns, 0);
     if alias_rc == alias_env_refusal() {
-        return es_new();
+        return 0;
     }
     // RI-C: does any REACHABLE (pruned) fn reference argv? Gates the entry argc/argv
     // capture so an argv-free program is byte-identical EVEN when std.cli (whose
@@ -51518,7 +52213,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // Never fires during self-compile (main.mind's user region has zero
     // candidates), so the loop stays byte-identical.
     if nb_tokens_user_float(tokens, src_addr, 0, tok_count(tokens), user_lo) == 1 {
-        return es_new();
+        return 0;
     }
     // Module-level rodata accumulator: an 8-byte length header + a byte buffer that
     // nb_expr's ast_str_lit arm appends string-literal bytes to (in first-use walk
@@ -51528,12 +52223,12 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // Sized to EXACTLY the 8 MiB rodata VADDR window (nb_arena_addr-nb_rodata_addr)
     // so the buffer cannot be scribbled past even if a caller skips the arm's
     // fail-closed window bound.
-    let rod: i64 = __mind_alloc(8 + (nb_arena_addr() - nb_rodata_addr()));
+    let rod: i64 = __mind_alloc(8 + nb_ctx_literal_capacity(ctx));
     __mind_store_i64(rod, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     // Which fns' RESULTS are read (store-as-value: see nb_obs_build).
     let obs: i64 = nb_obs_build(src_addr, ordered, n_fns);
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs);
+    let lr: NbState = nb_lower_all_ctx(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, ctx);
     // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
     // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
     // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
@@ -51541,7 +52236,7 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // EMPTY EmitState (0 bytes, not a valid ELF) so the boundary is explicit and
     // machine-checkable. The loop/native smokes already FAIL on empty output.
     if lr.next_id < 0 {
-        return es_new();
+        return 0;
     }
     let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
@@ -51550,9 +52245,60 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     // let-bound value / undefined name: fail-OPEN SIGILL or a silent wrong value).
     // See nb_calls_all_resolve. Never fires during self-compile.
     if nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, src_addr, 0) == 0 {
-        return es_new();
+        return 0;
     }
 
+    let note: String = nb_build_note(string_new(), hash_addr);
+    let rod_len: i64 = __mind_load_i64(rod);
+    let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
+    let parts: i64 = __mind_alloc(184);
+    if parts == 0 { return 0; }
+    let _code: i64 = nb_parts_put_string(parts + 8, image0);
+    let _rod: i64 = nb_parts_put_string(parts + 32, rodata);
+    let _note: i64 = nb_parts_put_string(parts + 56, note);
+    __mind_store_i64(parts, 1);
+    __mind_store_i64(parts + 80, starts);
+    __mind_store_i64(parts + 88, fn_names);
+    __mind_store_i64(parts + 96, calls);
+    __mind_store_i64(parts + 104, call_owner);
+    __mind_store_i64(parts + 112, n_fns);
+    __mind_store_i64(parts + 120, total_calls);
+    __mind_store_i64(parts + 128, entry_idx);
+    __mind_store_i64(parts + 136, 0);
+    if entry_idx >= 0 {
+        __mind_store_i64(parts + 136, ast_aux(__mind_load_i64(ordered)) / 2);
+    }
+    __mind_store_i64(parts + 144, src_addr);
+    __mind_store_i64(parts + 152, src_len);
+    __mind_store_i64(parts + 160, 0);
+    __mind_store_i64(parts + 168, 0);
+    __mind_store_i64(parts + 176, 0);
+    if ctx != 0 {
+        let captured: i64 = __mind_alloc(src_len + 16);
+        if captured == 0 { return 0; }
+        let _copy: i64 = nfn_copy_src_bytes(captured, src_addr, src_len, 0);
+        let mut z: i64 = 0;
+        while z < 16 {
+            __mind_store_i8(captured + src_len + z, 0);
+            z = z + 1;
+        }
+        __mind_store_i64(parts + 144, captured);
+        __mind_store_i64(parts + 160, 1);
+    }
+    parts
+}
+
+pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64) -> EmitState {
+    let parts: i64 = nb_lower_parts_hb_route(tokens, src_addr, hash_addr, user_lo, route, 0);
+    if parts == 0 { return es_new(); }
+    let image0: String = nb_parts_string(parts + 8);
+    let starts: i64 = __mind_load_i64(parts + 80);
+    let fn_names: i64 = __mind_load_i64(parts + 88);
+    let calls: i64 = __mind_load_i64(parts + 96);
+    let call_owner: i64 = __mind_load_i64(parts + 104);
+    let n_fns: i64 = __mind_load_i64(parts + 112);
+    let total_calls: i64 = __mind_load_i64(parts + 120);
+    let entry_idx: i64 = __mind_load_i64(parts + 128);
     // No-`main` (library) module: prepend the 9-byte synth entry stub at offset 0
     // (mirrors src/native/mod.rs pushing synth_lib_entry() as funcs[0]) and shift
     // every recorded fn start by 9 so the inter-fn rel32 patches stay exact. With
@@ -51579,14 +52325,8 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     let code_addr: i64 = string_addr(image);
     let _p: i64 = nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, src_addr, 0);
 
-    // entry_off = 0 (entry is laid first).
-    let note0: String = string_new();
-    let note: String = nb_build_note(note0, hash_addr);
-    // Materialize the accumulated rodata bytes into a String and place them in the
-    // 5th PT_LOAD segment. Empty for a string-literal-free module => byte-identical
-    // (modulo the +56 phdr shift) to the pre-rodata layout.
-    let rod_len: i64 = __mind_load_i64(rod);
-    let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
+    let note: String = nb_parts_string(parts + 56);
+    let rodata: String = nb_parts_string(parts + 32);
     let elf: String = nb_write_elf_rod(image, 0, note, rodata);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
@@ -51727,6 +52467,10 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
 pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64, route: i64, obs: i64) -> NbState {
+    nb_lower_all_ctx(acc, buf, ordered, n_fns, k, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, 0)
+}
+
+pub fn nb_lower_all_ctx(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64, route: i64, obs: i64, ctx: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -51736,11 +52480,11 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
         return NbState { code: acc.code, next_id: 0 - 1, last_id: 0, ncalls: acc.ncalls };
     }
     let node: i64 = __mind_load_i64(ordered + k * 8);
-    let is_entry: i64 = nb_is_entry(k, entry_idx);
+    let is_entry: i64 = nb_ctx_entry_kind(ctx, nb_is_entry(k, entry_idx));
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn_routed(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, route, nb_obs_flag(obs, k));
+    let fr: NbState = nb_lower_fn_routed_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, route, nb_obs_flag(obs, k), ctx);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
@@ -51755,7 +52499,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let accn: i64 = acc.next_id;
     let pn: i64 = nb_poison_merge(frn, accn);
     let acc2: NbState = NbState { code: image2, next_id: pn, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs)
+    nb_lower_all_ctx(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, ctx)
 }
 // The REFUSED-fn sentinel NbState (fail-closed): empty code + next_id == -1.
 // A single-expression helper (the es_new shape) so nb_lower_fn's poison gate
@@ -52081,6 +52825,189 @@ pub fn selftest_native_elf_fp_mem(a_bits: i64, b_bits: i64, op_sel: i64) -> Emit
 // nb_dtype_get(id) to pick the nb_fp_* xmm encoders vs the GP-integer ops.
 
 // dtype tags: an SSA value is either a 64-bit integer or a scalar f64.
+// Raw-pointer origin is separate from scalar register class (INT=0/FLOAT=1).
+// The second half of each dtype allocation holds one 0/1 origin per value slot.
+// This is a narrow pointer/nonpointer invariant, not complete pointee typing.
+// Raw pointer returns and pointer-bearing aggregates remain unsupported.
+// A real lowering table owns the actual resolved value's origin. The legacy
+// name-only predicate is retained only for bare-expression diagnostics that
+// intentionally have no table; it must never override a real scalar shadow.
+pub fn nb_origin_cast_operand_is_ptr(lcell: i64, slot: i64, buf: i64, node: i64, params: i64, n: i64) -> i64 {
+    let tbl: i64 = __mind_load_i64(lcell + 8);
+    if tbl != 0 { return nb_origin_get(tbl, slot); }
+    nb_ptrc_value_is_ptr(buf, node, params, n)
+}
+
+pub fn nb_origin_get(tbl: i64, id: i64) -> i64 {
+    if tbl == 0 { return 0; }
+    if id < 0 { return 0; }
+    let cap: i64 = __mind_load_i64(tbl - 16);
+    if id >= cap { __mind_store_i64(tbl - 8, 1); return 1; }
+    let origin: i64 = __mind_load_i64(tbl + (cap + id) * 8);
+    if origin < 0 { __mind_store_i64(tbl - 8, 1); return 1; }
+    if origin > 1 { __mind_store_i64(tbl - 8, 1); return 1; }
+    origin
+}
+pub fn nb_origin_set(tbl: i64, id: i64, origin: i64) -> i64 {
+    if tbl == 0 { return 0; }
+    if id < 0 { return 0; }
+    let cap: i64 = __mind_load_i64(tbl - 16);
+    if id >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
+    if origin < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
+    if origin > 1 { __mind_store_i64(tbl - 8, 1); return 0; }
+    __mind_store_i64(tbl + (cap + id) * 8, origin);
+    0
+}
+pub fn nb_origin_copy(tbl: i64, dst: i64, src: i64) -> i64 {
+    nb_origin_set(tbl, dst, nb_origin_get(tbl, src))
+}
+pub fn nb_origin_require_scalar(lcell: i64, slot: i64) -> i64 {
+    if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 {
+        __mind_store_i64(lcell + 80, 1);
+    }
+    0
+}
+pub fn nb_origin_type(buf: i64, leaf: i64) -> i64 {
+    if leaf == 0 { return 0; }
+    if ast_span_hi(leaf) <= ast_span_lo(leaf) { return 0; }
+    if load_byte(buf, ast_span_lo(leaf)) == 42 { return 1; }
+    0
+}
+pub fn nb_origin_ann_ok(lcell: i64, buf: i64, leaf: i64, slot: i64) -> i64 {
+    if leaf == 0 { return 0; }
+    if nb_origin_type(buf, leaf) != nb_origin_get(__mind_load_i64(lcell + 8), slot) {
+        __mind_store_i64(lcell + 80, 1);
+    }
+    0
+}
+pub fn nb_origin_resolve(buf: i64, name: i64, params: i64, count: i64, lets: i64, lcell: i64) -> i64 {
+    let slot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(name), ast_span_hi(name));
+    if slot >= 0 { return slot; }
+    resolve_param(params, count, buf, ast_span_lo(name), ast_span_hi(name))
+}
+pub fn nb_origin_assignment(lcell: i64, old: i64, value: i64) -> i64 {
+    if old < 0 { __mind_store_i64(lcell + 80, 1); return 0; }
+    let tbl: i64 = __mind_load_i64(lcell + 8);
+    if nb_origin_get(tbl, old) != nb_origin_get(tbl, value) {
+        __mind_store_i64(lcell + 80, 1);
+    }
+    0
+}
+// A join considers only live value-producing edges. Assignment type invariance
+// rejects late loop changes before any executable image can escape.
+pub fn nb_origin_join(lcell: i64, dst: i64, left: i64, right: i64, left_live: i64, right_live: i64) -> i64 {
+    let tbl: i64 = __mind_load_i64(lcell + 8);
+    if left_live == 1 {
+        let _c: i64 = nb_origin_copy(tbl, dst, left);
+        if right_live == 1 { let _a: i64 = nb_origin_assignment(lcell, left, right); }
+        return 0;
+    }
+    if right_live == 1 { let _c: i64 = nb_origin_copy(tbl, dst, right); }
+    0
+}
+pub fn nb_origin_args_rows(fnode: i64, ids: i64, n: i64, buf: i64, lcell: i64, i: i64) -> i64 {
+    if i >= n { return 1; }
+    let p: i64 = __mind_load_i64(ast_child1(fnode) + i * 8);
+    let actual: i64 = nb_origin_get(__mind_load_i64(lcell + 8), __mind_load_i64(ids + i * 8));
+    if nb_origin_type(buf, ast_child1(p)) != actual { return 0; }
+    nb_origin_args_rows(fnode, ids, n, buf, lcell, i + 1)
+}
+pub fn nb_origin_args_ok(callee: i64, ids: i64, n: i64, buf: i64, lcell: i64) -> i64 {
+    let at: i64 = __mind_load_i64(lcell + 88);
+    if at == 0 { return 1; }
+    let ordered: i64 = nb_at_native_ordered(at);
+    let count: i64 = nb_at_native_n_fns(at);
+    let k: i64 = nb_last_def_idx(buf, ordered, count, ast_span_lo(callee), ast_span_hi(callee), 0, 0 - 1);
+    if k < 0 { return 1; }
+    let f: i64 = __mind_load_i64(ordered + k * 8);
+    if ast_aux(f) / 2 != n { return 0; }
+    nb_origin_args_rows(f, ids, n, buf, lcell, 0)
+}
+pub fn nb_origin_return_shape_ok(buf: i64, node: i64, frt: i64) -> i64 {
+    if frt == 0 { return 1; }
+    let name: i64 = ast_child0(node);
+    let k: i64 = frt_find(frt, buf, ast_span_lo(name), ast_span_hi(name), 0);
+    if k < 0 { return 1; }
+    let lo: i64 = frt_retty_lo(frt, k);
+    let hi: i64 = frt_retty_hi(frt, k);
+    if nb_origin_span_has_ptr(buf, lo, hi) == 1 { return 0; }
+    1
+}
+pub fn nb_origin_record_field_ok(srt: i64, buf: i64, k: i64, j: i64) -> i64 {
+    let lo: i64 = srt_field_type_lo(srt, k, j);
+    let hi: i64 = srt_field_type_hi(srt, k, j);
+    if nb_origin_span_has_ptr(buf, lo, hi) == 1 { return 0; }
+    if srt_field_array_kind(srt, k, j) == 1 {
+        let el: i64 = srt_field_array_elem_lo(srt, k, j);
+        let eh: i64 = srt_field_array_elem_hi(srt, k, j);
+        if nb_origin_span_has_ptr(buf, el, eh) == 1 { return 0; }
+    }
+    1
+}
+pub fn nb_origin_records_ok(srt: i64, buf: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut ok: i64 = 1;
+    while k < srt_count(srt) {
+        let mut j: i64 = 0;
+        while j < srt_field_count(srt, k) {
+            ok = ok * nb_origin_record_field_ok(srt, buf, k, j);
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    ok
+}
+
+// Internal merge initialization: origin 2 means no live edge has arrived.
+// All calls use table-owned, capacity-checked slots; sentinel is never a value.
+pub fn nb_origin_merge_init(tbl: i64, mt: i64, n: i64, i: i64) -> i64 {
+    if i >= n { return 0; }
+    if tbl == 0 { return 0; }
+    let cap: i64 = __mind_load_i64(tbl - 16);
+    let id: i64 = __mind_load_i64(mt + (i * 5 + 4) * 8);
+    if id < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
+    if id >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
+    __mind_store_i64(tbl + (cap + id) * 8, 2);
+    nb_origin_merge_init(tbl, mt, n, i + 1)
+}
+pub fn nb_origin_merge_edge(lcell: i64, tbl: i64, dst: i64, src: i64) -> i64 {
+    if tbl == 0 { return 0; }
+    let cap: i64 = __mind_load_i64(tbl - 16);
+    if dst < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
+    if dst >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
+    if __mind_load_i64(tbl + (cap + dst) * 8) != 2 {
+        let _same: i64 = nb_origin_assignment(lcell, dst, src);
+    }
+    nb_origin_copy(tbl, dst, src)
+}
+pub fn nb_origin_scalar_args(lcell: i64, ids: i64, n: i64, i: i64) -> i64 {
+    if i >= n { return 0; }
+    let _v: i64 = nb_origin_require_scalar(lcell, __mind_load_i64(ids + i * 8));
+    nb_origin_scalar_args(lcell, ids, n, i + 1)
+}
+pub fn nb_origin_is_star(buf: i64, i: i64) -> i64 {
+    if load_byte(buf, i) == 42 { return 1; }
+    0
+}
+pub fn nb_origin_span_has_ptr(buf: i64, lo: i64, hi: i64) -> i64 {
+    let mut i: i64 = lo;
+    let mut found: i64 = 0;
+    while i < hi {
+        found = found | nb_origin_is_star(buf, i);
+        i = i + 1;
+    }
+    found
+}
+pub fn nb_origin_param_shapes_ok(buf: i64, params: i64, n: i64, i: i64) -> i64 {
+    if i >= n { return 1; }
+    let p: i64 = __mind_load_i64(params + i * 8);
+    let ty: i64 = ast_child1(p);
+    if nb_origin_type(buf, ty) == 0 {
+        if nb_origin_span_has_ptr(buf, ast_span_lo(ty), ast_span_hi(ty)) == 1 { return 0; }
+    }
+    nb_origin_param_shapes_ok(buf, params, n, i + 1)
+}
+
 pub fn nb_dtype_int() -> i64 {
     0
 }
@@ -52321,6 +53248,7 @@ pub fn nb_tag_float_params(tbl: i64, buf: i64, params_addr: i64, n_params: i64, 
     let pnode: i64 = __mind_load_i64(params_addr + i * 8);
     let dt: i64 = nb_param_is_float(buf, ast_child1(pnode));
     let _s: i64 = nb_dtype_tag_slot(tbl, i, dt);
+    let _o: i64 = nb_origin_set(tbl, i, nb_origin_type(buf, ast_child1(pnode)));
     nb_tag_float_params(tbl, buf, params_addr, n_params, i + 1)
 }
 
@@ -52417,11 +53345,14 @@ pub fn nb_fp_parity_fix(op: i64) -> i64 {
 // the buffer. Every SSA-path table is sized past its counted ids, so the flag
 // never fires there and no emitted byte changes.
 pub fn nb_dtype_table_new(n: i64) -> i64 {
-    let base: i64 = __mind_alloc(n * 8 + 16);
+    if n < 0 { return 0; }
+    if n > 576460752303423486 { return 0; }
+    let base: i64 = __mind_alloc(n * 16 + 16);
     __mind_store_i64(base, n);
     __mind_store_i64(base + 8, 0);
     let tbl: i64 = base + 16;
     let _z: i64 = nb_dtype_table_fill(tbl, 0, n);
+    let _o: i64 = nb_dtype_table_fill(tbl + n * 8, 0, n);
     tbl
 }
 
@@ -53148,7 +54079,8 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, 0);
     __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
@@ -53211,7 +54143,8 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, 0);
     __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
@@ -53282,7 +54215,8 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, 0);
     __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
@@ -53378,7 +54312,8 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, 0);
     __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
@@ -53556,7 +54491,8 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(120);
+    let lcell: i64 = __mind_alloc(128);
+    __mind_store_i64(lcell + 120, 0);
     __mind_store_i64(lcell + 112, 512);
     // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
     // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg

@@ -10,6 +10,7 @@ No seed is published. Every child is capped at 2 GiB address space.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -130,17 +131,21 @@ def supplemental_cases() -> list[tuple[str, bytes, bytes, int, int]]:
     return rows
 
 
-def limits() -> None:
+def limits(cpu_seconds: int = 120) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    resource.setrlimit(resource.RLIMIT_CPU, (120, 125))
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler', type=Path, help='Explicit diagnostic instrument; otherwise build current source from the frozen bounded seed')
     parser.add_argument('--evidence-dir', type=Path)
+    parser.add_argument('--build-cpu-seconds', type=int, default=120,
+                        help='Initial compiler/diagnostic-driver build CPU budget (1..3600, default120); all fixture build/run CPU120/wall150 and 2GiB limits stay unchanged')
     args = parser.parse_args()
+    if not 1 <= args.build_cpu_seconds <= 3600:
+        parser.error('--build-cpu-seconds must be between1 and3600')
     out = (args.evidence_dir or (Path(tempfile.mkdtemp(prefix='mind-source-note-')) / 'run')).resolve()
     out.mkdir(parents=True, exist_ok=False)
     compiler = (args.compiler or (HERE / 'testdata/selfhost_loop_bounded/stage1.elf')).resolve()
@@ -160,15 +165,21 @@ def main() -> int:
     (out / 'SUPPLEMENTAL_CASES.json').chmod(0o444)
     records = []
 
-    def run(name: str, exe: Path, data: bytes) -> subprocess.CompletedProcess:
+    def run(name: str, exe: Path, data: bytes, *, compiler_build: bool = False) -> subprocess.CompletedProcess:
         start = time.monotonic()
+        cpu_seconds = args.build_cpu_seconds if compiler_build else 120
+        wall_seconds = cpu_seconds + 30
         result = subprocess.run([str(exe)], input=data, capture_output=True,
-                                timeout=150, preexec_fn=limits)
+                                timeout=wall_seconds,
+                                preexec_fn=functools.partial(limits, cpu_seconds))
         (out / f'{name}.stdin').write_bytes(data)
         (out / f'{name}.stdout').write_bytes(result.stdout)
         (out / f'{name}.stderr').write_bytes(result.stderr)
         records.append({'name': name, 'argv': [str(exe)], 'exit': result.returncode,
                         'elapsed': time.monotonic() - start,
+                        'compiler_build': compiler_build,
+                        'cpu_soft_seconds': cpu_seconds, 'cpu_hard_seconds': cpu_seconds + 5,
+                        'wall_seconds': wall_seconds, 'address_space_bytes': 2 << 30,
                         'stdout_sha256': digest(result.stdout),
                         'stderr_sha256': digest(result.stderr)})
         (out / 'RESULTS.json').write_text(json.dumps(records, indent=2) + '\n')
@@ -183,7 +194,7 @@ def main() -> int:
         # The established bounded self-host layout; never rewrite frozen seeds.
         bootstrap = struct.pack('<4q', int.from_bytes(b'MINDLAY\x01', 'little'),
                                 805306368, 402653184, 1048576) + image
-        built = run('compiler-build', compiler, bootstrap)
+        built = run('compiler-build', compiler, bootstrap, compiler_build=True)
         assert built.returncode == 0 and not built.stderr and built.stdout.startswith(b'\x7fELF'), 'COMPILER_BUILD_FAILED'
         compiler = out / 'current-compiler.elf'
         compiler.write_bytes(built.stdout)
@@ -201,7 +212,7 @@ def main() -> int:
         'cases_sha256': digest((out / 'CASES.json').read_bytes()),
         'supplemental_cases_sha256': digest((out / 'SUPPLEMENTAL_CASES.json').read_bytes()),
     }, indent=2) + '\n')
-    build = run('build', compiler, packet)
+    build = run('build', compiler, packet, compiler_build=True)
     assert build.returncode == 0 and not build.stderr and build.stdout.startswith(b'\x7fELF'), 'BUILD_FAILED'
     driver = out / 'source-note.elf'
     driver.write_bytes(build.stdout)
