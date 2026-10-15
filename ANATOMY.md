@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2146 | **Est. tokens:** ~4004378
-**Generated:** 2026-10-15 11:38 UTC
+**Files:** 2158 | **Est. tokens:** ~4031003
+**Generated:** 2026-10-15 12:00 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31656 |
+| `./` | 33 | ~31717 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `.cargo/` | 1 | ~130 |
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 220 | ~609525 |
+| `examples/mindc_mind/` | 232 | ~636052 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -102,7 +102,7 @@
 | `experiments/global-vs-local/` | 7 | ~6487 |
 | `mind/std/cognitive/` | 4 | ~3529 |
 | `runtime-support/` | 1 | ~23216 |
-| `scripts/` | 31 | ~117568 |
+| `scripts/` | 31 | ~117605 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2372 |
 | `scripts/sdlc/` | 2 | ~2845 |
@@ -252,7 +252,7 @@
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) — === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `.editorconfig` (~51 tok, small) — root = true
-- `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
+- `.gitattributes` (~191 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `.gitignore` (~950 tok, large) — # Rust
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
 - `ARCHITECTURE.md` (~300 tok, medium) — MIND Architecture (high level)
@@ -698,7 +698,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
-- `SMOKE_WIRING.tsv` (~5159 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~5258 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
@@ -752,7 +752,7 @@
 - `native_cabi_driver.mind` (~308 tok, medium) — Author: STARGA Inc. Diagnostic stdin wrapper; no C imports or lane admission.
 - `native_cabi_registry.md` (~1705 tok, huge) — Typed native C ABI registry (candidate metadata slice)
 - `native_cabi_registry_smoke.py` (~1991 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
-- `native_dynamic.mind` (~4030 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic.mind` (~4642 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator.md` (~2366 tok, huge) — Bounded dynamic allocator component
 - `native_dynamic_allocator.mind` (~5402 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator_cases.tsv` (~336 tok, medium) — # Frozen before implementation/build; exact expected stdout is empty. exit70 std
@@ -761,11 +761,23 @@
 - `native_dynamic_allocator_mutations.tsv` (~119 tok, small) — id	change	case	expected_original_exit
 - `native_dynamic_allocator_ownership_cases.tsv` (~122 tok, small) — # Supplemental ownership-before-size contract; original39-case catalogue unchang
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_image.md` (~3173 tok, huge) — Dynamic image writer with checked runtime mappings
+- `native_dynamic_image.mind` (~3470 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_image_cases.tsv` (~760 tok, large) — id	name	category	runtime_exit	stdout_hex
+- `native_dynamic_image_check.py` (~6665 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
+- `native_dynamic_image_expectation_corrections.tsv` (~44 tok, tiny) — id	field	original	corrected	reason
+- `native_dynamic_image_fixture.mind` (~3446 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_image_mutations.tsv` (~74 tok, small) — name	case	expected_detection
 - `native_dynamic_layout.md` (~2529 tok, huge) — Checked dynamic MIND image layout, version 1
 - `native_dynamic_layout.mind` (~1459 tok, large) — Copyright 2026 STARGA Inc.
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
 - `native_dynamic_layout_check.py` (~2972 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
 - `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
+- `native_dynamic_legacy_outputs.tsv` (~5637 tok, huge) — scope	case	exit	stdout_sha256	stderr_sha256
+- `native_dynamic_mic_cases.tsv` (~184 tok, small) — id	name	stdout_hex
+- `native_dynamic_mic_compatibility.md` (~1255 tok, large) — Dynamic writer MIC compatibility
+- `native_dynamic_mic_fixture.mind` (~1033 tok, large) — Copyright 2026 STARGA Inc.
+- `native_dynamic_mic_mutations.tsv` (~75 tok, small) — name	function	case	expected_detection
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
 - `native_posix.md` (~1979 tok, huge) — Linux x86-64 POSIX substrate
@@ -1309,7 +1321,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9997 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10034 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the

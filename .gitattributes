@@ -10,6 +10,10 @@
 *.md   text eol=lf
 *.txt  text eol=lf
 
+# The frozen tab-separated packet has an intentionally empty final stdout_hex
+# column. Its trailing delimiter is data; preserve the pre-enumeration hash.
+examples/mindc_mind/native_dynamic_image_cases.tsv text eol=lf whitespace=-blank-at-eol
+
 # Binary artifacts: never normalize.
 *.so   binary
 *.a    binary
