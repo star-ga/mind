@@ -153,7 +153,9 @@ GATED_EVENTS = ("push", "pull_request")
 # generator testdata/native_libc_startup/gen_mind.py. Explicit manual gate
 # prerequisites remain; no production admission or CI success is implied.
 # 297 -> 298 adds the frozen string, binding and decoder-bounds gate.
-HARNESS_CEILING = 298  # Exact reviewed integration inventory; no spare allowance.
+# 298 -> 299 adds string_borrowed_check.py with explicit MIND-body parity,
+# source mutations and a separately documented C sanitizer reference.
+HARNESS_CEILING = 299  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

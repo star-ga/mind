@@ -953,52 +953,47 @@ MIND_EXPORT_WEAK int64_t string_validate_utf8(int64_t s) {
     return 0;
 }
 
-// string_push_byte — append a single byte, returning a new String handle.
-//
-// Non-mutating ABI: allocates a fresh 3-field String heap record on every
-// call (matches std/string.mind's non-mutating semantics).  The backing
-// store is reused when len < cap and reallocated (doubling) when len == cap.
-// Growth: cap 0 → 16, then doubles.
-//
-// Allocation size: new_cap + 7 bytes.  The byte at logical position i is
-// written via __mind_store_i64(base + i, …) which copies 8 bytes starting
-// at byte offset i.  At the last valid position (i = new_cap − 1) that
-// write needs bytes [new_cap−1 .. new_cap+6], so the backing store must be
-// at least new_cap + 7 bytes.  The extra 7 bytes are never part of the
-// logical string content (cap field controls the logical boundary); they
-// exist purely to make the 8-byte i64 store safe at every position.
+// Reference shim for the checked std.string capacity policy. This is not
+// compiler/theorem authority; explicitly embedded MIND tests exercise the
+// actual standard-library body independently of these weak compatibility names.
+MIND_EXPORT_WEAK int64_t string_push_capacity(int64_t len, int64_t cap) {
+    if (len < 0 || cap < 0 || len == INT64_MAX) return 0;
+    if (cap > 0) {
+        if (len > cap) return 0;
+        if (len < cap) return cap;
+    }
+    int64_t needed = len + 1;
+    int64_t next = cap == 0 ? 16 : cap;
+    while (next < needed) {
+        next = next > INT64_MAX / 2 ? needed : next * 2;
+    }
+    return next;
+}
+
+// Same valid-live-String/representable-append/allocation preconditions as the
+// MIND body. cap0 is borrowed, including nonnull empty views; never realloc it.
+// Owned spare storage is reused and owned growth may invalidate old aliases.
 MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
-    int64_t base    = __mind_load_i64(s);
-    int64_t len     = __mind_load_i64(s + 8);
-    int64_t cap     = __mind_load_i64(s + 16);
-
-    int64_t new_cap;
+    int64_t base = __mind_load_i64(s);
+    int64_t len = __mind_load_i64(s + 8);
+    int64_t cap = __mind_load_i64(s + 16);
+    int64_t new_cap = string_push_capacity(len, cap);
     int64_t new_base;
-
-    if (len < cap) {
-        new_cap  = cap;
+    if (cap == 0) {
+        new_base = __mind_alloc(new_cap);
+        if (len > 0) {
+            memcpy((void *)(uintptr_t)new_base,
+                   (const void *)(uintptr_t)base, (size_t)len);
+        }
+    } else if (new_cap == cap) {
         new_base = base;
     } else {
-        new_cap  = (cap == 0) ? 16 : cap * 2;
-        // Allocate new_cap + 7 bytes: the 7-byte pad ensures that a
-        // __mind_store_i64 at any byte offset in [0, new_cap) writes
-        // entirely within the allocated region (see comment above).
-        new_base = __mind_alloc(new_cap + 7);
-        if (len > 0 && base != 0) {
-            memcpy((void *)(uintptr_t)new_base,
-                   (void *)(uintptr_t)base,
-                   (size_t)len);
-        }
+        new_base = __mind_realloc(base, new_cap);
     }
-
-    // Write the new byte at offset `len` (each byte is stored in a full i64
-    // slot matching the MIND intrinsic convention — only low 8 bits matter).
-    __mind_store_i64(new_base + len, b & 0xFF);
-
-    // Allocate a fresh String header and populate it.
+    __mind_store_i8(new_base + len, b);
     int64_t rec = __mind_alloc(24);
-    __mind_store_i64(rec,      new_base);
-    __mind_store_i64(rec + 8,  len + 1);
+    __mind_store_i64(rec, new_base);
+    __mind_store_i64(rec + 8, len + 1);
     __mind_store_i64(rec + 16, new_cap);
     return rec;
 }

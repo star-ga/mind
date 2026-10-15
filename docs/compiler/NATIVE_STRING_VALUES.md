@@ -42,9 +42,11 @@ This change preserves the existing native borrowed String representation
 `{addr, len, cap = 0}` and read-only literal storage. It does **not** establish
 parity for arbitrary String mutation, capacity inspection or ownership operations
 against the MLIR backend's owned representation. Those are separate integration
-obligations. In particular, the existing standard-library append path attempts
-to realloc a borrowed literal and can crash; accepting a String value is not
-evidence that this separate ownership defect is fixed. Native source provenance
+obligations. The separately reviewed standard-library append fix now copies a
+borrowed prefix into a fresh owned buffer before appending; its ownership,
+capacity and allocation preconditions are documented in
+[Borrowed String append checks](../../examples/mindc_mind/string_borrowed_check.md).
+String decoding alone does not establish those ownership guarantees. Native source provenance
 remains source provenance; accepting these
 values does not claim that the current MIC trace path models every String value.
 No frozen compiler seed, downstream pin or production qualification is changed.

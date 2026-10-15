@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2170 | **Est. tokens:** ~4052214
-**Generated:** 2026-10-15 12:34 UTC
+**Files:** 2173 | **Est. tokens:** ~4056983
+**Generated:** 2026-10-15 12:36 UTC
 
 ## Token Budget Guide
 
@@ -49,7 +49,7 @@
 | `docs/` | 39 | ~114748 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
-| `docs/compiler/` | 7 | ~11816 |
+| `docs/compiler/` | 7 | ~11854 |
 | `docs/design/` | 4 | ~11498 |
 | `docs/gates/` | 1 | ~4020 |
 | `docs/mindcraft/` | 3 | ~7086 |
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 240 | ~653862 |
+| `examples/mindc_mind/` | 242 | ~657597 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -85,6 +85,7 @@
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2127 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2137 |
 | `examples/mindc_mind/testdata/selfhost_loop_bounded/` | 1 | ~269 |
+| `examples/mindc_mind/testdata/string_borrowed/` | 1 | ~869 |
 | `examples/native/` | 4 | ~1440 |
 | `examples/parser/` | 5 | ~17923 |
 | `examples/quant/` | 1 | ~3302 |
@@ -102,8 +103,8 @@
 | `examples/zoo/` | 6 | ~12518 |
 | `experiments/global-vs-local/` | 7 | ~6487 |
 | `mind/std/cognitive/` | 4 | ~3529 |
-| `runtime-support/` | 1 | ~23216 |
-| `scripts/` | 31 | ~117678 |
+| `runtime-support/` | 1 | ~23109 |
+| `scripts/` | 31 | ~117714 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2372 |
 | `scripts/sdlc/` | 2 | ~2845 |
@@ -161,7 +162,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11245 |
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
-| `std/` | 43 | ~207109 |
+| `std/` | 43 | ~207307 |
 | `tests/` | 423 | ~876546 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -501,7 +502,7 @@
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
 - `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
-- `NATIVE_STRING_VALUES.md` (~1789 tok, huge) — Native string value decoding
+- `NATIVE_STRING_VALUES.md` (~1827 tok, huge) — Native string value decoding
 ### `docs/design/`
 
 - `README.md` (~26 tok, tiny) — Design Docs
@@ -930,6 +931,8 @@
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
+- `string_borrowed_check.md` (~937 tok, large) — Borrowed String append checks
+- `string_borrowed_check.py` (~2798 tok, huge) — Source-bound borrowed String gate. MIND body and C shim are separate legs."""
 - `string_escape_driver.mind` (~531 tok, large)
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~2240 tok, huge)
@@ -1219,6 +1222,9 @@
 ### `examples/mindc_mind/testdata/`
 
 - `stdlib_manifest.txt` (~835 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+### `examples/mindc_mind/testdata/string_borrowed/`
+
+- `reference.c` (~869 tok, large) — Copyright STARGA Inc. Reference infrastructure only, not MIND implementation.
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1327,7 +1333,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~23216 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~23109 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
@@ -1336,7 +1342,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~10107 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10143 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -1878,7 +1884,7 @@
 - `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
 - `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `sha512.mind` (~5100 tok, huge) — std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
-- `string.mind` (~2725 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `string.mind` (~2923 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
 - `tls13_finished.mind` (~1409 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
 - `tls13_handshake.mind` (~5466 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
