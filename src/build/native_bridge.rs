@@ -18,6 +18,10 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
+mod entry;
+#[cfg(feature = "std-surface")]
+use entry::{check_entry_binds_main_params, check_entry_is_not_no_main_stub};
+#[cfg(feature = "std-surface")]
 mod outcome;
 #[cfg(feature = "std-surface")]
 mod seed;
@@ -337,12 +341,16 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(3);
     }
-    // An entry `main` with parameters would run with them all 0 (the frozen
-    // compiler does not bind them to argc/argv): refuse it, never miscompile.
-    if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
-        eprintln!("error[backend-native]: {msg}");
-        process::exit(3);
-    }
+    // An entry `main` with parameters would run with them all 0 unless the
+    // compiler binds them to argc/argv: refuse every shape but
+    // `main(argc: i64, argv: i64)`, whose binding is verified on the artifact.
+    let main_params = match admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        Ok(m) => m,
+        Err(msg) => {
+            eprintln!("error[backend-native]: {msg}");
+            process::exit(3);
+        }
+    };
     // A nested binding that re-declares an enclosing name would be merged into
     // the outer binding by the frozen compiler: refuse, never miscompile.
     // `admit_merged_program` already proved the image is UTF-8, so this is exact.
@@ -441,6 +449,20 @@ pub fn run_native_backend_bridge_profile(
             "error[backend-native]: `{}`: {why}; the source declares `main`, so this \
              artifact would not run the admitted program. No artifact written. \
              (native.entry_is_no_main_stub)",
+            paths[0]
+        );
+        process::exit(3);
+    }
+    // W4b: `main(argc: i64, argv: i64)` was admitted on condition that the
+    // compiler binds both parameters; a seed without the binding is refused here.
+    if main_params == admission::MainParams::ArgcArgv
+        && let Err(why) = check_entry_binds_main_params(&elf_bytes)
+    {
+        eprintln!(
+            "error[backend-native]: `{}`: the entry `fn main` declares parameter(s) \
+             [\"argc\", \"argv\"], but {why} (a silent miscompile). Use a compiler seed \
+             that binds `main(argc, argv)`, declare `fn main()`, or rerun with \
+             `--backend mlir`. No artifact written. (native.entry_main_has_params)",
             paths[0]
         );
         process::exit(3);
@@ -546,118 +568,6 @@ fn unterminated_imports(ast: &crate::ast::Module, text: &[u8]) -> Vec<String> {
         });
     }
     out
-}
-
-/// The frozen compiler's synthesized no-`main` entry:
-/// `xor edi,edi ; mov eax,60 ; syscall` (`main.mind::nb_synth_entry`).
-#[cfg(feature = "std-surface")]
-const NO_MAIN_ENTRY_STUB: [u8; 9] = [0x31, 0xFF, 0xB8, 0x3C, 0x00, 0x00, 0x00, 0x0F, 0x05];
-
-/// Refuse an x86-64 executable whose entry point is the no-`main` stub, or whose
-/// entry cannot be located in a loaded segment.
-///
-/// Scoped to `EM_X86_64` images because that is the only machine the frozen
-/// compiler emits; the host-native transport fixture used on other CI hosts
-/// writes a fixed `\x7fELF` + zeros anchor (machine 0) that carries no code.
-#[cfg(feature = "std-surface")]
-fn check_entry_is_not_no_main_stub(elf: &[u8]) -> Result<(), String> {
-    const EM_X86_64: u16 = 62;
-    const PT_LOAD: u32 = 1;
-    let u16_at = |o: usize| elf.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let u32_at = |o: usize| {
-        elf.get(o..o + 4)
-            .map(|b| u32::from_le_bytes(b.try_into().expect("4-byte slice")))
-    };
-    let u64_at = |o: usize| {
-        elf.get(o..o + 8)
-            .map(|b| u64::from_le_bytes(b.try_into().expect("8-byte slice")))
-    };
-    if u16_at(18) != Some(EM_X86_64) {
-        return Ok(());
-    }
-    let malformed = || "the emitted ELF's entry point lies in no loaded segment".to_string();
-    let entry = u64_at(24).ok_or_else(malformed)?;
-    let phoff = u64_at(32).ok_or_else(malformed)? as usize;
-    let phentsize = u16_at(54).ok_or_else(malformed)? as usize;
-    let phnum = u16_at(56).ok_or_else(malformed)? as usize;
-    for i in 0..phnum {
-        let ph = phoff.saturating_add(i.saturating_mul(phentsize));
-        if u32_at(ph) != Some(PT_LOAD) {
-            continue;
-        }
-        let (Some(off), Some(vaddr), Some(filesz)) =
-            (u64_at(ph + 8), u64_at(ph + 16), u64_at(ph + 32))
-        else {
-            return Err(malformed());
-        };
-        if entry < vaddr || entry - vaddr >= filesz {
-            continue;
-        }
-        let at = off.saturating_add(entry - vaddr) as usize;
-        let code = elf
-            .get(at..at + NO_MAIN_ENTRY_STUB.len())
-            .ok_or_else(malformed)?;
-        if code == NO_MAIN_ENTRY_STUB {
-            return Err(
-                "the frozen compiler emitted its no-`main` library entry stub \
-                        (`exit(0)`), so it did not see the admitted `main`"
-                    .to_string(),
-            );
-        }
-        return Ok(());
-    }
-    Err(malformed())
-}
-
-#[cfg(all(test, feature = "std-surface"))]
-mod entry_stub_tests {
-    use super::{NO_MAIN_ENTRY_STUB, check_entry_is_not_no_main_stub};
-
-    /// A minimal ELF64 x86-64 image: one PT_LOAD at file 0 / vaddr 0x400000,
-    /// entry 0x400078 (file offset 120, right after the header and one phdr).
-    fn elf_with_entry_code(machine: u16, code: &[u8]) -> Vec<u8> {
-        let mut b = vec![0u8; 120];
-        b[0..4].copy_from_slice(b"\x7fELF");
-        b[18..20].copy_from_slice(&machine.to_le_bytes());
-        b[24..32].copy_from_slice(&0x400078u64.to_le_bytes());
-        b[32..40].copy_from_slice(&64u64.to_le_bytes());
-        b[54..56].copy_from_slice(&56u16.to_le_bytes());
-        b[56..58].copy_from_slice(&1u16.to_le_bytes());
-        b[64..68].copy_from_slice(&1u32.to_le_bytes());
-        b[64 + 16..64 + 24].copy_from_slice(&0x400000u64.to_le_bytes());
-        b.extend_from_slice(code);
-        b.resize(400, 0);
-        let len = b.len() as u64;
-        b[64 + 32..64 + 40].copy_from_slice(&len.to_le_bytes());
-        b
-    }
-
-    #[test]
-    fn the_no_main_stub_at_the_entry_is_refused() {
-        let elf = elf_with_entry_code(62, &NO_MAIN_ENTRY_STUB);
-        assert!(check_entry_is_not_no_main_stub(&elf).is_err());
-    }
-
-    #[test]
-    fn a_real_main_prologue_at_the_entry_is_admitted() {
-        // movabs rsp, STACK_TOP -- the first bytes of every frozen `main`.
-        let elf = elf_with_entry_code(62, &[0x48, 0xBC, 0xF8, 0x0F, 0x00, 0x41, 0x01, 0, 0]);
-        assert_eq!(check_entry_is_not_no_main_stub(&elf), Ok(()));
-    }
-
-    #[test]
-    fn an_entry_outside_every_segment_is_refused() {
-        let mut elf = elf_with_entry_code(62, &NO_MAIN_ENTRY_STUB);
-        elf[24..32].copy_from_slice(&0x900000u64.to_le_bytes());
-        assert!(check_entry_is_not_no_main_stub(&elf).is_err());
-    }
-
-    #[test]
-    fn a_non_x86_64_transport_anchor_is_not_inspected() {
-        let mut anchor = b"\x7fELF".to_vec();
-        anchor.resize(397, 0);
-        assert_eq!(check_entry_is_not_no_main_stub(&anchor), Ok(()));
-    }
 }
 
 #[cfg(feature = "std-surface")]

@@ -69,6 +69,10 @@ const VEC_Q16_LANES: usize = 8;
 #[cfg(feature = "std-surface")]
 const MIND_INTRINSIC_PREFIX: &str = "__mind_";
 
+// W2-trap integer-division trap: exit status, guard emission, trampoline.
+#[path = "div_trap.rs"]
+mod div_trap;
+
 /// The closed set of `__mind_*` intrinsics the `Instr::Call` arm lowers inline
 /// (as opposed to emitting a generic `func.call` / `llvm.call` to the
 /// runtime-support bridge).
@@ -2046,17 +2050,18 @@ impl LoweringContext {
                         } else if !unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self
-                                .const_i64_map
-                                .get(rhs)
-                                .is_some_and(|&v| v != -1 && v != 0)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| {
+                                // elide only if the divisor AS `ity` is not -1/0
+                                let n = if ity == "i32" { v as i32 as i64 } else { v };
+                                n != -1 && n != 0
+                            })
                         {
                             // Signed narrow div/rem determinism — INT_MIN/-1 AND
                             // divisor-0, the same two x86-#DE-vs-AArch64 divergences
-                            // closed for i64. Substitute divisor 1 on either case
-                            // (never traps); the common emit forces the result to 0
-                            // when the divisor was 0 (`x/0 == 0`, `x%0 == 0`).
-                            // Elided for a constant divisor that is neither -1 nor 0.
+                            // closed for i64. Since W2-trap a zero divisor exits
+                            // with MIND_DIV_TRAP_EXIT_CODE; MIN/-1 keeps the
+                            // divisor-1 result (see the guard call below).
+                            // Elided for a constant divisor (as `ity`) not -1 or 0.
                             // INT_MIN(ity) built as 1<<(w-1). Unsigned narrow div has
                             // no INT_MIN/-1 case but IS routed (this arm is
                             // signed-only) — its div-by-zero is the unsigned guard
@@ -2109,25 +2114,28 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
+                            // W2-trap: zero traps; narrow MIN/-1 keeps the divisor-1
+                            // result, as the native backend does (div_trap.rs).
+                            self.emit_div_trap_guard(&format!("%disz{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else if unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && self.const_i64_map.get(rhs).is_none_or(|&v| v == 0)
+                            && self.const_i64_map.get(rhs).is_none_or(|&v| {
+                                (if ity == "i32" { v as i32 as i64 } else { v }) == 0
+                            })
                         {
                             // Unsigned narrow div/rem determinism — divisor-0.
                             // x86 `divl`/`divq` raise #DE on a zero divisor
                             // (SIGFPE / process crash), while AArch64 `udiv`
                             // returns 0 with no trap — a cross-substrate
                             // divergence and a crash where the deterministic
-                            // contract (matching the signed and i64 arms) is
-                            // `x/0 == 0`, `x%0 == 0`. Substitute divisor 1 when
-                            // the divisor is 0 (never traps); the common emit
-                            // forces the result to 0 via `div_zero_guard`.
+                            // contract is the W2 division trap (div_trap.rs); the
+                            // divisor is still substituted with 1 (never UB).
                             // Unsigned division has NO INT_MIN/-1 overflow case,
                             // so unlike the signed arm this only guards zero.
-                            // Elided for a constant divisor known to be nonzero.
+                            // Elided for a constant divisor nonzero as an `ity`.
                             // Gated; an i64-only program never reaches this arm,
                             // so keystone/canary bytes are unchanged.
                             self.emit_line(&format!(
@@ -2146,6 +2154,7 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
+                            self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
                         } else {
@@ -2325,9 +2334,8 @@ impl LoweringContext {
                         let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
                         #[cfg(not(feature = "std-surface"))]
                         let is_shift = false;
-                        // Set by the signed-div guard to the i1 "divisor == 0"
-                        // flag; the common emit then forces the RESULT to 0 so
-                        // `x / 0 == 0` (and `x % 0 == 0`) deterministically.
+                        // Set by the div guards to the i1 "divisor == 0" flag
+                        // (that path traps first; see emit_div_trap_guard).
                         let mut div_zero_guard: Option<String> = None;
                         let rhs_ref = if is_shift {
                             self.emit_line(&format!(
@@ -2348,9 +2356,8 @@ impl LoweringContext {
                             // zero divisor while AArch64 `udiv` returns 0 — a
                             // cross-substrate divergence + a crash where the
                             // deterministic contract (matching the signed i64 and
-                            // narrow arms) is `x/0 == 0`, `x%0 == 0`. Substitute
-                            // divisor 1 when it is 0 (never traps); the common emit
-                            // forces the result to 0 via `div_zero_guard`. Unsigned
+                            // narrow arms) is the W2 division trap (div_trap.rs);
+                            // divisor 1 is still substituted (never UB). Unsigned
                             // division has NO INT_MIN/-1 overflow case, so unlike the
                             // signed arm below this guards zero only. Elided for a
                             // constant divisor known nonzero. Gated; an i64-only
@@ -2372,6 +2379,7 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
+                            self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
                         } else if matches!(op, BinOp::Div | BinOp::Mod)
@@ -2389,18 +2397,9 @@ impl LoweringContext {
                             //     while AArch64 `sdiv` returns INT_MIN.
                             //   * divisor == 0: x86 `idiv` raises #DE while AArch64
                             //     `sdiv` returns 0.
-                            // Substitute divisor 1 on EITHER case (never traps): the
-                            // overflow case then yields the wrapping result on every
-                            // substrate (INT_MIN/1 == INT_MIN; INT_MIN%1 == 0). For
-                            // the zero case the divisor-1 substitution alone gives
-                            // `x/1 == x`, so the common emit additionally forces the
-                            // RESULT to 0 via `div_zero_guard`, making `x/0 == 0` and
-                            // `x%0 == 0` deterministically. (Provisional total
-                            // semantics — could be revisited to a deterministic trap
-                            // via the spec; 0 is the conventional, non-crashing
-                            // choice.) INT_MIN built as 1<<63 to dodge any
-                            // most-negative-literal parse edge. Inert for the gates
-                            // (no canary/keystone path divides).
+                            // W2-trap: EITHER case traps (div_trap.rs) before the
+                            // division; divisor 1 is still substituted (never UB).
+                            // INT_MIN built as 1<<63 (most-negative-literal edge).
                             self.emit_line(&format!(
                                 "    %done{0} = arith.constant 1 : i64",
                                 dst.0
@@ -2442,16 +2441,14 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
+                            self.emit_div_trap_guard(&format!("%dsub{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else {
                             rhs_base.clone()
                         };
                         if let Some(disz) = &div_zero_guard {
-                            // Force the result to 0 when the original divisor was 0
-                            // (the divisor was substituted to 1 above to avoid the
-                            // trap, which would otherwise give x/1 == x). Net:
-                            // `x / 0 == 0`, `x % 0 == 0`, deterministic everywhere.
+                            // Select 0 for a zero divisor (that path already trapped).
                             self.emit_line(&format!(
                                 "    %ddt{0} = {1} {2}, {3} : i64",
                                 dst.0, mlir_op, lhs_ref, rhs_ref
@@ -11424,6 +11421,8 @@ pub fn lower_ir_to_mlir_with_entry(
         // call. `(worker_fp, argbuf, struct_bytes, n_bands) -> void`.
         out.push_str("  llvm.func @__mind_blas_mt_dispatch(!llvm.ptr, !llvm.ptr, i64, i64)\n");
     }
+    // W2-trap: the `@__mind_div_trap` trampoline, iff a guard was emitted.
+    div_trap::append_trampoline(&ctx, &mut out)?;
     // Heap-allocation externs for the int8 BLIS macro-kernel's scratch panels
     // (C-scratch / packed-A / packed-B). Emitted once, before any function body
     // that calls @malloc / @free, so the `llvm.call`s resolve. Declared only
@@ -11578,7 +11577,6 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
 /// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
 /// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
 /// through untouched.
-#[cfg(feature = "std-surface")]
 fn extern_ret_mlir_ty(tok: &str) -> &str {
     match tok {
         "u8" => "i8",

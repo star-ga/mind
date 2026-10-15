@@ -1453,6 +1453,10 @@ pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) ->
     __mind_store_i64(n + 32, rhs);
     __mind_store_i64(n + 40, 0);
     __mind_store_i64(n + 48, op);
+    // +56 = the narrow-lattice cache (alias_annotate_call_expr), read by the
+    // native binop arm (nb_binop_narrow_code). `__mind_alloc` is not zeroed, so
+    // a node the annotation pass never visits must read neutral 0, not residue.
+    __mind_store_i64(n + 56, 0);
     n
 }
 
@@ -2736,6 +2740,34 @@ pub fn alias_join_narrow_code(left: i64, right: i64, op: i64) -> i64 {
         return right;
     }
     64
+}
+
+// The lattice code the annotation pass caches on a binop. Arithmetic joins its
+// operands (alias_join_narrow_code). A shift result carries its LEFT operand's
+// type, as in Rust's infer_narrow_arith_ty: an 8/16-bit left keeps its code (so
+// `(a << 1) + 200` on u8 is re-masked like any u8 arithmetic) and a wide left
+// keeps the result wide. An i32/u32 or literal left stays neutral, as before:
+// Rust types those shifts outside this lattice, so the mic@3 lowering of i32/u32
+// shifts is unchanged, and the native division check reads their 32-bit type
+// through nb_div_bits32_code instead. `& | ^` and comparisons are neutral.
+pub fn alias_binop_lattice_code(lw: i64, rw: i64, op: i64) -> i64 {
+    if op == op_shl() {
+        return alias_shift_lattice_code(lw);
+    }
+    if op == op_shr() {
+        return alias_shift_lattice_code(lw);
+    }
+    alias_join_narrow_code(lw, rw, op)
+}
+
+pub fn alias_shift_lattice_code(lw: i64) -> i64 {
+    if nb_narrow_8_16(lw) != 0 {
+        return lw;
+    }
+    if lw == 64 {
+        return 64;
+    }
+    0
 }
 
 pub fn flatten_narrow_binop_result(op: i64, left: i64, right: i64, root: i64, nodes: i64, cursor: i64) -> i64 {
@@ -28556,6 +28588,57 @@ pub fn eval_const_expr(node: i64, buf: i64) -> i64 {
     0
 }
 
+// W2-trap: 1 iff folding `node` with eval_const_expr never divides by zero and
+// never divides INT_MIN by -1. Those two quotients are the division trap
+// (docs/errors.md), so a compiler built with the trap would itself exit 79 inside
+// eval_const_expr, and the Rust oracle leaves such a division unfolded
+// (`div %a, %b`), which emit_bare_expr cannot print. lower_program and
+// lower_program_bimap refuse the module (es_refused) when this returns 0.
+pub fn const_expr_div_ok(node: i64, buf: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return const_expr_div_ok(ast_child0(node), buf);
+    }
+    if k != ast_binop() {
+        return 1;
+    }
+    if const_expr_div_ok(ast_child0(node), buf) == 0 {
+        return 0;
+    }
+    if const_expr_div_ok(ast_child1(node), buf) == 0 {
+        return 0;
+    }
+    if ast_aux(node) != op_div() {
+        return 1;
+    }
+    let r: i64 = eval_const_expr(ast_child1(node), buf);
+    if r == 0 {
+        return 0;
+    }
+    if r != 0 - 1 {
+        return 1;
+    }
+    let l: i64 = eval_const_expr(ast_child0(node), buf);
+    if l == 0 - 9223372036854775807 - 1 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff every bare top-level expression item folds without a trapping division.
+pub fn items_const_div_ok(buf: i64, items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 1;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if is_bare_expr_kind(ast_kind(item)) == 1 {
+        if const_expr_div_ok(item, buf) == 0 {
+            return 0;
+        }
+    }
+    items_const_div_ok(buf, items_addr, items_len, i + 1)
+}
+
 // Emit a bare top-level expression as one const-folded result:
 //   %<count-1> = const.i64 <val>
 //   output %<count-1>
@@ -28897,6 +28980,9 @@ pub fn lower_program_bimap(ast_addr: i64, buf: i64) -> EmitState {
     if bimap_items_valid(buf, items, n, 0) == 0 {
         return es_refused();
     }
+    if items_const_div_ok(buf, items, n, 0) == 0 {
+        return es_refused();
+    }
     let s0: EmitState = es_new();
     let s1: EmitState = emit_lit_module_open(s0);
     let s2: EmitState = emit_program_items_bimap(s1, buf, items, n, 0);
@@ -28943,6 +29029,9 @@ pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
     // none of which reach the parser fallback, so this never fires during
     // self-compile and the fixed point is unchanged.
     if nb_items_any_unsupported(items_addr, items_len, 0) == 1 {
+        return es_refused();
+    }
+    if items_const_div_ok(buf, items_addr, items_len, 0) == 0 {
         return es_refused();
     }
     let s0: EmitState = es_new();
@@ -32764,13 +32853,12 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
         let c3: String = nb_push(c2, 133);
         return nb_i32le_signed(c3, disp);
     }
-    // op_div(): the branchless guarded signed-division sequence (lhs already in
-    // rax). Byte-for-byte src/native::emit_div_mod_guarded(is_mod=false): substitute
-    // divisor 1 when rhs==0 OR (rax==INT_MIN && rcx==-1) so idiv never traps, then
-    // force the result to 0 when rhs==0 — giving MIND's defined edges x/0=0,
-    // INT_MIN/-1=INT_MIN. op_mod routes to the SAME guarded sequence with is_mod=1,
-    // which appends a `mov rax,rdx` tail (remainder, not quotient). tk_to_op DOES
-    // yield op_mod (the `%` operator), so the mod arm below is live.
+    // op_div(): the trapping signed-division sequence (lhs already in rax): rhs==0
+    // or (rax==INT_MIN && rhs==-1) exits the process with status 79 (W2-trap,
+    // docs/errors.md), every other pair is the idiv quotient. op_mod routes to the
+    // SAME sequence with is_mod=1, which appends a `mov rax,rdx` tail (remainder,
+    // not quotient). tk_to_op DOES yield op_mod (the `%` operator), so the mod arm
+    // below is live.
     if op == op_div() {
         return nb_div_guarded(code, disp, 0);
     }
@@ -32810,118 +32898,931 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     let c4: String = nb_push(c3, 133);
     nb_i32le_signed(c4, disp)
 }
-// Emit `emit_div_mod_guarded(is_mod=?, rhs=disp)` — the branchless guarded signed
-// div/mod with the dividend already in rax. Flat sequential `nb_push` chain (one let
-// per byte-group, no value-if-expr) to stay self-flip-clean. INT_MIN is emitted as
-// its raw 8 LE bytes (00*7, 0x80) so no i64 literal is needed. When is_mod==1 the
-// idiv is followed by `mov rax,rdx` (48 89 D0) so the RESULT is the remainder (in
-// rdx), not the quotient (in rax) — 63 bytes for mod vs 60 for div.
+// W2-trap: the TRAPPING signed i64 div/mod (dividend already in rax, divisor at
+// [rbp+disp]). MIND's rule (docs/errors.md, "Integer division trap"): `x / 0`,
+// `x % 0`, `INT_MIN / -1` and `INT_MIN % -1` terminate the process at once with
+// exit status 79 (nb_div_trap_code) — nothing further is written — and every other
+// pair is the plain x86 idiv result (quotient truncated toward zero, remainder with
+// the dividend's sign). The MLIR lowering guards arith.divsi/remsi with the same
+// predicate and the same exit status, so both backends agree. Fixed-length
+// sequence, short jumps with constant displacements (no jump-table entries):
+//    0  mov rcx,[rbp+disp]  = 48 8B 8D <disp32>
+//    7  test rcx,rcx        = 48 85 C9
+//   10  jz trap (+21)       = 74 15
+//   12  cmp rcx,-1          = 48 83 F9 FF
+//   16  jne ok (+27)        = 75 1B
+//   18  movabs r10,INT_MIN  = 49 BA 00 00 00 00 00 00 00 80
+//   28  cmp rax,r10         = 4C 39 D0
+//   31  jne ok (+12)        = 75 0C
+//   33  trap: mov edi,79    = BF 4F 00 00 00
+//   38  mov eax,231         = B8 E7 00 00 00   (exit_group)
+//   43  syscall             = 0F 05
+//   45  ok: cqo             = 48 99
+//   47  idiv rcx            = 48 F7 F9
+//   50  (mod only) mov rax,rdx = 48 89 D0
+// 50 bytes for div, 53 for mod. Clobbers rcx, rdx, r10 (and rdi/rax on the trap
+// path, which never returns). Flat sequential nb_push chain (one let per byte
+// group, no value-if-expr) to stay in the self-host subset.
 pub fn nb_div_guarded(code: String, disp: i64, is_mod: i64) -> String {
     // mov rcx, [rbp+rhs]  = 48 8B 8D <disp32>
     let a1: String = nb_push(code, 72);
     let a2: String = nb_push(a1, 139);
     let a3: String = nb_push(a2, 141);
     let a4: String = nb_i32le_signed(a3, disp);
-    // xor r8,r8 = 4D 31 C0 ; test rcx,rcx = 48 85 C9 ; sete r8b = 41 0F 94 C0
-    let b1: String = nb_push(a4, 77);
-    let b2: String = nb_push(b1, 49);
-    let b3: String = nb_push(b2, 192);
-    let b4: String = nb_push(b3, 72);
-    let b5: String = nb_push(b4, 133);
-    let b6: String = nb_push(b5, 201);
-    let b7: String = nb_push(b6, 65);
-    let b8: String = nb_push(b7, 15);
-    let b9: String = nb_push(b8, 148);
-    let b10: String = nb_push(b9, 192);
+    // test rcx,rcx = 48 85 C9 ; jz +21 = 74 15
+    let b1: String = nb_push(a4, 72);
+    let b2: String = nb_push(b1, 133);
+    let b3: String = nb_push(b2, 201);
+    let b4: String = nb_push(b3, 116);
+    let b5: String = nb_push(b4, 21);
+    // cmp rcx,-1 = 48 83 F9 FF ; jne +27 = 75 1B
+    let c1: String = nb_push(b5, 72);
+    let c2: String = nb_push(c1, 131);
+    let c3: String = nb_push(c2, 249);
+    let c4: String = nb_push(c3, 255);
+    let c5: String = nb_push(c4, 117);
+    let c6: String = nb_push(c5, 27);
     // movabs r10, INT_MIN = 49 BA 00 00 00 00 00 00 00 80
-    let c1: String = nb_push(b10, 73);
-    let c2: String = nb_push(c1, 186);
-    let c3: String = nb_push(c2, 0);
-    let c4: String = nb_push(c3, 0);
-    let c5: String = nb_push(c4, 0);
-    let c6: String = nb_push(c5, 0);
-    let c7: String = nb_push(c6, 0);
-    let c8: String = nb_push(c7, 0);
-    let c9: String = nb_push(c8, 0);
-    let c10: String = nb_push(c9, 128);
-    // xor r9,r9 = 4D 31 C9 ; cmp rax,r10 = 4C 39 D0 ; sete r9b = 41 0F 94 C1
-    let d1: String = nb_push(c10, 77);
-    let d2: String = nb_push(d1, 49);
-    let d3: String = nb_push(d2, 201);
-    let d4: String = nb_push(d3, 76);
-    let d5: String = nb_push(d4, 57);
-    let d6: String = nb_push(d5, 208);
-    let d7: String = nb_push(d6, 65);
-    let d8: String = nb_push(d7, 15);
-    let d9: String = nb_push(d8, 148);
-    let d10: String = nb_push(d9, 193);
-    // xor r11,r11 = 4D 31 DB ; cmp rcx,-1 = 48 83 F9 FF ; sete r11b = 41 0F 94 C3
-    let e1: String = nb_push(d10, 77);
-    let e2: String = nb_push(e1, 49);
-    let e3: String = nb_push(e2, 219);
-    let e4: String = nb_push(e3, 72);
-    let e5: String = nb_push(e4, 131);
-    let e6: String = nb_push(e5, 249);
-    let e7: String = nb_push(e6, 255);
-    let e8: String = nb_push(e7, 65);
-    let e9: String = nb_push(e8, 15);
-    let e10: String = nb_push(e9, 148);
-    let e11: String = nb_push(e10, 195);
-    // and r9,r11 = 4D 21 D9 ; or r9,r8 = 4D 09 C1
-    let f1: String = nb_push(e11, 77);
-    let f2: String = nb_push(f1, 33);
-    let f3: String = nb_push(f2, 217);
-    let f4: String = nb_push(f3, 77);
-    let f5: String = nb_push(f4, 9);
-    let f6: String = nb_push(f5, 193);
-    // mov r10,1 = 49 C7 C2 01 00 00 00
-    let g1: String = nb_push(f6, 73);
-    let g2: String = nb_push(g1, 199);
-    let g3: String = nb_push(g2, 194);
-    let g4: String = nb_push(g3, 1);
-    let g5: String = nb_push(g4, 0);
-    let g6: String = nb_push(g5, 0);
-    let g7: String = nb_push(g6, 0);
-    // test r9,r9 = 4D 85 C9 ; cmovnz rcx,r10 = 49 0F 45 CA
-    let h1: String = nb_push(g7, 77);
-    let h2: String = nb_push(h1, 133);
-    let h3: String = nb_push(h2, 201);
-    let h4: String = nb_push(h3, 73);
-    let h5: String = nb_push(h4, 15);
-    let h6: String = nb_push(h5, 69);
-    let h7: String = nb_push(h6, 202);
-    // cqo = 48 99 ; idiv rcx = 48 F7 F9
-    let i1: String = nb_push(h7, 72);
+    let d1: String = nb_push(c6, 73);
+    let d2: String = nb_push(d1, 186);
+    let d3: String = nb_push(d2, 0);
+    let d4: String = nb_push(d3, 0);
+    let d5: String = nb_push(d4, 0);
+    let d6: String = nb_push(d5, 0);
+    let d7: String = nb_push(d6, 0);
+    let d8: String = nb_push(d7, 0);
+    let d9: String = nb_push(d8, 0);
+    let d10: String = nb_push(d9, 128);
+    // cmp rax,r10 = 4C 39 D0 ; jne +12 = 75 0C
+    let e1: String = nb_push(d10, 76);
+    let e2: String = nb_push(e1, 57);
+    let e3: String = nb_push(e2, 208);
+    let e4: String = nb_push(e3, 117);
+    let e5: String = nb_push(e4, 12);
+    // trap: the shared exit_group(nb_div_trap_code()) block
+    let f1: String = nb_div_trap_exit(e5);
+    // ok: cqo = 48 99 ; idiv rcx = 48 F7 F9
+    let i1: String = nb_push(f1, 72);
     let i2: String = nb_push(i1, 153);
     let i3: String = nb_push(i2, 72);
     let i4: String = nb_push(i3, 247);
     let i5: String = nb_push(i4, 249);
-    // For mod (is_mod==1): the remainder is in rdx after idiv; move it into rax
-    // BEFORE the zero-guard so the guard zeroes the MOD result on rhs==0 too.
+    // For mod (is_mod==1): the remainder is in rdx after idiv; move it into rax.
     //   mov rax,rdx = 48 89 D0
     if is_mod == 1 {
         let m1: String = nb_push(i5, 72);
         let m2: String = nb_push(m1, 137);
-        let m3: String = nb_push(m2, 208);
-        return nb_div_guard_tail(m3);
+        return nb_push(m2, 208);
     }
-    nb_div_guard_tail(i5)
+    i5
 }
-// The shared zero-guard tail of nb_div_guarded (div and mod): force the result to 0
-// when rhs==0 (r8 was set to (rhs==0) earlier), giving MIND's defined edges x/0=0
-// and x%0=0. Extracted so div (is_mod=0) stays byte-identical to before the mod arm.
-//   xor r10,r10 = 4D 31 D2 ; test r8,r8 = 4D 85 C0 ; cmovnz rax,r10 = 49 0F 45 C2
-pub fn nb_div_guard_tail(i5: String) -> String {
-    let j1: String = nb_push(i5, 77);
-    let j2: String = nb_push(j1, 49);
-    let j3: String = nb_push(j2, 210);
-    let j4: String = nb_push(j3, 77);
-    let j5: String = nb_push(j4, 133);
-    let j6: String = nb_push(j5, 192);
-    let j7: String = nb_push(j6, 73);
-    let j8: String = nb_push(j7, 15);
-    let j9: String = nb_push(j8, 69);
-    nb_push(j9, 194)
+
+// W2-trap unsigned fence (fail-closed). nb_div_guarded is the SIGNED trapping
+// idiv sequence. It is exact for i64/i32/i16/i8 and for u32/u16/u8 values: those
+// are kept zero-extended to their declared width (nb_width_of_ann's -8/-16/-32
+// codes truncate every let, assign, param and return; nb_binop_narrow_code
+// truncates every 8/16-bit `+ - * <<` result), so idiv equals div on them, -1 and
+// INT_MIN never occur, and the only trap left is a zero divisor. A u64/usize operand with the
+// top bit set would instead divide wrongly or hit the INT_MIN/-1 trap, and the
+// native width lattice does not tell u64 from i64. So a `/` or `%` at byte
+// offset `pos` inside a fn that can hold a u64 value (u64x_prepare: the fn spells
+// `u64`/`usize` or names a u64-returning fn, a u64 field/variant/alias/const)
+// POISONS the fn (the whole module refuses, 0 bytes) instead of emitting signed
+// idiv. An overflowed or unbalanced scan, or a synthetic node with no source
+// position, fences every division of a module that spells the type. main.mind
+// spells neither, so self-compile is unaffected. A null frt (only the
+// float-only fp selftest drivers) is never fenced.
+// deferred: would emit `xor edx,edx ; div` with a zero-only trap for proven-u64
+// operands, refused because the width lattice has no u64 code — upgrade path:
+// give alias_annotate_call_expr a distinct u64 code and route it here.
+pub fn nb_div_unsigned_fenced(op: i64, lcell: i64, pos: i64) -> i64 {
+    if op != op_div() {
+        if op != op_mod() {
+            return 0;
+        }
+    }
+    let frt: i64 = __mind_load_i64(lcell + 16);
+    if frt == 0 {
+        return 0;
+    }
+    if frt_has_unsigned64(frt) == 0 {
+        return 0;
+    }
+    let spans: i64 = __mind_load_i64(frt + (frt_u64_word() + 2) * 8);
+    if spans == 0 {
+        return 1;
+    }
+    if u64x_count(spans) < 0 {
+        return 1;
+    }
+    if pos <= 0 {
+        return 1;
+    }
+    u64x_span_contains(spans, pos, 0)
+}
+
+// The narrow type of a binop's integer result, or 0 when the result is used at
+// 64 bits: the alias annotation pass caches the lattice code (signed +8/+16/+32,
+// unsigned -8/-16/-32) on every arithmetic binop it visits
+// (alias_join_narrow_code); `<<` keeps its left operand's narrow type. Only the
+// 8- and 16-bit codes count, mirroring the Rust frontend (infer_narrow_arith_ty
+// re-masks 8/16-bit arithmetic and evaluates i32/u32 arithmetic at 64 bits
+// until it is bound), so both backends compute the same value.
+pub fn nb_binop_narrow_code(node: i64, op: i64) -> i64 {
+    if alias_is_arith_op(op) == 1 {
+        return nb_narrow_8_16(__mind_load_i64(node + 56));
+    }
+    if op == op_shl() {
+        return nb_narrow_8_16(cached_narrow_expr_code(ast_child0(node)));
+    }
+    0
+}
+
+// The width (8 or 16) whose count mask a `<<` or `>>` uses, or 0. Rust masks the
+// count of a shift whose LEFT operand is an 8/16-bit narrow value to width-1
+// (`1u8 << 9` shifts by 1) and leaves every other shift to the 64-bit `& 63`
+// rule; the native shift follows the same cached left-operand type.
+pub fn nb_shift_count_width(node: i64, op: i64) -> i64 {
+    if op != op_shl() {
+        if op != op_shr() {
+            return 0;
+        }
+    }
+    let w: i64 = nb_narrow_8_16(cached_narrow_expr_code(ast_child0(node)));
+    if w < 0 {
+        return 0 - w;
+    }
+    w
+}
+
+// nb_val_arith_rax, except that a shift with a nonzero count width `cw`
+// (nb_shift_count_width) masks its count to cw-1 first:
+//   mov rcx,[rbp+disp32] = 48 8B 8D <disp32> ; and ecx,imm8 = 83 E1 <cw-1> ;
+//   shl rax,cl = 48 D3 E0 | sar rax,cl = 48 D3 F8
+// The result of an 8/16-bit `>>` then stays in range; a `<<` result is wrapped by
+// nb_binop_narrow_code. A shift count is never register-homed (the DTK
+// whitelist refuses shifts); if one ever were, the fn is refused (fail-closed).
+pub fn nb_val_arith_shift_rax(plan: i64, id: i64, code: String, op: i64, lcell: i64, cw: i64) -> String {
+    if cw == 0 {
+        return nb_val_arith_rax(plan, id, code, op, lcell);
+    }
+    if nb_plan_reg(plan, id) >= 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    let s1: String = nb_push(code, 72);
+    let s2: String = nb_push(s1, 139);
+    let s3: String = nb_push(s2, 141);
+    let s4: String = nb_i32le_signed(s3, nb_slot_disp(id));
+    let m1: String = nb_push(s4, 131);
+    let m2: String = nb_push(m1, 225);
+    let m3: String = nb_push(m2, cw - 1);
+    let s5: String = nb_push(m3, 72);
+    let s6: String = nb_push(s5, 211);
+    if op == op_shl() {
+        return nb_push(s6, 224);
+    }
+    nb_push(s6, 248)
+}
+
+// +-32 when `node` (parens stripped) is an i32/u32 `+ - * / % <<` result: that
+// arithmetic is evaluated at 64 bits (nb_binop_narrow_code) and must be wrapped
+// where it is bound. Bindings that know their declared width (let, assign,
+// param, return) wrap by it; a struct field store does not, so it wraps by
+// this code. 0 for every other node, which is already at its width.
+pub fn nb_bound32_code(node: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_bound32_code(ast_child0(node));
+    }
+    if ast_kind(node) != ast_binop() {
+        return 0;
+    }
+    let op: i64 = ast_aux(node);
+    let w: i64 = if alias_is_arith_op(op) == 1 {
+        __mind_load_i64(node + 56)
+    } else {
+        if op == op_shl() {
+            cached_narrow_expr_code(ast_child0(node))
+        } else {
+            0
+        }
+    };
+    if w == 32 {
+        return 32;
+    }
+    if w == 0 - 32 {
+        return 0 - 32;
+    }
+    0
+}
+
+// W2-trap division operand check (fail-closed). 1 iff the native backend cannot
+// prove that this `/` or `%` sees the operand values, and gives the result, the
+// MLIR build gives; the caller then refuses the module (0 bytes). Natively every
+// integer is an i64 slot: a binding (let, assign, param, return, struct field
+// store) wraps a narrow value to its declared width, and an 8/16-bit arithmetic
+// result is wrapped by the cached narrow lattice (nb_binop_narrow_code). The
+// division is refused when:
+//  - an operand is an i32/u32 arithmetic result that is not yet bound
+//    (nb_bound32_code): MLIR evaluates it at 32 bits when its operands are
+//    parameters and at 64 bits when they are locals;
+//  - an operand's arithmetic reaches a leaf whose narrow type the cached lattice
+//    does not carry (nb_div_leaf_exact: an i32/u32 call result, a narrow struct
+//    field, a u8 array cell, a method result), so the native intermediate is not
+//    wrapped where MLIR's is;
+//  - the operand types differ in a way the native i64 slots do not model
+//    (nb_div_class): a narrow operand next to a wide operand or a narrow operand
+//    of the other signedness, or the same field name declared narrow in two
+//    different ways;
+//  - an i32/u32 operand meets an integer literal that need not fit in 32 bits
+//    (MLIR converts the literal to the operand's 32-bit type);
+//  - it is a `/` with an i32 operand and a divisor that is not such a small
+//    literal: i32 MIN / -1 is 2^31 at 64 bits but MIN at 32 bits, and MLIR uses
+//    either width depending on where the operands come from, so no single
+//    native result matches it.
+// Every other division of exact operands is the plain i64 idiv of
+// nb_div_guarded, which equals MLIR's result (and its trap) on them.
+pub fn nb_div_unsafe(op: i64, node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if op != op_div() {
+        if op != op_mod() {
+            return 0;
+        }
+    }
+    let l: i64 = ast_child0(node);
+    let r: i64 = ast_child1(node);
+    if nb_div_operand_exact(l, buf, lets, lcell) == 0 {
+        return 1;
+    }
+    if nb_div_operand_exact(r, buf, lets, lcell) == 0 {
+        return 1;
+    }
+    let lc: i64 = nb_div_class(l, buf, lets, lcell);
+    let rc: i64 = nb_div_class(r, buf, lets, lcell);
+    if nb_div_classes_mix(lc, rc) == 1 {
+        return 1;
+    }
+    let w32: i64 = nb_div_is_w32(lc) + nb_div_is_w32(rc);
+    if w32 == 0 {
+        return 0;
+    }
+    // a 32-bit operand divides only with the same 32-bit type or a literal
+    if lc != 0 {
+        if rc != 0 {
+            if lc != rc {
+                return 1;
+            }
+        }
+    }
+    if nb_div_wide_lit(l, buf) == 1 {
+        return 1;
+    }
+    if nb_div_wide_lit(r, buf) == 1 {
+        return 1;
+    }
+    if op == op_div() {
+        if lc + rc > 0 {
+            // an i32 operand: the divisor must be a small literal (never -1),
+            // or the dividend one (never MIN), or the quotient is bound
+            // straight to an i32 slot
+            if nb_div_small_lit(r, buf) == 0 {
+                if nb_div_small_lit(l, buf) == 0 {
+                    if __mind_load_i64(node + 56) != nb_div_bound32_tag() {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// A signed i32 `/` whose quotient is bound straight to an i32 slot (a `let`
+// or assignment of an i32 name, a `return` from an `-> i32` fn, an i32 struct
+// field) is wrapped to 32 bits by that binding, so MIN / -1 gives MIN natively,
+// as it does in MLIR. The binding site calls this before it lowers the value:
+// the division node's narrow cache (+56) is re-tagged nb_div_bound32_tag(),
+// which nb_div_unsafe accepts in place of a small-literal divisor. Every other
+// cache reader treats the tag like a wide code, and the binding wraps the value
+// itself, so nothing else changes. `w` is the binding's declared width code.
+pub fn nb_bless_bound_div(node: i64, w: i64) -> i64 {
+    if w != 32 {
+        return 0;
+    }
+    if node == 0 {
+        return 0;
+    }
+    if ast_kind(node) == ast_paren() {
+        return nb_bless_bound_div(ast_child0(node), w);
+    }
+    if ast_kind(node) != ast_binop() {
+        return 0;
+    }
+    if ast_aux(node) != op_div() {
+        return 0;
+    }
+    // The cache is +32 for i32 identifiers and 64 when the i32 operand is a call
+    // or field leaf (the lattice keeps those neutral, as Rust does). An 8/16-bit
+    // code is never re-tagged: that quotient is wrapped to its own width first.
+    let c: i64 = __mind_load_i64(node + 56);
+    if c != 32 {
+        if c != 64 {
+            return 0;
+        }
+    }
+    __mind_store_i64(node + 56, nb_div_bound32_tag());
+    0
+}
+
+pub fn nb_div_bound32_tag() -> i64 {
+    4128
+}
+
+// 1 iff c is a 32-bit narrow code (+32 or -32).
+pub fn nb_div_is_w32(c: i64) -> i64 {
+    if c == 32 {
+        return 1;
+    }
+    if c == 0 - 32 {
+        return 1;
+    }
+    0
+}
+
+// 1 when the two operand classes cannot be divided as the same i64 values on
+// both backends. 0 is an integer literal (it takes the other side's type), 64 a
+// wide value, +-8/16/32 a narrow one. Equal-signedness narrow pairs, wide pairs
+// and anything with a literal are fine; a narrow value with a wide one or with a
+// narrow one of the other signedness is not, nor is a conflicting field type.
+pub fn nb_div_classes_mix(lc: i64, rc: i64) -> i64 {
+    if lc == nrw_conflict() {
+        return 1;
+    }
+    if rc == nrw_conflict() {
+        return 1;
+    }
+    if lc == 0 {
+        return 0;
+    }
+    if rc == 0 {
+        return 0;
+    }
+    if lc == 64 {
+        if rc == 64 {
+            return 0;
+        }
+        return 1;
+    }
+    if rc == 64 {
+        return 1;
+    }
+    if lc < 0 {
+        if rc < 0 {
+            return 0;
+        }
+        return 1;
+    }
+    if rc > 0 {
+        return 0;
+    }
+    1
+}
+
+// The type class of a division operand: 0 for an integer literal, the narrow
+// code (+-8/16/32) for a narrow value, nrw_conflict() for an ambiguous narrow
+// field, 64 for every other (wide) value.
+pub fn nb_div_class(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_class(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return nb_div_code_or_wide(__mind_load_i64(node + 56));
+    }
+    if k == ast_cast() {
+        return nb_div_code_or_wide(__mind_load_i64(node + 56));
+    }
+    if k == ast_binop() {
+        return nb_div_code_or_wide(__mind_load_i64(node + 56));
+    }
+    if k == ast_call() {
+        return nb_div_code_or_wide(nb_div_call_ret_code(ast_child0(node), buf, lcell));
+    }
+    if k == ast_method() {
+        return nb_div_code_or_wide(nb_div_named_ret_code(ast_child1(node), ast_child2(node), buf, lcell));
+    }
+    if k == ast_field() {
+        let fw: i64 = nrw_field_name_code(buf, lcell, ast_child1(node), ast_child2(node));
+        if fw == nrw_conflict() {
+            return fw;
+        }
+        return nb_div_code_or_wide(fw);
+    }
+    if k == ast_index() {
+        let base: i64 = ast_child0(node);
+        if ast_kind(base) == ast_field() {
+            if nb_field_array_rep_r(ast_child0(base), base, buf, lets, lcell) == 2 {
+                return 0 - 8;
+            }
+        }
+        return 64;
+    }
+    if k == ast_neg() {
+        return nb_div_class(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_not() {
+        return nb_div_class(ast_child0(node), buf, lets, lcell);
+    }
+    64
+}
+
+pub fn nb_div_code_or_wide(w: i64) -> i64 {
+    if alias_is_narrow_code(w) == 1 {
+        return w;
+    }
+    64
+}
+
+// 1 iff `node` (parens stripped) is a decimal integer literal of at most 9
+// digits (so it fits in an i32 and is never -1).
+pub fn nb_div_small_lit(node: i64, buf: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_div_small_lit(ast_child0(node), buf);
+    }
+    if ast_kind(node) != ast_int_lit() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if hi <= lo {
+        return 0;
+    }
+    if hi - lo > 9 {
+        return 0;
+    }
+    nb_div_all_digits(buf, lo, hi)
+}
+
+pub fn nb_div_all_digits(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    let c: i64 = load_byte(buf, lo);
+    if c < 48 {
+        return 0;
+    }
+    if c > 57 {
+        return 0;
+    }
+    nb_div_all_digits(buf, lo + 1, hi)
+}
+
+// 1 iff `node` (parens stripped) is an integer literal that is not small.
+pub fn nb_div_wide_lit(node: i64, buf: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_div_wide_lit(ast_child0(node), buf);
+    }
+    if ast_kind(node) != ast_int_lit() {
+        return 0;
+    }
+    if nb_div_small_lit(node, buf) == 1 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff the native value of operand `node` equals the MLIR value. A leaf is exact
+// (its binding wrapped it); an arithmetic or comparison node is exact when it is
+// not an unbound i32/u32 result and every leaf below it is exact as an
+// intermediate (nb_div_leaf_exact). A cast's operand is checked as an operand.
+pub fn nb_div_operand_exact(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_operand_exact(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_binop() {
+        return nb_div_inner_exact(node, buf, lets, lcell);
+    }
+    if k == ast_cast() {
+        return nb_div_operand_exact(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_neg() {
+        return nb_div_inner_exact(node, buf, lets, lcell);
+    }
+    if k == ast_not() {
+        return nb_div_inner_exact(node, buf, lets, lcell);
+    }
+    1
+}
+
+// The intermediate (unbound) form of nb_div_operand_exact.
+pub fn nb_div_inner_exact(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_inner_exact(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_binop() {
+        if nb_bound32_code(node) != 0 {
+            return 0;
+        }
+        if nb_div_bits32_inexact(node, buf) == 1 {
+            return 0;
+        }
+        if nb_div_inner_exact(ast_child0(node), buf, lets, lcell) == 0 {
+            return 0;
+        }
+        return nb_div_inner_exact(ast_child1(node), buf, lets, lcell);
+    }
+    if k == ast_cast() {
+        return nb_div_operand_exact(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_neg() {
+        // -x of an i32 MIN is MIN at 32 bits and 2^31 at 64 bits.
+        if nb_div_maybe_i32(ast_child0(node), buf, lcell) == 1 {
+            return 0;
+        }
+        return nb_div_inner_exact(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_not() {
+        return nb_div_inner_exact(ast_child0(node), buf, lets, lcell);
+    }
+    nb_div_leaf_exact(node, buf, lets, lcell)
+}
+
+// 1 when a binop inside a division operand reaches an i32/u32 value through
+// `& | ^ << >>`, where the cached lattice (nb_bound32_code) does not see it:
+//  - arithmetic over such an operand (`(b >> 1) - 7`, `(a & 15) - 7` on u32):
+//    MLIR evaluates it at 32 bits from parameters and at 64 bits from locals,
+//    like any unbound i32/u32 arithmetic;
+//  - a `>>` of such a value whose count is not a literal below 32: MLIR masks
+//    an i32 count to 31 and an i64 count to 63, the native shift masks to 63.
+// A bitwise result of in-range i32/u32 operands is itself in range, so it is
+// exact as an operand of its own.
+pub fn nb_div_bits32_inexact(node: i64, buf: i64) -> i64 {
+    let op: i64 = ast_aux(node);
+    if alias_is_arith_op(op) == 1 {
+        if nb_div_bits32_code(ast_child0(node)) != 0 {
+            return 1;
+        }
+        if nb_div_bits32_code(ast_child1(node)) != 0 {
+            return 1;
+        }
+        return 0;
+    }
+    if op == op_shr() {
+        if nb_div_bits32_code(ast_child0(node)) != 0 {
+            if nb_div_count_below_32(ast_child1(node), buf) == 0 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// +-32 when `node` (parens stripped) is an i32/u32 value or a `& | ^ << >>`
+// combination of one (a shift's type is its left operand's), else 0.
+pub fn nb_div_bits32_code(node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    if k == ast_binop() {
+        let op: i64 = ast_aux(node);
+        if op == op_shl() {
+            return nb_div_bits32_code(ast_child0(node));
+        }
+        if op == op_shr() {
+            return nb_div_bits32_code(ast_child0(node));
+        }
+        if nb_div_is_bitwise(op) == 1 {
+            let lc: i64 = nb_div_bits32_code(ast_child0(node));
+            if lc != 0 {
+                return lc;
+            }
+            return nb_div_bits32_code(ast_child1(node));
+        }
+        return nb_div_w32_or_zero(__mind_load_i64(node + 56));
+    }
+    if k == ast_ident() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_cast() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_call() {
+        return nb_div_w32_or_zero(cached_narrow_expr_code(node));
+    }
+    if k == ast_neg() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    if k == ast_not() {
+        return nb_div_bits32_code(ast_child0(node));
+    }
+    0
+}
+
+pub fn nb_div_w32_or_zero(c: i64) -> i64 {
+    if nb_div_is_w32(c) == 1 {
+        return c;
+    }
+    0
+}
+
+pub fn nb_div_is_bitwise(op: i64) -> i64 {
+    if op == op_bitand() {
+        return 1;
+    }
+    if op == op_bitor() {
+        return 1;
+    }
+    if op == op_bitxor() {
+        return 1;
+    }
+    0
+}
+
+// 1 iff `node` (parens stripped) is a decimal literal from 0 to 31.
+pub fn nb_div_count_below_32(node: i64, buf: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_div_count_below_32(ast_child0(node), buf);
+    }
+    if ast_kind(node) != ast_int_lit() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if nb_div_all_digits(buf, lo, hi) == 0 {
+        return 0;
+    }
+    if hi - lo == 1 {
+        return 1;
+    }
+    if hi - lo != 2 {
+        return 0;
+    }
+    let v: i64 = (load_byte(buf, lo) - 48) * 10 + (load_byte(buf, lo + 1) - 48);
+    if v < 32 {
+        return 1;
+    }
+    0
+}
+
+// A leaf used inside unbound arithmetic. Identifiers, literals and 8/16-bit call
+// results carry their narrow type in the cached lattice (alias_annotate_call_expr),
+// exactly as Rust's infer_narrow_arith_ty classifies them. The cache does not
+// type an i32/u32 call result (MLIR keeps it a physical i32), a struct field
+// whose name some struct declares narrow, a u8 array cell or a method result in
+// a module with narrow fns, so those leaves make the arithmetic inexact.
+pub fn nb_div_leaf_exact(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_call() {
+        let w: i64 = nb_div_call_ret_code(ast_child0(node), buf, lcell);
+        if w == 32 {
+            return 0;
+        }
+        if w == 0 - 32 {
+            return 0;
+        }
+        return 1;
+    }
+    if k == ast_method() {
+        let mw: i64 = nb_div_named_ret_code(ast_child1(node), ast_child2(node), buf, lcell);
+        if alias_is_narrow_code(mw) == 1 {
+            return 0;
+        }
+        return 1;
+    }
+    if k == ast_field() {
+        if nrw_field_name_code(buf, lcell, ast_child1(node), ast_child2(node)) != 0 {
+            return 0;
+        }
+        return 1;
+    }
+    if k == ast_index() {
+        let base: i64 = ast_child0(node);
+        if ast_kind(base) == ast_field() {
+            if nb_field_array_rep_r(ast_child0(base), base, buf, lets, lcell) == 2 {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    1
+}
+
+// The frt return-width code of the fn a call's callee names (an identifier),
+// or 0 when it is not registered / not an identifier.
+pub fn nb_div_call_ret_code(callee: i64, buf: i64, lcell: i64) -> i64 {
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
+    nb_div_named_ret_code(ast_span_lo(callee), ast_span_hi(callee), buf, lcell)
+}
+
+pub fn nb_div_named_ret_code(lo: i64, hi: i64, buf: i64, lcell: i64) -> i64 {
+    let frt: i64 = __mind_load_i64(lcell + 16);
+    if frt == 0 {
+        return 0;
+    }
+    let k: i64 = frt_find(frt, buf, lo, hi, 0);
+    if k < 0 {
+        return 0;
+    }
+    let w: i64 = frt_retw(frt, k);
+    if alias_is_narrow_code(w) == 1 {
+        return w;
+    }
+    0
+}
+
+// 1 iff operand `node` can hold a signed i32 value: an identifier or cast whose
+// cached code is +32, a call or method returning i32, or a struct field whose
+// name some struct declares i32 (or declares with conflicting narrow types).
+pub fn nb_div_maybe_i32(node: i64, buf: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return nb_div_maybe_i32(ast_child0(node), buf, lcell);
+    }
+    if k == ast_ident() {
+        if __mind_load_i64(node + 56) == 32 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == ast_cast() {
+        if __mind_load_i64(node + 56) == 32 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == ast_call() {
+        if nb_div_call_ret_code(ast_child0(node), buf, lcell) == 32 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == ast_method() {
+        if nb_div_named_ret_code(ast_child1(node), ast_child2(node), buf, lcell) == 32 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == ast_field() {
+        let fw: i64 = nrw_field_name_code(buf, lcell, ast_child1(node), ast_child2(node));
+        if fw == 32 {
+            return 1;
+        }
+        if fw == nrw_conflict() {
+            return 1;
+        }
+        return 0;
+    }
+    0
+}
+
+// ===== W2-trap narrow struct fields (native) =====
+// A struct field declared u8/u16/u32/i8/i16/i32 (directly or through a type
+// alias) holds its value wrapped to that width: nb_struct_fields and the field
+// assignment wrap an arithmetic value as they store it (nb_wrap_bound_w). The
+// alias table of the module is kept in the frt extension word frt_u64_word()+3
+// (nrw_prepare); 0 means "no aliases known", so only direct spellings resolve.
+pub fn nrw_conflict() -> i64 {
+    999
+}
+
+pub fn nrw_prepare(frt: i64, aliases: i64) -> i64 {
+    if frt == 0 {
+        return 0;
+    }
+    __mind_store_i64(frt + (frt_u64_word() + 3) * 8, aliases);
+    0
+}
+
+// The narrow code (+-8/16/32) of a declared type span, or 0 when it is wide or
+// not an integer type. Resolves a single-identifier alias when the table is known.
+pub fn nrw_type_code(buf: i64, frt: i64, lo: i64, hi: i64) -> i64 {
+    if hi <= lo {
+        return 0;
+    }
+    // byte compares only (frt_ret_width allocates its spellings): this runs
+    // for every struct-literal field of the native self-compile
+    let sw: i64 = narrow_cast_width(buf, lo, hi);
+    if sw > 0 {
+        return sw;
+    }
+    let uw: i64 = unsigned_cast_width(buf, lo, hi);
+    if uw > 0 {
+        return 0 - uw;
+    }
+    if frt == 0 {
+        return 0;
+    }
+    let aliases: i64 = __mind_load_i64(frt + (frt_u64_word() + 3) * 8);
+    if aliases == 0 {
+        return 0;
+    }
+    let aw: i64 = alias_resolve_span(aliases, buf, lo, hi);
+    if alias_is_narrow_code(aw) == 1 {
+        return aw;
+    }
+    0
+}
+
+// The narrow code of field j of struct k (0 for a wide, array or non-int field).
+pub fn nrw_struct_field_code(srt: i64, buf: i64, frt: i64, k: i64, j: i64) -> i64 {
+    if srt_field_array_kind(srt, k, j) != 0 {
+        return 0;
+    }
+    nrw_type_code(buf, frt, srt_field_type_lo(srt, k, j), srt_field_type_hi(srt, k, j))
+}
+
+// Over every struct of the module: the narrow code every field named
+// buf[lo, hi) is declared with (0 when they are all wide, or no struct has the
+// name), nrw_conflict() when two declarations differ (narrow vs wide included).
+pub fn nrw_field_name_code(buf: i64, lcell: i64, lo: i64, hi: i64) -> i64 {
+    let srt: i64 = __mind_load_i64(lcell + 24);
+    if srt == 0 {
+        return 0;
+    }
+    let r: i64 = nrw_field_name_scan(srt, buf, __mind_load_i64(lcell + 16), lo, hi, 0, 0, nrw_none());
+    if r == nrw_none() {
+        return 0;
+    }
+    r
+}
+
+pub fn nrw_none() -> i64 {
+    0 - 1000
+}
+
+pub fn nrw_field_name_scan(srt: i64, buf: i64, frt: i64, lo: i64, hi: i64, k: i64, j: i64, acc: i64) -> i64 {
+    if k >= srt_count(srt) {
+        return acc;
+    }
+    if j >= srt_field_count(srt, k) {
+        return nrw_field_name_scan(srt, buf, frt, lo, hi, k + 1, 0, acc);
+    }
+    if span_bytes_equal(buf, lo, hi, srt_field_lo(srt, k, j), srt_field_hi(srt, k, j)) == 1 {
+        let w: i64 = nrw_struct_field_code(srt, buf, frt, k, j);
+        if acc == nrw_none() {
+            return nrw_field_name_scan(srt, buf, frt, lo, hi, k, j + 1, w);
+        }
+        if acc != w {
+            return nrw_conflict();
+        }
+    }
+    nrw_field_name_scan(srt, buf, frt, lo, hi, k, j + 1, acc)
+}
+
+pub fn nb_strip_paren_kind(node: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_strip_paren_kind(ast_child0(node));
+    }
+    ast_kind(node)
+}
+
+// w when it is an 8- or 16-bit narrow code (+-8, +-16), else 0.
+pub fn nb_narrow_8_16(w: i64) -> i64 {
+    if alias_is_narrow_code(w) == 0 {
+        return 0;
+    }
+    if w == 32 {
+        return 0;
+    }
+    if w == 0 - 32 {
+        return 0;
+    }
+    w
+}
+
+// Wrap rax to narrow code w (nb_wrap_rax_w: movsx for signed, and-mask for
+// unsigned); w == 0 emits nothing. Early-return form (value-if trap rule).
+pub fn nb_wrap_narrow_result(code: String, w: i64) -> String {
+    if w == 0 {
+        return code;
+    }
+    nb_wrap_rax_w(code, w)
+}
+
+// The process exit status of the integer-division trap (x/0, x%0, INT_MIN/-1,
+// INT_MIN%-1). One documented value for every backend: docs/errors.md and the
+// MLIR lowering's MIND_DIV_TRAP_EXIT_CODE use the same number. Distinct from the
+// bounds trap (77, nb_oob_trap_code) and the arena-exhausted exit (70).
+pub fn nb_div_trap_code() -> i64 {
+    79
+}
+
+// The 12-byte trap block of nb_div_guarded:
+//   mov edi,79 = BF 4F 00 00 00 ; mov eax,231 = B8 E7 00 00 00 ; syscall = 0F 05
+pub fn nb_div_trap_exit(code: String) -> String {
+    let t1: String = nb_push(code, 191);
+    let t2: String = nb_u32(t1, nb_div_trap_code());
+    let t3: String = nb_push(t2, 184);
+    let t4: String = nb_u32(t3, 231);
+    let t5: String = nb_push(t4, 15);
+    nb_push(t5, 5)
 }
 
 // The `setcc` second opcode byte for a comparison BinOp, or -1 for a
@@ -34154,14 +35055,69 @@ pub fn nb_emit_argv_capture(code: String) -> String {
 }
 
 // Statement-form (Rule-4-safe: no struct-valued if-expr with a call branch) gate:
-// prepend the argc/argv capture iff this fn is the entry AND the module uses argv.
-pub fn nb_entry_prefix(code: String, is_entry: i64, uses_argv: i64) -> String {
+// prepend the argc/argv capture iff this fn is the entry AND the module uses argv,
+// then (W4b) the main(argc, argv) parameter binding iff the entry declares params.
+pub fn nb_entry_prefix(code: String, is_entry: i64, uses_argv: i64, n_params: i64) -> String {
     if is_entry == 1 {
         if uses_argv == 1 {
-            return nb_emit_argv_capture(code);
+            return nb_emit_main_params(nb_emit_argv_capture(code), n_params);
         }
+        return nb_emit_main_params(code, n_params);
     }
     code
+}
+
+// W4b — bind an entry `fn main(argc, argv)` to the OS argc/argv. At `_start`
+// rsp -> [argc][argv0..argvN-1][NULL], and rdi/rsi hold no arguments, so the
+// shared param spill (nb_emit_params: rdi -> slot 0, rsi -> slot 1) used to store
+// garbage (0 in practice). Load the SysV values into the first two GP argument
+// registers BEFORE the STACK_TOP rsp switch abandons the OS stack, so the spill
+// sees them exactly as a C `main(int argc, char **argv)` would:
+//   mov rdi,[rsp]   = 48 8B 3C 24      (argc)
+//   lea rsi,[rsp+8] = 48 8D 74 24 08   (argv: char **, &argv[0])
+// argv is the address of the pointer array — argv + 8*i holds argv[i] (the same
+// pointer __mind_argv(i) returns) and argv + 8*argc holds the NULL terminator.
+// Emitted only for an entry with 1 or 2 params (nb_entry_params_ok refuses the
+// rest); 0 bytes for a parameterless entry, so every existing program — main.mind's
+// own driver included — is byte-identical.
+pub fn nb_emit_main_params(code: String, n_params: i64) -> String {
+    if n_params == 0 {
+        return code;
+    }
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 60);
+    let c4: String = nb_push(c3, 36);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 141);
+    let c7: String = nb_push(c6, 116);
+    let c8: String = nb_push(c7, 36);
+    nb_push(c8, 8)
+}
+
+// W4b fail-closed: 1 when the entry's parameter list is one the binding covers —
+// none, `(argc)` or `(argc, argv)`, each an integer/pointer (GP) parameter. A
+// third parameter (envp is not bound) or a float parameter (it would read xmm0)
+// returns 0 and the caller refuses the whole module (0 bytes), never a program
+// whose parameters hold garbage. Non-entry fns always return 1.
+pub fn nb_entry_params_ok(is_entry: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
+    if is_entry != 1 {
+        return 1;
+    }
+    if n_params > 2 {
+        return 0;
+    }
+    if n_params >= 1 {
+        if nb_param_is_float(buf, ast_child1(__mind_load_i64(params_addr))) == nb_dtype_float() {
+            return 0;
+        }
+    }
+    if n_params == 2 {
+        if nb_param_is_float(buf, ast_child1(__mind_load_i64(params_addr + 8))) == nb_dtype_float() {
+            return 0;
+        }
+    }
+    1
 }
 
 // 1 iff buf[lo..hi) spells exactly "__mind_argc" or "__mind_argv" (both 11 bytes).
@@ -35319,6 +36275,52 @@ struct NbState {
     ncalls: i64,
 }
 
+// nb_wrap_bound_w / nb_wrap_bound32 read fields of an NbState parameter, so
+// they sit after the struct declaration (the Rust mic@3 lowering resolves a
+// struct parameter's field reads only once the struct is declared; see the
+// nb_deref_store note above).
+
+// Wrap a struct-field value in place before it is stored. `fw` is the field's
+// declared narrow code (0 for a wide field). Only an arithmetic value or an
+// integer literal is wrapped (`S { v: 300 }` on a u8 field stores 44, as MLIR
+// does): each lowers to its own fresh temporary, never a named binding, so the
+// in-place wrap aliases nothing and consumes no id. A narrow field wraps by its
+// own width; a wide field keeps the i32/u32 rule of nb_wrap_bound32. Every
+// other value (a name, call, cast or field read) already holds a value of its
+// own declared type.
+pub fn nb_wrap_bound_w(st: NbState, node: i64, fw: i64, lcell: i64) -> NbState {
+    if fw == 0 {
+        return nb_wrap_bound32(st, node, lcell);
+    }
+    let vk: i64 = nb_strip_paren_kind(node);
+    if vk != ast_binop() {
+        if vk != ast_int_lit() {
+            return st;
+        }
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
+    let c2: String = nb_wrap_rax_w(c1, fw);
+    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
+    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// Wrap the value `st.last_id` (the lowered `node`) in place to its i32/u32 width
+// when nb_bound32_code says it is unwrapped. The slot is the binop's own fresh
+// temporary, never a named binding, so the in-place wrap aliases nothing and
+// consumes no id. Every other value passes through with no bytes emitted.
+pub fn nb_wrap_bound32(st: NbState, node: i64, lcell: i64) -> NbState {
+    let w: i64 = nb_bound32_code(node);
+    if w == 0 {
+        return st;
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
+    let c2: String = nb_wrap_rax_w(c1, w);
+    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
+    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
 // ---- native let-env (name span -> frame slot) ----
 // A `let X = INIT` binding maps the name X to a frame slot (== its INIT value's
 // SSA id, since slot id == SSA id in this model — mirrors emit_mlir_stmt_env's
@@ -35444,6 +36446,13 @@ pub fn nb_width_of_ann(buf: i64, type_leaf: i64) -> i64 {
     if bytes_eq(buf, lo, hi, i32_buf, 0, 3) == 1 {
         return 32;
     }
+    // W2-trap: a direct u8/u16/u32 spelling is the unsigned code -8/-16/-32
+    // (the frt_ret_width convention), so a let, assign or param of that type is
+    // zero-extended to its width at the binding (nb_wrap_rax_w masks).
+    let uw: i64 = unsigned_cast_width(buf, lo, hi);
+    if uw > 0 {
+        return 0 - uw;
+    }
     64
 }
 
@@ -35451,7 +36460,12 @@ pub fn nb_width_of_ann(buf: i64, type_leaf: i64) -> i64 {
 // movsx rax,ax (16), movsxd rax,eax (32). Early-return statement form (the
 // struct-valued if-expr mis-lower trap — Rule: never a value-if over String calls).
 // Callers gate on w < 64, so the 32 fall-through is only ever reached for w == 32.
+// An unsigned code (-8/-16/-32) zero-extends instead (nb_mask_rax_w): before
+// W2-trap a u8 alias let fell through to movsxd and was never truncated.
 pub fn nb_wrap_rax_w(code: String, w: i64) -> String {
+    if w < 0 {
+        return nb_mask_rax_w(code, 0 - w);
+    }
     if w == 8 {
         return nb_movsx_rax_al(code);
     }
@@ -36847,15 +37861,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
         // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
+        // W2-trap unsigned fence: a `/` or `%` inside a fn that can hold a u64
+        // value poisons the module (fail-closed) instead of emitting signed idiv.
+        if nb_div_unsigned_fenced(op, lcell, ast_span_lo(node)) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        if nb_div_unsafe(op, node, buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
         let dplan: i64 = __mind_load_i64(lcell + 96);
         let c1: String = nb_val_load_rax(dplan, lhs_id, s2.code);
         let setcc: i64 = nb_setcc_opcode(op);
         let c2: String = if setcc >= 0 {
             nb_val_cmp_rax(dplan, rhs_id, c1, setcc)
         } else {
-            nb_val_arith_rax(dplan, rhs_id, c1, op, lcell)
+            nb_val_arith_shift_rax(dplan, rhs_id, c1, op, lcell, nb_shift_count_width(node, op))
         };
-        let c3: String = nb_val_store_rax(dplan, id, c2);
+        // W2-trap narrow lattice: an arithmetic result of narrow type is wrapped
+        // to its width before it is stored (the native twin of the mic@3
+        // flatten_narrow_binop_result), so `(a + b) / 3` on u8 divides the
+        // wrapped sum, as MLIR does. Wide and comparison results emit nothing.
+        let c2n: String = nb_wrap_narrow_result(c2, nb_binop_narrow_code(node, op));
+        let c3: String = nb_val_store_rax(dplan, id, c2n);
         return NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
     }
     if k == ast_addr_of() {
@@ -37931,8 +38958,18 @@ pub fn nb_struct_fields(st: NbState, buf: i64, snode: i64, fields_addr: i64, nfi
         let copied: NbState = nb_copy_array_to_record_cells(sv_arr, sv_arr.last_id, 0, ptr_id, off, alen, 0, arep);
         return nb_struct_fields(copied, buf, snode, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
     }
-    // Lower the field value -> its slot.
-    let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    // Lower the field value -> its slot. An arithmetic value is wrapped to the
+    // field's declared narrow width as it is stored (an unwrapped i32/u32
+    // expression bound to a wide field keeps nb_wrap_bound32), so a later read
+    // of a u8/i32 field sees the value MLIR stores (nb_wrap_bound_w).
+    let fcode: i64 = if sk < 0 {
+        0
+    } else {
+        nrw_struct_field_code(srt, buf, __mind_load_i64(lcell + 16), sk, i)
+    };
+    let _fb: i64 = nb_bless_bound_div(value_node, fcode);
+    let sv0: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    let sv: NbState = nb_wrap_bound_w(sv0, value_node, fcode, lcell);
     let val_id: i64 = sv.last_id;
     let val_nc: i64 = sv.ncalls;
     // Emit the per-field store, threading the code String + next_id through a
@@ -40115,7 +41152,22 @@ pub fn nb_record_field_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     }
     let s_fa: NbState = nb_field_addr(s_fb.code, s_fb.next_id, fb_id, foff, s_fb.ncalls);
     let faddr_id: i64 = s_fa.last_id;
-    let s_fv: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+    // The stored value is wrapped to the field's declared narrow width
+    // (nb_wrap_bound_w). The receiver's struct is resolved by field name over
+    // the whole registry: two structs declaring the name with different narrow
+    // types make the width unknown, and the store refuses (fail-closed).
+    let fa_code: i64 = nrw_field_name_code(buf, lcell, ast_child1(fa_t), ast_child2(fa_t));
+    if fa_code == nrw_conflict() {
+        __mind_store_i64(lcell + 80, 1)
+    }
+    let fa_w: i64 = if fa_code == nrw_conflict() {
+        0
+    } else {
+        fa_code
+    };
+    let _fab: i64 = nb_bless_bound_div(fa_v, fa_w);
+    let s_fv0: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+    let s_fv: NbState = nb_wrap_bound_w(s_fv0, fa_v, fa_w, lcell);
     let fdtbl: i64 = __mind_load_i64(lcell + 8);
     if nb_node_dtype_tbl(fa_v, fdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
         __mind_store_i64(lcell + 80, 1)
@@ -40465,6 +41517,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let cv2: String = nb_emit_return(cvw, is_entry);
             return NbState { code: cv2, next_id: sv.next_id, last_id: sv.last_id, ncalls: sv.ncalls };
         }
+        let _rb: i64 = nb_bless_bound_div(ret_operand, __mind_load_i64(lcell + 72));
         let s1: NbState = nb_expr(st, buf, ret_operand, params_addr, n_params, calls, lets, lcell);
         // FIX #166: SysV return-register selection by the RETURNED VALUE's dtype. An
         // explicit `return <float>` must place its result in xmm0 (movsd), NOT rax — the
@@ -40504,6 +41557,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // them upward (only the bound name X = dst). Restore after the init so those
         // internal phi names do not leak and pollute a later sibling's `in_outer`.
         let pre_init_n: i64 = __mind_load_i64(lcell);
+        let _lb: i64 = nb_bless_bound_div(init, nb_width_of_ann(buf, ast_child1(node)));
         let s1: NbState = nb_lower_let_init(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
         __mind_store_i64(lcell, pre_init_n);
         // Record the struct descriptor (struct-LITERAL init OR a struct-typed
@@ -40638,6 +41692,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let _dtv: i64 = nb_dtype_tag_slot(dtblv, sv.last_id, rhsdtv);
             return sv;
         }
+        let _ab: i64 = nb_bless_bound_div(ast_child2(node), nb_lets_lookup_width(lets, lcell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf)));
         let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
         // FIX #167: propagate the RHS dtype onto the REBOUND slot, mirroring the let-INIT
         // arm (22258-22260). Without this a `y = 3.0 * 2.0` rebind leaves y's slot reading
@@ -44195,7 +45250,8 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // RI-C: an argv-using entry captures OS argc/argv as the LITERAL first bytes,
     // BEFORE the STACK_TOP rsp switch abandons the OS stack. Statement-form gate
     // (nb_entry_prefix) so an argv-free entry gets code0 unchanged — byte-identical.
-    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv);
+    // W4b: the entry's main(argc, argv) params are loaded from the OS stack here too.
+    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv, n_params);
     // Entry-only stack switch: movabs rsp, STACK_TOP - 8 = 48 BC <imm64>
     // FIX #169 (SysV rsp alignment): STACK_TOP is 16-aligned, but the entry is
     // reached by this hard rsp-switch, NOT by a `call`, so it lacks the 8-byte
@@ -44276,6 +45332,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell + 88, 0);
     __mind_store_i64(lcell + 80, 0);
+    // W4b fail-closed: an entry whose params the main(argc, argv) binding does not
+    // cover poisons the fn (the whole module then refuses, 0 bytes).
+    if nb_entry_params_ok(is_entry, buf, params_addr, n_params) == 0 {
+        __mind_store_i64(lcell + 80, 1)
+    }
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
     // arm reads it, the `let` arm tags it. Sized nslots+64 (all SSA ids < nslots; the
@@ -47127,6 +48188,7 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     if alias_status < 0 {
         return es_new();
     }
+    let _nrw: i64 = nrw_prepare(frt, alias_status);
     let _ap: i64 = alias_annotate_params(src_addr, alias_status, ordered, n_fns, 0);
     // Apply the immutable alias environment to every reachable function body
     // before native lowering.  Parameter metadata alone resolves ABI widths;
@@ -49212,9 +50274,76 @@ pub fn frt_slot_words() -> i64 {
 }
 
 pub fn frt_alloc() -> i64 {
-    let t: i64 = __mind_alloc((1 + frt_cap() * frt_slot_words()) * 8);
+    let t: i64 = __mind_alloc((5 + frt_cap() * frt_slot_words()) * 8);
     __mind_store_i64(t + 0, 0);
+    __mind_store_i64(t + frt_u64_word() * 8, 0);
+    __mind_store_i64(t + (frt_u64_word() + 1) * 8, 0);
+    __mind_store_i64(t + (frt_u64_word() + 2) * 8, 0);
+    // +3: the module alias table for narrow struct-field types (nrw_prepare)
+    __mind_store_i64(t + (frt_u64_word() + 3) * 8, 0);
     t
+}
+
+// W2-trap unsigned fence: three words after the last fn slot. +0 is the module-
+// wide "spells a 64-bit unsigned type" flag (frt_scan_unsigned64); when it is set,
+// +1 points at the u64-associated name list and +2 at the tainted fn-span list
+// (u64x_prepare), otherwise both stay 0.
+pub fn frt_u64_word() -> i64 {
+    1 + frt_cap() * frt_slot_words()
+}
+
+// 1 iff the module's token stream names `u64` or `usize` anywhere (a type
+// annotation, a cast target, a generic argument, an alias target, a std
+// signature in the fed closure); comments and string literals never count.
+pub fn frt_has_unsigned64(t: i64) -> i64 {
+    __mind_load_i64(t + frt_u64_word() * 8)
+}
+
+// 1 iff token `pos` is the identifier `u64` (117 54 52) or `usize`
+// (117 115 105 122 101). Byte compares only, so the per-token scan allocates
+// nothing in the native bump arena.
+pub fn tok_is_unsigned64_name(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, pos);
+    let n: i64 = tok_hi(toks, pos) - lo;
+    if load_byte(buf, lo) != 117 {
+        return 0;
+    }
+    if n == 3 {
+        if load_byte(buf, lo + 1) == 54 {
+            if load_byte(buf, lo + 2) == 52 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if n == 5 {
+        if load_byte(buf, lo + 1) == 115 {
+            if load_byte(buf, lo + 2) == 105 {
+                if load_byte(buf, lo + 3) == 122 {
+                    if load_byte(buf, lo + 4) == 101 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Scan the ALREADY-lexed token stream once (no re-lex, Rule 2c) and record
+// whether any 64-bit unsigned type is spelled. Tail-recursive like frt_collect.
+pub fn frt_scan_unsigned64(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return t;
+    }
+    if tok_is_unsigned64_name(toks, buf, pos) == 1 {
+        __mind_store_i64(t + frt_u64_word() * 8, 1);
+        return t;
+    }
+    frt_scan_unsigned64(toks, buf, pos + 1, t)
 }
 
 pub fn frt_count(t: i64) -> i64 {
@@ -49412,6 +50541,8 @@ pub fn frt_collect(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
 pub fn frt_build(src_addr: i64, src_len: i64) -> i64 {
     let tokens: Vec = lex(src_addr, src_len);
     let t: i64 = frt_alloc();
+    let _u: i64 = frt_scan_unsigned64(tokens, src_addr, 0, t);
+    let _x: i64 = u64x_prepare(tokens, src_addr, t);
     frt_collect(tokens, src_addr, 0, t)
 }
 
@@ -49426,7 +50557,399 @@ pub fn frt_build(src_addr: i64, src_len: i64) -> i64 {
 // fewer arena-resident lex. src_addr is still the byte source the spans key into.
 pub fn frt_build_from_tokens(tokens: Vec, src_addr: i64) -> i64 {
     let t: i64 = frt_alloc();
+    let _u: i64 = frt_scan_unsigned64(tokens, src_addr, 0, t);
+    let _x: i64 = u64x_prepare(tokens, src_addr, t);
     frt_collect(tokens, src_addr, 0, t)
+}
+
+// ===== W2-trap unsigned fence: which fns can hold a 64-bit unsigned value =====
+// Only run when the module spells `u64`/`usize` (main.mind spells neither, so
+// its self-compile skips all of this). Pass B collects, to a fixpoint, the names
+// that carry a u64 value into code that does not spell the type: fns whose
+// return type spells it, struct/enum names and their field/variant names when
+// the body spells it, type aliases and consts/statics typed with it. Pass C
+// records the span of every fn whose tokens (signature or body) spell a u64
+// type or mention one of those names. A `/` or `%` inside such a span is
+// refused natively (nb_div_unsigned_fenced). A list overflow or an unbalanced
+// body records -1, which fences every division in the module (fail-closed).
+pub fn u64x_cap() -> i64 {
+    4096
+}
+
+pub fn u64x_new() -> i64 {
+    let t: i64 = __mind_alloc((1 + 2 * u64x_cap()) * 8);
+    __mind_store_i64(t, 0);
+    t
+}
+
+pub fn u64x_count(t: i64) -> i64 {
+    __mind_load_i64(t)
+}
+
+pub fn u64x_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + 2 * k) * 8)
+}
+
+pub fn u64x_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (2 + 2 * k) * 8)
+}
+
+pub fn u64x_push(t: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = u64x_count(t);
+    if n < 0 {
+        return 0;
+    }
+    if n >= u64x_cap() {
+        __mind_store_i64(t, 0 - 1);
+        return 0;
+    }
+    __mind_store_i64(t + (1 + 2 * n) * 8, lo);
+    __mind_store_i64(t + (2 + 2 * n) * 8, hi);
+    __mind_store_i64(t, n + 1);
+    0
+}
+
+// 1 iff the name list holds the byte span buf[lo, hi) (an overflowed list holds
+// every name).
+pub fn u64x_has_name(t: i64, buf: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    let n: i64 = u64x_count(t);
+    if n < 0 {
+        return 1;
+    }
+    if k >= n {
+        return 0;
+    }
+    if bytes_eq(buf, lo, hi, buf, u64x_lo(t, k), u64x_hi(t, k)) == 1 {
+        return 1;
+    }
+    u64x_has_name(t, buf, lo, hi, k + 1)
+}
+
+pub fn u64x_push_name(t: i64, toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    if u64x_has_name(t, buf, tok_lo(toks, pos), tok_hi(toks, pos), 0) == 1 {
+        return 0;
+    }
+    u64x_push(t, tok_lo(toks, pos), tok_hi(toks, pos))
+}
+
+// 1 iff token `pos` is an identifier spelling a 64-bit unsigned type or naming
+// a u64-associated declaration.
+pub fn u64x_tok_tainted(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    if tok_is_unsigned64_name(toks, buf, pos) == 1 {
+        return 1;
+    }
+    u64x_has_name(names, buf, tok_lo(toks, pos), tok_hi(toks, pos), 0)
+}
+
+// 1 iff token `pos` is the identifier whose bytes are b0..b5 (first n used).
+pub fn u64x_tok_word(toks: Vec, buf: i64, pos: i64, n: i64, b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, pos);
+    if tok_hi(toks, pos) - lo != n {
+        return 0;
+    }
+    if load_byte(buf, lo) != b0 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != b1 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != b2 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != b3 {
+        return 0;
+    }
+    if n == 4 {
+        return 1;
+    }
+    if load_byte(buf, lo + 4) != b4 {
+        return 0;
+    }
+    if n == 5 {
+        return 1;
+    }
+    if load_byte(buf, lo + 5) != b5 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff a token from `pos` up to the first `stop` token, `{` or EOF is tainted.
+pub fn u64x_span_spells(toks: Vec, buf: i64, pos: i64, stop: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == stop {
+        return 0;
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+        return 1;
+    }
+    u64x_span_spells(toks, buf, pos + 1, stop, names)
+}
+
+// 1 iff a token after the signature's `->` (up to the body `{` or `;`) is tainted.
+pub fn u64x_ret_spells(toks: Vec, buf: i64, pos: i64, seen_arrow: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_arrow() {
+        return u64x_ret_spells(toks, buf, pos + 1, 1, names);
+    }
+    if seen_arrow == 1 {
+        if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+            return 1;
+        }
+    }
+    u64x_ret_spells(toks, buf, pos + 1, seen_arrow, names)
+}
+
+// The index of the first `{` at or after `pos`, or -1 when a `;` or EOF comes
+// first (an extern / bodiless declaration, a tuple or unit struct).
+pub fn u64x_body_start(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return pos;
+    }
+    if k == tk_semi() {
+        return 0 - 1;
+    }
+    u64x_body_start(toks, pos + 1)
+}
+
+// Walk a brace body from just after its `{` (depth 1). Returns close*2 + tainted
+// where close is the index of the matching `}`, or -1 when EOF comes first.
+pub fn u64x_body_scan(toks: Vec, buf: i64, pos: i64, depth: i64, tainted: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return u64x_body_scan(toks, buf, pos + 1, depth + 1, tainted, names);
+    }
+    if k == tk_rbrace() {
+        if depth == 1 {
+            return pos * 2 + tainted;
+        }
+        return u64x_body_scan(toks, buf, pos + 1, depth - 1, tainted, names);
+    }
+    if tainted == 0 {
+        if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+            return u64x_body_scan(toks, buf, pos + 1, depth, 1, names);
+        }
+    }
+    u64x_body_scan(toks, buf, pos + 1, depth, tainted, names)
+}
+
+// Push the member names of a struct/enum body (pos just after `{`, up to the
+// index `close`): every depth-1 identifier followed by `:` (a field) or preceded
+// by `{` / `,` (a field or a variant).
+pub fn u64x_push_members(toks: Vec, buf: i64, pos: i64, close: i64, depth: i64, names: i64) -> i64 {
+    if pos >= close {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return u64x_push_members(toks, buf, pos + 1, close, depth + 1, names);
+    }
+    if k == tk_rbrace() {
+        return u64x_push_members(toks, buf, pos + 1, close, depth - 1, names);
+    }
+    if depth == 1 {
+        if k == tk_ident() {
+            let pk: i64 = tok_kind(toks, pos - 1);
+            if tok_kind(toks, pos + 1) == tk_colon() {
+                let _a: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+            if pk == tk_lbrace() {
+                let _b: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+            if pk == tk_comma() {
+                let _c: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+        }
+    }
+    u64x_push_members(toks, buf, pos + 1, close, depth, names)
+}
+
+// `struct`/`enum` NAME at `pos` (the keyword's index): when the declaration
+// spells a u64 type, push NAME and its member names.
+pub fn u64x_aggregate(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    let j: i64 = u64x_body_start(toks, pos + 2);
+    if j < 0 {
+        if u64x_span_spells(toks, buf, pos + 2, tk_semi(), names) == 1 {
+            return u64x_push_name(names, toks, buf, pos + 1);
+        }
+        return 0;
+    }
+    let r: i64 = u64x_body_scan(toks, buf, j + 1, 1, 0, names);
+    if r < 0 {
+        __mind_store_i64(names, 0 - 1);
+        return 0;
+    }
+    let close: i64 = r / 2;
+    let sig: i64 = u64x_span_spells(toks, buf, pos + 2, tk_semi(), names);
+    if r - close * 2 + sig == 0 {
+        return 0;
+    }
+    let _n: i64 = u64x_push_name(names, toks, buf, pos + 1);
+    u64x_push_members(toks, buf, j + 1, close, 1, names)
+}
+
+// Pass B, one sweep over the whole token stream. The recursion runs once per
+// token, so it stays a thin driver (a small native frame: the bounded profile's
+// stack must hold one frame per token of the combined source); the per-token
+// work lives in u64x_decl_at.
+pub fn u64x_scan_decls(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let _d: i64 = u64x_decl_at(toks, buf, pos, names);
+    u64x_scan_decls(toks, buf, pos + 1, names)
+}
+
+pub fn u64x_decl_at(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if u64x_count(names) < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_fn() {
+        if tok_kind(toks, pos + 1) == tk_ident() {
+            if u64x_ret_spells(toks, buf, pos + 2, 0, names) == 1 {
+                let _f: i64 = u64x_push_name(names, toks, buf, pos + 1);
+            }
+        }
+    }
+    if k == tk_ident() {
+        if tok_kind(toks, pos + 1) == tk_ident() {
+            // struct = 115 116 114 117 99 116 ; enum = 101 110 117 109
+            if u64x_tok_word(toks, buf, pos, 6, 115, 116, 114, 117, 99, 116) == 1 {
+                let _s: i64 = u64x_aggregate(toks, buf, pos, names);
+            }
+            if u64x_tok_word(toks, buf, pos, 4, 101, 110, 117, 109, 0, 0) == 1 {
+                let _e: i64 = u64x_aggregate(toks, buf, pos, names);
+            }
+            // type = 116 121 112 101 (alias NAME = TYPE ;)
+            if u64x_tok_word(toks, buf, pos, 4, 116, 121, 112, 101, 0, 0) == 1 {
+                if u64x_span_spells(toks, buf, pos + 2, tk_semi(), names) == 1 {
+                    let _t: i64 = u64x_push_name(names, toks, buf, pos + 1);
+                }
+            }
+            // const = 99 111 110 115 116 ; static = 115 116 97 116 105 99 (NAME : TYPE =)
+            let is_const: i64 = u64x_tok_word(toks, buf, pos, 5, 99, 111, 110, 115, 116, 0);
+            let is_static: i64 = u64x_tok_word(toks, buf, pos, 6, 115, 116, 97, 116, 105, 99);
+            if is_const + is_static > 0 {
+                if u64x_span_spells(toks, buf, pos + 2, tk_eq(), names) == 1 {
+                    let _c: i64 = u64x_push_name(names, toks, buf, pos + 1);
+                }
+            }
+        }
+    }
+    0
+}
+
+// Repeat pass B until the name list stops growing (a name can be declared after
+// its first use). More than 16 sweeps marks the list overflowed (fence all).
+pub fn u64x_collect_fix(toks: Vec, buf: i64, names: i64, rounds: i64) -> i64 {
+    let before: i64 = u64x_count(names);
+    let _s: i64 = u64x_scan_decls(toks, buf, 0, names);
+    let after: i64 = u64x_count(names);
+    if after < 0 {
+        return 0;
+    }
+    if after == before {
+        return 0;
+    }
+    if rounds >= 16 {
+        __mind_store_i64(names, 0 - 1);
+        return 0;
+    }
+    u64x_collect_fix(toks, buf, names, rounds + 1)
+}
+
+// Pass C: record the [lo, hi) byte span of every tainted fn (nested fns too).
+// Thin per-token driver like u64x_scan_decls; the work is in u64x_fn_at.
+pub fn u64x_scan_fns(toks: Vec, buf: i64, pos: i64, names: i64, spans: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let _f: i64 = u64x_fn_at(toks, buf, pos, names, spans);
+    u64x_scan_fns(toks, buf, pos + 1, names, spans)
+}
+
+pub fn u64x_fn_at(toks: Vec, buf: i64, pos: i64, names: i64, spans: i64) -> i64 {
+    if u64x_count(spans) < 0 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        let j: i64 = u64x_body_start(toks, pos + 1);
+        if j >= 0 {
+            let r: i64 = u64x_body_scan(toks, buf, j + 1, 1, 0, names);
+            if r < 0 {
+                __mind_store_i64(spans, 0 - 1);
+                return 0;
+            }
+            let close: i64 = r / 2;
+            let sig: i64 = u64x_span_spells(toks, buf, pos + 1, tk_semi(), names);
+            if r - close * 2 + sig > 0 {
+                let _p: i64 = u64x_push(spans, tok_lo(toks, pos), tok_hi(toks, close));
+            }
+        }
+    }
+    0
+}
+
+pub fn u64x_prepare(toks: Vec, buf: i64, t: i64) -> i64 {
+    if frt_has_unsigned64(t) == 0 {
+        return 0;
+    }
+    let names: i64 = u64x_new();
+    let _c: i64 = u64x_collect_fix(toks, buf, names, 0);
+    let spans: i64 = u64x_new();
+    if u64x_count(names) < 0 {
+        __mind_store_i64(spans, 0 - 1)
+    } else {
+        let _f: i64 = u64x_scan_fns(toks, buf, 0, names, spans);
+    }
+    __mind_store_i64(t + (frt_u64_word() + 1) * 8, names);
+    __mind_store_i64(t + (frt_u64_word() + 2) * 8, spans);
+    0
+}
+
+// 1 iff byte offset `pos` lies inside a recorded tainted fn span.
+pub fn u64x_span_contains(spans: i64, pos: i64, k: i64) -> i64 {
+    if k >= u64x_count(spans) {
+        return 0;
+    }
+    if pos >= u64x_lo(spans, k) {
+        if pos < u64x_hi(spans, k) {
+            return 1;
+        }
+    }
+    u64x_span_contains(spans, pos, k + 1)
 }
 
 // Apply the already-collected module-local alias table to return spans in the
@@ -49544,6 +51067,14 @@ pub fn alias_call_return_code(src: i64, aliases: i64, frt: i64, node: i64) -> i6
     let k: i64 = frt_find(frt, src, ast_span_lo(callee), ast_span_hi(callee), 0);
     if k < 0 {
         return 0;
+    }
+    // Rust's infer_narrow_arith_ty types a call leaf by its callee's declared
+    // return: an 8/16-bit narrow return is Narrow, so `fa() + fb()` on u8
+    // callees is re-masked to u8 (W2-trap: the native binop arm wraps it before
+    // a `/` or `%` sees it). i32/u32 stay on the alias path below, as in Rust.
+    let dw: i64 = nb_narrow_8_16(frt_retw(frt, k));
+    if dw != 0 {
+        return dw;
     }
     let lo: i64 = frt_retty_lo(frt, k);
     let hi: i64 = frt_retty_hi(frt, k);
@@ -49698,7 +51229,7 @@ pub fn alias_annotate_call_expr(src: i64, aliases: i64, frt: i64, env: i64, node
         if rw == alias_env_refusal() {
             return alias_env_refusal();
         }
-        let w: i64 = alias_join_narrow_code(lw, rw, ast_aux(node));
+        let w: i64 = alias_binop_lattice_code(lw, rw, ast_aux(node));
         __mind_store_i64(node + 56, w);
         return w;
     }
@@ -50040,6 +51571,7 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
         return es_new();
     }
     let _fa: i64 = frt_apply_aliases(frt, src_addr, aliases, 0);
+    let _nrw: i64 = nrw_prepare(frt, aliases);
     let _ap: i64 = alias_annotate_params(src_addr, aliases, ordered, n_fns, 0);
 
     // calls scratch table (one 3-i64 record per call site; +2 slack for our entry call).

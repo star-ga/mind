@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2062 | **Est. tokens:** ~3,824,770
-**Generated:** 2026-10-15 05:55 UTC
+**Files:** 2066 | **Est. tokens:** ~3,843,382
+**Generated:** 2026-10-15 05:56 UTC
 
 ## Token Budget Guide
 
@@ -42,13 +42,13 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~111,140 |
+| `docs/` | 38 | ~113,519 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 35 | ~171,406 |
+| `docs/rfcs/` | 35 | ~171,412 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 182 | ~493,077 |
+| `examples/mindc_mind/` | 184 | ~505,372 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -115,9 +115,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,884 |
+| `src/build/` | 13 | ~53,000 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 6 | ~19,852 |
+| `src/build/native_bridge/` | 7 | ~22,479 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -138,7 +138,7 @@
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 6 | ~14,931 |
+| `src/mlir/` | 7 | ~16,472 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -155,7 +155,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,579 |
-| `tests/` | 422 | ~871,353 |
+| `tests/` | 422 | ~872,001 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -461,9 +461,9 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~4368 tok, huge) — The Determinism Contract
-- `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
-- `errors.md` (~1679 tok, huge) — MIND Core Error Model
+- `determinism.md` (~4495 tok, huge) — The Determinism Contract
+- `ENGINE_CONSUMER_LIST.md` (~9566 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
+- `errors.md` (~3807 tok, huge) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
@@ -524,7 +524,7 @@
 - `0024-loop-collapse.md` (~7579 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
 - `0025-mind-intent-contracts.md` (~3605 tok, huge) — RFC 0025: MIND Intent — Intent Contracts (goal + constraints → verifiable Contract IR)
 - `0027-governed-physical-device-plane.md` (~2790 tok, huge) — RFC 0027: Governed Physical-Device Plane — evidence-bound actuation (`device_receipts`)
-- `0028-deterministic-field-calculus.md` (~10282 tok, huge) — RFC 0028: Deterministic Field Calculus
+- `0028-deterministic-field-calculus.md` (~10288 tok, huge) — RFC 0028: Deterministic Field Calculus
 - `DRAFT-deterministic-format-frontend.md` (~10522 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5177 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
 - `DRAFT-governed-device-io-mhs.md` (~5629 tok, huge) — Draft RFC: Governed Device I/O and MHS Compatibility — SUPERSEDED
@@ -654,7 +654,7 @@
 - `collect_field_strings_smoke.py` (~1215 tok, large)
 - `cutover_coverage_measure.py` (~3255 tok, huge)
 - `_diagnostic_project.py` (~376 tok, medium) — Owned CLI projects for diagnostic smoke fixtures."""
-- `div_shift_cmp_edge_smoke.py` (~1846 tok, huge)
+- `div_shift_cmp_edge_smoke.py` (~2106 tok, huge)
 - `enum_netverify.py` (~1957 tok, huge) — # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `fast_keystone.sh` (~3876 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
@@ -702,7 +702,7 @@
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `self_host_bounded_profile_smoke.py` (~4165 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1169 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
-- `self_host_cast_mic3_smoke.py` (~4680 tok, huge)
+- `self_host_cast_mic3_smoke.py` (~4740 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `self_host_continue_smoke.py` (~1384 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
 - `selfhost_driver.mind` (~4772 tok, huge) — ===========================================================================
@@ -731,6 +731,7 @@
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
+- `self_host_native_div_trap_smoke.py` (~9537 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
@@ -752,6 +753,7 @@
 - `self_host_native_intdot_i16_smoke.py` (~1121 tok, large) — RI-B2-S2 (#108) — native-ELF scalar int16 DOT-PRODUCT, FIRST byte-identity rung.
 - `self_host_native_intdot_q16_smoke.py` (~1111 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
+- `self_host_native_main_args_smoke.py` (~2417 tok, huge)
 - `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
 - `self_host_native_misc_census_smoke.py` (~2948 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
@@ -817,7 +819,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~4057 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~4078 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -1376,13 +1378,14 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~6421 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~6839 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
+- `entry.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8461 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~7577 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3018 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1584,6 +1587,7 @@
 
 - `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
 - `const_globals.rs` (~4744 tok, huge) — Copyright 2025 STARGA Inc.
+- `div_trap.rs` (~1541 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `nobuiltin.rs` (~1830 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2203,7 +2207,7 @@
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
-- `int_determinism.rs` (~1234 tok, large) — Copyright 2025 STARGA Inc.
+- `int_determinism.rs` (~1716 tok, huge) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~3085 tok, huge) — Copyright 2025 STARGA Inc.
 - `int_suffix_literal.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~675 tok, large) — Copyright 2025 STARGA Inc.
@@ -2423,7 +2427,7 @@
 - `narrow_signedness_batch2_run.rs` (~2236 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
-- `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
+- `narrow_unsigned_div_zero_run.rs` (~1413 tok, large) — Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~5870 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_bridge_refusals.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
