@@ -2625,3 +2625,100 @@ Why this matters for MIND specifically:
 - Do attention internals need their own credit rule in MIND, or does the output-layer
   estimate suffice at small scale?
 - Can the per-token reward reduction stay order-pinned on GPU without losing the speedup?
+
+## Phase 22 — MIND AI services (proposed, 2026-10-12)
+
+**Goal.** Offer AI as a service for MIND developers and teams, built on the MIND ecosystem working as one system rather than as separate tools.
+
+**Scope.**
+- Hosted assistance for MIND: docs answers (Ask SI), the public MCP server for coding agents and IDEs, and a knowledge base, all drawing on one shared, versioned corpus with citations.
+- Code services: syntax checking with the compiler's own parser, explaining compiler errors, symbol lookup from the code graph, and help porting code from other languages to MIND.
+- Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, MIND-Flow and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
+- Local MCP server, `mindc mcp`: the hosted docs tools offline, from a docs snapshot that matches the installed compiler version, plus toolchain tools that only a local server can run (check a file with real diagnostics, explain an error from the user's build, build with an evidence record, verify an artifact). Ships with the compiler over stdio, for air-gapped and regulated environments and for users who want no query to leave the machine.
+- Governance: every answer and every self-improvement step bounded by declared invariants, with a tamper-evident evidence record per request; improvements change data only and ship after evaluation and approval.
+
+### Order of work
+1. Unify the corpus and index shared by the MCP server, Ask AI and the knowledge base.
+2. Wire the code graph and compiler-backed tools into that shared layer.
+3. Add governance invariants and per-request evidence across the services.
+4. Ship the local MCP server as `mindc mcp`, sharing the tool definitions of the hosted server.
+5. Define the service tiers, limits and access model.
+
+### Open questions — answer before this gets a milestone
+- Free and paid tiers, quotas and identity.
+- Which components run hosted, and which stay local or self-hosted.
+- Service-level targets and how they are measured.
+
+## Phase 23 — Learned artifacts with a provenance trail (proposed, 2026-10-14)
+
+**Goal.** Treat a learned model produced by one deterministic forward pass as a compiled
+artifact: same inputs give byte-identical weights on every substrate, and the artifact
+carries an evidence record of exactly what produced it.
+
+**Why it fits MIND.** Recent research shows networks that read a labelled dataset and emit
+the weights of a small classifier for it in a single forward pass, with no per-task training.
+In MIND that forward pass is already byte-identical across x86, ARM and GPU. The emitted
+weights can then be anchored like any other artifact: hash of the generator, hash of the
+dataset, hash of the output weights, all in the evidence chain. The result is a learned
+model whose origin can be checked, not just its output.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 23.1 | Small weight-generating network run in MIND (Q16.16 and strict `f64` tiers) on a fixed table | Emitted weights byte-identical on avx2 and neon |
+| 23.2 | Evidence record binding generator hash, dataset hash and emitted-weights hash | `mindc verify` detects a one-byte change in any of the three |
+| 23.3 | Emitted classifier compared against a gradient-boosted tree fitted on the same table | Accuracy and fit time reported as numbers, not asserted |
+
+### Firewall — do not cross it
+
+- No accuracy claims for the generated classifiers. This phase is about provenance and
+  reproducibility; accuracy is reported, not marketed.
+- The dataset hash covers the exact rows and their order; reordering the table is a new
+  artifact.
+- No external dependency enters the default build; this is an example and a library path.
+
+### Open questions — answer before this gets a milestone
+
+- Which generator architecture is small enough to run in Q16.16 without losing the
+  classifier's usefulness?
+- Should the evidence record also bind the evaluation table and its score, or only the
+  inputs that produced the weights?
+
+Proposed; sequenced after Phase 21 and Phase 22.
+
+## Phase 24 — Seeded rewrite-rule grid generator, a showcase (proposed, 2026-10-14)
+
+**Goal.** A small `examples/` program where the whole generator is a list of grid rewrite
+rules (find a pattern, replace it, repeat until nothing matches). When a rule matches in
+several places, one match is picked by a seeded integer RNG. Same seed gives the same maze
+or structure, byte for byte, on x86, ARM and GPU.
+
+**Why it fits MIND.** Recent research shows that short ordered lists of local rewrite rules
+grow mazes, caves and buildings, in 2D and 3D, from a single starting cell. The work is all
+integer grid matching, which is the part of MIND that executes today. The only source of
+variation is the random choice between matches, and a seeded integer RNG pins it. It sits
+next to `examples/lorenz_f64.mind` as a second "deterministic but not predictable"
+demonstration: the output is unpredictable by eye and still bit-identical everywhere.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 24.1 | 2D rule engine: integer grid, ordered rules, seeded integer RNG for match choice; maze-growth and backtrack rules | Final grid hash identical on avx2 and neon for fixed seeds |
+| 24.2 | Same rule file run in 3D without changes | 3D grid hash identical on avx2 and neon |
+| 24.3 | Evidence record binding rule-file hash, seed and output-grid hash | `mindc verify` detects a one-byte change in any of the three |
+
+### Firewall — do not cross it
+
+- Integer only: no floats anywhere in the matcher, the RNG or the output.
+- Match enumeration order is part of the spec (row-major, fixed), so the RNG sees the same
+  candidate list on every substrate.
+- Example and library path only; nothing enters the default build.
+
+### Open questions — answer before this gets a milestone
+
+- Which RNG goes in `std` for this: an existing integer generator or a new counter-based one?
+- How large a grid before matching cost needs an index rather than a full scan?
+
+Proposed; a showcase, not on the critical path.
