@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2132 | **Est. tokens:** ~3,983,232
-**Generated:** 2026-10-15 11:34 UTC
+**Files:** 2137 | **Est. tokens:** ~3,993,681
+**Generated:** 2026-10-15 11:46 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 212 | ~598,686 |
+| `examples/mindc_mind/` | 217 | ~609,135 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -698,10 +698,10 @@
 - `native_cabi_registry_smoke.py` (~1991 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_cases.tsv` (~760 tok, large) — id	name	category	runtime_exit	stdout_hex
-- `native_dynamic_image_check.py` (~5110 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
+- `native_dynamic_image_check.py` (~6665 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
 - `native_dynamic_image_expectation_corrections.tsv` (~44 tok, tiny) — id	field	original	corrected	reason
 - `native_dynamic_image_fixture.mind` (~3446 tok, huge) — Copyright 2026 STARGA Inc.
-- `native_dynamic_image.md` (~3075 tok, huge) — Dynamic image writer with checked runtime mappings
+- `native_dynamic_image.md` (~3173 tok, huge) — Dynamic image writer with checked runtime mappings
 - `native_dynamic_image.mind` (~3470 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_mutations.tsv` (~74 tok, small) — name	case	expected_detection
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
@@ -709,7 +709,12 @@
 - `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
 - `native_dynamic_layout.md` (~2529 tok, huge) — Checked dynamic MIND image layout, version 1
 - `native_dynamic_layout.mind` (~1459 tok, large) — Copyright 2026 STARGA Inc.
-- `native_dynamic.mind` (~4030 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_legacy_outputs.tsv` (~5637 tok, huge) — scope	case	exit	stdout_sha256	stderr_sha256
+- `native_dynamic_mic_cases.tsv` (~184 tok, small) — id	name	stdout_hex
+- `native_dynamic_mic_compatibility.md` (~1255 tok, large) — Dynamic writer MIC compatibility
+- `native_dynamic_mic_fixture.mind` (~1033 tok, large) — Copyright 2026 STARGA Inc.
+- `native_dynamic_mic_mutations.tsv` (~75 tok, small) — name	function	case	expected_detection
+- `native_dynamic.mind` (~4642 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_posix.md` (~2111 tok, huge) — Linux x86-64 POSIX substrate
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.

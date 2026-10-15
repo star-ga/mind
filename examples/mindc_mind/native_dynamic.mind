@@ -38,6 +38,19 @@ pub fn nd_alpha(b: i64) -> i64 {
 }
 
 // mode 0: C symbol, 1: version/SONAME, 2: absolute interpreter pathname.
+pub fn nd_text_step(valid: i64, p: i64, i: i64, mode: i64) -> i64 {
+    if valid == 0 { return 0; }
+    let b: i64 = nd_byte(p, i);
+    let mut ok: i64 = nd_alpha(b);
+    if b >= 48 { if b <= 57 { ok = 1; } }
+    if mode > 0 {
+        if b == 46 { ok = 1; }
+        if b == 45 { ok = 1; }
+    }
+    if mode == 2 { if b == 47 { ok = 1; } }
+    ok
+}
+
 pub fn nd_text_ok(p: i64, n: i64, mode: i64) -> i64 {
     if n < 1 { return 0; }
     if n > 255 { return 0; }
@@ -46,31 +59,33 @@ pub fn nd_text_ok(p: i64, n: i64, mode: i64) -> i64 {
     if mode == 0 { if nd_alpha(nd_byte(p, 0)) == 0 { return 0; } }
     if mode == 2 { if nd_byte(p, 0) != 47 { return 0; } }
     let mut i: i64 = 0;
+    let mut valid: i64 = 1;
     while i < n {
-        let b: i64 = nd_byte(p, i);
-        let mut ok: i64 = nd_alpha(b);
-        if b >= 48 { if b <= 57 { ok = 1; } }
-        if mode > 0 {
-            if b == 46 { ok = 1; }
-            if b == 45 { ok = 1; }
-        }
-        if mode == 2 { if b == 47 { ok = 1; } }
-        if ok == 0 { return 0; }
+        valid = nd_text_step(valid, p, i, mode);
         i = i + 1;
     }
-    1
+    valid
+}
+
+// Preserve the first differing byte; later steps do not dereference inputs.
+pub fn nd_compare_step(result: i64, a: i64, b: i64, bn: i64, i: i64) -> i64 {
+    if result != 0 { return result; }
+    if i >= bn { return 1; }
+    let av: i64 = nd_byte(a, i);
+    let bv: i64 = nd_byte(b, i);
+    if av < bv { return 0 - 1; }
+    if av > bv { return 1; }
+    0
 }
 
 pub fn nd_compare(a: i64, an: i64, b: i64, bn: i64) -> i64 {
     let mut i: i64 = 0;
+    let mut result: i64 = 0;
     while i < an {
-        if i >= bn { return 1; }
-        let av: i64 = nd_byte(a, i);
-        let bv: i64 = nd_byte(b, i);
-        if av < bv { return 0 - 1; }
-        if av > bv { return 1; }
+        result = nd_compare_step(result, a, b, bn, i);
         i = i + 1;
     }
+    if result != 0 { return result; }
     if an < bn { return 0 - 1; }
     0
 }
@@ -82,6 +97,76 @@ pub fn nd_row_compare(a: i64, b: i64, field: i64) -> i64 {
 // Status: 1 code/entry, 2 counts, 3 interpreter/SONAME, 4 import text,
 // 5 duplicate symbol, 6 patch bounds/index, 7 non-call/nonzero placeholder,
 // 8 overlapping patches, 9 unused import. Zero means structurally valid inputs.
+// Every step preserves the first error and refuses before dereferencing any
+// later row. Earlier import/patch rows are valid before pairwise comparison.
+pub fn nd_duplicate_step(status: i64, row: i64, imports: Vec, j: i64) -> i64 {
+    if status != 0 { return status; }
+    if nd_row_compare(row, vec_get(imports, j), 0) == 0 { return 5; }
+    0
+}
+
+pub fn nd_import_step(status: i64, imports: Vec, i: i64) -> i64 {
+    if status != 0 { return status; }
+    let row: i64 = vec_get(imports, i);
+    if row <= 0 { return 4; }
+    if row > 9223372036854775775 { return 4; }
+    if nd_text_ok(nd_word(row, 0), nd_word(row, 1), 0) == 0 { return 4; }
+    if nd_text_ok(nd_word(row, 2), nd_word(row, 3), 1) == 0 { return 4; }
+    let mut result: i64 = 0;
+    let mut j: i64 = 0;
+    while j < i {
+        result = nd_duplicate_step(result, row, imports, j);
+        j = j + 1;
+    }
+    result
+}
+
+pub fn nd_overlap_step(status: i64, off: i64, patches: Vec, j: i64) -> i64 {
+    if status != 0 { return status; }
+    let prev: i64 = nd_word(vec_get(patches, j), 0);
+    if off < prev + 4 { if prev < off + 4 { return 8; } }
+    0
+}
+
+pub fn nd_patch_step(status: i64, code: String, ni: i64, patches: Vec, i: i64) -> i64 {
+    if status != 0 { return status; }
+    let row: i64 = vec_get(patches, i);
+    if row <= 0 { return 6; }
+    if row > 9223372036854775791 { return 6; }
+    let off: i64 = nd_word(row, 0);
+    let idx: i64 = nd_word(row, 1);
+    if off < 2 { return 6; }
+    if off > string_len(code) - 4 { return 6; }
+    if idx < 0 { return 6; }
+    if idx >= ni { return 6; }
+    let cp: i64 = string_addr(code);
+    if nd_byte(cp, off - 2) != 255 { return 7; }
+    if nd_byte(cp, off - 1) != 21 { return 7; }
+    if nd_byte(cp, off) != 0 { return 7; }
+    if nd_byte(cp, off + 1) != 0 { return 7; }
+    if nd_byte(cp, off + 2) != 0 { return 7; }
+    if nd_byte(cp, off + 3) != 0 { return 7; }
+    let mut result: i64 = 0;
+    let mut j: i64 = 0;
+    while j < i {
+        result = nd_overlap_step(result, off, patches, j);
+        j = j + 1;
+    }
+    result
+}
+
+pub fn nd_used_step(status: i64, patches: Vec, i: i64) -> i64 {
+    if status != 0 { return status; }
+    let mut used: i64 = 0;
+    let mut j: i64 = 0;
+    while j < vec_len(patches) {
+        if nd_word(vec_get(patches, j), 1) == i { used = 1; }
+        j = j + 1;
+    }
+    if used == 0 { return 9; }
+    0
+}
+
 pub fn nd_validate(code: String, entry_off: i64, imports: Vec, patches: Vec, interpreter: String, soname: String) -> i64 {
     let ncode: i64 = string_len(code);
     if ncode < 1 { return 1; }
@@ -106,58 +191,24 @@ pub fn nd_validate(code: String, entry_off: i64, imports: Vec, patches: Vec, int
     if nd_text_ok(string_addr(interpreter), string_len(interpreter), 2) == 0 { return 3; }
     if nd_text_ok(string_addr(soname), string_len(soname), 1) == 0 { return 3; }
     let mut i: i64 = 0;
+    let mut status: i64 = 0;
     while i < ni {
-        let row: i64 = vec_get(imports, i);
-        if row <= 0 { return 4; }
-        if row > 9223372036854775775 { return 4; }
-        if nd_text_ok(nd_word(row, 0), nd_word(row, 1), 0) == 0 { return 4; }
-        if nd_text_ok(nd_word(row, 2), nd_word(row, 3), 1) == 0 { return 4; }
-        let mut j: i64 = 0;
-        while j < i {
-            if nd_row_compare(row, vec_get(imports, j), 0) == 0 { return 5; }
-            j = j + 1;
-        }
+        status = nd_import_step(status, imports, i);
         i = i + 1;
     }
+    if status != 0 { return status; }
     i = 0;
     while i < np {
-        let row: i64 = vec_get(patches, i);
-        if row <= 0 { return 6; }
-        if row > 9223372036854775791 { return 6; }
-        let off: i64 = nd_word(row, 0);
-        let idx: i64 = nd_word(row, 1);
-        if off < 2 { return 6; }
-        if off > ncode - 4 { return 6; }
-        if idx < 0 { return 6; }
-        if idx >= ni { return 6; }
-        let cp: i64 = string_addr(code);
-        if nd_byte(cp, off - 2) != 255 { return 7; }
-        if nd_byte(cp, off - 1) != 21 { return 7; }
-        let mut k: i64 = 0;
-        while k < 4 {
-            if nd_byte(cp, off + k) != 0 { return 7; }
-            k = k + 1;
-        }
-        let mut j: i64 = 0;
-        while j < i {
-            let prev: i64 = nd_word(vec_get(patches, j), 0);
-            if off < prev + 4 { if prev < off + 4 { return 8; } }
-            j = j + 1;
-        }
+        status = nd_patch_step(status, code, ni, patches, i);
         i = i + 1;
     }
+    if status != 0 { return status; }
     i = 0;
     while i < ni {
-        let mut used: i64 = 0;
-        let mut j: i64 = 0;
-        while j < np {
-            if nd_word(vec_get(patches, j), 1) == i { used = 1; }
-            j = j + 1;
-        }
-        if used == 0 { return 9; }
+        status = nd_used_step(status, patches, i);
         i = i + 1;
     }
-    0
+    status
 }
 
 pub fn nd_round(n: i64, align: i64) -> i64 { ((n + align - 1) / align) * align }
@@ -176,6 +227,16 @@ pub fn nd_bytes(out: String, p: i64, n: i64) -> String {
 }
 pub fn nd_ztext(out: String, p: i64, n: i64) -> String { nb_push(nd_bytes(out, p, n), 0) }
 
+pub fn nd_sort_step(imports: Vec, indices: Vec, j: i64, field: i64) -> i64 {
+    if j <= 0 { return 0; }
+    let a: i64 = vec_get(indices, j - 1);
+    let b: i64 = vec_get(indices, j);
+    if nd_row_compare(vec_get(imports, a), vec_get(imports, b), field) <= 0 { return 0; }
+    vec_set(indices, j - 1, b);
+    vec_set(indices, j, a);
+    j - 1
+}
+
 // Original import indices, sorted by symbol spelling, without changing input.
 pub fn nd_order(imports: Vec) -> Vec {
     let mut order: Vec = vec_new();
@@ -184,12 +245,7 @@ pub fn nd_order(imports: Vec) -> Vec {
         order = vec_push(order, i);
         let mut j: i64 = i;
         while j > 0 {
-            let a: i64 = vec_get(order, j - 1);
-            let b: i64 = vec_get(order, j);
-            if nd_row_compare(vec_get(imports, a), vec_get(imports, b), 0) <= 0 { break; }
-            vec_set(order, j - 1, b);
-            vec_set(order, j, a);
-            j = j - 1;
+            j = nd_sort_step(imports, order, j, 0);
         }
         i = i + 1;
     }
@@ -215,25 +271,27 @@ pub fn nd_versions(imports: Vec, order: Vec) -> Vec {
     while i < vec_len(versions) {
         let mut j: i64 = i;
         while j > 0 {
-            let a: i64 = vec_get(versions, j - 1);
-            let b: i64 = vec_get(versions, j);
-            if nd_row_compare(vec_get(imports, a), vec_get(imports, b), 2) <= 0 { break; }
-            vec_set(versions, j - 1, b);
-            vec_set(versions, j, a);
-            j = j - 1;
+            j = nd_sort_step(imports, versions, j, 2);
         }
         i = i + 1;
     }
     versions
 }
 
+pub fn nd_version_step(found: i64, imports: Vec, versions: Vec, row: i64, i: i64) -> i64 {
+    if found != 0 { return found; }
+    if nd_row_compare(row, vec_get(imports, vec_get(versions, i)), 2) == 0 { return i + 2; }
+    0
+}
+
 pub fn nd_version_id(imports: Vec, versions: Vec, row: i64) -> i64 {
     let mut i: i64 = 0;
+    let mut found: i64 = 0;
     while i < vec_len(versions) {
-        if nd_row_compare(row, vec_get(imports, vec_get(versions, i)), 2) == 0 { return i + 2; }
+        found = nd_version_step(found, imports, versions, row, i);
         i = i + 1;
     }
-    0
+    found
 }
 
 // ELF hash uses 32-bit unsigned arithmetic; masking bounds every intermediate.
@@ -265,6 +323,53 @@ pub fn nd_ehdr(entry: i64) -> String {
     let d: String = nb_i64le(nb_i64le(nb_i64le(c, entry), 64), 0);
     let e: String = nb_u16(nb_u16(nb_u16(nb_u32(d, 0), 64), 56), 9);
     nb_u16(nb_u16(nb_u16(e, 0), 0), 0)
+}
+
+pub fn nd_valid_version(valid: i64, id: i64) -> i64 {
+    if valid == 0 { return 0; }
+    if id < 2 { return 0; }
+    1
+}
+
+pub fn nd_rank_step(found: i64, order: Vec, original: i64, i: i64) -> i64 {
+    if found >= 0 { return found; }
+    if vec_get(order, i) == original { return i; }
+    0 - 1
+}
+
+pub fn nd_link_step(valid: i64, out: String, row: i64, order: Vec, gv: i64) -> i64 {
+    if valid == 0 { return 0; }
+    let off: i64 = nd_word(row, 0);
+    let original: i64 = nd_word(row, 1);
+    let mut rank: i64 = 0 - 1;
+    let mut j: i64 = 0;
+    while j < vec_len(order) {
+        rank = nd_rank_step(rank, order, original, j);
+        j = j + 1;
+    }
+    if rank < 0 { return 0; }
+    if rank >= vec_len(order) { return 0; }
+    let disp: i64 = gv + rank * 8 - (nd_code_addr() + off + 4);
+    if disp < 0 { return 0; }
+    if disp > 2147483647 { return 0; }
+    let mut d: i64 = disp;
+    let mut k: i64 = 0;
+    while k < 4 {
+        __mind_store_i8(string_addr(out) + 4096 + off + k, d & 255);
+        d = d / 256;
+        k = k + 1;
+    }
+    1
+}
+
+pub fn nd_hash_chain_next(i: i64, n: i64) -> i64 {
+    if i < n { return i + 1; }
+    0
+}
+
+pub fn nd_need_next(i: i64, n: i64) -> i64 {
+    if i + 1 < n { return 16; }
+    0
 }
 
 // Checked bounded layout: code <=1MiB, <=256 imports and <=4096 call patches.
@@ -322,7 +427,7 @@ pub fn nd_write_elf(code: String, entry_off: i64, imports: Vec, patches: Vec, in
     meta = nb_u32(nb_u32(nb_u32(nb_u32(meta, 1), n + 1), 1), 0);
     i = 1;
     while i <= n {
-        let next: i64 = if i < n { i + 1 } else { 0 };
+        let next: i64 = nd_hash_chain_next(i, n);
         meta = nb_u32(meta, next);
         i = i + 1;
     }
@@ -337,12 +442,14 @@ pub fn nd_write_elf(code: String, entry_off: i64, imports: Vec, patches: Vec, in
     }
     meta = nb_u16(meta, 0);
     i = 0;
+    let mut valid_ids: i64 = 1;
     while i < n {
         let id: i64 = nd_version_id(imports, versions, vec_get(imports, vec_get(order, i)));
-        if id < 2 { return string_new(); }
+        valid_ids = nd_valid_version(valid_ids, id);
         meta = nb_u16(meta, id);
         i = i + 1;
     }
+    if valid_ids == 0 { return string_new(); }
     meta = nd_to(meta, needoff);
     // Elf64_Verneed: version1, count nv, SONAME offset1, aux offset16, next0.
     meta = nb_u32(nb_u32(nb_u32(nb_u16(nb_u16(meta, 1), nv), 1), 16), 0);
@@ -352,7 +459,7 @@ pub fn nd_write_elf(code: String, entry_off: i64, imports: Vec, patches: Vec, in
         meta = nb_u32(meta, nd_hash(nd_word(row, 2), nd_word(row, 3)));
         meta = nb_u16(nb_u16(meta, 0), i + 2);
         meta = nb_u32(meta, vec_get(vers, i));
-        let next: i64 = if i + 1 < nv { 16 } else { 0 };
+        let next: i64 = nd_need_next(i, nv);
         meta = nb_u32(meta, next);
         i = i + 1;
     }
@@ -392,30 +499,14 @@ pub fn nd_write_elf(code: String, entry_off: i64, imports: Vec, patches: Vec, in
     out = nd_to(out, fileend);
     if string_len(out) != fileend { return string_new(); }
 
-    // Patch only the newly owned output, after all layout checks. Input code is
-    // unchanged and can be reused for byte-identical repeated builds.
+    // Patch only newly owned output. The validity state absorbs any failure;
+    // later steps cannot write another displacement after an invalid result.
     i = 0;
+    let mut linked: i64 = 1;
     while i < vec_len(patches) {
-        let row: i64 = vec_get(patches, i);
-        let off: i64 = nd_word(row, 0);
-        let original: i64 = nd_word(row, 1);
-        let mut rank: i64 = 0;
-        while rank < n {
-            if vec_get(order, rank) == original { break; }
-            rank = rank + 1;
-        }
-        if rank >= n { return string_new(); }
-        let disp: i64 = gv + rank * 8 - (nd_code_addr() + off + 4);
-        if disp < 0 { return string_new(); }
-        if disp > 2147483647 { return string_new(); }
-        let mut d: i64 = disp;
-        let mut k: i64 = 0;
-        while k < 4 {
-            __mind_store_i8(string_addr(out) + 4096 + off + k, d & 255);
-            d = d / 256;
-            k = k + 1;
-        }
+        linked = nd_link_step(linked, out, vec_get(patches, i), order, gv);
         i = i + 1;
     }
+    if linked == 0 { return string_new(); }
     out
 }

@@ -5,7 +5,9 @@ Author: STARGA Inc.
 This standalone MIND component extends `native_dynamic.mind` with the geometry
 from `native_dynamic_layout.mind`. It does not enable compiler admission,
 implement typed C calls, initialize an allocator or provide a production libc
-main adapter. The original `nd_write_elf` API and implementation remain intact.
+main adapter. The original `nd_write_elf` API and emitted-byte contract remain
+intact. Its later MIC-compatibility refactor is documented separately in
+[`native_dynamic_mic_compatibility.md`](native_dynamic_mic_compatibility.md).
 
 ## Inputs and ownership
 
@@ -55,7 +57,7 @@ exact file length and dynamic-table containment before using its sizes. It
 replaces only the first header page and retains every byte from file offset
 4096 through the end of the original RELRO area. Consequently symbol ordering,
 version requirements, hash tables, GOT relocations and existing FF15 call
-displacements are produced by the unchanged writer. No instruction scanning,
+displacements are produced by the existing writer. No instruction scanning,
 E8 expansion, implicit rebase or new symbol-name ABI inference occurs.
 
 The new ELF contains 13 program headers, or 14 when literal bytes are present:
@@ -160,8 +162,8 @@ retains source/toolchain/dependency hashes, exact native input, commands and raw
 stdout/stderr/exit receipts; it removes LD_* and GLIBC_TUNABLES overrides and
 requires no system preloads. It makes no compiler-pin, CI or cross-host claim.
 The explicitly hashed oracle also checks nonempty MIC emission for every
-extension function. This is separate from native/MLIR runtime parity and does
-not by itself establish MIC closure for dependencies or the whole compiler.
+base-writer and extension function. This is separate from native/MLIR runtime
+parity and does not by itself establish MIC closure for the whole compiler.
 
 ### Observed component run, 2026-10-15
 
@@ -195,5 +197,8 @@ refactor above passes emission for all 14 extension functions using oracle
 SHA-256 `bab5c02ec407ec7c1b429f5befb39ec49d997d75dd7f1392f83ab364cb4a48ae`.
 The same 82 cases and three mutations pass again, with all 164 emitted stdout/
 stderr pairs unchanged from the prior runtime run. Seven functions in the
-unchanged underlying writer still lack MIC compatibility; that pre-existing
-dependency obligation is not hidden by this extension-level result.
+underlying writer initially lacked MIC compatibility. The separately documented
+correction now passes emission for all 38 base-writer functions as well as these
+14 extension functions, preserving the original 24 base entry points. Its
+15 supplementary cases, three additional compiled mutations and 158 exact
+legacy-output comparisons remain distinct from the original 82-case contract.

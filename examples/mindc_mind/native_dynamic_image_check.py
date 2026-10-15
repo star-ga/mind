@@ -14,7 +14,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 LIMIT = 2 << 30
 CASES_SHA = '7a5db32aad478fcd944b182b3e857f251e766d119b1d2baaa84c07ddf39f560f'
-BASE_WRITER_SHA = '468dc87cdb41da33939d23696eda9ebd980ff75bae91cd82cf5c2e68367081aa'
+BASE_WRITER_SHA = '4c8db4d85ca457809e2d19c792924894279d227cd0198d85f8ea0b381efbf6ef'
 
 
 def digest(data):
@@ -189,6 +189,20 @@ def main():
     assert [(m['name'], m['case']) for m in mutation_cases] == [('skip_expected_layout_comparison', '100'), ('skip_note_structure_validation', '25'), ('context_readonly_header', '0')]
     (e / 'mutations.tsv').write_bytes(mutation_packet)
     print('PRELISTED MUTATIONS', len(mutation_cases), digest(mutation_packet), flush=True)
+    supplement_packet = (HERE / 'native_dynamic_mic_cases.tsv').read_bytes()
+    assert digest(supplement_packet) == '14327bcf2a79fe60b60ba045ad8ec4c2cea36838a81279a4c2e305d26c01c717'
+    supplement_cases = list(csv.DictReader(supplement_packet.decode().splitlines(), delimiter='\t'))
+    assert len(supplement_cases) == 15
+    (e / 'supplement-cases.tsv').write_bytes(supplement_packet)
+    print('PRELISTED WRITER SUPPLEMENT', len(supplement_cases), digest(supplement_packet), flush=True)
+    base_mutation_packet = (HERE / 'native_dynamic_mic_mutations.tsv').read_bytes()
+    base_mutation_cases = list(csv.DictReader(base_mutation_packet.decode().splitlines(), delimiter='\t'))
+    assert [(m['function'], m['case']) for m in base_mutation_cases] == [('nd_import_step', '4'), ('nd_compare_step', '2'), ('nd_sort_step', '0')]
+    (e / 'base-mutations.tsv').write_bytes(base_mutation_packet)
+    print('PRELISTED BASE MUTATIONS', len(base_mutation_cases), digest(base_mutation_packet), flush=True)
+    legacy_packet = (HERE / 'native_dynamic_legacy_outputs.tsv').read_bytes()
+    assert digest(legacy_packet) == '64d542243685fe6b44720f8b7792bcc6bc0e8072cdeac5ab4355051533f1b0c7'
+    (e / 'legacy-outputs.tsv').write_bytes(legacy_packet)
     print('PRELISTED', len(cases), CASES_SHA, flush=True)
     env = os.environ.copy()
     for key in list(env):
@@ -225,7 +239,7 @@ def main():
                         for name in ['vec', 'string']) + b'\n'
     combined = prefix + user
     (e / 'assembled.mind').write_bytes(combined)
-    source_files = ['main.mind', 'native_dynamic.mind', 'native_dynamic_layout.mind', 'native_dynamic_image.mind', 'native_dynamic_image_fixture.mind', 'native_dynamic_image_cases.tsv', 'native_dynamic_image_expectation_corrections.tsv', 'native_dynamic_image_mutations.tsv', 'native_dynamic_image_check.py']
+    source_files = ['main.mind', 'native_dynamic.mind', 'native_dynamic_layout.mind', 'native_dynamic_image.mind', 'native_dynamic_image_fixture.mind', 'native_dynamic_image_cases.tsv', 'native_dynamic_image_expectation_corrections.tsv', 'native_dynamic_image_mutations.tsv', 'native_dynamic_mic_fixture.mind', 'native_dynamic_mic_cases.tsv', 'native_dynamic_mic_mutations.tsv', 'native_dynamic_legacy_outputs.tsv', 'native_dynamic_image_check.py']
     (e / 'INPUT_HASHES.txt').write_text(''.join(f'{digest((HERE / f).read_bytes())}  {f}\n' for f in source_files) + f'{digest(prefix)}  stdlib_prefix\n{digest(combined)}  assembled\n{args.seed_sha256}  {seed}\n{args.mindc_sha256}  {mindc}\n')
     with (e / 'INPUT_HASHES.txt').open('a') as f:
         f.write(f'{args.mic_oracle_sha256}  {oracle}\n')
@@ -237,20 +251,21 @@ def main():
     emit = lib.selftest_nfn_emit_nth
     emit.argtypes = [ct.c_int64] * 6
     emit.restype = ct.c_int64
-    mic_source = (HERE / 'native_dynamic_image.mind').read_bytes()
-    mic_names = re.findall(rb'^pub fn (\w+)\(', mic_source, re.M)
-    assert mic_names
     mic_rows = []
-    for index, name in enumerate(mic_names):
-        sc = ct.create_string_buffer(mic_source + b'\0' * 8)
-        buf = ct.create_string_buffer(1 << 18)
-        offsets = (ct.c_int64 * 8192)()
-        count = ct.c_int64()
-        rc = emit(ct.addressof(sc), len(mic_source), ct.addressof(buf), ct.addressof(offsets), ct.addressof(count), index)
-        mic_rows.append(f'{index}\t{name.decode()}\t{rc}\n')
-        (e / 'mic-functions.tsv').write_text('index\tname\temitted\n' + ''.join(mic_rows))
-        assert rc == 1, ('module function cannot emit MIC', name, rc)
-    print('MIC module functions PASS', len(mic_names), flush=True)
+    for module in ['native_dynamic.mind', 'native_dynamic_image.mind']:
+        mic_source = (HERE / module).read_bytes()
+        mic_names = re.findall(rb'^pub fn (\w+)\(', mic_source, re.M)
+        assert mic_names
+        for index, name in enumerate(mic_names):
+            sc = ct.create_string_buffer(mic_source + b'\0' * 8)
+            buf = ct.create_string_buffer(1 << 18)
+            offsets = (ct.c_int64 * 8192)()
+            count = ct.c_int64()
+            rc = emit(ct.addressof(sc), len(mic_source), ct.addressof(buf), ct.addressof(offsets), ct.addressof(count), index)
+            mic_rows.append(f'{module}\t{index}\t{name.decode()}\t{rc}\n')
+            (e / 'mic-functions.tsv').write_text('module\tindex\tname\temitted\n' + ''.join(mic_rows))
+            assert rc == 1, ('module function cannot emit MIC', module, name, rc)
+        print('MIC module functions PASS', module, len(mic_names), flush=True)
     image = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(combined)) + combined
     (e / 'input.packet').write_bytes(image)
     nb = run('native-build', [seed], image, timeout=240)
@@ -325,6 +340,67 @@ def main():
     new_elf = (e / 'case-0.elf').read_bytes()
     assert new_elf[4096:] == original_elf[4096:], 'existing linked payload changed'
     assert digest((HERE / 'native_dynamic.mind').read_bytes()) == BASE_WRITER_SHA
+    supplement = prefix + b'\n'.join([encoders, original, (HERE / 'native_dynamic_mic_fixture.mind').read_bytes()])
+    (e / 'supplement.mind').write_bytes(supplement)
+    supplement_input = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(supplement)) + supplement
+    sb = run('supplement-native-build', [seed], supplement_input, timeout=240)
+    assert sb.returncode == 0 and sb.stderr == b'' and sb.stdout.startswith(b'\x7fELF')
+    snative = e / 'supplement.native.elf'
+    snative.write_bytes(sb.stdout)
+    snative.chmod(0o700)
+    sproject = e / 'supplement-project'
+    sproject.mkdir()
+    (sproject / 'Mind.toml').write_bytes((project / 'Mind.toml').read_bytes())
+    (sproject / 'main.mind').write_bytes(supplement)
+    smlir = e / 'supplement.mlir.elf'
+    sm = run('supplement-mlir-build', [mindc, '--allow-nondeterministic', 'build', '--backend', 'mlir', '--target', 'cpu', '--emit', 'binary', '--optimize', 'debug', '--no-cache', '--out', smlir], cwd=sproject, timeout=300)
+    assert sm.returncode == 0 and smlir.exists(), ('supplement MLIR build', sm.stderr[-1200:])
+    for case in supplement_cases:
+        for backend, exe in [('native', snative), ('mlir', smlir)]:
+            r = run(f'supplement-{case["id"]}-{backend}', [exe], struct.pack('<q', int(case['id'])))
+            assert (r.returncode, r.stdout, r.stderr) == (0, bytes.fromhex(case['stdout_hex']), b''), ('supplement', case, backend, r.returncode, r.stdout, r.stderr)
+    print('WRITER SUPPLEMENT PASS', len(supplement_cases), 'exact outcomes on both backends', flush=True)
+    legacy = {(r['scope'], r['case']): (r['exit'], r['stdout_sha256'], r['stderr_sha256'])
+              for r in csv.DictReader(legacy_packet.decode().splitlines(), delimiter='\t')}
+    observed = set()
+    for scope, folder, marker in [('writer', e / 'original-writer', 'emit-'), ('image', e, 'emit-'), ('supplement', e, 'supplement-')]:
+        for row in csv.DictReader((folder / 'executions.tsv').read_text().splitlines(), delimiter='\t'):
+            label = row['id'].split('-', 1)[1]
+            if not label.startswith(marker):
+                continue
+            case = label.split('-')[1]
+            if not case.isdecimal():
+                continue
+            key = (scope, case)
+            actual = (row['exit'], row['stdout_sha256'], row['stderr_sha256'])
+            assert key in legacy and actual == legacy[key], ('legacy output changed', key, actual)
+            observed.add(key)
+    assert observed == set(legacy), 'legacy coverage changed'
+    (e / 'legacy-byte-parity.txt').write_text(f'PASS {len(observed)} distinct legacy output contracts unchanged; all native/MLIR emissions compared.\n')
+    print('LEGACY OUTPUTS PASS', len(observed), flush=True)
+    base_edits = [
+        (b'if status != 0 { return status; }', b'if 0 != 0 { return status; }'),
+        (b'if result != 0 { return result; }', b'if 0 != 0 { return result; }'),
+        (b'), field) <= 0', b'), field) >= 0'),
+    ]
+    base_results = []
+    for i, (m, (before, after)) in enumerate(zip(base_mutation_cases, base_edits)):
+        fn_body = encoder(original.decode(), m['function']).encode().rstrip()
+        assert fn_body.count(before) == 1 and supplement.count(fn_body) == 1
+        mutant = supplement.replace(fn_body, fn_body.replace(before, after))
+        (e / f'base-mutant-{i}.mind').write_bytes(mutant)
+        data = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(mutant)) + mutant
+        built = run(f'base-mutant-{i}-build', [seed], data, timeout=240)
+        assert built.returncode == 0 and built.stderr == b'' and built.stdout.startswith(b'\x7fELF')
+        exe = e / f'base-mutant-{i}.elf'
+        exe.write_bytes(built.stdout)
+        exe.chmod(0o700)
+        result = run(f'base-mutant-{i}-case-{m["case"]}', [exe], struct.pack('<q', int(m['case'])))
+        expected = next(bytes.fromhex(c['stdout_hex']) for c in supplement_cases if c['id'] == m['case'])
+        assert result.returncode == 0 and result.stderr == b'' and result.stdout and result.stdout != expected, ('base mutation not detected by normal wrong output', m, result.returncode, result.stdout)
+        base_results.append(f'{m["name"]}\t{digest(mutant)}\t{digest(built.stdout)}\t{m["case"]}\tDETECTED_NORMAL_WRONG_RESULT\n')
+        print('BASE MUTATION DETECTED', m['name'], 'normal exit0 with incorrect output', flush=True)
+    (e / 'base-mutation-results.tsv').write_text('mutation\tsource_sha256\texecutable_sha256\tcase\tverdict\n' + ''.join(base_results))
     edits = [
         (b'if ndx_same_plan(plan, expected) == 0 {', b'if 0 != 0 {'),
         (b'if ndx_note_ok(note) == 0 {', b'if 0 != 0 {'),
@@ -353,8 +429,8 @@ def main():
         mutant_rows.append(f'{m["name"]}\t{digest(mutant)}\t{digest(built.stdout)}\t{m["case"]}\tDETECTED_NORMAL_WRONG_RESULT\n')
         print('MUTATION DETECTED', m['name'], 'normal exit0 with incorrect emitted result', flush=True)
     (e / 'mutation-results.tsv').write_text('mutation\tsource_sha256\texecutable_sha256\tcase\tverdict\n' + ''.join(mutant_rows))
-    print(f'PASS {len(cases)} cases: {accepted} accepted images, {refused} normal refusals, {runtime} loader/runtime outcomes; original writer unchanged', flush=True)
-    (e / 'VERDICT.txt').write_text(f'PASS\ncases={len(cases)}\naccepted={accepted}\nrefused={refused}\nruntime={runtime}\nmutations={len(mutation_cases)}\n')
+    print(f'PASS {len(cases)} cases: {accepted} accepted images, {refused} normal refusals, {runtime} loader/runtime outcomes; original writer bytes preserved', flush=True)
+    (e / 'VERDICT.txt').write_text(f'PASS\ncases={len(cases)}\naccepted={accepted}\nrefused={refused}\nruntime={runtime}\nmutations={len(mutation_cases)}\nsupplement={len(supplement_cases)}\nbase_mutations={len(base_mutation_cases)}\n')
 
 
 if __name__ == '__main__':
