@@ -1,0 +1,138 @@
+// Copyright 2026 STARGA Inc. Diagnostic binary transport, never admission.
+pub fn nbf_read(p: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_read(0, p + done, n - done, 0 - 1);
+        if got <= 0 {
+            return 0;
+        }
+        done = done + got;
+    }
+    1
+}
+pub fn nbf_write(p: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_write(1, p + done, n - done, 0 - 1);
+        if got <= 0 {
+            return 0;
+        }
+        done = done + got;
+    }
+    1
+}
+pub fn nbf_check(mode: i64, source: i64, n: i64, plan: i64, size: i64, header: i64, diag: i64) -> i64 {
+    let offset: i64 = __mind_load_i64(header + 32);
+    let value: i64 = __mind_load_i64(header + 40);
+    let row: i64 = __mind_load_i64(header + 16);
+    let profile: i64 = __mind_load_i64(header + 24);
+    if mode == 2 {
+        if offset < 0 {
+            return 71;
+        }
+        if offset >= size {
+            return 71;
+        }
+        __mind_store_i8(plan + offset, value)
+    }
+    if mode == 3 {
+        if offset < 0 {
+            return 71;
+        }
+        if offset >= n {
+            return 71;
+        }
+        __mind_store_i8(source + offset, value)
+    }
+    if mode == 4 {
+        return ncb_check(plan, size, source, n, __mind_load_i64(header + 56), profile, diag);
+    }
+    if mode == 5 {
+        return ncb_check(plan, size, source, n, row, __mind_load_i64(header + 64), diag);
+    }
+    if mode == 6 {
+        let extended: i64 = __mind_alloc(size + 1);
+        let _copy: i64 = ncb_copy(extended, plan, size);
+        __mind_store_i8(extended + size, 0);
+        let status: i64 = ncb_check(extended, size + 1, source, n, row, profile, diag);
+        __mind_free(extended);
+        return status;
+    }
+    if mode == 7 {
+        return ncb_check(plan, __mind_load_i64(header + 48), source, n, row, profile, diag);
+    }
+    ncb_check(plan, size, source, n, row, profile, diag)
+}
+pub fn main() -> i64 {
+    let header: i64 = __mind_alloc(80);
+    if nbf_read(header, 80) == 0 {
+        return 71;
+    }
+    let mode: i64 = __mind_load_i64(header);
+    let n: i64 = __mind_load_i64(header + 8);
+    if n < 0 {
+        return 71;
+    }
+    if n > 4194304 {
+        return 71;
+    }
+    let source: i64 = __mind_alloc(n + 8);
+    if nbf_read(source, n) == 0 {
+        return 71;
+    }
+    __mind_store_i64(source + n, 0);
+    let trailing: i64 = __mind_alloc(8);
+    if __mind_read(0, trailing, 1, 0 - 1) != 0 {
+        return 71;
+    }
+    __mind_free(trailing);
+    let diag: i64 = __mind_alloc(40);
+    let _clear: i64 = ncb_zero(diag, 40);
+    if mode == 9 {
+        let status: i64 = ncb_low32_view(__mind_load_i64(header + 72), __mind_load_i64(header + 40), diag + 32);
+        __mind_store_i64(diag, status);
+        let _write: i64 = nbf_write(diag, 40);
+        return 0;
+    }
+    let mut used_length: i64 = n;
+    if mode == 10 {
+        used_length = __mind_load_i64(header + 48);
+    }
+    let plan: i64 = ncb_build(source, used_length, __mind_load_i64(header + 16), __mind_load_i64(header + 24), diag);
+    if plan == 0 {
+        let _write: i64 = nbf_write(diag, 40);
+        __mind_free(source);
+        __mind_free(diag);
+        __mind_free(header);
+        return 0;
+    }
+    let size: i64 = __mind_load_i64(plan + 8);
+    if mode == 0 {
+        __mind_store_i64(diag + 32, size);
+        let _write: i64 = nbf_write(diag, 40);
+        let _body: i64 = nbf_write(plan, size);
+    } else {
+        let mut current: i64 = source;
+        if mode == 8 {
+            current = __mind_alloc(n + 8);
+            let _copy: i64 = ncb_copy(current, source, n + 8);
+            __mind_free(source);
+            let overwrite: i64 = __mind_alloc(n + 8);
+            let _zero: i64 = ncb_zero(overwrite, n + 8);
+            __mind_free(overwrite)
+        }
+        let result: i64 = nbf_check(mode, current, n, plan, size, header, diag);
+        if result == 71 {
+            return 71;
+        }
+        let _write: i64 = nbf_write(diag, 40);
+        __mind_free(current)
+    }
+    let _release: i64 = ncb_free(plan);
+    if mode == 0 {
+        __mind_free(source)
+    }
+    __mind_free(diag);
+    __mind_free(header);
+    0
+}
