@@ -1029,6 +1029,27 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 21 examples/mindc_mind/self_host_bounded_profile_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Bounded native allocator gate — merging free-list runtime under RLIMIT_AS=2GiB (self_host_native_alloc_bounded_smoke.py)
+        # Derives the tree's bounded compiler natively (frozen default seed -> B1
+        # -> B2 -> B3, B2 == B3 under the cap), then: the allocator runtime source
+        # re-assembled and byte-compared with the blob B2 and a fixture start
+        # with; a C stress harness over that blob (random traces + full heap walk
+        # after every operation); every fixture in testdata/native_alloc_bounded/
+        # (alloc/free/realloc loops with a small live footprint, a fitting block
+        # behind a smaller bin head, realloc growth into a free neighbour,
+        # C-runtime edge cases incl. realloc(NULL, 0), deterministic
+        # out-of-memory exit 70, duplicate struct names that crashed the
+        # compiler under the bounded allocator)
+        # natively AND through the MLIR backend under the same cap; and the
+        # compiler's own arena reclaim code run natively. 36 verdicts; the MLIR
+        # legs need MINDC_BIN, so a missing binary is a red SKIP. Three whole
+        # self-compiles plus 12 MLIR builds overrun run_gate's 900 s default on
+        # a loaded runner, hence the explicit 2400 s budget.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 36 --timeout 2400 examples/mindc_mind/self_host_native_alloc_bounded_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)
         # RI-B1 native-ELF float column (roadmap C1). No frozen float byte-oracle
         # can exist (the deleted Rust native backend rejected ConstF64), so the CPU

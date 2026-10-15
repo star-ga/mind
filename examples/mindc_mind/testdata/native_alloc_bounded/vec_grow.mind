@@ -1,0 +1,44 @@
+// std vec_push shape: a buffer grown by doubling __mind_realloc, filled,
+// summed and freed, 150 times. Each round's peak is ~24 MiB; the rounds total
+// ~3.6 GiB of requests, so this only runs under RLIMIT_AS = 2 GiB when realloc
+// and free return blocks for reuse. Sum of 0..999999 = 499999500000.
+// Expected stdout "vec\n", exit 7.
+fn build(n: i64) -> i64 {
+    let mut cap: i64 = 1;
+    let mut buf: i64 = __mind_alloc(8);
+    let mut i: i64 = 0;
+    while i < n {
+        if i == cap {
+            cap = cap * 2;
+            buf = __mind_realloc(buf, cap * 8);
+        }
+        __mind_store_i64(buf + i * 8, i);
+        i = i + 1;
+    }
+    let mut s: i64 = 0;
+    let mut j: i64 = 0;
+    while j < n {
+        s = s + __mind_load_i64(buf + j * 8);
+        j = j + 1;
+    }
+    let f: i64 = __mind_free(buf);
+    s + f
+}
+fn say(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i8(buf, a);
+    __mind_store_i8(buf + 1, b);
+    __mind_store_i8(buf + 2, c);
+    __mind_store_i8(buf + 3, d);
+    __mind_write(1, buf, 4, 0 - 1)
+}
+fn main() -> i64 {
+    let mut k: i64 = 0;
+    let mut acc: i64 = 0;
+    while k < 150 {
+        acc = acc + build(1000000) - 499999500000;
+        k = k + 1;
+    }
+    let w: i64 = say(118, 101, 99, 10);
+    acc + w + 3
+}

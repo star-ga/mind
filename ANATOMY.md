@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2044 | **Est. tokens:** ~3,808,717
-**Generated:** 2026-10-15 05:54 UTC
+**Files:** 2062 | **Est. tokens:** ~3,824,770
+**Generated:** 2026-10-15 05:55 UTC
 
 ## Token Budget Guide
 
@@ -62,11 +62,13 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 181 | ~487,412 |
+| `examples/mindc_mind/` | 182 | ~493,077 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
+| `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
+| `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_misc/` | 36 | ~4,808 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -698,7 +700,7 @@
 - `self_host_array_smoke.py` (~1425 tok, large)
 - `self_host_arridx_mic3_smoke.py` (~1864 tok, huge)
 - `self_host_body_smoke.py` (~3055 tok, huge)
-- `self_host_bounded_profile_smoke.py` (~4122 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
+- `self_host_bounded_profile_smoke.py` (~4165 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1169 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_cast_mic3_smoke.py` (~4680 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
@@ -722,6 +724,7 @@
 - `self_host_mlir_smoke.py` (~1954 tok, huge)
 - `self_host_narrow_let_mic3_smoke.py` (~1612 tok, huge)
 - `self_host_narrow_param_smoke.py` (~11275 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
+- `self_host_native_alloc_bounded_smoke.py` (~5464 tok, huge) — Bounded-profile allocator gate (W11c): grow-on-demand arena, C-runtime
 - `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
 - `self_host_native_avx2_dot_f32_smoke.py` (~1663 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
@@ -814,7 +817,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3899 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~4057 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -928,6 +931,29 @@
 - `shadow_assign_before_twice.mind` (~87 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 - `shadow_assign_before_two_names.mind` (~96 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 - `shadow_assign_before_while_after.mind` (~92 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+### `examples/mindc_mind/testdata/native_alloc_bounded/`
+
+- `afl_inc.mind` (~190 tok, small) — Strictly growing alloc/free loop (verifier repro, W11c round 2): each step
+- `alloc_nonpos.mind` (~291 tok, medium) — alloc/realloc/free parity with the C runtime (runtime-support/mind_intrinsics.c):
+- `big_increasing.mind` (~159 tok, small) — A 300..319 MB scratch buffer allocated, touched at its last word and freed,
+- `bin_fit_search.mind` (~338 tok, medium) — A free block that fits must be found even when it is not the head of its
+- `dup_struct_name.mind` (~186 tok, small) — Two struct declarations with the same name (W11c). The emitter visits the
+- `grow8.mind` (~173 tok, small) — Naive append (verifier repro, W11c round 2): one buffer grown by 8 bytes per
+- `grow_big.mind` (~283 tok, medium) — measured-report's synthesize-path footprint: 256+512+4+6+8 MiB = 786 MiB of
+- `interleaved_growth.mind` (~306 tok, medium) — Two buffers grown alternately by __mind_realloc, 8 and 16 bytes per step for
+- `oom_exit.mind` (~111 tok, small) — Allocation without free past the address-space limit: the native image must
+- `r18_free_loop.mind` (~60 tok, small) — fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { let p: i64 = __mind_alloc(1000000); __mind_s
+- `realloc_free_neighbour.mind` (~299 tok, medium) — realloc grows a block in place into its free successor (W11c round 3).
+- `realloc_null_zero.mind` (~199 tok, small) — realloc(NULL, 0) (verifier repro edge/e04, W11c round 2). The C runtime's
+### `examples/mindc_mind/testdata/native_alloc_bounded/rt/`
+
+- `alloc_rt_harness.c` (~3223 tok, huge) — Standalone stress harness for the bounded-profile allocator blob (rt.bin).
+- `alloc_rt.s` (~3414 tok, huge) — .intel_syntax noprefix
+- `gen_mind.py` (~489 tok, medium) — rt.bin -> MIND byte-emitter functions (nb_le 7-byte chunks; nb_i64le for
+### `examples/mindc_mind/testdata/native_alloc_bounded/`
+
+- `vec_grow.mind` (~326 tok, medium) — std vec_push shape: a buffer grown by doubling __mind_realloc, filled,
+- `vec_std.mind` (~341 tok, medium) — std vec_push itself: std/vec.mind vec_new + vec_push growing through
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8
