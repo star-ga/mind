@@ -130,7 +130,9 @@ GATED_EVENTS = ("push", "pull_request")
 # -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
 # Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
 # not hide this growth by changing the pathspec or classifying files out of it.
-HARNESS_CEILING = 285  # Exact reviewed integration inventory; no spare allowance.
+# 285 -> 286 adds self_host_source_note_smoke.py: native PT_NOTE bounds/identity
+# refusals and exact HOME-lowered string bytes/source digest, wired in ci.yml.
+HARNESS_CEILING = 286  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

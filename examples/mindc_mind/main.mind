@@ -50991,13 +50991,79 @@ pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> E
     hm_mark_source_note(es)
 }
 
-// Set the note's n_type (the u32 at len-44 of the 52-byte trailing note) to 2.
-pub fn hm_mark_source_note(es: EmitState) -> EmitState {
-    let n: i64 = string_len(es.buf);
-    if n < 52 {
-        return es;
+// Locate the emitter's MIND note through PT_NOTE. String-literal rodata follows
+// the note, so a file-tail-relative write can silently corrupt literal bytes.
+// This is a bounded check of our emitted note, not authentication of an ELF.
+// Refuse absent, ambiguous or malformed notes before changing any byte.
+pub fn hm_source_note_offset(buf: String) -> i64 {
+    let n: i64 = string_len(buf);
+    if n < 64 {
+        return 0 - 1;
     }
-    __mind_store_i8(string_addr(es.buf) + n - 44, 2);
+    let a: i64 = string_addr(buf);
+    if __mind_load_i32(a) != 1179403647 {
+        return 0 - 1;
+    }
+    if __mind_load_i8(a + 4) != 2 || __mind_load_i8(a + 5) != 1 || __mind_load_i8(a + 6) != 1 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 16) != 2 || __mind_load_i16(a + 18) != 62 || __mind_load_i32(a + 20) != 1 {
+        return 0 - 1;
+    }
+    if __mind_load_i16(a + 52) != 64 || __mind_load_i16(a + 54) != 56 {
+        return 0 - 1;
+    }
+    let phoff: i64 = __mind_load_i64(a + 32);
+    let count: i64 = __mind_load_i16(a + 56);
+    if phoff < 64 || phoff > n || count <= 0 {
+        return 0 - 1;
+    }
+    // Divide the remaining size before multiplying untrusted header fields.
+    if count > (n - phoff) / 56 {
+        return 0 - 1;
+    }
+    let headers_end: i64 = phoff + count * 56;
+    let mut found: i64 = 0 - 1;
+    let mut i: i64 = 0;
+    while i < count {
+        let p: i64 = a + phoff + i * 56;
+        if __mind_load_i32(p) == 4 {
+            if found >= 0 {
+                return 0 - 1;
+            }
+            let off: i64 = __mind_load_i64(p + 8);
+            if off < headers_end || off > n - 52 {
+                return 0 - 1;
+            }
+            if __mind_load_i64(p + 32) != 52 || __mind_load_i64(p + 40) != 52 || __mind_load_i64(p + 48) != 4 {
+                return 0 - 1;
+            }
+            let note: i64 = a + off;
+            if __mind_load_i32(note) != 5 || __mind_load_i32(note + 4) != 32 {
+                return 0 - 1;
+            }
+            let kind: i64 = __mind_load_i32(note + 8);
+            if kind != 1 && kind != 2 {
+                return 0 - 1;
+            }
+            // Owner name plus padding: M I N D NUL NUL NUL NUL.
+            if __mind_load_i32(note + 12) != 1145981261 || __mind_load_i32(note + 16) != 0 {
+                return 0 - 1;
+            }
+            found = off;
+        }
+        i = i + 1;
+    }
+    found
+}
+
+// Tag a source-hash note as type 2; leave the digest and all other bytes intact.
+pub fn hm_mark_source_note(es: EmitState) -> EmitState {
+    let off: i64 = hm_source_note_offset(es.buf);
+    if off < 0 {
+        return es_refused();
+    }
+    __mind_store_i8(string_addr(es.buf) + off + 8, 2);
     es
 }
 
