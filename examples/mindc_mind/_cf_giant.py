@@ -546,8 +546,9 @@ def capacity_cases():
     return [
         ("8100 small functions (SSA tables, ~105 KB of arena each)", many_fn_program(8100, "inc"), True, True),
         ("10000 functions x 100 lets (27 MB)", many_fn_program(10000, "lets100"), True, True),
-        ("1 MB string literal", long_token_program("str", 1000000), True, True),
-        ("1 MB string literal, unseeded image", long_token_program("str", 1000000), True, False),
+        ("1 MB string literal", long_token_program("str", 1000000), False, True),
+        ("1 MB string literal, unseeded image", long_token_program("str", 1000000), False, False),
+        ("8 MB string literal", long_token_program("str", 8000000), True, True),
         ("4 MB identifier", long_token_program("ident", 4000000), True, True),
         ("4 MB digit run", long_token_program("digits", 4000000), True, True),
         ("4 MB comment line", long_token_program("comment", 4000000), False, True),

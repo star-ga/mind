@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2029 | **Est. tokens:** ~3,802,500
-**Generated:** 2026-10-15 00:04 UTC
+**Files:** 2029 | **Est. tokens:** ~3,802,521
+**Generated:** 2026-10-15 00:16 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 179 | ~487,805 |
+| `examples/mindc_mind/` | 179 | ~487,826 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -648,7 +648,7 @@
 - `bootstrap_smoke.py` (~2473 tok, huge)
 - `branch_shadow_crossbackend_smoke.py` (~2039 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
-- `_cf_giant.py` (~7083 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
+- `_cf_giant.py` (~7104 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
 - `_cf_oracle.py` (~1375 tok, large) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED

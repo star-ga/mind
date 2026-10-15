@@ -32837,7 +32837,12 @@ pub fn nb_refuse_arena() -> EmitState {
     }
     es_new()
 }
-// Longest token of tokens [lo, hi) in bytes (halving: depth log2(n)).
+// Longest token of tokens [lo, hi), in budget units (halving: depth log2(n)):
+// its length in bytes, a string literal's divided by 8. The walks over an
+// identifier's or a digit run's bytes recurse once per byte (a 2 MB identifier
+// overflowed the bounded stack), the string-literal walks far more cheaply (an
+// 8 MB literal reached a clean refusal), so a literal that compiled before
+// (837 KB, bounded profile) is not refused by this budget.
 pub fn nb_tok_max_len(toks: Vec, lo: i64, hi: i64) -> i64 {
     if hi - lo > 64 {
         let mid: i64 = lo + (hi - lo) / 2;
@@ -32854,7 +32859,12 @@ pub fn nb_tok_max_leaf(toks: Vec, i: i64, hi: i64, best: i64) -> i64 {
     if i >= hi {
         return best;
     }
-    let w: i64 = tok_hi(toks, i) - tok_lo(toks, i);
+    let raw: i64 = tok_hi(toks, i) - tok_lo(toks, i);
+    let w: i64 = if tok_kind(toks, i) == tk_str() {
+        raw / 8
+    } else {
+        raw
+    };
     if w > best {
         return nb_tok_max_leaf(toks, i + 1, hi, w);
     }
