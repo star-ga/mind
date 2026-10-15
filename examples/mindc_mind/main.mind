@@ -35943,10 +35943,10 @@ pub fn nb_emit_load_i32_zx(code: String, addr_disp: i64) -> String {
 
 // Legacy stream read/write sequence (no source-level offset). It is the exact
 // 30-byte form the bootstrap seed and the Rust native backend emit for
-// `__mind_read`/`__mind_write`, so every call whose offset is the compile-time
-// stream sentinel -1 stays byte-identical across the self-host fixed point (see
-// nb_is_stream_sentinel). The result is the raw kernel value (negative errno on
-// failure). nr = 0 (SYS_read) or 1 (SYS_write).
+// the pre-offset THREE-argument `__mind_read`/`__mind_write` compatibility form.
+// Four-argument calls always use nb_emit_io, including a literal -1 offset.
+// The legacy result is the raw kernel value (negative errno on failure).
+// nr = 0 (SYS_read) or 1 (SYS_write).
 //   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
 //   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
 //   mov rdx,[rbp+count] = 48 8B 95 <disp32>
@@ -35992,10 +35992,11 @@ pub fn nb_int_lit_value(buf: i64, node: i64) -> i64 {
     parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
 }
 
-// 1 when the offset operand DENOTES the compile-time constant -1 (spelled
+// Historical sentinel classifier, retained for diagnostics; it no longer
+// selects an I/O error convention. 1 when the operand DENOTES constant -1 (spelled
 // `0 - 1`, `-1`, a folded const, or either in parentheses), else 0. Keyed on
 // the denoted value, not the node constructor: a runtime value, any other
-// constant, or any other operator returns 0 and takes the runtime dispatch.
+// constant, or any other operator returns 0.
 pub fn nb_is_stream_sentinel(buf: i64, node: i64) -> i64 {
     let k: i64 = ast_kind(node);
     if k == ast_paren() {
@@ -36027,25 +36028,24 @@ pub fn nb_is_stream_sentinel(buf: i64, node: i64) -> i64 {
     0
 }
 
-// Intrinsic kind for a call site. `__mind_write` (8) and `__mind_read` (9) map to
-// the legacy stream kinds 1008 and 1009 when the fourth operand is the stream
-// sentinel, or when there is no fourth operand slot (the pre-offset 3-argument
-// form, which reads only slots 0..2 exactly as the bootstrap seed does). Only a
-// 4-argument call with any other offset takes the runtime dispatch; every other
-// intrinsic keeps its table id.
+// Intrinsic kind for a call site. Only the documented pre-offset THREE-argument
+// form uses legacy kinds 1008/1009 and reads exactly slots 0..2. Every FOUR-arg
+// read/write uses the same guarded dispatch, independent of offset syntax.
+// Other arities return -1; the caller must refuse before loading argument slots.
+// Every other intrinsic keeps its table id.
 pub fn nb_intrinsic_site_kind(intr: i64, buf: i64, args_addr: i64, args_len: i64) -> i64 {
     if intr != 8 {
         if intr != 9 {
             return intr;
         }
     }
-    if args_len != 4 {
+    if args_len == 3 {
         return intr + 1000;
     }
-    if nb_is_stream_sentinel(buf, __mind_load_i64(args_addr + 3 * 8)) == 1 {
-        return intr + 1000;
+    if args_len == 4 {
+        return intr;
     }
-    intr
+    0 - 1
 }
 
 // Linux syscall argument 3 lives in r10, not the SysV call register rcx.
@@ -36063,9 +36063,9 @@ pub fn nb_load_sysarg(code: String, i: i64, disp: i64) -> String {
 // Match the existing C read/write twins, including their -1 error sentinel and
 // zero result for null buffers or nonpositive counts. Negative offsets select
 // stream I/O; nonnegative offsets select pread64/pwrite64 at RUNTIME.
-// Positioned operations do not move the fd cursor. A call whose offset operand
-// is the compile-time constant -1 does not come here: nb_intrinsic_site_kind
-// routes it to the seed's raw stream sequence (nb_emit_stream_io).
+// Positioned operations do not move the fd cursor. Literal and computed offsets
+// follow this identical path. This normalizes the result only; writing libc's
+// thread-local errno is a separate dynamic-runtime integration obligation.
 pub fn nb_emit_io(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64, offset_disp: i64, stream_nr: i64) -> String {
     let c1: String = nb_load_sysarg(code, 0, fd_disp);
     let c2: String = nb_load_sysarg(c1, 1, buf_disp);
@@ -37068,7 +37068,7 @@ pub fn nb_emit_sqrt(code: String, a0: i64, dst_id: i64) -> String {
 // end never reads a store's dst). A pure function of the IR.
 pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> String {
     if kind >= 1008 {
-        // Stream sentinel __mind_write (1008) / __mind_read (1009): the legacy
+        // THREE-argument __mind_write (1008) / __mind_read (1009): the legacy
         // raw stream sequence, byte-identical to the bootstrap seed.
         let sa0: i64 = __mind_load_i64(ids + 0 * 8);
         let sa1: i64 = __mind_load_i64(ids + 1 * 8);
@@ -39174,6 +39174,12 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 __mind_store_i64(lcell + 80, 1)
             }
             let site_kind: i64 = nb_intrinsic_site_kind(intr, buf, args_addr, args_len);
+            if site_kind < 0 {
+                // Malformed I/O arity must not read nonexistent/stale ids slots.
+                // The module-level refusal path observes this function poison.
+                __mind_store_i64(lcell + 80, 1);
+                return sa;
+            }
             let c_intr: String = nb_emit_intrinsic(sa.code, site_kind, ids, id);
             if intr == 52 {
                 let _tb: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), id, nb_dtype_float());

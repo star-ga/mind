@@ -34,33 +34,26 @@ errno, or with NULL on pointer-returning errors.
 negative offsets, positioned I/O otherwise, `-1` on failure, and zero for a
 null buffer or nonpositive count. They do not supply an errno location.
 
-Reading errno after a failed `__mind_read` (the campaign `nc_errno()` pattern
-after a literal `0 - 1` read) has no portable form yet. Natively that call
-returns the raw `-errno` (for example `-11` for EAGAIN), so
-`posix_errno(got)` gives the errno. The C twin returns `-1` and leaves the
-code in libc's thread-local errno, where `posix_errno(-1)` reads 1, not the
-errno. Until the admission lane maps `__errno_location`, a consumer that needs
-the errno must take it from the native result, not from `__errno_location()`.
+All four-argument calls use the guarded dispatch, including literal `-1`,
+`0 - 1`, `1 - 2`, parentheses and computed negative offsets. Their return values,
+null-buffer guard and nonpositive-count guard agree with the C twins. Positioned
+operations leave the file cursor unchanged. Native result normalization does
+**not** populate libc's thread-local errno. The campaign's `nc_errno()` pattern
+still requires the separately reviewed dynamic-runtime integration; neither
+`posix_errno(-1)` nor an arbitrary TLS pointer supplies that missing bridge.
 
-One native exception keeps the self-host fixed point: when the offset operand
-denotes the compile-time constant `-1` (`0 - 1`, `-1`, `1 - 2`, or either in
-parentheses), the native emitter keeps the bootstrap seed's raw 30-byte stream
-sequence, the form the compiler's own read/write call sites have always
-compiled to. On that path success results are identical on both backends; a
-failure returns the raw negative errno natively and `-1` from the C twin, and a
-null buffer or nonpositive count reaches the kernel natively. This divergence
-already existed before the positioned-I/O change. A runtime `-1` offset, any
-other constant, and every nonnegative offset take the C-twin-identical
-dispatch. Removing the exception changes how the compiler compiles itself, so
-it needs a two-hop seed advance at integration, never a per-lane edit.
+The pre-offset **three-argument** compatibility form
+`__mind_write(fd, buf, n)` retains the historical raw stream sequence. It reads
+only slots 0..2 and preserves raw negative errno. Other arities are diagnosed
+before intrinsic argument slots are read. Raw `__mind_sys_*` and `std.posix`
+contracts remain unchanged.
 
-A call with no offset operand at all (the pre-offset 3-argument form
-`__mind_write(fd, buf, n)`, used by the BLAS dot smokes) takes the same
-legacy stream sequence: it reads only argument slots 0..2, as the seed does.
-Only a 4-argument call whose offset is not the constant `-1` is dispatched.
-`self_host_native_sys_smoke.py` asserts both forms and checks that the frozen
-seed and current stage1 emit identical bytes for the sentinel sites and for
-every emitter function this substrate changed.
+The earlier literal-offset exception was an implementation defect: a literal
+and a computed `-1` could disagree on errors and no-op guards. Its exact old
+fixtures and failing evidence are preserved. Removing it deliberately changes
+four-argument code bytes and requires integration to advance the self-host seed;
+no lane updates frozen fixtures or compiler pins. See [native_io_parity.md](native_io_parity.md)
+for the changed byte contract and retained tests.
 
 ## Tier 2 kernel adaptations
 

@@ -138,7 +138,9 @@ GATED_EVENTS = ("push", "pull_request")
 # refusals and exact HOME-lowered string bytes/source digest, wired in ci.yml.
 # 288 -> 289 adds the standalone native_dynamic_layout_check.py transport.
 # Its explicit native/MLIR prerequisites and manual execution remain visible.
-HARNESS_CEILING = 289  # Exact reviewed integration inventory; no spare allowance.
+# 289 -> 290 adds self_host_native_io_smoke.py, explicitly classified manual
+# pending source-bound bounded compiler construction in CI. No other allowance.
+HARNESS_CEILING = 290  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

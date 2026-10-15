@@ -6,10 +6,12 @@ using the frozen pure-MIND seed. Every program runs in a fresh temporary
 working directory, with independent expected exit/stdout and disk assertions.
 MINDC_BIN selects the freshly built Rust/MLIR oracle.
 
-The seed-neutral checks guard the self-host fixed point: read/write calls with
-a literal -1 offset, and every emitter function this substrate changed, must
-compile to the same bytes (code and trace note) under the frozen seed and the
-current stage1.
+Compatibility checks preserve the documented three-argument legacy form and
+require uniform guarded dispatch for every four-argument offset spelling.
+The old literal-sentinel byte-equality contract is deliberately superseded:
+its raw syscall sequence caused observable divergence from the C twins.
+Original fixture sources are retained; native_io_parity.md records the change.
+Emitter-function closure byte parity remains a separate required check.
 """
 import hashlib
 import os
@@ -115,6 +117,8 @@ fn main() -> i64 {
     return 0;
 }
 """
+# Historical fixture text is preserved, including comments describing the old
+# literal exception. The new I/O gate separately requires exact -1/no-op parity.
 ERRORS = PATHS + """
 fn write_dyn(fd: i64, p: i64, n: i64, off: i64) -> i64 {
     return __mind_write(fd, p, n, off);
@@ -147,8 +151,8 @@ fn main() -> i64 {
     return 0;
 }
 """
-# Literal -1 offsets in every spelling, and nothing else. The frozen seed and
-# the current stage1 must emit this program byte for byte (code and trace note).
+# Original literal-sentinel fixture, unchanged. Current output must contain
+# five guarded dispatches; an older seed may legitimately emit raw syscalls.
 SENTINEL_ONLY = """
 fn main() -> i64 {
     let p: i64 = __mind_alloc(8);
@@ -161,8 +165,8 @@ fn main() -> i64 {
     return a + b + c + d + e;
 }
 """
-# Sentinel and non-sentinel sites side by side: 3 legacy writes, 1 legacy read,
-# 3 runtime dispatches (a runtime offset, the constant -2, the constant 0).
+# Original mixed fixture, unchanged. All seven four-argument sites now use
+# guarded dispatch, including literal, computed, negative and positioned offsets.
 SENTINEL_MIXED = """
 fn put(p: i64, off: i64) -> i64 {
     return __mind_write(1, p, 1, off);
@@ -260,18 +264,30 @@ def emit(exe: pathlib.Path, user: str) -> bytes:
 
 
 def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
-    """Failures of the bootstrap byte-neutrality checks (empty list = pass)."""
+    """I/O compatibility plus emitter byte-parity checks (empty list = pass)."""
     fails: list[str] = []
     seed_bytes, new_bytes = emit(_FROZEN, SENTINEL_ONLY), emit(stage1, SENTINEL_ONLY)
-    if seed_bytes != new_bytes:
-        fails.append(f"sentinel_seed_bytes: stage1 {len(new_bytes)}B != frozen seed {len(seed_bytes)}B")
+    counts = (len(LEGACY_IO[1].findall(new_bytes)), len(LEGACY_IO[0].findall(new_bytes)),
+              len(DISPATCH_IO.findall(new_bytes)))
+    if counts != (0, 0, 5):
+        fails.append(f"sentinel_dispatch_all: {counts}, expected (0, 0, 5)")
     else:
-        print(f"PASS sentinel_seed_bytes: stage1 == frozen seed ({len(new_bytes)}B)", flush=True)
+        print(f"PASS sentinel_dispatch_all: {counts}; seed_sha256="
+              f"{hashlib.sha256(seed_bytes).hexdigest()} current_sha256="
+              f"{hashlib.sha256(new_bytes).hexdigest()}", flush=True)
+    literal = tmp / "sentinel_only.elf"
+    literal.write_bytes(new_bytes)
+    literal.chmod(0o755)
+    proc = subprocess.run([str(literal)], cwd=tmp, input=b"", capture_output=True, timeout=15)
+    if (proc.returncode, proc.stdout, proc.stderr) != (3, b"AAA", b""):
+        fails.append(f"sentinel_only: exit={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}")
+    else:
+        print("PASS sentinel_only: original fixture exit=3 stdout=AAA stderr=empty", flush=True)
     mixed = emit(stage1, SENTINEL_MIXED)
     counts = (len(LEGACY_IO[1].findall(mixed)), len(LEGACY_IO[0].findall(mixed)),
               len(DISPATCH_IO.findall(mixed)))
-    if counts != (3, 1, 3):
-        fails.append(f"sentinel_dispatch: legacy write/read, dispatch = {counts}, expected (3, 1, 3)")
+    if counts != (0, 0, 7):
+        fails.append(f"sentinel_dispatch: legacy write/read, dispatch = {counts}, expected (0, 0, 7)")
     else:
         print(f"PASS sentinel_dispatch: legacy write/read, dispatch = {counts}", flush=True)
     three = emit(stage1, LEGACY_THREE_ARG)
@@ -283,8 +299,8 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
     exe.write_bytes(three)
     exe.chmod(0o755)
     proc = subprocess.run([str(exe)], cwd=tmp, input=b"", capture_output=True, timeout=15)
-    got = (counts, proc.returncode, proc.stdout)
-    if got != ((1, 1, 0), 0, bytes.fromhex("8877665544332211")):
+    got = (counts, proc.returncode, proc.stdout, proc.stderr)
+    if got != ((1, 1, 0), 0, bytes.fromhex("8877665544332211"), b""):
         fails.append(f"legacy_three_arg: (legacy write/read, dispatch), exit, stdout = {got!r}")
     else:
         print(f"PASS legacy_three_arg: {got!r}", flush=True)
@@ -302,7 +318,7 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
     else:
         for backend, exe in [("native", native), ("mlir", mlir)]:
             proc = subprocess.run([str(exe)], cwd=tmp, capture_output=True, timeout=15)
-            if (proc.returncode, proc.stdout) != (0, b"ABCDE"):
+            if (proc.returncode, proc.stdout, proc.stderr) != (0, b"ABCDE", b""):
                 fails.append(f"sentinel_mixed/{backend}: exit={proc.returncode} stdout={proc.stdout!r}")
             else:
                 print(f"PASS sentinel_mixed/{backend}: exit=0 stdout={proc.stdout!r}", flush=True)
@@ -380,8 +396,8 @@ def main() -> int:
                     (work / "input").write_bytes(b"ABCD")
                     proc = subprocess.run([str(exe)], cwd=work, capture_output=True, timeout=15)
                     checked += 1
-                    results.append((proc.returncode, proc.stdout))
-                    ok = results[-1] == (0, expected) and not (work / "data").exists() and not (work / "renamed").exists()
+                    results.append((proc.returncode, proc.stdout, proc.stderr))
+                    ok = results[-1] == (0, expected, b"") and not (work / "data").exists() and not (work / "renamed").exists()
                     if ok:
                         print(f"PASS {name}/{backend}: exit={proc.returncode} stdout={proc.stdout!r}", flush=True)
                     else:
