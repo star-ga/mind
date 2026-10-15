@@ -134,7 +134,9 @@ GATED_EVENTS = ("push", "pull_request")
 # native_cabi_registry_smoke.py. These standalone diagnostics require explicit
 # compiler/native/oracle artifacts. Their production integration and CI runner
 # dependencies remain open and are recorded in SMOKE_WIRING.
-HARNESS_CEILING = 287  # Exact reviewed integration inventory; no spare allowance.
+# 287 -> 288 adds self_host_native_io_smoke.py, explicitly classified manual
+# pending source-bound bounded compiler construction in CI. No other allowance.
+HARNESS_CEILING = 288  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
