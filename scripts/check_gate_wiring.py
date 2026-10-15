@@ -149,7 +149,10 @@ GATED_EVENTS = ("push", "pull_request")
 # the generator is development tooling, not a second runtime or admission path.
 # 294 -> 295 adds native_dynamic_image_check.py, the separately reviewed
 # checked-layout writer gate. Original writer/planner gates are retained.
-HARNESS_CEILING = 295  # Exact reviewed integration inventory; no spare allowance.
+# 295 -> 297 adds native_libc_startup_check.py and its development byte
+# generator testdata/native_libc_startup/gen_mind.py. Explicit manual gate
+# prerequisites remain; no production admission or CI success is implied.
+HARNESS_CEILING = 297  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
