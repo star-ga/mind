@@ -245,6 +245,8 @@ def main():
     ap.add_argument('--seed',type=Path);ap.add_argument('--seed-sha256')
     ap.add_argument('--mindc',type=Path);ap.add_argument('--mindc-sha256')
     ap.add_argument('--main-sha256');ap.add_argument('--context-sha256')
+    ap.add_argument('--source-image-sha256',default='751661cd0d688641e0fdba333519aada55a7a44612b1039429a8eb0daa0f4db0')
+    ap.add_argument('--build-only',action='store_true',help='record diagnostic artifacts; execute no case catalogue')
     a=ap.parse_args();e=a.evidence.resolve()
     cases=enumerate_cases();casebytes=(json.dumps(cases,indent=2)+'\n').encode()
     pointer_bytes=POINTER_CATALOGUE.read_bytes();pointer_rows=json.loads(pointer_bytes)['cases']
@@ -277,10 +279,10 @@ def main():
     assert sha(mindc.read_bytes())==a.mindc_sha256
     paths=[HERE/'main.mind',HERE/'native_dynamic_layout.mind',HERE/'native_emission_context.mind',
            HERE/'native_dynamic.mind',HERE/'native_dynamic_image.mind',HERE/'native_dynamic_allocator.mind',
-           HERE/'native_libc_startup.mind',HERE/'native_source_image.mind']
+           HERE/'native_libc_startup.mind',HERE/'native_libc_io.mind',HERE/'native_source_image.mind']
     assert sha(paths[0].read_bytes())==a.main_sha256
     assert sha(paths[2].read_bytes())==a.context_sha256
-    assert sha(paths[-1].read_bytes())=='751661cd0d688641e0fdba333519aada55a7a44612b1039429a8eb0daa0f4db0'
+    assert sha(paths[-1].read_bytes())==a.source_image_sha256
     stdpaths=sorted((ROOT/'std').rglob('*.mind'))
     deps=paths+[POINTER_CATALOGUE,Path('/lib64/ld-linux-x86-64.so.2').resolve(),Path('/lib/x86_64-linux-gnu/libc.so.6').resolve()]+stdpaths+[Path(__file__).resolve(),HERE/'_stdlib_manifest.py',HERE/'testdata/stdlib_manifest.txt',ROOT/'runtime-support/mind_intrinsics.c']
     captured={str(f.resolve()):f.read_bytes() for f in deps}
@@ -323,6 +325,9 @@ def main():
     assert q.returncode==0 and mlir.is_file(),('MLIR build',q.returncode,q.stderr)
     artifacts={str(f):sha(f.read_bytes()) for f in (native,mlir)}
     (e/'ARTIFACTS.json').write_text(json.dumps(artifacts,indent=2)+'\n');intact()
+    if a.build_only:
+        (e/'BUILD_ONLY.json').write_text(json.dumps(dict(case_execution=False,artifacts=artifacts),indent=2)+'\n')
+        print('BUILD_ONLY: artifacts recorded; no catalogue outcomes claimed');return
     failures=[];outcomes=[]
     def check(label,wire,expected=None,src=None):
         pair=[]

@@ -1,0 +1,247 @@
+{
+  "candidate_main_sha256": "4c5684281f995450ef5c18769a9971c3dcef4dd7c901c00cddf8c03703267683",
+  "recipe_sha256": "561996c538e9f1b8d1d2b6c48c9dde0e257c93ad32f73f79d3d61c9e43c44417",
+  "results": [
+    {
+      "id": "reserved-origin-guard-removed",
+      "source_sha256": "5e3c96a67cc0c262cc047f94488c21a61a5d999ab98437cb4873f92bc7efa1f6",
+      "executable_sha256": "b081c3f88578dfef56ffa9bfb0eaedc78b8776f442814f5f7fbfd239297c3c86",
+      "status": "DETECTED",
+      "outcomes": [
+        {
+          "id": "reserved-origin-guard-removed-A-0",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "reserved-origin-guard-removed-A-1",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "reserved-origin-guard-removed-B-0",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "reserved-origin-guard-removed-B-1",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        }
+      ]
+    },
+    {
+      "id": "scalar-domain-guard-removed",
+      "source_sha256": "3de864641edd0edd40b8c56524a76f2b3c8e304992325e1f8180be11464cbbfa",
+      "executable_sha256": "670b877feb3e8fd6a984406f6916cf57ded20e3e6e2fc394b786a3221f5e850b",
+      "status": "DETECTED",
+      "outcomes": [
+        {
+          "id": "scalar-domain-guard-removed-A-0",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "scalar-domain-guard-removed-A-1",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "scalar-domain-guard-removed-B-0",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        },
+        {
+          "id": "scalar-domain-guard-removed-B-1",
+          "normal_compile": true,
+          "detected": true,
+          "baseline_refused": true,
+          "mutant_accepted": true
+        }
+      ]
+    },
+    {
+      "id": "float-guard-removed",
+      "source_sha256": "da47b9bed5e9b3b3d2e37a641710d3b306876c657fd0900988526e6a8f9efd4b",
+      "executable_sha256": "e81d764ebbe64c21d2c9ff17e95cb31b46412c06fa7537000366fff6bb6c8ee3",
+      "status": "UNDETECTED",
+      "outcomes": [
+        {
+          "id": "float-guard-removed-A-0",
+          "normal_compile": true,
+          "detected": false,
+          "baseline_refused": true,
+          "mutant_accepted": false
+        },
+        {
+          "id": "float-guard-removed-A-1",
+          "normal_compile": true,
+          "detected": false,
+          "baseline_refused": true,
+          "mutant_accepted": false
+        },
+        {
+          "id": "float-guard-removed-B-0",
+          "normal_compile": true,
+          "detected": false,
+          "baseline_refused": true,
+          "mutant_accepted": false
+        },
+        {
+          "id": "float-guard-removed-B-1",
+          "normal_compile": true,
+          "detected": false,
+          "baseline_refused": true,
+          "mutant_accepted": false
+        }
+      ]
+    },
+    {
+      "id": "write-target-is-read",
+      "source_sha256": "5cc54bb530e2528eb19e4df60987f6d2884a9cf6eeb5621d52194884e17ff2dc",
+      "executable_sha256": "6dc771349d2b7bb552f50a363e8feb2a6ba2f70c0f7a851db0dff4fe55610f92",
+      "status": "DETECTED",
+      "outcomes": [
+        {
+          "id": "write-target-is-read-A-0",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "write-target-is-read-A-1",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "write-target-is-read-B-0",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "write-target-is-read-B-1",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        }
+      ]
+    },
+    {
+      "id": "offset-loaded-from-count",
+      "source_sha256": "68a7e97a637a9579fd01ca9d14d93653610e38df03aa935deb5c143185c50a01",
+      "executable_sha256": "c86387a8885ee6ed8d75c0296c76f9d32195892a2110956b650b1c92aaa6aad3",
+      "status": "DETECTED",
+      "outcomes": [
+        {
+          "id": "offset-loaded-from-count-A-0",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "offset-loaded-from-count-A-1",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "offset-loaded-from-count-B-0",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        },
+        {
+          "id": "offset-loaded-from-count-B-1",
+          "normal_compile": true,
+          "detected": true,
+          "valid_images": true,
+          "baseline_runtime": 3,
+          "mutant_runtime": 255,
+          "baseline_matches": true,
+          "mutant_normal": true
+        }
+      ]
+    },
+    {
+      "id": "positioned-write-import-is-read",
+      "source_sha256": "b9a1d3008e1e06c4376c04943f22f40ff90917e32bcf700bed6c1687bfa59201",
+      "executable_sha256": "74dc9d346a11350306c3c7b2e513fabd4553bdd7ce68b84baf0576783d4fcfe6",
+      "status": "UNDETECTED",
+      "outcomes": [
+        {
+          "id": "positioned-write-import-is-read-A-0",
+          "normal_compile": true,
+          "detected": false,
+          "valid_images": false
+        },
+        {
+          "id": "positioned-write-import-is-read-A-1",
+          "normal_compile": true,
+          "detected": false,
+          "valid_images": false
+        },
+        {
+          "id": "positioned-write-import-is-read-B-0",
+          "normal_compile": true,
+          "detected": false,
+          "valid_images": false
+        },
+        {
+          "id": "positioned-write-import-is-read-B-1",
+          "normal_compile": true,
+          "detected": false,
+          "valid_images": false
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The float-guard deletion is undetected because the separate source-domain guard still rejects the input.",
+    "The import-index modulo mutant is undetected by its predeclared runtime-specific detector: the layout planner normally refuses it first with [6,19,0,0], so no runtime executable exists. This is a distinct fail-closed observation; its original targeted status is not rewritten.",
+    "All six actual mutated MIND diagnostic builds completed normally. No crash or failed build was counted as detection."
+  ]
+}

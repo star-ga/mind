@@ -32,12 +32,12 @@ remains a valid context; this record is not authorization or source provenance.
 
 | Offset | Field |
 |---|---|
-| 0, 8 | Schema 1 and dynamic-target mode 1 |
+| 0, 8 | Schema 1 or 2 and dynamic-target mode 1 |
 | 16 | Allocator state address |
 | 24, 32 | Reserved argc and argv cell addresses |
 | 40, 48 | Literal base and available 8 MiB window |
 | 56, 64 | Arena base and target stack top |
-| 72 | Reserved zero |
+| 72 | Zero for schema 1; generated stream-thunk base for schema 2 |
 | 80 | Owned ten-word request |
 | 160 | Recomputed 32-word layout |
 
@@ -47,6 +47,14 @@ They do not validate arbitrary pointers or parse untrusted serialized records.
 `nb_ctx_shape_ok` only checks necessary emitter-field invariants. Public component
 orchestration must call `nec_check`; the internal shape check is not a substitute
 for complete geometry recomputation.
+
+`nec_new_profile(request, schema, stream_base)` and
+`nec_lower_parts_profile(..., schema, stream_base)` provide the internal schema-2
+variant used by source-image orchestration. The original entry points select
+schema 1 with a zero stream base. Schema 2 restricts the base to the code window;
+the image orchestrator must additionally bind it to the actual generated runtime
+placement and final image plan. A caller-selected schema or address does not
+authorize a foreign call.
 
 ## Lowering and entry semantics
 
@@ -67,9 +75,11 @@ source slice requires exactly one main, an explicit i64 result and zero, one or
 two integer/pointer arguments. Aliased/aggregate/unit/float results, callbacks,
 variadics and unsupported signature syntax remain refused.
 
-The first dynamic slice permits arithmetic, memory, argument and supported
-float-bit intrinsics. Stream I/O, open and raw process/system-call intrinsics
-remain refused until their distinct contracts are connected. Dormant top-level
+The schema-1 dynamic slice permits arithmetic, memory, argument and supported
+float-bit intrinsics. Schema 2 also connects the four-operand stream intrinsics
+through the checked libc I/O recipe described in
+[`native_source_image.md`](native_source_image.md). Open and raw process/system-call
+intrinsics remain refused. Dormant top-level
 extern declarations are checked block by block with the existing declaration
 grammar. Every block must match its AST span; local-body/name collisions and
 primitive-type shadows refuse. A full token census rejects extern declarations
@@ -106,7 +116,7 @@ existing compiler-owned semantics. The input length is bounded to 64 MiB in the
 new dynamic entry. No filename, supplied success flag or theorem identifier can
 select a less restrictive lowering path.
 
-The returned 184-byte record owns these values:
+The returned 192-byte record owns these values:
 
 | Offset | Field |
 |---|---|
@@ -119,6 +129,13 @@ The returned 184-byte record owns these values:
 | 144, 152, 160 | Captured source address, length and ownership flag |
 | 168 | Local relocation applied flag |
 | 176 | Owned emission context |
+| 184 | Source-derived stream-use bit, zero or one |
+
+The stream-use collector traverses the same reachable source functions that
+are lowered. With no collected use, body lowering receives schema 1, so a missed
+unsupported AST shape cannot silently emit a stream-thunk reference without its
+imports. Schema-1 and context-zero paths retain zero in this additional word.
+The record is an internal live allocation, not a public serialized wire format.
 
 Name spans resolve against the retained source copy, so freeing the original
 input cannot invalidate them. Internal AST/count scratch is still subject to the

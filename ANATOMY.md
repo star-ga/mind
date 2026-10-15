@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2200 | **Est. tokens:** ~4145760
-**Generated:** 2026-10-15 15:56 UTC
+**Files:** 2208 | **Est. tokens:** ~4172208
+**Generated:** 2026-10-15 17:05 UTC
 
 ## Token Budget Guide
 
@@ -69,7 +69,7 @@
 | `examples/lexer/` | 6 | ~8888 |
 | `examples/mind_mirror_v04/` | 2 | ~3836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3862 |
-| `examples/mindc_mind/` | 261 | ~730854 |
+| `examples/mindc_mind/` | 269 | ~757244 |
 | `examples/mindc_mind/testdata/` | 3 | ~4163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9283 |
@@ -106,7 +106,7 @@
 | `experiments/global-vs-local/` | 7 | ~6487 |
 | `mind/std/cognitive/` | 4 | ~3529 |
 | `runtime-support/` | 1 | ~23109 |
-| `scripts/` | 31 | ~117885 |
+| `scripts/` | 31 | ~117943 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2372 |
 | `scripts/sdlc/` | 2 | ~2845 |
@@ -703,7 +703,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
-- `SMOKE_WIRING.tsv` (~5901 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~5994 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
@@ -785,8 +785,8 @@
 - `native_dynamic_mic_fixture.mind` (~1033 tok, large) — Copyright 2026 STARGA Inc.
 - `native_dynamic_mic_mutations.tsv` (~75 tok, small) — name	function	case	expected_detection
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
-- `native_emission_context.md` (~3568 tok, huge) — Explicit target context and source-lowered module parts
-- `native_emission_context.mind` (~907 tok, large) — Copyright 2026 STARGA Inc.
+- `native_emission_context.md` (~3838 tok, huge) — Explicit target context and source-lowered module parts
+- `native_emission_context.mind` (~1142 tok, large) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
 - `native_libc_binding.md` (~3820 tok, huge) — Source-bound libc declaration metadata
 - `native_libc_binding.mind` (~16138 tok, huge) — Copyright 2026 STARGA Inc.
@@ -806,8 +806,16 @@
 - `native_libc_startup_mutations.tsv` (~134 tok, small) — id	change	case	expected_detection
 - `native_pointer_origin_cases.json` (~3497 tok, huge) — Keys: version, author, status, scope, source_catalogues
 - `native_posix.md` (~1979 tok, huge) — Linux x86-64 POSIX substrate
-- `native_source_image.md` (~1486 tok, large) — Source-lowered Linux libc image candidate
-- `native_source_image.mind` (~2939 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_source_image.md` (~2374 tok, huge) — Source-lowered Linux libc image candidate
+- `native_source_image.mind` (~3813 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_stream_io.md` (~2162 tok, huge) — Source-lowered stream I/O candidate
+- `native_stream_io_case_corrections.json` (~5416 tok, huge) — Keys: original_contract, original_sha256, corrected_contract, corrected_sha256, changes
+- `native_stream_io_cases.json` (~3715 tok, huge) — Keys: contract, cases
+- `native_stream_io_cases_v2.json` (~4374 tok, huge) — Keys: contract, cases
+- `native_stream_io_cases_v3.json` (~4377 tok, huge) — Keys: contract, cases
+- `native_stream_io_check.py` (~1417 tok, large) — Source-lowered MIND stream-I/O diagnostic transport, not compiler admission.
+- `native_stream_io_mutation_observations.json` (~2000 tok, huge) — Keys: candidate_main_sha256, recipe_sha256, results, limitations
+- `native_stream_io_mutations.json` (~459 tok, medium)
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
@@ -859,7 +867,7 @@
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
 - `self_host_native_elf_smoke.py` (~10999 tok, huge)
-- `self_host_native_emission_context_smoke.py` (~8726 tok, huge) — Independent diagnostic transport for native emission contexts.
+- `self_host_native_emission_context_smoke.py` (~8836 tok, huge) — Independent diagnostic transport for native emission contexts.
 - `self_host_native_f64_intrinsics_smoke.py` (~4928 tok, huge) — W8c smoke: float builtins/intrinsics in the pure-MIND native compiler.
 - `self_host_native_f64_lit_smoke.py` (~3079 tok, huge) — W8b smoke: correctly rounded decimal -> binary64 float literals in the pure-MIND
 - `self_host_native_fp_binop_smoke.py` (~1095 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
@@ -1375,7 +1383,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~10314 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10372 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
