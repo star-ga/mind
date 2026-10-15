@@ -98,7 +98,7 @@ self_host_native_avx2_dot_f32_smoke	ci	gate
 self_host_native_blas_dot_i16_smoke	ci	gate	
 self_host_native_blas_dot_q16_smoke	ci	gate	
 self_host_native_cast_conv_smoke	ci	gate	
-self_host_native_cf_smoke	ci	gate	
+self_host_native_cf_smoke	ci	gate	General control-flow corpus, independent reference interpreter, default/bounded capacity checks, diagnosed-refusal controls, and oracle heap checks; helpers are classified separately above.
 self_host_native_diag_smoke	ci	gate	
 self_host_native_div_trap_smoke	ci	gate	
 self_host_native_dot_f32_smoke	ci	gate	

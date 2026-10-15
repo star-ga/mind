@@ -116,7 +116,21 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-HARNESS_CEILING = 263  # Includes the manifest-bound canonical record-trace gate.
+# 263 -> 285: compiler-delivery integration census, 42cadc3c -> b4ab203d.
+# +12 independently wired gates in examples/mindc_mind: intrinsic_id_table_lint,
+# self_host_bounded_profile_smoke, and self_host_native_{alloc_bounded,cf,
+# div_trap,f64_intrinsics,f64_lit,main_args,misc_census,process,shadow_scope,sys}_smoke.
+# Their CI runners are checked by SMOKE_WIRING.tsv; no new gate is exempted.
+# +5 imported helpers: _cf_{corpus,giant,oracle}, _shadow_scope_lang, _w8_native.
+# These retain the independent model/capacity/oracle and shared-driver boundaries.
+# +1 allocator-byte regeneration utility: testdata/native_alloc_bounded/rt/gen_mind.py.
+# +5 std_process_wait acceptance files: _harness.py, accept.py, cases_spawn.py,
+# cases_status.py, run_cases.sh. They preserve the process-isolated native fault
+# checks and module-size split; the runner is manual, not a claim of CI execution.
+# -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
+# Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
+# not hide this growth by changing the pathspec or classifying files out of it.
+HARNESS_CEILING = 285  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
