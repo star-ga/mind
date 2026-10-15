@@ -41,24 +41,7 @@ fn assert_refused(name: &str, src: &str, kind: &str) -> String {
 }
 
 #[test]
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-fn an_entry_main_with_argc_argv_is_refused_not_run_with_zeros() {
-    let stderr = assert_refused(
-        "argc_probe",
-        "fn main(argc: i64, argv: i64) -> i64 { if argv == 0 { return 40 + argc; } \
-         return 20 + argc; }\n",
-        "native.entry_main_has_params",
-    );
-    assert!(stderr.contains("--backend mlir"), "hint missing:\n{stderr}");
-    assert!(
-        stderr.contains("\"argc\""),
-        "parameter list missing:\n{stderr}"
-    );
-}
-
-#[test]
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn an_entry_main_with_argc_argv_uses_the_process_arguments() {
+fn an_entry_main_with_argc_argv_is_admitted_and_bound_where_native_runs() {
     for (name, src) in [
         (
             "argc_ssa",
@@ -77,7 +60,9 @@ fn an_entry_main_with_argc_argv_uses_the_process_arguments() {
         let (code, stderr, bytes) = p.build_native("src/main.mind");
         assert_eq!(code, 0, "{name}: {stderr}");
         let bytes = bytes.expect("admitted argc/argv program must emit an artifact");
-        // The harness supplies only argv[0], hence argc == 1 and argv != 0.
+        // Linux x86-64 executes the real image with only argv[0], hence
+        // argc == 1 and argv != 0. Other hosts check admission and exact
+        // transport via the drain fixture; they cannot attest entry semantics.
         assert_native_result(&p, &bytes, 21, name);
     }
 }
