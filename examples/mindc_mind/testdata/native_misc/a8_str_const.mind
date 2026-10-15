@@ -1,0 +1,33 @@
+// A8 refusal (deferred): string consts `const NAME: str|&str|String = "..."`,
+// with and without `;`, used as a let init, a call argument, a handle-word read
+// and a write buffer. mindc-Rust inlines the literal at every use as a heap
+// String {addr, len, cap = len}; native stage1 has no string-literal lowering in
+// its mic@3 twin yet, so every use fails closed. MLIR: exit 22, "hello hi\n".
+fn str_len(s: i64) -> i64 {
+    __mind_load_i64(s + 8)
+}
+
+fn put(s: i64) -> i64 {
+    __mind_write(1, __mind_load_i64(s), __mind_load_i64(s + 8), 0 - 1)
+}
+
+fn main() -> i64 {
+    let s = MSG;
+    let n: i64 = str_len(s);
+    let b: i64 = __mind_load_i64(__mind_load_i64(TAG)) & 255;
+    let c: i64 = __mind_load_i64(NAME + 8);
+    let w1: i64 = put(MSG);
+    let w2: i64 = put(SEP);
+    let w3: i64 = put(TAG);
+    let nl: i64 = __mind_alloc(8);
+    __mind_store_i8(nl, 10);
+    let w4: i64 = __mind_write(1, nl, 1, 0 - 1);
+    // n=5, c=3, b='h'=104, writes 5+1+2+1=9:
+    // (5*100 + 3*10 + 104 - 100 + 9 - 9) & 255 = 534 & 255 = 22
+    (n * 100 + c * 10 + b - 100 + w1 + w2 + w3 + w4 - 9) & 255
+}
+
+const MSG: str = "hello"
+const TAG: &str = "hi";
+const NAME: String = "abc"
+const SEP: str = " ";

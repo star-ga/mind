@@ -1335,6 +1335,7 @@ jobs:
             self_host_native_scalar_f32_smoke \
             self_host_native_scalar_f64_smoke \
             self_host_native_cast_conv_smoke \
+            self_host_native_misc_census_smoke \
             self_host_native_matmul_f32_v_smoke \
             self_host_native_dot_l1_q16_smoke \
             self_host_native_avx2_dot_f32_smoke; do

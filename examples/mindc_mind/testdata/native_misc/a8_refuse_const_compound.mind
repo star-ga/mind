@@ -1,0 +1,9 @@
+// A8 refusal: compound assignment to a top-level const. MLIR: K += 2 on the
+// per-function copy -> 7, r = 1 -> 8. Native must fail closed, not drop it.
+fn main() -> i64 {
+    let r: i64 = 1;
+    K += 2;
+    r + K
+}
+
+const K: i64 = 5;

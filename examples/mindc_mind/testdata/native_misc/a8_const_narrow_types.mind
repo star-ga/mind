@@ -1,0 +1,16 @@
+// A8: consts declared with each narrow, unsigned and pointer-sized integer
+// type inline as their plain decimal value, `;`-terminated and `;`-less.
+// Expected exit 181: 100 + 50 + 28 - 9 + 6 + 1 + 5.
+const A: u8 = 100;
+const B: u16 = 7
+const C: i32 = 70000;
+const D: u64 = 9
+const E: usize = 4;
+const F: isize = 3
+const G: i8 = 2;
+const H: i16 = 1
+const I: u32 = 5;
+
+fn main() -> i64 {
+    (C - 69900) + A / 2 + B * E - D + F * G + H + I
+}
