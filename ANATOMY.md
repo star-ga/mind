@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2135 | **Est. tokens:** ~3,984,912
-**Generated:** 2026-10-15 11:11 UTC
+**Files:** 2136 | **Est. tokens:** ~3,985,878
+**Generated:** 2026-10-15 11:30 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 211 | ~594,016 |
+| `examples/mindc_mind/` | 212 | ~594,651 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -71,7 +71,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
-| `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,410 |
+| `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_misc/` | 37 | ~4,969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -698,11 +698,12 @@
 - `native_cabi_registry.md` (~1705 tok, huge) — Typed native C ABI registry (candidate metadata slice)
 - `native_cabi_registry_smoke.py` (~1991 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
 - `native_dynamic_allocator_cases.tsv` (~336 tok, medium) — # Frozen before implementation/build; exact expected stdout is empty. exit70 std
-- `native_dynamic_allocator_check.py` (~3297 tok, huge) — External diagnostic transport for the MIND allocator emitter/runtime.
+- `native_dynamic_allocator_check.py` (~3430 tok, huge) — External diagnostic transport for the MIND allocator emitter/runtime.
 - `native_dynamic_allocator_driver.mind` (~176 tok, small) — Copyright 2026 STARGA Inc. Standalone diagnostic, no compiler admission.
-- `native_dynamic_allocator.md` (~1988 tok, huge) — Bounded dynamic allocator component
-- `native_dynamic_allocator.mind` (~5400 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_dynamic_allocator.md` (~2366 tok, huge) — Bounded dynamic allocator component
+- `native_dynamic_allocator.mind` (~5402 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator_mutations.tsv` (~119 tok, small) — id	change	case	expected_original_exit
+- `native_dynamic_allocator_ownership_cases.tsv` (~122 tok, small) — # Supplemental ownership-before-size contract; original39-case catalogue unchang
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
 - `native_dynamic_layout_check.py` (~2972 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
@@ -1024,8 +1025,8 @@
 - `shadow_scopes_ssa.mind` (~401 tok, medium) — The same shadow scoping on the SSA lowering (no return inside a loop, so the
 ### `examples/mindc_mind/testdata/native_dynamic_allocator/`
 
-- `allocator.s` (~4013 tok, huge) — .intel_syntax noprefix
-- `check.c` (~1599 tok, huge)
+- `allocator.s` (~4044 tok, huge) — .intel_syntax noprefix
+- `check.c` (~1899 tok, huge)
 - `gen_mind.py` (~502 tok, large) — rt.bin -> MIND byte-emitter functions (nb_le 7-byte chunks; nb_i64le for
 - `probe.s` (~296 tok, medium) — # Copyright 2026 STARGA Inc. Diagnostic register canaries only.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`

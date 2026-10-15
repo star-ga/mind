@@ -134,3 +134,27 @@ Frozen case SHA-256:
 `ecfa89f8568d718ef14e532d639cdd94af15a86f5829b54f51759f56306e9d00`.
 Frozen mutation SHA-256:
 `ec18aae3979d086770873aec970d61c8f5b6805b34a8dd837e87eef8be7bfc5f`.
+
+## Ownership-order correction
+
+Independent review found that positive-size `realloc` rounded and validated
+the requested size before classifying an existing pointer. Consequently a
+foreign pointer with `INT64_MAX` or `2^46+1` requested bytes exited70 instead of
+returning0 as documented. The corrected nonzero-pointer path rejects foreign
+ownership first, then preserves the validated pointer across size rounding.
+Owned-pointer exhaustion still exits70; null-pointer allocation, zero-size free
+and negative-size behavior are unchanged. This does not extend pointer validity
+to forged or interior owned addresses.
+
+The original39-case catalogue and five mutation cases retain their exact bytes.
+`native_dynamic_allocator_ownership_cases.tsv` adds12 separately frozen controls:
+foreign/reserved oversized pointers return0 without changing reserved cells;
+owned/null oversized requests still exit70; zero and negative cases retain their
+documented behavior. Its SHA-256 is
+`ee86ffb3f57d28fad3a5e7cb69bf259aaa6919231a76690aa3ac09e9c929a323`.
+All51 runtime cases, five invalid-request controls, five actual source mutations
+and the unchanged static-byte comparison passed after the correction. Fresh
+native/MLIR emitted runtime bytes match the reassembled reference. The corrected
+runtime is2360 bytes; entry offsets are still supplied by emitted metadata.
+The run used76,681,216 peak cgroup bytes with zero OOM events under2GiB/zero-swap.
+Independent re-execution of the correction remains a separate review step.

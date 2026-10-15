@@ -158,10 +158,12 @@ ra_ret0:
     xor eax, eax
     jmp pub_out
 ra_resize:
-    call round_n                # rsi = r
     call valid                  # rax = p (rdx = s, r8 = lim) or 0
     test rax, rax
     jz ra_foreign
+    push rax                    # reject foreign ownership before size limits
+    call round_n                # rsi = r; clobbers rax, preserves rdx/r8
+    pop rax
     cmp rsi, rdx
     ja ra_grow
     mov rcx, rdx                # shrink / same size

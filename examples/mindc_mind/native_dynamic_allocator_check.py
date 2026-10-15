@@ -12,6 +12,7 @@ from native_dynamic_writer_check import encoder
 HERE=Path(__file__).resolve().parent
 CASE_SHA='ecfa89f8568d718ef14e532d639cdd94af15a86f5829b54f51759f56306e9d00'
 MUT_SHA='ec18aae3979d086770873aec970d61c8f5b6805b34a8dd837e87eef8be7bfc5f'
+OWNERSHIP_SHA='ee86ffb3f57d28fad3a5e7cb69bf259aaa6919231a76690aa3ac09e9c929a323'
 def sha(data): return hashlib.sha256(data).hexdigest()
 def limit():
     resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30))
@@ -26,6 +27,10 @@ def main():
     mutations=HERE/'native_dynamic_allocator_mutations.tsv';assert sha(mutations.read_bytes())==MUT_SHA
     rows=list(csv.DictReader([x for x in case.read_text().splitlines() if not x.startswith('#')],delimiter='\t'));assert len(rows)==39
     print('FROZEN',CASE_SHA,len(rows),flush=True)
+    ownership=HERE/'native_dynamic_allocator_ownership_cases.tsv';assert sha(ownership.read_bytes())==OWNERSHIP_SHA
+    extra=list(csv.DictReader([x for x in ownership.read_text().splitlines() if not x.startswith('#')],delimiter='\t'));assert len(extra)==12
+    print('OWNERSHIP_FROZEN',OWNERSHIP_SHA,len(extra),flush=True)
+    rows+=extra
     env=os.environ.copy()
     for k in list(env):
         if k.startswith('LD_') or k in ('GLIBC_TUNABLES','MINDC_NATIVE_ELF'):env.pop(k)
@@ -37,7 +42,7 @@ def main():
         records.append(dict(id=stem,argv=list(map(str,argv)),exit=q.returncode,stdout_sha256=sha(q.stdout),stderr_sha256=sha(q.stderr)))
         (e/'executions.json').write_text(json.dumps(records,indent=2)+'\n');return q
     td=HERE/'testdata/native_dynamic_allocator'
-    sources=[HERE/'native_dynamic_allocator.mind',HERE/'native_dynamic_layout.mind',HERE/'native_dynamic_allocator_driver.mind',case,mutations,Path(__file__),td/'allocator.s',td/'gen_mind.py',td/'check.c',td/'probe.s',HERE.parent.parent/'std/string.mind',HERE/'main.mind']
+    sources=[HERE/'native_dynamic_allocator.mind',HERE/'native_dynamic_layout.mind',HERE/'native_dynamic_allocator_driver.mind',case,ownership,mutations,Path(__file__),td/'allocator.s',td/'gen_mind.py',td/'check.c',td/'probe.s',HERE.parent.parent/'std/string.mind',HERE/'main.mind']
     (e/'SOURCE_HASHES.json').write_text(json.dumps({str(x):sha(x.read_bytes()) for x in sources},indent=2)+'\n')
     (e/'TOOLCHAIN.json').write_text(json.dumps({'native':str(a.seed),'native_sha256':a.seed_sha256,'mlir':str(a.mindc),'mlir_sha256':a.mindc_sha256},indent=2)+'\n')
     diagnostics={}
@@ -152,6 +157,7 @@ def main():
     q=run('static-emit',[exe]);assert (q.returncode,q.stdout,q.stderr)==(0,expected,b'')
     print('PASS original static runtime bytes',sha(expected),flush=True)
     assert sha(case.read_bytes())==CASE_SHA and sha(mutations.read_bytes())==MUT_SHA
-    (e/'VERDICT').write_text('PASS 39 runtime cases,5 emitter refusals,5 actual source mutations,original static bytes\n')
-    print('PASS 39 runtime cases;5 emitter refusals;5 source mutations;original static bytes',flush=True)
+    assert sha(ownership.read_bytes())==OWNERSHIP_SHA
+    (e/'VERDICT').write_text('PASS original39+supplemental12 runtime cases,5 emitter refusals,5 actual source mutations,original static bytes\n')
+    print('PASS original39+supplemental12 runtime cases;5 emitter refusals;5 source mutations;original static bytes',flush=True)
 if __name__=='__main__':main()

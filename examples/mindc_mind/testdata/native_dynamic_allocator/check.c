@@ -71,6 +71,24 @@ int main(int argc,char **argv) {
  if(!strcmp(name,"shrink_split")){uint64_t p=allocn(256),q=allocn(32);fill(p,256,0x51);fill(q,32,0x62);C((uint64_t)realloc_f(p,64)==p);C(allocn(128)==p+72);bytes(p,64,0x51);bytes(p+72,128,0);bytes(q,32,0x62);return 0;}
  if(!strcmp(name,"realloc_null_zero")){uint64_t p=realloc_f(0,0);C(p==A+72);bytes(p,24,0);C(realloc_f(p,0)==0 && W(A)==56);return 0;}
  if(!strcmp(name,"realloc_negative")){uint64_t p=allocn(64);fill(p,64,0x62);C(realloc_f(p,-1)==0);bytes(p,64,0x62);C(realloc_f(0,-1)==0);return 0;}
+ if(!strcmp(name,"foreign_intmax")||!strcmp(name,"foreign_over_limit")||!strcmp(name,"reserved_intmax")||!strcmp(name,"foreign_zero")||!strcmp(name,"foreign_negative")){
+  uint64_t p=!strcmp(name,"reserved_intmax")?A+16:0x1000;
+  int64_t n=INT64_MAX;
+  if(!strcmp(name,"foreign_over_limit"))n=(INT64_C(1)<<46)+1;
+  if(!strcmp(name,"foreign_zero"))n=0;
+  if(!strcmp(name,"foreign_negative"))n=-1;
+  C(realloc_f(p,n)==0 && W(A)==56);
+  for(int i=1;i<8;i++)C(W(A+i*8)==0x1020304050607000ULL+i);
+  return 0;
+ }
+ if(!strcmp(name,"owned_intmax")||!strcmp(name,"owned_over_limit")||!strcmp(name,"null_intmax")||!strcmp(name,"null_over_limit")){
+  uint64_t p=!strncmp(name,"owned_",6)?allocn(64):0;
+  int64_t n=strstr(name,"over_limit")?(INT64_C(1)<<46)+1:INT64_MAX;
+  C(realloc_f(p,n)!=0);return 0;
+ }
+ if(!strcmp(name,"owned_zero")){uint64_t p=allocn(64);fill(p,64,0x62);C(realloc_f(p,0)==0 && W(A)==56);C(allocn(64)==p);bytes(p,64,0);return 0;}
+ if(!strcmp(name,"owned_negative")){uint64_t p=allocn(64);fill(p,64,0x62);uint64_t cursor=W(A);C(realloc_f(p,-1)==0 && W(A)==cursor);bytes(p,64,0x62);return 0;}
+ if(!strcmp(name,"null_zero_again")){uint64_t p=realloc_f(0,0);C(p==A+72);bytes(p,24,0);return 0;}
  if(!strcmp(name,"foreign")){C(free_f(0x1000,0)==0 && realloc_f(0x1000,32)==0);C(free_f(A+16,0)==0 && realloc_f(A+16,32)==0);C(W(A)==56);return 0;}
  if(!strcmp(name,"reserved_cells")){uint64_t p=allocn(100),q=allocn(primary+1);C(p>=A+72 && q==OB+8);free_f(p,0);free_f(q,0);for(int i=1;i<8;i++)C(W(A+i*8)==0x1020304050607000ULL+i);return 0;}
  if(!strcmp(name,"zero_reuse")){uint64_t p=allocn(64);fill(p,64,0x62);free_f(p,0);C(allocn(64)==p);bytes(p,64,0);return 0;}
