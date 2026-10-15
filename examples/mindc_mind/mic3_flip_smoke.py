@@ -1,14 +1,15 @@
 """
 Whole-module mic@3 self-host FLIP gate.
 
-Proves the pure-MIND bootstrap compiler reproduces the CANONICAL BINARY IR exactly,
-not just the mic@1 text fixed point: feed examples/mindc_mind/main.mind to the
-self-hosted driver `selftest_mic3_module_nfn(...)` in libmindc_mind.so and compare its
-emitted mic@3 module byte-for-byte against the Rust oracle `mindc --emit-mic3 main.mind`.
+Compares the current self-host MIND compiler's canonical binary IR with the
+reference compiler on the exact current main.mind source. The byte comparison
+binds this source and these built instruments; it is not a general compiler
+correctness proof, a runtime/type-soundness result, or pin qualification.
 
-This is the load-bearing self-host invariant — the artifact the evidence chain anchors
-on (trace_hash = mini_sha256(emit_mic3(ir))) is identical whether produced by Rust or by
-MIND. Once green, the Rust front-end is decorative at the binary-IR layer too.
+Feed main.mind to selftest_mic3_module_nfn in the freshly built library and
+compare the emitted mic@3 bytes against mindc --emit-mic3 on the same input.
+Eight additive record-binding regressions retain this original whole-module
+comparison and exercise descriptor-slot versus resolved-SSA-ID references.
 
 Verdicts:
   PASS  — nfn(main.mind) == mindc --emit-mic3 main.mind, byte-identical
@@ -62,11 +63,11 @@ def oracle_mic3(src: str):
         sp = pathlib.Path(td) / "m.mind"
         op = pathlib.Path(td) / "m.mic3"
         sp.write_text(src)
-        subprocess.run(
+        result = subprocess.run(
             [str(MINDC), "--emit-mic3", str(op), str(sp)],
             capture_output=True,
         )
-        return op.read_bytes() if op.exists() else None
+        return op.read_bytes() if result.returncode == 0 and op.exists() else None
 
 
 def nfn_mic3(src: str):
@@ -89,13 +90,59 @@ def nfn_mic3(src: str):
     return _read_string_record(_i64(es, 0)) if es else b""
 
 
+# Additive regression cases for the descriptor-slot versus resolved-SSA-ID boundary.
+# Local let-call bindings exposed wrong MIC references even when module lengths
+# matched. Preserve exact source bytes; these checks do not assert runtime typing.
+RECORD_BINDING_CASES = [
+    ('parameter-control',
+     'struct Other { v:i64 }\npub fn probe(a:i64,b:i64)->Ghost{Ghost{x:a,y:b}}\n'),
+    ('let-call-record',
+     'struct Other { v:i64 }\npub fn probe(p:i64)->Ghost{let a:i64=__mind_load_i64(p);let b:i64=__mind_load_i64(p+8);let c:i64=__mind_load_i64(p+16);Ghost{x:a,y:b,z:c}}\n'),
+    ('let-call-no-schema',
+     'pub fn probe(p:i64)->Ghost{let a:i64=__mind_load_i64(p);let b:i64=__mind_load_i64(p+8);Ghost{x:a,y:b}}\n'),
+    ('let-arithmetic-record',
+     'struct Other { v:i64 }\npub fn probe(p:i64)->Ghost{let a:i64=p+2;let b:i64=a*3;Ghost{x:a,y:b}}\n'),
+    ('let-call-known',
+     'struct Ghost{x:i64,y:i64}\npub fn probe(p:i64)->Ghost{let a:i64=__mind_load_i64(p);let b:i64=__mind_load_i64(p+8);Ghost{x:a,y:b}}\n'),
+    ('local-shadow-record',
+     'struct Other { v:i64 }\npub fn probe(a:i64)->Ghost{let a:i64=a+2;let b:i64=a*3;Ghost{x:a,y:b}}\n'),
+    ('nested-let-record',
+     'struct Other { v:i64 }\npub fn probe(p:i64)->Ghost{let a:i64=p+2;Ghost{x:Inner{v:a},y:a}}\n'),
+    ('array-let-record',
+     'struct Other { v:i64 }\npub fn probe(p:i64)->i64{let a:i64=p+2;let xs=[Ghost{x:a}];0}\n'),
+]
+
+
+def record_binding_regressions():
+    failures = 0
+    for label, source in RECORD_BINDING_CASES:
+        oracle = oracle_mic3(source)
+        try:
+            emitted = nfn_mic3(source)
+        except Exception as exc:  # noqa: BLE001 — refusal/crash is not success
+            print(f"FAIL: record binding {label}: driver raised {exc!r}")
+            failures += 1
+            continue
+        if not oracle or not emitted or emitted != oracle:
+            print(
+                f"FAIL: record binding {label}: "
+                f"nfn={len(emitted)} B oracle={len(oracle or b'')} B"
+            )
+            failures += 1
+    if failures:
+        print(f"FAIL: record binding regressions {len(RECORD_BINDING_CASES) - failures}/{len(RECORD_BINDING_CASES)}")
+        return 1
+    print(f"PASS: record binding regressions {len(RECORD_BINDING_CASES)}/{len(RECORD_BINDING_CASES)} byte-identical")
+    return 0
+
+
 def main():
     if not SO.exists():
         if os.environ.get("MINDC_SO"):
             print(f"ERROR: {SO} not found (MINDC_SO is set — refusing to skip)")
             return 1
-        print(f"SKIP: {SO} not found (build libmindc_mind.so first)")
-        return 0
+        print(f"BLOCKED: {SO} not found (build libmindc_mind.so first)")
+        return 1
     if not MINDC.exists():
         print(f"BLOCKED: oracle mindc not found at {MINDC}")
         return 1
@@ -119,7 +166,7 @@ def main():
             f"PASS: whole-module mic@3 FLIP byte-identical "
             f"({len(nfn)} B) — nfn(main.mind) == mindc --emit-mic3"
         )
-        return 0
+        return record_binding_regressions()
 
     n = min(len(nfn), len(oracle))
     di = next((i for i in range(n) if nfn[i] != oracle[i]), n)

@@ -1,0 +1,97 @@
+// Copyright 2026 STARGA Inc.
+// Owned target context for the native emitter. No production admission.
+// Live raw-address inputs are caller obligations, as in ndl_plan. The captured
+// request and derived plan are copied by value; no caller buffer is retained.
+
+pub fn nec_fields(ctx: i64) -> i64 {
+    let plan: i64 = ctx + 160;
+    __mind_store_i64(ctx, 1);
+    __mind_store_i64(ctx + 8, 1);
+    __mind_store_i64(ctx + 16, __mind_load_i64(plan + 136));
+    __mind_store_i64(ctx + 24, __mind_load_i64(plan + 120) + 8);
+    __mind_store_i64(ctx + 32, __mind_load_i64(plan + 120) + 16);
+    __mind_store_i64(ctx + 40, __mind_load_i64(plan + 104));
+    __mind_store_i64(ctx + 48, 8388608);
+    __mind_store_i64(ctx + 56, __mind_load_i64(plan + 120));
+    __mind_store_i64(ctx + 64, __mind_load_i64(plan + 168));
+    __mind_store_i64(ctx + 72, 0);
+    0
+}
+
+pub fn nec_new(request: i64) -> i64 {
+    if request == 0 { return 0; }
+    let ctx: i64 = __mind_alloc(416);
+    if ctx == 0 { return 0; }
+    let mut i: i64 = 0;
+    while i < 10 {
+        __mind_store_i64(ctx + 80 + i * 8, __mind_load_i64(request + i * 8));
+        i = i + 1;
+    }
+    if ndl_plan(ctx + 80, ctx + 160) != 0 {
+        __mind_free(ctx);
+        return 0;
+    }
+    let _fields: i64 = nec_fields(ctx);
+    ctx
+}
+
+// Recompute from the owned request and compare every derived word. Header
+// magic, a saved success flag, or caller-supplied derived geometry is insufficient.
+// A fully coherent different valid request is a different valid context; source
+// and final-image binding belongs to the emission orchestrator, not this record.
+pub fn nec_check(ctx: i64) -> i64 {
+    if ctx == 0 { return 0; }
+    let expected: i64 = nec_new(ctx + 80);
+    if expected == 0 { return 0; }
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < 52 {
+        if __mind_load_i64(ctx + i * 8) != __mind_load_i64(expected + i * 8) {
+            ok = 0;
+        }
+        i = i + 1;
+    }
+    __mind_free(expected);
+    ok
+}
+
+pub fn nec_free(ctx: i64) -> i64 {
+    if ctx != 0 { __mind_free(ctx); }
+    0
+}
+
+// Capture before lexing, then lower through the single shared compiler path.
+// `hash` is the existing 32-byte compiler-note input, not an authorization
+// claim. Its derivation remains the source-note driver's obligation. All raw
+// input buffers must be live and immutable during capture; route follows the
+// existing compiler-owned function-routing contract. No untrusted pointer data
+// or serialized PASS flags are accepted by this development interface.
+pub fn nec_lower_parts(source: i64, length: i64, hash: i64, user_lo: i64, route: i64, request: i64) -> i64 {
+    if source == 0 { return 0; }
+    if hash == 0 { return 0; }
+    if length <= 0 { return 0; }
+    if length > 67108864 { return 0; }
+    if user_lo < 0 { return 0; }
+    if user_lo > length { return 0; }
+    let ctx: i64 = nec_new(request);
+    if ctx == 0 { return 0; }
+    if nec_check(ctx) == 0 { nec_free(ctx); return 0; }
+    let captured: i64 = __mind_alloc(length + 16);
+    if captured == 0 { nec_free(ctx); return 0; }
+    let _copy: i64 = nfn_copy_src_bytes(captured, source, length, 0);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(captured + length + i, 0);
+        i = i + 1;
+    }
+    let tokens: Vec = lex(captured, length);
+    let parts: i64 = nb_lower_parts_hb_route(tokens, captured, hash, user_lo, route, ctx);
+    __mind_free(captured);
+    if parts == 0 { nec_free(ctx); return 0; }
+    __mind_store_i64(parts + 176, ctx);
+    if nb_parts_local_calls_ok(parts) == 0 {
+        nb_parts_free(parts);
+        return 0;
+    }
+    parts
+}

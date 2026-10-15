@@ -1271,9 +1271,16 @@ jobs:
             self_host_source_note_smoke \
             self_host_native_cf_smoke; do
             echo "=== $s ==="
+            gate_args=()
+            if [ "$s" = self_host_source_note_smoke ]; then
+              # Current-source diagnostic compilation exceeds 120 CPU seconds.
+              # Only its two initial builds get this allowance; fixture builds
+              # and executions retain their original CPU120/wall150 limits.
+              gate_args=(--build-cpu-seconds 300)
+            fi
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
-              python3 scripts/run_gate.py "examples/mindc_mind/$s.py"
+              python3 scripts/run_gate.py "examples/mindc_mind/$s.py" "${gate_args[@]}"
           done
         working-directory: ${{ github.workspace }}
 

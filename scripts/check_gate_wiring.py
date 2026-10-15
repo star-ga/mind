@@ -160,8 +160,11 @@ GATED_EVENTS = ("push", "pull_request")
 # orchestration/native/CPU gate. No additional product runtime or admission.
 # 302 -> 303 adds native_libc_io_check.py: standalone fixed libc I/O recipe,
 # native/MLIR byte parity, actual TLS errno/file effects and source mutations.
-# Explicit manual prerequisites remain; no production call admission.
-HARNESS_CEILING = 303  # Exact reviewed integration inventory; no spare allowance.
+# 303 -> 304 adds self_host_native_emission_context_smoke.py: a manual
+# source-lowering/context and source-image candidate gate with explicit current
+# compiler prerequisites. Retained failures and independent review obligations
+# remain visible; counting the harness does not claim CI execution or admission.
+HARNESS_CEILING = 304  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
