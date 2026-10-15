@@ -27,6 +27,8 @@ mod evidence;
 pub(crate) mod fp_mode;
 pub mod frozen_profile;
 pub mod native_closure;
+#[cfg(feature = "std-surface")]
+pub mod native_lane_profile;
 mod print;
 mod verify;
 

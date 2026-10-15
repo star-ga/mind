@@ -22,6 +22,8 @@ mod entry;
 #[cfg(feature = "std-surface")]
 use entry::{check_entry_binds_main_params, check_entry_is_not_no_main_stub};
 #[cfg(feature = "std-surface")]
+mod namespace;
+#[cfg(feature = "std-surface")]
 mod outcome;
 #[cfg(feature = "std-surface")]
 mod seed;
@@ -249,11 +251,10 @@ pub fn run_native_backend_bridge_profile(
     // source the joiner contributes nothing, which is what makes "single-file
     // bytes did not move" a mechanical check instead of an argument.
     let std_blob = crate::build::native_image::compose_std_blob(&std_sources);
-    let image = crate::build::native_image::compose_image_with_layout(
-        &std_blob,
-        &user_sources,
-        layout.as_ref(),
-    );
+    // Layout and feature admission are independent: a memory limit is not a
+    // compiler capability. Only the selected compiler's distinct lane marker
+    // chooses the candidate profile; unmarked seeds retain the old contract.
+    let lane_v1 = seed::compiler_supports_native_lane_v1(layout.is_some());
 
     // Admission and emission use the same captured, composed user region.
     // The exhaustive frozen-profile allowlist checks every retained user body,
@@ -316,13 +317,14 @@ pub fn run_native_backend_bridge_profile(
             process::exit(3);
         }
     }
-    let (merged_ast, merged_ir) = match admit_merged_program(&paths[0], &fence_source, &reserved) {
-        Ok(lowered) => lowered,
-        Err(msg) => {
-            eprintln!("error[backend-native]: {msg}");
-            process::exit(3);
-        }
-    };
+    let (merged_ast, merged_ir, omit_seed) =
+        match admit_merged_program(&paths[0], &fence_source, &reserved, &std_sources, lane_v1) {
+            Ok(lowered) => lowered,
+            Err(msg) => {
+                eprintln!("error[backend-native]: {msg}");
+                process::exit(3);
+            }
+        };
     // DIALECT FENCE: an import the frozen compiler would read as a DIFFERENT
     // extent than the admission parser did. Admission above reasoned about the
     // Rust parse; the ELF is built from the frozen parse of the same bytes, so
@@ -371,25 +373,41 @@ pub fn run_native_backend_bridge_profile(
     // artifact; reachability informs diagnostics, it does not narrow admission.
     // enforced-by: RI-D1-PROFILE
     // The source check covers what the IR cannot carry (a declared f32 width).
-    match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
-        .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
-    {
-        Ok(()) => {}
-        Err(rejection) => {
-            eprintln!(
-                "error[backend-native]: `{}` is not in the frozen native profile \
+    // The candidate path already checked its complete typed profile before
+    // namespace selection. Never apply its additions to an unmarked compiler.
+    if !lane_v1 {
+        match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
+            .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
+        {
+            Ok(()) => {}
+            Err(rejection) => {
+                eprintln!(
+                    "error[backend-native]: `{}` is not in the frozen native profile \
                  (out-of-profile construct: {}).\n  \
                  The native backend is proven byte-identical only on the frozen \
                  construct allowlist. Rerun with `--backend mlir` for the full \
                  surface. This is a refusal, not a fallback: silently compiling an \
                  unproven construct is the failure this fence exists to prevent.",
-                paths[0], rejection.construct
-            );
-            process::exit(3);
+                    paths[0], rejection.construct
+                );
+                process::exit(3);
+            }
         }
     }
 
-    // The stdin image was composed above by `native_image::compose_image`.
+    // Compose only after namespace and type admission. A closed private-helper
+    // collision omits the WHOLE unused seed, never renames a user symbol or
+    // drops a user body. The ordinary path keeps the exact historical bytes.
+    let selected_std = if omit_seed {
+        crate::build::native_image::compose_std_blob(&[])
+    } else {
+        std_blob
+    };
+    let image = crate::build::native_image::compose_image_with_layout(
+        &selected_std,
+        &user_sources,
+        layout.as_ref(),
+    );
     let image = image.bytes;
 
     // Resolve the pure-MIND compiler ELF (the RI-D shell-out target):
@@ -581,7 +599,9 @@ fn admit_merged_program(
     path: &str,
     merged: &[u8],
     reserved: &BTreeSet<String>,
-) -> Result<(crate::ast::Module, crate::ir::IRModule), String> {
+    std_sources: &[Vec<u8>],
+    lane_v1: bool,
+) -> Result<(crate::ast::Module, crate::ir::IRModule, bool), String> {
     let text = std::str::from_utf8(merged)
         .map_err(|e| format!("`{path}`: source is not valid UTF-8: {e}"))?;
     let ast = match crate::parser::parse(text) {
@@ -625,7 +645,32 @@ fn admit_merged_program(
     // 101). Lowering then runs behind a panic boundary for anything else.
     admission::refuse_unresolved_names(&ast, text, path)?;
     admission::refuse_symbolic_dims_read_as_values(&ast, text, path)?;
+    let lane_error = |r: crate::ir::native_lane_profile::LaneProfileRejection| {
+        format!(
+            "`{path}` is outside candidate native-lane-v1 ({}). No artifact written.",
+            r.construct
+        )
+    };
+    if lane_v1 {
+        crate::ir::native_lane_profile::profile_lane_admits_source(&ast).map_err(lane_error)?;
+    }
     let ir = admission::lower_without_panicking(&ast, path)?;
+    if lane_v1 {
+        crate::ir::native_lane_profile::profile_lane_admits(&ast, &ir).map_err(lane_error)?;
+        let bindings = namespace::intrinsic_bindings(&ir);
+        let omit_seed = namespace::omit_private_seed(&ast, std_sources, reserved, &bindings)
+            .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+        let empty = BTreeSet::new();
+        crate::ir::native_closure::admit_native_lane_closure(
+            &ast,
+            &ir,
+            "main",
+            if omit_seed { &empty } else { reserved },
+            &bindings,
+        )
+        .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+        return Ok((ast, ir, omit_seed));
+    }
     // Closure admission runs for its ownership, ambiguity and unresolved-edge
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
@@ -633,5 +678,5 @@ fn admit_merged_program(
     crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", reserved)
         .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
     let _ = path;
-    Ok((ast, ir))
+    Ok((ast, ir, false))
 }
