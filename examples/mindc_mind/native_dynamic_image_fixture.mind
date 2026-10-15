@@ -1,0 +1,284 @@
+// Copyright 2026 STARGA Inc.
+// Generic byte fixtures for the standalone writer; no general startup/ABI claim.
+pub fn ndx_test_hex_nibble(b: i64) -> i64 {
+    if b >= 48 { if b <= 57 { return b - 48; } }
+    if b >= 97 { if b <= 102 { return b - 87; } }
+    0 - 1
+}
+pub fn ndx_test_hex(s: String) -> String {
+    let mut out: String = string_new();
+    let mut i: i64 = 0;
+    while i < string_len(s) {
+        let a: i64 = ndx_test_hex_nibble(string_get_byte(s, i));
+        let b: i64 = ndx_test_hex_nibble(string_get_byte(s, i + 1));
+        out = nb_push(out, a * 16 + b);
+        i = i + 2;
+    }
+    out
+}
+pub fn ndx_test_append(a: String, hex: String) -> String {
+    let b: String = ndx_test_hex(hex);
+    let out: String = nd_bytes(a, string_addr(b), string_len(b));
+    let _d: i64 = ndx_drop(b);
+    out
+}
+pub fn ndx_test_owned(s: String) -> String {
+    nd_bytes(string_new(), string_addr(s), string_len(s))
+}
+pub fn ndx_test_rax(code: String, addr: i64) -> String {
+    nb_i64le(ndx_test_append(code, "48b8"), addr)
+}
+// Zero-check then an explicit normal failure exit (99) if the read is nonzero.
+pub fn ndx_test_zero(code: String, addr: i64) -> String {
+    ndx_test_append(ndx_test_rax(code, addr), "488338007406b863000000c3")
+}
+pub fn ndx_test_mark(code: String, context: i64) -> String {
+    let a: String = ndx_test_append(ndx_test_rax(code, context), "48c70041000000b801000000bf01000000");
+    let b: String = nb_i64le(ndx_test_append(a, "48be"), context);
+    ndx_test_append(b, "ba010000000f05")
+}
+pub fn ndx_test_body(mode: i64, plan: i64, literal_len: i64) -> String {
+    let context: i64 = nd_word(plan, 11);
+    let arena: i64 = nd_word(plan, 15);
+    let state: i64 = nd_word(plan, 17);
+    let stack: i64 = nd_word(plan, 20);
+    let top: i64 = nd_word(plan, 21);
+    let mut out: String = string_new();
+    if mode == 5 || mode == 43 {
+        let addresses: i64 = __mind_alloc(64);
+        __mind_store_i64(addresses, context);
+        __mind_store_i64(addresses + 8, context + 4088);
+        __mind_store_i64(addresses + 16, arena);
+        __mind_store_i64(addresses + 24, arena + nd_word(plan, 16) - 8);
+        __mind_store_i64(addresses + 32, state);
+        __mind_store_i64(addresses + 40, state + 512);
+        __mind_store_i64(addresses + 48, stack);
+        __mind_store_i64(addresses + 56, top - 8);
+        let mut i: i64 = 0;
+        while i < 8 { out = ndx_test_zero(out, nd_word(addresses, i)); i = i + 1; }
+        i = 0;
+        while i < 8 {
+            out = ndx_test_append(ndx_test_rax(out, nd_word(addresses, i)), "48c70041000000488338417406b863000000c3");
+            i = i + 1;
+        }
+        __mind_free(addresses);
+        out = ndx_test_mark(out, context);
+    } else {
+        if mode == 6 {
+            out = ndx_test_append(ndx_test_rax(out, nd_word(plan, 9)), "488338007506b863000000c3");
+            out = ndx_test_mark(out, context);
+            out = ndx_test_append(ndx_test_rax(out, nd_word(plan, 9)), "488b08488908");
+        } else {
+            if mode == 7 {
+                out = ndx_test_mark(out, context);
+                out = ndx_test_append(ndx_test_rax(out, nd_word(plan, 3)), "c60031");
+            } else {
+                if mode == 8 {
+                    out = ndx_test_append(ndx_test_rax(out, 8388608), "8038417406b863000000c3");
+                    out = ndx_test_mark(out, context);
+                    out = ndx_test_append(ndx_test_rax(out, 8388608), "c60041");
+                } else {
+                    if mode == 9 {
+                        out = ndx_test_rax(out, stack);
+                        out = ndx_test_append(out, "48bab82a000000c30000488910");
+                        out = ndx_test_mark(out, context);
+                        out = ndx_test_append(ndx_test_rax(out, stack), "ffd0");
+                    } else {
+                        if mode == 10 || mode == 11 {
+                            let addr: i64 = if mode == 10 { nd_word(plan, 18) - 4096 } else { nd_word(plan, 18) };
+                            out = ndx_test_mark(out, context);
+                            out = ndx_test_append(ndx_test_rax(out, addr), "488b00");
+                        } else {
+                            out = ndx_test_append(ndx_test_rax(out, 8388608), "8038417406b863000000c3");
+                            out = ndx_test_append(ndx_test_rax(out, 8388608 + literal_len - 1), "8038417406b863000000c3");
+                            out = ndx_test_append(out, "b801000000bf0100000048be0000800000000000ba010000000f05");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ndx_test_append(out, "b82a000000c3")
+}
+pub fn ndx_test_probe(mode: i64) -> i64 {
+    if mode >= 1 { if mode <= 11 { return 1; } }
+    if mode == 16 { return 1; }
+    if mode == 43 { return 1; }
+    0
+}
+pub fn ndx_test_code(mode: i64, plan: i64, literal_len: i64) -> String {
+    let startup: String = ndx_test_hex("31ed4989d15e4889e24883e4f050544531c031c948bf2510400000000000ff1500000000f4");
+    if ndx_test_probe(mode) == 0 {
+        return ndx_test_append(startup, "554889e5534883ec0889fbff150000000085c07e0489d8eb05b8630000004883c4085b5dc3");
+    }
+    let body: String = ndx_test_body(mode, plan, literal_len);
+    let code: String = nd_bytes(startup, string_addr(body), string_len(body));
+    let _d: i64 = ndx_drop(body);
+    // A retained unreachable reference exercises eager import closure too.
+    ndx_test_append(code, "ff1500000000")
+}
+pub fn ndx_test_note(kind: i64) -> String {
+    let a: String = nb_u32(nb_u32(nb_u32(string_new(), 5), 32), kind);
+    let mut out: String = nb_i64le(a, 1145981261);
+    let mut i: i64 = 0;
+    while i < 32 { out = nb_push(out, i); i = i + 1; }
+    out
+}
+pub fn ndx_test_fixture(mode: i64) -> String {
+    let policy: i64 = __mind_alloc(48);
+    __mind_store_i64(policy, 1);
+    __mind_store_i64(policy + 8, 8388608);
+    __mind_store_i64(policy + 16, 1048576);
+    __mind_store_i64(policy + 24, 1048576);
+    __mind_store_i64(policy + 32, 4096);
+    __mind_store_i64(policy + 40, 67108864);
+    if mode == 28 { __mind_store_i64(policy, 0); }
+    if mode == 29 { __mind_store_i64(policy + 8, 4096); }
+    if mode == 30 { __mind_store_i64(policy + 16, 1); }
+    if mode == 31 { __mind_store_i64(policy + 24, 4097); }
+    if mode == 32 { __mind_store_i64(policy + 32, 0); }
+    if mode == 33 { __mind_store_i64(policy + 40, 2147483648); }
+    if mode == 41 { __mind_store_i64(policy + 40, 0 - 1); }
+    if mode == 43 { __mind_store_i64(policy + 16, 0); }
+    let plan: i64 = __mind_alloc(256);
+    let _z: i64 = ndl_zero(plan);
+    let mut literal_len: i64 = 0;
+    if mode == 1 || mode == 8 { literal_len = 1; }
+    if mode == 2 { literal_len = 4096; }
+    if mode == 3 { literal_len = 4097; }
+    if mode == 4 { literal_len = 43; }
+    if mode == 16 { literal_len = 8388608; }
+    let mut literals: String = string_new();
+    let mut i: i64 = 0;
+    while i < literal_len { literals = nb_push(literals, 65); i = i + 1; }
+    if mode == 34 { literals = String { addr: 1, len: 8388609, cap: 8388609 }; }
+    if mode == 35 { literals = String { addr: 1, len: 1, cap: 0 }; }
+    if mode == 36 { literals = String { addr: 1, len: 0 - 1, cap: 0 }; }
+    let mut code: String = ndx_test_code(mode, plan, literal_len);
+    let mut imports: Vec = vec_new();
+    let mut patches: Vec = vec_new();
+    let mut interpreter: String = "/lib64/ld-linux-x86-64.so.2";
+    if mode == 18 {
+        interpreter = ndx_test_owned("/");
+        while string_len(interpreter) < 255 { interpreter = nb_push(interpreter, 97); }
+    }
+    if mode == 40 { interpreter = ""; }
+    let mut name: String = "getpid";
+    let mut version: String = "GLIBC_2.2.5";
+    if mode == 12 { version = "GLIBC_999.999"; }
+    if mode == 13 { name = "ndx_missing_symbol_20261015"; }
+    imports = vec_push(imports, nd_import("__libc_start_main", "GLIBC_2.34"));
+    imports = vec_push(imports, nd_import(name, version));
+    patches = vec_push(patches, nd_patch(32, 0));
+    let second: i64 = if ndx_test_probe(mode) == 1 { string_len(code) - 4 } else { 50 };
+    patches = vec_push(patches, nd_patch(second, 1));
+    if mode == 14 || mode == 42 {
+        let count: i64 = if mode == 14 { 80 } else { 256 };
+        i = 2;
+        while i < count {
+            let symbol: String = string_push_i64(ndx_test_owned("ndx_many_symbol_"), i);
+            let ver: String = string_push_i64(ndx_test_owned("NDX_VERSION_"), i);
+            imports = vec_push(imports, nd_import(symbol, ver));
+            patches = vec_push(patches, nd_patch(string_len(code) + 2, i));
+            code = ndx_test_append(code, "ff1500000000");
+            i = i + 1;
+        }
+    }
+    if mode == 15 { code = nd_to(code, 1048576); }
+    let mut entry: i64 = 0;
+    if mode == 37 { entry = string_len(code); }
+    if mode == 38 { __mind_store_i8(string_addr(code) + 32, 1); }
+    if mode == 39 { vec_set(imports, 1, vec_get(imports, 0)); }
+    let rc: i64 = ndx_plan(code, entry, imports, patches, interpreter, "libc.so.6", literals, policy, plan);
+    if rc != 0 { return string_new(); }
+    if mode == 19 {
+        let alias: i64 = __mind_alloc(256);
+        i = 0;
+        while i < 6 { __mind_store_i64(alias + i * 8, nd_word(policy, i)); i = i + 1; }
+        let ar: i64 = ndx_plan(code, entry, imports, patches, interpreter, "libc.so.6", literals, alias, alias);
+        if ar != 0 { return string_new(); }
+        if ndx_same_plan(alias, plan) == 0 { return string_new(); }
+        __mind_free(alias);
+    }
+    if mode == 49 {
+        let invalid: i64 = __mind_alloc(48);
+        let bad: i64 = __mind_alloc(256);
+        i = 0;
+        while i < 6 { __mind_store_i64(invalid + i * 8, nd_word(policy, i)); i = i + 1; }
+        __mind_store_i64(invalid, 0);
+        i = 0;
+        while i < 32 { __mind_store_i64(bad + i * 8, 99); i = i + 1; }
+        let br: i64 = ndx_plan(code, entry, imports, patches, interpreter, "libc.so.6", literals, invalid, bad);
+        if br != 31 { return string_new(); }
+        i = 0;
+        while i < 32 { if nd_word(bad, i) != 0 { return string_new(); } i = i + 1; }
+        __mind_free(invalid);
+        __mind_free(bad);
+    }
+    if ndx_test_probe(mode) == 1 {
+        let replacement: String = ndx_test_code(mode, plan, literal_len);
+        if string_len(replacement) != string_len(code) { return string_new(); }
+        let _old: i64 = ndx_drop(code);
+        code = replacement;
+    }
+    if mode >= 100 { if mode <= 131 {
+        let offset: i64 = (mode - 100) * 8;
+        __mind_store_i64(plan + offset, __mind_load_i64(plan + offset) + 1);
+    } }
+    let kind: i64 = if mode == 4 { 1 } else { 2 };
+    let mut note: String = ndx_test_note(kind);
+    if mode == 20 { note = String { addr: string_addr(note), len: 51, cap: string_cap(note) }; }
+    if mode == 21 { note = nb_push(note, 0); }
+    if mode == 22 { __mind_store_i32(string_addr(note), 4); }
+    if mode == 23 { __mind_store_i32(string_addr(note) + 4, 31); }
+    if mode == 24 { __mind_store_i32(string_addr(note) + 8, 0); }
+    if mode == 25 { __mind_store_i32(string_addr(note) + 8, 3); }
+    if mode == 26 { __mind_store_i8(string_addr(note) + 12, 88); }
+    if mode == 27 { __mind_store_i8(string_addr(note) + 19, 1); }
+    if mode == 46 { note = String { addr: 1, len: 52, cap: 0 }; }
+    if mode == 47 { note = String { addr: 0 - 1, len: 52, cap: 52 }; }
+    let saved_code: String = nd_bytes(string_new(), string_addr(code), string_len(code));
+    let note_copy_len: i64 = if mode == 46 || mode == 47 { 0 } else { string_len(note) };
+    let saved_note: String = nd_bytes(string_new(), string_addr(note), note_copy_len);
+    let out: String = ndx_write_elf(code, entry, imports, patches, interpreter, "libc.so.6", literals, policy, note, plan);
+    if mode == 44 || mode == 45 {
+        if nd_compare(string_addr(saved_code), string_len(saved_code), string_addr(code), string_len(code)) != 0 { return string_new(); }
+        if nd_compare(string_addr(saved_note), string_len(saved_note), string_addr(note), string_len(note)) != 0 { return string_new(); }
+        if nd_word(vec_get(patches, 0), 0) != 32 { return string_new(); }
+        if nd_word(vec_get(patches, 1), 0) != second { return string_new(); }
+        let again: String = ndx_write_elf(code, entry, imports, patches, interpreter, "libc.so.6", literals, policy, note, plan);
+        if nd_compare(string_addr(out), string_len(out), string_addr(again), string_len(again)) != 0 { return string_new(); }
+        let _again: i64 = ndx_drop(again);
+    }
+    let _sc: i64 = ndx_drop(saved_code);
+    let _sn: i64 = ndx_drop(saved_note);
+    __mind_free(policy);
+    __mind_free(plan);
+    out
+}
+pub fn main() -> i64 {
+    // Same fixed binary transport on both diagnostic backends; no argv
+    // intrinsic dependency in the MLIR reference instrument.
+    let input: i64 = __mind_alloc(8);
+    let got: i64 = __mind_read(0, input, 8, 0 - 1);
+    if got != 8 { return 64; }
+    let mode: i64 = __mind_load_i64(input);
+    __mind_free(input);
+    let out: String = ndx_test_fixture(mode);
+    if string_len(out) == 0 {
+        // Explicit byte 10 preserves the diagnostic on native's current raw
+        // literal subset; a backslash escape is intentionally not substituted.
+        let text: String = "ndx image refused";
+        let copy: String = nd_bytes(string_new(), string_addr(text), string_len(text));
+        let message: String = nb_push(copy, 10);
+        let _w: i64 = __mind_write(2, string_addr(message), string_len(message), 0 - 1);
+        return 23;
+    }
+    let mut pos: i64 = 0;
+    while pos < string_len(out) {
+        let count: i64 = __mind_write(1, string_addr(out) + pos, string_len(out) - pos, 0 - 1);
+        if count <= 0 { return 70; }
+        pos = pos + count;
+    }
+    0
+}

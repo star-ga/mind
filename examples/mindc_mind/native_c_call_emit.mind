@@ -1,0 +1,142 @@
+// Copyright 2026 STARGA Inc.
+// Fixed scalar SysV call emission. No source admission or library ABI binding.
+// Requires native_c_call_plan.mind and the existing nb_* byte encoders.
+// Borrowed row/type/slot buffers must remain readable and immutable. The four
+// metadata output words must be writable and must not alias any borrowed input.
+
+pub fn nce_zero(metadata: i64) -> i64 {
+    __mind_store_i64(metadata, 0);
+    __mind_store_i64(metadata + 8, 0);
+    __mind_store_i64(metadata + 16, 0);
+    __mind_store_i64(metadata + 24, 0);
+    0
+}
+
+pub fn nce_slot_ok(disp: i64, frame: i64) -> i64 {
+    if disp > 0 - 8 { return 0; }
+    if disp < 0 - frame { return 0; }
+    if disp % 8 != 0 { return 0; }
+    1
+}
+
+// This interface accepts frame displacements, not arbitrary machine addresses.
+pub fn nce_validate(row: i64, slots: i64, frame: i64, dst: i64, import_id: i64) -> i64 {
+    let row_error: i64 = ncp_validate(row);
+    if row_error != 0 { return row_error; }
+    if frame < 16 { return 9; }
+    if frame > 2147483632 { return 9; }
+    if frame % 16 != 0 { return 9; }
+    if import_id < 0 { return 10; }
+    if import_id > 255 { return 10; }
+    let n: i64 = __mind_load_i64(row + 40);
+    if n > 0 { if slots == 0 { return 11; } }
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while i < n {
+        ok = ok * nce_slot_ok(__mind_load_i64(slots + i * 8), frame);
+        i = i + 1;
+    }
+    if ok == 0 { return 11; }
+    let rt: i64 = ncp_type(__mind_load_i64(row + 56));
+    if rt != 0 { if nce_slot_ok(dst, frame) == 0 { return 12; } }
+    0
+}
+
+pub fn nce_op3(code: String, a: i64, b: i64, c: i64) -> String {
+    let c1: String = nb_push(code, a);
+    let c2: String = nb_push(c1, b);
+    nb_push(c2, c)
+}
+
+// Read only the meaningful low width from an eight-byte compiler frame slot.
+pub fn nce_load_scalar(code: String, tag: i64, disp: i64) -> String {
+    if tag == 1 {
+        return nb_i32le_signed(nb_push(nce_op3(code, 72, 15, 190), 133), disp);
+    }
+    if tag == 3 {
+        return nb_i32le_signed(nb_push(nce_op3(code, 72, 15, 191), 133), disp);
+    }
+    if tag == 5 { return nb_i32le_signed(nce_op3(code, 72, 99, 133), disp); }
+    if tag == 2 { return nb_i32le_signed(nce_op3(code, 15, 182, 133), disp); }
+    if tag == 4 { return nb_i32le_signed(nce_op3(code, 15, 183, 133), disp); }
+    if tag == 6 { return nb_i32le_signed(nb_push(nb_push(code, 139), 133), disp); }
+    if tag == 13 { return nb_i32le_signed(nce_op3(code, 15, 182, 133), disp); }
+    nb_load_rax(code, disp)
+}
+
+// RAX is never a GP argument register, so these moves preserve earlier args.
+pub fn nce_move_gp(code: String, reg: i64) -> String {
+    if reg == 0 { return nce_op3(code, 72, 137, 199); }
+    if reg == 1 { return nce_op3(code, 72, 137, 198); }
+    if reg == 2 { return nce_op3(code, 72, 137, 194); }
+    if reg == 3 { return nce_op3(code, 72, 137, 193); }
+    if reg == 4 { return nce_op3(code, 73, 137, 192); }
+    nce_op3(code, 73, 137, 193)
+}
+
+// item is a validated ncp_plan parameter record, never caller-built metadata.
+pub fn nce_argument(code: String, item: i64, disp: i64) -> String {
+    let tag: i64 = __mind_load_i64(item);
+    let kind: i64 = __mind_load_i64(item + 8);
+    let place: i64 = __mind_load_i64(item + 16);
+    if kind == 2 { return nb_fp_movsd_load_xmmk(code, place, disp); }
+    let loaded: String = nce_load_scalar(code, tag, disp);
+    if kind == 1 { return nce_move_gp(loaded, place); }
+    // mov [rsp + disp32], rax. The planned slot is within the reserved space.
+    let store: String = nb_push(nce_op3(loaded, 72, 137, 132), 36);
+    nb_u32(store, place)
+}
+
+pub fn nce_stack(code: String, bytes: i64, restore: i64) -> String {
+    if bytes == 0 { return code; }
+    let op: i64 = if restore == 1 { 196 } else { 236 };
+    nb_u32(nce_op3(code, 72, 129, op), bytes)
+}
+
+// SysV leaves excess INTEGER result bits unspecified. Ignore them completely.
+pub fn nce_result(code: String, tag: i64, disp: i64) -> String {
+    if tag == 0 { return code; }
+    if tag == 12 { return nb_fp_movsd_store_xmm0(code, disp); }
+    if tag == 1 {
+        return nb_store_rax(nb_push(nce_op3(code, 72, 15, 190), 192), disp);
+    }
+    if tag == 3 {
+        return nb_store_rax(nb_push(nce_op3(code, 72, 15, 191), 192), disp);
+    }
+    if tag == 5 { return nb_store_rax(nce_op3(code, 72, 99, 192), disp); }
+    if tag == 2 { return nb_store_rax(nce_op3(code, 15, 182, 192), disp); }
+    if tag == 4 { return nb_store_rax(nce_op3(code, 15, 183, 192), disp); }
+    if tag == 6 { return nb_store_rax(nb_push(nb_push(code, 137), 192), disp); }
+    if tag == 13 { return nb_store_rax(nce_op3(code, 15, 182, 192), disp); }
+    nb_store_rax(code, disp)
+}
+
+// Caller RSP is 16-byte aligned at the bottom of its valid RBP frame. Callee
+// obeys fixed-scalar SysV and all caller-clobbered registers may be destroyed.
+// A returned fixup must be bound by the dynamic writer before execution.
+pub fn nce_emit(row: i64, slots: i64, frame: i64, dst: i64, import_id: i64, metadata: i64) -> String {
+    let _clear: i64 = nce_zero(metadata);
+    if nce_validate(row, slots, frame, dst, import_id) != 0 { return string_new(); }
+    let plan: i64 = ncp_plan(row);
+    if plan == 0 { return string_new(); }
+    let n: i64 = __mind_load_i64(plan + 8);
+    let reserve: i64 = __mind_load_i64(plan + 40);
+    let rt: i64 = __mind_load_i64(plan + 48);
+    let mut code: String = nce_stack(string_new(), reserve, 0);
+    let mut i: i64 = 0;
+    while i < n {
+        code = nce_argument(code, plan + 80 + i * 40, __mind_load_i64(slots + i * 8));
+        i = i + 1;
+    }
+    let call: String = nb_push(nb_push(code, 255), 21);
+    let fixup: i64 = string_len(call);
+    let pending: String = nb_u32(call, 0);
+    let restored: String = nce_stack(pending, reserve, 1);
+    let result: String = nce_result(restored, rt, dst);
+    let _free: i64 = __mind_free(plan);
+    __mind_store_i64(metadata + 8, fixup);
+    __mind_store_i64(metadata + 16, import_id);
+    __mind_store_i64(metadata + 24, reserve);
+    __mind_store_i64(metadata, 1);
+    result
+}

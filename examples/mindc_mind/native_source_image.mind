@@ -1,0 +1,345 @@
+// Copyright 2026 STARGA Inc.
+// First source-lowered libc image slice; no production CLI admission.
+// Requires the shared main/nec lowering path and reviewed ndl/ndx/nda/nsa modules.
+// Checked API: nsi_compile. Raw inputs must be live and immutable during capture;
+// diag32 must be writable/disjoint. Route is compiler-owned routing metadata.
+// Internal helpers require checked owned parts/workspace, never foreign records.
+
+pub fn nsi_error(diag: i64, code: i64, detail: i64) -> i64 {
+    __mind_store_i64(diag, code);
+    __mind_store_i64(diag + 8, detail);
+    0
+}
+pub fn nsi_zero(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n { __mind_store_i8(p + i, 0); i = i + 1; }
+    0
+}
+pub fn nsi_drop(s: String) -> i64 {
+    __mind_free(string_addr(s));
+    0
+}
+// Workspace1152B: policy0/48, request48/80, symbols128/80, runtime208/64,
+// startup272/64, plan336/256, hash592/32, Vec slots624/16,
+// import row640/32, patch row672/16 and fixed text688/63; owned NIO bundle752/8,
+// NIO diagnostic760/32, import pointers800/40 and extra rows840/128,
+// patch pointers1000/40 and extra rows1040/64. All fields initialized.
+// Canonical fixed recipe text; caller has initialized all 768 workspace bytes.
+// Embedded ASCII avoids the current library MIC literal-shape limitation.
+pub fn nsi_text_init(w: i64) -> i64 {
+    // __libc_start_main
+    __mind_store_i64(w + 688, 8313472711475879775);
+    __mind_store_i64(w + 696, 7593470703466340724);
+    __mind_store_i8(w + 704, 110);
+    // GLIBC_2.34
+    __mind_store_i64(w + 705, 3328827817059765319);
+    __mind_store_i8(w + 713, 51);
+    __mind_store_i8(w + 714, 52);
+    // /lib64/ld-linux-x86-64.so.2
+    __mind_store_i64(w + 715, 7795506888185572399);
+    __mind_store_i64(w + 723, 3276497845987585380);
+    __mind_store_i64(w + 731, 8299628570581809272);
+    __mind_store_i8(w + 739, 111);
+    __mind_store_i8(w + 740, 46);
+    __mind_store_i8(w + 741, 50);
+    // libc.so.6
+    __mind_store_i64(w + 742, 3346019691232651628);
+    __mind_store_i8(w + 750, 54);
+    0
+}
+// Borrowed interior spans: all consumers read only; never free or append.
+pub fn nsi_text(w: i64, index: i64) -> String {
+    if index == 0 { return String { addr: w + 688, len: 17, cap: 0 }; }
+    if index == 1 { return String { addr: w + 705, len: 10, cap: 0 }; }
+    if index == 2 { return String { addr: w + 715, len: 27, cap: 0 }; }
+    if index == 3 { return String { addr: w + 742, len: 9, cap: 0 }; }
+    string_new()
+}
+pub fn nsi_request(w: i64, code_len: i64, literals: i64) -> i64 {
+    let r: i64 = w + 48;
+    __mind_store_i64(r, __mind_load_i64(w));
+    __mind_store_i64(r + 8, code_len);
+    __mind_store_i64(r + 16, 4096);
+    __mind_store_i64(r + 24, 4096);
+    __mind_store_i64(r + 32, literals);
+    let mut i: i64 = 1;
+    while i < 6 {
+        __mind_store_i64(r + 32 + i * 8, __mind_load_i64(w + i * 8));
+        i = i + 1;
+    }
+    0
+}
+pub fn nsi_io_offset() -> i64 { nsa_code_size() + nda_code_size() }
+pub fn nsi_io_size(w: i64) -> i64 {
+    if __mind_load_i64(w + 752) != 0 { return 100; }
+    0
+}
+// Exactly two fixed-size registry constructions (build/check) per compilation
+// with actual stream use, never once per callsite. Parser scratch belongs to
+// the compiler compilation arena; repeated compilation still obeys its cap.
+pub fn nsi_bind_io(parts: i64, w: i64, diag: i64) -> i64 {
+    let ctx: i64 = __mind_load_i64(parts + 176);
+    if nec_check(ctx) == 0 { return nsi_error(diag, 9, 1); }
+    if __mind_load_i64(ctx) != 2 { return nsi_error(diag, 9, 2); }
+    if __mind_load_i64(ctx + 72) != nd_code_addr() + nsi_io_offset() { return nsi_error(diag, 9, 3); }
+    let used: i64 = __mind_load_i64(parts + 184);
+    if used == 0 { return 1; }
+    if used != 1 { return nsi_error(diag, 9, 4); }
+    let bundle: i64 = nio_build(1, w + 760);
+    if bundle == 0 { return nsi_error(diag, 9, 5); }
+    if nio_check(bundle, __mind_load_i64(bundle + 8), 1, w + 760) != 0 {
+        let _free: i64 = nio_free(bundle);
+        return nsi_error(diag, 9, 6);
+    }
+    __mind_store_i64(w + 752, bundle);
+    1
+}
+pub fn nsi_import_row(w: i64, bundle: i64, i: i64) -> i64 {
+    let original: i64 = bundle + __mind_load_i64(bundle + 96) + i * 40;
+    let row: i64 = w + 840 + i * 32;
+    __mind_store_i64(row, bundle + __mind_load_i64(original));
+    __mind_store_i64(row + 8, __mind_load_i64(original + 8));
+    __mind_store_i64(row + 16, bundle + __mind_load_i64(bundle + 128));
+    __mind_store_i64(row + 24, __mind_load_i64(bundle + 136));
+    __mind_store_i64(w + 800 + (i + 1) * 8, row);
+    0
+}
+pub fn nsi_imports(w: i64) -> Vec {
+    let name: String = nsi_text(w, 0);
+    let version: String = nsi_text(w, 1);
+    __mind_store_i64(w + 640, string_addr(name));
+    __mind_store_i64(w + 648, string_len(name));
+    __mind_store_i64(w + 656, string_addr(version));
+    __mind_store_i64(w + 664, string_len(version));
+    __mind_store_i64(w + 624, w + 640);
+    let bundle: i64 = __mind_load_i64(w + 752);
+    if bundle == 0 { return Vec { addr: w + 624, len: 1, cap: 1 }; }
+    __mind_store_i64(w + 800, w + 640);
+    let mut i: i64 = 0;
+    while i < 4 { let _row: i64 = nsi_import_row(w, bundle, i); i = i + 1; }
+    Vec { addr: w + 800, len: 5, cap: 5 }
+}
+pub fn nsi_patch_row(w: i64, bundle: i64, i: i64) -> i64 {
+    let original: i64 = bundle + __mind_load_i64(bundle + 112) + i * 24;
+    let row: i64 = w + 1040 + i * 16;
+    __mind_store_i64(row, nsi_io_offset() + __mind_load_i64(original));
+    __mind_store_i64(row + 8, 1 + __mind_load_i64(original + 8));
+    __mind_store_i64(w + 1000 + (i + 1) * 8, row);
+    0
+}
+pub fn nsi_patches(w: i64, displacement: i64) -> Vec {
+    __mind_store_i64(w + 672, displacement);
+    __mind_store_i64(w + 680, 0);
+    __mind_store_i64(w + 632, w + 672);
+    let bundle: i64 = __mind_load_i64(w + 752);
+    if bundle == 0 { return Vec { addr: w + 632, len: 1, cap: 1 }; }
+    __mind_store_i64(w + 1000, w + 672);
+    let mut i: i64 = 0;
+    while i < 4 { let _row: i64 = nsi_patch_row(w, bundle, i); i = i + 1; }
+    Vec { addr: w + 1000, len: 5, cap: 5 }
+}
+pub fn nsi_join_io(code: String, w: i64) -> String {
+    let bundle: i64 = __mind_load_i64(w + 752);
+    if bundle == 0 { return code; }
+    nd_bytes(code, bundle + __mind_load_i64(bundle + 64), 100)
+}
+pub fn nsi_join(start: String, runtime: String, body: String, w: i64) -> String {
+    // Copy borrowed inputs into a fresh owner; parts strings are never consumed.
+    let a: String = nd_bytes(string_new(), string_addr(start), string_len(start));
+    let b: String = nd_bytes(a, string_addr(runtime), string_len(runtime));
+    let with_io: String = nsi_join_io(b, w);
+    nd_bytes(with_io, string_addr(body), string_len(body))
+}
+pub fn nsi_main_length(parts: i64) -> i64 {
+    if __mind_load_i64(parts + 112) < 1 { return 0; }
+    if __mind_load_i64(parts + 128) < 0 { return 0; }
+    let arity: i64 = __mind_load_i64(parts + 136);
+    if arity < 0 { return 0; }
+    if arity > 2 { return 0; }
+    if __mind_load_i64(parts + 160) != 1 { return 0; }
+    let starts: i64 = __mind_load_i64(parts + 80);
+    if __mind_load_i64(starts) != 0 { return 0; }
+    let names: i64 = __mind_load_i64(parts + 88);
+    let source: i64 = __mind_load_i64(parts + 144);
+    if nb_name_is_main(source, __mind_load_i64(names), __mind_load_i64(names + 8)) != 1 { return 0; }
+    let end: i64 = nb_parts_function_end(parts, 0);
+    if end < 1 { return 0; }
+    if end > __mind_load_i64(parts + 16) { return 0; }
+    end
+}
+pub fn nsi_geometry_same(old: i64, request: i64) -> i64 {
+    if old == 0 { return 0; }
+    if nec_check(old) == 0 { return 0; }
+    let current: i64 = nec_new(request);
+    if current == 0 { return 0; }
+    if __mind_load_i64(old) == 2 {
+        __mind_store_i64(current, 2);
+        // Derive the target from the FINAL checked plan, not a supplied pointer.
+        __mind_store_i64(current + 72, __mind_load_i64(current + 184) + nsi_io_offset());
+    }
+    // All ten lowering-context words, including state, argc/argv, literal
+    // window, arena and stack top. Code/metadata sizes in the captured request
+    // legitimately differ; no embedded address is patched to hide a mismatch.
+    let mut i: i64 = 0;
+    let mut equal: i64 = 1;
+    while i < 10 {
+        if __mind_load_i64(old + i * 8) != __mind_load_i64(current + i * 8) { equal = 0; }
+        i = i + 1;
+    }
+    let _free: i64 = nec_free(current);
+    equal
+}
+pub fn nsi_symbols(parts: i64, w: i64, main_length: i64) -> i64 {
+    let s: i64 = w + 128;
+    let rt: i64 = nsa_code_size();
+    let rt_size: i64 = __mind_load_i64(w + 208 + 40);
+    if __mind_load_i64(w + 208) != 1 { return 0; }
+    if rt_size != nda_code_size() { return 0; }
+    __mind_store_i64(s, 1);
+    __mind_store_i64(s + 8, 0);
+    __mind_store_i64(s + 16, rt);
+    __mind_store_i64(s + 24, rt_size);
+    __mind_store_i64(s + 32, __mind_load_i64(w + 208 + 8));
+    __mind_store_i64(s + 40, rt + rt_size + nsi_io_size(w));
+    __mind_store_i64(s + 48, main_length);
+    __mind_store_i64(s + 56, __mind_load_i64(parts + 136));
+    __mind_store_i64(s + 64, 7);
+    __mind_store_i64(s + 72, 0);
+    1
+}
+pub fn nsi_final_image(parts: i64, w: i64, diag: i64) -> String {
+    let runtime: String = nda_emit(w + 48, w + 208);
+    if string_len(runtime) != nda_code_size() {
+        let _d: i64 = nsi_drop(runtime);
+        let _e: i64 = nsi_error(diag, 5, 1);
+        return string_new();
+    }
+    let main_length: i64 = nsi_main_length(parts);
+    if main_length == 0 {
+        let _d: i64 = nsi_drop(runtime);
+        let _e: i64 = nsi_error(diag, 4, 2);
+        return string_new();
+    }
+    if nsi_symbols(parts, w, main_length) == 0 {
+        let _d: i64 = nsi_drop(runtime);
+        let _e: i64 = nsi_error(diag, 5, 2);
+        return string_new();
+    }
+    let start: String = nsa_emit(w + 48, w + 128, w + 272);
+    if string_len(start) != nsa_code_size() {
+        let _d: i64 = nsi_drop(runtime);
+        let _s: i64 = nsi_drop(start);
+        let _e: i64 = nsi_error(diag, 5, 3);
+        return string_new();
+    }
+    let code: String = nsi_join(start, runtime, nb_parts_string(parts + 8), w);
+    let _s: i64 = nsi_drop(start);
+    let _r: i64 = nsi_drop(runtime);
+    let imports: Vec = nsi_imports(w);
+    let patches: Vec = nsi_patches(w, __mind_load_i64(w + 272 + 32));
+    let image: String = ndx_write_elf(code, 0, imports, patches, nsi_text(w, 2), nsi_text(w, 3), nb_parts_string(parts + 32), w, nb_parts_string(parts + 56), w + 336);
+    let _c: i64 = nsi_drop(code);
+    if string_len(image) == 0 {
+        let _e: i64 = nsi_error(diag, 8, 0);
+    }
+    image
+}
+pub fn nsi_plan_image(parts: i64, w: i64, diag: i64, draft: String) -> String {
+    let imports: Vec = nsi_imports(w);
+    let patches: Vec = nsi_patches(w, nsa_libc_fixup());
+    let result: i64 = ndx_plan(draft, 0, imports, patches, nsi_text(w, 2), nsi_text(w, 3), nb_parts_string(parts + 32), w, w + 336);
+    if result != 0 {
+        let _e: i64 = nsi_error(diag, 6, result);
+        return string_new();
+    }
+    __mind_store_i64(w + 48 + 16, __mind_load_i64(w + 336 + 56));
+    __mind_store_i64(w + 48 + 24, __mind_load_i64(w + 336 + 80));
+    if nsi_geometry_same(__mind_load_i64(parts + 176), w + 48) == 0 {
+        let _e: i64 = nsi_error(diag, 7, 0);
+        return string_new();
+    }
+    nsi_final_image(parts, w, diag)
+}
+pub fn nsi_from_parts(parts: i64, w: i64, diag: i64) -> String {
+    if nb_parts_local_calls_ok(parts) == 0 {
+        let _e: i64 = nsi_error(diag, 4, 1);
+        return string_new();
+    }
+    if nsi_main_length(parts) == 0 {
+        let _e: i64 = nsi_error(diag, 4, 2);
+        return string_new();
+    }
+    let n: i64 = __mind_load_i64(parts + 16);
+    let prefix: i64 = nsa_code_size() + nda_code_size() + nsi_io_size(w);
+    if prefix < 1 { let _e: i64 = nsi_error(diag, 5, 4); return string_new(); }
+    if n > 1048576 - prefix { let _e: i64 = nsi_error(diag, 6, 11); return string_new(); }
+    if nb_parts_patch_local(parts) == 0 {
+        let _e: i64 = nsi_error(diag, 4, 3);
+        return string_new();
+    }
+    let _r: i64 = nsi_request(w, prefix + n, __mind_load_i64(parts + 40));
+    let runtime: String = nda_emit(w + 48, w + 208);
+    if string_len(runtime) != nda_code_size() {
+        let _d: i64 = nsi_drop(runtime);
+        let _e: i64 = nsi_error(diag, 5, 1);
+        return string_new();
+    }
+    let start: String = nsa_blob_p1(string_new(), 0, 0, 0, 0, 0);
+    if string_len(start) != nsa_code_size() {
+        let _d: i64 = nsi_drop(runtime);
+        let _s: i64 = nsi_drop(start);
+        let _e: i64 = nsi_error(diag, 5, 3);
+        return string_new();
+    }
+    let draft: String = nsi_join(start, runtime, nb_parts_string(parts + 8), w);
+    let _s: i64 = nsi_drop(start);
+    let _r: i64 = nsi_drop(runtime);
+    let image: String = nsi_plan_image(parts, w, diag, draft);
+    let _d: i64 = nsi_drop(draft);
+    image
+}
+pub fn nsi_compile(source: i64, length: i64, hash: i64, user_lo: i64, route: i64, policy: i64, diagnostic: i64) -> String {
+    let _z: i64 = nsi_zero(diagnostic, 32);
+    if source <= 0 { let _e: i64 = nsi_error(diagnostic, 1, 1); return string_new(); }
+    if length <= 0 { let _e: i64 = nsi_error(diagnostic, 1, 2); return string_new(); }
+    if length > 67108864 { let _e: i64 = nsi_error(diagnostic, 1, 2); return string_new(); }
+    if source > 9223372036854775807 - length { let _e: i64 = nsi_error(diagnostic, 1, 1); return string_new(); }
+    if hash <= 0 { let _e: i64 = nsi_error(diagnostic, 1, 3); return string_new(); }
+    if hash > 9223372036854775775 { let _e: i64 = nsi_error(diagnostic, 1, 3); return string_new(); }
+    if policy <= 0 { let _e: i64 = nsi_error(diagnostic, 1, 4); return string_new(); }
+    if policy > 9223372036854775759 { let _e: i64 = nsi_error(diagnostic, 1, 4); return string_new(); }
+    if user_lo < 0 { let _e: i64 = nsi_error(diagnostic, 1, 5); return string_new(); }
+    if user_lo > length { let _e: i64 = nsi_error(diagnostic, 1, 5); return string_new(); }
+    let w: i64 = __mind_alloc(1152);
+    if w == 0 { let _e: i64 = nsi_error(diagnostic, 2, 0); return string_new(); }
+    let _zero: i64 = nsi_zero(w, 1152);
+    let _text: i64 = nsi_text_init(w);
+    let mut i: i64 = 0;
+    while i < 6 { __mind_store_i64(w + i * 8, __mind_load_i64(policy + i * 8)); i = i + 1; }
+    i = 0;
+    while i < 32 { __mind_store_i8(w + 592 + i, __mind_load_i8(hash + i)); i = i + 1; }
+    let _request: i64 = nsi_request(w, 1, 0);
+    let ctx: i64 = nec_new(w + 48);
+    if ctx == 0 {
+        __mind_free(w);
+        let _e: i64 = nsi_error(diagnostic, 3, 0);
+        return string_new();
+    }
+    let _ctx: i64 = nec_free(ctx);
+    let parts: i64 = nec_lower_parts_profile(source, length, w + 592, user_lo, route, w + 48, 2, nd_code_addr() + nsi_io_offset());
+    if parts == 0 {
+        __mind_free(w);
+        let _e: i64 = nsi_error(diagnostic, 4, 0);
+        return string_new();
+    }
+    if nsi_bind_io(parts, w, diagnostic) == 0 {
+        let _parts: i64 = nb_parts_free(parts);
+        __mind_free(w);
+        return string_new();
+    }
+    let image: String = nsi_from_parts(parts, w, diagnostic);
+    let _io: i64 = nio_free(__mind_load_i64(w + 752));
+    let _parts: i64 = nb_parts_free(parts);
+    __mind_free(w);
+    image
+}

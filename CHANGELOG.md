@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the native bridge reports the compiler child's real outcome
+- When streaming the source image to the native compiler fails, the bridge no longer
+  exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then
+  SIGKILL and reap), and reports the actual outcome: exit status, or terminating signal
+  name and number with the core flag, plus up to 64 KiB of the child's stderr. The exit
+  stays nonzero (the child's own code, `128 + signal`, or 2) and no artifact is written.
+  Measured: the committed seed under `RLIMIT_AS = 2 GiB` now reports
+  `terminated by signal 11 (SIGSEGV)` (its execve fails with ENOMEM).
+- Both output pipes are drained while the image is written. A compiler that filled its
+  stderr before reading stdin used to deadlock the bridge.
+- A compiler killed by a signal on the normal path is reported by signal and exits
+  `128 + signal`, instead of "rejected the program (exit 1)".
+- These compiler-process failures now carry the stable code `E6011`
+  (`error[backend-native][E6011]: ...`, docs/errors.md). The code covers a stream
+  failure, a signal death, a child that could not be reaped, and a compiler ELF that
+  could not be spawned (the OS error is named). A compiler that read the whole image
+  and refused the program keeps its uncoded "rejected the program (exit N)" verdict.
+- The stderr report keeps the TAIL as well as the head: the first 16 KiB and the last
+  48 KiB, with the number of bytes left out between them. A compiler that logs a lot
+  and then dies no longer has its last lines cut off.
+
+### Fixed — checked process wait and spawn_capture descriptors
+- `std.process.wait` retries `EINTR` and returns an error record when `waitpid`
+  fails. Waiting on a non-child is no longer reported as exit 0 / signal 0.
+- Exit, signal, core-dump and stopped statuses stay distinct. `wait_flags`
+  passes the `waitpid` options through (`WNOHANG`, `WUNTRACED`).
+- `spawn` and `spawn_capture` publish a failed `exec` on `child_exec_errno`
+  via a close-on-exec pipe. Exit status 127 by itself is not that failure.
+- `spawn_capture` reads pipe ends as full ints and closes every end it opened
+  when `pipe` or `fork` fails, including descriptors at or above 65536.
+
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN
 - The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven

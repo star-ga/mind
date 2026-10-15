@@ -520,6 +520,20 @@ jobs:
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_fail_loud_run -- --nocapture
 
+      - name: Constant-table build reproducibility (x86/ARM)
+        # Eight separate builds per case, ASLR on, must produce ONE artifact:
+        # constant tables, constants folded by canonicalize, a multi-module
+        # project. One-shot bufferization used to order their globals by heap
+        # address; run on both substrates because the pass is substrate-blind
+        # and the reproducibility claim is per runner. Job-level
+        # MIND_BENCH_REQUIRE=1 makes a missing backend a failure, not a skip.
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 600 cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test const_table_build_determinism -- --nocapture
+
       - name: Cross-substrate reproducibility gate
         id: xsi_gate
         # Host substrate (avx2 on x86_64, neon on aarch64) is verified here;
@@ -726,7 +740,9 @@ jobs:
   mindcraft_self_host:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 30 min for the keystone + self-host smokes, plus up to 25 for the twin-emitter
+    # fuzzer step (nested debug `cargo test` build of the dump_ref oracle).
+    timeout-minutes: 55
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -824,6 +840,16 @@ jobs:
         # be able to land as a quiet one-line edit. Pure text analysis, no build
         # artifacts, so it runs early and fails fast alongside the wiring lint.
         run: python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Native intrinsic id table contract (intrinsic_id_table_lint.py)
+        # nb_intrinsic_id / nb_sys_intrinsic_id map each `__mind_*` callee to an id
+        # and nb_emit_intrinsic selects its code by `if kind == ID`; an id with no
+        # arm falls through to the `__mind_read` sequence. Two lanes appending ids
+        # from the same "next free" number merge as CLEAN text and still collide
+        # (it happened: two blocks both claimed 20 and 21). Pure text analysis with
+        # an in-memory mutation self-test, so it runs early next to the other lints.
+        run: python3 scripts/run_gate.py --min-asserted 4 examples/mindc_mind/intrinsic_id_table_lint.py
         working-directory: ${{ github.workspace }}
 
       - name: Install Rust (nightly)
@@ -1000,6 +1026,40 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 2 examples/mindc_mind/self_host_loop_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Bounded native profile gate — seed + programs under RLIMIT_AS=2GiB (self_host_bounded_profile_smoke.py)
+        # The pinned bounded seed must (a) be what the frozen default seed emits
+        # for the v2 layout header, (b) reproduce itself stage1==stage2==stage3
+        # under a 2 GiB address-space cap, (c) compile and run the scalar
+        # evaluator harness under the cap, and (d) refuse over-cap allocation,
+        # stack overflow and malformed layouts fail-closed (incl. the fill_0..fill_4
+        # arena-cap boundary). 21 verdicts; the
+        # bridge leg needs MINDC_BIN, so a missing binary is a red SKIP.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 21 examples/mindc_mind/self_host_bounded_profile_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Bounded native allocator gate — merging free-list runtime under RLIMIT_AS=2GiB (self_host_native_alloc_bounded_smoke.py)
+        # Derives the tree's bounded compiler natively (frozen default seed -> B1
+        # -> B2 -> B3, B2 == B3 under the cap), then: the allocator runtime source
+        # re-assembled and byte-compared with the blob B2 and a fixture start
+        # with; a C stress harness over that blob (random traces + full heap walk
+        # after every operation); every fixture in testdata/native_alloc_bounded/
+        # (alloc/free/realloc loops with a small live footprint, a fitting block
+        # behind a smaller bin head, realloc growth into a free neighbour,
+        # C-runtime edge cases incl. realloc(NULL, 0), deterministic
+        # out-of-memory exit 70, duplicate struct names that crashed the
+        # compiler under the bounded allocator)
+        # natively AND through the MLIR backend under the same cap; and the
+        # compiler's own arena reclaim code run natively. 36 verdicts; the MLIR
+        # legs need MINDC_BIN, so a missing binary is a red SKIP. Three whole
+        # self-compiles plus 12 MLIR builds overrun run_gate's 900 s default on
+        # a loaded runner, hence the explicit 2400 s budget.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 36 --timeout 2400 examples/mindc_mind/self_host_native_alloc_bounded_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)
         # RI-B1 native-ELF float column (roadmap C1). No frozen float byte-oracle
         # can exist (the deleted Rust native backend rejected ConstF64), so the CPU
@@ -1025,6 +1085,59 @@ jobs:
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py examples/mindc_mind/self_host_native_elf_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Native nested-binding scoping gate (self_host_native_shadow_scope_smoke.py)
+        # A `let` in an if/else block or while body that re-declares an outer `let`
+        # or parameter must get its own storage for that block, a break/continue
+        # must carry the outer binding (not a body shadow) out of the loop, and a
+        # range-for variable must stay scoped to its loop. stage1 is built from
+        # main.mind by the frozen pure-MIND seed; hand fixtures plus 200 generated
+        # programs (seed 1234, block depths 1-4, break/continue/return) are compiled
+        # by stage1, run, and compared with a lexically scoped Python model. A
+        # refusal passes only when the shadow-free twin is refused too, or when
+        # MINDC_SO shows the code generator alone builds it to the model's value
+        # (only the mic@3 note builder refused). stage1 must carry the
+        # scoped-nested-bindings mark the Rust bridge checks; --bridge also runs
+        # `mindc build --backend native` with that stage1 (the proven shadows are
+        # admitted and exit with the model's value) and with the embedded seed
+        # (unmarked: still refused, native.block_shadow / loop_body_shadow).
+        # A stage1 build plus ~400 compiles and ~180 bridge builds measured 635 s on
+        # a loaded 12-core host, so run_gate gets 1800 s instead of its 900 s default
+        # and the step's timeout-minutes is the binding limit.
+        timeout-minutes: 35
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+            python3 scripts/run_gate.py --min-asserted 20 --timeout 1800 \
+              examples/mindc_mind/self_host_native_shadow_scope_smoke.py --bridge
+        working-directory: ${{ github.workspace }}
+
+      - name: Twin-emitter mic@3 differential fuzzer (mindfuzz_self_host.py)
+        # Generated-program agreement of the pure-MIND self-host mic@3 note
+        # (selftest_native_elf_u) with the Rust emit_mic3 reference note
+        # (tests/_ref_mic3_dump.rs::dump_ref, one nested debug `cargo test` per
+        # batch). Seed and count are pinned so the corpus is deterministic. Any
+        # note divergence fails; so does a program the self-host emits for but
+        # the Rust oracle rejects, and a broken oracle (the `add` sanity fixture)
+        # fails as BLOCKED instead of skipping — that skip is how this gate
+        # measured nothing for a month while dump_ref was broken. Self-host
+        # fail-closed refusals are counted, never compared, never a pass — and
+        # --min-compared floors how many programs must actually be compared, so a
+        # self-host that refuses everything cannot pass as "0 divergences".
+        # Every compared program (and every emitted regression fixture) is ALSO
+        # executed: the self-host ELF's exit code must equal the Rust/MLIR
+        # binary's (`mindc build --backend mlir --emit=binary`), so a matching
+        # note can never hide a wrong runtime value from the native-ELF code.
+        # run_gate's own per-gate timeout defaults to 900 s; give it 1500 s so the
+        # step's timeout-minutes (not run_gate) is the binding limit.
+        timeout-minutes: 25
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 2 --timeout 1500 \
+              examples/mindc_mind/mindfuzz_self_host.py --seed 1234 --count 200 \
+              --min-compared 80
         working-directory: ${{ github.workspace }}
 
       - name: RI-D seam gates — mindc build --backend=native (bridge + exact fail-close diagnostics)
@@ -1123,6 +1236,8 @@ jobs:
             self_host_native_narrow_arith_batch_smoke \
             self_host_native_toplevel_assign_smoke \
             self_host_native_narrow_paramret_smoke \
+            self_host_native_sys_smoke \
+            self_host_native_process_smoke \
             self_host_native_tensor_batchsum_smoke \
             self_host_native_tensor_rowmin_smoke \
             self_host_param_mutation_smoke \
@@ -1152,11 +1267,20 @@ jobs:
             self_host_tc_unknown_ident_smoke \
             self_host_tc_undeclared_assign_smoke \
             self_host_tc_unknown_call_smoke \
-            self_host_tc_let_infer_smoke; do
+            self_host_tc_let_infer_smoke \
+            self_host_source_note_smoke \
+            self_host_native_cf_smoke; do
             echo "=== $s ==="
+            gate_args=()
+            if [ "$s" = self_host_source_note_smoke ]; then
+              # Current-source diagnostic compilation exceeds 120 CPU seconds.
+              # Only its two initial builds get this allowance; fixture builds
+              # and executions retain their original CPU120/wall150 limits.
+              gate_args=(--build-cpu-seconds 300)
+            fi
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
-              python3 scripts/run_gate.py "examples/mindc_mind/$s.py"
+              python3 scripts/run_gate.py "examples/mindc_mind/$s.py" "${gate_args[@]}"
           done
         working-directory: ${{ github.workspace }}
 
@@ -1181,6 +1305,7 @@ jobs:
             option_netverify \
             ref_netverify \
             self_host_failclosed_smoke \
+            self_host_for_smoke \
             self_host_if_region_carry_smoke \
             self_host_native_fp_call_smoke \
             self_host_native_fp_field_smoke \
@@ -1253,6 +1378,7 @@ jobs:
             self_host_native_scalar_f32_smoke \
             self_host_native_scalar_f64_smoke \
             self_host_native_cast_conv_smoke \
+            self_host_native_misc_census_smoke \
             self_host_native_matmul_f32_v_smoke \
             self_host_native_dot_l1_q16_smoke \
             self_host_native_avx2_dot_f32_smoke; do
@@ -1296,6 +1422,8 @@ jobs:
             self_host_native_blas_dot_i16_smoke \
             self_host_native_blas_dot_q16_smoke \
             self_host_native_elf_alignment_smoke \
+            self_host_native_f64_intrinsics_smoke \
+            self_host_native_f64_lit_smoke \
             self_host_native_fp_binop_smoke \
             self_host_native_fp_let_smoke \
             self_host_native_fp_param_smoke \
@@ -1378,6 +1506,8 @@ jobs:
             self_host_andor_smoke \
             self_host_args_from_os_smoke \
             self_host_argv_smoke \
+            self_host_native_div_trap_smoke \
+            self_host_native_main_args_smoke \
             self_host_array_smoke \
             self_host_arridx_mic3_smoke \
             self_host_check_driver_smoke \

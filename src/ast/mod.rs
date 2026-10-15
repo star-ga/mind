@@ -1166,6 +1166,6 @@ impl Node {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Module {
     pub items: Vec<Node>,
-    /// Formatter-only record of spellings the desugars dropped. See [`SourceSpelling`].
+    /// Record of spellings and namespace qualifiers the desugars dropped. See [`SourceSpelling`].
     pub spelling: SourceSpelling,
 }

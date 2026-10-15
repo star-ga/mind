@@ -1,0 +1,46 @@
+// Author: STARGA Inc. Frozen known answers; preparation is not subject execution.
+fn st_vector_input(id:i64,p:i64)->i64 {
+if id==1 {  return 0; }
+if id==2 { __mind_store_i8(p+0,97);__mind_store_i8(p+1,98);__mind_store_i8(p+2,99); return 3; }
+if id==3 { __mind_store_i8(p+0,97);__mind_store_i8(p+1,98);__mind_store_i8(p+2,99);__mind_store_i8(p+3,100);__mind_store_i8(p+4,98);__mind_store_i8(p+5,99);__mind_store_i8(p+6,100);__mind_store_i8(p+7,101);__mind_store_i8(p+8,99);__mind_store_i8(p+9,100);__mind_store_i8(p+10,101);__mind_store_i8(p+11,102);__mind_store_i8(p+12,100);__mind_store_i8(p+13,101);__mind_store_i8(p+14,102);__mind_store_i8(p+15,103);__mind_store_i8(p+16,101);__mind_store_i8(p+17,102);__mind_store_i8(p+18,103);__mind_store_i8(p+19,104);__mind_store_i8(p+20,102);__mind_store_i8(p+21,103);__mind_store_i8(p+22,104);__mind_store_i8(p+23,105);__mind_store_i8(p+24,103);__mind_store_i8(p+25,104);__mind_store_i8(p+26,105);__mind_store_i8(p+27,106);__mind_store_i8(p+28,104);__mind_store_i8(p+29,105);__mind_store_i8(p+30,106);__mind_store_i8(p+31,107);__mind_store_i8(p+32,105);__mind_store_i8(p+33,106);__mind_store_i8(p+34,107);__mind_store_i8(p+35,108);__mind_store_i8(p+36,106);__mind_store_i8(p+37,107);__mind_store_i8(p+38,108);__mind_store_i8(p+39,109);__mind_store_i8(p+40,107);__mind_store_i8(p+41,108);__mind_store_i8(p+42,109);__mind_store_i8(p+43,110);__mind_store_i8(p+44,108);__mind_store_i8(p+45,109);__mind_store_i8(p+46,110);__mind_store_i8(p+47,111);__mind_store_i8(p+48,109);__mind_store_i8(p+49,110);__mind_store_i8(p+50,111);__mind_store_i8(p+51,112);__mind_store_i8(p+52,110);__mind_store_i8(p+53,111);__mind_store_i8(p+54,112);__mind_store_i8(p+55,113); return 56; }
+if id==4 { st_input(p,55,2); return 55; }
+if id==5 { st_input(p,56,2); return 56; }
+if id==6 { st_input(p,63,2); return 63; }
+if id==7 { st_input(p,64,2); return 64; }
+if id==8 { st_input(p,65,2); return 65; }
+if id==9 { st_input(p,119,2); return 119; }
+if id==10 { st_input(p,120,2); return 120; }
+if id==11 { st_input(p,128,2); return 128; }
+if id==12 { st_input(p,256,0); return 256; }
+if id==13 { st_input(p,1000000,1); return 1000000; }
+if id==14 { st_input(p,4194304,2); return 4194304; }
+if id==15 { st_input(p,4096,2); return 4096; }
+0-1
+}
+fn st_vector_digest(id:i64,p:i64)->i64 {
+if id==1 { __mind_store_i64(p+0,1449310910991872227);__mind_store_i64(p+8,2646268962349054874);__mind_store_i64(p+16,5517924826087534119);__mind_store_i64(p+24,6176777564751238564); return 1; }
+if id==2 { __mind_store_i64(p+0,0-1527000031757436742);__mind_store_i64(p+8,2531777658719584577);__mind_store_i64(p+16,0-7171393520880516176);__mind_store_i64(p+24,0-5974868289610903372); return 1; }
+if id==3 { __mind_store_i64(p+0,0-5172376671387742940);__mind_store_i64(p+8,4134372681655435493);__mind_store_i64(p+16,7431501666607971491);__mind_store_i64(p+24,0-4537698670536168202); return 1; }
+if id==4 { __mind_store_i64(p+0,377831551687589929);__mind_store_i64(p+8,0-2024965912687454047);__mind_store_i64(p+16,3867008992953776048);__mind_store_i64(p+24,0-8925079383222656896); return 1; }
+if id==5 { __mind_store_i64(p+0,0-978702173689920207);__mind_store_i64(p+8,0-7098302220850589712);__mind_store_i64(p+16,0-7438294347655848);__mind_store_i64(p+24,8405533806497056084); return 1; }
+if id==6 { __mind_store_i64(p+0,7909220783069684831);__mind_store_i64(p+8,7609747192749483748);__mind_store_i64(p+16,0-5257530023815818831);__mind_store_i64(p+24,0-3364079151320182880); return 1; }
+if id==7 { __mind_store_i64(p+0,0-210764744441861228);__mind_store_i64(p+8,0-8717091380011627260);__mind_store_i64(p+16,4536551564109284724);__mind_store_i64(p+24,9096852579027551891); return 1; }
+if id==8 { __mind_store_i64(p+0,5569804532860735996);__mind_store_i64(p+8,7531970952799131865);__mind_store_i64(p+16,0-177689072698166628);__mind_store_i64(p+24,6109676700501222971); return 1; }
+if id==9 { __mind_store_i64(p+0,0-1017104727243891536);__mind_store_i64(p+8,0-6143314841365692640);__mind_store_i64(p+16,0-3057643093534314756);__mind_store_i64(p+24,0-5900152431842573633); return 1; }
+if id==10 { __mind_store_i64(p+0,1379979464054534749);__mind_store_i64(p+8,4726792472796653100);__mind_store_i64(p+16,0-3518977000671153938);__mind_store_i64(p+24,0-1835129994931744104); return 1; }
+if id==11 { __mind_store_i64(p+0,701029301647371530);__mind_store_i64(p+8,0-6249780578498682269);__mind_store_i64(p+16,8000335329198463911);__mind_store_i64(p+24,5543612113672234241); return 1; }
+if id==12 { __mind_store_i64(p+0,3355983072724168512);__mind_store_i64(p+8,5289312347667869511);__mind_store_i64(p+16,8117771027523065969);__mind_store_i64(p+24,0-9202942288760532505); return 1; }
+if id==13 { __mind_store_i64(p+0,0-7855662476104382515);__mind_store_i64(p+8,7439620600203026817);__mind_store_i64(p+16,1017980247634247921);__mind_store_i64(p+24,0-3446360065022792444); return 1; }
+if id==14 { __mind_store_i64(p+0,0-3840218050321590554);__mind_store_i64(p+8,1062291265325003454);__mind_store_i64(p+16,2073623891645200066);__mind_store_i64(p+24,2216083246105462686); return 1; }
+if id==15 { __mind_store_i64(p+0,1165512232190755918);__mind_store_i64(p+8,4924467516824704717);__mind_store_i64(p+16,6515429063933902369);__mind_store_i64(p+24,0-1439619136232728524); return 1; }
+0
+}
+fn st_vector_unchanged(id:i64,p:i64,n:i64)->i64 {
+if id==1 {  return 1; }
+if id==2 { if __mind_load_i8(p+0)!=97 || __mind_load_i8(p+1)!=98 || __mind_load_i8(p+2)!=99 {return 0;} return 1; }
+if id==3 { if __mind_load_i8(p+0)!=97 || __mind_load_i8(p+1)!=98 || __mind_load_i8(p+2)!=99 || __mind_load_i8(p+3)!=100 || __mind_load_i8(p+4)!=98 || __mind_load_i8(p+5)!=99 || __mind_load_i8(p+6)!=100 || __mind_load_i8(p+7)!=101 || __mind_load_i8(p+8)!=99 || __mind_load_i8(p+9)!=100 || __mind_load_i8(p+10)!=101 || __mind_load_i8(p+11)!=102 || __mind_load_i8(p+12)!=100 || __mind_load_i8(p+13)!=101 || __mind_load_i8(p+14)!=102 || __mind_load_i8(p+15)!=103 || __mind_load_i8(p+16)!=101 || __mind_load_i8(p+17)!=102 || __mind_load_i8(p+18)!=103 || __mind_load_i8(p+19)!=104 || __mind_load_i8(p+20)!=102 || __mind_load_i8(p+21)!=103 || __mind_load_i8(p+22)!=104 || __mind_load_i8(p+23)!=105 || __mind_load_i8(p+24)!=103 || __mind_load_i8(p+25)!=104 || __mind_load_i8(p+26)!=105 || __mind_load_i8(p+27)!=106 || __mind_load_i8(p+28)!=104 || __mind_load_i8(p+29)!=105 || __mind_load_i8(p+30)!=106 || __mind_load_i8(p+31)!=107 || __mind_load_i8(p+32)!=105 || __mind_load_i8(p+33)!=106 || __mind_load_i8(p+34)!=107 || __mind_load_i8(p+35)!=108 || __mind_load_i8(p+36)!=106 || __mind_load_i8(p+37)!=107 || __mind_load_i8(p+38)!=108 || __mind_load_i8(p+39)!=109 || __mind_load_i8(p+40)!=107 || __mind_load_i8(p+41)!=108 || __mind_load_i8(p+42)!=109 || __mind_load_i8(p+43)!=110 || __mind_load_i8(p+44)!=108 || __mind_load_i8(p+45)!=109 || __mind_load_i8(p+46)!=110 || __mind_load_i8(p+47)!=111 || __mind_load_i8(p+48)!=109 || __mind_load_i8(p+49)!=110 || __mind_load_i8(p+50)!=111 || __mind_load_i8(p+51)!=112 || __mind_load_i8(p+52)!=110 || __mind_load_i8(p+53)!=111 || __mind_load_i8(p+54)!=112 || __mind_load_i8(p+55)!=113 {return 0;} return 1; }
+let mut j:i64=0;while j<n {
+let b:i64=if id==12 {j%256} else {if id==13 {97} else {(j*37+11)%256}};
+if __mind_load_i8(p+j)!=b {return 0;}j=j+1;
+}1
+}

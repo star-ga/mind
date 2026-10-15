@@ -52,9 +52,9 @@ Integer arithmetic is fully deterministic and byte-identical across substrates.
 
 | Case | Rule |
 |------|------|
-| `x / 0` | `= 0` (defined; no trap, no UB) |
-| `x % 0` | `= 0` (defined) |
-| `INT_MIN / -1` | `= INT_MIN` (defined; no overflow trap) |
+| `x / 0`, `x % 0` | deterministic trap: the process exits with status 79 and writes nothing more ([`docs/errors.md`](errors.md#integer-division-trap)) |
+| `INT_MIN / -1`, `INT_MIN % -1` (`i64`) | the same trap, exit status 79; narrow `i8`/`i16`/`i32` `MIN / -1` gives `MIN` (remainder `0`) |
+| unsigned division | unsigned result, trap only on a zero divisor, for `u8`/`u16`/`u32` on both backends and for `u64` locals, parameters and returns on MLIR; the native backend refuses `u64`/`usize` division, and MLIR still divides a `u64` const item or struct field as signed (open defect, see [`docs/errors.md`](errors.md#integer-division-trap)) |
 | Integer overflow | wraps two's-complement (defined; identical on x86 and ARM) |
 | Oversized shift (`count ≥ bit-width`) | given a defined result (never UB) |
 | Condition truthiness (`if c`) | tests `c != 0` — the whole value, not the low bit |

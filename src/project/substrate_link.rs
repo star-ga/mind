@@ -83,6 +83,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.iouring",
     "std.json",
     "std.net",
+    "std.posix",
     "std.process",
     "std.reactor",
     "std.regex",

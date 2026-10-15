@@ -1,0 +1,26 @@
+// f64 values through the HOME lowering: a float accumulator assigned from a
+// value-if inside a loop, with a return from inside the loop (A6 L1 A9).
+// scale(1.25, 20) returns 189.5 - 1.25 = 188.25 at i = 13; scale(0.75, 3)
+// = 3.25; 188.25 * 4 + 1000 * (3.25 * 8) = 753 + 26000 = 26753 = 129 mod 256.
+// expect: exit=129
+// stdout:
+// note: 2
+fn scale(x: f64, n: i64) -> f64 {
+    let mut acc: f64 = 0.5;
+    let mut i: i64 = 0;
+    while i < n {
+        i = i + 1;
+        if acc > 100.0 {
+            return acc - x;
+        }
+        acc = if i % 2 == 0 { acc * 2.0 } else { acc + x };
+    }
+    acc
+}
+fn main() -> i64 {
+    let a: f64 = scale(1.25, 20);
+    let b: f64 = scale(0.75, 3);
+    let c: i64 = (a * 4.0) as i64;
+    let d: i64 = (b * 8.0) as i64;
+    c + d * 1000
+}

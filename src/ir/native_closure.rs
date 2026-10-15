@@ -54,6 +54,13 @@
 //! Traversal goes through [`crate::ir::instr_bodies`], the single enumeration of
 //! body-carrying variants, so a newly added nested-body variant cannot silently
 //! become invisible to reachability while remaining visible to the fence.
+//!
+//! The versioned candidate lane has a separate entry point below. Its caller
+//! must first validate the complete source and IR under that lane's typed
+//! profile. It then checks EVERY retained function against exact compiler ABI
+//! bindings, with reserved-definition and arity guards. The historical APIs
+//! keep their original strict behavior. Prefix omission, when eligible, is
+//! performed by the bridge's namespace module; no user body is removed here.
 
 #![cfg(feature = "std-surface")]
 
@@ -122,10 +129,10 @@ pub fn defined_fn_names(module: &IRModule) -> BTreeSet<String> {
 
 /// Direct call edges out of one instruction stream, not descending into nested
 /// `FnDef` bodies (those are separate nodes in the call graph).
-fn direct_calls(instrs: &[Instr], out: &mut Vec<String>) {
+fn direct_calls(instrs: &[Instr], out: &mut Vec<(String, usize)>) {
     for instr in instrs {
-        if let Instr::Call { name, .. } = instr {
-            out.push(name.clone());
+        if let Instr::Call { name, args, .. } = instr {
+            out.push((name.clone(), args.len()));
         }
         if matches!(instr, Instr::FnDef { .. }) {
             continue;
@@ -185,6 +192,14 @@ pub fn reachable_from(
     module: &IRModule,
     roots: &[String],
 ) -> Result<BTreeSet<String>, ClosureRejection> {
+    reachable_with_bindings(module, roots, &BTreeMap::new())
+}
+
+fn reachable_with_bindings(
+    module: &IRModule,
+    roots: &[String],
+    bindings: &BTreeMap<String, usize>,
+) -> Result<BTreeSet<String>, ClosureRejection> {
     let defined = defined_fn_names(module);
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -211,7 +226,18 @@ pub fn reachable_from(
         };
         let mut callees = Vec::new();
         direct_calls(body, &mut callees);
-        for callee in callees {
+        for (callee, arity) in callees {
+            if let Some(expected) = bindings.get(&callee) {
+                if arity != *expected {
+                    return reject(
+                        "closure.intrinsic_arity",
+                        format!(
+                            "`{current}` calls `{callee}` with {arity} arguments; expected {expected}"
+                        ),
+                    );
+                }
+                continue;
+            }
             if !defined.contains(&callee) {
                 return reject(
                     "closure.unresolved_edge",
@@ -381,8 +407,69 @@ pub fn admit_native_closure(
     let mut root_set: BTreeSet<String> = executable_roots(ir, entry).into_iter().collect();
     let mut top_level = Vec::new();
     direct_calls(&ir.instrs, &mut top_level);
-    root_set.extend(top_level);
+    root_set.extend(top_level.into_iter().map(|(name, _)| name));
     let roots: Vec<String> = root_set.into_iter().collect();
     let reachable = reachable_from(ir, &roots)?;
     Ok(restrict_to_reachable(ir, &reachable))
+}
+
+/// Resolve the complete user image against checked compiler/extern bindings.
+///
+/// This is a binding check, NOT a feature or type admission. The caller MUST
+/// first validate the complete source and IR under the versioned native lane
+/// profile; `bindings` contains only that profile's exact ABI names/arities.
+/// Unlike historical entry-rooted diagnostics, every retained user body is a
+/// root here. Therefore omitting an unused std prefix cannot leave an uncalled
+/// function silently bound to it. Intrinsics are terminal edges, never fake
+/// user definitions. The historical API above remains strict and unchanged.
+pub fn admit_native_lane_closure(
+    ast: &crate::ast::Module,
+    ir: &IRModule,
+    entry: &str,
+    reserved: &BTreeSet<String>,
+    bindings: &BTreeMap<String, usize>,
+) -> Result<(), ClosureRejection> {
+    reject_ambiguous_ast(ast, reserved)?;
+    let mut override_name = None;
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| match node {
+            crate::ast::Node::FnDef(f, _)
+                if f.name.starts_with("__mind_") || bindings.contains_key(&f.name) =>
+            {
+                override_name.get_or_insert_with(|| f.name.clone());
+            }
+            crate::ast::Node::ExternBlock { fns, .. } => {
+                for f in fns {
+                    if f.name.starts_with("__mind_") {
+                        override_name.get_or_insert_with(|| f.name.clone());
+                    }
+                }
+            }
+            _ => {}
+        });
+    }
+    if let Some(name) = override_name {
+        return reject(
+            "closure.reserved_intrinsic_definition",
+            format!("`{name}` cannot override a compiler or external binding"),
+        );
+    }
+    let mut roots = defined_fn_names(ir);
+    roots.extend(executable_roots(ir, entry));
+    let mut top_level = Vec::new();
+    direct_calls(&ir.instrs, &mut top_level);
+    for (name, arity) in top_level {
+        if let Some(expected) = bindings.get(&name) {
+            if arity != *expected {
+                return reject(
+                    "closure.intrinsic_arity",
+                    format!("module calls `{name}` with {arity} arguments; expected {expected}"),
+                );
+            }
+        } else {
+            roots.insert(name);
+        }
+    }
+    reachable_with_bindings(ir, &roots.into_iter().collect::<Vec<_>>(), bindings)?;
+    Ok(())
 }

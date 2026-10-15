@@ -1,0 +1,10 @@
+// A8 refusal: assignment to a top-level const. mindc-Rust assigns a
+// per-function copy (MLIR: r=1, K=6 -> 7); native has no const storage, so the
+// store would be silently dropped (6). The assign must fail closed instead.
+fn main() -> i64 {
+    let mut r: i64 = 1;
+    K = 6;
+    r + K
+}
+
+const K: i64 = 5

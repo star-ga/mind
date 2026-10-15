@@ -116,7 +116,63 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-HARNESS_CEILING = 263  # Includes the manifest-bound canonical record-trace gate.
+# 263 -> 285: compiler-delivery integration census, 42cadc3c -> b4ab203d.
+# +12 independently wired gates in examples/mindc_mind: intrinsic_id_table_lint,
+# self_host_bounded_profile_smoke, and self_host_native_{alloc_bounded,cf,
+# div_trap,f64_intrinsics,f64_lit,main_args,misc_census,process,shadow_scope,sys}_smoke.
+# Their CI runners are checked by SMOKE_WIRING.tsv; no new gate is exempted.
+# +5 imported helpers: _cf_{corpus,giant,oracle}, _shadow_scope_lang, _w8_native.
+# These retain the independent model/capacity/oracle and shared-driver boundaries.
+# +1 allocator-byte regeneration utility: testdata/native_alloc_bounded/rt/gen_mind.py.
+# +5 std_process_wait acceptance files: _harness.py, accept.py, cases_spawn.py,
+# cases_status.py, run_cases.sh. They preserve the process-isolated native fault
+# checks and module-size split; the runner is manual, not a claim of CI execution.
+# -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
+# Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
+# not hide this growth by changing the pathspec or classifying files out of it.
+# 285 -> 287 adds native_dynamic_writer_check.py and
+# native_cabi_registry_smoke.py. These standalone diagnostics require explicit
+# compiler/native/oracle artifacts. Their production integration and CI runner
+# dependencies remain open and are recorded in SMOKE_WIRING.
+# 287 -> 288 adds self_host_source_note_smoke.py: native PT_NOTE bounds/identity
+# refusals and exact HOME-lowered string bytes/source digest, wired in ci.yml.
+# 288 -> 289 adds the standalone native_dynamic_layout_check.py transport.
+# Its explicit native/MLIR prerequisites and manual execution remain visible.
+# 289 -> 290 adds self_host_native_io_smoke.py, explicitly classified manual
+# pending source-bound bounded compiler construction in CI. No other allowance.
+# 290 -> 291 adds native_c_call_plan_check.py: a frozen scalar ABI metadata
+# gate with explicit source-bound native and MLIR compiler prerequisites.
+# 291 -> 292 adds native_c_call_emit_check.py, the frozen ABI execution and
+# source-mutation gate for a standalone candidate MIND call emitter.
+# 292 -> 294 adds native_dynamic_allocator_check.py and its diagnostic byte
+# generator testdata/native_dynamic_allocator/gen_mind.py. One manual gate;
+# the generator is development tooling, not a second runtime or admission path.
+# 294 -> 295 adds native_dynamic_image_check.py, the separately reviewed
+# checked-layout writer gate. Original writer/planner gates are retained.
+# 295 -> 297 adds native_libc_startup_check.py and its development byte
+# generator testdata/native_libc_startup/gen_mind.py. Explicit manual gate
+# prerequisites remain; no production admission or CI success is implied.
+# 297 -> 298 adds the frozen string, binding and decoder-bounds gate.
+# 298 -> 299 adds string_borrowed_check.py with explicit MIND-body parity,
+# source mutations and a separately documented C sanitizer reference.
+# 299 -> 300 adds the reviewed source-to-libc declaration binding gate.
+# 300 -> 302 adds the captured source-bundle helper and its explicit
+# orchestration/native/CPU gate. No additional product runtime or admission.
+# 302 -> 303 adds native_libc_io_check.py: standalone fixed libc I/O recipe,
+# native/MLIR byte parity, actual TLS errno/file effects and source mutations.
+# 303 -> 304 adds self_host_native_emission_context_smoke.py: a manual
+# source-lowering/context and source-image candidate gate with explicit current
+# compiler prerequisites. Retained failures and independent review obligations
+# remain visible; counting the harness does not claim CI execution or admission.
+# 304 -> 305 adds native_stream_io_check.py: exact-source stream image runtime
+# transport. The manually invoked gate retains original and versioned catalogues;
+# it does not qualify the production CLI or a consumer compiler pin.
+# The SHA lifetime fixture assembler adds one tracked shell transport. The
+# source adapter adds one runner and three enumeration helpers: original
+# framing/mutations, independent source notes, and additive hash refusals.
+# The variadic planner adds its capture wrapper and sealed run.sh transport.
+# All plan assertions remain MIND; these scripts add no source admission.
+HARNESS_CEILING = 312  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

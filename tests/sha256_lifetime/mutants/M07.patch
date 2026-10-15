@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -422 +422 @@
+-        return 1;
++        return 0;

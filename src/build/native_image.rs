@@ -100,9 +100,254 @@ pub fn compose_image(std_blob: &StdBlob, sources: &[Vec<u8>]) -> NativeImage {
     }
 }
 
+/// Magic tagging a v2 (explicit-layout) image header: `"MINDLAY\x01"` as a
+/// little-endian i64. Mirrors `nb_layout_magic()` in `examples/mindc_mind/main.mind`.
+pub const LAYOUT_MAGIC: i64 = i64::from_le_bytes(*b"MINDLAY\x01");
+
+/// Fixed arena base of every native image (`nb_arena_addr()` = 16 MiB).
+pub const ARENA_ADDR: u64 = 0x100_0000;
+
+/// The memory layout of an emitted native image.
+///
+/// One value decides every layout-dependent byte the frozen compiler emits: the
+/// arena PT_LOAD size, the stack PT_LOAD address and size, the entry stack
+/// pointer and the immediate of each inlined allocation guard. The default
+/// profile is not represented here: when no layout is requested the bridge sends
+/// the v1 header, so default images are byte-identical to before this type
+/// existed. Field meaning and the validation rules mirror `nb_layout_check` in
+/// `examples/mindc_mind/main.mind`, which re-validates inside the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeLayout {
+    /// Bump-arena PT_LOAD size (bytes, whole pages, >= 1 MiB).
+    pub arena_bytes: u64,
+    /// Call-stack PT_LOAD size (bytes, whole pages, >= 64 KiB).
+    pub stack_bytes: u64,
+    /// Unmapped gap between the arena end and the stack bottom (bytes, >= 1 page).
+    pub guard_bytes: u64,
+}
+
+/// Largest single region a layout may request (1 TiB), so sums cannot overflow.
+const LAYOUT_REGION_MAX: u64 = 1 << 40;
+/// The stack top must stay below 2^46, far inside the 47-bit user address space.
+const LAYOUT_TOP_MAX: u64 = 1 << 46;
+
+impl NativeLayout {
+    /// The BOUNDED profile: every native image -- including the compiler seed --
+    /// loads and runs under `RLIMIT_AS` = 2 GiB.
+    ///
+    /// Sized from measured peaks of the self-host compile (the largest input
+    /// the seed handles): the arena high-water mark is below 537 MiB (the
+    /// self-compile succeeds under a 537 MiB arena cap) and the stack peak touch
+    /// is 228,597,760 bytes, so 768 MiB arena and 384 MiB stack leave at least
+    /// 30% and 43% headroom. The 1 MiB guard is unmapped (no address-space cost)
+    /// and exceeds the largest frame of the compiler seed (15,216 bytes); a frame
+    /// larger than the guard could still step over it. Reserved load total is
+    /// about 1.15 GiB (measured VmPeak 1,182,300 kB for the self-compile),
+    /// leaving room under the 2 GiB cap for the kernel's initial stack and vDSO.
+    pub const BOUNDED: NativeLayout = NativeLayout {
+        arena_bytes: 768 << 20,
+        stack_bytes: 384 << 20,
+        guard_bytes: 1 << 20,
+    };
+
+    /// Look up a named profile. `default` means "no explicit layout" (`None`).
+    pub fn from_profile(name: &str) -> Result<Option<NativeLayout>, String> {
+        match name {
+            "default" => Ok(None),
+            "bounded" => Ok(Some(NativeLayout::BOUNDED)),
+            other => Err(format!(
+                "unknown native profile `{other}` (expected `default` or `bounded`)"
+            )),
+        }
+    }
+
+    /// Check the layout exactly as the compiler will, with a readable reason.
+    pub fn validate(&self) -> Result<(), String> {
+        let named = [
+            ("arena", self.arena_bytes, 1 << 20),
+            ("stack", self.stack_bytes, 64 << 10),
+            ("guard", self.guard_bytes, 4096),
+        ];
+        for (name, v, min) in named {
+            if v < min {
+                return Err(format!("{name} size {v} is below the minimum {min} bytes"));
+            }
+            if v > LAYOUT_REGION_MAX {
+                return Err(format!("{name} size {v} exceeds the 1 TiB region limit"));
+            }
+            if v % 4096 != 0 {
+                return Err(format!(
+                    "{name} size {v} is not a whole number of 4096-byte pages"
+                ));
+            }
+        }
+        if self.stack_top() > LAYOUT_TOP_MAX {
+            return Err(format!(
+                "stack top {:#x} exceeds the {LAYOUT_TOP_MAX:#x} address limit",
+                self.stack_top()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Stack PT_LOAD base: the arena end plus the unmapped guard gap.
+    pub fn stack_addr(&self) -> u64 {
+        ARENA_ADDR + self.arena_bytes + self.guard_bytes
+    }
+
+    /// One past the highest stack byte (the entry stack pointer region top).
+    pub fn stack_top(&self) -> u64 {
+        self.stack_addr() + self.stack_bytes
+    }
+
+    /// The (vaddr, memsz) of the arena and stack PT_LOADs an image built with
+    /// this layout must carry.
+    pub fn expected_bss_segments(&self) -> [(u64, u64); 2] {
+        [
+            (ARENA_ADDR, self.arena_bytes),
+            (self.stack_addr(), self.stack_bytes),
+        ]
+    }
+}
+
+/// Compose the stdin image, with the v2 header when a layout is requested.
+///
+/// `None` is exactly [`compose_image`] (the v1 header), so the default path
+/// cannot drift. `Some` prefixes `[magic][arena][stack][guard]` to the v1 header.
+pub fn compose_image_with_layout(
+    std_blob: &StdBlob,
+    sources: &[Vec<u8>],
+    layout: Option<&NativeLayout>,
+) -> NativeImage {
+    let img = compose_image(std_blob, sources);
+    let Some(l) = layout else {
+        return img;
+    };
+    let mut bytes = Vec::with_capacity(32 + img.bytes.len());
+    bytes.extend_from_slice(&LAYOUT_MAGIC.to_le_bytes());
+    for v in [l.arena_bytes, l.stack_bytes, l.guard_bytes] {
+        bytes.extend_from_slice(&(v as i64).to_le_bytes());
+    }
+    bytes.extend_from_slice(&img.bytes);
+    NativeImage {
+        bytes,
+        user_lo: img.user_lo,
+        src_len: img.src_len,
+    }
+}
+
+/// The (vaddr, memsz) of every RW PT_LOAD of a 64-bit little-endian ELF, in
+/// program-header order; `None` when the header table is malformed.
+pub fn rw_load_segments(elf: &[u8]) -> Option<Vec<(u64, u64)>> {
+    let rd16 = |o: usize| -> Option<u64> {
+        Some(u16::from_le_bytes(elf.get(o..o + 2)?.try_into().ok()?) as u64)
+    };
+    let rd32 = |o: usize| -> Option<u64> {
+        Some(u32::from_le_bytes(elf.get(o..o + 4)?.try_into().ok()?) as u64)
+    };
+    let rd64 =
+        |o: usize| -> Option<u64> { Some(u64::from_le_bytes(elf.get(o..o + 8)?.try_into().ok()?)) };
+    let phoff = rd64(32)? as usize;
+    let phentsize = rd16(54)? as usize;
+    let phnum = rd16(56)? as usize;
+    if phentsize != 56 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for i in 0..phnum {
+        let ph = phoff.checked_add(i.checked_mul(phentsize)?)?;
+        // PT_LOAD with PF_W set.
+        if rd32(ph)? == 1 && rd32(ph + 4)? & 2 != 0 {
+            out.push((rd64(ph + 16)?, rd64(ph + 40)?));
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_magic_matches_the_compiler_constant() {
+        // nb_layout_magic() in examples/mindc_mind/main.mind.
+        assert_eq!(LAYOUT_MAGIC, 97180662784477517);
+    }
+
+    #[test]
+    fn no_layout_is_exactly_the_v1_image() {
+        let blob = compose_std_blob(&[b"s".to_vec()]);
+        let user = vec![b"fn main() -> i64 { return 42; }".to_vec()];
+        assert_eq!(
+            compose_image_with_layout(&blob, &user, None),
+            compose_image(&blob, &user)
+        );
+    }
+
+    #[test]
+    fn bounded_layout_prefixes_the_v2_header() {
+        let blob = compose_std_blob(&[b"s".to_vec()]);
+        let user = vec![b"u".to_vec()];
+        let v1 = compose_image(&blob, &user);
+        let v2 = compose_image_with_layout(&blob, &user, Some(&NativeLayout::BOUNDED));
+        assert_eq!(&v2.bytes[32..], &v1.bytes[..]);
+        let w = |k: usize| i64::from_le_bytes(v2.bytes[k * 8..k * 8 + 8].try_into().unwrap());
+        assert_eq!(w(0), LAYOUT_MAGIC);
+        assert_eq!(w(1), 768 << 20);
+        assert_eq!(w(2), 384 << 20);
+        assert_eq!(w(3), 1 << 20);
+    }
+
+    #[test]
+    fn bounded_profile_fits_two_gib_with_room() {
+        let l = NativeLayout::BOUNDED;
+        l.validate().unwrap();
+        assert_eq!(l.stack_addr(), 823_132_160);
+        assert!(l.arena_bytes + l.stack_bytes < (2u64 << 30) - (512 << 20));
+    }
+
+    #[test]
+    fn layout_validation_refuses_each_bad_shape() {
+        let ok = NativeLayout::BOUNDED;
+        for bad in [
+            NativeLayout {
+                arena_bytes: 4096,
+                ..ok
+            },
+            NativeLayout {
+                stack_bytes: 4096,
+                ..ok
+            },
+            NativeLayout {
+                guard_bytes: 0,
+                ..ok
+            },
+            NativeLayout {
+                arena_bytes: ok.arena_bytes + 1,
+                ..ok
+            },
+            NativeLayout {
+                stack_bytes: 1 << 41,
+                ..ok
+            },
+            NativeLayout {
+                guard_bytes: 1 << 41,
+                ..ok
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?} must refuse");
+        }
+    }
+
+    #[test]
+    fn profile_names() {
+        assert_eq!(NativeLayout::from_profile("default").unwrap(), None);
+        assert_eq!(
+            NativeLayout::from_profile("bounded").unwrap(),
+            Some(NativeLayout::BOUNDED)
+        );
+        assert!(NativeLayout::from_profile("tiny").is_err());
+    }
 
     /// The load-bearing property: with ONE source the joiner contributes nothing,
     /// so the composed bytes are exactly the pre-existing single-file bytes.

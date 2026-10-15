@@ -46,7 +46,138 @@ use std::process::Command;
 //                       added). A bare `continue;` as a DIRECT block statement
 //                       does not parse, so the continue is always inside an `if`.
 //  * block_deep       — the same through two nested bare blocks.
+//
+// Nested-loop `continue` shapes — the MLIR leg of the nested-continue gate whose
+// native-ELF leg is `examples/mindc_mind/self_host_continue_smoke.py` (the native
+// self-host emitter hung on every one of these; this backend must keep running
+// them with the same values):
+//  * nest_bare        — an UNCONDITIONAL `continue` as the inner `for`'s whole body,
+//                       then an outer statement after the inner loop.
+//  * nest_both        — unconditional `continue` at BOTH levels.
+//  * nest_triple      — three nested `for`s, the innermost ending in `continue`.
+//  * for_in_while / while_in_for — a range-`for` inside a `while` and back.
+//  * nest_while_tail  — nested `while`s whose bodies carry an UNREACHABLE tail
+//                       after `continue` that writes an OUTER var (must not run).
+//  * nest_break_tail  — the same with `break`: the post-loop value of the inner
+//                       counter must be the LIVE one (1), never the dead tail's.
+//
+// Exit-edge write-back shapes — a carried var written BEFORE a conditional
+// `continue`/`break` and AGAIN after it (the native emitter re-entered the loop
+// with the previous iteration's value: a hang for an induction var, a lost
+// update for an accumulator, a stale post-loop value after `break`):
+//  * wb_cont_ind      — the induction var itself (`i = i + 1; if i == k {
+//                       continue; } i = i + 0;`) must still reach `n`.
+//  * wb_cont          — an accumulator keeps the pre-`continue` update.
+//  * wb_break         — the post-loop value is the one live at the `break`.
+//  * wb_outer_after_inner — an OUTER `continue` after an inner loop that wrote
+//                       the outer var.
 const SRC: &str = r#"
+fn wb_cont_ind(n: i64, k: i64) -> i64 {
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        if i == k { continue; }
+        i = i + 0;
+    }
+    return i;
+}
+fn wb_cont(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        s = s + 1;
+        if i == k { continue; }
+        s = s + 100;
+    }
+    return s;
+}
+fn wb_break(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        s = s + 1;
+        if i == k { break; }
+        s = s + 100;
+    }
+    return s;
+}
+fn wb_outer_after_inner(n: i64, k: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        i = i + 1;
+        for j in 0..2 { s = s + j; continue; }
+        if i == k { continue; }
+        s = s + 100;
+    }
+    return s;
+}
+fn nest_bare(n: i64, m: i64) -> i64 {
+    let mut s = 0;
+    for i in 0..n {
+        for j in 0..m { continue; }
+        s = s + 1;
+    }
+    return s;
+}
+fn nest_both(n: i64, m: i64) -> i64 {
+    let mut s = 0;
+    for i in 0..n {
+        for j in 0..m { s = s + 1; continue; }
+        s = s + 10;
+        continue;
+    }
+    return s;
+}
+fn nest_triple(a: i64, b: i64, c: i64) -> i64 {
+    let mut s = 0;
+    for i in 0..a {
+        for j in 0..b {
+            for k in 0..c { s = s + 1; continue; }
+        }
+    }
+    return s;
+}
+fn for_in_while(n: i64, m: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        for j in 0..m { s = s + j; continue; }
+        i = i + 1;
+    }
+    return s;
+}
+fn while_in_for(n: i64, m: i64) -> i64 {
+    let mut s = 0;
+    for i in 0..n {
+        let mut j = 0;
+        while j < m { j = j + 1; s = s + 1; continue; }
+    }
+    return s;
+}
+fn nest_while_tail(n: i64, m: i64) -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < m { j = j + 1; s = s + 1; continue; s = s + 100; }
+        i = i + 1;
+    }
+    return s;
+}
+fn nest_break_tail(n: i64, m: i64) -> i64 {
+    let mut i = 0;
+    let mut t = 0;
+    while i < n {
+        let mut j = 0;
+        while j < m { j = j + 1; break; j = j + 1; }
+        t = t + j;
+        i = i + 1;
+    }
+    return t * 10 + i;
+}
 fn for_cont(n: i64) -> i64 {
     let mut s = 0;
     for i in 0..n {
@@ -147,6 +278,22 @@ fn for_continue_advances_loop() {
          assert ns(2,3) == 104, 'nested(2,3)='+str(ns(2,3))\n\
          assert bc(5) == 8,  'block_cont(5)='+str(bc(5))\n\
          assert bd(5) == 8,  'block_deep(5)='+str(bd(5))\n\
+         nb = f('nest_bare', 2); nh = f('nest_both', 2); nt = f('nest_triple', 3)\n\
+         fw = f('for_in_while', 2); wf = f('while_in_for', 2)\n\
+         wt = f('nest_while_tail', 2); bt = f('nest_break_tail', 2)\n\
+         assert nb(3,2) == 3,     'nest_bare(3,2)='+str(nb(3,2))\n\
+         assert nh(3,2) == 36,    'nest_both(3,2)='+str(nh(3,2))\n\
+         assert nt(2,3,4) == 24,  'nest_triple(2,3,4)='+str(nt(2,3,4))\n\
+         assert fw(4,3) == 12,    'for_in_while(4,3)='+str(fw(4,3))\n\
+         assert wf(3,4) == 12,    'while_in_for(3,4)='+str(wf(3,4))\n\
+         assert wt(3,2) == 6,     'nest_while_tail(3,2)='+str(wt(3,2))\n\
+         assert bt(3,2) == 33,    'nest_break_tail(3,2)='+str(bt(3,2))\n\
+         wi = f('wb_cont_ind', 2); wc = f('wb_cont', 2); wk = f('wb_break', 2)\n\
+         wo = f('wb_outer_after_inner', 2)\n\
+         assert wi(10,5) == 10,   'wb_cont_ind(10,5)='+str(wi(10,5))\n\
+         assert wc(3,2) == 203,   'wb_cont(3,2)='+str(wc(3,2))\n\
+         assert wk(10,3) == 203,  'wb_break(10,3)='+str(wk(10,3))\n\
+         assert wo(3,2) == 203,   'wb_outer_after_inner(3,2)='+str(wo(3,2))\n\
          print('ok')\n",
         so.to_string_lossy()
     );

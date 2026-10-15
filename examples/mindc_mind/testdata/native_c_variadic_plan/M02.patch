@@ -1,0 +1,4 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -100,0 +101 @@
++    if conversion == 2 { return 2; }

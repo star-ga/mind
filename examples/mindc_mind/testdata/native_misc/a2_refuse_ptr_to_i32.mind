@@ -1,0 +1,7 @@
+// A2 fail-closed: a pointer narrowed to i32 is a truncation, not a 64-bit
+// re-interpretation; native refuses it.
+fn main() -> i64 {
+    let a: i64 = 4294967301;
+    let y: i32 = (a as *const u8) as i32;
+    y as i64
+}

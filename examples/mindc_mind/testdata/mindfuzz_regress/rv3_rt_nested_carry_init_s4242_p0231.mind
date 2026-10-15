@@ -1,0 +1,28 @@
+// Regression class (twin-emitter review round 3, runtime leg): native ELF nested-loop carry init must come from the pre-loop env (seed 4242 prog0231).
+fn main() -> i64 {
+    let mut v7380: i64 = (1 % ((1 + 1) | 1));
+    let mut v7381: i64 = v7380;
+    v7380 = 9;
+    let mut c2762: i64 = 0;
+    while c2762 < 3 {
+        c2762 = (c2762 + 1);
+        let mut c2763: i64 = 0;
+        while c2763 < 4 {
+            v7381 = (v7381 / ((c2762 * c2762) | 1));
+            v7380 = ((v7380 - c2763) + (v7381 + 3));
+            if c2763 <= 2 {
+                break;
+            }
+            if v7381 == 0 {
+                v7381 = (8 | ((3 + 1) % ((c2763 * 4) | 1)));
+            } else {
+                v7381 = ((1 % ((c2762 * 8) | 1)) - 7);
+                v7380 = 2;
+                v7381 = c2763;
+            }
+            c2763 = (c2763 + 1);
+        }
+        v7381 = (((v7380 * 4) - (c2763 % (2 | 1))) + ((c2762 * 8) % (c2762 | 1)));
+    }
+    return v7380;
+}

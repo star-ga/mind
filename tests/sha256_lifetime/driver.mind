@@ -1,0 +1,121 @@
+// Author: STARGA Inc. All digest, ownership and refusal verdicts execute in MIND.
+// Vector definitions and two tiny call bridges are concatenated by transport.
+// No host test program decides mathematical/digest or allocation verdicts.
+fn st_equal(p:i64,q:i64,n:i64)->i64 {
+    let mut i:i64=0;while i<n { if __mind_load_i8(p+i)!=__mind_load_i8(q+i) { return 0; }i=i+1; }1
+}
+fn st_sentinel(p:i64,n:i64,b:i64)->i64 {
+    let mut i:i64=0;while i<n { if __mind_load_i8(p+i)!=b { return 0; }i=i+1; }1
+}
+fn st_input(p:i64,n:i64,mode:i64)->i64 {
+    let mut i:i64=0;while i<n {
+        let b:i64=if mode==1 { 97 } else { if mode==2 { (i*37+11)%256 } else { i%256 } };
+        __mind_store_i8(p+i,b);i=i+1;
+    }0
+}
+fn st_raw_kat(s:i64,p:i64,n:i64,want:i64,out:i64)->i64 {
+    st_reset(s,0);st_fill(out,64,204);
+    if st_raw(s,p,n,out+16)!=0 { return 0; }
+    if st_equal(out+16,want,32)!=1 || st_sentinel(out,16,204)!=1 || st_sentinel(out+48,16,204)!=1 { return 0; }
+    if st_account(s,3,3,0,0)!=1 { return 0; }
+    if st_observed()==1 {
+        let padded:i64=((n+9+63)/64)*64;
+        if st_get(s,40)!=padded+576 { return 0; }
+    }1
+}
+fn st_raw_refuse(s:i64,p:i64,n:i64,passedout:i64,liveout:i64,status:i64,fail:i64)->i64 {
+    st_reset(s,fail);st_fill(liveout,64,204);
+    if st_raw(s,p,n,passedout)!=status { return 0; }
+    if st_sentinel(liveout,64,204)!=1 { return 0; }
+    let calls:i64=if fail>0 { fail } else { 0 };
+    let frees:i64=if fail>0 { fail-1 } else { 0 };
+    st_account(s,calls,frees,0,0)
+}
+fn st_wrapper_kat(s:i64,b:bytes,want:i64)->i64 {
+    st_reset(s,0);let result=st_wrapped(s,b);
+    if result==0 { return 0; }
+    if st_observed()==1 && st_live(s,result)!=1 { return 0; }
+    if st_equal(result,want,32)!=1 { return 0; }
+    if st_account(s,5,4,1,32)!=1 { return 0; }
+    if st_observed()==1 { st_release(s,result); } else { __mind_free(result); }
+    st_account(s,5,5,0,0)
+}
+fn st_wrapper_refuse(s:i64,b:bytes,fail:i64)->i64 {
+    st_reset(s,fail);let result=st_wrapped(s,b);
+    if result!=0 { return 0; }
+    let calls:i64=if fail>0 { fail } else { 0 };
+    let frees:i64=if fail>0 { fail-1 } else { 0 };
+    st_account(s,calls,frees,0,0)
+}
+pub fn main()->i64 {
+    let s:i64=__mind_alloc(4096);let p:i64=__mind_alloc(4194304);let out:i64=__mind_alloc(64);let want:i64=__mind_alloc(32);
+    let stride:i64=__mind_alloc(2048);let mut b:bytes=[];
+    if s==0 || p==0 || out==0 || want==0 || stride==0 || b==0 { return 70; }
+    let mut checks:i64=0;
+    let mut id:i64=1;
+    while id<=14 {
+        let n:i64=st_vector_input(id,p);st_vector_digest(id,want);
+        if st_raw_kat(s,if id==1 { 0 } else { p },n,want,out)!=1 { return id; }
+        if st_vector_unchanged(id,p,n)!=1 { return id; }
+        checks=checks+1;id=id+1;
+    }
+    st_vector_input(15,p);st_vector_digest(15,want);
+    let mut repeat:i64=0;
+    while repeat<32 {
+        if st_raw_kat(s,p,4096,want,out)!=1 { return 15; }
+        repeat=repeat+1;
+    }checks=checks+1;
+    if st_raw_refuse(s,p,0-1,out+16,out,1,0)!=1 { return 16; }checks=checks+1;
+    if st_raw_refuse(s,p,1152921504606846976,out+16,out,1,0)!=1 { return 17; }checks=checks+1;
+    if st_raw_refuse(s,0-1,0,out+16,out,1,0)!=1 { return 18; }checks=checks+1;
+    if st_raw_refuse(s,0,1,out+16,out,1,0)!=1 { return 19; }checks=checks+1;
+    if st_raw_refuse(s,9223372036854775807,2,out+16,out,1,0)!=1 { return 20; }checks=checks+1;
+    if st_raw_refuse(s,p,1,0,out,1,0)!=1 { return 21; }checks=checks+1;
+    if st_raw_refuse(s,p,1,0-1,out,1,0)!=1 { return 22; }checks=checks+1;
+    if st_raw_refuse(s,p,1,9223372036854775777,out,1,0)!=1 { return 23; }checks=checks+1;
+    if st_observed()==1 {
+        if st_raw_refuse(s,1,1152921504606846975,out+16,out,2,1)!=1 { return 24; }checks=checks+1;
+        if st_raw_refuse(s,9223372036854775806,2,out+16,out,2,1)!=1 { return 25; }checks=checks+1;
+        if st_raw_refuse(s,p,1,9223372036854775776,out,2,1)!=1 { return 26; }checks=checks+1;
+    }
+    // Exercise the actual growable-bytes record ABI without a host pointer cast.
+    __mind_store_i64(b,stride);__mind_store_i64(b+8,3);__mind_store_i64(b+16,256);
+    __mind_store_i64(stride,97);__mind_store_i64(stride+8,98);__mind_store_i64(stride+16,99);
+    st_vector_digest(2,want);
+    if st_wrapper_kat(s,b,want)!=1 { return 27; }checks=checks+1;
+    __mind_store_i64(b,0);__mind_store_i64(b+8,0);st_vector_digest(1,want);
+    if st_wrapper_kat(s,b,want)!=1 { return 28; }checks=checks+1;
+    __mind_store_i64(b,stride);__mind_store_i64(b+8,256);let mut i:i64=0;
+    while i<256 { __mind_store_i64(stride+i*8,i);i=i+1; }st_vector_digest(12,want);
+    if st_wrapper_kat(s,b,want)!=1 { return 29; }checks=checks+1;
+    __mind_store_i64(b+8,0-1);
+    if st_wrapper_refuse(s,b,0)!=1 { return 30; }checks=checks+1;
+    __mind_store_i64(b+8,1152921504606846976);
+    if st_wrapper_refuse(s,b,0)!=1 { return 31; }checks=checks+1;
+    __mind_store_i64(b+8,1);__mind_store_i64(b,0);
+    if st_wrapper_refuse(s,b,0)!=1 { return 32; }checks=checks+1;
+    __mind_store_i64(b,0-1);
+    if st_wrapper_refuse(s,b,0)!=1 { return 33; }checks=checks+1;
+    __mind_store_i64(b,9223372036854775801);
+    if st_wrapper_refuse(s,b,0)!=1 { return 34; }checks=checks+1;
+    __mind_store_i64(b,9223372036854775800);__mind_store_i64(b+8,2);
+    if st_wrapper_refuse(s,b,0)!=1 { return 35; }checks=checks+1;
+    if st_observed()==1 {
+        __mind_store_i64(b,9223372036854775800);__mind_store_i64(b+8,1);
+        if st_wrapper_refuse(s,b,1)!=1 { return 36; }checks=checks+1;
+        __mind_store_i64(p,6513249);let mut fail:i64=1;
+        while fail<=3 {
+            if st_raw_refuse(s,p,3,out+16,out,2,fail)!=1 { return 36+fail; }
+            checks=checks+1;fail=fail+1;
+        }
+        __mind_store_i64(b,stride);__mind_store_i64(b+8,3);
+        __mind_store_i64(stride,97);__mind_store_i64(stride+8,98);__mind_store_i64(stride+16,99);
+        fail=1;while fail<=5 {
+            if st_wrapper_refuse(s,b,fail)!=1 { return 39+fail; }
+            checks=checks+1;fail=fail+1;
+        }
+    }
+    if checks!=(if st_observed()==1 { 44 } else { 32 }) { return 65; }
+    __mind_free(s);__mind_free(p);__mind_free(out);__mind_free(want);__mind_free(stride);__mind_free(b);
+    0
+}
