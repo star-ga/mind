@@ -1,0 +1,27 @@
+// f64 values through the HOME lowering: || in an if condition inside a loop with
+// continue, an early return from inside the loop (A1 L1 L3).
+// h(1.0, 10) = (1.5^10 * 2) as i64 = 115; h(-0.0625, 4) returns -1 at c = 1;
+// h(2.0, 0) = 4; 115 - 3 + 4 = 116.
+// Known MLIR-backend defect, pinned: as mlir_f64_loop_carry_vif.
+// expect: exit=116
+// stdout:
+// note: 2
+// mlir: nobuild=prior use here
+fn h(p: f64, n: i64) -> i64 {
+    let mut q: f64 = p;
+    let mut c: i64 = 0;
+    while c < n {
+        c = c + 1;
+        q = q * 1.5;
+        if q > 50.0 || c == 7 {
+            continue;
+        }
+        if q < 0.125 {
+            return 0 - c;
+        }
+    }
+    (q * 2.0) as i64
+}
+fn main() -> i64 {
+    h(1.0, 10) + h(0.0 - 0.0625, 4) * 3 + h(2.0, 0)
+}

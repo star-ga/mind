@@ -109,34 +109,107 @@ CASES = [
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 3 {\n        x = x + 1;\n        if a < 10 { x = x + 2; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
 ]
 
-# Write + `break`/`continue` in the SAME branch. A taken exit used to bypass the
-# branch's merge-phi stores and silently DROP the write (fail-OPEN: exit 2 want 102
-# / 0 want 100 / 4 want 54), so these were refused 0B. The exit edge now moves every
-# loop-carried var's live value into its loop slot before jumping
-# (nb_exit_edge_copies), so they MUST emit + run to the reference.
-EXIT_EDGE = [
-    ("break after write, same branch: while{ if a==2 {x+=100; break;} else {x+=1} }", 102,
+# Branch-exit carry: a `break`/`continue` inside an if-branch that ALSO assigns a
+# variable. Earlier lowering dropped writes on these exit edges (exit 2 want 102,
+# 0 want 100, or 4 want 54). The merged compiler includes SSA exit-edge copies and
+# per-function HOME routing. These tests require the same exact lexical result
+# regardless of the selected lowering; an empty emit or wrong result is a FAIL.
+# The references below independently re-run the control flow in Python.
+def _ref_break_after_write():
+    x, a = 0, 0
+    while a < 10:
+        if a == 2:
+            x += 100
+            break
+        x += 1
+        a += 1
+    return x
+
+
+def _ref_bare_assign_break():
+    x, a = 0, 0
+    while a < 10:
+        if a == 2:
+            x = 100
+            break
+        a += 1
+    return x
+
+
+def _ref_continue_after_write():
+    x, a = 0, 0
+    while a < 5:
+        a += 1
+        if a == 3:
+            x += 50
+            continue
+        x += 1
+    return x
+
+
+def _ref_break_nested_if():
+    x, a = 0, 0
+    while a < 10:
+        if a < 10:
+            x += 1
+            if x > 2:
+                break
+        a += 1
+    return x
+
+
+def _ref_inner_break_outer_carry():
+    x, a = 0, 0
+    while a < 3:
+        d = 0
+        while d < 10:
+            if d == 2:
+                x += 10
+                break
+            x += 1
+            d += 1
+        a += 1
+    return x
+
+
+def _ref_continue_nested_if():
+    x, a = 0, 0
+    while a < 6:
+        a += 1
+        if a % 2 == 0:
+            x += 3
+            if a > 3:
+                continue
+            x += 100
+        x += 1
+    return x
+
+
+EXIT_WRITE = [
+    ("break after write, same branch: while{ if a==2 {x+=100; break;} else {x+=1} }",
+     _ref_break_after_write(),
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
-    ("bare-= + break: while{ if a==2 {x=100; break;} }", 100,
+    ("bare-= + break: while{ if a==2 {x=100; break;} }", _ref_bare_assign_break(),
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = 100; break; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
-    ("continue after write: while{ a+=1; if a==3 {x+=50; continue;} x+=1 }", 54,
+    ("continue after write: while{ a+=1; if a==3 {x+=50; continue;} x+=1 }",
+     _ref_continue_after_write(),
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        if a == 3 { x = x + 50; continue; }\n        x = x + 1;\n    }\n    return x;\n}\n"),
-    ("break at nested-if depth in a writing branch: while{ if{ x+=1; if{ break; } } }", 3,
+    ("break at nested-if depth in a writing branch: while{ if{ x+=1; if{ break; } } }",
+     _ref_break_nested_if(),
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a < 10 { x = x + 1; if x > 2 { break; } }\n        a = a + 1;\n    }\n    return x;\n}\n"),
+    ("inner-loop break after write, outer carry: while{ while{ if d==2 {x+=10; break;} x+=1 } }",
+     _ref_inner_break_outer_carry(),
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        while d < 10 {\n            if d == 2 { x = x + 10; break; }\n            x = x + 1;\n            d = d + 1;\n        }\n        a = a + 1;\n    }\n    return x;\n}\n"),
+    ("continue at nested-if depth after write: while{ if{ x+=3; if{ continue; } x+=100 } x+=1 }",
+     _ref_continue_nested_if(),
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 6 {\n        a = a + 1;\n        if a % 2 == 0 {\n            x = x + 3;\n            if a > 3 { continue; }\n            x = x + 100;\n        }\n        x = x + 1;\n    }\n    return x;\n}\n"),
 ]
 
-# A `let` in the loop body SHADOWS a carried var that an exit must move: the exit
-# resolves the carried name LEXICALLY (nb_lets_lookup_carried stops at the body-local
-# declaration), so the move carries the outer binding (5), never the shadow (52, the
-# MLIR build's known shadow-carry defect -- see self_host_native_shadow_scope_smoke.py).
-# Formerly refused 0B; now asserted against the lexical reference with the EXIT_EDGE
-# shapes.
-EXIT_EDGE.append(
+# Preserve the other merge parent's lexical shadowing regression. The outer
+# binding must remain 5 across the continue; the inner x=50 must not escape.
+EXIT_WRITE.append(
     ("exit-edge move of a shadowed carried var: while{ x+=1; if a==3 { let x=50; continue; } }", 5,
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        x = x + 1;\n        if a == 3 { let x: i64 = 50; continue; }\n    }\n    return x;\n}\n"))
-
-# FAIL-CLOSED refusals (MUST emit 0B — a wrong-value ELF here is a FAIL); none at present.
-REFUSE = []
 
 # Struct field STORES (`p.x = v`) — formerly REFUSE cases from the era when
 # parse_field_assign_or_expr poisoned the statement (bare `=` is an infix
@@ -156,9 +229,10 @@ FIELD_STORE_CASES = [
      "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 0, y: 9 };\n    let mut a: i64 = 0;\n    while a < 3 {\n        p.x = p.x + 1;\n        a = a + 1;\n    }\n    return p.x;\n}\n"),
 ]
 
-# Exit-in-branch shapes that MUST STAY value-correct: an exit-ONLY branch and a
-# write+RETURN branch (`return` computes from the live env at the return site, and
-# main.mind's early-return style depends on it).
+# Exit-in-branch shapes that MUST STAY value-correct (the guard is per-branch —
+# an exit-ONLY branch or a write+RETURN branch is sound and must not be refused;
+# `return` computes from the live env at the return site, and main.mind's
+# early-return style depends on it).
 EXIT_CONTROLS = [
     ("write+RETURN in branch (sound, permitted): while{ if a==2 {x+=100; return x;} x+=1 }", 102,
      "fn f() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; return x; }\n        x = x + 1;\n        a = a + 1;\n    }\n    return 0 - 1;\n}\nfn main() -> i64 { return f(); }\n"),
@@ -233,8 +307,7 @@ def main() -> int:
     sl_ok = 0
     exitc_ok = 0
     fstore_ok = 0
-    edge_ok = 0
-    refused = 0
+    exitw_ok = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
 
@@ -245,8 +318,9 @@ def main() -> int:
             return subprocess.run([str(p)], timeout=10).returncode
 
         for group, cases in (("loop-carry", CASES), ("straight-line", STRAIGHT),
-                             ("exit-control", EXIT_CONTROLS), ("exit-edge", EXIT_EDGE),
-                             ("field-store", FIELD_STORE_CASES)):
+                             ("exit-control", EXIT_CONTROLS),
+                             ("field-store", FIELD_STORE_CASES),
+                             ("exit-write", EXIT_WRITE)):
             for label, exp, src in cases:
                 elf = emit(src)
                 if not elf:
@@ -264,37 +338,29 @@ def main() -> int:
                         sl_ok += 1
                     elif group == "field-store":
                         fstore_ok += 1
-                    elif group == "exit-edge":
-                        edge_ok += 1
+                    elif group == "exit-write":
+                        exitw_ok += 1
                     else:
                         exitc_ok += 1
-                print(f"  {'PASS' if ok else 'FAIL'}  {group}: {label} "
-                      f"-> exit {rc} (python-ref {exp} -> byte {want})")
-
-        for label, src in REFUSE:
-            elf = emit(src)
-            if elf:
-                rc = run_elf(elf)
-                print(f"  FAIL  fail-OPEN (want 0B refusal, got a RUNNING ELF exit {rc}): {label}")
-                all_ok = False
-                continue
-            refused += 1
-            print(f"  PASS  fail-closed 0B: {label}")
+                if ok:
+                    print(f"  PASS  {group}: {label} "
+                          f"-> exit {rc} (python-ref {exp} -> byte {want})")
+                else:
+                    print(f"  FAIL  {group}: {label} "
+                          f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
     if (loop_ok < len(CASES) or sl_ok < len(STRAIGHT)
             or exitc_ok < len(EXIT_CONTROLS) or fstore_ok < len(FIELD_STORE_CASES)
-            or edge_ok < len(EXIT_EDGE) or refused < len(REFUSE)):
+            or exitw_ok < len(EXIT_WRITE)):
         all_ok = False
     if all_ok:
         print(f"ALL PASS  i64 loop-carry through branched regions ({loop_ok} loop-carry + "
-              f"{sl_ok} straight-line + {exitc_ok} exit-control + {edge_ok} exit-edge + "
-              f"{fstore_ok} field-store shapes) emit + run to the "
+              f"{sl_ok} straight-line + {exitc_ok} exit-control + {fstore_ok} field-store + "
+              f"{exitw_ok} exit-write shapes) emit + run to the "
               "independent Python reference — both-branch-same-var, if-in-if (depth 3), "
               "if-wrapped inner while (Sub-step C), outer-if-wrapped loop, for-loop, multi-var, "
-              "write+return / exit-only branches, write+break/continue carried across the "
-              "exit edge (a shadowed carried var included, by its lexical value), "
-              f"field stores in if/top-level/while — {refused} refusal shape(s); "
-              "no fail-OPEN drop")
+              "write+return / exit-only branches, field stores in if/top-level/while, and "
+              "write-then-break/continue branches including lexical shadowing; no fail-OPEN drop")
         return 0
     print("FAILURES above")
     return 1

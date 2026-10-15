@@ -6,8 +6,9 @@
 //!
 //! * `fn main(argc: i64, argv: i64)` built natively and ran with both
 //!   parameters 0: the probe below exited 40 where the MLIR build of the same
-//!   source exits 20 + argc. The bridge now refuses an entry `main` with
-//!   parameters by name (`native.entry_main_has_params`) and writes nothing.
+//!   source exits 20 + argc. The bridge admits that signature only when the
+//!   emitted entry binds the process arguments; unsupported signatures and
+//!   older images without the binding still refuse without an artifact.
 //! * Undefined identifiers and symbolic tensor dimensions read as values
 //!   reached lowering's fail-closed `panic!`, so `mindc build --backend native`
 //!   died with exit 101. Every case of that negative corpus -- reduced from the
@@ -40,6 +41,7 @@ fn assert_refused(name: &str, src: &str, kind: &str) -> String {
 }
 
 #[test]
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 fn an_entry_main_with_argc_argv_is_refused_not_run_with_zeros() {
     let stderr = assert_refused(
         "argc_probe",
@@ -52,6 +54,32 @@ fn an_entry_main_with_argc_argv_is_refused_not_run_with_zeros() {
         stderr.contains("\"argc\""),
         "parameter list missing:\n{stderr}"
     );
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn an_entry_main_with_argc_argv_uses_the_process_arguments() {
+    for (name, src) in [
+        (
+            "argc_ssa",
+            "fn main(argc: i64, argv: i64) -> i64 { if argv == 0 { return 40 + argc; } \
+             return 20 + argc; }\n",
+        ),
+        (
+            "argc_home",
+            "fn main(argc: i64, argv: i64) -> i64 { let mut i: i64 = 0; \
+             while i < argc && argv != 0 { if i == 0 { return 20 + argc; } \
+             i = i + 1; } return 40; }\n",
+        ),
+    ] {
+        let p = Project::new(name);
+        p.write("src/main.mind", src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: {stderr}");
+        let bytes = bytes.expect("admitted argc/argv program must emit an artifact");
+        // The harness supplies only argv[0], hence argc == 1 and argv != 0.
+        assert_native_result(&p, &bytes, 21, name);
+    }
 }
 
 #[test]

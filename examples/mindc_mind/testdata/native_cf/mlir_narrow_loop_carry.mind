@@ -1,0 +1,32 @@
+// A narrow i32 parameter copied into an i32 let, multiplied and added past
+// the i32 range inside a loop with || in a condition and a nested early
+// return (A1 L1 L2 L3 O3). Every assignment wraps to 32 bits:
+// step(7, 5) = -1974836417, step(-5, 9) = 1111373163;
+// (-1974836417 rem 251 + 1111373163 rem 241 + 600) mod 256 = 6.
+// Known MLIR-backend defect, pinned: MLIR types the i32 loop-carried value
+// as i64 in the loop's block arguments and fails to build.
+// expect: exit=6
+// stdout:
+// note: 2
+// mlir: nobuild=prior use here
+fn step(x: i32, k: i64) -> i32 {
+    let mut y: i32 = x;
+    let mut j: i64 = 0;
+    while j < k {
+        j = j + 1;
+        if j % 2 == 0 || y > 2000000000 {
+            y = y * 3;
+        } else {
+            if y < 0 - 2000000000 {
+                return y;
+            }
+            y = y + 1500000000;
+        }
+    }
+    y
+}
+fn main() -> i64 {
+    let r: i32 = step(7, 5);
+    let s: i32 = step(0 - 5, 9);
+    ((r as i64) % 251 + (s as i64) % 241 + 600) % 256
+}
