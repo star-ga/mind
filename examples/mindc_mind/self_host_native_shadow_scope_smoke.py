@@ -50,10 +50,13 @@ What runs:
      generated program must build and exit with the model's value, and every
      fixture must either do so or be refused (exit 3, no artifact) by a fence
      other than the shadow guard (native profile, closure); the range-for
-     fixtures (BRIDGE_UNPROVEN) must be refused by the shadow guard. With the
-     embedded (unmarked) seed no fixture may run to a wrong value, and every
-     fixture the scoping compiler built must be refused by the shadow guard
-     (native.block_shadow / native.loop_body_shadow).
+     fixtures (BRIDGE_UNPROVEN) must be refused by the shadow guard. The
+     embedded default seed (no MINDC_NATIVE_ELF; MINDC_BIN built from this tree)
+     is held to the contract its own bytes select: a seed carrying the mark is a
+     scoping compiler and meets exactly the stage1 contract above; an unmarked
+     seed may run no fixture to a wrong value, and every fixture the scoping
+     compiler built must be refused by the shadow guard (native.block_shadow /
+     native.loop_body_shadow).
 
 Flags: --count N (generated programs, default 200), --seed S (default 1234),
        --min-compared M (default 60: natively-built-and-compared floor),
@@ -488,12 +491,13 @@ MLIR_DEFECT_FIXTURES = {
     "comment_between_let_and_name": 100,
 }
 
-# The embedded frozen seed (testdata/selfhost_loop/stage1.elf, abb0622b) drops the
-# first of two assignments to a carried name at a `continue`/`break` taken between
-# them -- no shadow involved (`while k < 4 { k = k + 1; x = x + 10; if k > 1 {
-# continue; } x = x + 1; }` exits 12, lexically 42). main.mind already lowers it
-# correctly (stage1 from this tree exits 42); the integration reseed ships that. The
-# bridge leg accepts this recorded exit from the embedded seed only.
+# The historical embedded seed (testdata/selfhost_loop/stage1.elf, abb0622b) dropped
+# the first of two assignments to a carried name at a `continue`/`break` taken
+# between them -- no shadow involved (`while k < 4 { k = k + 1; x = x + 10; if k > 1 {
+# continue; } x = x + 1; }` exits 12, lexically 42). main.mind lowers it correctly
+# and the two-hop reseed that embeds the nblane01/nbscope1 marks ships that, so a
+# marked embedded seed gets no allowance; the bridge leg accepts this recorded exit
+# only from an UNMARKED embedded seed.
 EMBEDDED_SEED_DEFECT = {
     "comment_let_before_assign_continue": 12, "comment_for_before_assign_break": 23,
     "comment_let_mut_before_assign_break": 23, "comment_slashes_in_string_line": 23,
@@ -578,6 +582,11 @@ def main(argv=None) -> int:
             fails += not ok
             print(f"  {'PASS' if ok else 'FAIL'}  mlir fixture {k}: {ml} {tag}")
     if a.bridge:
+        # which contract the embedded leg is held to is decided by the seed's own
+        # bytes (the mark the Rust bridge reads), never assumed
+        embedded_scopes = MARK in FROZEN_SEED.read_bytes()
+        print(f"  NOTE  embedded default seed {'carries' if embedded_scopes else 'lacks'} "
+              f"the scoped-nested-bindings mark {MARK!r}")
         for k, (src, want) in FIXTURES.items():
             got = bridge_exit(src, td, f"m_{k}", st)
             if k in BRIDGE_UNPROVEN:
@@ -592,13 +601,22 @@ def main(argv=None) -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  bridge(stage1) {k}: {got[:2]} want={want}"
                   + ("" if ok else f"\n{got[2] if len(got) > 2 else ''}"))
             emb = bridge_exit(src, td, f"e_{k}", None)
-            # the unmarked embedded seed never runs to a wrong value; where the
-            # scoping compiler built the program, only the shadow guard stops it
-            ok = emb == ("ok", want) or (emb[0] == "refused" and emb[1] == 3 and not emb[3])
-            if got[0] == "ok" and k not in NO_GUARD_SHADOW:
-                ok = shadow_refusal(emb)
             tag = ""
-            if not ok and emb == ("ok", EMBEDDED_SEED_DEFECT.get(k)):
+            if embedded_scopes:
+                # the reseeded embedded seed is a scoping compiler: the stage1
+                # contract above, with no recorded-defect allowance
+                if k in BRIDGE_UNPROVEN:
+                    ok = shadow_refusal(emb)
+                else:
+                    ok = emb == ("ok", want) or (emb[0] == "refused" and emb[1] == 3
+                                                 and not emb[3] and not shadow_refusal(emb))
+            else:
+                # the unmarked embedded seed never runs to a wrong value; where the
+                # scoping compiler built the program, only the shadow guard stops it
+                ok = emb == ("ok", want) or (emb[0] == "refused" and emb[1] == 3 and not emb[3])
+                if got[0] == "ok" and k not in NO_GUARD_SHADOW:
+                    ok = shadow_refusal(emb)
+            if not ok and not embedded_scopes and emb == ("ok", EMBEDDED_SEED_DEFECT.get(k)):
                 # the frozen seed's own miscompile (fixed in main.mind, shipped by
                 # the next reseed): counted and named, not a scoping failure here
                 ok, tag = True, f"  EMBEDDED-SEED-KNOWN-DEFECT (lexical {want})"

@@ -1,21 +1,24 @@
 # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 # compiler that reproduces itself byte-identically (stage1==stage2==stage3)
 # and seeds the PRIMARY reproduction-independence loop. NOT skippable in CI.
-# published-by	self_host_loop_smoke.py --advance
+# published-by	self_host_loop_smoke.py --advance --hops 2
 #
 # PROVENANCE RECEIPT — every value below is derived from this run's inputs
 # and outputs and is reproducible by re-running the same mode on the same
 # tree. No timestamp is recorded: it could not be re-derived and would only
 # make this file differ from itself.
-# advanced_from_seed_sha256	4053db1d12242842c164c61bf88936cf5711289725eee0676bb96dfc8d803cab
-# combined_source_sha256	14c7135cbc1851207d6b8df87856e1d26ebdeb65c51d5c93e4fe0f4fda24f6ac
-# combined_source_bytes	3094934
-# user_lo	393307
-# stage1_sha256	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
-# stage2_sha256	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
-# stage3_sha256	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
-# oracle_sha256	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
-# oracle_provenance	fresh-build
+# advance_hops	2
+# advanced_from_seed_sha256	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
+# combined_source_sha256	a44fbf671c143b24ae74b8240d9858be53f1fa3af1da0877e53cf3960cd4c154
+# combined_source_bytes	3550091
+# user_lo	395479
+# intermediate_stage1_sha256	8216c1ab95fcfc599dacd4dbc8773dcb6c85731ba60e4b3841aa749a5b660683
+# stage2_sha256	af1bf1d78e5aa7cd1d0fd7d01e2da521152297fea0204f4552bda6db2cd1ad25
+# stage3_sha256	af1bf1d78e5aa7cd1d0fd7d01e2da521152297fea0204f4552bda6db2cd1ad25
+# published_stage	stage2
+# oracle_sha256	af1bf1d78e5aa7cd1d0fd7d01e2da521152297fea0204f4552bda6db2cd1ad25
+# oracle_provenance	env-verified
+# seed_chain	PURE-MIND two-hop: old seed -> stage1 (intermediate, not published) -> stage2 (published) == stage3 == oracle
 #
 # name	size_bytes	sha256
-stage1.elf	2460643	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00
+stage1.elf	3025870	af1bf1d78e5aa7cd1d0fd7d01e2da521152297fea0204f4552bda6db2cd1ad25

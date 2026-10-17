@@ -260,6 +260,26 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_seeds_carry_the_native_lane_v1_and_scoped_binding_marks() {
+        // `compiler_supports_native_lane_v1` reads these bytes when no
+        // MINDC_NATIVE_ELF override is set. A seed without the `nblane01` mark
+        // sends every native build down the historical admission branch, which
+        // has no intrinsic bindings and refuses the MIND-Lab programs at the
+        // closure fence. The reseed that embeds main.mind's
+        // `nb_cap_native_lane_v1` must reach BOTH profiles.
+        for (what, elf) in [("default", DEFAULT_SEED_ELF), ("bounded", BOUNDED_SEED_ELF)] {
+            assert!(
+                has_mark(elf, NATIVE_LANE_V1_MARK),
+                "the embedded {what} seed does not carry the native-lane-v1 mark"
+            );
+            assert!(
+                has_mark(elf, SCOPED_BINDINGS_MARK),
+                "the embedded {what} seed does not carry the scoped-bindings mark"
+            );
+        }
+    }
+
+    #[test]
     fn the_embedded_default_and_bounded_seeds_match_their_pins() {
         assert!(verified_seed(DEFAULT_SEED_ELF, DEFAULT_SEED_MANIFEST, "default").is_ok());
         assert!(verified_seed(BOUNDED_SEED_ELF, BOUNDED_SEED_MANIFEST, "bounded").is_ok());

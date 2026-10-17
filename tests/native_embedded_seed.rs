@@ -163,6 +163,76 @@ fn the_consumer_command_line_builds_with_the_embedded_default_seed() {
     consumer_build("default");
 }
 
+/// The MIND-Lab `w_set` shape (a store intrinsic's result returned and summed)
+/// plus a full-width `i64 as f64` / `f64 as i64` round trip. Only the
+/// native-lane-v1 admission path binds the intrinsics and admits these casts;
+/// the historical path refuses the program at the closure fence
+/// (`__mind_alloc` has no definition, `closure.unresolved_edge`). The bridge
+/// selects the lane only for a compiler carrying the `nblane01` mark, so with
+/// the embedded seeds and no override this builds exactly when the reseeded
+/// seeds carry it. Expected: every store result is the defined 0, so `bad` is
+/// 0; slot 7 holds 7 * 3 + 1 = 22, and (22.0 + 0.5) as i64 truncates to 22.
+const LANE_PROGRAM: &str = "fn lane_get(w_addr: i64, i: i64) -> i64 { __mind_load_i64(w_addr + i * 8) }\n\
+     fn lane_set(w_addr: i64, i: i64, v: i64) -> i64 { __mind_store_i64(w_addr + i * 8, v) }\n\
+     fn main() -> i64 {\n\
+     \x20   let w: i64 = __mind_alloc(64);\n\
+     \x20   let mut i: i64 = 0;\n\
+     \x20   let mut bad: i64 = 0;\n\
+     \x20   while i < 8 { bad = bad + lane_set(w, i, i * 3 + 1); i = i + 1; }\n\
+     \x20   let f: f64 = lane_get(w, 7) as f64;\n\
+     \x20   ((f + 0.5) as i64) + bad\n\
+     }\n";
+
+fn lane_build(profile: &str) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tmp = tempfile::tempdir().expect("private TMPDIR");
+    std::fs::write(dir.path().join("main.mind"), LANE_PROGRAM).expect("write program");
+    let out = dir.path().join("program");
+    let res = Command::new(MINDC)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TMPDIR", tmp.path())
+        .current_dir(dir.path())
+        .args([
+            "build",
+            "main.mind",
+            "--backend",
+            "native",
+            "--target",
+            "cpu",
+            "--emit",
+            "binary",
+            "--optimize",
+            "debug",
+            "--no-cache",
+            "--native-profile",
+            profile,
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .expect("spawn mindc");
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert_eq!(
+        res.status.code(),
+        Some(0),
+        "{profile}: the embedded seed did not select native-lane-v1 for a lane-only \
+         program:\n{stderr}"
+    );
+    let elf = std::fs::read(&out).expect("the build must write the artifact");
+    assert_eq!(run(&elf), 22, "{profile}: lane program exit");
+}
+
+#[test]
+fn the_embedded_bounded_seed_selects_native_lane_v1() {
+    lane_build("bounded");
+}
+
+#[test]
+fn the_embedded_default_seed_selects_native_lane_v1() {
+    lane_build("default");
+}
+
 #[test]
 fn an_explicit_missing_compiler_override_is_still_refused() {
     // The override keeps its meaning: a named compiler that does not exist is
