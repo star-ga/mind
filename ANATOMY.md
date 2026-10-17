@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2383 | **Est. tokens:** ~4,298,410
-**Generated:** 2026-10-15 18:29 UTC
+**Files:** 2383 | **Est. tokens:** ~4,305,000
+**Generated:** 2026-10-17 08:08 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 39 | ~114,748 |
+| `docs/` | 39 | ~115,632 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 8 | ~17,804 |
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 276 | ~773,341 |
+| `examples/mindc_mind/` | 276 | ~775,042 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -167,7 +167,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 423 | ~876,546 |
+| `tests/` | 423 | ~880,551 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -496,7 +496,7 @@
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
-- `INDEPENDENCE_ROADMAP.md` (~18828 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~19712 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1083 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -818,9 +818,9 @@
 - `self_host_ifret_chain_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_letpath_failclose_smoke.py` (~2243 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
 - `self_host_lockstep_smoke.py` (~2241 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
-- `_selfhost_loop_reseed.py` (~1550 tok, huge) — Legacy Rust-seeded re-freeze implementation for the LOOP harness.
-- `self_host_loop_smoke.md` (~1634 tok, huge) — Self-host LOOP gate contract
-- `self_host_loop_smoke.py` (~8573 tok, huge) — Self-host LOOP reproduction and advancement gate.
+- `_selfhost_loop_reseed.py` (~1658 tok, huge) — Legacy Rust-seeded re-freeze implementation for the LOOP harness.
+- `self_host_loop_smoke.md` (~2084 tok, huge) — Self-host LOOP gate contract
+- `self_host_loop_smoke.py` (~9716 tok, huge) — Self-host LOOP reproduction and advancement gate.
 - `self_host_matchscalar_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
 - `self_host_mic3_float_valueif_smoke.py` (~1803 tok, huge)
@@ -3026,10 +3026,10 @@
 - `while_counter_1.mind` (~27 tok, tiny) — fn f(n: i64) -> i64 {
 ### `tests/`
 
-- `self_host_loop_advance_contract_test.py` (~5416 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
-- `self_host_loop_advance_publication_test.py` (~5173 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
-- `_self_host_loop_advance_support.py` (~1643 tok, huge) — Shared fixtures for the self-host loop advancement controls.
-- `self_host_loop_advance_test.py` (~335 tok, medium) — Runner for the self-host LOOP advancement harness controls.
+- `self_host_loop_advance_contract_test.py` (~6964 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
+- `self_host_loop_advance_publication_test.py` (~7323 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
+- `_self_host_loop_advance_support.py` (~1910 tok, huge) — Shared fixtures for the self-host loop advancement controls.
+- `self_host_loop_advance_test.py` (~375 tok, medium) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/sha256_lifetime/`
 

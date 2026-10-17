@@ -28,8 +28,10 @@ def main() -> int:
         print(f"{len(FAILURES)} FAILED: {', '.join(FAILURES)}")
         return 1
     print()
-    print("RESULT: PASS — --advance publishes only on full agreement, every "
-          "ordinary refusal preserves the fixture, failed rollback is reported "
+    print("RESULT: PASS — --advance publishes only on full agreement, "
+          "--advance --hops 2 publishes stage2 only once stage2 == stage3 and "
+          "the oracle agrees with it, --reseed records the broken seed chain, "
+          "every ordinary refusal preserves the fixture, failed rollback is reported "
           "with recoverable copies, and ordinary verification is unweakened. "
           "(Harness controls: synthetic images, stub oracle — not "
           "compiler evidence.)")
