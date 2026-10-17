@@ -99,7 +99,9 @@ the candidate contract while delegating to the historical seed for features
 that seed already implements. They test selection, binding and image
 composition, not the complete new feature implementation. Release validation
 must run the real merged compiler with its marker emitted from committed
-source. In particular, native raw syscalls are not evidence of libc-compatible
+source. `nb_cap_native_lane_v1` in `examples/mindc_mind/main.mind` emits it, so
+a compiler built from that source carries the marker; the embedded seeds
+select the lane only after they are reseeded from such a source. In particular, native raw syscalls are not evidence of libc-compatible
 extern semantics; unsupported externs and unsupported typed constructs remain
 blocked by the candidate profile.
 

@@ -36429,6 +36429,20 @@ pub fn nb_cap_scoped_nested_bindings() -> i64 {
     3559374704218432110
 }
 
+// Capability mark: NATIVE LANE V1. This compiler implements every construct the
+// candidate typed profile admits (src/ir/native_lane_profile.rs): the checked
+// i64/f64 scalar surface, the profile's intrinsic and raw-syscall set, a store
+// result read as the defined 0 in any value position (nb_expr's store arm and
+// nb_block_tail_store_zero), saturating `f64 as i64` and `i64 as f64`, and an
+// image whose std prefix the bridge omitted. Compiled natively this body is
+// `movabs rax, imm64` whose little-endian immediate spells "nblane01"; the Rust
+// bridge (src/build/native_bridge/seed.rs, NATIVE_LANE_V1_MARK) applies the lane
+// profile only to a compiler ELF that carries those bytes. It is a compatibility
+// mark, not a signature or a pin. Earlier seeds do not carry it.
+pub fn nb_cap_native_lane_v1() -> i64 {
+    3544444431495881326
+}
+
 // emit_alloc(bytes_disp): round the requested size up to the 8-byte stride into
 // rsi, then bump. Leaves the data pointer in rax.
 //   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; add rsi,7 = 48 83 C6 07 ;
