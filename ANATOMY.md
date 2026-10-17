@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2383 | **Est. tokens:** ~4,298,410
-**Generated:** 2026-10-15 18:29 UTC
+**Files:** 2386 | **Est. tokens:** ~4,309,036
+**Generated:** 2026-10-17 06:58 UTC
 
 ## Token Budget Guide
 
@@ -42,10 +42,10 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 39 | ~114,748 |
+| `docs/` | 39 | ~114,800 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 8 | ~17,804 |
+| `docs/compiler/` | 8 | ~18,086 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 276 | ~773,341 |
+| `examples/mindc_mind/` | 277 | ~776,552 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -74,6 +74,7 @@
 | `examples/mindc_mind/testdata/native_c_variadic_plan/` | 147 | ~89,226 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
+| `examples/mindc_mind/testdata/native_lane_values/` | 2 | ~988 |
 | `examples/mindc_mind/testdata/native_libc_binding/` | 1 | ~149 |
 | `examples/mindc_mind/testdata/native_libc_io/` | 7 | ~15,200 |
 | `examples/mindc_mind/testdata/native_libc_startup/` | 3 | ~1,539 |
@@ -124,9 +125,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,507 |
+| `src/build/` | 13 | ~53,529 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~25,757 |
+| `src/build/native_bridge/` | 8 | ~28,167 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -141,13 +142,13 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 12 | ~108,965 |
+| `src/ir/` | 12 | ~110,562 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/ir/native_c_abi/` | 1 | ~3,735 |
-| `src/ir/native_lane_profile/` | 1 | ~2,636 |
+| `src/ir/native_lane_profile/` | 1 | ~4,700 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 7 | ~16,474 |
@@ -474,7 +475,7 @@
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
 - `NATIVE_C_VARIADIC_PLAN.md` (~5675 tok, huge) — Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
-- `NATIVE_LANE_PROFILE.md` (~976 tok, large) — Typed scalar delivery profile
+- `NATIVE_LANE_PROFILE.md` (~1258 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
 - `NATIVE_STRING_VALUES.md` (~1827 tok, huge) — Native string value decoding
 ### `docs/design/`
@@ -512,7 +513,7 @@
 ### `docs/`
 
 - `mlir-lowering.md` (~286 tok, medium) — MLIR lowering pipeline (public)
-- `native-closure-lane.md` (~1229 tok, large) — Candidate native closure and namespace admission
+- `native-closure-lane.md` (~1281 tok, large) — Candidate native closure and namespace admission
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11775 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
@@ -748,6 +749,7 @@
 - `native_emission_context.md` (~3838 tok, huge) — Explicit target context and source-lowered module parts
 - `native_emission_context.mind` (~1142 tok, large) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
+- `native_lane_value_shapes_smoke.py` (~3058 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_binding_check.py` (~6416 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
 - `native_libc_binding_fixture.mind` (~1063 tok, large) — Copyright 2026 STARGA Inc. Diagnostic binary transport, never admission.
@@ -932,7 +934,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6186 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~6339 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
@@ -1262,6 +1264,10 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/native_lane_values/`
+
+- `casts_edges.mind` (~567 tok, large) — Author: STARGA Inc. Full-width i64 <-> f64 conversion edges (NaN, +-inf, +-2^63,
+- `casts_exprs.mind` (~421 tok, medium) — Author: STARGA Inc. i64 <-> f64 conversions of expression-shaped operands:
 ### `examples/mindc_mind/testdata/native_libc_binding/`
 
 - `views.c` (~149 tok, small)
@@ -1703,15 +1709,15 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~6839 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~7082 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
-- `entry.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
+- `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
 - `namespace.rs` (~2927 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8084 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~8106 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3369 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1896,10 +1902,10 @@
 ### `src/ir/`
 
 - `native_closure.rs` (~5179 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_lane_profile.rs` (~7175 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_lane_profile.rs` (~8772 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
-- `tests.rs` (~2636 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~4700 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.

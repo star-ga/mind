@@ -14,10 +14,33 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneProfileRejection {
     pub construct: &'static str,
+    /// Byte offset, in the checked source text, of the innermost source node
+    /// or top-level item the walker refused. `None` for IR-only refusals.
+    pub at: Option<usize>,
+    /// The function whose signature or body was being checked, when known.
+    pub function: Option<String>,
+}
+impl LaneProfileRejection {
+    fn new(construct: &'static str) -> Self {
+        LaneProfileRejection {
+            construct,
+            at: None,
+            function: None,
+        }
+    }
+    /// Record the innermost location only: the first (deepest) caller wins.
+    fn located(mut self, at: usize) -> Self {
+        self.at.get_or_insert(at);
+        self
+    }
+    fn in_function(mut self, name: &str) -> Self {
+        self.function.get_or_insert_with(|| name.to_string());
+        self
+    }
 }
 type Check<T> = Result<T, LaneProfileRejection>;
 fn reject<T>(construct: &'static str) -> Check<T> {
-    Err(LaneProfileRejection { construct })
+    Err(LaneProfileRejection::new(construct))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,8 +48,19 @@ enum Ty {
     I64,
     F64,
     Unit,
-    Discard,
+    /// The result of a store intrinsic. It is a statement where a statement
+    /// fits and the defined i64 value 0 where a value is read: the MLIR
+    /// lowering materialises `arith.constant 0`, and the marked compiler's
+    /// value-position store lowering writes 0 into the result slot (see
+    /// `nb_block_tail_store_zero` and the store arm of `nb_expr` in
+    /// `examples/mindc_mind/main.mind`). Constant initialisers still refuse it.
+    Store,
     Never,
+}
+
+/// The type a value read observes: a store result reads as its defined 0.
+fn value(ty: Ty) -> Ty {
+    if ty == Ty::Store { Ty::I64 } else { ty }
 }
 #[derive(Clone, Debug)]
 struct Signature {
@@ -60,15 +94,37 @@ fn scalar(ann: &TypeAnn) -> Check<Ty> {
 /// Exact terminal-call inventory for closure admission. This alone is NOT
 /// admission: the combined source/IR predicate checks argument and result types.
 pub(crate) fn intrinsic_arity(name: &str) -> Option<usize> {
-    intrinsic_signature(name).map(|s| s.params.len())
+    intrinsic_signature(name)
+        .map(|s| s.params.len())
+        .or_else(|| conversion_arity(name))
+}
+
+/// The scalar `as` conversions the source walker admits, as lowering spells
+/// them (`src/eval/lower.rs`, `Node::As`): `x as i64` is `__mind_conv_i64(x)`
+/// and `x as f64` is `__mind_conv_f64(x)`. Typed by the SOURCE value, because
+/// the same callee converts (f64 source) or is the identity (i64 source).
+/// IR only: an explicit source call to `__mind_conv_f64` is still unknown.
+fn conversion_type(name: &str, args: &[Ty]) -> Option<Ty> {
+    let args: Vec<Ty> = args.iter().map(|&a| value(a)).collect();
+    match (name, args.as_slice()) {
+        ("__mind_conv_i64", [Ty::F64]) => Some(Ty::I64),
+        ("__mind_conv_f64", [Ty::I64]) => Some(Ty::F64),
+        _ => None,
+    }
+}
+fn conversion_arity(name: &str) -> Option<usize> {
+    matches!(name, "__mind_conv_f64").then_some(1)
 }
 
 fn intrinsic_signature(name: &str) -> Option<Signature> {
     use Ty::{F64, I64};
     // Reuse canonical i64 ABI rows only for the explicitly supported names.
-    // Preserve the canonical DiscardOnly compatibility policy. The delivery
-    // emitter can materialize zero for value-position stores; that behavior
-    // does not broaden this profile. Positioned read/write is delivery-specific.
+    // The canonical contract marks stores DiscardOnly because the historical
+    // frozen seed leaves their result slot unwritten. This profile is selected
+    // only for a compiler carrying the lane marker, whose value-position store
+    // lowering writes the C runtime's defined 0 (the value MLIR materialises),
+    // so a store result is typed `Ty::Store`: a statement, or the value 0.
+    // Positioned read/write is delivery-specific.
     let row = match name {
         "__mind_alloc" => Some("alloc"),
         "__mind_load_i64" => Some("load_i64"),
@@ -92,7 +148,7 @@ fn intrinsic_signature(name: &str) -> Option<Signature> {
             params: vec![I64; contract.parameters.len()],
             result: match contract.result {
                 crate::intrinsic_contract::IntrinsicResult::I64 => I64,
-                crate::intrinsic_contract::IntrinsicResult::DiscardOnly => Ty::Discard,
+                crate::intrinsic_contract::IntrinsicResult::DiscardOnly => Ty::Store,
             },
         });
     }
@@ -101,7 +157,7 @@ fn intrinsic_signature(name: &str) -> Option<Signature> {
             (vec![I64], I64)
         }
         "__mind_realloc" => (vec![I64, I64], I64),
-        "__mind_store_i32" => (vec![I64, I64], Ty::Discard),
+        "__mind_store_i32" => (vec![I64, I64], Ty::Store),
         "__mind_bits_to_f64" => (vec![I64], F64),
         "__mind_f64_to_bits" => (vec![F64], I64),
         // These are the verified raw Linux word ABI, not libc-compatible externs.
@@ -140,7 +196,9 @@ fn intrinsic_signature(name: &str) -> Option<Signature> {
 }
 
 fn equal(actual: Ty, wanted: Ty) -> Check<()> {
-    if actual == wanted || actual == Ty::Never {
+    // A store result fits a statement slot (Unit) and an i64 value slot.
+    let store_fits = actual == Ty::Store && matches!(wanted, Ty::I64 | Ty::Unit);
+    if actual == wanted || actual == Ty::Never || store_fits {
         Ok(())
     } else {
         reject("lane.type.mismatch")
@@ -151,9 +209,11 @@ fn unify(a: Ty, b: Ty) -> Check<Ty> {
         return Ok(b);
     }
     if b == Ty::Never || a == b {
-        Ok(a)
-    } else {
-        reject("lane.type.branch_mismatch")
+        return Ok(a);
+    }
+    match (a, b) {
+        (Ty::Store, Ty::I64) | (Ty::I64, Ty::Store) => Ok(Ty::I64),
+        _ => reject("lane.type.branch_mismatch"),
     }
 }
 fn call_type(name: &str, args: &[Ty], functions: &Functions) -> Check<Ty> {
@@ -161,9 +221,7 @@ fn call_type(name: &str, args: &[Ty], functions: &Functions) -> Check<Ty> {
     let sig = functions
         .get(name)
         .or(intrinsic.as_ref())
-        .ok_or(LaneProfileRejection {
-            construct: "lane.call.unknown",
-        })?;
+        .ok_or(LaneProfileRejection::new("lane.call.unknown"))?;
     if args.len() != sig.params.len() {
         return reject("lane.call.arity");
     }
@@ -173,6 +231,7 @@ fn call_type(name: &str, args: &[Ty], functions: &Functions) -> Check<Ty> {
     Ok(sig.result)
 }
 fn binary(op: &BinOp, left: Ty, right: Ty) -> Check<Ty> {
+    let (left, right) = (value(left), value(right));
     equal(left, right)?;
     if !matches!(left, Ty::I64 | Ty::F64) {
         return reject("lane.binop.non_scalar");
@@ -219,14 +278,17 @@ impl Source<'_> {
         Ok(result)
     }
     fn node(&mut self, node: &Node, env: &mut BTreeMap<String, Ty>) -> Check<Ty> {
+        self.node_kind(node, env)
+            .map_err(|r| r.located(node.span().start()))
+    }
+    fn node_kind(&mut self, node: &Node, env: &mut BTreeMap<String, Ty>) -> Check<Ty> {
         match node {
             Node::Lit(Literal::Int(_), _) => Ok(Ty::I64),
             Node::Lit(Literal::Float(_), _) => Ok(Ty::F64),
-            Node::Lit(Literal::Ident(name), _) => {
-                env.get(name).copied().ok_or(LaneProfileRejection {
-                    construct: "lane.source.unbound",
-                })
-            }
+            Node::Lit(Literal::Ident(name), _) => env
+                .get(name)
+                .copied()
+                .ok_or(LaneProfileRejection::new("lane.source.unbound")),
             Node::Lit(Literal::Str(_), _) => reject("lane.source.string"),
             Node::Paren(inner, _) => self.node(inner, env),
             Node::Binary {
@@ -238,7 +300,7 @@ impl Source<'_> {
                 Ok(Ty::I64)
             }
             Node::Neg { operand, .. } => {
-                let ty = self.node(operand, env)?;
+                let ty = value(self.node(operand, env)?);
                 // Runtime f64 negation currently lowers through an integer
                 // zero (eval/lower.rs), losing a uniformly typed subtraction.
                 // Literal negation folds directly to ConstF64 and is safe here.
@@ -256,9 +318,12 @@ impl Source<'_> {
                 Ok(Ty::I64)
             }
             Node::Let {
-                name, ann, value, ..
+                name,
+                ann,
+                value: init,
+                ..
             } => {
-                let ty = self.node(value, env)?;
+                let ty = value(self.node(init, env)?);
                 if let Some(ann) = ann {
                     equal(ty, scalar(ann)?)?;
                 }
@@ -269,9 +334,9 @@ impl Source<'_> {
                 Ok(Ty::Unit)
             }
             Node::Assign { name, value, .. } => {
-                let old = *env.get(name).ok_or(LaneProfileRejection {
-                    construct: "lane.source.unbound",
-                })?;
+                let old = *env
+                    .get(name)
+                    .ok_or(LaneProfileRejection::new("lane.source.unbound"))?;
                 equal(self.node(value, env)?, old)?;
                 Ok(Ty::Unit)
             }
@@ -280,12 +345,7 @@ impl Source<'_> {
                     .iter()
                     .map(|a| self.node(a, env))
                     .collect::<Check<Vec<_>>>()?;
-                let result = call_type(callee, &types, self.functions)?;
-                Ok(if result == Ty::Discard {
-                    Ty::Unit
-                } else {
-                    result
-                })
+                call_type(callee, &types, self.functions)
             }
             Node::Return { value, .. } => {
                 let ty = match value {
@@ -351,14 +411,19 @@ impl Source<'_> {
                 }
             }
             Node::As { expr, ty, .. } => {
-                let from = self.node(expr, env)?;
+                let from = value(self.node(expr, env)?);
                 // Narrow source casts retain width semantics in subsequent
                 // expressions, but legacy scalar IR erases that information.
+                // Only full-width i64 <-> f64 conversions are admitted: the
+                // marked compiler and MLIR both convert i64 -> f64 with IEEE
+                // round-to-nearest-even and f64 -> i64 by SATURATING truncation
+                // (NaN -> 0, out of range -> i64::MIN / i64::MAX). See
+                // `conversion_type` for the IR side of the same pairs.
                 match ty {
-                    TypeAnn::ScalarI64 => {
-                        equal(from, Ty::I64)?;
+                    TypeAnn::ScalarI64 if matches!(from, Ty::I64 | Ty::F64 | Ty::Never) => {
                         Ok(Ty::I64)
                     }
+                    TypeAnn::ScalarF64 if matches!(from, Ty::I64 | Ty::Never) => Ok(Ty::F64),
                     _ => reject("lane.source.cast"),
                 }
             }
@@ -425,28 +490,34 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
     let mut functions = Functions::new();
     for node in &source.items {
         if let Node::FnDef(fd, _) = node {
-            if fd.name.starts_with("__mind_")
-                || !fd.type_params.is_empty()
-                || fd.reap_threshold.is_some()
-                || !fd.attrs.is_empty()
-            {
-                return reject("lane.source.function_contract");
-            }
-            let sig = Signature {
-                params: fd
-                    .params
-                    .iter()
-                    .map(|p| scalar(&p.ty))
-                    .collect::<Check<_>>()?,
-                result: fd
-                    .ret_type
-                    .as_ref()
-                    .map(scalar)
-                    .transpose()?
-                    .unwrap_or(Ty::Unit),
-            };
+            let at = node.span().start();
+            let sig = (|| -> Check<Signature> {
+                if fd.name.starts_with("__mind_")
+                    || !fd.type_params.is_empty()
+                    || fd.reap_threshold.is_some()
+                    || !fd.attrs.is_empty()
+                {
+                    return reject("lane.source.function_contract");
+                }
+                Ok(Signature {
+                    params: fd
+                        .params
+                        .iter()
+                        .map(|p| scalar(&p.ty))
+                        .collect::<Check<_>>()?,
+                    result: fd
+                        .ret_type
+                        .as_ref()
+                        .map(scalar)
+                        .transpose()?
+                        .unwrap_or(Ty::Unit),
+                })
+            })()
+            .map_err(|r| r.in_function(&fd.name).located(at))?;
             if functions.insert(fd.name.clone(), sig).is_some() {
-                return reject("lane.source.duplicate_function");
+                return Err(LaneProfileRejection::new("lane.source.duplicate_function")
+                    .in_function(&fd.name)
+                    .located(at));
             }
         }
     }
@@ -460,52 +531,68 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
             ..
         } = node
         {
-            if !attrs.is_empty() {
-                return reject("lane.source.const_attributes");
-            }
-            let actual = Source {
-                functions: &functions,
-                result: Ty::Unit,
-                loops: 0,
-            }
-            .node(value, &mut globals.clone())?;
-            if let Some(ty) = ty {
-                equal(actual, scalar(ty)?)?;
-            }
-            if !matches!(actual, Ty::I64 | Ty::F64)
-                || globals.insert(name.clone(), actual).is_some()
-            {
-                return reject("lane.source.const_type");
-            }
+            (|| -> Check<()> {
+                if !attrs.is_empty() {
+                    return reject("lane.source.const_attributes");
+                }
+                let actual = Source {
+                    functions: &functions,
+                    result: Ty::Unit,
+                    loops: 0,
+                }
+                .node(value, &mut globals.clone())?;
+                if let Some(ty) = ty {
+                    equal(actual, scalar(ty)?)?;
+                }
+                if !matches!(actual, Ty::I64 | Ty::F64)
+                    || globals.insert(name.clone(), actual).is_some()
+                {
+                    return reject("lane.source.const_type");
+                }
+                Ok(())
+            })()
+            .map_err(|r| r.located(node.span().start()))?;
         }
     }
     for node in &source.items {
-        match node {
+        let checked: Check<()> = match node {
             Node::FnDef(fd, _) => {
                 let sig = &functions[&fd.name];
                 let mut env = globals.clone();
                 let mut names = BTreeSet::new();
-                for (p, ty) in fd.params.iter().zip(&sig.params) {
-                    if !names.insert(&p.name) {
-                        return reject("lane.source.duplicate_parameter");
+                (|| -> Check<()> {
+                    for (p, ty) in fd.params.iter().zip(&sig.params) {
+                        if !names.insert(&p.name) {
+                            return reject("lane.source.duplicate_parameter");
+                        }
+                        env.insert(p.name.clone(), *ty);
                     }
-                    env.insert(p.name.clone(), *ty);
-                }
-                let got = Source {
-                    functions: &functions,
-                    result: sig.result,
-                    loops: 0,
-                }
-                .block(&fd.body, &mut env)?;
-                equal(got, sig.result)?;
+                    let got = Source {
+                        functions: &functions,
+                        result: sig.result,
+                        loops: 0,
+                    }
+                    .block(&fd.body, &mut env)?;
+                    equal(got, sig.result)
+                })()
+                .map_err(|r| r.in_function(&fd.name))
             }
-            Node::Const { .. } => {}
+            Node::Const { .. } => Ok(()),
+            // A plain project import names a module the bridge's resolver
+            // already linked into this image; it has no runtime meaning,
+            // and the frozen parser skips the `;`-terminated item (the
+            // bridge refuses an unterminated one). Calls still bind only to
+            // functions in this one image, whose names must be unique.
+            // An `as` rename would make call spelling module-relative:
+            // refuse it.
+            Node::Import { alias: None, .. } => Ok(()),
             Node::Export {
                 names, category, ..
-            } if category.is_none() && names.iter().all(|n| functions.contains_key(n)) => {}
-            Node::ExternBlock { .. } => return reject("lane.extern.unimplemented"),
-            _ => return reject("lane.source.top_level"),
-        }
+            } if category.is_none() && names.iter().all(|n| functions.contains_key(n)) => Ok(()),
+            Node::ExternBlock { .. } => reject("lane.extern.unimplemented"),
+            _ => reject("lane.source.top_level"),
+        };
+        checked.map_err(|r| r.located(node.span().start()))?;
     }
     Ok(functions)
 }
@@ -516,14 +603,9 @@ pub fn profile_lane_admits_source(source: &ast::Module) -> Check<()> {
 }
 
 fn get(env: &Values, id: &ValueId) -> Check<Ty> {
-    let ty = env.get(id).copied().ok_or(LaneProfileRejection {
-        construct: "lane.ir.untyped_value",
-    })?;
-    if ty == Ty::Discard {
-        reject("lane.ir.discard_result_use")
-    } else {
-        Ok(ty)
-    }
+    env.get(id)
+        .copied()
+        .ok_or(LaneProfileRejection::new("lane.ir.untyped_value"))
 }
 fn put(env: &mut Values, id: ValueId, ty: Ty) -> Check<()> {
     if let Some(old) = env.insert(id, ty) {
@@ -561,8 +643,11 @@ impl Ir<'_> {
                         .iter()
                         .map(|a| get(env, a))
                         .collect::<Check<Vec<_>>>()?;
-                    let ty = call_type(name, &args, self.functions)?;
-                    put(env, *dst, ty)?;
+                    let ty = match conversion_type(name, &args) {
+                        Some(ty) => ty,
+                        None => call_type(name, &args, self.functions)?,
+                    };
+                    put(env, *dst, value(ty))?;
                 }
                 Instr::Return { value } => equal(
                     value
@@ -593,19 +678,32 @@ impl Ir<'_> {
                     self.walk(then_instrs, &mut a)?;
                     let mut b = cond;
                     self.walk(else_instrs, &mut b)?;
-                    put(
-                        env,
-                        *dst,
-                        unify(get(&a, then_result)?, get(&b, else_result)?)?,
-                    )?;
+                    // A branch that surely leaves (return/break/continue)
+                    // never reaches the merge, so its side is not typed there:
+                    // lowering forwards the other branch's value in its place
+                    // (`if c { x = 1; } else { return 0; }`).
+                    let then_live = !diverges(then_instrs);
+                    let else_live = !diverges(else_instrs);
+                    // When BOTH leave, the merge is unreachable: every use of its
+                    // ids is dead code (after this `if`, or on an enclosing
+                    // branch that `diverges` therefore also marks as leaving).
+                    let merged = |left: &ValueId, right: &ValueId| -> Check<Ty> {
+                        match (then_live, else_live) {
+                            (true, true) => unify(get(&a, left)?, get(&b, right)?),
+                            (true, false) => get(&a, left),
+                            (false, true) => get(&b, right),
+                            (false, false) => Ok(Ty::Never),
+                        }
+                    };
+                    put(env, *dst, merged(then_result, else_result)?)?;
                     for (id, left, right) in merges {
-                        put(env, *id, unify(get(&a, left)?, get(&b, right)?)?)?;
+                        put(env, *id, merged(left, right)?)?;
                     }
                     for (_, id) in branch_bindings {
                         // A binding escaping a branch must be defined on both
-                        // paths or be an explicit validated merge/dst.
+                        // reaching paths or be an explicit validated merge/dst.
                         if !env.contains_key(id) {
-                            put(env, *id, unify(get(&a, id)?, get(&b, id)?)?)?;
+                            put(env, *id, merged(id, id)?)?;
                         }
                     }
                 }
@@ -641,9 +739,10 @@ impl Ir<'_> {
                     }
                 }
                 Instr::Break { live } | Instr::Continue { live } => {
-                    let expected = self.loops.last().ok_or(LaneProfileRejection {
-                        construct: "lane.ir.loop_exit_scope",
-                    })?;
+                    let expected = self
+                        .loops
+                        .last()
+                        .ok_or(LaneProfileRejection::new("lane.ir.loop_exit_scope"))?;
                     let mut seen = BTreeSet::new();
                     for (name, id) in live {
                         if !seen.insert(name) {
@@ -696,6 +795,21 @@ impl Ir<'_> {
     }
 }
 
+/// True only when control surely leaves `instrs` before falling through: a
+/// top-level `return`, `break` or `continue`, or an `if` both of whose branches
+/// surely leave. Anything else (a loop, a call) may fall through.
+fn diverges(instrs: &[Instr]) -> bool {
+    instrs.iter().any(|i| match i {
+        Instr::Return { .. } | Instr::Break { .. } | Instr::Continue { .. } => true,
+        Instr::If {
+            then_instrs,
+            else_instrs,
+            ..
+        } => diverges(then_instrs) && diverges(else_instrs),
+        _ => false,
+    })
+}
+
 /// Require the source and its single lowering together. The caller owns their
 /// provenance/binding and the exact compiler-capability selection; this function
 /// is not a validator for arbitrary independent source/IR pairs or proof data.
@@ -704,9 +818,7 @@ pub fn profile_lane_admits(source: &ast::Module, ir: &IRModule) -> Check<()> {
     if !ir.value_types.is_empty() {
         return reject("lane.ir.aggregate_metadata");
     }
-    crate::ir::check_ssa_well_formed(ir).map_err(|_| LaneProfileRejection {
-        construct: "lane.ir.ssa",
-    })?;
+    crate::ir::check_ssa_well_formed(ir).map_err(|_| LaneProfileRejection::new("lane.ir.ssa"))?;
     let mut seen = BTreeSet::new();
     let mut globals = Values::new();
     for instr in &ir.instrs {
@@ -720,41 +832,45 @@ pub fn profile_lane_admits(source: &ast::Module, ir: &IRModule) -> Check<()> {
             semantic_types,
         } = instr
         {
-            let sig = functions.get(name).ok_or(LaneProfileRejection {
-                construct: "lane.ir.function_binding",
-            })?;
-            if !seen.insert(name.clone())
-                || params.len() != sig.params.len()
-                || reap_threshold.is_some()
-                || !value_types.is_empty()
-            {
-                return reject("lane.ir.function_binding");
-            }
-            let mut env = Values::new();
-            for ((_, id), ty) in params.iter().zip(&sig.params) {
-                put(&mut env, *id, *ty)?;
-            }
-            Ir {
-                functions: &functions,
-                result: sig.result,
-                loops: vec![],
-                params,
-            }
-            .walk(body, &mut env)?;
-            if let Some(ret) = ret_id {
-                equal(get(&env, ret)?, sig.result)?;
-            }
-            if let Some(meta) = semantic_types {
-                for (id, ty) in meta.values() {
-                    use crate::types::{ScalarType, SemanticType};
-                    let expected = match ty {
-                        SemanticType::Scalar(ScalarType::I64 | ScalarType::Bool) => Ty::I64,
-                        SemanticType::Scalar(ScalarType::F64) => Ty::F64,
-                        _ => return reject("lane.ir.semantic_type"),
-                    };
-                    equal(get(&env, id)?, expected)?;
+            (|| -> Check<()> {
+                let sig = functions
+                    .get(name)
+                    .ok_or(LaneProfileRejection::new("lane.ir.function_binding"))?;
+                if !seen.insert(name.clone())
+                    || params.len() != sig.params.len()
+                    || reap_threshold.is_some()
+                    || !value_types.is_empty()
+                {
+                    return reject("lane.ir.function_binding");
                 }
-            }
+                let mut env = Values::new();
+                for ((_, id), ty) in params.iter().zip(&sig.params) {
+                    put(&mut env, *id, *ty)?;
+                }
+                Ir {
+                    functions: &functions,
+                    result: sig.result,
+                    loops: vec![],
+                    params,
+                }
+                .walk(body, &mut env)?;
+                if let Some(ret) = ret_id {
+                    equal(get(&env, ret)?, sig.result)?;
+                }
+                if let Some(meta) = semantic_types {
+                    for (id, ty) in meta.values() {
+                        use crate::types::{ScalarType, SemanticType};
+                        let expected = match ty {
+                            SemanticType::Scalar(ScalarType::I64 | ScalarType::Bool) => Ty::I64,
+                            SemanticType::Scalar(ScalarType::F64) => Ty::F64,
+                            _ => return reject("lane.ir.semantic_type"),
+                        };
+                        equal(get(&env, id)?, expected)?;
+                    }
+                }
+                Ok(())
+            })()
+            .map_err(|r| r.in_function(name))?;
         } else {
             Ir {
                 functions: &functions,

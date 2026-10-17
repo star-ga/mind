@@ -462,7 +462,7 @@ pub fn run_native_backend_bridge_profile(
     // is the frozen compiler's no-`main` library stub means the compiler did not
     // see the `main` that was admitted. Whatever the cause, that artifact is a
     // silent `exit(0)` and never a correct build of this program.
-    if let Err(why) = check_entry_is_not_no_main_stub(&elf_bytes) {
+    if let Err(why) = check_entry_is_not_no_main_stub(&elf_bytes, layout.as_ref()) {
         eprintln!(
             "error[backend-native]: `{}`: {why}; the source declares `main`, so this \
              artifact would not run the admitted program. No artifact written. \
@@ -474,7 +474,7 @@ pub fn run_native_backend_bridge_profile(
     // W4b: `main(argc: i64, argv: i64)` was admitted on condition that the
     // compiler binds both parameters; a seed without the binding is refused here.
     if main_params == admission::MainParams::ArgcArgv
-        && let Err(why) = check_entry_binds_main_params(&elf_bytes)
+        && let Err(why) = check_entry_binds_main_params(&elf_bytes, layout.as_ref())
     {
         eprintln!(
             "error[backend-native]: `{}`: the entry `fn main` declares parameter(s) \
@@ -647,8 +647,9 @@ fn admit_merged_program(
     admission::refuse_symbolic_dims_read_as_values(&ast, text, path)?;
     let lane_error = |r: crate::ir::native_lane_profile::LaneProfileRejection| {
         format!(
-            "`{path}` is outside candidate native-lane-v1 ({}). No artifact written.",
-            r.construct
+            "`{path}` is outside candidate native-lane-v1 ({}){}. No artifact written.",
+            r.construct,
+            admission::lane_rejection_site(&r, text)
         )
     };
     if lane_v1 {
