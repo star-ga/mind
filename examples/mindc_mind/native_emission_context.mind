@@ -56,8 +56,12 @@ pub fn nec_new_profile(request: i64, schema: i64, stream_base: i64) -> i64 {
 // and final-image binding belongs to the emission orchestrator, not this record.
 pub fn nec_check(ctx: i64) -> i64 {
     if ctx == 0 { return 0; }
-    let expected: i64 = nec_new_profile(ctx + 80, __mind_load_i64(ctx), __mind_load_i64(ctx + 72));
+    let schema: i64 = __mind_load_i64(ctx);
+    let base_schema: i64 = if schema == 3 { 2 } else { schema };
+    if schema == 3 { if nb_ctx_shape_ok(ctx) == 0 { return 0; } }
+    let expected: i64 = nec_new_profile(ctx + 80, base_schema, __mind_load_i64(ctx + 72));
     if expected == 0 { return 0; }
+    if schema == 3 { __mind_store_i64(expected, 3); }
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
     while i < 52 {
@@ -71,7 +75,10 @@ pub fn nec_check(ctx: i64) -> i64 {
 }
 
 pub fn nec_free(ctx: i64) -> i64 {
-    if ctx != 0 { __mind_free(ctx); }
+    if ctx != 0 {
+        let _scope: i64 = nb_fc_free(nb_fc_scope(ctx));
+        __mind_free(ctx);
+    }
     0
 }
 

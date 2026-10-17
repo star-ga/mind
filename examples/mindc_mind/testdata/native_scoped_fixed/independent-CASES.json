@@ -1,0 +1,751 @@
+{
+  "schema": 1,
+  "status": "PRELISTED_NOT_EXECUTED",
+  "source_base": "17ea2dffec714cfa2532250a5ad13f56b5f1f7fa",
+  "prefix": {
+    "path": "capture/prefix.mind",
+    "bytes": 395479,
+    "sha256": "199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202"
+  },
+  "cases": [
+    {
+      "id": "P01-close-i32-result",
+      "purpose": "Check exact source i32 prototype and negative result sign extension.",
+      "source": {
+        "path": "sources/P01-close-i32-result.mind",
+        "bytes": 141,
+        "sha256": "9c39e719e5ed8bbf645e78e19600b93b26f4d82493e84e34995e235b101f21d2"
+      },
+      "full_source_sha256": "d006ab8615aefa9c85958d3e111895ccbd4743c8115ab4513d1fc8f2d524092c",
+      "user_lo": 395479,
+      "full_source_bytes": 395620,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "close"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P02-close-observed-tls-errno",
+      "purpose": "Observe libc TLS errno after the actual source close call, not metadata.",
+      "source": {
+        "path": "sources/P02-close-observed-tls-errno.mind",
+        "bytes": 363,
+        "sha256": "de546c689767dfc18f31473b6e68af9c0b743233ce345519fbf8af275d1fca42"
+      },
+      "full_source_sha256": "c1b09e21220fa463b378a464ef36c1701fc7081e0024c60d6039e5b8af8eb986",
+      "user_lo": 395479,
+      "full_source_bytes": 395842,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "close",
+        "__errno_location"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P03-read-ebadf",
+      "purpose": "Actual four-argument read returns -1 and updates same libc TLS errno.",
+      "source": {
+        "path": "sources/P03-read-ebadf.mind",
+        "bytes": 409,
+        "sha256": "b6ec5cedc1fc795f17bf1c93c745680b6c4c0e7c82f16a750520aff4c3eab100"
+      },
+      "full_source_sha256": "113719fe96d1059c0eb2250d5c551abd3b5a65c695bc93d882a2cca53f2f24b0",
+      "user_lo": 395479,
+      "full_source_bytes": 395888,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P04-write-ebadf",
+      "purpose": "Actual four-argument write returns -1 and updates same libc TLS errno.",
+      "source": {
+        "path": "sources/P04-write-ebadf.mind",
+        "bytes": 410,
+        "sha256": "9ff3c96cb3fc5d540c4705237807c56abe5ab71793932a357723646911de72fc"
+      },
+      "full_source_sha256": "abb38e94c9c70f889f4db039ba7c3b7d66324f1f20bb7b1833c7698de8eccea4",
+      "user_lo": 395479,
+      "full_source_bytes": 395889,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P05-empty-nonblocking-pipe",
+      "purpose": "Deterministic EAGAIN through source I/O and errno accessor.",
+      "source": {
+        "path": "sources/P05-empty-nonblocking-pipe.mind",
+        "bytes": 384,
+        "sha256": "7f06a311c463f515bf3238cddbaecf45e8f6494422ccb7a0fa98e65d2c7d310b"
+      },
+      "full_source_sha256": "ea29c4bbb6ec6bc27f3355daa4fb87496df80c9bae745d54af4281847036bf5c",
+      "user_lo": 395479,
+      "full_source_bytes": 395863,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "owned-pipe-read-fd9",
+        "nonblocking": true,
+        "initial_hex": "",
+        "writer_kept_open_by_transport": true,
+        "expected_remaining_hex": ""
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P06-positioned-pipe-espipe",
+      "purpose": "Offset zero selects pread; ESPIPE and unconsumed pipe byte prove branch.",
+      "source": {
+        "path": "sources/P06-positioned-pipe-espipe.mind",
+        "bytes": 382,
+        "sha256": "77fc7e97da55fffa70745bab270f1cdb3220dd07151925c8c11eb36c851b8f71"
+      },
+      "full_source_sha256": "d3a38afe9f17e6053940457b15a80013db88670cbfe4b7a677416d435dddf752",
+      "user_lo": 395479,
+      "full_source_bytes": 395861,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "owned-pipe-read-fd9",
+        "nonblocking": false,
+        "initial_hex": "51",
+        "writer_kept_open_by_transport": true,
+        "expected_remaining_hex": "51"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P07-nio-shortcuts-preserve-errno",
+      "purpose": "Documented thunk guards do not enter libc or change errno.",
+      "source": {
+        "path": "sources/P07-nio-shortcuts-preserve-errno.mind",
+        "bytes": 367,
+        "sha256": "f9dea28a12fc4a72280f19fb96f9417db8bbcac54639fef01cb2a486c9724daf"
+      },
+      "full_source_sha256": "d9a9e1778549258d6025f6f02c63c822274ff31fed440c51cc730c0b50cc03a9",
+      "user_lo": 395479,
+      "full_source_bytes": 395846,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      },
+      "notes": "Does not assert that a successful arbitrary libc call preserves errno."
+    },
+    {
+      "id": "P08-close-owned-inherited-fd",
+      "purpose": "Source C call changes only a child-owned fd; following source I/O sees EBADF.",
+      "source": {
+        "path": "sources/P08-close-owned-inherited-fd.mind",
+        "bytes": 632,
+        "sha256": "89d2c1709976f657f636dad3e615956918026fd228fc8e591d5f94d78cf770f7"
+      },
+      "full_source_sha256": "76e2fe1d14afc10dcd9d8aae7b5f0f180f22a92d227af755ec16218b4541fcd4",
+      "user_lo": 395479,
+      "full_source_bytes": 396111,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "close",
+        "__errno_location",
+        "read",
+        "pread",
+        "write",
+        "pwrite"
+      ],
+      "setup": {
+        "kind": "owned-pipe-read-fd9",
+        "nonblocking": false,
+        "initial_hex": "51",
+        "writer_kept_open_by_transport": true,
+        "expected_remaining_hex": ""
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "P09-typed-param-loop-live-values",
+      "purpose": "Live typed binding, repeated calls, final frame includes later locals; both routes.",
+      "source": {
+        "path": "sources/P09-typed-param-loop-live-values.mind",
+        "bytes": 436,
+        "sha256": "25db01251b2b070a0c42068a04dd29c3c4a4a81f25c865a254f351a345d75ac9"
+      },
+      "full_source_sha256": "9fc15fe0cfbbdcda07a70cd3673d0e88e4fb8e3aa370cb1a8d279c95d86556bc",
+      "user_lo": 395479,
+      "full_source_bytes": 395915,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "close"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      },
+      "notes": "Passing close does not prove preservation against every permitted SysV clobber."
+    },
+    {
+      "id": "P10-nested-argument-once",
+      "purpose": "Nested local call argument executes exactly once before the foreign call.",
+      "source": {
+        "path": "sources/P10-nested-argument-once.mind",
+        "bytes": 415,
+        "sha256": "e1f2c773df1022a9e772f2ebddba3fc005f32995232eb9b6ca1aa2aa886c3fd9"
+      },
+      "full_source_sha256": "452445badbfa4b447cc2d26ed54696568021d803ee856ee80b1af11c8f152583",
+      "user_lo": 395479,
+      "full_source_bytes": 395894,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main",
+        "close"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "C01-no-c-reference",
+      "purpose": "Exact same-packet old/new image byte preservation with no C usage.",
+      "source": {
+        "path": "sources/C01-no-c-reference.mind",
+        "bytes": 21,
+        "sha256": "ff4f2227fa623859e1c3a8533d9f9288f1f406337112f5119ca7e753f34d80c5"
+      },
+      "full_source_sha256": "b00c781f882e63baa75ac4f511e7ad6b2f0fc1b4f737df10d067ef1db67cbe9d",
+      "user_lo": 395479,
+      "full_source_bytes": 395500,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      },
+      "notes": "Compare this packet to preintegration image, never compare different source notes."
+    },
+    {
+      "id": "C02-dormant-declaration-reference",
+      "purpose": "Unused extern adds no import; exact same-packet preintegration comparison.",
+      "source": {
+        "path": "sources/C02-dormant-declaration-reference.mind",
+        "bytes": 66,
+        "sha256": "d364e08506c25842518ab6276c1df7e6f91e7376fa758e6ec43ede475436a238"
+      },
+      "full_source_sha256": "5a606e83a4951451d82ac99bea498b8383ff90071afc626ac1f0c850585dd1c1",
+      "user_lo": 395479,
+      "full_source_bytes": 395545,
+      "expected_admission": "accept",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "expected_symbols": [
+        "__libc_start_main"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      }
+    },
+    {
+      "id": "R01-undeclared-close",
+      "purpose": "Four unrelated prefix declarations do not authorize a user call.",
+      "source": {
+        "path": "sources/R01-undeclared-close.mind",
+        "bytes": 46,
+        "sha256": "89efb93715f50684f5570aef857700c276959ebac71b2ab082ea1707062670d1"
+      },
+      "full_source_sha256": "6122000dce4083bb1969d1f595059027bbfc7c28136faa155c47e01f4ff62319",
+      "user_lo": 395479,
+      "full_source_bytes": 395525,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R02-undeclared-errno",
+      "purpose": "std.process declaration cannot authorize an undeclared user accessor.",
+      "source": {
+        "path": "sources/R02-undeclared-errno.mind",
+        "bytes": 45,
+        "sha256": "b08db2b3f98ca658553c787f9976a2b3f350f0101aae16bacc18d822186ecbf1"
+      },
+      "full_source_sha256": "810b2fe617ec8aff5eaaca240a4db6acd22168bc7b0de364003770e8ba2b323d",
+      "user_lo": 395479,
+      "full_source_bytes": 395524,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R03-duplicate-same-unit",
+      "purpose": "Identical names in two blocks of the same TU remain duplicate declarations.",
+      "source": {
+        "path": "sources/R03-duplicate-same-unit.mind",
+        "bytes": 136,
+        "sha256": "782af07261e36beba6e06a1db689b279045c32e6592910ce143e3a3c70796c82"
+      },
+      "full_source_sha256": "46b2585248d843c4b7051200b61e2af6391873fd7d7c7577e1b13e8023ee87e1",
+      "user_lo": 395479,
+      "full_source_bytes": 395615,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R04-wrong-close-parameter",
+      "purpose": "User i64 prototype cannot inherit the prefix correct i32 prototype.",
+      "source": {
+        "path": "sources/R04-wrong-close-parameter.mind",
+        "bytes": 82,
+        "sha256": "2955850aa6cd4608357d9baa4a270ca73ed99a3a4757337e548ff6c7c67e60c2"
+      },
+      "full_source_sha256": "5f9a447c41ee2dbbb4825435c447d74fcd28b1826da4954588a0c439f8f5afab",
+      "user_lo": 395479,
+      "full_source_bytes": 395561,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R05-wrong-close-result",
+      "purpose": "Result source width must match the bound library contract.",
+      "source": {
+        "path": "sources/R05-wrong-close-result.mind",
+        "bytes": 84,
+        "sha256": "903ae96da6d5ade5fa6d9c8f8f6da88fab8eb8f02b17113ca7727e69d8470b82"
+      },
+      "full_source_sha256": "eb87f118c495f5ef141372340a734967dc763914a1d5402273bd5f0a664352ad",
+      "user_lo": 395479,
+      "full_source_bytes": 395563,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R06-errno-wrong-qualifier",
+      "purpose": "Qualifiers remain part of the original result type.",
+      "source": {
+        "path": "sources/R06-errno-wrong-qualifier.mind",
+        "bytes": 102,
+        "sha256": "5a8946ce6db0564c502644712d5300f53a46e9f5f42bdcd0fc204264b3da33cf"
+      },
+      "full_source_sha256": "29bca2a2062ac6928cd938caaa28bc79e3211f8ea981524775edfc81c3a655b8",
+      "user_lo": 395479,
+      "full_source_bytes": 395581,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R07-errno-wrong-depth",
+      "purpose": "Pointer depth cannot be erased to generic pointer ABI before binding.",
+      "source": {
+        "path": "sources/R07-errno-wrong-depth.mind",
+        "bytes": 105,
+        "sha256": "dbe2b836a08fafa5ec89069a1b7bff9d5eefd3e74bbd0489be1d6f83af8859a8"
+      },
+      "full_source_sha256": "ba7ea82a12922080f4a2b77617560fd4d0c1be1df6e50a2b0e7a714a60367958",
+      "user_lo": 395479,
+      "full_source_bytes": 395584,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R08-local-callee-shadow",
+      "purpose": "Live local noncallable binding cannot fall through to a foreign name.",
+      "source": {
+        "path": "sources/R08-local-callee-shadow.mind",
+        "bytes": 108,
+        "sha256": "05b8db56b82bb1127fa04fa06e64ed04244714818b5e5ec8d04b442203a688c2"
+      },
+      "full_source_sha256": "57d7df5161ab599a6b1fc0bff2b7cdbebf17b60d5bfa211e60c3513702c82188",
+      "user_lo": 395479,
+      "full_source_bytes": 395587,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R09-typed-bool-shadow",
+      "purpose": "Actual live operand type, not original same-name parameter type.",
+      "source": {
+        "path": "sources/R09-typed-bool-shadow.mind",
+        "bytes": 153,
+        "sha256": "ca94ed1ff20b817c916b236ec8d2540729c2ee19f05649ca65b1452ee95e7c07"
+      },
+      "full_source_sha256": "e2f4565bea1b715fa765d44ea086cf4c573ed29b992bf04b70129114ebb2c025",
+      "user_lo": 395479,
+      "full_source_bytes": 395632,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R10-extra-argument",
+      "purpose": "Exact arity before call emission.",
+      "source": {
+        "path": "sources/R10-extra-argument.mind",
+        "bytes": 100,
+        "sha256": "e17732bb61b9044a83be3f8875b6994814a7a7737ec06d55077171037fce064f"
+      },
+      "full_source_sha256": "073d56e2cb3659de407997a0e782ff569552e233ad015538c8b74851ea4744eb",
+      "user_lo": 395479,
+      "full_source_bytes": 395579,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R11-local-body-and-extern",
+      "purpose": "Same-unit body/declaration namespace collision cannot choose first or last.",
+      "source": {
+        "path": "sources/R11-local-body-and-extern.mind",
+        "bytes": 120,
+        "sha256": "503f7a5f066e2af18d1f6b602ad73dd5294191f725a2760bd7ebf657fcf7ac9b"
+      },
+      "full_source_sha256": "714906ea28df81510226b75aada9d5c557c541e2e4c3c262b24f4d67eae89700",
+      "user_lo": 395479,
+      "full_source_bytes": 395599,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R12-fixed-looking-variadic",
+      "purpose": "Known actual libc variadic is not admitted as an invented fixed call.",
+      "source": {
+        "path": "sources/R12-fixed-looking-variadic.mind",
+        "bytes": 136,
+        "sha256": "5302c8daa3a2dbc2db4a8bbf32c8259d09fa30e7408c0f8b1ea36bbab675e2d0"
+      },
+      "full_source_sha256": "6579024bf1b27a53170d9b589cde4f65c329534e121a8553d3c7e3568396d12e",
+      "user_lo": 395479,
+      "full_source_bytes": 395615,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R13-nonreturning-call",
+      "purpose": "Void syntax does not erase known nonreturning control-flow effects.",
+      "source": {
+        "path": "sources/R13-nonreturning-call.mind",
+        "bytes": 82,
+        "sha256": "b43be48755f6a2aa2136a051d6be827157475e44b49a59808ef1f69d1217eaab"
+      },
+      "full_source_sha256": "5656b49667de38d2126bccf19ab4a45589b60f805cb688b9f43a72a2365d4df4",
+      "user_lo": 395479,
+      "full_source_bytes": 395561,
+      "expected_admission": "refuse",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    }
+  ],
+  "pending_visibility_case": "pending/P11-public-std-and-user-close.mind",
+  "pending_reason": "Author must specify official public std visibility/import rule; not in denominator."
+}

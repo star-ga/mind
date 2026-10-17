@@ -1,0 +1,4 @@
+extern "C" { unsafe fn f(x:i32)->i32; }
+fn f(x:i64)->i64 { x }
+fn caller(v:i32)->i32 { v }
+fn main()->i64 { caller(f(0)) as i64 }

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2384 | **Est. tokens:** ~4,303,509
-**Generated:** 2026-10-17 07:30 UTC
+**Files:** 2446 | **Est. tokens:** ~4,349,915
+**Generated:** 2026-10-17 07:35 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 276 | ~773,341 |
+| `examples/mindc_mind/` | 280 | ~787,020 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -80,6 +80,9 @@
 | `examples/mindc_mind/testdata/native_misc/` | 37 | ~4,969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
+| `examples/mindc_mind/testdata/native_scoped_fixed/` | 8 | ~17,608 |
+| `examples/mindc_mind/testdata/native_scoped_fixed/observers/` | 7 | ~7,820 |
+| `examples/mindc_mind/testdata/native_scoped_fixed/sources/` | 43 | ~7,299 |
 | `examples/mindc_mind/testdata/native_source_driver/` | 4 | ~3,237 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
 | `examples/mindc_mind/testdata/selfhost_loop_bounded/` | 1 | ~269 |
@@ -746,7 +749,8 @@
 - `native_dynamic.mind` (~4642 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_emission_context.md` (~3838 tok, huge) — Explicit target context and source-lowered module parts
-- `native_emission_context.mind` (~1142 tok, large) — Copyright 2026 STARGA Inc.
+- `native_emission_context.mind` (~1214 tok, large) — Copyright 2026 STARGA Inc.
+- `native_fixed_scope_manifest.mind` (~4346 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
 - `native_libc_binding_check.py` (~6416 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
@@ -766,12 +770,15 @@
 - `native_libc_startup_mutations.tsv` (~134 tok, small) — id	change	case	expected_detection
 - `native_pointer_origin_cases.json` (~3497 tok, huge) — Keys: version, author, status, scope, source_catalogues
 - `native_posix.md` (~1979 tok, huge) — Linux x86-64 POSIX substrate
+- `native_scoped_source_driver.mind` (~2228 tok, huge) — STARGA Inc. NSF_STDIN_V2 source compiler transport.
+- `native_scoped_source_image.md` (~1925 tok, huge) — Scoped fixed C calls: NSF/1 candidate
+- `native_scoped_source_image.mind` (~4955 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_source_driver_check.md` (~2601 tok, huge) — Reproducing the source-input adapter diagnostic
 - `native_source_driver_check.py` (~5775 tok, huge) — Explicit-instrument NSI_STDIN_V1 diagnostic, not compiler qualification.
 - `native_source_driver.md` (~906 tok, large) — Native source-input adapter
 - `native_source_driver.mind` (~2228 tok, huge) — STARGA Inc. NSI_STDIN_V1 source compiler transport.
 - `native_source_image.md` (~2374 tok, huge) — Source-lowered Linux libc image candidate
-- `native_source_image.mind` (~3813 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_source_image.mind` (~3966 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_stream_io_case_corrections.json` (~5416 tok, huge) — Keys: original_contract, original_sha256, corrected_contract, corrected_sha256, changes
 - `native_stream_io_cases.json` (~3715 tok, huge) — Keys: contract, cases
 - `native_stream_io_cases_v2.json` (~4374 tok, huge) — Keys: contract, cases
@@ -1377,6 +1384,74 @@
 - `scalar_owner_named.mind` (~157 tok, small) — The prefold passes rewrite field reads into `__mind_load_i64` calls whose
 - `wrong_owner.mind` (~40 tok, tiny) — fn main() -> i64 {
 - `wrong_type.mind` (~28 tok, tiny) — fn main() -> i64 {
+### `examples/mindc_mind/testdata/native_scoped_fixed/`
+
+- `independent-CASES.json` (~5969 tok, huge) — Keys: schema, status, source_base, prefix, cases
+- `independent-EARLY_SOURCE_REVIEW.md` (~1656 tok, huge) — Early scoped fixed-call source review
+- `independent-PACKETS.json` (~2920 tok, huge) — Keys: schema, status, wire, HOME_requirement, packets
+- `independent-SCOPE_CASES.json` (~1048 tok, large) — Keys: schema, status, cases
+- `independent-SUPPLEMENT.json` (~972 tok, large) — Keys: schema, status, cases, amendment
+- `independent-VISIBILITY_SUPPLEMENT.json` (~238 tok, medium) — Keys: schema, status, id, purpose, source
+### `examples/mindc_mind/testdata/native_scoped_fixed/observers/`
+
+- `geometry.mind` (~714 tok, large) — STARGA Inc. Geometry ownership observer, not a production context validator.
+- `geometry-owner-mutant.mind` (~714 tok, large) — STARGA Inc. Geometry ownership observer, not a production context validator.
+- `staged-frame-range-mutant.mind` (~1273 tok, large) — STARGA Inc. Exact source-extracted staged-state helper controls.
+- `staged-rebase-mutant.mind` (~1278 tok, large) — STARGA Inc. Exact source-extracted staged-state helper controls.
+- `staged-rollback-mutant.mind` (~1280 tok, large) — STARGA Inc. Exact source-extracted staged-state helper controls.
+- `staged-scope-end-mutant.mind` (~1281 tok, large) — STARGA Inc. Exact source-extracted staged-state helper controls.
+- `staged-state.mind` (~1280 tok, large) — STARGA Inc. Exact source-extracted staged-state helper controls.
+### `examples/mindc_mind/testdata/native_scoped_fixed/`
+
+- `README.md` (~179 tok, small) — NSF/1 frozen diagnostic catalogue
+### `examples/mindc_mind/testdata/native_scoped_fixed/sources/`
+
+- `A01-branch-local-call-targets.mind` (~85 tok, small) — fn af_helper(x:i64)->i64 {x+7}
+- `A02-nested-foreign-call.mind` (~33 tok, tiny) — fn main()->i64 {let x:i64=close(close((0-1) as i32)) as i64;if x!=0-1{return 91;}0}
+- `A03-i64-argument.mind` (~23 tok, tiny) — fn main()->i64 {let x:i64=0-1;close(x) as i64}
+- `A04-u32-argument.mind` (~23 tok, tiny) — fn main()->i64 {let x:u32=1;close(x) as i64}
+- `A05-f64-argument.mind` (~23 tok, tiny) — fn main()->i64 {let x:f64=1.0;close(x) as i64}
+- `A06-parameter-callee-shadow.mind` (~27 tok, tiny) — fn main()->i64 {let close:i64=3;close((0-1) as i32) as i64}
+- `A07-unknown-library-symbol.mind` (~25 tok, tiny) — fn main()->i64 {af_unknown((0-1) as i32) as i64}
+- `A08-reserved-intrinsic-declaration.mind` (~21 tok, tiny) — fn main()->i64 {__mind_alloc(8)}
+- `A09-alias-import.mind` (~11 tok, tiny) — fn main()->i64 {0}
+- `A10-primitive-type-shadow.mind` (~13 tok, tiny) — fn main()->i64 {0}
+- `A11-calls-256.mind` (~2716 tok, huge) — fn main()->i64 {let mut total:i64=0;
+- `A12-calls-257.mind` (~2727 tok, huge) — fn main()->i64 {let mut total:i64=0;
+- `C01-no-c-reference.mind` (~6 tok, tiny) — fn main()->i64 { 0 }
+- `C02-dormant-declaration-reference.mind` (~17 tok, tiny) — fn main()->i64 { 0 }
+- `P01-close-i32-result.mind` (~36 tok, tiny) — fn main()->i64 {
+- `P02-close-observed-tls-errno.mind` (~91 tok, small) — fn main()->i64 {
+- `P03-read-ebadf.mind` (~103 tok, small) — fn main()->i64 {
+- `P04-write-ebadf.mind` (~103 tok, small) — fn main()->i64 {
+- `P05-empty-nonblocking-pipe.mind` (~96 tok, small) — fn main()->i64 {
+- `P06-positioned-pipe-espipe.mind` (~96 tok, small) — fn main()->i64 {
+- `P07-nio-shortcuts-preserve-errno.mind` (~92 tok, small) — fn main()->i64 {
+- `P08-close-owned-inherited-fd.mind` (~158 tok, small) — fn main()->i64 {
+- `P09-typed-param-loop-live-values.mind` (~109 tok, small) — fn scfc_apply(fd:i32)->i64 {
+- `P10-nested-argument-once.mind` (~104 tok, small) — fn scfc_argument(p:i64)->i32 {
+- `P11-public-std-and-user-close.mind` (~73 tok, small) — fn main()->i64 {
+- `R01-undeclared-close.mind` (~12 tok, tiny) — fn main()->i64 { close((0-1) as i32) as i64 }
+- `R02-undeclared-errno.mind` (~12 tok, tiny) — fn main()->i64 { __errno_location() as i64 }
+- `R03-duplicate-same-unit.mind` (~34 tok, tiny) — fn main()->i64 { close((0-1) as i32) as i64 }
+- `R04-wrong-close-parameter.mind` (~21 tok, tiny) — fn main()->i64 { close(0-1) as i64 }
+- `R05-wrong-close-result.mind` (~21 tok, tiny) — fn main()->i64 { close((0-1) as i32) }
+- `R06-errno-wrong-qualifier.mind` (~26 tok, tiny) — fn main()->i64 { __errno_location() as i64 }
+- `R07-errno-wrong-depth.mind` (~27 tok, tiny) — fn main()->i64 { __errno_location() as i64 }
+- `R08-local-callee-shadow.mind` (~27 tok, tiny) — fn main()->i64 { let close:i64=7; close((0-1) as i32) as i64 }
+- `R09-typed-bool-shadow.mind` (~39 tok, tiny) — fn scfc_bad(fd:i32)->i64 {
+- `R10-extra-argument.mind` (~25 tok, tiny) — fn main()->i64 { close((0-1) as i32,0 as i32) as i64 }
+- `R11-local-body-and-extern.mind` (~30 tok, tiny) — fn close(fd:i32)->i32 { fd }
+- `R12-fixed-looking-variadic.mind` (~34 tok, tiny) — fn main()->i64 { open(0 as *const u8,0 as i32,0 as i32) as i64 }
+- `R13-nonreturning-call.mind` (~21 tok, tiny) — fn main()->i64 { _exit(0 as i32); 0 }
+- `R14-untyped-close-literal.mind` (~21 tok, tiny) — fn main()->i64 { close(0-1) as i64 }
+- `R15-private-std-local-edge.mind` (~8 tok, tiny) — fn main()->i64 { proc_errno() }
+- `R16-unresolved-user-import.mind` (~28 tok, tiny) — fn main()->i64 { close((0-1) as i32) as i64 }
+- `R17-public-std-without-import.mind` (~69 tok, small) — fn main()->i64 {
+- `R18-foreign-local-name-collision.mind` (~33 tok, tiny) — fn f(x:i64)->i64 { x }
+### `examples/mindc_mind/testdata/native_scoped_fixed/`
+
+- `SUPPLEMENT.json` (~4626 tok, huge) — Keys: schema, status, cases, observer_contract, mutations
 ### `examples/mindc_mind/testdata/native_source_driver/`
 
 - `catalog.py` (~1414 tok, large) — Original 38 adapter controls and four MIND source mutants; enumeration only."""

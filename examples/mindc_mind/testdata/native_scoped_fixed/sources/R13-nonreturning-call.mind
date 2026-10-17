@@ -1,0 +1,2 @@
+extern "C" { unsafe fn _exit(status:i32); }
+fn main()->i64 { _exit(0 as i32); 0 }
