@@ -19,7 +19,11 @@ The bridge selects candidate `native-lane-v1` only when the chosen native
 compiler contains the distinct byte marker `48 b8 6e 62 6c 61 6e 65 30 31`
 (`movabs rax` with immediate bytes `nblane01`). The existing `nbscope1` marker
 and a bounded memory layout do not select this profile. Unmarked compilers
-retain the historical frozen source/IR predicates and collision rules.
+retain the historical frozen source/IR predicates and collision rules. Under
+them a call to a compiler intrinsic stays an unresolved edge; the refusal
+names the intrinsic and the missing mark rather than reading as a forgotten
+user definition. The historical seeds' intrinsic lowering is not proven in
+every value position, so that refusal is not relaxed.
 
 This is a version compatibility marker. It is not a signature, compiler hash,
 independent validation or qualified release pin. A user-supplied compiler
