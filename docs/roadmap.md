@@ -2772,3 +2772,53 @@ load-time policy on the device.
 
 Proposed; depends on Phase 19.1 A and B (offline keygen and a published trust anchor).
 Until then the capability is described as *signed (opt-in)*, not as signed releases.
+
+## Phase 26 — Seeded constraint-propagation generator, a showcase (proposed, 2026-10-16)
+
+**Goal.** A second `examples/` generator beside Phase 24. It learns the local patterns of a
+small sample grid and their allowed neighbours, then fills a much larger grid: pick the
+undecided cell with the lowest entropy, choose one of its remaining patterns with a seeded
+weighted draw, remove every neighbour pattern that no longer fits, and repeat. A cell with
+no pattern left is a contradiction, and the run restarts on the next seed. Same sample,
+same seed gives the same output grid, byte for byte, on x86, ARM and GPU.
+
+**Why it fits MIND.** This method, often called wave function collapse, is classical
+constraint propagation; nothing about it is quantum. Common implementations are not
+reproducible across machines: they rank cells by a floating-point Shannon entropy built
+from `log` calls, break ties by whatever order a hash map returns, and draw from a
+floating-point random generator. Any of those can pick a different cell on a different
+CPU, and from that point the two outputs share nothing. MIND removes all three: entropy in
+Q16.16 with a pinned `log` table, a fixed tie-break order, and an integer seeded draw.
+Unlike Phase 24 it has real per-step arithmetic in the choice, so it is a stronger test of
+the fixed-point path, and the result is visual enough to show on the site.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 26.1 | Pattern extraction from a sample grid, adjacency table as bitsets, propagation queue | Extracted pattern count and adjacency table hash identical on avx2 and neon |
+| 26.2 | Q16.16 entropy with a pinned `log2` table, row-major tie-break, integer weighted draw from the seeded RNG chosen in Phase 24 | Output-grid hash identical on avx2 and neon for 100 fixed seeds |
+| 26.3 | Explicit outcomes `SOLVED`, `CONTRADICTION` (with step count) and `BUDGET_EXHAUSTED`; restart policy is part of the spec | Contradicting seeds fail at the same step on every substrate |
+| 26.4 | Evidence record binding sample-grid hash, rule-table hash, seed, decision count and output-grid hash, reusing the Phase 24.3 record shape | `mindc verify` detects a one-byte change in any field |
+| 26.5 | CPU vs GPU timing of the propagation step, reported as measured numbers | Same hashes on both; a GPU speedup is reported only if measured, since propagation is irregular and branch-heavy |
+
+### Firewall — do not cross it
+
+- No floats in the choice path: entropy, weights and the random draw are all integer or
+  Q16.16. A floating-point reference build may exist only as a comparison, never as the
+  output.
+- Selection order, tie-break order and restart policy are written in the spec; a fixed
+  seed alone does not make two runs identical.
+- Example and library path only; nothing enters the default build, and the compiler's core
+  semantics do not change for it.
+- If a narrow reusable constraint-solving module grows out of this, it lands in `std` only
+  after 26.2 passes, and it stays a library, not a language feature.
+
+### Open questions — answer before this gets a milestone
+
+- One shared generator crate for Phases 24 and 26 (same RNG, same evidence record), or two
+  examples that share only `std` pieces?
+- Overlapping patterns only, or also hand-written tile sets with explicit adjacency?
+- How large can the grid get before the propagation queue needs a bounded-memory design?
+
+Proposed; a showcase, not on the critical path. Depends on the RNG decision in Phase 24.
