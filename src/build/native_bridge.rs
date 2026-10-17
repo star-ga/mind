@@ -686,7 +686,50 @@ fn admit_merged_program(
     let copies = namespace::identical_private_seed_copies(&ast, text, std_sources, reserved);
     let reserved: BTreeSet<String> = reserved.difference(&copies).cloned().collect();
     crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", &reserved)
-        .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+        .map_err(|r| historical_closure_refusal(&r))?;
     let _ = path;
     Ok((ast, ir, false))
+}
+
+#[cfg(feature = "std-surface")]
+/// The historical closure refusal, naming the compiler selection when the
+/// unresolved callee is a compiler intrinsic.
+///
+/// Only a compiler carrying the native-lane-v1 mark binds intrinsics. An
+/// unmarked compiler gets the historical frozen profile, which binds none: the
+/// closure refuses the edge here, and the frozen fence would refuse the same
+/// call as `call.undefined_or_builtin`. That strictness is deliberate and this
+/// adds an explanation, never a binding. The unmarked seeds' intrinsic
+/// lowering is not proven in every value position. Measured on the d2a716ff
+/// embedded bounded seed (sha256 `e9de4480…`): a store whose result is the tail
+/// value of a helper (`deep_dirty_then_tail` in
+/// `native_lane_value_shapes_smoke.py`) exits 19 natively against 17 on MLIR,
+/// because the seed reads a stale stack slot. Binding intrinsics here would
+/// turn this refusal into that silent wrong result.
+///
+/// Without the note the refusal read as a forgotten user definition, and a
+/// qualification round filed it against this closure rather than against the
+/// compiler selection. The kind label, the first line and the refused set are
+/// unchanged. A callee outside the lane's exact intrinsic table gets no note.
+fn historical_closure_refusal(r: &crate::ir::native_closure::ClosureRejection) -> String {
+    let refusal = format!("{} ({})", r.detail, r.kind);
+    // `reachable_from` words an unresolved edge "`caller` calls `callee`, ...";
+    // identifiers carry no backtick, so the split is unambiguous.
+    let intrinsic = (r.kind == "closure.unresolved_edge")
+        .then(|| r.detail.split_once(" calls `"))
+        .flatten()
+        .and_then(|(_, rest)| rest.split_once('`'))
+        .map(|(callee, _)| callee)
+        .filter(|callee| crate::ir::native_lane_profile::intrinsic_arity(callee).is_some());
+    match intrinsic {
+        None => refusal,
+        Some(callee) => format!(
+            "{refusal}\n  `{callee}` is a compiler intrinsic. The selected native compiler does \
+             not carry the native-lane-v1 compatibility mark, so the historical frozen \
+             profile applies, and it binds no compiler intrinsic. Only native-lane-v1 admits \
+             intrinsic calls (docs/native-closure-lane.md). This is a refusal, not a missing \
+             definition: use a native compiler that carries the mark, or `--backend mlir`. \
+             No artifact written."
+        ),
+    }
 }
