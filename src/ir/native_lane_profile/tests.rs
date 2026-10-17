@@ -466,3 +466,52 @@ fn divergence_is_recognised_only_when_control_surely_leaves() {
         exit_ids: vec![],
     }]));
 }
+
+/// The refusal classes the MIND-Lab lane-admission probe reported, as generic
+/// shapes. The scalar ones are admitted together; `print` and a C extern block,
+/// which no native-lane compiler implements, refuse at a located source site.
+#[test]
+fn probe_refusals_are_admitted_or_located() {
+    // lane.source.top_level (plain import), lane.ir.discard_result_use (a store
+    // result read as a value) and lane.type.mismatch (a store-returning helper,
+    // a diverging branch, full-width casts) in one program.
+    let scalar = "import helper;\n\
+        fn w_set(w: i64, i: i64, v: i64) -> i64 { __mind_store_i64(w + i * 8, v) }\n\
+        fn decode(first: i64) -> i64 { let mut n = 0; if first < 128 { n = 1; } \
+        else { if first >= 194 { n = 2; } else { return 0 - 1; } } return n; }\n\
+        fn ratio(a: i64, b: i64) -> i64 { return ((a as f64) / (b as f64) * 100.0) as i64; }\n\
+        fn main() -> i64 { let w = __mind_alloc(64); let bad = w_set(w, 1, 5) + w_set(w, 2, 6); \
+        return bad + decode(65) + ratio(1, 4); }\n";
+    assert_eq!(admits(scalar), Ok(()), "{scalar}");
+
+    // lane.call.unknown on the evaluator: `print` lowers to runtime calls no
+    // native-lane compiler implements. It now refuses at the call, located.
+    let evaluator = "fn main(argc: i64, argv: i64) -> i64 {\n    let count: i64 = argc + argv;\n    \
+        if count < 1 { return 2; }\n    print(count); 0\n}\n";
+    for err in [
+        source_admits(evaluator).unwrap_err(),
+        admits(evaluator).unwrap_err(),
+    ] {
+        assert_eq!(err.construct, "lane.source.print");
+        assert_eq!(err.function.as_deref(), Some("main"));
+        assert_eq!(err.at, Some(evaluator.find("print").unwrap()));
+    }
+    for source in [
+        "fn main() -> i64 { print(1); 0 }",
+        "fn main() -> i64 { print(\"label\"); 0 }",
+        "fn main() -> i64 { print(1, 2); 0 }",
+    ] {
+        assert_eq!(
+            source_admits(source).unwrap_err().construct,
+            "lane.source.print"
+        );
+    }
+
+    // The C-extern programs: the block itself refuses, at its own offset.
+    let externs =
+        "fn main() -> i64 { return 0; }\nextern \"C\" {\n    fn close(fd: i32) -> i32;\n}\n";
+    let err = source_admits(externs).unwrap_err();
+    assert_eq!(err.construct, "lane.extern.unimplemented");
+    assert_eq!(err.function, None);
+    assert_eq!(err.at, Some(externs.find("extern").unwrap()));
+}

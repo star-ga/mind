@@ -427,13 +427,12 @@ impl Source<'_> {
                     _ => reject("lane.source.cast"),
                 }
             }
-            Node::Print { args, .. } => {
-                if args.len() != 1 {
-                    return reject("lane.source.print_arity");
-                }
-                equal(self.node(&args[0], env)?, Ty::I64)?;
-                Ok(Ty::Unit)
-            }
+            // `print` lowers to the `printI64`/`printNewline`/`print_bytes`
+            // runtime calls (src/eval/lower.rs, `Node::Print`). No native-lane
+            // compiler implements them and the IR walker types none of them,
+            // so admitting `print` here only moved its refusal to an unlocated
+            // IR call. Refuse it at its source site instead.
+            Node::Print { .. } => reject("lane.source.print"),
             Node::ExternBlock { .. } => reject("lane.extern.unimplemented"),
             Node::FnDef(..) => reject("lane.source.nested_function"),
             Node::Const { .. }

@@ -286,7 +286,6 @@ pub(super) fn refuse_symbolic_dims_read_as_values(
     ))
 }
 
-/// Lower behind a panic boundary: a lowering `panic!` becomes a refusal.
 /// Where a candidate-lane refusal happened, as text for its diagnostic: the
 /// function and the 1-based line/column of the refused node in `text`, the
 /// composed user image the profile checked (for a single-file program, that
@@ -312,6 +311,7 @@ pub(super) fn lane_rejection_site(
     site
 }
 
+/// Lower behind a panic boundary: a lowering `panic!` becomes a refusal.
 pub(super) fn lower_without_panicking(
     ast: &Module,
     path: &str,

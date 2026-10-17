@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2449 | **Est. tokens:** ~4,360,541
-**Generated:** 2026-10-17 11:49 UTC
+**Files:** 2449 | **Est. tokens:** ~4,361,280
+**Generated:** 2026-10-17 12:27 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/` | 39 | ~115,183 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 8 | ~18,086 |
+| `docs/compiler/` | 8 | ~18,120 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -112,7 +112,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 31 | ~118,036 |
+| `scripts/` | 31 | ~118,091 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -145,13 +145,13 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 12 | ~110,621 |
+| `src/ir/` | 12 | ~110,665 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/ir/native_c_abi/` | 1 | ~3,735 |
-| `src/ir/native_lane_profile/` | 1 | ~4,700 |
+| `src/ir/native_lane_profile/` | 1 | ~5,306 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 7 | ~16,474 |
@@ -478,7 +478,7 @@
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
 - `NATIVE_C_VARIADIC_PLAN.md` (~5675 tok, huge) — Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
-- `NATIVE_LANE_PROFILE.md` (~1258 tok, large) — Typed scalar delivery profile
+- `NATIVE_LANE_PROFILE.md` (~1292 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
 - `NATIVE_STRING_VALUES.md` (~1827 tok, huge) — Native string value decoding
 ### `docs/design/`
@@ -1637,7 +1637,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~10465 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10520 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -1977,10 +1977,10 @@
 ### `src/ir/`
 
 - `native_closure.rs` (~5238 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_lane_profile.rs` (~8772 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_lane_profile.rs` (~8816 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
-- `tests.rs` (~4700 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~5306 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.

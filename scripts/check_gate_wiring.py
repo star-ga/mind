@@ -172,7 +172,10 @@ GATED_EVENTS = ("push", "pull_request")
 # framing/mutations, independent source notes, and additive hash refusals.
 # The variadic planner adds its capture wrapper and sealed run.sh transport.
 # All plan assertions remain MIND; these scripts add no source admission.
-HARNESS_CEILING = 312  # Exact reviewed integration inventory; no spare allowance.
+# The native-lane value-shape smoke adds one runner: the only check that builds
+# each admitted lane shape through mindc with a marked compiler and MLIR and
+# compares both executables with independently computed values.
+HARNESS_CEILING = 313  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
