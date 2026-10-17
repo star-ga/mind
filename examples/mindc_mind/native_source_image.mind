@@ -80,7 +80,9 @@ pub fn nsi_io_size(w: i64) -> i64 {
 pub fn nsi_bind_io(parts: i64, w: i64, diag: i64) -> i64 {
     let ctx: i64 = __mind_load_i64(parts + 176);
     if nec_check(ctx) == 0 { return nsi_error(diag, 9, 1); }
-    if __mind_load_i64(ctx) != 2 { return nsi_error(diag, 9, 2); }
+    if __mind_load_i64(ctx) != 2 {
+        if __mind_load_i64(ctx) != 3 { return nsi_error(diag, 9, 2); }
+    }
     if __mind_load_i64(ctx + 72) != nd_code_addr() + nsi_io_offset() { return nsi_error(diag, 9, 3); }
     let used: i64 = __mind_load_i64(parts + 184);
     if used == 0 { return 1; }
@@ -105,6 +107,10 @@ pub fn nsi_import_row(w: i64, bundle: i64, i: i64) -> i64 {
     0
 }
 pub fn nsi_imports(w: i64) -> Vec {
+    let supplied: i64 = __mind_load_i64(w + 1120);
+    if supplied != 0 {
+        return Vec { addr: __mind_load_i64(supplied), len: __mind_load_i64(supplied + 8), cap: __mind_load_i64(supplied + 16) };
+    }
     let name: String = nsi_text(w, 0);
     let version: String = nsi_text(w, 1);
     __mind_store_i64(w + 640, string_addr(name));
@@ -130,6 +136,10 @@ pub fn nsi_patch_row(w: i64, bundle: i64, i: i64) -> i64 {
 pub fn nsi_patches(w: i64, displacement: i64) -> Vec {
     __mind_store_i64(w + 672, displacement);
     __mind_store_i64(w + 680, 0);
+    let supplied: i64 = __mind_load_i64(w + 1128);
+    if supplied != 0 {
+        return Vec { addr: __mind_load_i64(supplied), len: __mind_load_i64(supplied + 8), cap: __mind_load_i64(supplied + 16) };
+    }
     __mind_store_i64(w + 632, w + 672);
     let bundle: i64 = __mind_load_i64(w + 752);
     if bundle == 0 { return Vec { addr: w + 632, len: 1, cap: 1 }; }
@@ -172,8 +182,8 @@ pub fn nsi_geometry_same(old: i64, request: i64) -> i64 {
     if nec_check(old) == 0 { return 0; }
     let current: i64 = nec_new(request);
     if current == 0 { return 0; }
-    if __mind_load_i64(old) == 2 {
-        __mind_store_i64(current, 2);
+    if __mind_load_i64(old) >= 2 {
+        __mind_store_i64(current, __mind_load_i64(old));
         // Derive the target from the FINAL checked plan, not a supplied pointer.
         __mind_store_i64(current + 72, __mind_load_i64(current + 184) + nsi_io_offset());
     }
@@ -186,7 +196,9 @@ pub fn nsi_geometry_same(old: i64, request: i64) -> i64 {
         if __mind_load_i64(old + i * 8) != __mind_load_i64(current + i * 8) { equal = 0; }
         i = i + 1;
     }
-    let _free: i64 = nec_free(current);
+    // This comparison temporary is416 bytes from nec_new, even when its
+    // version word is3. It owns no scope and must never use nec_free.
+    __mind_free(current);
     equal
 }
 pub fn nsi_symbols(parts: i64, w: i64, main_length: i64) -> i64 {

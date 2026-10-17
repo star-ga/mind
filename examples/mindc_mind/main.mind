@@ -33337,18 +33337,362 @@ pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
 // authorization token. Zero preserves the original static backend exactly.
 // Context geometry describes the EMITTED program. The running compiler's
 // nb_arena_low/short/checkpoint resource guards remain independent.
+// Scoped-call storage is internal owned compiler state, never a wire input.
+// Header128: source,length,user_lo at8/16/24, units at40, records48,
+// count56, current unit72, function checkpoint80. Unit rows32:
+// start,length,original per-unit registry,reserved. Call rows64:
+// code offset,unit,row index,arity,arg0 displacement,result displacement,
+// final frame,pointer-result. Only final NCE emission makes staged calls usable.
+pub fn nb_fc_scope(ctx: i64) -> i64 {
+    if ctx == 0 { return 0; }
+    if __mind_load_i64(ctx) != 3 { return 0; }
+    __mind_load_i64(ctx + 416)
+}
+pub fn nb_fc_free(scope: i64) -> i64 {
+    if scope == 0 { return 0; }
+    let units: i64 = __mind_load_i64(scope + 40);
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(scope + 32) {
+        let registry: i64 = __mind_load_i64(units + i * 32 + 16);
+        let _r: i64 = nb_cabi_free(registry);
+        i = i + 1;
+    }
+    __mind_free(units);
+    __mind_free(__mind_load_i64(scope + 48));
+    __mind_free(__mind_load_i64(scope + 8));
+    __mind_free(scope);
+    0
+}
+pub fn nb_fc_unit_loop(scope: i64, lo: i64, hi: i64, i: i64, count: i64) -> i64 {
+    if i >= count { return 0 - 1; }
+    let row: i64 = __mind_load_i64(scope + 40) + i * 32;
+    let start: i64 = __mind_load_i64(row);
+    let end: i64 = start + __mind_load_i64(row + 8);
+    if lo >= start { if hi <= end { return i; } }
+    nb_fc_unit_loop(scope, lo, hi, i + 1, count)
+}
+pub fn nb_fc_unit(scope: i64, lo: i64, hi: i64) -> i64 {
+    if lo < 0 { return 0 - 1; }
+    if hi <= lo { return 0 - 1; }
+    nb_fc_unit_loop(scope, lo, hi, 0, __mind_load_i64(scope + 32))
+}
+pub fn nb_fc_begin(ctx: i64, node: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 1; }
+    let unit: i64 = nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node));
+    if unit < 0 { return 0; }
+    __mind_store_i64(scope + 72, unit);
+    __mind_store_i64(scope + 80, __mind_load_i64(scope + 56));
+    __mind_store_i64(scope + 96, 0);
+    1
+}
+pub fn nb_fc_rollback(ctx: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope != 0 { __mind_store_i64(scope + 56, __mind_load_i64(scope + 80)); }
+    0
+}
+pub fn nb_fc_frame(ctx: i64, frame: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 0; }
+    let mut i: i64 = __mind_load_i64(scope + 80);
+    while i < __mind_load_i64(scope + 56) {
+        __mind_store_i64(__mind_load_i64(scope + 48) + i * 64 + 48, frame);
+        i = i + 1;
+    }
+    0
+}
+pub fn nb_fc_rebase_loop(scope: i64, base: i64, bytes: i64, i: i64, count: i64) -> i64 {
+    if i >= count { return 1; }
+    let row: i64 = __mind_load_i64(scope + 48) + i * 64;
+    let off: i64 = __mind_load_i64(row);
+    if off < 0 { return 0; }
+    if off > bytes - 64 { return 0; }
+    if base > 4194304 - off { return 0; }
+    if __mind_load_i64(row + 48) < 16 { return 0; }
+    __mind_store_i64(row, base + off);
+    nb_fc_rebase_loop(scope, base, bytes, i + 1, count)
+}
+pub fn nb_fc_rebase(ctx: i64, base: i64, bytes: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 1; }
+    nb_fc_rebase_loop(scope, base, bytes, __mind_load_i64(scope + 80), __mind_load_i64(scope + 56))
+}
+pub fn nb_fc_lookup_loop(scope: i64, buf: i64, callee: i64, registry: i64, i: i64, count: i64) -> i64 {
+    if i >= count { return 0; }
+    let row: i64 = __mind_load_i64(__mind_load_i64(registry + 16) + i * 8);
+    if span_bytes_equal2(buf, ast_span_lo(callee), ast_span_hi(callee), __mind_load_i64(registry), __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
+        __mind_store_i64(scope + 88, i);
+        return row;
+    }
+    nb_fc_lookup_loop(scope, buf, callee, registry, i + 1, count)
+}
+pub fn nb_fc_lookup(scope: i64, buf: i64, callee: i64) -> i64 {
+    if scope == 0 { return 0; }
+    if ast_kind(callee) != ast_ident() { return 0; }
+    let unit: i64 = __mind_load_i64(scope + 72);
+    if unit < 0 { return 0; }
+    if unit >= __mind_load_i64(scope + 32) { return 0; }
+    let registry: i64 = __mind_load_i64(__mind_load_i64(scope + 40) + unit * 32 + 16);
+    if registry == 0 { return 0; }
+    nb_fc_lookup_loop(scope, buf, callee, registry, 0, __mind_load_i64(registry + 24))
+}
+pub fn nb_fc_i32_ann(buf: i64, ann: i64) -> i64 {
+    if ann == 0 { return 0; }
+    let lo: i64 = ast_span_lo(ann);
+    if ast_span_hi(ann) - lo != 3 { return 0; }
+    if __mind_load_i8(buf + lo) != 105 { return 0; }
+    if __mind_load_i8(buf + lo + 1) != 51 { return 0; }
+    if __mind_load_i8(buf + lo + 2) != 50 { return 0; }
+    1
+}
+pub fn nb_fc_definition_count(scope: i64, callee: i64, buf: i64) -> i64 {
+    let mut found: i64 = 0;
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(scope + 120) {
+        let node: i64 = __mind_load_i64(__mind_load_i64(scope + 64) + i * 8);
+        let name: i64 = ast_child0(node);
+        if span_bytes_equal(buf, ast_span_lo(callee), ast_span_hi(callee), ast_span_lo(name), ast_span_hi(name)) == 1 { found = found + 1; }
+        i = i + 1;
+    }
+    found
+}
+
+pub fn nb_fc_call_i32_loop(ordered: i64, n_fns: i64, i: i64, buf: i64, callee: i64) -> i64 {
+    if i >= n_fns { return 0; }
+    let fn_node: i64 = __mind_load_i64(ordered + i * 8);
+    let name: i64 = ast_child0(fn_node);
+    if span_bytes_equal(buf, ast_span_lo(callee), ast_span_hi(callee), ast_span_lo(name), ast_span_hi(name)) == 1 {
+        let local: i64 = buf + ast_span_lo(fn_node);
+        let t: Vec = lex(local, ast_span_hi(fn_node) - ast_span_lo(fn_node));
+        let ret: i64 = frt_scan_retty_pos(t, 2);
+        if ret < 0 { return 0; }
+        if tok_hi(t, ret) - tok_lo(t, ret) != 3 { return 0; }
+        let ptr: i64 = local + tok_lo(t, ret);
+        if __mind_load_i8(ptr) != 105 { return 0; }
+        if __mind_load_i8(ptr + 1) != 51 { return 0; }
+        if __mind_load_i8(ptr + 2) != 50 { return 0; }
+        return 1;
+    }
+    nb_fc_call_i32_loop(ordered, n_fns, i + 1, buf, callee)
+}
+pub fn nb_fc_call_i32(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(__mind_load_i64(lcell + 120));
+    if scope == 0 { return 0; }
+    let callee: i64 = ast_child0(node);
+    if ast_kind(callee) != ast_ident() { return 0; }
+    if nb_fc_definition_count(scope, callee, buf) == 0 {
+        if nb_fc_shadowed(callee, buf, lets, lcell) == 0 {
+            let foreign: i64 = nb_fc_lookup(scope, buf, callee);
+            if foreign != 0 {
+                if nb_fc_result(foreign) == 1 { return 1; }
+                return 0;
+            }
+        }
+    }
+    if nb_fc_local_ok(scope, callee, buf, lets, lcell) != 1 { return 0; }
+    let at: i64 = __mind_load_i64(lcell + 88);
+    nb_fc_call_i32_loop(nb_at_native_ordered(at), nb_at_native_n_fns(at), 0, buf, callee)
+}
+
+pub fn nb_fc_i32_actual_loop(buf: i64, lo: i64, hi: i64, lets: i64, i: i64, current: i64) -> i64 {
+    if i < 0 { return 0 - 1; }
+    let row: i64 = lets + i * 40;
+    if span_bytes_equal(buf, lo, hi, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
+        let ann: i64 = nb_stream_ident_row(0, lets, i, buf, lo, hi, current);
+        if ann <= 0 { return 0; }
+        return nb_fc_i32_ann(buf, ann);
+    }
+    nb_fc_i32_actual_loop(buf, lo, hi, lets, i - 1, current)
+}
+pub fn nb_fc_i32_actual(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() { return nb_fc_i32_actual(ast_child0(node), buf, lets, lcell); }
+    if k == ast_call() { return nb_fc_call_i32(node, buf, lets, lcell); }
+    if k == ast_cast() {
+        if ast_cast_is_ptr(buf, node) != 0 { return 0; }
+        if ast_cast_is_unsigned(buf, node) != 0 { return 0; }
+        if ast_aux(node) != 32 { return 0; }
+        return 1;
+    }
+    if k != ast_ident() { return 0; }
+    let at: i64 = __mind_load_i64(lcell + 88);
+    if at == 0 { return 0; }
+    let current: i64 = nb_at_native_current(at);
+    if current == 0 { return 0; }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    let found: i64 = nb_fc_i32_actual_loop(buf, lo, hi, lets, __mind_load_i64(lcell) - 1, current);
+    if found >= 0 { return found; }
+    let ps: i64 = ast_child1(current);
+    let index: i64 = resolve_param(ps, ast_aux(current) / 2, buf, lo, hi);
+    if index < 0 { return 0; }
+    nb_fc_i32_ann(buf, ast_child1(__mind_load_i64(ps + index * 8)))
+}
+// Reject a value binder before consulting either local or foreign names.
+pub fn nb_fc_shadowed_loop(buf: i64, lo: i64, hi: i64, lets: i64, i: i64, count: i64) -> i64 {
+    if i >= count { return 0; }
+    let row: i64 = lets + i * 40;
+    if span_bytes_equal(buf, lo, hi, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 { return 1; }
+    nb_fc_shadowed_loop(buf, lo, hi, lets, i + 1, count)
+}
+pub fn nb_fc_shadowed(callee: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let lo: i64 = ast_span_lo(callee);
+    let hi: i64 = ast_span_hi(callee);
+    if nb_fc_shadowed_loop(buf, lo, hi, lets, 0, __mind_load_i64(lcell)) == 1 { return 1; }
+    let at: i64 = __mind_load_i64(lcell + 88);
+    if at == 0 { return 1; }
+    let current: i64 = nb_at_native_current(at);
+    if current == 0 { return 1; }
+    if resolve_param(ast_child1(current), ast_aux(current) / 2, buf, lo, hi) >= 0 { return 1; }
+    0
+}
+// Resolve original ownership BEFORE accepting the retained flat AST target.
+// Unsupported/ambiguous import scopes refuse instead of inheriting last-wins.
+pub fn nb_fc_local_scan(scope: i64, buf: i64, lo: i64, hi: i64, owner: i64, mask: i64, i: i64, count: i64, counts: i64) -> i64 {
+    if i >= count { return 1; }
+    let node: i64 = __mind_load_i64(__mind_load_i64(scope + 64) + i * 8);
+    let name: i64 = ast_child0(node);
+    if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
+        let unit: i64 = nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node));
+        if unit < 0 { return 0; }
+        if unit == owner {
+            __mind_store_i64(counts + 0, __mind_load_i64(counts + 0) + 1);
+            __mind_store_i64(counts + 8, node);
+        }
+        if unit != owner {
+            if fn_def_is_pub(node) == 1 {
+                if (mask & (1 << unit)) != 0 {
+                    __mind_store_i64(counts + 16, __mind_load_i64(counts + 16) + 1);
+                    __mind_store_i64(counts + 24, node);
+                }
+            }
+        }
+    }
+    nb_fc_local_scan(scope, buf, lo, hi, owner, mask, i + 1, count, counts)
+}
+pub fn nb_fc_local_actual(ordered: i64, n: i64, i: i64, buf: i64, lo: i64, hi: i64, wanted: i64, actual: i64) -> i64 {
+    if i >= n { return actual; }
+    let node: i64 = __mind_load_i64(ordered + i * 8);
+    let name: i64 = ast_child0(node);
+    if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
+        if node != wanted { return 0 - 1; }
+        return nb_fc_local_actual(ordered, n, i + 1, buf, lo, hi, wanted, actual + 1);
+    }
+    nb_fc_local_actual(ordered, n, i + 1, buf, lo, hi, wanted, actual)
+}
+pub fn nb_fc_local_ok(scope: i64, callee: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if scope == 0 { return 1; }
+    if ast_kind(callee) != ast_ident() { return 0; }
+    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 { return 0; }
+    // Existing return metadata is global: ambiguous bodies cannot safely share it.
+    if nb_fc_definition_count(scope, callee, buf) != 1 { return 0; }
+    let owner: i64 = __mind_load_i64(scope + 72);
+    let mask: i64 = __mind_load_i64(__mind_load_i64(scope + 40) + owner * 32 + 24);
+    let lo: i64 = ast_span_lo(callee);
+    let hi: i64 = ast_span_hi(callee);
+    let counts: i64 = __mind_alloc(32);
+    __mind_store_i64(counts + 0, 0);
+    __mind_store_i64(counts + 8, 0);
+    __mind_store_i64(counts + 16, 0);
+    __mind_store_i64(counts + 24, 0);
+    let scan_ok: i64 = nb_fc_local_scan(scope, buf, lo, hi, owner, mask, 0, __mind_load_i64(scope + 120), counts);
+    if scan_ok == 0 {
+        __mind_free(counts);
+        return 0;
+    }
+    let local_count: i64 = __mind_load_i64(counts + 0);
+    let local: i64 = __mind_load_i64(counts + 8);
+    let public_count: i64 = __mind_load_i64(counts + 16);
+    let public_target: i64 = __mind_load_i64(counts + 24);
+    __mind_free(counts);
+    if local_count > 1 { return 0; }
+    let mut wanted: i64 = local;
+    if local_count == 0 {
+        if public_count != 1 { return 0; }
+        wanted = public_target;
+    }
+    let at: i64 = __mind_load_i64(lcell + 88);
+    let ordered: i64 = nb_at_native_ordered(at);
+    let n: i64 = nb_at_native_n_fns(at);
+    let actual: i64 = nb_fc_local_actual(ordered, n, 0, buf, lo, hi, wanted, 0);
+    if actual != 1 { return 0; }
+    1
+}
+
+pub fn nb_fc_result(row: i64) -> i64 {
+    let ty: i64 = __mind_load_i64(row + 56);
+    if __mind_load_i64(ty) == 1 {
+        if __mind_load_i8(ty + 8) == 5 { return 1; }
+    }
+    if __mind_load_i64(ty) == 2 {
+        if __mind_load_i8(ty + 8) == 33 {
+            if __mind_load_i8(ty + 9) == 5 { return 2; }
+        }
+    }
+    0
+}
+// Every original translation unit already passed its complete registry parser.
+// Cross-unit repetitions are not declarations of the same lexical unit.
+pub fn nb_fc_items_check_units(scope: i64, items: i64, count: i64, i: i64) -> i64 {
+    if i >= count { return 1; }
+    let node: i64 = __mind_load_i64(items + i * 8);
+    if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) < 0 { return 0; }
+    nb_fc_items_check_units(scope, items, count, i + 1)
+}
+pub fn nb_fc_items_find_main(scope: i64, src: i64, fns: i64, n: i64, i: i64, mains: i64, main_node: i64, out: i64) -> i64 {
+    if i >= n {
+        if mains != 1 { return 0; }
+        __mind_store_i64(out, main_node);
+        return 1;
+    }
+    let node: i64 = __mind_load_i64(fns + i * 8);
+    let name: i64 = ast_child0(node);
+    if nb_name_is_main(src, ast_span_lo(name), ast_span_hi(name)) == 1 {
+        if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) != 21 { return 0; }
+        return nb_fc_items_find_main(scope, src, fns, n, i + 1, mains + 1, node, out);
+    }
+    nb_fc_items_find_main(scope, src, fns, n, i + 1, mains, main_node, out)
+}
+pub fn nb_fc_items_ok(ctx: i64, tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 0; }
+    if __mind_load_i64(scope + 16) != tok_lo(tokens, tok_count(tokens) - 1) { return 0; }
+    __mind_store_i64(scope + 64, fns);
+    __mind_store_i64(scope + 120, n);
+    if nb_fc_items_check_units(scope, items, count, 0) == 0 { return 0; }
+    let main_cell: i64 = __mind_alloc(8);
+    let ok: i64 = nb_fc_items_find_main(scope, src, fns, n, 0, 0, 0, main_cell);
+    if ok == 0 {
+        __mind_free(main_cell);
+        return 0;
+    }
+    let main_node: i64 = __mind_load_i64(main_cell);
+    __mind_free(main_cell);
+    nb_dynamic_main_signature(tokens, src, main_node)
+}
+
 pub fn nb_ctx_shape_ok(ctx: i64) -> i64 {
     if ctx == 0 { return 1; }
     let version: i64 = __mind_load_i64(ctx);
-    if version != 1 { if version != 2 { return 0; } }
+    if version != 1 { if version != 2 { if version != 3 { return 0; } } }
     if __mind_load_i64(ctx + 8) != 1 { return 0; }
     if version == 1 { if __mind_load_i64(ctx + 72) != 0 { return 0; } }
-    if version == 2 {
+    if version >= 2 {
         // Checked source-image integration binds this target to the placed NIO
         // code. This necessary shape guard alone is not artifact authority.
         let base: i64 = __mind_load_i64(ctx + 72);
         if base < 4198400 { return 0; }
         if base > 5246876 { return 0; }
+    }
+    if version == 3 {
+        let scope: i64 = nb_fc_scope(ctx);
+        if scope == 0 { return 0; }
+        if __mind_load_i64(scope) != 1 { return 0; }
+        if __mind_load_i64(scope + 32) != 22 { return 0; }
+        if __mind_load_i64(scope + 56) < 0 { return 0; }
+        if __mind_load_i64(scope + 56) > 256 { return 0; }
+        if __mind_load_i64(ctx + 424) < 0 { return 0; }
+        if __mind_load_i64(ctx + 424) > 1 { return 0; }
     }
     if __mind_load_i64(ctx + 80) != 1 { return 0; }
     let arena_bytes: i64 = __mind_load_i64(ctx + 120);
@@ -33398,6 +33742,10 @@ pub fn nb_ctx_arg_addr(ctx: i64, field: i64) -> i64 {
 pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
     if ctx == 0 { return 1; }
     if nb_ctx_shape_ok(ctx) == 0 { return 0; }
+    if __mind_load_i64(ctx) == 3 {
+        if kind == 8 { return __mind_load_i64(ctx + 424); }
+        if kind == 9 { return __mind_load_i64(ctx + 424); }
+    }
     if __mind_load_i64(ctx) == 2 {
         if kind == 8 { return 1; }
         if kind == 9 { return 1; }
@@ -33420,6 +33768,10 @@ pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
 // actual call still meets the schema1 refusal. The caller frees only this copy.
 pub fn nb_ctx_without_stream(ctx: i64, uses: i64) -> i64 {
     if ctx == 0 { return 0; }
+    if __mind_load_i64(ctx) == 3 {
+        __mind_store_i64(ctx + 424, uses);
+        return ctx;
+    }
     if __mind_load_i64(ctx) != 2 { return ctx; }
     if uses != 0 { return ctx; }
     let copy: i64 = __mind_alloc(416);
@@ -38378,6 +38730,53 @@ struct NbState {
     ncalls: i64,
 }
 
+// Field-reading helpers must follow the struct declaration for mic@3.
+pub fn nb_fc_stage(st: NbState, scope: i64, row: i64, callee: i64, args: i64, n: i64, ids: i64, dts: i64, buf: i64, lets: i64, lcell: i64) -> NbState {
+    let mut ok: i64 = 1;
+    let row_index: i64 = __mind_load_i64(scope + 88);
+    if nb_fc_definition_count(scope, callee, buf) != 0 { ok = 0; }
+    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 { ok = 0; }
+    if __mind_load_i64(scope + 112) != 0 { ok = 0; }
+    if __mind_load_i64(row + 16) > 1 { ok = 0; }
+    if __mind_load_i64(row + 32) != 0 { ok = 0; }
+    if n != __mind_load_i64(row + 40) { ok = 0; }
+    if n > 1 { ok = 0; }
+    let result: i64 = nb_fc_result(row);
+    if result == 0 { ok = 0; }
+    if __mind_load_i64(scope + 56) >= 256 { ok = 0; }
+    if __mind_load_i64(scope + 96) == 0 {
+        if __mind_load_i64(lcell + 96) != 0 { ok = 0; }
+    }
+    if ok == 0 { __mind_store_i64(lcell + 80, 1); return st; }
+    let mut arg: i64 = 0;
+    if n == 1 {
+        let ty: i64 = __mind_load_i64(__mind_load_i64(row + 48));
+        if __mind_load_i64(ty) != 1 { ok = 0; }
+        if __mind_load_i8(ty + 8) != 5 { ok = 0; }
+        if __mind_load_i64(dts) != nb_dtype_int() { ok = 0; }
+        let slot: i64 = __mind_load_i64(ids);
+        if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 { ok = 0; }
+        if nb_fc_i32_actual(__mind_load_i64(args), buf, lets, lcell) == 0 { ok = 0; }
+        arg = nb_slot_disp(slot);
+    }
+    if ok == 0 { __mind_store_i64(lcell + 80, 1); return st; }
+    let record: i64 = __mind_load_i64(scope + 48) + __mind_load_i64(scope + 56) * 64;
+    __mind_store_i64(record, string_len(st.code));
+    __mind_store_i64(record + 8, __mind_load_i64(scope + 72));
+    __mind_store_i64(record + 16, row_index);
+    __mind_store_i64(record + 24, n);
+    __mind_store_i64(record + 32, arg);
+    __mind_store_i64(record + 40, nb_slot_disp(st.next_id));
+    __mind_store_i64(record + 48, 0);
+    __mind_store_i64(record + 56, result - 1);
+    __mind_store_i64(scope + 56, __mind_load_i64(scope + 56) + 1);
+    let mut code: String = st.code;
+    let mut i: i64 = 0;
+    while i < 64 { code = nb_push(code, 204); i = i + 1; }
+    let _origin: i64 = nb_origin_set(__mind_load_i64(lcell + 8), st.next_id, result - 1);
+    NbState { code: code, next_id: st.next_id + 1, last_id: st.next_id, ncalls: st.ncalls }
+}
+
 // nb_wrap_bound_w / nb_wrap_bound32 read fields of an NbState parameter, so
 // they sit after the struct declaration (the Rust mic@3 lowering resolves a
 // struct parameter's field reads only once the struct is declared; see the
@@ -39679,6 +40078,17 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let _op: i64 = nb_origin_scalar_args(lcell, ids, args_len, 0);
             let c_bi: String = nb_emit_blas_dot_i16(sa.code, __mind_load_i64(ids + 0 * 8), __mind_load_i64(ids + 1 * 8), __mind_load_i64(ids + 2 * 8), id);
             return NbState { code: c_bi, next_id: id + 10, last_id: id, ncalls: sa.ncalls };
+        }
+        // Scoped foreign sites retain their original per-unit declaration.
+        // This path only stages bytes; NCE finalization needs the actual frame.
+        let fc_scope: i64 = nb_fc_scope(__mind_load_i64(lcell + 120));
+        let fc_row: i64 = nb_fc_lookup(fc_scope, buf, callee);
+        if fc_row != 0 {
+            return nb_fc_stage(sa, fc_scope, fc_row, callee, args_addr, args_len, ids, arg_dts, buf, lets, lcell);
+        }
+        if nb_fc_local_ok(fc_scope, callee, buf, lets, lcell) == 0 {
+            __mind_store_i64(lcell + 80, 1);
+            return sa;
         }
         // Source-defined record transport must retain the exact declaration
         // owner when an either side carries a fixed-array field. Dtype INT and
@@ -46256,7 +46666,7 @@ pub fn nb_stream_site_ok(callee: i64, args: i64, n: i64, dtypes: i64, ids: i64, 
     let ctx: i64 = __mind_load_i64(lcell + 120);
     if ctx == 0 { return 1; }
     if kind != 8 { if kind != 9 { return 1; } }
-    if __mind_load_i64(ctx) != 2 { return 0; }
+    if __mind_load_i64(ctx) != 2 { if __mind_load_i64(ctx) != 3 { return 0; } }
     if ast_kind(callee) != ast_ident() { return 0; }
     if n != 4 { return 0; }
     let mut i: i64 = 0;
@@ -48447,6 +48857,8 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
 }
 
 pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, ctx: i64) -> NbState {
+    let fc_scope: i64 = nb_fc_scope(ctx);
+    if fc_scope != 0 { __mind_store_i64(fc_scope + 96, 1); }
     if nb_ctx_entry_ok(ctx, is_entry) == 0 { return nb_poison_state(ncalls0); }
     if nb_origin_return_shape_ok(buf, node, frt) == 0 { return nb_poison_state(ncalls0); }
     if is_entry == 2 {
@@ -48557,7 +48969,9 @@ pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncal
     if __mind_load_i64(lcell + 80) == 1 {
         return nb_poison_state(ncalls0);
     }
-    let _pf: i64 = hm_patch_frame(st_body.code, frame_off, nb_round16(8 * st_body.next_id));
+    let final_frame: i64 = nb_round16(8 * st_body.next_id);
+    let _ff: i64 = nb_fc_frame(ctx, final_frame);
+    let _pf: i64 = hm_patch_frame(st_body.code, frame_off, final_frame);
     let njmps: i64 = __mind_load_i64(jcell);
     let _pj: i64 = nb_patch_jmps(string_addr(st_body.code), jmps, njmps, 0);
     st_body
@@ -48980,12 +49394,14 @@ pub fn nb_lower_fn_routed(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls
 }
 
 pub fn nb_lower_fn_routed_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, route: i64, fobs: i64, ctx: i64) -> NbState {
+    if nb_fc_begin(ctx, node) == 0 { return nb_poison_state(ncalls0); }
     if hm_route_home(buf, node, route) == 1 {
         return nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, ctx);
     }
     let fr: NbState = nb_lower_fn_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, fobs, ctx);
     let frn: i64 = fr.next_id;
     if frn < 0 {
+        let _fc: i64 = nb_fc_rollback(ctx);
         return nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, ctx);
     }
     fr
@@ -49337,6 +49753,7 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     // whole-function copy.
     let njmps: i64 = __mind_load_i64(jcell);
     let fn_code_addr: i64 = string_addr(st_body.code);
+    let _ff: i64 = nb_fc_frame(ctx, frame);
     let _pj: i64 = nb_patch_jmps(fn_code_addr, jmps, njmps, 0);
     st_body
 }
@@ -52332,6 +52749,7 @@ pub fn nb_parts_free(parts: i64) -> i64 {
     if __mind_load_i64(parts + 160) == 1 {
         __mind_free(__mind_load_i64(parts + 144));
     }
+    let _fc: i64 = nb_fc_free(nb_fc_scope(__mind_load_i64(parts + 176)));
     __mind_free(__mind_load_i64(parts + 176));
     __mind_free(parts);
     0
@@ -52613,7 +53031,11 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     let entry_idx: i64 = nb_find_main(src_addr, fns, n_fns, 0);
 
     if ctx != 0 {
-        if nb_dynamic_items_ok(tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+        if nb_fc_scope(ctx) == 0 {
+            if nb_dynamic_items_ok(tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+        } else {
+            if nb_fc_items_ok(ctx, tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+        }
         if entry_idx < 0 { return 0; }
     }
 
@@ -52679,7 +53101,7 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     let uses_argv: i64 = nb_fns_use_argv(src_addr, ordered, n_fns, 0);
     let mut uses_stream: i64 = 0;
     if ctx != 0 {
-        if __mind_load_i64(ctx) == 2 {
+        if __mind_load_i64(ctx) >= 2 {
             uses_stream = nb_fns_use_stream(src_addr, ordered, n_fns, 0);
             if uses_stream != 0 {
                 if nb_stream_names_ok(tokens, src_addr) == 0 { return 0; }
@@ -52988,6 +53410,9 @@ pub fn nb_lower_all_ctx(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
     let fr: NbState = nb_lower_fn_routed_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, route, nb_obs_flag(obs, k), ctx);
+    if nb_fc_rebase(ctx, string_len(image), string_len(fr.code)) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);

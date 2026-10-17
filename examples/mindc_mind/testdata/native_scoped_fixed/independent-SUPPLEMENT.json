@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "status": "PRELISTED_NOT_EXECUTED",
+  "cases": [
+    {
+      "id": "P11-public-std-and-user-close",
+      "source": {
+        "path": "sources/P11-public-std-and-user-close.mind",
+        "bytes": 292,
+        "sha256": "12308432216c815de477cb8bd09de641321972e6ea6079f20b0e8043ff646ca7"
+      },
+      "full_source_sha256": "6961dd2b0775c5104abafce0caa507101482c8eddda45aa4bc50e6208e09e9e0",
+      "full_source_bytes": 395771,
+      "user_lo": 395479,
+      "expected_admission": "accept",
+      "purpose": "Author-confirmed public std.net import: two original module owners independently bind close, one loader symbol.",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_runtime": {
+        "exit": 0,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "signals_allowed": false
+      },
+      "expected_symbols": [
+        "__libc_start_main",
+        "close"
+      ]
+    },
+    {
+      "id": "R14-untyped-close-literal",
+      "source": {
+        "path": "sources/R14-untyped-close-literal.mind",
+        "bytes": 82,
+        "sha256": "f1d24f5cd141d3ec613234bb4da537d86fe7cb60491970f2aa74f64d63a014b9"
+      },
+      "full_source_sha256": "aaf680671b0d64e720e58700b51646a9612a70af85fe0434d02543a360ef8aa3",
+      "full_source_bytes": 395561,
+      "user_lo": 395479,
+      "expected_admission": "refuse",
+      "purpose": "Initial source checker requires an actual i32 expression; no unchecked contextual narrowing.",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R15-private-std-local-edge",
+      "source": {
+        "path": "sources/R15-private-std-local-edge.mind",
+        "bytes": 32,
+        "sha256": "08844a4a823e8d7ef98541681c469418245bb93028996152df27c1018a2bbef7"
+      },
+      "full_source_sha256": "1994aabb9fdf86a2f116fa62561f2382a3f200cec323fdc96cfa68d657d74886",
+      "full_source_bytes": 395511,
+      "user_lo": 395479,
+      "expected_admission": "refuse",
+      "purpose": "A private std.process helper cannot bypass the user declaration/import boundary through a flat local call.",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    },
+    {
+      "id": "R16-unresolved-user-import",
+      "source": {
+        "path": "sources/R16-unresolved-user-import.mind",
+        "bytes": 112,
+        "sha256": "a3ff9d830625b2b88e5036f8c6c0eedecb1e33892b8c0b9007198de107ec48be"
+      },
+      "full_source_sha256": "56407d7e996bb70cd3a46a080afdb81eb46efa89f33505a5020668097cbe5f0e",
+      "full_source_bytes": 395591,
+      "user_lo": 395479,
+      "expected_admission": "refuse",
+      "purpose": "Unsupported module import cannot be treated as inert source decoration.",
+      "routes": [
+        "automatic",
+        "HOME"
+      ],
+      "setup": {
+        "kind": "clean-child-no-inherited-fds-above-2"
+      },
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      }
+    }
+  ],
+  "amendment": "P11 supersedes only the unfrozen pending visibility proposal; original CASES.json remains unchanged."
+}

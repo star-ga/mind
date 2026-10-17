@@ -1,0 +1,2 @@
+extern "C" { unsafe fn af_unknown(fd:i32)->i32; }
+fn main()->i64 {af_unknown((0-1) as i32) as i64}
