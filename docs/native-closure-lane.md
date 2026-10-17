@@ -3,7 +3,9 @@
 Author: STARGA Inc.
 
 The historical native profile still rejects unresolved runtime calls and every
-collision with its standard-library prefix. A separate candidate lane profile
+collision with its standard-library prefix, except a user function that is an
+exact private copy of a private seed helper (see
+[exact private copies](#exact-private-copies-historical-profile)). A separate candidate lane profile
 can distinguish supported intrinsic calls from missing user definitions and
 handle private helper collisions without rewriting user code. These changes do
 not qualify a compiler release or establish consumer backend parity.
@@ -59,6 +61,28 @@ seed body remains to resolve a private name differently. The complete user
 region stays byte-for-byte unchanged, in its captured resolver order, with
 every user function still a native root. No name is rewritten or user body
 pruned. Noncolliding programs retain the exact historical prefix and image.
+
+## Exact private copies (historical profile)
+
+The frozen compiler keeps the last definition of each bare name, so a user
+function named like a seed helper replaces that helper for every caller,
+standard-library callers included. That is an ambiguity only when the two
+definitions differ. On the historical path a colliding name is admitted when
+the user image defines it once, as a private, unexported, top-level function
+without attributes or type parameters; the complete seed parses and defines it
+once in the same way, with no seed module making it public or exporting it;
+and the two definitions are equal line for line after each line loses its `//`
+comment and trailing spaces. A definition containing a string or character
+literal or a block-comment marker is never compared, so comment removal cannot
+misread a literal.
+
+Every other collision keeps the `closure.std_symbol_collision` refusal and its
+message. The image is not rewritten or pruned: both identical copies are sent
+to the frozen compiler, and noncolliding images never parse the seed. Calls out
+of an admitted copy must still resolve inside the user image; an open copy is
+an unresolved edge, never a binding into a seed body. The candidate lane keeps
+its own omission rule above. `tests/native_seed_copy_admission_controls.rs`
+builds and executes an exact copy and refuses divergent, public and open copies.
 
 ## Regression evidence and limits
 

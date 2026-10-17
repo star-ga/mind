@@ -259,7 +259,9 @@ pub fn run_native_backend_bridge_profile(
     // Admission and emission use the same captured, composed user region.
     // The exhaustive frozen-profile allowlist checks every retained user body,
     // including uncalled functions. The current bridge does not admit calls into
-    // the seed standard library: unresolved edges and seed-name collisions refuse.
+    // the seed standard library: unresolved edges and seed-name collisions refuse
+    // (a user function that is an exact private copy of a private seed helper
+    // is not a collision; see `namespace::identical_private_seed_copies`).
     // The seed compiler's own refusal is a second fence, with no backend fallback.
     let fence_source = crate::build::native_image::compose_user_region(&user_sources);
 
@@ -675,7 +677,14 @@ fn admit_merged_program(
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
     // full lowering, not a reachability-narrowed subset.
-    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", reserved)
+    //
+    // A seed-name collision is an ambiguity only when the two definitions
+    // differ. Names whose user definition is an exact private copy of the
+    // seed's private definition leave the reserved set; every other collision
+    // keeps its refusal. The image itself is unchanged.
+    let copies = namespace::identical_private_seed_copies(&ast, text, std_sources, reserved);
+    let reserved: BTreeSet<String> = reserved.difference(&copies).cloned().collect();
+    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", &reserved)
         .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
     let _ = path;
     Ok((ast, ir, false))
