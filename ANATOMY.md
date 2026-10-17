@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2383 | **Est. tokens:** ~4,298,892
-**Generated:** 2026-10-17 07:17 UTC
+**Files:** 2384 | **Est. tokens:** ~4,303,509
+**Generated:** 2026-10-17 07:30 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 39 | ~114,748 |
+| `docs/` | 39 | ~115,131 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 8 | ~17,804 |
@@ -124,9 +124,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,507 |
+| `src/build/` | 13 | ~53,664 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~25,757 |
+| `src/build/native_bridge/` | 8 | ~28,573 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -141,7 +141,7 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 12 | ~108,965 |
+| `src/ir/` | 12 | ~109,024 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
@@ -167,7 +167,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 423 | ~877,028 |
+| `tests/` | 424 | ~878,230 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -512,7 +512,7 @@
 ### `docs/`
 
 - `mlir-lowering.md` (~286 tok, medium) — MLIR lowering pipeline (public)
-- `native-closure-lane.md` (~1229 tok, large) — Candidate native closure and namespace admission
+- `native-closure-lane.md` (~1612 tok, huge) — Candidate native closure and namespace admission
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11775 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
@@ -1707,11 +1707,11 @@
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
-- `namespace.rs` (~2927 tok, huge) — Copyright 2025 STARGA Inc.
+- `namespace.rs` (~5743 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8084 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~8241 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3369 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1895,7 +1895,7 @@
 - `tests.rs` (~3735 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
-- `native_closure.rs` (~5179 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure.rs` (~5238 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_lane_profile.rs` (~7175 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
@@ -2786,6 +2786,7 @@
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_seed_copy_admission_controls.rs` (~1202 tok, large) — Historical native admission of user copies of private std seed helpers.
 - `nerve_numerics_lint.rs` (~4079 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~990 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~772 tok, large) — Copyright 2025 STARGA Inc.

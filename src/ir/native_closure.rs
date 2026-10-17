@@ -50,6 +50,9 @@
 //! * A name colliding with the std seed blob is a `std_symbol_collision` refusal,
 //!   for the same reason — std prefixing is convention, not a guarantee
 //!   (`std/toml.mind` ships a bare `bytes_eq`, `std/io.mind` a bare `stdin`).
+//!   The `reserved` set is the caller's: the historical bridge removes from it
+//!   only names whose user definition is an exact private copy of the seed's
+//!   single private definition, where either copy denotes the same function.
 //!
 //! Traversal goes through [`crate::ir::instr_bodies`], the single enumeration of
 //! body-carrying variants, so a newly added nested-body variant cannot silently
