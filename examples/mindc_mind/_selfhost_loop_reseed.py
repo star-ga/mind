@@ -102,8 +102,12 @@ def do_reseed(harness, combined: bytes, stdin_image: bytes, user_lo: int) -> int
         "stage2_sha256": hashlib.sha256(stage2).hexdigest(),
         "stage3_sha256": hashlib.sha256(stage3).hexdigest(),
         "oracle_provenance": so_.provenance,
-        "seed_chain": "RUST-SEEDED (legacy) — this hop does not descend from the "
-                      "previous pure-MIND compiler",
+        # The bootstrap policy (docs/INDEPENDENCE_ROADMAP.md, "Bootstrap
+        # seed-advance policy") admits a reseed only as a disclosed exception
+        # whose artifact says, verbatim, what the docstring above says.
+        "seed_chain": "RUST-SEEDED (legacy) — the pure-MIND seed chain is broken "
+                      "for that hop: it does not descend from the previous "
+                      "pure-MIND compiler",
     }
     try:
         publish_fixture(stage1, manifest_text(
@@ -122,5 +126,7 @@ def do_reseed(harness, combined: bytes, stdin_image: bytes, user_lo: int) -> int
         return 1
     print(f"  RESEEDED  frozen bootstrap stage1.elf re-minted from RUST output "
           f"(legacy path): {len(stage1)}B sha256={h1}\n"
+          f"            the pure-MIND seed chain is broken for that hop — disclose "
+          f"this reseed in the change that commits it\n"
           f"            wrote {_FROZEN} and {_FROZEN_MANIFEST}")
     return 0
