@@ -287,6 +287,31 @@ pub(super) fn refuse_symbolic_dims_read_as_values(
 }
 
 /// Lower behind a panic boundary: a lowering `panic!` becomes a refusal.
+/// Where a candidate-lane refusal happened, as text for its diagnostic: the
+/// function and the 1-based line/column of the refused node in `text`, the
+/// composed user image the profile checked (for a single-file program, that
+/// is the file itself). Empty when the refusal carries neither (IR-only).
+pub(super) fn lane_rejection_site(
+    r: &crate::ir::native_lane_profile::LaneProfileRejection,
+    text: &str,
+) -> String {
+    let mut site = String::new();
+    if let Some(name) = &r.function {
+        site.push_str(&format!(" in fn `{name}`"));
+    }
+    if let Some(at) =
+        r.at.filter(|&at| at <= text.len() && text.is_char_boundary(at))
+    {
+        let before = &text[..at];
+        let line = before.matches('\n').count() + 1;
+        let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+        site.push_str(&format!(
+            " at line {line}, column {column} of the composed user image"
+        ));
+    }
+    site
+}
+
 pub(super) fn lower_without_panicking(
     ast: &Module,
     path: &str,

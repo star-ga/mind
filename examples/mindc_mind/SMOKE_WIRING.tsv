@@ -18,7 +18,7 @@
 # fast_keystone.sh "runs the SAME set"; fast_keystone.sh claimed "CI protects
 # each landed rung" — both were false).
 #
-# deferred: five `gate` rows below are UNWIRED because they are RED at this commit,
+# deferred: four `gate` rows below are UNWIRED because they are RED at this commit,
 # not because they are unimportant. They are recorded here with their exact
 # failing case so the gap is visible instead of implied; wiring them into CI is
 # blocked on FIXING them (each note names what must change). Do not wire a red
@@ -78,7 +78,7 @@ self_host_carry_cap_smoke	ci,keystone	gate
 self_host_cast_mic3_smoke	ci	gate	
 self_host_alias_controls_smoke	ci	gate	
 self_host_check_driver_smoke	ci	gate	
-self_host_continue_smoke	none	gate	RED at this commit against the FROZEN seed only: main.mind is fixed (nested-loop dead tails after `continue`/`break` are truncated by every id-threading walker — nb_while_carry_wnest and nb_count_stmt's while arm, not just nb_emit_while; and every `break`/`continue` writes each carried var back to its working slot — nb_loops_exit_writeback), but testdata/selfhost_loop/stage1.elf still predates both, so the 19 nested fixtures still HANG through it, the 9 exit-edge write-back fixtures hang or return a stale value, and 3 dead-tail pairs emit different code. `self_host_continue_smoke.py <compiler.elf>` with a compiler derived from current main.mind by the frozen seed passes 46/46 (40 fixtures, 3 no-hang shapes, 3 dead-tail pairs). deferred: wire into CI in the same change that advances the frozen seed (self_host_loop_smoke.py --advance); a hanging case must never be wired into CI as-is.
+self_host_continue_smoke	ci	gate	Nested-loop dead tails after `continue`/`break` and exit-edge write-back of carried vars, compiled by the frozen pure-MIND seed (what `mindc build --backend native` runs): 40 fixtures + 3 no-hang shapes + 3 dead-tail identical-code pairs; a hang is a hard FAIL. Wired in the change that advanced the frozen seed (two-hop) to a compiler carrying nb_truncate_dead, nb_while_carry_wnest and nb_loops_exit_writeback.
 self_host_dtype_tag_smoke	ci	gate	
 self_host_else_if_smoke	ci	gate	
 self_host_failclosed_smoke	ci,keystone	gate	
@@ -219,3 +219,4 @@ native_libc_io_check	none	gate	Manual fixed libc I/O recipe gate with frozen met
 self_host_native_emission_context_smoke	none	gate	Manual source-lowering/context and source-image candidate gate with explicit hash-bound native/MLIR instruments and a separate pointer-origin catalogue. deferred: production I/O and foreign-call integration, original retained failures and independent boundary review remain open; CI must construct the current source-bound prerequisites before wiring. Does not qualify a consumer pin.
 native_stream_io_check	none	gate	Manual exact-source stream-I/O image transport with hash-bound native/CPU drivers, original and separately versioned fixture catalogues, image byte parity and historical no-I/O comparisons. deferred: CI prerequisite construction and production CLI/consumer qualification; no pin promotion or replacement of original acceptance contracts.
 native_c_variadic_plan_check	none	gate	Manual bounded scalar SysV variadic metadata gate with frozen MIND assertions, native/MLIR byte parity, owned-output checks and six source mutations. deferred: CI requires exact source-bound compiler prerequisites; no call emission, source admission or consumer pin qualification.
+native_lane_value_shapes_smoke	ci	gate	native-lane-v1 value-shape gate: store results read as the defined 0 (stack dirtied first), full-width i64<->f64 conversion edges, diverging-branch merges and main(argc, argv) behind the explicit-layout runtime prefix, each built through mindc with the reseeded bounded stage1.elf (carries the nblane01 mark) as --compiler and with MLIR, and checked against independently computed values.

@@ -99,7 +99,13 @@ the candidate contract while delegating to the historical seed for features
 that seed already implements. They test selection, binding and image
 composition, not the complete new feature implementation. Release validation
 must run the real merged compiler with its marker emitted from committed
-source. In particular, native raw syscalls are not evidence of libc-compatible
+source. `nb_cap_native_lane_v1` in `examples/mindc_mind/main.mind` emits it, so
+a compiler built from that source carries the marker. The embedded default
+seed was advanced from such a source by the two-hop pure-MIND advance and the
+bounded seed re-blessed from it, so both carry the marker and a plain
+`mindc build --backend native` selects the lane; `seed.rs`'s
+`the_embedded_seeds_carry_the_native_lane_v1_and_scoped_binding_marks` and
+`tests/native_embedded_seed.rs` (`*_selects_native_lane_v1`) pin that. In particular, native raw syscalls are not evidence of libc-compatible
 extern semantics; unsupported externs and unsupported typed constructs remain
 blocked by the candidate profile.
 

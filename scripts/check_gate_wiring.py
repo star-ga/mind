@@ -172,7 +172,11 @@ GATED_EVENTS = ("push", "pull_request")
 # framing/mutations, independent source notes, and additive hash refusals.
 # The variadic planner adds its capture wrapper and sealed run.sh transport.
 # All plan assertions remain MIND; these scripts add no source admission.
-HARNESS_CEILING = 312  # Exact reviewed integration inventory; no spare allowance.
+# 312 -> 313 adds native_lane_value_shapes_smoke.py (from 264c097f): the 25-case
+# native-lane-v1 value-shape gate, each case built natively through `mindc` with
+# the reseeded bounded seed (it carries the nblane01 mark) and with MLIR, checked
+# against independently computed values. CI-wired in the reseed change.
+HARNESS_CEILING = 313  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

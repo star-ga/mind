@@ -1039,6 +1039,21 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 21 examples/mindc_mind/self_host_bounded_profile_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native-lane-v1 value-shape gate (native_lane_value_shapes_smoke.py)
+        # The reseeded bounded seed carries the nblane01 mark, so `mindc build
+        # --backend native --native-profile bounded` applies the candidate
+        # native-lane-v1 profile with it. 25 cases: store results read as the
+        # defined 0 on a dirtied stack, full-width i64<->f64 conversion edges,
+        # diverging-branch merges and main(argc, argv) behind the explicit-layout
+        # runtime prefix, each built natively AND with MLIR and checked against
+        # values computed independently of both backends.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 25 \
+              examples/mindc_mind/native_lane_value_shapes_smoke.py \
+              --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+        working-directory: ${{ github.workspace }}
+
       - name: Bounded native allocator gate — merging free-list runtime under RLIMIT_AS=2GiB (self_host_native_alloc_bounded_smoke.py)
         # Derives the tree's bounded compiler natively (frozen default seed -> B1
         # -> B2 -> B3, B2 == B3 under the cap), then: the allocator runtime source
@@ -1269,6 +1284,7 @@ jobs:
             self_host_tc_unknown_call_smoke \
             self_host_tc_let_infer_smoke \
             self_host_source_note_smoke \
+            self_host_continue_smoke \
             self_host_native_cf_smoke; do
             echo "=== $s ==="
             gate_args=()

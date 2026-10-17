@@ -465,3 +465,196 @@ def case_main_reseed_dispatches_to_the_legacy_path() -> None:
         check("main(env reseed): dispatches to reseed",
               loop.main([], {loop.RESEED_ENV: "1"}), 0)
         check("main(env reseed): reached the legacy path", seen, ["reseed"])
+
+
+# ── two-hop advance: what is published, and what is refused ────────────────
+
+def case_two_hop_publishes_stage2_once_stage2_equals_stage3() -> None:
+    """ACCEPT. The old seed compiles the new source into an intermediate
+    compiler (stage1, old codegen); stage1 compiles the same source into the new
+    fixed point; stage2 == stage3 and the fresh oracle agrees with stage2. The
+    PUBLISHED image is stage2 — never the intermediate — and the receipt says
+    which stage that is, without a `stage1_sha256` row a reader could mistake
+    for the published hash."""
+    with Sandbox() as sb:
+        log: list[bytes] = []
+        sb.patch(
+            build_seed=lambda: (SRC, IMAGE, USER_LO),
+            run_elf=stub_loop((INTERMEDIATE, NEW_POINT, NEW_POINT), log),
+            stage0_emit=lambda c, u: NEW_POINT,
+            so=lambda: StubOracle(),
+        )
+        rc, out = captured(loop.main, ["--advance", "--hops", "2"], {})
+        check("two hop: publishes on stage2 == stage3 + oracle agreement", rc, 0)
+        check("two hop: the fixture holds stage2, not the intermediate",
+              sb.elf_path.read_bytes(), NEW_POINT)
+        check("two hop: published ELF is executable",
+              bool(sb.elf_path.stat().st_mode & 0o111), True)
+        # The chain is asserted by CONTENT: the old seed ran first, then the
+        # intermediate it emitted, then stage2. Nothing Rust-emitted was run.
+        check("two hop: executed old seed -> intermediate -> stage2",
+              log, [OLD_SEED, INTERMEDIATE, NEW_POINT])
+        text = sb.manifest_path.read_text()
+        rows = receipt_rows(text)
+        for key, value in (
+            ("advance_hops", "2"),
+            ("advanced_from_seed_sha256", sha(OLD_SEED)),
+            ("combined_source_sha256", sha(SRC)),
+            ("intermediate_stage1_sha256", sha(INTERMEDIATE)),
+            ("stage2_sha256", sha(NEW_POINT)),
+            ("stage3_sha256", sha(NEW_POINT)),
+            ("published_stage", "stage2"),
+            ("oracle_sha256", sha(NEW_POINT)),
+            ("oracle_provenance", "fresh-build"),
+        ):
+            check(f"two hop receipt: {key}", rows.get(key), value)
+        check("two hop receipt: no ambiguous stage1_sha256 row",
+              "stage1_sha256" in rows, False)
+        check("two hop receipt: names the pure-MIND chain",
+              rows.get("seed_chain", "").startswith("PURE-MIND two-hop"), True)
+        check("two hop receipt: names the publishing mode",
+              rows.get("published-by"), "self_host_loop_smoke.py --advance --hops 2")
+        check("two hop receipt: the pinned row is stage2's",
+              f"stage1.elf\t{len(NEW_POINT)}\t{sha(NEW_POINT)}" in text, True)
+        check("two hop: the report names the intermediate hash",
+              sha(INTERMEDIATE) in out, True)
+
+
+def case_two_hop_refused_unless_stage2_equals_stage3() -> None:
+    """REFUSE. stage2 != stage3 means the compiler stage1 emitted does not
+    reproduce itself — a miscompile or nondeterminism, not a codegen change.
+    A third hop is never the answer; both stage1 shapes are refused."""
+    for label, chain in (
+        ("stage1 != stage2", (INTERMEDIATE, NEW_POINT, OTHER)),
+        ("stage1 == stage2", (NEW_POINT, NEW_POINT, OTHER)),
+    ):
+        with Sandbox() as sb:
+            log: list[bytes] = []
+            sb.patch(
+                run_elf=stub_loop(chain, log),
+                stage0_emit=lambda c, u: NEW_POINT,
+                so=lambda: StubOracle(),
+            )
+            rc, out = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+            check(f"two hop refuse({label}): stage2 != stage3 fails", rc, 1)
+            check(f"two hop refuse({label}): fixture untouched", sb.unchanged(), True)
+            check(f"two hop refuse({label}): all three stages were derived", len(log), 3)
+            check(f"two hop refuse({label}): the report names stage2 != stage3",
+                  "stage2 != stage3" in out, True)
+
+
+def case_two_hop_oracle_must_corroborate_the_published_stage2() -> None:
+    """An oracle that agrees with the INTERMEDIATE (old-codegen) stage1 but not
+    with stage2 corroborates the wrong image: refused, nothing written."""
+    with Sandbox() as sb:
+        log: list[bytes] = []
+        sb.patch(
+            run_elf=stub_loop((INTERMEDIATE, NEW_POINT, NEW_POINT), log),
+            stage0_emit=lambda c, u: INTERMEDIATE,
+            so=lambda: StubOracle(),
+        )
+        rc, _ = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+        check("two hop: oracle == intermediate != stage2 is refused", rc, 1)
+        check("two hop: oracle mismatch leaves the fixture untouched",
+              sb.unchanged(), True)
+
+
+def case_two_hop_stays_strict_on_the_shared_refusals() -> None:
+    """The shared one-hop refusals still bind with --hops 2: no seed to advance
+    from, a missing or stale oracle, and the oracle deferral variable."""
+    with Sandbox() as sb:
+        sb.elf_path.unlink()
+        tripped: list[str] = []
+        sb.patch(
+            run_elf=lambda *a, **k: tripped.append("run_elf") or b"",
+            so=lambda: tripped.append("so") or StubOracle(),
+        )
+        rc, _ = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+        check("two hop: missing seed is blocked", rc, 2)
+        check("two hop: missing seed runs nothing", tripped, [])
+    for label, oracle in (
+        ("missing oracle", StubOracle(present=False)),
+        ("stale oracle", StubOracle(provenance="legacy-in-tree")),
+    ):
+        with Sandbox() as sb:
+            log: list[bytes] = []
+            sb.patch(
+                run_elf=stub_loop((INTERMEDIATE, NEW_POINT, NEW_POINT), log),
+                stage0_emit=lambda c, u: NEW_POINT,
+                so=lambda o=oracle: o,
+            )
+            prior = os.environ.get(loop.ORACLE_DEFER_ENV)
+            os.environ[loop.ORACLE_DEFER_ENV] = "1"
+            try:
+                rc, _ = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+            finally:
+                if prior is None:
+                    os.environ.pop(loop.ORACLE_DEFER_ENV, None)
+                else:
+                    os.environ[loop.ORACLE_DEFER_ENV] = prior
+            check(f"two hop: {label} is blocked even with the deferral set", rc, 2)
+            check(f"two hop: {label} leaves the fixture untouched", sb.unchanged(), True)
+
+
+def case_two_hop_old_seed_refusal_is_a_real_process_failure() -> None:
+    """REAL process boundary with --hops 2: an old seed that exits non-zero is
+    refused through run_elf's own handling, and nothing is written."""
+    with Sandbox() as sb:
+        sb.elf_path.write_text("#!/bin/sh\necho 'refused' >&2\nexit 3\n")
+        sb.elf_path.chmod(0o755)
+        sb.before_elf = sb.elf_path.read_bytes()
+        sb.patch(so=lambda: StubOracle(), stage0_emit=lambda c, u: NEW_POINT)
+        rc, out = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+        check("two hop: old-seed refusal fails", rc, 1)
+        check("two hop: old-seed refusal is attributed to the old seed",
+              "old frozen seed refused" in out, True)
+        check("two hop: old-seed refusal leaves the fixture untouched",
+              sb.unchanged(), True)
+
+
+def case_reseed_receipt_records_the_broken_seed_chain_verbatim() -> None:
+    """The bootstrap policy allows --reseed only as a disclosed exception whose
+    receipt records "the pure-MIND seed chain is broken for that hop", verbatim
+    from the legacy module's own contract. A Rust-seeded re-mint that does not
+    say so in the artifact it publishes is the silent reseed the policy bans."""
+    with Sandbox() as sb:
+        log: list[bytes] = []
+        sb.patch(
+            run_elf=stub_loop((NEW_POINT, NEW_POINT), log),
+            stage0_emit=lambda c, u: NEW_POINT,
+            so=lambda: StubOracle(),
+        )
+        rc, out = captured(loop.do_reseed, SRC, IMAGE, USER_LO)
+        check("reseed receipt: the stub re-mint publishes", rc, 0)
+        check("reseed receipt: the fixture holds the re-minted ELF",
+              sb.elf_path.read_bytes(), NEW_POINT)
+        rows = receipt_rows(sb.manifest_path.read_text())
+        check("reseed receipt: a seed_chain row exists", "seed_chain" in rows, True)
+        check("reseed receipt: records the broken pure-MIND chain verbatim",
+              "the pure-MIND seed chain is broken for that hop"
+              in rows.get("seed_chain", ""), True)
+        check("reseed report: says the chain is broken",
+              "the pure-MIND seed chain is broken for that hop" in out, True)
+
+
+def case_two_hop_accepts_a_source_that_one_hop_already_fixes() -> None:
+    """ACCEPT, degenerate shape. When the source does not change codegen,
+    stage1 == stage2 == stage3 and --hops 2 must still publish (the same bytes
+    one hop would): the policy names --hops 2 as the next advance without
+    knowing in advance which shape the source has, so refusing this case would
+    force a second run of the heavy loop for nothing."""
+    with Sandbox() as sb:
+        log: list[bytes] = []
+        sb.patch(
+            run_elf=stub_loop((NEW_POINT, NEW_POINT, NEW_POINT), log),
+            stage0_emit=lambda c, u: NEW_POINT,
+            so=lambda: StubOracle(),
+        )
+        rc, _ = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+        check("two hop degenerate: publishes", rc, 0)
+        check("two hop degenerate: the fixture holds the fixed point",
+              sb.elf_path.read_bytes(), NEW_POINT)
+        rows = receipt_rows(sb.manifest_path.read_text())
+        check("two hop degenerate: intermediate and published hashes agree",
+              (rows.get("intermediate_stage1_sha256"), rows.get("stage2_sha256")),
+              (sha(NEW_POINT), sha(NEW_POINT)))
