@@ -37,7 +37,8 @@ one composed image.
 
 Unsigned integers, narrow integer expressions and casts, f32 and
 float-to-float casts, pointers, C externs, aggregates, tensors, methods,
-implicit standard-library objects, closures and unrecognized syntax refuse. A raw intrinsic accepting an i64 address does not
+implicit standard-library objects, closures, `print` (its runtime-call lowering
+has no native-lane implementation) and unrecognized syntax refuse. A raw intrinsic accepting an i64 address does not
 prove memory safety of that address. The predicate is a compiler feature fence,
 not a memory-safety or theorem verifier.
 
@@ -76,7 +77,8 @@ unsigned/narrow types, mixed float/integer operations, unknown/dead calls,
 wrong arity, intrinsic overrides, wrong return type, altered parameter index,
 branch scope escape, malformed loop tuples, a store result forged into a float
 operation, a float forged into the int-to-float conversion, refused casts and
-renamed imports. A refusal carries the function name and, for source checks,
+renamed imports, and `print` and C extern blocks refused at their source
+site. A refusal carries the function name and, for source checks,
 the byte offset of the refused node; the bridge reports it as a line and column
 of the composed user image. Passing
 these profile tests does not substitute for execution parity on a reseeded

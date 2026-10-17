@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2449 | **Est. tokens:** ~4,368,798
-**Generated:** 2026-10-17 19:21 UTC
+**Files:** 2449 | **Est. tokens:** ~4,369,482
+**Generated:** 2026-10-17 19:30 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/` | 39 | ~116,140 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 8 | ~18,086 |
+| `docs/compiler/` | 8 | ~18,120 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -145,13 +145,13 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 12 | ~110,621 |
+| `src/ir/` | 12 | ~110,665 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/ir/native_c_abi/` | 1 | ~3,735 |
-| `src/ir/native_lane_profile/` | 1 | ~4,700 |
+| `src/ir/native_lane_profile/` | 1 | ~5,306 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 7 | ~16,474 |
@@ -478,7 +478,7 @@
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
 - `NATIVE_C_VARIADIC_PLAN.md` (~5675 tok, huge) — Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
-- `NATIVE_LANE_PROFILE.md` (~1258 tok, large) — Typed scalar delivery profile
+- `NATIVE_LANE_PROFILE.md` (~1292 tok, large) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
 - `NATIVE_STRING_VALUES.md` (~1827 tok, huge) — Native string value decoding
 ### `docs/design/`
@@ -1977,10 +1977,10 @@
 ### `src/ir/`
 
 - `native_closure.rs` (~5238 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_lane_profile.rs` (~8772 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_lane_profile.rs` (~8816 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
-- `tests.rs` (~4700 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~5306 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
