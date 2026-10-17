@@ -21,11 +21,14 @@ result slot unwritten reads stale data and fails (the pre-fix frozen seed return
 because an explicit-layout image starts with the allocator runtime prefix, and
 the bridge must find the argc/argv binding at the program entry behind it.
 
-The committed seeds do not carry the mark until the reviewed reseed, so this
-smoke needs an explicit marked compiler and refuses to run without one:
+The smoke names its compiler explicitly and refuses to run without one; CI
+passes the committed bounded seed, which carries the mark since the reseed:
 
   MINDC_BIN=target/release/mindc python3 native_lane_value_shapes_smoke.py \\
-      --compiler /path/to/marked/stage.elf
+      --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+
+Both paths are resolved against the invoking directory before use: every build
+runs with its case directory as cwd, where a relative path names nothing.
 
 Exit: 0 every case matches; 1 a case differs; 2 BLOCKED (no mindc, no marked
 compiler, or a compiler without the mark).
@@ -181,13 +184,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--compiler", default=os.environ.get("MINDC_NATIVE_LANE_ELF"))
     args = ap.parse_args()
+    # Absolute before use: `_build` runs mindc with the case directory as cwd, so
+    # a relative MINDC_BIN or --compiler (the bridge reads MINDC_NATIVE_ELF from
+    # there) would name nothing and the native leg would be refused, not tested.
     mindc = os.environ.get("MINDC_BIN", str(REPO / "target" / "release" / "mindc"))
+    mindc = str(pathlib.Path(mindc).resolve())
+    if args.compiler:
+        args.compiler = str(pathlib.Path(args.compiler).resolve())
     if not pathlib.Path(mindc).exists():
         print(f"BLOCKED: mindc not found at {mindc}")
         return 2
     if not args.compiler or not pathlib.Path(args.compiler).exists():
-        print("BLOCKED: pass --compiler <marked native compiler>; the committed seeds carry "
-              "the native-lane-v1 mark only after the reviewed reseed")
+        print("BLOCKED: pass --compiler <marked native compiler> (CI passes the committed "
+              "bounded seed, testdata/selfhost_loop_bounded/stage1.elf)")
         return 2
     if MARK not in pathlib.Path(args.compiler).read_bytes():
         print(f"BLOCKED: {args.compiler} does not carry the native-lane-v1 mark, so the bridge "
