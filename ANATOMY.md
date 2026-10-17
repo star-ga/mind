@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2383 | **Est. tokens:** ~4,305,000
-**Generated:** 2026-10-17 08:08 UTC
+**Files:** 2383 | **Est. tokens:** ~4,305,298
+**Generated:** 2026-10-17 08:18 UTC
 
 ## Token Budget Guide
 
@@ -167,7 +167,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 423 | ~880,551 |
+| `tests/` | 423 | ~880,849 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -3027,7 +3027,7 @@
 ### `tests/`
 
 - `self_host_loop_advance_contract_test.py` (~6964 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
-- `self_host_loop_advance_publication_test.py` (~7323 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
+- `self_host_loop_advance_publication_test.py` (~7621 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
 - `_self_host_loop_advance_support.py` (~1910 tok, huge) — Shared fixtures for the self-host loop advancement controls.
 - `self_host_loop_advance_test.py` (~375 tok, medium) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.

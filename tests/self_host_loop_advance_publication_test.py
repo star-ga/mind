@@ -635,3 +635,26 @@ def case_reseed_receipt_records_the_broken_seed_chain_verbatim() -> None:
               in rows.get("seed_chain", ""), True)
         check("reseed report: says the chain is broken",
               "the pure-MIND seed chain is broken for that hop" in out, True)
+
+
+def case_two_hop_accepts_a_source_that_one_hop_already_fixes() -> None:
+    """ACCEPT, degenerate shape. When the source does not change codegen,
+    stage1 == stage2 == stage3 and --hops 2 must still publish (the same bytes
+    one hop would): the policy names --hops 2 as the next advance without
+    knowing in advance which shape the source has, so refusing this case would
+    force a second run of the heavy loop for nothing."""
+    with Sandbox() as sb:
+        log: list[bytes] = []
+        sb.patch(
+            run_elf=stub_loop((NEW_POINT, NEW_POINT, NEW_POINT), log),
+            stage0_emit=lambda c, u: NEW_POINT,
+            so=lambda: StubOracle(),
+        )
+        rc, _ = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=2)
+        check("two hop degenerate: publishes", rc, 0)
+        check("two hop degenerate: the fixture holds the fixed point",
+              sb.elf_path.read_bytes(), NEW_POINT)
+        rows = receipt_rows(sb.manifest_path.read_text())
+        check("two hop degenerate: intermediate and published hashes agree",
+              (rows.get("intermediate_stage1_sha256"), rows.get("stage2_sha256")),
+              (sha(NEW_POINT), sha(NEW_POINT)))
