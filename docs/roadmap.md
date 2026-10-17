@@ -2780,7 +2780,8 @@ small sample grid and their allowed neighbours, then fills a much larger grid: p
 undecided cell with the lowest entropy, choose one of its remaining patterns with a seeded
 weighted draw, remove every neighbour pattern that no longer fits, and repeat. A cell with
 no pattern left is a contradiction, and the run restarts on the next seed. Same sample,
-same seed gives the same output grid, byte for byte, on x86, ARM and GPU.
+same seed gives the same output grid, byte for byte, on x86 and ARM; GPU is a separate
+milestone (26.6) and is not claimed until it is measured.
 
 **Why it fits MIND.** This method, often called wave function collapse, is classical
 constraint propagation; nothing about it is quantum. Common implementations are not
@@ -2800,12 +2801,15 @@ the fixed-point path, and the result is visual enough to show on the site.
 | 26.2 | Q16.16 entropy with a pinned `log2` table, row-major tie-break, integer weighted draw from the seeded RNG chosen in Phase 24 | Output-grid hash identical on avx2 and neon for 100 fixed seeds |
 | 26.3 | Explicit outcomes `SOLVED`, `CONTRADICTION` (with step count) and `BUDGET_EXHAUSTED`; restart policy is part of the spec | Contradicting seeds fail at the same step on every substrate |
 | 26.4 | Evidence record binding sample-grid hash, rule-table hash, seed, decision count and output-grid hash, reusing the Phase 24.3 record shape | `mindc verify` detects a one-byte change in any field |
-| 26.5 | CPU vs GPU timing of the propagation step, reported as measured numbers | Same hashes on both; a GPU speedup is reported only if measured, since propagation is irregular and branch-heavy |
+| 26.5 | Side-by-side render of the x86 and ARM outputs plus the execution trace, for the site | Rendered images are produced from the verified grids, never redrawn |
+| 26.6 | GPU run as an independent validation milestone, plus CPU vs GPU timing | GPU output hash equals the CPU hash before any GPU claim is made; a speedup is reported only if measured, since propagation is irregular and branch-heavy |
 
 ### Firewall — do not cross it
 
 - No floats in the choice path: entropy, weights and the random draw are all integer or
-  Q16.16. A floating-point reference build may exist only as a comparison, never as the
+  Q16.16. Q16.16 alone is not enough: the `log2` table, overflow behaviour (saturate or
+  wrap, stated per operation), rounding mode, PRNG algorithm, iteration order and tie-break
+  are all written in the spec. A floating-point reference build may exist only as a comparison, never as the
   output.
 - Selection order, tie-break order and restart policy are written in the spec; a fixed
   seed alone does not make two runs identical.
