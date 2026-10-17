@@ -105,6 +105,64 @@ fn a_clean_env_native_build_outside_the_repo_uses_the_embedded_bounded_seed() {
     check_profile("bounded");
 }
 
+/// The exact flag set a consumer qualification build passes. Every program in
+/// that build refused with "the embedded std seed blob hashes to ..., but the
+/// manifest pins SEED_BLOB_SHA256 ..." after seed-member std modules changed
+/// without the pin moving, while the shorter command line above was the only
+/// control and nothing in the local gates ran it.
+fn consumer_build(profile: &str) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tmp = tempfile::tempdir().expect("private TMPDIR");
+    std::fs::write(dir.path().join("main.mind"), PROGRAM).expect("write program");
+    let out = dir.path().join("program");
+    let res = Command::new(MINDC)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TMPDIR", tmp.path())
+        .current_dir(dir.path())
+        .args([
+            "build",
+            "main.mind",
+            "--backend",
+            "native",
+            "--target",
+            "cpu",
+            "--emit",
+            "binary",
+            "--optimize",
+            "debug",
+            "--no-cache",
+            "--native-profile",
+            profile,
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .expect("spawn mindc");
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert!(
+        !stderr.contains("SEED_BLOB_SHA256"),
+        "{profile}: the embedded std blob was refused against its pin:\n{stderr}"
+    );
+    assert_eq!(
+        res.status.code(),
+        Some(0),
+        "{profile}: consumer command line failed:\n{stderr}"
+    );
+    let elf = std::fs::read(&out).expect("the build must write the artifact");
+    assert_eq!(run(&elf), 7, "{profile}: consumer artifact exit");
+}
+
+#[test]
+fn the_consumer_command_line_builds_with_the_embedded_bounded_seed() {
+    consumer_build("bounded");
+}
+
+#[test]
+fn the_consumer_command_line_builds_with_the_embedded_default_seed() {
+    consumer_build("default");
+}
+
 #[test]
 fn an_explicit_missing_compiler_override_is_still_refused() {
     // The override keeps its meaning: a named compiler that does not exist is

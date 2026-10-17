@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2383 | **Est. tokens:** ~4,298,410
-**Generated:** 2026-10-15 18:29 UTC
+**Files:** 2383 | **Est. tokens:** ~4,298,892
+**Generated:** 2026-10-17 07:17 UTC
 
 ## Token Budget Guide
 
@@ -167,7 +167,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 423 | ~876,546 |
+| `tests/` | 423 | ~877,028 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2780,7 +2780,7 @@
 
 - `native_closure_admission.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
-- `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
+- `native_embedded_seed.rs` (~1914 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1461 tok, large) — Copyright 2025 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
