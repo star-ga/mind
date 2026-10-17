@@ -170,7 +170,9 @@ GATED_EVENTS = ("push", "pull_request")
 # 305 -> 307 adds native_c_variadic_plan_check.py and its captured run.sh:
 # byte capture/identity validation plus serial native/MLIR transport. All plan
 # assertions remain MIND; this adds no compiler runtime or source admission.
-HARNESS_CEILING = 307  # Exact reviewed integration inventory; no spare allowance.
+# 307 -> 309 adds native_c_variadic_emit_check.py and its captured run.sh:
+# capture/identity and build/run transport only; executable assertions are MIND.
+HARNESS_CEILING = 309  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

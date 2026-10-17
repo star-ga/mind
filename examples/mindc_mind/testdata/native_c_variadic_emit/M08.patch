@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -136 +136 @@
+-    let result: String = nce_result(restored, rt, dst);
++    let result: String = if rt == 1 { nb_store_rax(restored, dst) } else { nce_result(restored, rt, dst) };

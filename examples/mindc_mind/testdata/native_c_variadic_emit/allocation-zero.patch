@@ -1,0 +1,5 @@
+--- original.mind
++++ fault.mind
+@@ -159 +159 @@
+-    __mind_alloc(bytes)
++    0
