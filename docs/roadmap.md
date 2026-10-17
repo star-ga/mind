@@ -2721,3 +2721,54 @@ demonstration: the output is unpredictable by eye and still bit-identical everyw
 - How large a grid before matching cost needs an index rather than a full scan?
 
 Proposed; a showcase, not on the critical path.
+
+## Phase 25 — Signed-artifact-only execution on edge and IoT devices (proposed, 2026-10-16)
+
+**Goal.** A device runtime policy that refuses to load or run any model or program
+artifact that is unsigned or fails verification. On a device under this policy, the only
+thing that executes is an artifact whose signature verifies against a pinned trust anchor
+and whose evidence chain is intact.
+
+**Why it fits MIND.** Recent security research describes model weight files used as
+malware payloads: an attacker ships a "model" to weak edge devices, and the loader that
+parses it, or the program that runs it, is the way in. Small devices rarely check where a
+model came from; they load whatever file is in the expected path. MIND already has the
+parts to close that door: the opt-in post-quantum hybrid signature
+`pqc-hybrid-ml-dsa-87-slh-dsa-256s` (ML-DSA-87 AND SLH-DSA-SHAKE-256s, both legs must
+verify, non-degradable verifier), the pinned-signer allowlist, and the tamper-evident
+evidence chain inside the artifact. Phase 25 turns those from a verification tool into a
+load-time policy on the device.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 25.1 | Device policy mode: verify before load, using the same verifier as `mindc verify --require-signed --signer-pubkey`; refuse unsigned, unverified, wrong-signer, or wrong-scheme artifacts before any byte of the payload is parsed as a model or program | A test corpus of unsigned, truncated, one-byte-tampered, leg-stripped and scheme-rewritten artifacts is rejected 100%, and each rejection names its reason |
+| 25.2 | Evidence-chain check at load: `trace_hash` must match the canonical bytes, and the signature must cover the evidence chain, so a signed wrapper around altered weights fails | Tampering with weights, evidence record or signature each fails closed |
+| 25.3 | Pinned trust anchor on the device, with the rotation and revocation rules of Phase 19.1 (epoch, `supersedes`, `revoked`) | An artifact signed by a revoked or superseded key is refused; a current-epoch artifact loads |
+| 25.4 | Footprint pass for constrained targets (verify-only build, no signing code on the device) | Verifier size and verify time per artifact reported as numbers on an ARM target |
+
+### Firewall — do not cross it
+
+- **Byte-identity is unchanged for unsigned builds.** Signing stays opt-in; the PQC
+  features stay off by default; the keystone and cross-substrate gates never compile a
+  PQC crate. The device policy is a runtime check, not a change to what the compiler
+  emits.
+- **No Ed25519 in the flagship path.** The device policy accepts only the flagship hybrid
+  scheme. Legacy single-leg tags are rejected by policy, never accepted as a fallback, so
+  there is no downgrade target.
+- **Fail closed.** A missing anchor, a missing signature, an unknown scheme or a verifier
+  error means the artifact does not run. There is no "warn and continue" mode in the
+  policy.
+- **Verify before parse.** No model or program parser touches an artifact's payload until
+  the signature and evidence checks have passed.
+
+### Open questions — answer before this gets a milestone
+
+- How is the trust anchor provisioned onto a device at manufacture, and how does an
+  offline device learn about a revocation?
+- Does the smallest target need a verify-only SLH-DSA path tuned for code size, given its
+  larger signatures?
+
+Proposed; depends on Phase 19.1 A and B (offline keygen and a published trust anchor).
+Until then the capability is described as *signed (opt-in)*, not as signed releases.
