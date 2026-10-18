@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2450 | **Est. tokens:** ~4,372,055
-**Generated:** 2026-10-17 19:34 UTC
+**Files:** 2605 | **Est. tokens:** ~4,660,467
+**Generated:** 2026-10-18 07:00 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/` | 39 | ~116,211 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
-| `docs/compiler/` | 8 | ~18,120 |
+| `docs/compiler/` | 9 | ~22,168 |
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,020 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -63,7 +63,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 281 | ~792,197 |
+| `examples/mindc_mind/` | 285 | ~798,073 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,163 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -71,6 +71,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
+| `examples/mindc_mind/testdata/native_c_variadic_emit/` | 150 | ~278,449 |
 | `examples/mindc_mind/testdata/native_c_variadic_plan/` | 147 | ~89,226 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -112,7 +113,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 31 | ~118,115 |
+| `scripts/` | 31 | ~118,154 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -476,6 +477,7 @@
 - `NATIVE_C_ABI_CONTRACT.md` (~1832 tok, huge) â€” Source-derived native C ABI declaration contract
 - `NATIVE_C_CALL_EMISSION.md` (~1766 tok, huge) â€” Fixed scalar C call emission
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) â€” Fixed scalar C call plans
+- `NATIVE_C_VARIADIC_EMIT.md` (~4048 tok, huge) â€” Scalar variadic call emission
 - `NATIVE_C_VARIADIC_PLAN.md` (~5675 tok, huge) â€” Scalar SysV variadic argument plan, version 2
 - `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) â€” Native dynamic ELF writer candidate
 - `NATIVE_LANE_PROFILE.md` (~1292 tok, large) â€” Typed scalar delivery profile
@@ -719,9 +721,13 @@
 - `native_c_call_plan_check.py` (~2833 tok, huge) â€” Frozen scalar SysV plan cases, compared with native and fresh MLIR drivers.
 - `native_c_call_plan_driver.mind` (~499 tok, medium) â€” Copyright 2026 STARGA Inc.
 - `native_c_call_plan.mind` (~1394 tok, large) â€” Copyright 2026 STARGA Inc.
+- `native_c_variadic_emit_check.py` (~1538 tok, huge) â€” Capture bytes or delegate transport. All call assertions execute in MIND."""
+- `native_c_variadic_emit_driver.mind` (~2145 tok, huge) â€” Copyright 2026 STARGA Inc.
+- `native_c_variadic_emit.mind` (~1736 tok, huge) â€” Copyright 2026 STARGA Inc.
 - `native_c_variadic_plan_check.py` (~1115 tok, large) â€” Capture bytes or delegate transport. All plan assertions execute in MIND."""
 - `native_c_variadic_plan_driver.mind` (~1656 tok, huge) â€” Copyright 2026 STARGA Inc.
 - `native_c_variadic_plan.mind` (~1624 tok, huge) â€” Copyright 2026 STARGA Inc.
+- `native_c_variadic_verify.mind` (~381 tok, medium) â€” Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator_cases.tsv` (~336 tok, medium) â€” # Frozen before implementation/build; exact expected stdout is empty. exit70 std
 - `native_dynamic_allocator_check.py` (~3430 tok, huge) â€” External diagnostic transport for the MIND allocator emitter/runtime.
 - `native_dynamic_allocator_driver.mind` (~176 tok, small) â€” Copyright 2026 STARGA Inc. Standalone diagnostic, no compiler admission.
@@ -941,7 +947,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) â€” # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) â€” Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) â€” smoke_wiring_lint.py â€” machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6171 tok, huge) â€” # SMOKE_WIRING.tsv â€” the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~6247 tok, huge) â€” # SMOKE_WIRING.tsv â€” the CHECKED contract for where each examples/mindc_mind s
 - `source_note_driver.mind` (~349 tok, medium) â€” Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) â€” stdlib_manifest_lint.py â€” machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) â€” Shared reader for the committed std/*.mind manifest.
@@ -1108,6 +1114,158 @@
 - `o_if_else_merges.mind` (~332 tok, medium) â€” O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
 - `shadow_scopes.mind` (~602 tok, large) â€” Lets that shadow an outer name inside loop bodies and if branches, on the
 - `shadow_scopes_ssa.mind` (~401 tok, medium) â€” The same shadow scoping on the SSA lowering (no return inside a loop, so the
+### `examples/mindc_mind/testdata/native_c_variadic_emit/`
+
+- `allocation-zero.patch` (~21 tok, tiny) â€” --- original.mind
+- `BUILD_HASHES.tsv` (~430 tok, medium) â€” variant	backend	sha256
+- `C01.input` (~88 tok, small) â€” 
+- `C01.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C01.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C02.input` (~104 tok, small) â€” 
+- `C02.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿÿÿÿÿÿÿÿ
+- `C02.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿÿÿÿÿÿÿÿ
+- `C03.input` (~136 tok, small) â€” 
+- `C03.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿ
+- `C03.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿ
+- `C04.input` (~104 tok, small) â€” 
+- `C04.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C04.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C05.input` (~104 tok, small) â€” 
+- `C05.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C05.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C06.input` (~104 tok, small) â€” 
+- `C06.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C06.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C07.input` (~104 tok, small) â€” 
+- `C07.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C07.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C08.input` (~120 tok, small) â€” 
+- `C08.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C08.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C09.input` (~184 tok, small) â€” 	
+- `C09.semantic` (~2092 tok, huge) â€” 	ðÿÿÿÿÿÿ{€€
+- `C09.verify` (~4184 tok, huge) â€” 	ðÿÿÿÿÿÿ{€€
+- `C10.input` (~200 tok, medium) â€” 
+- `C10.semantic` (~2092 tok, huge) â€” 
+- `C10.verify` (~4184 tok, huge) â€” 
+- `C11.input` (~248 tok, medium) â€” 
+- `C11.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C11.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C12.input` (~344 tok, medium) â€” 
+- `C12.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C12.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C13.input` (~360 tok, medium) â€” 
+- `C13.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C13.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C14.input` (~136 tok, small) â€” 
+- `C14.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€xV4
+- `C14.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€xV4
+- `C15.input` (~4168 tok, huge) â€” 
+- `C15.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C15.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C16.input` (~104 tok, small) â€” 
+- `C16.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C16.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C17.input` (~120 tok, small) â€” 
+- `C17.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C17.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C18.input` (~136 tok, small) â€” 
+- `C18.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C18.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C19.input` (~152 tok, small) â€” 
+- `C19.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C19.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C20.input` (~168 tok, small) â€” 
+- `C20.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C20.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C21.input` (~184 tok, small) â€” 
+- `C21.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C21.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C22.input` (~200 tok, medium) â€” 
+- `C22.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C22.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C23.input` (~216 tok, medium) â€” 		
+- `C23.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C23.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C24.input` (~232 tok, medium) â€” 
+- `C24.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C24.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
+- `C25.input` (~88 tok, small) â€” 
+- `C25.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C25.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C26.input` (~88 tok, small) â€” 
+- `C26.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C26.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C27.input` (~88 tok, small) â€” 
+- `C27.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C27.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C28.input` (~88 tok, small) â€” 
+- `C28.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C28.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C29.input` (~88 tok, small) â€” 
+- `C29.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C29.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C30.input` (~88 tok, small) â€” 
+- `C30.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C30.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
+- `C31.input` (~120 tok, small) â€” 
+- `C31.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ€€
+- `C31.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ€€
+- `C32.input` (~104 tok, small) â€”  
+- `C32.semantic` (~2092 tok, huge) â€”  ðÿÿÿÿÿÿ{€€
+- `C32.verify` (~4184 tok, huge) â€”  ðÿÿÿÿÿÿ{€€
+- `C33.input` (~104 tok, small) â€” !
+- `C33.semantic` (~2092 tok, huge) â€” !ðÿÿÿÿÿÿ{€€
+- `C33.verify` (~4184 tok, huge) â€” !ðÿÿÿÿÿÿ{€€
+- `C34.input` (~228 tok, medium) â€” "
+- `C34.semantic` (~2092 tok, huge) â€” "ðÿÿÿÿÿÿ{€€€ÿÿÿÿÿÿÿÿ
+- `C34.verify` (~4184 tok, huge) â€” "ðÿÿÿÿÿÿ{€€€ÿÿÿÿÿÿÿÿ
+- `C35.input` (~104 tok, small) â€” #
+- `C35.semantic` (~2092 tok, huge) â€” #ðÿÿÿÿÿÿ{€€xV4‰gE#
+- `C35.verify` (~4184 tok, huge) â€” #ðÿÿÿÿÿÿ{€€xV4‰gE#
+- `C36.input` (~4168 tok, huge) â€” $
+- `C36.semantic` (~2092 tok, huge) â€” $ðÿÿÿÿÿÿ{€€
+- `C36.verify` (~4184 tok, huge) â€” $ðÿÿÿÿÿÿ{€€
+- `C37.input` (~88 tok, small) â€” %
+- `C37.semantic` (~2092 tok, huge) â€” %ðÿÿÿÿÿÿ{€€
+- `C37.verify` (~4184 tok, huge) â€” %ðÿÿÿÿÿÿ{€€
+- `C38.input` (~104 tok, small) â€” &
+- `C38.semantic` (~2092 tok, huge) â€” &ðÿÿÿÿÿÿ{€€
+- `C38.verify` (~4184 tok, huge) â€” &ðÿÿÿÿÿÿ{€€
+- `capture.c` (~12405 tok, huge) â€” Copyright 2026 STARGA Inc. Independent observation fixture, not a verdict authority.
+- `capture.S` (~1065 tok, large) â€” # Copyright 2026 STARGA Inc. Independent SysV observation fixture.
+- `CASES.tsv` (~480 tok, medium) â€” C01	baseline	call	no-tail
+- `E01.input` (~88 tok, small) â€” '
+- `E02.input` (~88 tok, small) â€” (
+- `E03.input` (~88 tok, small) â€” )
+- `E04.input` (~88 tok, small) â€” *
+- `E05.input` (~88 tok, small) â€” +
+- `E06.input` (~88 tok, small) â€” ,
+- `E07.input` (~104 tok, small) â€” -
+- `E08.input` (~88 tok, small) â€” .
+- `E09.input` (~88 tok, small) â€” /
+- `E10.input` (~88 tok, small) â€” 0
+- `E11.input` (~88 tok, small) â€” 1
+- `E12.input` (~88 tok, small) â€” 2
+- `E13.input` (~88 tok, small) â€” 3
+- `E14.input` (~76 tok, small) â€” 4
+- `E15.input` (~88 tok, small) â€” 5
+- `E16.input` (~104 tok, small) â€” 6
+- `E17.input` (~88 tok, small) â€” 7
+- `E18.input` (~88 tok, small) â€” 8€
+- `E19.input` (~88 tok, small) â€” 9
+- `M01.patch` (~46 tok, tiny) â€” --- original.mind
+- `M02.patch` (~45 tok, tiny) â€” --- original.mind
+- `M03.patch` (~48 tok, tiny) â€” --- original.mind
+- `M04.patch` (~120 tok, small) â€” --- original.mind
+- `M05.patch` (~34 tok, tiny) â€” --- original.mind
+- `M06.patch` (~31 tok, tiny) â€” --- original.mind
+- `M07.patch` (~44 tok, tiny) â€” --- original.mind
+- `M08.patch` (~54 tok, small) â€” --- original.mind
+- `MUTATIONS.json` (~639 tok, large)
+- `MUTATIONS.tsv` (~26 tok, tiny) â€” M01	C02	1
+- `OBSERVED.tsv` (~7784 tok, huge) â€” path	exit	payload_sha256
+- `run.sh` (~1433 tok, large) â€” Copyright 2026 STARGA Inc. Transport only; MIND performs the assertions.
 ### `examples/mindc_mind/testdata/native_c_variadic_plan/`
 
 - `allocation-zero.patch` (~29 tok, tiny) â€” --- a/native_c_variadic_plan.mind
@@ -1637,7 +1795,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) â€” Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) â€” Docs-claim CI gate â€” fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) â€” check_commit_messages.sh <rev-range> â€” no model or tool credit in commit
-- `check_gate_wiring.py` (~10544 tok, huge) â€” Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~10583 tok, huge) â€” Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) â€” Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) â€” Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) â€” check_release_gating.py â€” machine-checked supply-chain contract for the

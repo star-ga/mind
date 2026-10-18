@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — native variadic C-call emitter component
+- Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
+
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer
   exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then

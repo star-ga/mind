@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -135 +135 @@
+-    let restored: String = nce_stack(pending, reserve, 1);
++    let restored: String = nce_stack(pending, reserve + 16, 1);

@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -103 +103 @@
+-    ncve_store_rax(loaded, place)
++    ncve_store_rax(loaded, place + 8)
