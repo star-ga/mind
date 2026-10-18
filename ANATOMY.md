@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2511 | **Est. tokens:** ~4,577,169
-**Generated:** 2026-10-17 02:04 UTC
+**Files:** 2512 | **Est. tokens:** ~4,551,958
+**Generated:** 2026-10-18 06:52 UTC
 
 ## Token Budget Guide
 
@@ -71,7 +71,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
-| `examples/mindc_mind/testdata/native_c_variadic_emit/` | 149 | ~303,660 |
+| `examples/mindc_mind/testdata/native_c_variadic_emit/` | 150 | ~278,449 |
 | `examples/mindc_mind/testdata/native_c_variadic_plan/` | 145 | ~81,235 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -1218,8 +1218,7 @@
 - `C38.verify` (~4184 tok, huge) — &�������{��
 - `capture.c` (~12405 tok, huge) — Copyright 2026 STARGA Inc. Independent observation fixture, not a verdict authority.
 - `capture.S` (~1065 tok, large) — # Copyright 2026 STARGA Inc. Independent SysV observation fixture.
-- `CASES.json` (~25497 tok, huge)
-- `CASES.tsv` (~461 tok, medium) — C01	baseline	call	no-tail
+- `CASES.tsv` (~480 tok, medium) — C01	baseline	call	no-tail
 - `E01.input` (~88 tok, small) — '
 - `E02.input` (~88 tok, small) — (
 - `E03.input` (~88 tok, small) — )
@@ -1237,6 +1236,8 @@
 - `E15.input` (~88 tok, small) — 5
 - `E16.input` (~104 tok, small) — 6
 - `E17.input` (~88 tok, small) — 7
+- `E18.input` (~88 tok, small) — 8�
+- `E19.input` (~88 tok, small) — 9
 - `M01.patch` (~46 tok, tiny) — --- original.mind
 - `M02.patch` (~45 tok, tiny) — --- original.mind
 - `M03.patch` (~48 tok, tiny) — --- original.mind
@@ -1247,7 +1248,7 @@
 - `M08.patch` (~54 tok, small) — --- original.mind
 - `MUTATIONS.json` (~639 tok, large)
 - `MUTATIONS.tsv` (~26 tok, tiny) — M01	C02	1
-- `OBSERVED.tsv` (~7693 tok, huge) — path	exit	payload_sha256
+- `OBSERVED.tsv` (~7784 tok, huge) — path	exit	payload_sha256
 - `run.sh` (~1433 tok, large) — Copyright 2026 STARGA Inc. Transport only; MIND performs the assertions.
 ### `examples/mindc_mind/testdata/native_c_variadic_plan/`
 

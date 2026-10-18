@@ -7423,5 +7423,89 @@
         0
       ]
     ]
+  },
+  {
+    "id": "E18",
+    "label": "frame-upper-bound",
+    "tags": [
+      5
+    ],
+    "values": [
+      7
+    ],
+    "fixed": 1,
+    "fixed_types": [
+      5
+    ],
+    "ret": 8,
+    "result": 42,
+    "frame": 2147483648,
+    "dst": -4080,
+    "import_id": 17,
+    "cc": 0,
+    "safety": 1,
+    "varargs": 1,
+    "total": 1,
+    "slots": [
+      -8
+    ],
+    "null_slots": 0,
+    "error": 9,
+    "fault": 0,
+    "mode": 0,
+    "number": 56,
+    "slot_values": [
+      7373874950723076103
+    ],
+    "reserve": 0,
+    "al": 0,
+    "placements": [
+      [
+        "G",
+        0
+      ]
+    ]
+  },
+  {
+    "id": "E19",
+    "label": "negative-import-id",
+    "tags": [
+      5
+    ],
+    "values": [
+      7
+    ],
+    "fixed": 1,
+    "fixed_types": [
+      5
+    ],
+    "ret": 8,
+    "result": 42,
+    "frame": 4096,
+    "dst": -4080,
+    "import_id": -1,
+    "cc": 0,
+    "safety": 1,
+    "varargs": 1,
+    "total": 1,
+    "slots": [
+      -8
+    ],
+    "null_slots": 0,
+    "error": 10,
+    "fault": 0,
+    "mode": 0,
+    "number": 57,
+    "slot_values": [
+      7373874950723076103
+    ],
+    "reserve": 0,
+    "al": 0,
+    "placements": [
+      [
+        "G",
+        0
+      ]
+    ]
   }
 ]

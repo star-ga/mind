@@ -53,3 +53,5 @@ E14	baseline	construct	refusal-E14
 E15	baseline	construct	refusal-E15
 E16	baseline	construct	refusal-E16
 E17	allocation-zero	construct	refusal-E17
+E18	baseline	error	frame-upper-bound
+E19	baseline	error	negative-import-id
