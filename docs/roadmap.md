@@ -2562,6 +2562,70 @@ operations themselves must be fixed and identical on every backend.
   epilogue off, and a new fused-vs-unfused fixture proves the fused output is
   byte-identical to the two-pass output on x86 and ARM.
 
+### 19.6.5 — Thread-pool dispatch: record what was measured, land the rest
+
+The multithreaded Q16.16 GEMV (`__mind_blas_gemv_q16_mt`) and its persistent
+thread pool (`__mind_blas_mt_dispatch`) landed in `394e3bcc` and `95344367`.
+The numbers behind that change need to be stated precisely, because the
+projected gain and the measured gain differ.
+
+**Measured (criterion, `benches/det_gemv_q16_mt.rs`, 11922×384 routing shape, 12 threads):**
+
+| Build | Time per call | Status |
+|---|---|---|
+| Per-band `pthread_create`/`join` (before the pool) | 575 µs | measured |
+| Persistent pool (`394e3bcc` + `95344367`) | 484 µs median (502 µs criterion estimate) | measured |
+| Persistent pool, projected before it was built | 250–260 µs | projection, never reached |
+
+- **Where the 335 µs figure comes from.** Before the pool, a 64×64 call took
+  about 335 µs, roughly as long as the full 11922×384 shape. That was read as
+  the cost of spawning and joining about 12 threads on every call. It is an
+  inference from two timings, not a direct measurement of spawn cost.
+- **Where 10–20 µs comes from.** It was the expected wake-up cost of parked
+  workers, used to project 250–260 µs per call. It was never measured, and the
+  measured result (484 µs, a 16% gain) fell well short of it. Do not cite
+  "335 µs to 10–20 µs" as a result.
+
+**Measured on an unmerged experiment branch, not yet on `main`:**
+
+- The calling thread runs one band itself and only the last worker to finish
+  signals completion (one wake per call instead of one per band). A
+  dispatch-overhead probe went from 98 µs to 47 µs per call, and throughput
+  from 10.6 to 11.7 GMAC/s, with output bytes unchanged.
+- Kernel-side changes on the same branch (wrapping `i32` accumulation,
+  row-register blocking, software prefetch, pointer induction) reached
+  12.90 GMAC/s best-of-3, against 14.3 GMAC/s for a tuned floating-point BLAS
+  on the same shape. These numbers were taken outside the 19.6.2 protocol.
+
+**Tried and rejected (19.6.1), each byte-identical:**
+
+- Bounded-spin barrier instead of the condvar park: 12.03 → 9.92 GMAC/s on a
+  quiet machine. An earlier estimate that pool sync cost about 139 µs per call
+  came from measurements on a busy machine; on a quiet one the kernel is
+  memory-bandwidth bound and spinning threads only add contention.
+- Capping the band count at 6: 11.62 → 7.17 GMAC/s.
+- 24-bit packed catalog values: 0.83–0.86× of the 32-bit path (more shuffle
+  and load uops on a load-port-bound kernel).
+- 2 MiB huge-page hint: −1.2%; the machine had no free huge pages, so the hint could not take effect.
+- Alternating sweep direction for cross-call cache reuse: 4–12% slower.
+
+**Deliverables**
+
+1. Re-measure the merged pool under 19.6.2, reporting dispatch overhead and
+   compute separately (the kernel ablation harness in Phase 11 applies).
+2. Port the one-wake dispatch change to `main` as its own commit.
+3. Port the kernel-side changes one at a time, each re-measured under 19.6.2;
+   keep only those that still win.
+4. Add the tried-and-rejected list above to the GEMV benchmark report.
+
+- **Gate:** keystone 7/7; the pinned cross-substrate canaries (Q16 `92e2cb75`,
+  int8 `917d353b`, GEMV `3238e8c7`) do not move; output is independent of
+  thread count across the thread sweep; and a race flush (about 10,000
+  repeated calls across 1, 2, 4 and 12 threads against the scalar oracle,
+  plus one ThreadSanitizer build of the runtime) passes before the standard
+  gates, because condvar pools fail intermittently.
+- **Status:** Proposed. The pool itself shipped; items 1–4 are open.
+
 ### Firewall — do not cross it
 
 Do not reorder, split, or widen the accumulation to make the epilogue fit.
