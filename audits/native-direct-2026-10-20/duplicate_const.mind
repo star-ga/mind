@@ -1,0 +1,9 @@
+// A duplicate const declaration refuses every read of it on the native route.
+const D: i64 = 5;
+fn a() -> i64 {
+    return D;
+}
+const D: i64 = 5;
+fn main() -> i64 {
+    return a() - 5;
+}
