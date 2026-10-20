@@ -10,7 +10,7 @@ AM="${ARCH_MIND:-}"
 if [ -z "$AM" ]; then
   if command -v arch-mind >/dev/null 2>&1; then AM=arch-mind
   elif [ -x "$HOME/arch-mind/bin/arch-mind" ]; then AM="$HOME/arch-mind/bin/arch-mind"
-  elif [ -x /home/user/arch-mind/bin/arch-mind ]; then AM=/home/user/arch-mind/bin/arch-mind
+  elif [ -x "$ROOT/../arch-mind/bin/arch-mind" ]; then AM="$ROOT/../arch-mind/bin/arch-mind"
   fi
 fi
 [ -n "$AM" ] || { echo "::error::arch-mind not found (set ARCH_MIND or put arch-mind on PATH)"; exit 1; }
