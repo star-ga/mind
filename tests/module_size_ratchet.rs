@@ -129,7 +129,9 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/eval/abi_gate.rs", 1036),
     ("src/eval/autodiff.rs", 1643),
     ("src/eval/lower.rs", 12683),
-    ("src/eval/mlir_build.rs", 1002),
+    // The driver applies the resolved mlir-translate vpdpbusd.512 declaration
+    // after nobuiltin. That hook stays in this file; the pin records it.
+    ("src/eval/mlir_build.rs", 1015),
     ("src/eval/mlir_export.rs", 1447),
     ("src/eval/mod.rs", 3918),
     ("src/eval/stdlib/tensor.rs", 1097),
@@ -155,7 +157,9 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/project/mod.rs", 3459),
     ("src/type_checker/mod.rs", 6577),
     ("src/type_checker/resolve.rs", 1319),
-    ("tests/cross_substrate_identity.rs", 3288),
+    // The compile-only VNNI translate leg lives in the binary the toolchain
+    // matrix already runs, so each LLVM major translates the module.
+    ("tests/cross_substrate_identity.rs", 3352),
     ("tests/g2_differential_mlir.rs", 1020),
     ("tests/mindc_deps_phase_de.rs", 851),
     ("tests/mindfuzz_cross_substrate.rs", 1486),

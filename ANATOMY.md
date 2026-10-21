@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1902 | **Est. tokens:** ~3,696,620
-**Generated:** 2026-10-21 23:35 UTC
+**Files:** 1902 | **Est. tokens:** ~3,696,695
+**Generated:** 2026-10-21 23:58 UTC
 
 ## Token Budget Guide
 
@@ -149,7 +149,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 416 | ~846,883 |
+| `tests/` | 416 | ~846,958 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2232,7 +2232,7 @@
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
 - `module_path_reference.rs` (~613 tok, large) — Copyright 2026 STARGA Inc.
-- `module_size_ratchet.rs` (~4019 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_size_ratchet.rs` (~4094 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
