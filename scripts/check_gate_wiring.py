@@ -178,7 +178,7 @@ GATED_EVENTS = ("push", "pull_request")
 # against independently computed values. CI-wired in the reseed change.
 # 313 -> 315 adds native_c_variadic_emit_check.py and its captured run.sh:
 # capture/identity and build/run transport only; executable assertions are MIND.
-HARNESS_CEILING = 315  # Exact reviewed integration inventory; no spare allowance.
+HARNESS_CEILING = 316  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
