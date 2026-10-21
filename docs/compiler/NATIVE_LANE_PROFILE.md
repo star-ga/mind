@@ -2,7 +2,7 @@
 
 Author: STARGA Inc.
 
-`src/ir/native_lane_profile.rs` provides a conservative, source-aware native
+`src/ir/native_lane_profile/mod.rs` provides a conservative, source-aware native
 capability predicate. It does not change the historical frozen profile, select
 an executable, qualify a compiler pin, or establish consumer parity. Selection
 must separately bind a compiler with the corresponding verified capabilities.

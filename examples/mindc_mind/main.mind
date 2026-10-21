@@ -36430,7 +36430,7 @@ pub fn nb_cap_scoped_nested_bindings() -> i64 {
 }
 
 // Capability mark: NATIVE LANE V1. This compiler implements every construct the
-// candidate typed profile admits (src/ir/native_lane_profile.rs): the checked
+// candidate typed profile admits (src/ir/native_lane_profile/mod.rs): the checked
 // i64/f64 scalar surface, the profile's intrinsic and raw-syscall set, a store
 // result read as the defined 0 in any value position (nb_expr's store arm and
 // nb_block_tail_store_zero), saturating `f64 as i64` and `i64 as f64`, and an

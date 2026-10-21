@@ -17,9 +17,7 @@ pub(crate) use types::intrinsic_arity;
 #[cfg(test)]
 use crate::ast;
 #[cfg(test)]
-pub use crate::ir::BinOp;
-#[cfg(test)]
-use crate::ir::{IRModule, Instr, ValueId};
+use crate::ir::{BinOp, IRModule, Instr, ValueId};
 #[cfg(test)]
 use admit::diverges;
 #[cfg(test)]

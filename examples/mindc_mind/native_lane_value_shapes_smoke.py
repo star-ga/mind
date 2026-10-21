@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 
-The candidate native-lane-v1 profile (src/ir/native_lane_profile.rs) admits
+The candidate native-lane-v1 profile (src/ir/native_lane_profile/mod.rs) admits
 three shapes the historical frozen profile refuses, because the MIND-Lab
 programs need them and a compiler carrying the `nblane01` mark implements them:
 
