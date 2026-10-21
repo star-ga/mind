@@ -288,6 +288,10 @@ fn propagate_while(
     }
 }
 
+// `module` supplies the signature table used to classify array and tensor
+// values. That classification is compiled only under `std-surface`. Without
+// the feature the parameter is only passed into the nested-function walk.
+#[cfg_attr(not(feature = "std-surface"), allow(clippy::only_used_in_recursion))]
 fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
