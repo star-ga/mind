@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — whole-array binary operators on the native backend (#287)
+- Whole-array binary operators on the native backend built a binary that returned
+  wrong values (released 0.10.2). They are now refused with a named construct
+  (`binop.array_operand`). Element reads are unaffected.
+
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN
 - The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven

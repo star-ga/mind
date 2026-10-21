@@ -438,6 +438,52 @@ fn array_plus_scalar_is_refused() {
     );
 }
 
+/// The array is the right operand (`1 + a`, and the comparisons). A predicate
+/// that inspects only the left operand admits every one of these: the left
+/// value is a scalar constant.
+#[cfg(feature = "std-surface")]
+#[test]
+fn scalar_op_array_is_refused() {
+    for op in [
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::Div,
+        BinOp::Mod,
+        BinOp::Lt,
+        BinOp::Le,
+        BinOp::Gt,
+        BinOp::Ge,
+        BinOp::Eq,
+        BinOp::Ne,
+        BinOp::BitAnd,
+        BinOp::BitOr,
+        BinOp::BitXor,
+        BinOp::Shl,
+        BinOp::Shr,
+    ] {
+        let instrs = vec![fndef(vec![
+            Instr::ConstI64(ValueId(0), 1),
+            Instr::ConstArray {
+                dst: ValueId(1),
+                name: None,
+                values: vec![7, 8],
+            },
+            Instr::BinOp {
+                dst: ValueId(2),
+                op,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+        ])];
+        assert_eq!(
+            admits(&instrs).unwrap_err().construct,
+            "binop.array_operand",
+            "{op:?} with the array on the right"
+        );
+    }
+}
+
 /// `bytes[N]` indexing is a pointer add. The parameter is not an aggregate,
 /// so the add stays on the scalar operator rule.
 #[cfg(feature = "std-surface")]
@@ -551,4 +597,29 @@ fn lowered_array_add_is_refused_and_element_add_is_admitted() {
         ),
         Ok(())
     );
+}
+
+/// Source form of a scalar operator with the array on the right. Lowering must
+/// keep that operand on the right, where the fence sees it.
+#[cfg(feature = "std-surface")]
+#[test]
+fn lowered_scalar_op_array_is_refused() {
+    assert_eq!(
+        lowered_construct(
+            "fn main() -> i64 { let a: [i64; 2] = [8, 6]; \
+                 let c = 1 + a; return c[0]; }"
+        ),
+        Err("binop.array_operand")
+    );
+    for op in ["<", "<=", ">", ">=", "==", "!="] {
+        let src = format!(
+            "fn main() -> i64 {{ let a: [i64; 2] = [1, 2]; \
+             if 1 {op} a {{ return 1; }} return 0; }}"
+        );
+        assert_eq!(
+            lowered_construct(&src),
+            Err("binop.array_operand"),
+            "{op} with the array on the right"
+        );
+    }
 }

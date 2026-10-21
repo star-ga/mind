@@ -34352,6 +34352,10 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     // on ast_binop (fail-closed): before this guard, ANY unhandled node kind
     // fell through here and walked ast_child0/child1 as if it were a binop — a
     // silent miscompile (or a null-node fault) for every unsupported construct.
+    // deferred: this arm still lowers an array or tensor operand. The Rust
+    // frozen-profile fence refuses that operand as binop.array_operand, and
+    // this second fence does not. Upgrade path: a reseed that adds the
+    // second-fence guard.
     if k == ast_binop() {
         let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
         let lhs_id: i64 = s1.last_id;
