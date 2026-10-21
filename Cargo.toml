@@ -216,6 +216,14 @@ required-features = ["std-surface"]
 name = "nerve_numerics_lint"
 required-features = ["std-surface"]
 
+# Whole-array binary operators are refused by the native frozen-profile fence.
+# `std-surface` is what lowers `[i64; N]` to ConstArray. `mlir-build` is what
+# makes the element-add control build a real binary on the other backend.
+# Without this stanza the file is an empty harness under `--no-default-features`.
+[[test]]
+name = "native_array_binop_refusal"
+required-features = ["std-surface", "mlir-build"]
+
 [[bench]]
 name = "compiler"
 harness = false

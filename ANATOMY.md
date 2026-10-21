@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2617 | **Est. tokens:** ~4,663,325
-**Generated:** 2026-10-21 14:55 UTC
+**Files:** 2620 | **Est. tokens:** ~4,669,553
+**Generated:** 2026-10-21 23:22 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~31,962 |
+| `./` | 34 | ~32,064 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -111,10 +111,10 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~903 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~12,146 |
+| `.github/workflows/` | 8 | ~12,212 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 33 | ~118,795 |
+| `scripts/` | 33 | ~119,118 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -147,7 +147,7 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 12 | ~101,925 |
+| `src/ir/` | 13 | ~104,992 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
@@ -162,7 +162,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,781 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 20 | ~71,645 |
+| `src/project/` | 21 | ~72,637 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -173,7 +173,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 425 | ~885,077 |
+| `tests/` | 426 | ~886,755 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -269,7 +269,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) â€” === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) â€” MIND Bounty Board
 - `build.rs` (~767 tok, large) â€” Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~3947 tok, huge) â€” [package]
+- `Cargo.toml` (~4049 tok, huge) â€” [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) â€” Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) â€” Repository Structure (Snapshot)
@@ -957,7 +957,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) â€” # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) â€” Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) â€” smoke_wiring_lint.py â€” machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6302 tok, huge) â€” # SMOKE_WIRING.tsv â€” the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~6302 tok, huge) â€” # SMOKE_WIRING.tsv â€” the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) â€” Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) â€” stdlib_manifest_lint.py â€” machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) â€” Shared reader for the committed std/*.mind manifest.
@@ -969,14 +969,14 @@
 - `tc_differential_fuzz.py` (~13332 tok, huge) â€” tcdiff â€” differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/backend_native_bridge/`
 
-- `add.elf` (~123 tok, small) â€” ELF> @@@8
+- `add.elf` (binary, 492 bytes)
 - `add.mind` (~24 tok, tiny) â€” fn add(a: i64, b: i64) -> i64 {
-- `const_return.elf` (~100 tok, small) â€” ELF> @@@8
+- `const_return.elf` (binary, 397 bytes)
 - `const_return.mind` (~9 tok, tiny) â€” fn main() -> i64 {
-- `local_call.elf` (~119 tok, small) â€” ELF> @@@8
+- `local_call.elf` (binary, 474 bytes)
 - `local_call.mind` (~23 tok, tiny) â€” fn helper(x: i64) -> i64 {
 - `MANIFEST.txt` (~497 tok, medium) â€” # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
-- `while_sum.elf` (~146 tok, small) â€” ELF> @@@8
+- `while_sum.elf` (binary, 581 bytes)
 - `while_sum.mind` (~37 tok, tiny) â€” fn main() -> i64 {
 ### `examples/mindc_mind/testdata/`
 
@@ -1128,142 +1128,142 @@
 
 - `allocation-zero.patch` (~21 tok, tiny) â€” --- original.mind
 - `BUILD_HASHES.tsv` (~430 tok, medium) â€” variant	backend	sha256
-- `C01.input` (~88 tok, small) â€” 
-- `C01.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C01.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C02.input` (~104 tok, small) â€” 
-- `C02.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿÿÿÿÿÿÿÿ
-- `C02.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿÿÿÿÿÿÿÿ
-- `C03.input` (~136 tok, small) â€” 
-- `C03.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿ
-- `C03.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€ÿ
-- `C04.input` (~104 tok, small) â€” 
-- `C04.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C04.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C05.input` (~104 tok, small) â€” 
-- `C05.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C05.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C06.input` (~104 tok, small) â€” 
-- `C06.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C06.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C07.input` (~104 tok, small) â€” 
-- `C07.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C07.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C08.input` (~120 tok, small) â€” 
-- `C08.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C08.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C09.input` (~184 tok, small) â€” 	
-- `C09.semantic` (~2092 tok, huge) â€” 	ðÿÿÿÿÿÿ{€€
-- `C09.verify` (~4184 tok, huge) â€” 	ðÿÿÿÿÿÿ{€€
-- `C10.input` (~200 tok, medium) â€” 
-- `C10.semantic` (~2092 tok, huge) â€” 
-- `C10.verify` (~4184 tok, huge) â€” 
-- `C11.input` (~248 tok, medium) â€” 
-- `C11.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C11.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C12.input` (~344 tok, medium) â€” 
-- `C12.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C12.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C13.input` (~360 tok, medium) â€” 
-- `C13.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C13.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C14.input` (~136 tok, small) â€” 
-- `C14.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€xV4
-- `C14.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€xV4
-- `C15.input` (~4168 tok, huge) â€” 
-- `C15.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C15.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C16.input` (~104 tok, small) â€” 
-- `C16.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C16.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C17.input` (~120 tok, small) â€” 
-- `C17.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C17.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C18.input` (~136 tok, small) â€” 
-- `C18.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C18.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C19.input` (~152 tok, small) â€” 
-- `C19.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C19.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C20.input` (~168 tok, small) â€” 
-- `C20.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C20.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C21.input` (~184 tok, small) â€” 
-- `C21.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C21.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C22.input` (~200 tok, medium) â€” 
-- `C22.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C22.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C23.input` (~216 tok, medium) â€” 		
-- `C23.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C23.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C24.input` (~232 tok, medium) â€” 
-- `C24.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C24.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€c
-- `C25.input` (~88 tok, small) â€” 
-- `C25.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C25.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C26.input` (~88 tok, small) â€” 
-- `C26.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C26.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C27.input` (~88 tok, small) â€” 
-- `C27.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C27.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C28.input` (~88 tok, small) â€” 
-- `C28.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C28.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C29.input` (~88 tok, small) â€” 
-- `C29.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C29.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C30.input` (~88 tok, small) â€” 
-- `C30.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C30.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ{€€
-- `C31.input` (~120 tok, small) â€” 
-- `C31.semantic` (~2092 tok, huge) â€” ðÿÿÿÿÿÿ€€
-- `C31.verify` (~4184 tok, huge) â€” ðÿÿÿÿÿÿ€€
-- `C32.input` (~104 tok, small) â€”  
-- `C32.semantic` (~2092 tok, huge) â€”  ðÿÿÿÿÿÿ{€€
-- `C32.verify` (~4184 tok, huge) â€”  ðÿÿÿÿÿÿ{€€
-- `C33.input` (~104 tok, small) â€” !
-- `C33.semantic` (~2092 tok, huge) â€” !ðÿÿÿÿÿÿ{€€
-- `C33.verify` (~4184 tok, huge) â€” !ðÿÿÿÿÿÿ{€€
-- `C34.input` (~228 tok, medium) â€” "
-- `C34.semantic` (~2092 tok, huge) â€” "ðÿÿÿÿÿÿ{€€€ÿÿÿÿÿÿÿÿ
-- `C34.verify` (~4184 tok, huge) â€” "ðÿÿÿÿÿÿ{€€€ÿÿÿÿÿÿÿÿ
-- `C35.input` (~104 tok, small) â€” #
-- `C35.semantic` (~2092 tok, huge) â€” #ðÿÿÿÿÿÿ{€€xV4‰gE#
-- `C35.verify` (~4184 tok, huge) â€” #ðÿÿÿÿÿÿ{€€xV4‰gE#
-- `C36.input` (~4168 tok, huge) â€” $
-- `C36.semantic` (~2092 tok, huge) â€” $ðÿÿÿÿÿÿ{€€
-- `C36.verify` (~4184 tok, huge) â€” $ðÿÿÿÿÿÿ{€€
-- `C37.input` (~88 tok, small) â€” %
-- `C37.semantic` (~2092 tok, huge) â€” %ðÿÿÿÿÿÿ{€€
-- `C37.verify` (~4184 tok, huge) â€” %ðÿÿÿÿÿÿ{€€
-- `C38.input` (~104 tok, small) â€” &
-- `C38.semantic` (~2092 tok, huge) â€” &ðÿÿÿÿÿÿ{€€
-- `C38.verify` (~4184 tok, huge) â€” &ðÿÿÿÿÿÿ{€€
+- `C01.input` (binary, 352 bytes)
+- `C01.semantic` (binary, 8368 bytes)
+- `C01.verify` (binary, 16736 bytes)
+- `C02.input` (binary, 416 bytes)
+- `C02.semantic` (binary, 8368 bytes)
+- `C02.verify` (binary, 16736 bytes)
+- `C03.input` (binary, 544 bytes)
+- `C03.semantic` (binary, 8368 bytes)
+- `C03.verify` (binary, 16736 bytes)
+- `C04.input` (binary, 416 bytes)
+- `C04.semantic` (binary, 8368 bytes)
+- `C04.verify` (binary, 16736 bytes)
+- `C05.input` (binary, 416 bytes)
+- `C05.semantic` (binary, 8368 bytes)
+- `C05.verify` (binary, 16736 bytes)
+- `C06.input` (binary, 416 bytes)
+- `C06.semantic` (binary, 8368 bytes)
+- `C06.verify` (binary, 16736 bytes)
+- `C07.input` (binary, 416 bytes)
+- `C07.semantic` (binary, 8368 bytes)
+- `C07.verify` (binary, 16736 bytes)
+- `C08.input` (binary, 480 bytes)
+- `C08.semantic` (binary, 8368 bytes)
+- `C08.verify` (binary, 16736 bytes)
+- `C09.input` (binary, 736 bytes)
+- `C09.semantic` (binary, 8368 bytes)
+- `C09.verify` (binary, 16736 bytes)
+- `C10.input` (binary, 800 bytes)
+- `C10.semantic` (binary, 8368 bytes)
+- `C10.verify` (binary, 16736 bytes)
+- `C11.input` (binary, 992 bytes)
+- `C11.semantic` (binary, 8368 bytes)
+- `C11.verify` (binary, 16736 bytes)
+- `C12.input` (binary, 1376 bytes)
+- `C12.semantic` (binary, 8368 bytes)
+- `C12.verify` (binary, 16736 bytes)
+- `C13.input` (binary, 1440 bytes)
+- `C13.semantic` (binary, 8368 bytes)
+- `C13.verify` (binary, 16736 bytes)
+- `C14.input` (binary, 544 bytes)
+- `C14.semantic` (binary, 8368 bytes)
+- `C14.verify` (binary, 16736 bytes)
+- `C15.input` (binary, 16672 bytes)
+- `C15.semantic` (binary, 8368 bytes)
+- `C15.verify` (binary, 16736 bytes)
+- `C16.input` (binary, 416 bytes)
+- `C16.semantic` (binary, 8368 bytes)
+- `C16.verify` (binary, 16736 bytes)
+- `C17.input` (binary, 480 bytes)
+- `C17.semantic` (binary, 8368 bytes)
+- `C17.verify` (binary, 16736 bytes)
+- `C18.input` (binary, 544 bytes)
+- `C18.semantic` (binary, 8368 bytes)
+- `C18.verify` (binary, 16736 bytes)
+- `C19.input` (binary, 608 bytes)
+- `C19.semantic` (binary, 8368 bytes)
+- `C19.verify` (binary, 16736 bytes)
+- `C20.input` (binary, 672 bytes)
+- `C20.semantic` (binary, 8368 bytes)
+- `C20.verify` (binary, 16736 bytes)
+- `C21.input` (binary, 736 bytes)
+- `C21.semantic` (binary, 8368 bytes)
+- `C21.verify` (binary, 16736 bytes)
+- `C22.input` (binary, 800 bytes)
+- `C22.semantic` (binary, 8368 bytes)
+- `C22.verify` (binary, 16736 bytes)
+- `C23.input` (binary, 864 bytes)
+- `C23.semantic` (binary, 8368 bytes)
+- `C23.verify` (binary, 16736 bytes)
+- `C24.input` (binary, 928 bytes)
+- `C24.semantic` (binary, 8368 bytes)
+- `C24.verify` (binary, 16736 bytes)
+- `C25.input` (binary, 352 bytes)
+- `C25.semantic` (binary, 8368 bytes)
+- `C25.verify` (binary, 16736 bytes)
+- `C26.input` (binary, 352 bytes)
+- `C26.semantic` (binary, 8368 bytes)
+- `C26.verify` (binary, 16736 bytes)
+- `C27.input` (binary, 352 bytes)
+- `C27.semantic` (binary, 8368 bytes)
+- `C27.verify` (binary, 16736 bytes)
+- `C28.input` (binary, 352 bytes)
+- `C28.semantic` (binary, 8368 bytes)
+- `C28.verify` (binary, 16736 bytes)
+- `C29.input` (binary, 352 bytes)
+- `C29.semantic` (binary, 8368 bytes)
+- `C29.verify` (binary, 16736 bytes)
+- `C30.input` (binary, 352 bytes)
+- `C30.semantic` (binary, 8368 bytes)
+- `C30.verify` (binary, 16736 bytes)
+- `C31.input` (binary, 480 bytes)
+- `C31.semantic` (binary, 8368 bytes)
+- `C31.verify` (binary, 16736 bytes)
+- `C32.input` (binary, 416 bytes)
+- `C32.semantic` (binary, 8368 bytes)
+- `C32.verify` (binary, 16736 bytes)
+- `C33.input` (binary, 416 bytes)
+- `C33.semantic` (binary, 8368 bytes)
+- `C33.verify` (binary, 16736 bytes)
+- `C34.input` (binary, 912 bytes)
+- `C34.semantic` (binary, 8368 bytes)
+- `C34.verify` (binary, 16736 bytes)
+- `C35.input` (binary, 416 bytes)
+- `C35.semantic` (binary, 8368 bytes)
+- `C35.verify` (binary, 16736 bytes)
+- `C36.input` (binary, 16672 bytes)
+- `C36.semantic` (binary, 8368 bytes)
+- `C36.verify` (binary, 16736 bytes)
+- `C37.input` (binary, 352 bytes)
+- `C37.semantic` (binary, 8368 bytes)
+- `C37.verify` (binary, 16736 bytes)
+- `C38.input` (binary, 416 bytes)
+- `C38.semantic` (binary, 8368 bytes)
+- `C38.verify` (binary, 16736 bytes)
 - `capture.c` (~12405 tok, huge) â€” Copyright 2026 STARGA Inc. Independent observation fixture, not a verdict authority.
 - `capture.S` (~1065 tok, large) â€” # Copyright 2026 STARGA Inc. Independent SysV observation fixture.
 - `CASES.tsv` (~480 tok, medium) â€” C01	baseline	call	no-tail
-- `E01.input` (~88 tok, small) â€” '
-- `E02.input` (~88 tok, small) â€” (
-- `E03.input` (~88 tok, small) â€” )
-- `E04.input` (~88 tok, small) â€” *
-- `E05.input` (~88 tok, small) â€” +
-- `E06.input` (~88 tok, small) â€” ,
-- `E07.input` (~104 tok, small) â€” -
-- `E08.input` (~88 tok, small) â€” .
-- `E09.input` (~88 tok, small) â€” /
-- `E10.input` (~88 tok, small) â€” 0
-- `E11.input` (~88 tok, small) â€” 1
-- `E12.input` (~88 tok, small) â€” 2
-- `E13.input` (~88 tok, small) â€” 3
-- `E14.input` (~76 tok, small) â€” 4
-- `E15.input` (~88 tok, small) â€” 5
-- `E16.input` (~104 tok, small) â€” 6
-- `E17.input` (~88 tok, small) â€” 7
-- `E18.input` (~88 tok, small) â€” 8€
-- `E19.input` (~88 tok, small) â€” 9
+- `E01.input` (binary, 352 bytes)
+- `E02.input` (binary, 352 bytes)
+- `E03.input` (binary, 352 bytes)
+- `E04.input` (binary, 352 bytes)
+- `E05.input` (binary, 352 bytes)
+- `E06.input` (binary, 352 bytes)
+- `E07.input` (binary, 416 bytes)
+- `E08.input` (binary, 352 bytes)
+- `E09.input` (binary, 352 bytes)
+- `E10.input` (binary, 352 bytes)
+- `E11.input` (binary, 352 bytes)
+- `E12.input` (binary, 352 bytes)
+- `E13.input` (binary, 352 bytes)
+- `E14.input` (binary, 304 bytes)
+- `E15.input` (binary, 352 bytes)
+- `E16.input` (binary, 416 bytes)
+- `E17.input` (binary, 352 bytes)
+- `E18.input` (binary, 352 bytes)
+- `E19.input` (binary, 352 bytes)
 - `M01.patch` (~46 tok, tiny) â€” --- original.mind
 - `M02.patch` (~45 tok, tiny) â€” --- original.mind
 - `M03.patch` (~48 tok, tiny) â€” --- original.mind
@@ -1280,136 +1280,136 @@
 
 - `allocation-zero.patch` (~29 tok, tiny) â€” --- a/native_c_variadic_plan.mind
 - `BUILD_HASHES.tsv` (~327 tok, medium) â€” variant	backend	exit	executable_sha256
-- `C01.expected` (~68 tok, small) â€” 
-- `C01.input` (~124 tok, small) â€” 
-- `C02.expected` (~108 tok, small) â€”  
-- `C02.input` (~176 tok, small) â€” 
-- `C03.expected` (~108 tok, small) â€”  
-- `C03.input` (~176 tok, small) â€” 
-- `C04.expected` (~148 tok, small) â€” @
-- `C04.input` (~228 tok, medium) â€” 
-- `C05.expected` (~148 tok, small) â€” @
-- `C05.input` (~228 tok, medium) â€” 
-- `C06.expected` (~108 tok, small) â€”  
-- `C06.input` (~176 tok, small) â€” 
-- `C07.expected` (~108 tok, small) â€”  
-- `C07.input` (~176 tok, small) â€” 
-- `C08.expected` (~308 tok, medium) â€” À
-- `C08.input` (~436 tok, medium) â€” 
-- `C09.expected` (~348 tok, medium) â€” `
-- `C09.input` (~488 tok, medium) â€” 
-- `C10.expected` (~468 tok, medium) â€” @
-- `C10.input` (~644 tok, large) â€” 
-- `C11.expected` (~708 tok, large) â€”  
-- `C11.input` (~956 tok, large) â€” 
-- `C12.expected` (~4 tok, tiny)
-- `C12.input` (~60 tok, small) â€” 
-- `C13.expected` (~108 tok, small) â€”  
-- `C13.input` (~176 tok, small) â€” 
-- `C14.expected` (~4 tok, tiny) â€” 
-- `C14.input` (~60 tok, small) â€” 
-- `C15.expected` (~4 tok, tiny) â€” 	
-- `C15.input` (~72 tok, small) â€” 	
-- `C16.expected` (~4 tok, tiny) â€” 
-- `C16.input` (~60 tok, small) â€” 
-- `C17.expected` (~4 tok, tiny) â€” 
-- `C17.input` (~60 tok, small) â€” 
-- `C18.expected` (~4 tok, tiny) â€” 
-- `C18.input` (~60 tok, small) â€” 
-- `C19.expected` (~4 tok, tiny) â€” 
-- `C19.input` (~60 tok, small) â€” 
-- `C20.expected` (~4 tok, tiny) â€” 
-- `C20.input` (~60 tok, small) â€” 
-- `C21.expected` (~4 tok, tiny) â€” 
-- `C21.input` (~60 tok, small) â€” 
-- `C22.expected` (~4 tok, tiny) â€” 
-- `C22.input` (~60 tok, small) â€” 
-- `C23.expected` (~4 tok, tiny) â€” 
-- `C23.input` (~60 tok, small) â€” ÿÿÿÿÿÿÿÿ
-- `C24.expected` (~4 tok, tiny) â€” 
-- `C24.input` (~60 tok, small) â€” 
-- `C25.expected` (~4 tok, tiny) â€” 
-- `C25.input` (~60 tok, small) â€” ÿÿÿÿÿÿÿÿ
-- `C26.expected` (~4 tok, tiny) â€” 
-- `C26.input` (~60 tok, small) â€” 
-- `C27.expected` (~4 tok, tiny) â€” 
-- `C27.input` (~60 tok, small) â€” ÿÿÿÿÿÿÿ
-- `C28.expected` (~4 tok, tiny) â€” 
-- `C28.input` (~60 tok, small) â€” 
-- `C29.expected` (~4 tok, tiny) â€” 
-- `C29.input` (~60 tok, small) â€” 
-- `C30.expected` (~4 tok, tiny) â€” 
-- `C30.input` (~60 tok, small) â€” 
-- `C31.expected` (~4 tok, tiny) â€” 
-- `C31.input` (~60 tok, small) â€” 
-- `C32.expected` (~4 tok, tiny) â€” 	
-- `C32.input` (~60 tok, small) â€”  	
-- `C33.expected` (~4 tok, tiny) â€” 
-- `C33.input` (~60 tok, small) â€” 
-- `C34.expected` (~4 tok, tiny) â€” 
-- `C34.input` (~60 tok, small) â€” 
-- `C35.expected` (~4 tok, tiny) â€” 
-- `C35.input` (~60 tok, small) â€” 
-- `C36.expected` (~4 tok, tiny) â€” 
-- `C36.input` (~60 tok, small) â€” 
-- `C37.expected` (~4 tok, tiny) â€” 
-- `C37.input` (~60 tok, small) â€” 
-- `C38.expected` (~4 tok, tiny) â€” 
-- `C38.input` (~60 tok, small) â€” 
-- `C39.expected` (~4 tok, tiny) â€” 	
-- `C39.input` (~72 tok, small) â€” 	
-- `C40.expected` (~4 tok, tiny) â€” 	
-- `C40.input` (~72 tok, small) â€” 	
-- `C41.expected` (~4 tok, tiny) â€” 	
-- `C41.input` (~72 tok, small) â€” 	
-- `C42.expected` (~4 tok, tiny) â€” 	
-- `C42.input` (~72 tok, small) â€” 	
-- `C43.expected` (~4 tok, tiny) â€” 	
-- `C43.input` (~72 tok, small) â€” 	
-- `C44.expected` (~4 tok, tiny) â€” 	
-- `C44.input` (~72 tok, small) â€” 	
-- `C45.expected` (~4 tok, tiny) â€” 	
-- `C45.input` (~72 tok, small) â€” 	
-- `C46.expected` (~4 tok, tiny)
-- `C46.input` (~60 tok, small) â€” 
-- `C47.expected` (~4 tok, tiny)
-- `C47.input` (~60 tok, small) â€” 
-- `C48.expected` (~4 tok, tiny)
-- `C48.input` (~60 tok, small) â€” 
-- `C49.expected` (~4 tok, tiny)
-- `C49.input` (~60 tok, small) â€” 
-- `C50.expected` (~4 tok, tiny)
-- `C50.input` (~60 tok, small) â€” 
-- `C51.expected` (~68 tok, small) â€” 
-- `C51.input` (~124 tok, small) â€” 
-- `C52.expected` (~108 tok, small) â€”  
-- `C52.input` (~176 tok, small) â€” 
-- `C53.expected` (~10268 tok, huge) â€” ` ÐÐ
-- `C53.input` (~13384 tok, huge) â€” 
-- `C54.expected` (~10268 tok, huge) â€” ` ÐÐ
-- `C54.input` (~16444 tok, huge) â€” 
-- `C55.expected` (~68 tok, small) â€” 
-- `C55.input` (~124 tok, small) â€” 
-- `C56.expected` (~68 tok, small) â€” 
-- `C56.input` (~124 tok, small) â€” 
-- `C57.expected` (~68 tok, small) â€” 
-- `C57.input` (~124 tok, small) â€” 
-- `C58.expected` (~68 tok, small) â€” 
-- `C58.input` (~124 tok, small) â€” 
-- `C59.expected` (~668 tok, large) â€” `
-- `C59.input` (~1060 tok, large) â€” 
-- `C60.expected` (~268 tok, medium) â€”  
-- `C60.input` (~444 tok, medium) â€” 
-- `C61.expected` (~108 tok, small) â€”  
-- `C61.input` (~176 tok, small) â€” 
-- `C62.expected` (~4 tok, tiny) â€” 
-- `C62.input` (~84 tok, small) â€” 
-- `C63.expected` (~4 tok, tiny) â€” 
-- `C63.input` (~84 tok, small) â€” 
-- `C64.expected` (~4 tok, tiny)
-- `C64.input` (~72 tok, small) â€” 
-- `C65.expected` (~4 tok, tiny)
-- `C65.input` (~60 tok, small) â€” 
+- `C01.expected` (binary, 272 bytes)
+- `C01.input` (binary, 496 bytes)
+- `C02.expected` (binary, 432 bytes)
+- `C02.input` (binary, 704 bytes)
+- `C03.expected` (binary, 432 bytes)
+- `C03.input` (binary, 704 bytes)
+- `C04.expected` (binary, 592 bytes)
+- `C04.input` (binary, 912 bytes)
+- `C05.expected` (binary, 592 bytes)
+- `C05.input` (binary, 912 bytes)
+- `C06.expected` (binary, 432 bytes)
+- `C06.input` (binary, 704 bytes)
+- `C07.expected` (binary, 432 bytes)
+- `C07.input` (binary, 704 bytes)
+- `C08.expected` (binary, 1232 bytes)
+- `C08.input` (binary, 1744 bytes)
+- `C09.expected` (binary, 1392 bytes)
+- `C09.input` (binary, 1952 bytes)
+- `C10.expected` (binary, 1872 bytes)
+- `C10.input` (binary, 2576 bytes)
+- `C11.expected` (binary, 2832 bytes)
+- `C11.input` (binary, 3824 bytes)
+- `C12.expected` (binary, 16 bytes)
+- `C12.input` (binary, 240 bytes)
+- `C13.expected` (binary, 432 bytes)
+- `C13.input` (binary, 704 bytes)
+- `C14.expected` (binary, 16 bytes)
+- `C14.input` (binary, 240 bytes)
+- `C15.expected` (binary, 16 bytes)
+- `C15.input` (binary, 288 bytes)
+- `C16.expected` (binary, 16 bytes)
+- `C16.input` (binary, 240 bytes)
+- `C17.expected` (binary, 16 bytes)
+- `C17.input` (binary, 240 bytes)
+- `C18.expected` (binary, 16 bytes)
+- `C18.input` (binary, 240 bytes)
+- `C19.expected` (binary, 16 bytes)
+- `C19.input` (binary, 240 bytes)
+- `C20.expected` (binary, 16 bytes)
+- `C20.input` (binary, 240 bytes)
+- `C21.expected` (binary, 16 bytes)
+- `C21.input` (binary, 240 bytes)
+- `C22.expected` (binary, 16 bytes)
+- `C22.input` (binary, 240 bytes)
+- `C23.expected` (binary, 16 bytes)
+- `C23.input` (binary, 240 bytes)
+- `C24.expected` (binary, 16 bytes)
+- `C24.input` (binary, 240 bytes)
+- `C25.expected` (binary, 16 bytes)
+- `C25.input` (binary, 240 bytes)
+- `C26.expected` (binary, 16 bytes)
+- `C26.input` (binary, 240 bytes)
+- `C27.expected` (binary, 16 bytes)
+- `C27.input` (binary, 240 bytes)
+- `C28.expected` (binary, 16 bytes)
+- `C28.input` (binary, 240 bytes)
+- `C29.expected` (binary, 16 bytes)
+- `C29.input` (binary, 240 bytes)
+- `C30.expected` (binary, 16 bytes)
+- `C30.input` (binary, 240 bytes)
+- `C31.expected` (binary, 16 bytes)
+- `C31.input` (binary, 240 bytes)
+- `C32.expected` (binary, 16 bytes)
+- `C32.input` (binary, 240 bytes)
+- `C33.expected` (binary, 16 bytes)
+- `C33.input` (binary, 240 bytes)
+- `C34.expected` (binary, 16 bytes)
+- `C34.input` (binary, 240 bytes)
+- `C35.expected` (binary, 16 bytes)
+- `C35.input` (binary, 240 bytes)
+- `C36.expected` (binary, 16 bytes)
+- `C36.input` (binary, 240 bytes)
+- `C37.expected` (binary, 16 bytes)
+- `C37.input` (binary, 240 bytes)
+- `C38.expected` (binary, 16 bytes)
+- `C38.input` (binary, 240 bytes)
+- `C39.expected` (binary, 16 bytes)
+- `C39.input` (binary, 288 bytes)
+- `C40.expected` (binary, 16 bytes)
+- `C40.input` (binary, 288 bytes)
+- `C41.expected` (binary, 16 bytes)
+- `C41.input` (binary, 288 bytes)
+- `C42.expected` (binary, 16 bytes)
+- `C42.input` (binary, 288 bytes)
+- `C43.expected` (binary, 16 bytes)
+- `C43.input` (binary, 288 bytes)
+- `C44.expected` (binary, 16 bytes)
+- `C44.input` (binary, 288 bytes)
+- `C45.expected` (binary, 16 bytes)
+- `C45.input` (binary, 288 bytes)
+- `C46.expected` (binary, 16 bytes)
+- `C46.input` (binary, 240 bytes)
+- `C47.expected` (binary, 16 bytes)
+- `C47.input` (binary, 240 bytes)
+- `C48.expected` (binary, 16 bytes)
+- `C48.input` (binary, 240 bytes)
+- `C49.expected` (binary, 16 bytes)
+- `C49.input` (binary, 240 bytes)
+- `C50.expected` (binary, 16 bytes)
+- `C50.input` (binary, 240 bytes)
+- `C51.expected` (binary, 272 bytes)
+- `C51.input` (binary, 496 bytes)
+- `C52.expected` (binary, 432 bytes)
+- `C52.input` (binary, 704 bytes)
+- `C53.expected` (binary, 41072 bytes)
+- `C53.input` (binary, 53536 bytes)
+- `C54.expected` (binary, 41072 bytes)
+- `C54.input` (binary, 65776 bytes)
+- `C55.expected` (binary, 272 bytes)
+- `C55.input` (binary, 496 bytes)
+- `C56.expected` (binary, 272 bytes)
+- `C56.input` (binary, 496 bytes)
+- `C57.expected` (binary, 272 bytes)
+- `C57.input` (binary, 496 bytes)
+- `C58.expected` (binary, 272 bytes)
+- `C58.input` (binary, 496 bytes)
+- `C59.expected` (binary, 2672 bytes)
+- `C59.input` (binary, 4240 bytes)
+- `C60.expected` (binary, 1072 bytes)
+- `C60.input` (binary, 1776 bytes)
+- `C61.expected` (binary, 432 bytes)
+- `C61.input` (binary, 704 bytes)
+- `C62.expected` (binary, 16 bytes)
+- `C62.input` (binary, 336 bytes)
+- `C63.expected` (binary, 16 bytes)
+- `C63.input` (binary, 336 bytes)
+- `C64.expected` (binary, 16 bytes)
+- `C64.input` (binary, 288 bytes)
+- `C65.expected` (binary, 16 bytes)
+- `C65.input` (binary, 240 bytes)
 - `CASES.json` (~6542 tok, huge)
 - `CASES.tsv` (~587 tok, large) â€” C01	baseline	0	proposal01-no-tail
 - `COMBINED_BUILD_HASHES.tsv` (~317 tok, medium) â€” variant	backend	executable_sha256
@@ -1433,12 +1433,12 @@
 - `probe.s` (~296 tok, medium) â€” # Copyright 2026 STARGA Inc. Diagnostic register canaries only.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
-- `add.elf` (~123 tok, small) â€” ELF> @@@8
-- `if_ret.elf` (~150 tok, small) â€” ELF> @@@8
+- `add.elf` (binary, 492 bytes)
+- `if_ret.elf` (binary, 598 bytes)
 - `MANIFEST.txt` (~152 tok, small) â€” # Frozen native-ELF oracle references, captured before #15 deletes src/native.
-- `recursion.elf` (~175 tok, small) â€” ELF> @@@8
-- `struct_field.elf` (~166 tok, small) â€” ELF> @@@8
-- `value_if.elf` (~147 tok, small) â€” ELF> @@@8
+- `recursion.elf` (binary, 699 bytes)
+- `struct_field.elf` (binary, 664 bytes)
+- `value_if.elf` (binary, 585 bytes)
 ### `examples/mindc_mind/testdata/native_lane_values/`
 
 - `casts_edges.mind` (~567 tok, large) â€” Author: STARGA Inc. Full-width i64 <-> f64 conversion edges (NaN, +-inf, +-2^63,
@@ -1784,7 +1784,7 @@
 - `cargo-deny.yml` (~302 tok, medium) â€” name: Cargo Deny
 - `crypto-vectors.yml` (~1625 tok, huge) â€” name: Crypto Vectors
 - `docs-claims.yml` (~2668 tok, huge) â€” name: Docs Claims
-- `link-check.yml` (~253 tok, medium) â€” name: Link Check
+- `link-check.yml` (~319 tok, medium) â€” name: Link Check
 - `mindcraft.yml` (~933 tok, large) â€” name: Mindcraft Check
 - `release-drafter.yml` (~164 tok, small) â€” name: Release Drafter
 - `release.yml` (~3761 tok, huge) â€” name: Release
@@ -1801,7 +1801,7 @@
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) â€” shellcheck shell=bash
 - `anatomy-hook.sh` (~1811 tok, huge) â€” STARGA author guard (chained first: a wrong-identity commit must never be created).
-- `anatomy.sh` (~2453 tok, huge) â€” anatomy â€” Generate ANATOMY.md for any repo
+- `anatomy.sh` (~2755 tok, huge) â€” anatomy â€” Generate ANATOMY.md for any repo
 - `arch_gate.sh` (~400 tok, medium) â€” arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) â€” Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) â€” Docs-claim CI gate â€” fail if any public surface drifts from config/capabilities.toml.
@@ -1813,7 +1813,7 @@
 - `check_release_gating.py` (~4342 tok, huge) â€” check_release_gating.py â€” machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~866 tok, large) â€” commit-msg-hook.sh â€” local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) â€” Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10045 tok, huge) â€” exec_semantics_gate.sh â€” run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10066 tok, huge) â€” exec_semantics_gate.sh â€” run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) â€” gate_assert.py â€” the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) â€” Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) â€” # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -2138,7 +2138,8 @@
 
 - `evidence.rs` (~13387 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) â€” FP-contract mode â€” the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~7794 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~6482 tok, huge) â€” Copyright 2025 STARGA Inc.
+- `frozen_profile_tests.rs` (~4379 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `mic_load.rs` (~994 tok, large) â€” Copyright 2025 STARGA Inc.
 - `mod.rs` (~16831 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_c_abi.rs` (~3388 tok, huge) â€” Copyright 2026 STARGA Inc.
@@ -2233,6 +2234,7 @@
 - `canonical_bridge.rs` (~5927 tok, huge) â€” Copyright 2026 STARGA Inc.
 - `compiled_sources.rs` (~530 tok, large) â€” Copyright 2025 STARGA Inc.
 - `embedded_entry.rs` (~670 tok, large) â€” Copyright 2025-2026 STARGA Inc.
+- `host_triple.rs` (~992 tok, large) â€” Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) â€” Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) â€” Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~7745 tok, huge) â€” Copyright 2025 STARGA Inc.
@@ -3024,6 +3026,7 @@
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) â€” Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1413 tok, large) â€” Copyright 2025 STARGA Inc.
+- `native_array_binop_refusal.rs` (~1678 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~5870 tok, huge) â€” Copyright 2025 STARGA Inc.
 - `native_bridge_refusals.rs` (~6436 tok, huge) â€” Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
