@@ -651,9 +651,15 @@ jobs:
     # the one the neon (real aarch64) runner computes. This job downloads both
     # runners' digest artifacts and FAILS RED on any mismatch — a real x86 != ARM
     # divergence in the fuzzed corpus can no longer ship green (MIND-CONSTITUTION
-    # §I.4). `needs:` gates it on both matrix legs producing their artifact.
+    # §I.4). Each cell compares avx2 against neon for ONE toolchain. A failure
+    # of the other toolchain must not skip this cell: skipping the job before
+    # the matrix expands leaves a single check whose name still contains the
+    # unexpanded matrix expression, and it also drops the compare for the
+    # toolchain that did produce both digests. `!cancelled()` schedules every
+    # cell; a cell whose own substrate artifact is missing still fails closed.
     name: Fuzzer cross-runner mic@3 identity (avx2 == neon) (LLVM ${{ matrix.llvm }})
     needs: cross_substrate_identity
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:

@@ -10,15 +10,16 @@
 //! programs inside `mlir-opt` ("could not infer buffer type of block
 //! argument", "cannot bufferize a FuncOp ... without a unique ReturnOp"): its
 //! one-shot bufferization cannot handle a tensor carried across a loop or
-//! returned from several exits, which MLIR 20 (the version CI pins) does. Both
-//! now say which tool, which version, and where a usable one is installed.
+//! returned from several exits, which MLIR 20 and newer can. CI tests MLIR 23
+//! (latest) and MLIR 20 (oldest supported). Both now say which tool, which
+//! version, and where a usable one is installed.
 
 use std::path::PathBuf;
 
 use crate::diagnostics::capability::FallbackReason;
 
 /// The oldest MLIR whose bufferization handles tensors carried across loops and
-/// multiple returns; the version CI builds and tests with.
+/// multiple returns. CI tests 23 and 20; 20 stays the minimum.
 pub const MIN_MLIR_MAJOR: u32 = 20;
 
 /// The major version in `<tool> --version` output (`LLVM version 18.1.3`).

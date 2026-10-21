@@ -223,6 +223,16 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         // ops, so the scalar `fn f(x, y) { x + y }` class is unaffected
         // and the default `cargo build` (which never runs mlir-opt — this
         // is the `mlir-build` feature path) is byte-identical.
+        //
+        // `convert-vector-to-llvm` on MLIR 23 can leave `ub.poison` in the
+        // body (a NEON vector pad is `ub.poison : vector<16xi32>`).
+        // `mlir-translate --mlir-to-llvmir` does not register the `ub`
+        // dialect, on 20 or on 23, and rejects the op. `convert-ub-to-llvm`
+        // rewrites `ub.poison` to `llvm.mlir.poison`. The pass has shipped
+        // since before MLIR 18 and is present on the MLIR 20 minimum; on IR
+        // with no `ub` op it does not change the module text. It runs after
+        // `convert-func-to-llvm` so poison that survived into `llvm.func`
+        // is still rewritten, and before `reconcile-unrealized-casts`.
         "none" | "core" | "cpu-demo" | "jit-cpu" => Some(
             "canonicalize,cse,\
              convert-scf-to-cf,\
@@ -232,6 +242,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              convert-cf-to-llvm,\
              convert-arith-to-llvm,\
              convert-func-to-llvm,\
+             convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         // Tensor-aware pipeline. Adds bufferization + linalg lowering
@@ -249,6 +260,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              convert-arith-to-llvm,\
              convert-func-to-llvm,\
              convert-to-llvm,\
+             convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         _ => None,

@@ -360,7 +360,7 @@ if [ "${1:-}" = "--full" ]; then
 
   step "cross-substrate determinism 24/24  [ci.yml cross_substrate_identity — THE wedge invariant]"
   # Was ABSENT from preflight until 2026-08-27 while preflight still printed
-  # "safe to push". Features must match ci.yml:286 EXACTLY — tests/cross_substrate_identity.rs
+  # "safe to push". Features must match ci.yml:566 EXACTLY — tests/cross_substrate_identity.rs
   # carries a file-level #![cfg(all(feature="mlir-build", feature="std-surface",
   # feature="cross-module-imports"))]; drop any one and the whole file vanishes and
   # cargo reports `ok. 0 passed` with exit 0. Hence the POSITIVE-count assert.
