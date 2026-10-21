@@ -112,6 +112,7 @@ CRITICAL_exec=(
   "determinism_veto_control 2"       # the determinism-by-default veto positive control
   "alias_miscompile_run 1"    # the alias-miscompile regression gate
   "array_oob_trap_run 1"      # ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP
+  "native_array_binop_refusal 3"  # whole-array binop refused; element add admitted
   "fail_closed_capability_skip 20"  # measured 22; the capability-skip helper contract
   "fail_closed_capability_skip_env 4"  # measured 6; the MIND_BENCH_REQUIRE READER itself
   "fail_closed_capability_skip_stub_exec 4"  # its end-to-end leg, spawned for real (unix)

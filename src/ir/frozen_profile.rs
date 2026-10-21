@@ -22,7 +22,7 @@
 //! path today, so it changes zero mic@3 bytes and cannot perturb the keystone.
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
-use crate::ir::{BinOp, IRModule, Instr};
+use crate::ir::{BinOp, IRModule, Instr, ValueId};
 
 /// The first construct that is NOT in the frozen native profile, named for a
 /// fail-loud diagnostic. `None`-free by construction: `Ok(())` means every
@@ -44,7 +44,11 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // not, and cannot be assumed proven. See `admit_call`.
     let mut defined = std::collections::BTreeSet::new();
     collect_fn_names(&module.instrs, &mut defined);
-    admit_instrs_in(&module.instrs, &defined)
+    // Aggregate classification is per function: each `FnDef` body mints a fresh
+    // ValueId space. The top-level set covers instructions that are not inside a
+    // function. `admit_instrs_in` opens a new set at every function boundary.
+    let mut aggs = std::collections::BTreeSet::new();
+    admit_instrs_in(&module.instrs, &defined, module, &mut aggs)
 }
 
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
@@ -188,9 +192,107 @@ fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
     }
 }
 
+/// Refuse a binary operator when either operand is an array or tensor value.
+///
+/// `ConstArray` and `BinOp::Add` (and `Sub` / `Mul`, the comparisons, and the
+/// bitwise ops) are each in profile on their own, so `[i64; N] + [i64; N]` was
+/// admitted. The frozen native compiler then adds the two base addresses and
+/// the artifact runs and returns the wrong value. An element read is
+/// `ArrayLoad`, whose destination is a scalar, so `a[i] + b[i]` stays admitted.
+///
+/// The operand class is decided before [`admit_binop`], so an array `/` is
+/// named `binop.array_operand` rather than `binop.div`. A scalar `/` is still
+/// `binop.div`. `bytes[N]` and slices are not aggregate values: indexing them
+/// lowers to a pointer add, and marking them would refuse that add.
+fn admit_binop_use(
+    op: &BinOp,
+    lhs: ValueId,
+    rhs: ValueId,
+    aggs: &std::collections::BTreeSet<ValueId>,
+) -> Result<(), FrozenProfileRejection> {
+    if aggs.contains(&lhs) || aggs.contains(&rhs) {
+        return reject("binop.array_operand");
+    }
+    admit_binop(op)
+}
+
+#[cfg(feature = "std-surface")]
+fn type_is_aggregate(ty: &crate::ast::TypeAnn) -> bool {
+    match ty {
+        crate::ast::TypeAnn::Array { .. }
+        | crate::ast::TypeAnn::Tensor { .. }
+        | crate::ast::TypeAnn::DiffTensor { .. }
+        | crate::ast::TypeAnn::SparseTensor { .. } => true,
+        crate::ast::TypeAnn::Generic { name, .. } if name == "array" => true,
+        _ => false,
+    }
+}
+
+/// Seed the aggregate set for one function. ValueIds restart at each `FnDef`,
+/// so this must not inherit the caller's set. A parameter is an aggregate only
+/// when its declared type is an array or tensor. `bytes[N]` is `Named`, a
+/// slice is `Slice`, and neither is included: their index lowering is a
+/// pointer add of a scalar address.
+#[cfg(feature = "std-surface")]
+fn seed_fn_aggregates(
+    name: &str,
+    params: &[(String, ValueId)],
+    value_types: &std::collections::BTreeMap<ValueId, crate::ir::ArrayType>,
+    module: &IRModule,
+    aggs: &mut std::collections::BTreeSet<ValueId>,
+) {
+    if let Some((tys, _)) = module.fn_signatures.get(name) {
+        for ((_, vid), ty) in params.iter().zip(tys.iter()) {
+            if type_is_aggregate(ty) {
+                aggs.insert(*vid);
+            }
+        }
+    }
+    for vid in value_types.keys() {
+        aggs.insert(*vid);
+    }
+}
+
+#[cfg(feature = "std-surface")]
+fn note_aggregate_call(
+    name: &str,
+    dst: ValueId,
+    module: &IRModule,
+    aggs: &mut std::collections::BTreeSet<ValueId>,
+) {
+    if let Some((_, Some(ret))) = module.fn_signatures.get(name) {
+        if type_is_aggregate(ret) {
+            aggs.insert(dst);
+        }
+    }
+}
+
+/// A loop-carried aggregate is the same value under three ids (the pre-loop
+/// value, the back-edge value, and the value after the loop). If any one of
+/// them is an aggregate, the other two are too, including a use inside the body.
+#[cfg(feature = "std-surface")]
+fn propagate_while(
+    init_ids: &[ValueId],
+    live_vars: &[(String, ValueId)],
+    exit_ids: &[ValueId],
+    aggs: &mut std::collections::BTreeSet<ValueId>,
+) {
+    let n = init_ids.len().min(live_vars.len()).min(exit_ids.len());
+    for i in 0..n {
+        let carried = [init_ids[i], live_vars[i].1, exit_ids[i]];
+        if carried.iter().any(|id| aggs.contains(id)) {
+            for id in carried {
+                aggs.insert(id);
+            }
+        }
+    }
+}
+
 fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
+    module: &IRModule,
+    aggs: &mut std::collections::BTreeSet<ValueId>,
 ) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
         match instr {
@@ -220,7 +322,17 @@ fn admit_instrs_in(
             // needs the operand/field type, i.e. the same (op, operand_type) keying
             // `admit_binop` already defers — thread `FnDef.value_types` through
             // first. Tracked on matrix row 12 / the RI-D1 bijection gate.
-            Instr::Call { name, .. } => admit_call(name, defined)?,
+            Instr::Call { name, dst, .. } => {
+                // A call that returns an array or tensor produces an aggregate
+                // value. Record it before the callee check so a later binop on
+                // that result is named `binop.array_operand` when the call
+                // itself is in profile.
+                #[cfg(feature = "std-surface")]
+                note_aggregate_call(name, *dst, module, aggs);
+                #[cfg(not(feature = "std-surface"))]
+                let _ = dst;
+                admit_call(name, defined)?
+            }
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
             | Instr::Return { .. }
@@ -230,29 +342,72 @@ fn admit_instrs_in(
             // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
             // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
             // corpus never proves — see admit_binop for the rejection set + fitment note.
-            Instr::BinOp { op, .. } => admit_binop(op)?,
-            Instr::FnDef { body, .. } => admit_instrs_in(body, defined)?,
+            // The operand class is checked first (`binop.array_operand`): an array or
+            // tensor value used as an operand is a different native path from the
+            // scalar operator, and the frozen compiler miscompiles it.
+            Instr::BinOp { op, lhs, rhs, .. } => admit_binop_use(op, *lhs, *rhs, aggs)?,
+            // Each function has its own ValueId space. Classify aggregates from
+            // this function's signature and body, not from the caller.
+            Instr::FnDef { body, .. } => {
+                let mut child = std::collections::BTreeSet::new();
+                #[cfg(feature = "std-surface")]
+                if let Instr::FnDef {
+                    name,
+                    params,
+                    value_types,
+                    ..
+                } = instr
+                {
+                    seed_fn_aggregates(name, params, value_types, module, &mut child);
+                }
+                admit_instrs_in(body, defined, module, &mut child)?;
+            }
             #[cfg(feature = "std-surface")]
             Instr::While {
-                cond_instrs, body, ..
+                cond_instrs,
+                body,
+                init_ids,
+                live_vars,
+                exit_ids,
+                ..
             } => {
-                admit_instrs_in(cond_instrs, defined)?;
-                admit_instrs_in(body, defined)?;
+                propagate_while(init_ids, live_vars, exit_ids, aggs);
+                admit_instrs_in(cond_instrs, defined, module, aggs)?;
+                admit_instrs_in(body, defined, module, aggs)?;
+                propagate_while(init_ids, live_vars, exit_ids, aggs);
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
                 cond_instrs,
                 then_instrs,
                 else_instrs,
+                then_result,
+                else_result,
+                dst,
+                merges,
                 ..
             } => {
-                admit_instrs_in(cond_instrs, defined)?;
-                admit_instrs_in(then_instrs, defined)?;
-                admit_instrs_in(else_instrs, defined)?;
+                admit_instrs_in(cond_instrs, defined, module, aggs)?;
+                admit_instrs_in(then_instrs, defined, module, aggs)?;
+                admit_instrs_in(else_instrs, defined, module, aggs)?;
+                if aggs.contains(then_result) || aggs.contains(else_result) {
+                    aggs.insert(*dst);
+                }
+                for (merge_id, then_val, else_val) in merges {
+                    if aggs.contains(then_val) || aggs.contains(else_val) {
+                        aggs.insert(*merge_id);
+                    }
+                }
+            }
+            // `ConstArray` is in profile (a read-only blob) AND it is an aggregate
+            // value. Recording its destination is what lets the binop arm refuse
+            // `a + b` without refusing `a[i]`, which is `ArrayLoad`.
+            #[cfg(feature = "std-surface")]
+            Instr::ConstArray { dst, .. } => {
+                aggs.insert(*dst);
             }
             #[cfg(feature = "std-surface")]
-            Instr::ConstArray { .. }
-            | Instr::ArrayLoad { .. }
+            Instr::ArrayLoad { .. }
             | Instr::Break { .. }
             | Instr::Continue { .. }
             | Instr::ExternFnDecl { .. } => {}
@@ -332,325 +487,5 @@ fn admit_instrs_in(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ir::{Instr, ValueId};
-
-    /// Test-side mirror of [`profile_frozen_admits`] for a bare instruction slice.
-    /// It builds the defined-function set with the SAME `collect_fn_names` pass the
-    /// public entry uses, so a test can never accidentally prove a property under a
-    /// different admission context than production.
-    fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
-        let mut defined = std::collections::BTreeSet::new();
-        collect_fn_names(instrs, &mut defined);
-        admit_instrs_in(instrs, &defined)
-    }
-
-    fn fndef(body: Vec<Instr>) -> Instr {
-        Instr::FnDef {
-            name: "f".into(),
-            params: vec![],
-            ret_id: None,
-            body,
-            reap_threshold: None,
-            semantic_types: None,
-            #[cfg(feature = "std-surface")]
-            value_types: Default::default(),
-        }
-    }
-
-    fn matmul() -> Instr {
-        Instr::MatMul {
-            dst: ValueId(2),
-            a: ValueId(0),
-            b: ValueId(1),
-        }
-    }
-
-    #[test]
-    fn scalar_body_is_admitted() {
-        // fn f() -> i64 { return 42 } — pure scalar, in profile.
-        let instrs = vec![fndef(vec![
-            Instr::ConstI64(ValueId(0), 42),
-            Instr::Return {
-                value: Some(ValueId(0)),
-            },
-        ])];
-        assert_eq!(admits(&instrs), Ok(()));
-    }
-
-    #[test]
-    fn tensor_matmul_is_rejected_by_name() {
-        let err = admits(&[matmul()]).unwrap_err();
-        assert_eq!(err.construct, "tensor.matmul");
-    }
-
-    #[test]
-    fn tensor_hidden_in_fn_body_is_still_rejected() {
-        // The offender must not hide inside a nested function body.
-        let err = admits(&[fndef(vec![matmul()])]).unwrap_err();
-        assert_eq!(err.construct, "tensor.matmul");
-    }
-
-    #[test]
-    fn public_wrapper_delegates() {
-        // The IRModule wrapper walks module.instrs — smoke it via the helper it
-        // delegates to, so this file needs no full IRModule literal.
-        assert!(admits(&[Instr::Output(ValueId(0))]).is_ok());
-    }
-
-    fn binop(op: BinOp) -> Instr {
-        Instr::BinOp {
-            dst: ValueId(2),
-            op,
-            lhs: ValueId(0),
-            rhs: ValueId(1),
-        }
-    }
-
-    #[test]
-    fn corpus_proven_binops_are_admitted() {
-        // The 5-program readiness corpus exercises `+` (Add) and `<` (Lt, the for-loop
-        // desugar); Sub/Mul/other-compares are substrate-invariant on the same axis.
-        for op in [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Lt, BinOp::Eq] {
-            assert_eq!(admits(&[binop(op)]), Ok(()), "{op:?} should be admitted");
-        }
-    }
-
-    #[test]
-    fn divergent_binops_are_rejected_by_name() {
-        // The H5 exploit ops: Div/Mod (i64::MIN/-1, sign-of-remainder) are not in the
-        // byte-identity corpus and must be named, not silently admitted.
-        assert_eq!(
-            admits(&[binop(BinOp::Div)]).unwrap_err().construct,
-            "binop.div"
-        );
-        assert_eq!(
-            admits(&[binop(BinOp::Mod)]).unwrap_err().construct,
-            "binop.mod"
-        );
-    }
-
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn shifts_are_rejected_by_name() {
-        // Shl (count >= width UB) / Shr (arith-vs-logical signedness split) — the ops
-        // that keep the Q16.16 `(a*b)>>16` ecosystem tier out of the frozen profile.
-        assert_eq!(
-            admits(&[binop(BinOp::Shl)]).unwrap_err().construct,
-            "binop.shl"
-        );
-        assert_eq!(
-            admits(&[binop(BinOp::Shr)]).unwrap_err().construct,
-            "binop.shr"
-        );
-    }
-
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn array_read_is_admitted_but_array_store_is_rejected() {
-        // Row 12: reading a fixed array is corpus-proven (readiness-gate program
-        // `array_idx_loop`); WRITING one is not ported to the frozen stage1.elf.
-        // They share a constructor family, so admitting them together was the
-        // constructor-vs-denotation defect — this pins the split.
-        assert_eq!(
-            admits(&[Instr::ArrayLoad {
-                dst: ValueId(2),
-                base: ValueId(0),
-                index: ValueId(1),
-            }]),
-            Ok(())
-        );
-        assert_eq!(
-            admits(&[Instr::ArrayStore {
-                dst: ValueId(3),
-                base: ValueId(0),
-                index: ValueId(1),
-                value: ValueId(2),
-            }])
-            .unwrap_err()
-            .construct,
-            "aggregate.array_store"
-        );
-    }
-
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn array_store_hidden_in_fn_body_is_rejected() {
-        // Must not slip through the FnDef recursion, same as the Div case below.
-        let err = admits(&[fndef(vec![Instr::ArrayStore {
-            dst: ValueId(3),
-            base: ValueId(0),
-            index: ValueId(1),
-            value: ValueId(2),
-        }])])
-        .unwrap_err();
-        assert_eq!(err.construct, "aggregate.array_store");
-    }
-
-    #[test]
-    fn intrinsic_callee_is_rejected_but_user_callee_is_admitted() {
-        // The aggregate ABI reaches the IR as intrinsic calls; pin BOTH directions
-        // so a future intrinsic allowlist has to update this test deliberately.
-        let call = |name: &str| Instr::legacy_call(ValueId(1), name, vec![]);
-        assert_eq!(
-            admits(&[call("__mind_alloc")]).unwrap_err().construct,
-            "call.undefined_or_builtin"
-        );
-        // `f` IS defined by `fndef`, so a call to it is in profile.
-        assert_eq!(admits(&[fndef(vec![]), call("f")]), Ok(()));
-    }
-
-    #[test]
-    fn divergent_binop_hidden_in_fn_body_is_rejected() {
-        // The op-blind admission bug: a Div buried in a function body must not slip
-        // through the FnDef recursion.
-        let err = admits(&[fndef(vec![binop(BinOp::Div)])]).unwrap_err();
-        assert_eq!(err.construct, "binop.div");
-    }
-
-    // ---- row 10 FLOAT_LANGUAGE_COVERAGE: the NaN-compare divergence ----
-
-    /// A float literal alone stays in profile: `float_as_i64` (`(2.5+4.0) as i64`) is a
-    /// readiness-corpus IN-profile program and carries no comparison.
-    #[test]
-    fn float_arithmetic_without_comparison_is_admitted() {
-        let instrs = vec![fndef(vec![
-            Instr::ConstF64(ValueId(0), 2.5),
-            Instr::ConstF64(ValueId(1), 4.0),
-            binop(BinOp::Add),
-            Instr::Return {
-                value: Some(ValueId(2)),
-            },
-        ])];
-        assert_eq!(admits(&instrs), Ok(()));
-    }
-
-    /// A float comparison is now IN profile: the native lowering is IEEE-ordered
-    /// (swapped-operand `seta`/`setae` for `<`/`<=`, `sete AND setnp` for `==`,
-    /// `setne OR setp` for `!=`) and `ri_d1_frozen_profile_gate.py` proves native == MLIR
-    /// == an IEEE oracle over NaN / +-0.0 / +-inf. Before that proof this exact shape was
-    /// refused as `binop.compare_in_float_module` (old native exit 3 vs MLIR exit 0).
-    #[test]
-    fn comparison_in_a_float_module_is_admitted() {
-        for op in [
-            BinOp::Lt,
-            BinOp::Le,
-            BinOp::Gt,
-            BinOp::Ge,
-            BinOp::Eq,
-            BinOp::Ne,
-        ] {
-            let instrs = vec![fndef(vec![
-                Instr::ConstF64(ValueId(0), 0.0),
-                Instr::ConstF64(ValueId(1), f64::NAN),
-                binop(op),
-            ])];
-            assert_eq!(
-                admits(&instrs),
-                Ok(()),
-                "{op:?} over f64 operands is native == MLIR proven and must be admitted"
-            );
-        }
-    }
-
-    /// Relaxing the float-COMPARE arm must not relax the operators it never proved:
-    /// `Div` (and `Mod`) in a float module stay refused by name, exactly as in an
-    /// integer module.
-    #[test]
-    fn div_in_a_float_module_is_still_rejected() {
-        for (op, label) in [(BinOp::Div, "binop.div"), (BinOp::Mod, "binop.mod")] {
-            let instrs = vec![fndef(vec![
-                Instr::ConstF64(ValueId(0), 1.0),
-                Instr::ConstF64(ValueId(1), 3.0),
-                binop(BinOp::Lt),
-                binop(op),
-            ])];
-            assert_eq!(admits(&instrs).unwrap_err().construct, label);
-        }
-    }
-
-    /// Integer comparisons keep the profile's proven for-loop (`array_idx_loop`).
-    #[test]
-    fn integer_comparison_without_float_is_still_admitted() {
-        assert_eq!(admits(&[binop(BinOp::Lt)]), Ok(()));
-    }
-
-    /// A comparison over float params whose literal sits in ANOTHER fn (the shape the old
-    /// module-scoped taint existed for) is admitted too — the admission no longer depends
-    /// on where a float literal appears.
-    #[test]
-    fn float_in_caller_with_comparison_in_another_fn_is_admitted() {
-        let caller = Instr::FnDef {
-            name: "main".into(),
-            params: vec![],
-            ret_id: None,
-            body: vec![Instr::ConstF64(ValueId(0), 1.5)],
-            reap_threshold: None,
-            semantic_types: None,
-            #[cfg(feature = "std-surface")]
-            value_types: Default::default(),
-        };
-        let callee = fndef(vec![binop(BinOp::Lt)]);
-        assert_eq!(admits(&[caller, callee]), Ok(()));
-    }
-
-    fn source_admits(src: &str) -> Result<(), FrozenProfileRejection> {
-        let module = crate::parser::parse(src).expect("test source parses");
-        profile_frozen_admits_source(&module)
-    }
-
-    /// The IR half cannot see a declared f32: both literals lower to `ConstF64` and the
-    /// compare to a bare `Lt`, so the IR predicate admits it. The source half refuses it.
-    #[test]
-    fn declared_f32_comparison_is_rejected_on_the_source() {
-        let src = "fn main() -> i64 { let x: f32 = 1.0; let y: f32 = 2.0; \
-                   if x < y { return 1; } return 0; }";
-        let module = crate::parser::parse(src).expect("parses");
-        let ir = crate::eval::lower_to_ir(&module).expect("lowers");
-        assert_eq!(profile_frozen_admits(&ir), Ok(()), "IR half is type-blind");
-        assert_eq!(
-            source_admits(src).unwrap_err().construct,
-            "type.non_f64_float"
-        );
-    }
-
-    /// Every spelling that puts a non-f64 float into the program is refused: params,
-    /// returns, casts, the call-form cast, struct fields and nested element types.
-    #[test]
-    fn every_non_f64_float_spelling_is_rejected() {
-        for src in [
-            "fn f(x: f32) -> i64 { return 0; }",
-            "fn f() -> f32 { return 1.0; }",
-            "fn main() -> i64 { let a: f64 = 1.0; let b = a as f32; return 0; }",
-            "fn main() -> i64 { let a: f64 = 1.0; let b = f32(a); return 0; }",
-            "struct P { x: f32 }",
-            "fn f(xs: [f32; 4]) -> i64 { return 0; }",
-            "fn f(x: f16) -> i64 { return 0; }",
-            "fn f(x: bf16) -> i64 { return 0; }",
-        ] {
-            assert_eq!(
-                source_admits(src).map_err(|r| r.construct),
-                Err("type.non_f64_float"),
-                "{src}"
-            );
-        }
-    }
-
-    /// Positive control: f64 and integer programs, including f64 comparisons, pass.
-    #[test]
-    fn f64_and_integer_sources_are_admitted() {
-        for src in [
-            "fn main() -> i64 { let x: f64 = 1.0; let y: f64 = 2.0; \
-             if x < y { return 1; } return 0; }",
-            "fn d(x: f64, y: f64) -> f64 { return x * y; }",
-            "fn main() -> i64 { let n: i64 = 3; return n; }",
-            "fn main() -> i64 { let a: f64 = 1.5; return a as i64; }",
-            // A tensor element dtype is not a scalar width; the tensor itself is refused
-            // elsewhere, under its own name.
-            "fn sink(x: Tensor<f32, [4]>) -> i64 { return 0; }",
-        ] {
-            assert_eq!(source_admits(src), Ok(()), "{src}");
-        }
-    }
-}
+#[path = "frozen_profile_tests.rs"]
+mod tests;
