@@ -28,6 +28,7 @@ _cf_giant	none	helper	Capacity program generators (giant flat lists, deep trees,
 _cf_oracle	none	helper	Oracle .so heap checks (main.mind free contract, malloc-checked .so child, self-emit) imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
 _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refusal control imported by self_host_tc_unknown_call_smoke.
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
+_mindfuzz_twin_emit	none	helper	Twin-emitter half of mindfuzz_self_host (source emitter, self-host and reference note oracles, runtime exit check, minimizer, batch builder); not a gate — running it directly is a no-op.
 _selfhost_loop_reseed	none	helper	Focused legacy Rust-seeded publication path imported by self_host_loop_smoke.py; not a gate — running it directly is a no-op.
 _selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
 _selfhost_sources	none	helper	Immutable internal compiler source capture and library/native view materialization; imported bootstrap orchestration, not product runtime or native admission.

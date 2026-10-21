@@ -68,6 +68,7 @@ COPIED = (
     "scripts/commit-msg-hook.sh",
     "scripts/anatomy-hook.sh",
     "scripts/check_gate_wiring.py",
+    "scripts/check_gate_wiring_preflight.py",
     "scripts/preflight.sh",
     "scripts/workflow_scan.py",
 )
