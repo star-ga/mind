@@ -31,19 +31,19 @@ extract_summary() {
   case "$ext" in
     py)
       # Look for docstring or first comment
-      grep -m1 -E '^\s*("""|#\s+\w)' "$file" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/"""//' | head -c 120 || true
+      grep -m1 -E '^\s*("""|#\s+\w)' "$file" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/"""//' | utf8_trunc 120 || true
       ;;
     rs|ts|js|tsx|jsx|go|c|cpp|h|java|swift|kt)
       # First // or /// comment
-      grep -m1 -E '^\s*//[/!]?\s+\w' "$file" 2>/dev/null | sed 's|^[[:space:]]*//[/!]*[[:space:]]*||' | head -c 120 || true
+      grep -m1 -E '^\s*//[/!]?\s+\w' "$file" 2>/dev/null | sed 's|^[[:space:]]*//[/!]*[[:space:]]*||' | utf8_trunc 120 || true
       ;;
     mind)
       # First // comment or fn declaration
-      grep -m1 -E '^\s*(//|fn |module )' "$file" 2>/dev/null | sed 's|^[[:space:]]*//[[:space:]]*||' | head -c 120 || true
+      grep -m1 -E '^\s*(//|fn |module )' "$file" 2>/dev/null | sed 's|^[[:space:]]*//[[:space:]]*||' | utf8_trunc 120 || true
       ;;
     md)
       # First heading
-      grep -m1 -E '^#' "$file" 2>/dev/null | sed 's/^#\+[[:space:]]*//' | head -c 120 || true
+      grep -m1 -E '^#' "$file" 2>/dev/null | sed 's/^#\+[[:space:]]*//' | utf8_trunc 120 || true
       ;;
     json)
       # Just say what it is
@@ -52,13 +52,13 @@ extract_summary() {
       [ -n "$keys" ] && echo "Keys: $keys" || true
       ;;
     toml|yaml|yml)
-      grep -m1 -E '^\[|^[a-z]' "$file" 2>/dev/null | head -c 120 || true
+      grep -m1 -E '^\[|^[a-z]' "$file" 2>/dev/null | utf8_trunc 120 || true
       ;;
     sh|bash|zsh)
-      grep -m1 -E '^#\s+\w' "$file" 2>/dev/null | sed 's/^#[[:space:]]*//' | head -c 120 || true
+      grep -m1 -E '^#\s+\w' "$file" 2>/dev/null | sed 's/^#[[:space:]]*//' | utf8_trunc 120 || true
       ;;
     *)
-      head -1 "$file" 2>/dev/null | head -c 80 || true
+      head -1 "$file" 2>/dev/null | utf8_trunc 80 || true
       ;;
   esac
 }
@@ -86,6 +86,39 @@ size_bucket() {
   elif [ "$tokens" -lt 1500 ]; then echo "large"
   else echo "huge"
   fi
+}
+
+# Non-text files are indexed by path and size only. Copying their bytes
+# makes ANATOMY.md invalid UTF-8. A NUL or a byte sequence that is not
+# UTF-8 is the test. The extension denylist in filter_files does not see
+# every fixture.
+is_non_text() {
+  local file="$1"
+  if [ ! -s "$file" ]; then
+    return 1
+  fi
+  # A NUL pattern cannot go through grep: an empty pattern matches every
+  # file. Exit 0 when the bytes must not be copied into the index.
+  python3 -c 'import sys
+data = open(sys.argv[1], "rb").read()
+if b"\0" in data:
+    sys.exit(0)
+try:
+    data.decode("utf-8")
+except UnicodeDecodeError:
+    sys.exit(0)
+sys.exit(1)' "$file"
+}
+
+# First N Unicode scalar values. head -c cuts bytes and can split a
+# multibyte character, which makes the index invalid UTF-8.
+utf8_trunc() {
+  local n="$1"
+  python3 -c 'import sys
+n = int(sys.argv[1])
+text = sys.stdin.buffer.read().decode("utf-8", "replace")
+text = text.replace("\r", "").replace("\n", "")
+sys.stdout.write(text[:n])' "$n"
 }
 
 # Parse args
@@ -270,16 +303,23 @@ EOF
     
     dir=$(dirname "$file")
     base=$(basename "$file")
-    tokens=$(estimate_tokens "$file")
-    bucket=$(size_bucket "$tokens")
-    summary=$(extract_summary "$file")
-    
+
     # New directory header
     if [ "$dir" != "$current_dir" ]; then
       current_dir="$dir"
       echo "### \`$dir/\`"
       echo ""
     fi
+
+    if is_non_text "$file"; then
+      bin_size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null || echo 0)
+      echo "- \`$base\` (binary, ${bin_size} bytes)"
+      continue
+    fi
+
+    tokens=$(estimate_tokens "$file")
+    bucket=$(size_bucket "$tokens")
+    summary=$(extract_summary "$file")
     
     # File entry
     if [ -n "$summary" ]; then

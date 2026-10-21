@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1900 | **Est. tokens:** ~3,687,553
-**Generated:** 2026-10-21 12:10 UTC
+**Files:** 1900 | **Est. tokens:** ~3,687,855
+**Generated:** 2026-10-21 12:11 UTC
 
 ## Token Budget Guide
 
@@ -94,7 +94,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
-| `scripts/` | 32 | ~117,320 |
+| `scripts/` | 32 | ~117,622 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -811,7 +811,7 @@
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3822 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~3822 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -819,26 +819,26 @@
 - `tc_differential_fuzz.py` (~13332 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/backend_native_bridge/`
 
-- `add.elf` (~123 tok, small) — ELF> @@@8
+- `add.elf` (binary, 492 bytes)
 - `add.mind` (~24 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
-- `const_return.elf` (~100 tok, small) — ELF> @@@8
+- `const_return.elf` (binary, 397 bytes)
 - `const_return.mind` (~9 tok, tiny) — fn main() -> i64 {
-- `local_call.elf` (~119 tok, small) — ELF> @@@8
+- `local_call.elf` (binary, 474 bytes)
 - `local_call.mind` (~23 tok, tiny) — fn helper(x: i64) -> i64 {
 - `MANIFEST.txt` (~497 tok, medium) — # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
-- `while_sum.elf` (~146 tok, small) — ELF> @@@8
+- `while_sum.elf` (binary, 581 bytes)
 - `while_sum.mind` (~37 tok, tiny) — fn main() -> i64 {
 ### `examples/mindc_mind/testdata/`
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
-- `add.elf` (~123 tok, small) — ELF> @@@8
-- `if_ret.elf` (~150 tok, small) — ELF> @@@8
+- `add.elf` (binary, 492 bytes)
+- `if_ret.elf` (binary, 598 bytes)
 - `MANIFEST.txt` (~152 tok, small) — # Frozen native-ELF oracle references, captured before #15 deletes src/native.
-- `recursion.elf` (~175 tok, small) — ELF> @@@8
-- `struct_field.elf` (~166 tok, small) — ELF> @@@8
-- `value_if.elf` (~147 tok, small) — ELF> @@@8
+- `recursion.elf` (binary, 699 bytes)
+- `struct_field.elf` (binary, 664 bytes)
+- `value_if.elf` (binary, 585 bytes)
 ### `examples/mindc_mind/testdata/native_record_array/`
 
 - `aggregate_refuse.mind` (~33 tok, tiny) — fn main() -> i64 {
@@ -1060,7 +1060,7 @@
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
 - `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
-- `anatomy.sh` (~2453 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `arch_gate.sh` (~400 tok, medium) — arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
