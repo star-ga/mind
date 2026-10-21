@@ -311,6 +311,82 @@ pub(super) fn lane_rejection_site(
     site
 }
 
+/// What lowering produced before the lane fence is allowed to answer.
+pub(super) enum LaneLowering {
+    /// Lowering succeeded. The caller still runs the lane fence on this IR.
+    Ready(crate::ir::IRModule),
+    /// Lowering failed for a reason other than a materialization refusal.
+    /// The lane fence owns the diagnostic when it also rejects; otherwise the
+    /// caller surfaces this message.
+    FenceMayOwn(String),
+}
+
+/// Guards that must own a refusal before the candidate lane fence.
+///
+/// The lane source fence runs on every marked compiler and reports a generic
+/// construct (`lane.source.unsupported`, `lane.source.top_level`,
+/// `lane.source.duplicate_function`, `lane.call.unknown`). These checks are
+/// the ones a control pins to a specific kind. They refuse first, or they
+/// lower and let a materialization refusal preempt the fence. They do not
+/// admit anything the fence would refuse.
+///
+/// Seed copies: an image that already contains an identical private copy of a
+/// seed helper is vendoring that helper. Any other reserved name it also
+/// defines is a divergent or public collision and keeps the historical
+/// `closure.std_symbol_collision` refusal, naming the helper. A call out of
+/// such a copy that the user image does not define is `closure.unresolved_edge`,
+/// not `lane.call.unknown`. An image with no identical copy is unchanged: a
+/// closed private collision still omits the seed (`omit_private_seed`).
+pub(super) fn lane_guards_before_fence(
+    path: &str,
+    ast: &Module,
+    text: &str,
+    merged: &[u8],
+    std_sources: &[Vec<u8>],
+    reserved: &BTreeSet<String>,
+) -> Result<LaneLowering, String> {
+    let unterminated = super::unterminated_imports(ast, merged);
+    if !unterminated.is_empty() {
+        return Err(super::unterminated_import_refusal(path, &unterminated));
+    }
+    // Duplicate bare names, including those nested in transparent module
+    // blocks. An empty reserved set keeps this to the count check: a private
+    // seed-name collision is not a duplicate, and the lane still omits a
+    // closed one that is not part of an identical-copy set.
+    if let Err(refusal) = crate::ir::native_closure::reject_ambiguous_ast(ast, &BTreeSet::new()) {
+        return Err(format!("{} ({})", refusal.detail, refusal.kind));
+    }
+    let copies = super::namespace::identical_private_seed_copies(ast, text, std_sources, reserved);
+    if !copies.is_empty() {
+        let defined = crate::ir::native_closure::ast_definition_counts(ast);
+        if let Some(name) = defined
+            .keys()
+            .find(|name| reserved.contains(*name) && !copies.contains(*name))
+        {
+            return Err(format!(
+                "`{name}` collides with a std seed-blob symbol (closure.std_symbol_collision)"
+            ));
+        }
+    }
+    let ir = match lower_without_panicking(ast, path) {
+        Err(msg) if msg.contains("lower.materialization_refused") => return Err(msg),
+        Err(msg) => return Ok(LaneLowering::FenceMayOwn(msg)),
+        Ok(ir) => ir,
+    };
+    if !copies.is_empty() {
+        let bindings = super::namespace::intrinsic_bindings(&ir);
+        let guarded: BTreeSet<String> = reserved.difference(&copies).cloned().collect();
+        if let Err(refusal) = crate::ir::native_closure::admit_native_lane_closure(
+            ast, &ir, "main", &guarded, &bindings,
+        ) {
+            if refusal.kind == "closure.unresolved_edge" {
+                return Err(format!("{} ({})", refusal.detail, refusal.kind));
+            }
+        }
+    }
+    Ok(LaneLowering::Ready(ir))
+}
+
 /// Lower behind a panic boundary: a lowering `panic!` becomes a refusal.
 pub(super) fn lower_without_panicking(
     ast: &Module,

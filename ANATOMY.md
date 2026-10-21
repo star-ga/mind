@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2620 | **Est. tokens:** ~4,669,553
-**Generated:** 2026-10-21 23:22 UTC
+**Files:** 2620 | **Est. tokens:** ~4,670,658
+**Generated:** 2026-10-22 01:04 UTC
 
 ## Token Budget Guide
 
@@ -130,9 +130,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,305 |
+| `src/build/` | 13 | ~54,514 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~31,227 |
+| `src/build/native_bridge/` | 8 | ~32,123 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -1954,7 +1954,7 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~7082 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~7978 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1962,7 +1962,7 @@
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8882 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9091 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3613 tok, huge) — Copyright 2025 STARGA Inc.

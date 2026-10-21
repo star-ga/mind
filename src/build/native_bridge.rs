@@ -335,13 +335,8 @@ pub fn run_native_backend_bridge_profile(
     let unterminated = unterminated_imports(&merged_ast, &fence_source);
     if !unterminated.is_empty() {
         eprintln!(
-            "error[backend-native]: `{}`: import item(s) {unterminated:?} are not \
-             `;`-terminated. The frozen native compiler ends an `import`/`use` item at \
-             the next `;` token, so it would swallow the items that follow (including \
-             `main`) and emit a different program than the one admitted. Write the `;` \
-             (e.g. `import helper;`), or rerun with `--backend mlir`. No artifact \
-             written. (native.import_not_semicolon_terminated)",
-            paths[0]
+            "error[backend-native]: {}",
+            unterminated_import_refusal(&paths[0], &unterminated)
         );
         process::exit(3);
     }
@@ -591,6 +586,17 @@ fn unterminated_imports(ast: &crate::ast::Module, text: &[u8]) -> Vec<String> {
 }
 
 #[cfg(feature = "std-surface")]
+fn unterminated_import_refusal(path: &str, items: &[String]) -> String {
+    format!(
+        "`{path}`: import item(s) {items:?} are not `;`-terminated. The frozen native \
+         compiler ends an `import`/`use` item at the next `;` token, so it would swallow \
+         the items that follow (including `main`) and emit a different program than the \
+         one admitted. Write the `;` (e.g. `import helper;`), or rerun with `--backend mlir`. \
+         No artifact written. (native.import_not_semicolon_terminated)"
+    )
+}
+
+#[cfg(feature = "std-surface")]
 /// Admit the merged program: ambiguity first, then the entry-rooted closure.
 ///
 /// Order is load-bearing. `reachable_from` walks the FIRST definition of a
@@ -654,10 +660,26 @@ fn admit_merged_program(
             admission::lane_rejection_site(&r, text)
         )
     };
-    if lane_v1 {
-        crate::ir::native_lane_profile::profile_lane_admits_source(&ast).map_err(lane_error)?;
-    }
-    let ir = admission::lower_without_panicking(&ast, path)?;
+    let ir = if lane_v1 {
+        // Specific guards own their pinned kinds. The lane fence still runs
+        // on a program those guards accept, and it still refuses first for
+        // every other construct.
+        match admission::lane_guards_before_fence(path, &ast, text, merged, std_sources, reserved)?
+        {
+            admission::LaneLowering::Ready(ir) => {
+                crate::ir::native_lane_profile::profile_lane_admits_source(&ast)
+                    .map_err(lane_error)?;
+                ir
+            }
+            admission::LaneLowering::FenceMayOwn(lower_error) => {
+                crate::ir::native_lane_profile::profile_lane_admits_source(&ast)
+                    .map_err(lane_error)?;
+                return Err(lower_error);
+            }
+        }
+    } else {
+        admission::lower_without_panicking(&ast, path)?
+    };
     if lane_v1 {
         crate::ir::native_lane_profile::profile_lane_admits(&ast, &ir).map_err(lane_error)?;
         let bindings = namespace::intrinsic_bindings(&ir);
