@@ -78,7 +78,7 @@ This repository contains the open-core stack: the MIND language, type system, co
 
 ### Optional Dependencies
 
-- **LLVM/MLIR 20** (`mlir-opt`, `mlir-translate`, `clang`): the toolchain CI builds and tests the native backend with. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
+- **LLVM/MLIR 23** (latest) and **LLVM/MLIR 20** (oldest supported) (`mlir-opt`, `mlir-translate`, `clang`): the toolchains CI builds and tests the native backend with. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
 - **MLIR tools**: Required for `mlir-exec` feature
 - **C compiler**: Required for FFI examples
 
