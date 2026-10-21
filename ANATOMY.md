@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1902 | **Est. tokens:** ~3,692,789
-**Generated:** 2026-10-21 15:15 UTC
+**Files:** 1902 | **Est. tokens:** ~3,696,620
+**Generated:** 2026-10-21 23:35 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~31,470 |
+| `./` | 34 | ~31,518 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -43,7 +43,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~110,236 |
+| `docs/` | 38 | ~110,323 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -89,9 +89,9 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
-| `.github/` | 4 | ~903 |
+| `.github/` | 4 | ~910 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~12,212 |
+| `.github/workflows/` | 8 | ~12,657 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
 | `scripts/` | 32 | ~117,643 |
@@ -115,10 +115,10 @@
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
-| `src/diagnostics/` | 4 | ~15,658 |
+| `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,393 |
+| `src/eval/` | 38 | ~141,595 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -132,7 +132,7 @@
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 4 | ~8,460 |
+| `src/mlir/` | 4 | ~11,488 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -258,7 +258,7 @@
 - `mindci.toml` (~245 tok, medium) — [pipeline]
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~7422 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~7470 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1903 tok, huge) — Security Policy
@@ -462,7 +462,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~4368 tok, huge) — The Determinism Contract
+- `determinism.md` (~4404 tok, huge) — The Determinism Contract
 - `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
 - `errors.md` (~1338 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
@@ -474,7 +474,7 @@
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
 - `INDEPENDENCE_ROADMAP.md` (~18828 tok, huge) — MIND Rust-Independence Roadmap
-- `install.md` (~1083 tok, large) — Installing mindc
+- `install.md` (~1134 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1763 tok, huge) — IR stability contract
@@ -1036,12 +1036,12 @@
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
-- `required-ci-jobs.tsv` (~745 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+- `required-ci-jobs.tsv` (~752 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~2440 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~302 tok, medium) — name: Cargo Deny
-- `crypto-vectors.yml` (~1625 tok, huge) — name: Crypto Vectors
+- `crypto-vectors.yml` (~2070 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
@@ -1242,7 +1242,7 @@
 - `capability.rs` (~9002 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~3733 tok, huge) — Copyright 2025 STARGA Inc.
 - `refusal.rs` (~1354 tok, large) — Copyright 2025 STARGA Inc.
-- `toolchain.rs` (~1569 tok, huge) — Copyright 2026 STARGA Inc.
+- `toolchain.rs` (~1583 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/distributed/`
 
 - `allgather.rs` (~813 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -1279,7 +1279,7 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~10916 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~11118 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -1406,9 +1406,9 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~5965 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.
-- `nobuiltin.rs` (~1830 tok, huge) — Copyright 2025 STARGA Inc.
+- `nobuiltin.rs` (~2532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
 - `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.

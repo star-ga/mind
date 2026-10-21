@@ -557,6 +557,10 @@ jobs:
         # the other substrate is verified on its sibling matrix runner. Every
         # manifest case must atomically publish a measured/deferred receipt;
         # the second target compares that executed set to the manifest set.
+        # `gemm_i8_vnni_translates_on_the_resolved_toolchain` translates the
+        # VNNI module to LLVM IR on this job's toolchain. It does not execute
+        # the kernel, so a runner without AVX-512-VNNI still exercises the
+        # intrinsic declaration that `mlir-translate` checks.
         run: |
           set -euo pipefail
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/mind-xsi-receipts.XXXXXX")"

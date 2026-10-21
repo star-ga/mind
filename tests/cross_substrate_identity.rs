@@ -1676,6 +1676,90 @@ fn gemm_i8_vnni_reproducibility_gate() {
     common::xsi_gate::record_measured(id);
 }
 
+/// Translate the VNNI module to LLVM IR on the toolchain `resolve_tools`
+/// selects. Execution needs AVX-512-VNNI silicon; translation does not, so
+/// this runs on every CI toolchain, including a host that defers the
+/// reproducibility gate above. The emitter's text stays the LLVM 20
+/// declaration. The build driver rewrites it from the resolved
+/// `mlir-translate` before that tool checks the intrinsic signature.
+#[test]
+fn gemm_i8_vnni_translates_on_the_resolved_toolchain() {
+    for tool in ["mlir-opt", "mlir-translate", "clang"] {
+        if which::which(tool).is_err() {
+            crate::common::gate::skipped(
+                "cross_substrate_identity",
+                &format!(
+                    "{tool} not on PATH; install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner"
+                ),
+            );
+            return;
+        }
+    }
+    let src_path = scratch_src("mind_xsi_dot_q16_vnni_translate.mind", SRC);
+    let emitted = Command::new(mindc_bin())
+        .env("MIND_INTDOT", "vnni")
+        .args([src_path.to_str().unwrap(), "--emit-mlir"])
+        .output()
+        .expect("spawn mindc --emit-mlir");
+    assert!(
+        emitted.status.success(),
+        "mindc --emit-mlir failed for the VNNI translate leg\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&emitted.stdout),
+        String::from_utf8_lossy(&emitted.stderr),
+    );
+    let mlir = String::from_utf8(emitted.stdout).expect("emit-mlir utf8");
+    let emit_calls: Vec<&str> = mlir
+        .lines()
+        .filter(|line| line.contains("vpdpbusd.512"))
+        .collect();
+    assert!(
+        !emit_calls.is_empty(),
+        "MIND_INTDOT=vnni did not emit vpdpbusd.512"
+    );
+    for line in &emit_calls {
+        assert!(
+            line.contains("(vector<16xi32>, vector<16xi32>, vector<16xi32>)"),
+            "emitter declaration is not the stable LLVM 20 form: {line}"
+        );
+    }
+
+    let tools = libmind::eval::mlir_build::resolve_tools().expect("resolved build tools");
+    let out = scratch().join("mind_xsi_dot_q16_vnni_translate.ll");
+    let opts = libmind::eval::mlir_build::BuildOptions {
+        preset: libmind::eval::mlir_build::preset_for_mlir(&mlir),
+        emit_mlir_file: None,
+        emit_llvm_file: Some(out.as_path()),
+        emit_obj_file: None,
+        emit_shared: None,
+        opt_pipeline: None,
+        target_triple: None,
+    };
+    libmind::eval::mlir_build::build_all(&mlir, &tools, &opts)
+        .unwrap_or_else(|err| panic!("VNNI translate failed for {}: {err}", tools.mlir_translate));
+    let ir = std::fs::read_to_string(&out).expect("read llvm ir");
+    let calls: Vec<&str> = ir
+        .lines()
+        .filter(|line| line.contains("vpdpbusd.512"))
+        .collect();
+    assert!(!calls.is_empty(), "translated LLVM IR has no vpdpbusd.512");
+    let major = libmind::mlir::gemm_tuning::llvm_major_of_tool(&tools.mlir_translate);
+    let byte = libmind::mlir::gemm_tuning::vpdpbusd_512_byte_operands(major);
+    for line in &calls {
+        if byte {
+            assert!(
+                line.contains("<64 x i8>"),
+                "LLVM {major:?} vpdpbusd.512 call is missing byte operands: {line}"
+            );
+        } else {
+            assert!(
+                line.contains("<16 x i32>") && !line.contains("<64 x i8>"),
+                "LLVM {major:?} vpdpbusd.512 call is not the i32 declaration: {line}"
+            );
+        }
+    }
+}
+
 // --- gemv-i16 workload (int16 matrix x vector) -----------------------------
 // The "int-dot" tier sibling of gemv-q16: y = W . x over int16 inputs, where W
 // is a 256x256 int16 matrix and x a 256-vector, via __mind_blas_matmul_rmajor_i16_v.

@@ -8128,6 +8128,8 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
+        // The emitter always declares `vpdpbusd.512` on `<16 x i32>`. The build
+        // driver rewrites the operands to the resolved `mlir-translate` signature.
         // `vpdpbusd.512` is declared on `<16 x i32>`, so the per-column `Σ bₛ`
         // is accumulated in COL_REGS = nr/16 separate ZMM groups (2 for NR=32),
         // each over its own 64-byte slice of the K-quad's B panel, then the three
@@ -8194,11 +8196,12 @@ impl LoweringContext {
             line(&format!(
                 "              %{p}_h_bv{j} = vector.bitcast %{p}_h_bvb{j} : vector<64xi8> to vector<16xi32>"
             ));
-            for stmt in vpdpbusd_512_lines_for_host(
+            for stmt in vpdpbusd_512_lines(
                 &format!("%{p}_h_nb{j}"),
                 &format!("%{p}_h_acc{j}"),
                 &format!("%{p}_h_ones"),
                 &format!("%{p}_h_bv{j}"),
+                false,
             ) {
                 line(&format!("              {stmt}"));
             }
@@ -8365,11 +8368,12 @@ impl LoweringContext {
                 "                %{p}_abc{t} = vector.broadcast %{p}_av{t} : vector<1xi32> to vector<16xi32>"
             ));
             for j in 0..col_regs {
-                for stmt in vpdpbusd_512_lines_for_host(
+                for stmt in vpdpbusd_512_lines(
                     &format!("%{p}_nm{t}_{j}"),
                     &format!("%{p}_macc{t}_{j}"),
                     &format!("%{p}_abc{t}"),
                     &format!("%{p}_bv{j}"),
+                    false,
                 ) {
                     line(&format!("                {stmt}"));
                 }
