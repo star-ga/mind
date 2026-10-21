@@ -8194,11 +8194,14 @@ impl LoweringContext {
             line(&format!(
                 "              %{p}_h_bv{j} = vector.bitcast %{p}_h_bvb{j} : vector<64xi8> to vector<16xi32>"
             ));
-            line(&format!(
-                "              %{p}_h_nb{j} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
-                 (%{p}_h_acc{j}, %{p}_h_ones, %{p}_h_bv{j}) : \
-                 (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
-            ));
+            for stmt in vpdpbusd_512_lines_for_host(
+                &format!("%{p}_h_nb{j}"),
+                &format!("%{p}_h_acc{j}"),
+                &format!("%{p}_h_ones"),
+                &format!("%{p}_h_bv{j}"),
+            ) {
+                line(&format!("              {stmt}"));
+            }
             h_yields.push(format!("%{p}_h_nb{j}"));
         }
         line(&format!(
@@ -8362,11 +8365,14 @@ impl LoweringContext {
                 "                %{p}_abc{t} = vector.broadcast %{p}_av{t} : vector<1xi32> to vector<16xi32>"
             ));
             for j in 0..col_regs {
-                line(&format!(
-                    "                %{p}_nm{t}_{j} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
-                     (%{p}_macc{t}_{j}, %{p}_abc{t}, %{p}_bv{j}) : \
-                     (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
-                ));
+                for stmt in vpdpbusd_512_lines_for_host(
+                    &format!("%{p}_nm{t}_{j}"),
+                    &format!("%{p}_macc{t}_{j}"),
+                    &format!("%{p}_abc{t}"),
+                    &format!("%{p}_bv{j}"),
+                ) {
+                    line(&format!("                {stmt}"));
+                }
                 yields.push(format!("%{p}_nm{t}_{j}"));
             }
         }

@@ -219,20 +219,10 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         // the translate step.
         // `convert-vector-to-llvm` lowers RFC 0006 Track B `vector`-dialect
         // ops (vector.load / vector.fma / vector.reduction) emitted by the
-        // `dot_f32_v` path. It is a no-op on IR that contains no vector
-        // ops, so the scalar `fn f(x, y) { x + y }` class is unaffected
-        // and the default `cargo build` (which never runs mlir-opt — this
-        // is the `mlir-build` feature path) is byte-identical.
-        //
-        // `convert-vector-to-llvm` on MLIR 23 can leave `ub.poison` in the
-        // body (a NEON vector pad is `ub.poison : vector<16xi32>`).
-        // `mlir-translate --mlir-to-llvmir` does not register the `ub`
-        // dialect, on 20 or on 23, and rejects the op. `convert-ub-to-llvm`
-        // rewrites `ub.poison` to `llvm.mlir.poison`. The pass has shipped
-        // since before MLIR 18 and is present on the MLIR 20 minimum; on IR
-        // with no `ub` op it does not change the module text. It runs after
-        // `convert-func-to-llvm` so poison that survived into `llvm.func`
-        // is still rewritten, and before `reconcile-unrealized-casts`.
+        // `dot_f32_v` path. On MLIR 23 it can leave `ub.poison`, which
+        // `mlir-translate` rejects: the `ub` dialect is not registered on
+        // 20 or 23. `convert-ub-to-llvm` rewrites that to `llvm.mlir.poison`.
+        // The pass has shipped since before MLIR 18 and is a no-op with no `ub` op.
         "none" | "core" | "cpu-demo" | "jit-cpu" => Some(
             "canonicalize,cse,\
              convert-scf-to-cf,\
@@ -241,8 +231,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              finalize-memref-to-llvm,\
              convert-cf-to-llvm,\
              convert-arith-to-llvm,\
-             convert-func-to-llvm,\
-             convert-ub-to-llvm,\
+             convert-func-to-llvm,convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         // Tensor-aware pipeline. Adds bufferization + linalg lowering
@@ -259,8 +248,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              convert-cf-to-llvm,\
              convert-arith-to-llvm,\
              convert-func-to-llvm,\
-             convert-to-llvm,\
-             convert-ub-to-llvm,\
+             convert-to-llvm,convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         _ => None,

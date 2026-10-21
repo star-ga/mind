@@ -235,3 +235,128 @@ impl IntDotMode {
         }
     }
 }
+
+/// Whether `llvm.x86.avx512.vpdpbusd.512` types its two byte operands as
+/// `vector<64xi8>`. LLVM 20 declares all three operands `vector<16xi32>`.
+/// LLVM 21 and newer declare `(vector<16xi32>, vector<64xi8>, vector<64xi8>)`.
+/// An unknown toolchain keeps the LLVM 20 declaration.
+pub fn vpdpbusd_512_byte_operands(llvm_major: Option<u32>) -> bool {
+    matches!(llvm_major, Some(major) if major >= 21)
+}
+
+/// One `vpdpbusd.512` call, plus the bitcasts the newer declaration needs.
+///
+/// `dst`, `acc`, `a` and `b` are SSA names that already include `%`. The
+/// accumulator stays `vector<16xi32>` on every toolchain. When `byte_operands`
+/// is set, `a` and `b` (still `vector<16xi32>` values, the register view) are
+/// bitcast to `vector<64xi8>`. The bit width does not change, so the bytes the
+/// kernel computed are the same; only the declared operand type moves.
+pub fn vpdpbusd_512_lines(
+    dst: &str,
+    acc: &str,
+    a: &str,
+    b: &str,
+    byte_operands: bool,
+) -> Vec<String> {
+    if byte_operands {
+        vec![
+            format!("{dst}_a8 = llvm.bitcast {a} : vector<16xi32> to vector<64xi8>"),
+            format!("{dst}_b8 = llvm.bitcast {b} : vector<16xi32> to vector<64xi8>"),
+            format!(
+                "{dst} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 ({acc}, {dst}_a8, {dst}_b8) : \
+                 (vector<16xi32>, vector<64xi8>, vector<64xi8>) -> vector<16xi32>"
+            ),
+        ]
+    } else {
+        vec![format!(
+            "{dst} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+             ({acc}, {a}, {b}) : \
+             (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+        )]
+    }
+}
+
+fn version_major(text: &str) -> Option<u32> {
+    let rest = text.split("version ").nth(1)?;
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Major of the `mlir-translate` (or `clang`) that will consume this module.
+/// Cached for the process: one toolchain produces one operand declaration.
+fn active_llvm_major() -> Option<u32> {
+    static CACHED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        for tool in ["mlir-translate", "clang"] {
+            let Ok(out) = std::process::Command::new(tool).arg("--version").output() else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(major) = version_major(&text) {
+                return Some(major);
+            }
+        }
+        None
+    })
+}
+
+/// [`vpdpbusd_512_lines`] for the toolchain currently on `PATH`.
+pub fn vpdpbusd_512_lines_for_host(dst: &str, acc: &str, a: &str, b: &str) -> Vec<String> {
+    vpdpbusd_512_lines(
+        dst,
+        acc,
+        a,
+        b,
+        vpdpbusd_512_byte_operands(active_llvm_major()),
+    )
+}
+
+#[cfg(test)]
+mod vpdpbusd_type_tests {
+    use super::*;
+
+    #[test]
+    fn older_toolchain_keeps_the_i32_declaration() {
+        assert!(!vpdpbusd_512_byte_operands(None));
+        assert!(!vpdpbusd_512_byte_operands(Some(18)));
+        assert!(!vpdpbusd_512_byte_operands(Some(20)));
+        let lines = vpdpbusd_512_lines("%d", "%acc", "%a", "%b", false);
+        assert_eq!(
+            lines,
+            vec![
+                "%d = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 (%acc, %a, %b) : \
+                 (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn newer_toolchain_bitcasts_the_byte_operands() {
+        assert!(vpdpbusd_512_byte_operands(Some(21)));
+        assert!(vpdpbusd_512_byte_operands(Some(23)));
+        let lines = vpdpbusd_512_lines("%d", "%acc", "%a", "%b", true);
+        assert_eq!(
+            lines,
+            vec![
+                "%d_a8 = llvm.bitcast %a : vector<16xi32> to vector<64xi8>".to_string(),
+                "%d_b8 = llvm.bitcast %b : vector<16xi32> to vector<64xi8>".to_string(),
+                "%d = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 (%acc, %d_a8, %d_b8) : \
+                 (vector<16xi32>, vector<64xi8>, vector<64xi8>) -> vector<16xi32>"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_a_major_from_version_text() {
+        assert_eq!(version_major("LLVM version 23.1.4\n"), Some(23));
+        assert_eq!(version_major("Ubuntu LLVM version 20.1.2\n"), Some(20));
+        assert_eq!(version_major("no version here"), None);
+    }
+}
