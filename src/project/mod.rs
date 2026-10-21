@@ -50,6 +50,7 @@ pub(crate) use identity::{canonical_dir, find_project_root_for_file_checked};
 pub(crate) mod build_lock;
 mod compiled_sources;
 mod embedded_entry;
+mod host_triple;
 mod link;
 #[cfg(feature = "mlir-build")]
 mod native_sources;
@@ -2366,7 +2367,7 @@ fn compile_single_source(
                     // host build (`None`) falls back to the exact per-backend host
                     // triple, keeping the host object bytes byte-identical.
                     target_triple: Some(
-                        cc_target_triple.unwrap_or_else(|| get_target_triple(backend)),
+                        cc_target_triple.unwrap_or_else(|| host_triple::get_target_triple(backend)),
                     ),
                 };
 
@@ -2603,52 +2604,6 @@ fn try_emit_mic(source_code: &str) -> Option<String> {
     }))
     .ok()
     .flatten()
-}
-
-/// Get the LLVM target triple for a backend
-#[allow(dead_code)]
-fn get_target_triple(backend: &str) -> &'static str {
-    match backend {
-        // GPU backends use host triple for the launcher
-        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" | "rocm"
-        | "rocm-mi300" | "webgpu" | "directx" | "oneapi" => {
-            #[cfg(target_os = "linux")]
-            {
-                "x86_64-unknown-linux-gnu"
-            }
-            #[cfg(target_os = "macos")]
-            {
-                "aarch64-apple-darwin"
-            }
-            #[cfg(target_os = "windows")]
-            {
-                "x86_64-pc-windows-msvc"
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            {
-                "x86_64-unknown-linux-gnu"
-            }
-        }
-        "metal" | "metal-m4" => "aarch64-apple-darwin",
-        _ => {
-            #[cfg(target_os = "linux")]
-            {
-                "x86_64-unknown-linux-gnu"
-            }
-            #[cfg(target_os = "macos")]
-            {
-                "aarch64-apple-darwin"
-            }
-            #[cfg(target_os = "windows")]
-            {
-                "x86_64-pc-windows-msvc"
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            {
-                "x86_64-unknown-linux-gnu"
-            }
-        }
-    }
 }
 
 /// Re-rank a link-time refusal against the cause the compile step recorded.
