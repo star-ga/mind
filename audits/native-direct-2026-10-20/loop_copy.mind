@@ -1,0 +1,13 @@
+// Loop-carried plain copy: the native emitter (examples/mindc_mind/main.mind,
+// 2026-10-20 main) returns 0; MLIR returns 7. `b = a + 0;` is correct.
+// This is the root cause of std/sha256.mind's wrong digest on the native route.
+fn main() -> i64 {
+    let a: i64 = 7;
+    let mut b: i64 = 2;
+    let mut i: i64 = 0;
+    while i < 1 {
+        b = a;
+        i = i + 1;
+    }
+    return b;
+}

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2605 | **Est. tokens:** ~4,660,467
-**Generated:** 2026-10-18 07:00 UTC
+**Files:** 2612 | **Est. tokens:** ~4,662,518
+**Generated:** 2026-10-21 09:01 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31,717 |
+| `./` | 34 | ~31,962 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
+| `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
 | `bench/` | 5 | ~7,574 |
 | `benches/` | 28 | ~83,855 |
 | `benches/common/` | 2 | ~2,995 |
@@ -113,11 +114,11 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 31 | ~118,154 |
+| `scripts/` | 32 | ~118,554 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
-| `sdk/ts/mic-map/` | 6 | ~15,498 |
+| `sdk/ts/mic-map/` | 6 | ~15,510 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/scripts/` | 1 | ~499 |
 | `sdk/ts/mic-map/src/` | 9 | ~12,181 |
@@ -281,6 +282,7 @@
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
+- `mindci.toml` (~245 tok, medium) — [pipeline]
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~7422 tok, huge) — MIND — Machine Intelligence Native Design
@@ -311,6 +313,13 @@
 - `arch-mind-v0.4.2.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `arch-mind-v0.4.3.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `arch-mind-v0.4.4.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+### `audits/native-direct-2026-10-20/`
+
+- `const_no_semicolon.mind` (~90 tok, small) — A const declared without a trailing `;` is refused by the native emitter
+- `duplicate_const.mind` (~47 tok, tiny) — A duplicate const declaration refuses every read of it on the native route.
+- `extern_swallow.mind` (~74 tok, small) — An `extern "C" fn` declaration placed before `main` makes the native emitter
+- `loop_copy.mind` (~99 tok, small) — Loop-carried plain copy: the native emitter (examples/mindc_mind/main.mind,
+- `README.md` (~1084 tok, large) — Native backend, direct route: findings (2026-10-20)
 ### `bench/`
 
 - `beat_clang_igemm_driver.c` (~494 tok, medium)
@@ -1792,6 +1801,7 @@
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
 - `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
 - `anatomy.sh` (~2453 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `arch_gate.sh` (~400 tok, medium) — arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
@@ -1878,7 +1888,7 @@
 
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `package.json` (~210 tok, medium) — Keys: name, version, description, type, private
-- `package-lock.json` (~12339 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
+- `package-lock.json` (~12351 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
 - `README.md` (~152 tok, small) — @mind/mic-map
 ### `sdk/ts/mic-map/scripts/`
 

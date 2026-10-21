@@ -1,0 +1,29 @@
+# MIND-CI pipeline for mind (MIND-CI/1, see star-ga/mind-ci docs/PIPELINE.md).
+# Added 2026-10-20 additively: no existing workflow, rule or floor was changed.
+# The arch-rules job runs arch-mind over the MIND sources (--lang mind); the
+# Rust and Python sidecar languages join when the sidecar is built on the runner.
+
+[pipeline]
+spec = "MIND-CI/1"
+name = "mind"
+default_branch = "main"
+
+[policy]
+fork_prs_on_own_runners = false
+cache_promote_from = ["trunk"]
+required_signers = 1
+max_retries_infra = 1
+queue_max_s = 1800
+agent_lane_max_wait_s = 900
+
+# arch-rules is advisory (required = false) until the owner revisits the floors:
+# DEPTH_FLOOR (7000, measured 6000) and EVIDENCE_FLOOR (5, measured 0) fail under a mind-only scan.
+[[job]]
+name = "arch-rules"
+runs_on = "linux-x86_64"
+required = false
+inputs = ["**/*.mind", ".arch-mind/rules.mind", "scripts/arch_gate.sh"]
+toolchain = ["arch-mind"]
+steps = ["bash scripts/arch_gate.sh"]
+timeout_s = 900
+assert_required = true

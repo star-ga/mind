@@ -1,0 +1,8 @@
+// A const declared without a trailing `;` is refused by the native emitter
+// when a function reads it; with `;` it compiles. std/json.mind:66 and
+// std/toml.mind:50 are written this way (and both name the const MAX_DEPTH,
+// which is a duplicate declaration across the seed, refused as well).
+const KQ: i64 = 512
+fn main() -> i64 {
+    return KQ - 512;
+}
