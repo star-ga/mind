@@ -14,12 +14,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checker's default agent is refused with 403 by one live document
+      # host. A curl-compatible agent is accepted there. The host stays in
+      # the check: do not exclude it, and do not accept 403 for every host.
       - name: Run lychee
         uses: lycheeverse/lychee-action@v2.0.2
         with:
           args: >-
             --verbose
             --no-progress
+            --user-agent curl/8.5.0
             --include-fragments
             --exclude-mail
             --exclude 'https://github.com/star-ga/mind-runtime'
