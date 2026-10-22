@@ -144,7 +144,7 @@ pub fn build_all_with_objects(
     let preset_name = opts.preset;
     let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
         .map_err(BuildError::Internal)?;
-
+    let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
     let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
     let optimized_mlir = if let Some(pipeline) = combined_pipeline {
         crate::mlir::staged_opt::run_pipeline(&lowered, &pipeline, tools)?
@@ -219,10 +219,10 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         // the translate step.
         // `convert-vector-to-llvm` lowers RFC 0006 Track B `vector`-dialect
         // ops (vector.load / vector.fma / vector.reduction) emitted by the
-        // `dot_f32_v` path. It is a no-op on IR that contains no vector
-        // ops, so the scalar `fn f(x, y) { x + y }` class is unaffected
-        // and the default `cargo build` (which never runs mlir-opt — this
-        // is the `mlir-build` feature path) is byte-identical.
+        // `dot_f32_v` path. On MLIR 23 it can leave `ub.poison`, which
+        // `mlir-translate` rejects: the `ub` dialect is not registered on
+        // 20 or 23. `convert-ub-to-llvm` rewrites that to `llvm.mlir.poison`.
+        // The pass has shipped since before MLIR 18 and is a no-op with no `ub` op.
         "none" | "core" | "cpu-demo" | "jit-cpu" => Some(
             "canonicalize,cse,\
              convert-scf-to-cf,\
@@ -231,7 +231,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              finalize-memref-to-llvm,\
              convert-cf-to-llvm,\
              convert-arith-to-llvm,\
-             convert-func-to-llvm,\
+             convert-func-to-llvm,convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         // Tensor-aware pipeline. Adds bufferization + linalg lowering
@@ -248,7 +248,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
              convert-cf-to-llvm,\
              convert-arith-to-llvm,\
              convert-func-to-llvm,\
-             convert-to-llvm,\
+             convert-to-llvm,convert-ub-to-llvm,\
              reconcile-unrealized-casts",
         ),
         _ => None,

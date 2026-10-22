@@ -107,6 +107,25 @@ fn cmp_src(op: &str) -> String {
     )
 }
 
+/// Scalar on the left, array on the right (`1 + a`).
+fn rhs_arith_src(op: &str) -> String {
+    format!(
+        "fn main() -> i64 {{\n    \
+         let a: [i64; 2] = [8, 6];\n    \
+         let c = 1 {op} a;\n    \
+         return c[0];\n}}\n"
+    )
+}
+
+fn rhs_cmp_src(op: &str) -> String {
+    format!(
+        "fn main() -> i64 {{\n    \
+         let a: [i64; 2] = [1, 2];\n    \
+         if 1 {op} a {{ return 1; }}\n    \
+         return 0;\n}}\n"
+    )
+}
+
 struct Build {
     code: i32,
     blob: String,
@@ -200,6 +219,17 @@ fn native_refuses_every_array_binop() {
     }
     for (i, op) in ["<", "<=", ">", ">=", "==", "!="].into_iter().enumerate() {
         assert_named_refusal(&format!("cmp{i}"), &cmp_src(op));
+    }
+    // The array is the right operand. A guard that inspects only the left
+    // operand admits every program in these two loops.
+    for (i, op) in ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_named_refusal(&format!("rhsarith{i}"), &rhs_arith_src(op));
+    }
+    for (i, op) in ["<", "<=", ">", ">=", "==", "!="].into_iter().enumerate() {
+        assert_named_refusal(&format!("rhscmp{i}"), &rhs_cmp_src(op));
     }
 }
 

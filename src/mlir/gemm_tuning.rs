@@ -235,3 +235,249 @@ impl IntDotMode {
         }
     }
 }
+
+/// Whether `llvm.x86.avx512.vpdpbusd.512` types its two byte operands as
+/// `vector<64xi8>`. LLVM 20 declares all three operands `vector<16xi32>`.
+/// LLVM 21 and newer declare `(vector<16xi32>, vector<64xi8>, vector<64xi8>)`.
+/// An unknown toolchain keeps the LLVM 20 declaration.
+///
+/// The emitter always writes the LLVM 20 declaration. The build driver calls
+/// this with the major of the *resolved* `mlir-translate` (the tool that
+/// checks the signature) and rewrites the declaration when this is true.
+pub fn vpdpbusd_512_byte_operands(llvm_major: Option<u32>) -> bool {
+    matches!(llvm_major, Some(major) if major >= 21)
+}
+
+/// One `vpdpbusd.512` call, plus the bitcasts the newer declaration needs.
+///
+/// `dst`, `acc`, `a` and `b` are SSA names that already include `%`. The
+/// accumulator stays `vector<16xi32>` on every toolchain. When `byte_operands`
+/// is set, `a` and `b` (still `vector<16xi32>` values, the register view) are
+/// bitcast to `vector<64xi8>`. The bit width does not change, so the bytes the
+/// kernel computed are the same; only the declared operand type moves.
+pub fn vpdpbusd_512_lines(
+    dst: &str,
+    acc: &str,
+    a: &str,
+    b: &str,
+    byte_operands: bool,
+) -> Vec<String> {
+    if byte_operands {
+        vec![
+            format!("{dst}_a8 = llvm.bitcast {a} : vector<16xi32> to vector<64xi8>"),
+            format!("{dst}_b8 = llvm.bitcast {b} : vector<16xi32> to vector<64xi8>"),
+            format!(
+                "{dst} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 ({acc}, {dst}_a8, {dst}_b8) : \
+                 (vector<16xi32>, vector<64xi8>, vector<64xi8>) -> vector<16xi32>"
+            ),
+        ]
+    } else {
+        vec![format!(
+            "{dst} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+             ({acc}, {a}, {b}) : \
+             (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+        )]
+    }
+}
+
+/// Major version reported by the tool at `path` (`<tool> --version`).
+///
+/// `path` is the binary the build driver resolved: `MLIR_TRANSLATE` when that
+/// override is set, otherwise `mlir-translate` on `PATH`. This is not a second
+/// search of `PATH`. A missing binary or a version line the parser cannot
+/// read is `None`, which keeps the LLVM 20 operand declaration.
+pub fn llvm_major_of_tool(path: &str) -> Option<u32> {
+    let out = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    crate::diagnostics::toolchain::parse_llvm_major(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Rewrite `vpdpbusd.512` in `mlir` for the translator at `translate_path`.
+///
+/// `translate_path` is the binary the build driver resolved (`MLIR_TRANSLATE`
+/// when that override is set, otherwise `mlir-translate` on `PATH`). The major
+/// is read from that binary. This is not a second search of `PATH`. A module
+/// that does not emit the intrinsic is returned unchanged and does not spawn
+/// the probe, so the default (`MIND_INTDOT` unset) path does not change a byte.
+pub fn for_translator(mlir: String, translate_path: &str) -> String {
+    if mlir.contains(VPDPBUSD_512) {
+        let major = llvm_major_of_tool(translate_path);
+        apply_vpdpbusd_512_declaration(&mlir, major)
+    } else {
+        mlir
+    }
+}
+
+/// Rewrite `vpdpbusd.512` calls in `mlir` for `llvm_major`.
+///
+/// The emitter writes the LLVM 20 declaration on every host. When the
+/// resolved translator wants byte operands, each call gains the two bitcasts
+/// [`vpdpbusd_512_lines`] emits for that declaration. Any other major,
+/// including `None`, returns `mlir` unchanged, so a module that never emits
+/// the intrinsic is byte-identical. Idempotent: a call that is already in the
+/// byte form is left as it is.
+pub fn apply_vpdpbusd_512_declaration(mlir: &str, llvm_major: Option<u32>) -> String {
+    if !vpdpbusd_512_byte_operands(llvm_major) || !mlir.contains(VPDPBUSD_512) {
+        return mlir.to_owned();
+    }
+    let mut out = String::with_capacity(mlir.len() + 64);
+    for line in mlir.split_inclusive('\n') {
+        let (body, eol) = match line.strip_suffix('\n') {
+            Some(body) => (body, "\n"),
+            None => (line, ""),
+        };
+        match rewrite_vpdpbusd_512_line(body) {
+            Some(rewritten) => {
+                out.push_str(&rewritten);
+                out.push_str(eol);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+const VPDPBUSD_512: &str = "llvm.x86.avx512.vpdpbusd.512";
+const VPDPBUSD_I32_SIG: &str = "(vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>";
+
+/// One emitter line of the LLVM 20 declaration, or `None` when `body` is not
+/// that call. The replacement matches [`vpdpbusd_512_lines`] with byte operands.
+fn rewrite_vpdpbusd_512_line(body: &str) -> Option<String> {
+    let indent_len = body.len() - body.trim_start().len();
+    let indent = &body[..indent_len];
+    let rest = body[indent_len..].trim_end();
+    let (dst, after) =
+        rest.split_once(" = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"")?;
+    let after = after.trim_start().strip_prefix('(')?;
+    let (args, sig) = after.split_once(") : ")?;
+    if sig != VPDPBUSD_I32_SIG {
+        return None;
+    }
+    let mut parts = args.split(',');
+    let acc = parts.next()?.trim();
+    let a = parts.next()?.trim();
+    let b = parts.next()?.trim();
+    if parts.next().is_some() || !is_ssa(dst) || !is_ssa(acc) || !is_ssa(a) || !is_ssa(b) {
+        return None;
+    }
+    Some(format!(
+        "{indent}{dst}_a8 = llvm.bitcast {a} : vector<16xi32> to vector<64xi8>\n\
+         {indent}{dst}_b8 = llvm.bitcast {b} : vector<16xi32> to vector<64xi8>\n\
+         {indent}{dst} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+         ({acc}, {dst}_a8, {dst}_b8) : \
+         (vector<16xi32>, vector<64xi8>, vector<64xi8>) -> vector<16xi32>"
+    ))
+}
+
+fn is_ssa(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next() == Some('%')
+        && name.len() > 1
+        && chars.all(|c| !c.is_whitespace() && c != ',' && c != '(' && c != ')')
+}
+
+#[cfg(test)]
+mod vpdpbusd_type_tests {
+    use super::*;
+
+    #[test]
+    fn older_toolchain_keeps_the_i32_declaration() {
+        assert!(!vpdpbusd_512_byte_operands(None));
+        assert!(!vpdpbusd_512_byte_operands(Some(18)));
+        assert!(!vpdpbusd_512_byte_operands(Some(20)));
+        let lines = vpdpbusd_512_lines("%d", "%acc", "%a", "%b", false);
+        assert_eq!(
+            lines,
+            vec![
+                "%d = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 (%acc, %a, %b) : \
+                 (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn newer_toolchain_bitcasts_the_byte_operands() {
+        assert!(vpdpbusd_512_byte_operands(Some(21)));
+        assert!(vpdpbusd_512_byte_operands(Some(23)));
+        let lines = vpdpbusd_512_lines("%d", "%acc", "%a", "%b", true);
+        assert_eq!(
+            lines,
+            vec![
+                "%d_a8 = llvm.bitcast %a : vector<16xi32> to vector<64xi8>".to_string(),
+                "%d_b8 = llvm.bitcast %b : vector<16xi32> to vector<64xi8>".to_string(),
+                "%d = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 (%acc, %d_a8, %d_b8) : \
+                 (vector<16xi32>, vector<64xi8>, vector<64xi8>) -> vector<16xi32>"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn declaration_follows_the_major_and_is_idempotent() {
+        let src = "  %d = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"(%acc, %a, %b) : (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>\n  %other = arith.constant 1 : i64\n";
+        assert_eq!(apply_vpdpbusd_512_declaration(src, None), src);
+        assert_eq!(apply_vpdpbusd_512_declaration(src, Some(20)), src);
+        let once = apply_vpdpbusd_512_declaration(src, Some(23));
+        let want = vpdpbusd_512_lines("%d", "%acc", "%a", "%b", true);
+        assert_eq!(
+            once,
+            format!(
+                "  {}\n  {}\n  {}\n  %other = arith.constant 1 : i64\n",
+                want[0], want[1], want[2]
+            )
+        );
+        assert_eq!(apply_vpdpbusd_512_declaration(&once, Some(23)), once);
+        assert_eq!(
+            apply_vpdpbusd_512_declaration("module {\n}\n", Some(23)),
+            "module {\n}\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn derives_the_major_from_an_explicit_tool_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "mind-vnni-major-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let tool = dir.join("mlir-translate");
+        let write = |text: &str| {
+            std::fs::write(&tool, format!("#!/bin/sh\nprintf '%s\\n' '{text}'\n"))
+                .expect("write tool");
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        };
+        write("LLVM version 23.1.4");
+        assert_eq!(
+            llvm_major_of_tool(tool.to_str().expect("utf8 path")),
+            Some(23)
+        );
+        write("Ubuntu LLVM version 20.1.2");
+        assert_eq!(
+            llvm_major_of_tool(tool.to_str().expect("utf8 path")),
+            Some(20)
+        );
+        write("no version here");
+        assert_eq!(llvm_major_of_tool(tool.to_str().expect("utf8 path")), None);
+        let missing = dir.join("absent-translate");
+        assert_eq!(
+            llvm_major_of_tool(missing.to_str().expect("utf8 path")),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

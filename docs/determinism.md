@@ -15,6 +15,8 @@ leaves the result to accident — to undefined behaviour, backend quirks, hidden
 global state, race conditions, or the order in which a parallel runtime happens to
 execute.
 
+Artifacts are byte-identical for a given toolchain version across substrates, and the toolchain version is part of the reproducible build input.
+
 Every questionable operation falls into exactly one of three buckets:
 
 | Bucket | Meaning |

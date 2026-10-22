@@ -43,10 +43,12 @@ on your `PATH`:
 
 If they are absent, codegen fails with a clear `tool not found` error rather than
 silently degrading; a build names the missing tool and any installed copy under
-`/usr/lib/llvm-<N>/bin`. Use LLVM/MLIR 20, the version CI tests with: MLIR 18
+`/usr/lib/llvm-<N>/bin`. Tested with LLVM/MLIR 23 (latest) and 20 (oldest supported). MLIR 18
 builds most programs but cannot bufferize a tensor carried across a loop or
-returned from several exits. On Debian/Ubuntu: `apt install mlir-20-tools
-clang-20` and put `/usr/lib/llvm-20/bin` on `PATH`; on macOS: `brew install llvm`
+returned from several exits. On Debian/Ubuntu, LLVM/MLIR 20 (oldest supported): `apt install mlir-20-tools
+clang-20` and put `/usr/lib/llvm-20/bin` on `PATH`. LLVM/MLIR 23 (latest): add the signed
+`llvm-toolchain-noble-23` apt source, `apt install mlir-23-tools clang-23`, and put
+`/usr/lib/llvm-23/bin` on `PATH`; on macOS: `brew install llvm`
 (and add its `bin` to `PATH`).
 
 Note: `https://mindlang.dev/install.sh` is a redirect to the canonical

@@ -24,7 +24,7 @@ tracing + byte-diff + run-parity.
 | 9 | SCALAR_LANGUAGE_COVERAGE | **PASS** | native backend | — | int `7+35`→42, struct-return `3+4`→7 via `--backend=native` | done |
 | 10 | FLOAT_LANGUAGE_COVERAGE | **PARTIAL** | native backend | scalar f64 `+ − ×` and f64 COMPARE (`< <= > >= == !=`, IEEE-ordered, native == MLIR incl. NaN / ±0.0 / ±inf); f32 / non-dyadic literal / mixed int-float / `/` / `%` / tensor-float all refused | `2.5+4.0 as i64`→6 native; NaN compare native 0 == MLIR 0 (was native 3); 14-pair f64 compare truth table native == MLIR == IEEE in `ri_d1_frozen_profile_gate.py` | RI-E: native tensor float + f32 compare proof + `(op, operand_type)` keying (#313) |
 | 11 | TENSOR_LANGUAGE_COVERAGE | **NO** | native backend | tensor lowering not in stage1.elf subset | tensor prog `--backend=native` → FAIL-CLOSED `error[backend-native]` | RI-E: native tensor lowering |
-| 12 | AGGREGATE_ENUM_COVERAGE | **PARTIAL** | native backend | aggregate ABI is intrinsic-call-shaped; array WRITE + enum values unported | fixed-array READ native OK; struct/enum → FAIL-CLOSED (see row-12 measured map) | RI-F: native trait/enum-payload dispatch |
+| 12 | AGGREGATE_ENUM_COVERAGE | **PARTIAL** | native backend | aggregate ABI is intrinsic-call-shaped; array WRITE + enum values unported; whole-array binop over-admission closed (`binop.array_operand`) | fixed-array READ native OK; whole-array binary operators refused (element reads unaffected); struct/enum → FAIL-CLOSED (see row-12 measured map) | RI-F: native trait/enum-payload dispatch |
 | 13 | REGALLOC | **PARTIAL** | native emitter | production-grade allocation | DTK (Deterministic Top-K) first slice landed (#254) | RI-C-REGALLOC: production allocator |
 | 14 | STDLIB_LINKING | **PARTIAL** | native backend | std-blob linked via self-host image, not general std resolution; 19 of 42 `std/*.mind` resolve on NEITHER path | `stdlib_manifest_lint.py` (membership now a checked contract, both directions); scalar builds link the seeded std blob | RI-E stdlib native link |
 | 15 | CROSS_MACHINE_DETERMINISM | **PASS** | the wedge | — | `cross_substrate_identity` (avx2==neon canaries) + native build byte-identical across runs | done |
@@ -222,13 +222,14 @@ tensor-style named rejection.
 | `let mut` array, no store | admit | runs, `1` | **PROVEN in-profile** |
 | scalar `match` | admit | runs, `20` | **PROVEN in-profile** |
 | `a[i] = v` (`Instr::ArrayStore`) | **admitted** → now rejected | refuses | **OVER-ADMISSION (fixed)** |
+| whole-array binary operator (`a + b`, `1 + a`, comparisons) | **admitted** → now rejected `binop.array_operand` | refuses, no artifact | **OVER-ADMISSION (fixed)** |
 | C-like enum value `let e = E.A` | **admitted** | refuses | **OVER-ADMISSION (open)** |
 | struct literal / field read / struct return | reject `call.undefined_or_builtin` | — | **OVER-REJECTION** |
 | struct param, nested struct, f64 field, field assign | reject `call.undefined_or_builtin` | — | **OVER-REJECTION** |
 | enum tuple-payload / struct-variant + match | reject `call.undefined_or_builtin` | — | over-rejection (unproven anyway) |
 | trait dispatch | reject `cannot determine` (parse) | — | out-of-profile (row 12 blocker) |
 
-Two defect directions, both instances of admission keyed on the CONSTRUCTOR rather than
+Three defect directions, each an instance of admission keyed on the CONSTRUCTOR rather than
 on what the construct DENOTES — the same shape as the `admit_binop` (2026-08-21) and
 `admit_call` findings:
 
@@ -246,6 +247,15 @@ on what the construct DENOTES — the same shape as the `admit_binop` (2026-08-2
    complete predictor, and fence #2 stays load-bearing. Safe today (refusal is loud);
    the risk to track is a future `stage1.elf` reseed that ACCEPTS such a construct
    without a corpus program proving it.
+3. **Over-admission — whole-array binary operator (CLOSED).** `ConstArray` and each
+   binary operator are in profile on their own, so a whole-array operand was admitted
+   (`[i64; N] + [i64; N]`, a scalar on either side, and the comparisons). The native
+   backend built a binary that returned the wrong value. The operand is now refused
+   as `binop.array_operand`, ahead of the operator's own name. An element read
+   (`a[i] + b[i]`) is a scalar load and stays admitted. main before #287, measured
+   on main 920d2df2, returned 0 where 15 is the value for a length-1 addition, and
+   2 where 1 is the value for the longer additions; those programs now refuse and
+   write no artifact.
 
 **Blocking, not row 12's to fix — the first-fence wiring over-rejects the readiness
 corpus.** `admit_call` admits only callees DEFINED in the module, so every aggregate

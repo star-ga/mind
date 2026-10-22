@@ -38,12 +38,12 @@ pqc_hybrid_signing	PQC hybrid signing controls
 pqc_hybrid_cli	PQC hybrid signing CLI
 build_test	Build & Test
 cross_substrate_identity	Cross-substrate bit-identity (
-mindfuzz_cross_runner_identity	Fuzzer cross-runner mic@3 identity (avx2 == neon)
+mindfuzz_cross_runner_identity	Fuzzer cross-runner mic@3 identity (avx2 == neon) (LLVM 
 format	Format Check
 docs	Documentation
-mindcraft_self_host	Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
-executable_miscompile_gate	Executable miscompile gate (compile + run + assert)
-executable_semantics_tier	Executable-semantics test tier (mlir-build)
+mindcraft_self_host	Mindcraft self-host (RFC 0008 Phase G — KEYSTONE) (LLVM 
+executable_miscompile_gate	Executable miscompile gate (compile + run + assert) (LLVM 
+executable_semantics_tier	Executable-semantics test tier (mlir-build) (LLVM 
 mindcraft_check	Mindcraft check (RFC 0007 Phase 6)
 conformance	Core v1 conformance suite
 ri_d1_mlir_free	RI-D1 MLIR-free native path (MLIR compiled out)

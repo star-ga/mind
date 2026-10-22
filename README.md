@@ -20,7 +20,7 @@ See [`docs/install.md`](docs/install.md) for all install options including manua
 
 ## Overview
 
-**MIND** is a deterministic compiler: its deterministic-integer and Q16.16 fixed-point lowering produces output that is bit-identical across CPU substrates (x86-`avx2` == ARM-`neon`), with a tamper-evident evidence chain embedded in the artifact itself. The CLI's opt-in production signing profile uses the exact ML-DSA-87 + SLH-DSA-SHAKE-256s pair; Ed25519 and the earlier Ed25519/ML-DSA-65 hybrid are retired from signing and trust verification, and published releases remain unsigned until operational release custody, signed manifests, and independent release replay are established. Scalar IEEE-754 `float64` now compiles on the strict deterministic path — run-to-run bit-identical, and verified byte-identical across x86_64 (`avx2`) and ARM64 (`neon`) on real hardware (2026-07-05). Vector-reduction, transcendental, and GPU float determinism are on the roadmap.
+**MIND** is a deterministic compiler: its deterministic-integer and Q16.16 fixed-point lowering produces output that is bit-identical across CPU substrates (x86-`avx2` == ARM-`neon`), with a tamper-evident evidence chain embedded in the artifact itself. The CLI's opt-in production signing profile uses the exact ML-DSA-87 + SLH-DSA-SHAKE-256s pair; Ed25519 and the earlier Ed25519/ML-DSA-65 hybrid are retired from signing and trust verification, and published releases remain unsigned until operational release custody, signed manifests, and independent release replay are established. Scalar IEEE-754 `float64` now compiles on the strict deterministic path — run-to-run bit-identical, and verified byte-identical across x86_64 (`avx2`) and ARM64 (`neon`) on real hardware (2026-07-05). Vector-reduction, transcendental, and GPU float determinism are on the roadmap. Artifacts are byte-identical for a given toolchain version across substrates, and the toolchain version is part of the reproducible build input.
 
 MIND combines declarative tensor algebra, static shape inference, and automatic differentiation for building intelligent systems with auditable foundations. The compiler roadmap targets a fully Pure MIND implementation with its own native backends. The current release toolchain still includes Rust and MLIR/LLVM components while the native self-hosted path advances through verified capability gates.
 
@@ -78,7 +78,7 @@ This repository contains the open-core stack: the MIND language, type system, co
 
 ### Optional Dependencies
 
-- **LLVM/MLIR 20** (`mlir-opt`, `mlir-translate`, `clang`): the toolchain CI builds and tests the native backend with. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
+- **LLVM/MLIR 23** (latest) and **LLVM/MLIR 20** (oldest supported) (`mlir-opt`, `mlir-translate`, `clang`): the toolchains CI builds and tests the native backend with. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
 - **MLIR tools**: Required for `mlir-exec` feature
 - **C compiler**: Required for FFI examples
 

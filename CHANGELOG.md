@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `spawn_capture` reads pipe ends as full ints and closes every end it opened
   when `pipe` or `fork` fails, including descriptors at or above 65536.
 
+### Fixed — whole-array binary operators on the native backend (#287)
+- Whole-array binary operators on the native backend built a binary that returned
+  wrong values. The miscompile existed on main after #110 and before #287 and was
+  never in a tagged release. They are now refused with a named construct
+  (`binop.array_operand`). Element reads are unaffected.
+
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN
 - The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven

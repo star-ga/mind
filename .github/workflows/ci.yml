@@ -423,15 +423,29 @@ jobs:
     # neon hash is an unverified copy of avx2 and an ARM lowering divergence
     # would ship green. MIND_BENCH_REQUIRE=1 turns a missing MLIR toolchain into
     # a hard failure so the gate can never pass vacuously.
-    name: Cross-substrate bit-identity (${{ matrix.substrate }})
+    name: Cross-substrate bit-identity (${{ matrix.substrate }}) (LLVM ${{ matrix.llvm }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - llvm: "23"
+            runner: ubuntu-24.04
             substrate: avx2
-          - runner: ubuntu-24.04-arm
+            # PATH stays LLVM 23. LLVM 20 is installed beside it so the VNNI
+            # mismatch test can point MLIR_TRANSLATE at the other major.
+            dual_llvm: "1"
+          - llvm: "23"
+            runner: ubuntu-24.04-arm
             substrate: neon
+            dual_llvm: "0"
+          - llvm: "20"
+            runner: ubuntu-24.04
+            substrate: avx2
+            dual_llvm: "0"
+          - llvm: "20"
+            runner: ubuntu-24.04-arm
+            substrate: neon
+            dual_llvm: "0"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30  # build mindc + run the ELF byte-identity gate; bound stalls
 
@@ -441,6 +455,9 @@ jobs:
       no_proxy: ""
       MIND_BENCH_REQUIRE: "1"
       MIND_INTDOT_VNNI_VERIFY: "1"
+      # "1" only on the avx2 LLVM 23 leg, which installs both majors. The
+      # mismatch test fail-closes a missing second toolchain only then.
+      MIND_DUAL_LLVM: ${{ matrix.dual_llvm }}
 
     steps:
       - name: Checkout
@@ -460,26 +477,68 @@ jobs:
           restore-keys: |
             ${{ matrix.runner }}-xsi-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
-        # Noble universe also packages llvm-20 (1:20.1.2); we pin it on both
-        # x86_64 and arm64 so the gate shells out to unversioned mlir-opt /
-        # mlir-translate / clang in /usr/lib/llvm-20/bin. The wedge is
-        # LLVM-version-independent (the gate hashes the Q16.16 result, not
-        # codegen) — verified to match the llvm-18-blessed references.
+      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
+        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
+        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
+        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
+        # is an upstream failure, and the gate assertions below are unchanged.
+        # The avx2 LLVM 23 leg also installs LLVM 20 off PATH for the mismatch test.
         run: |
-          # ports.ubuntu.com (arm64 mirror) has transient outages that red the
-          # ARM leg on an UPSTREAM issue, not a code defect. Retry up to 5x with
-          # backoff + --fix-missing before failing; the byte-identity assertion
-          # itself is unchanged.
+          set -o pipefail
+          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
+            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
+            exit 1
+          fi
           ok=0
           for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            if [ "${{ matrix.llvm }}" = "23" ]; then
+              if ! command -v gpg >/dev/null 2>&1; then
+                sudo apt-get update || true
+                sudo apt-get install -y gnupg
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
+            else
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            fi
             echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+          if [ "${{ matrix.dual_llvm }}" = "1" ]; then
+            if [ "${{ matrix.llvm }}" != "23" ]; then
+              echo "FAIL: the dual-toolchain leg keeps LLVM 23 on PATH and installs LLVM 20 beside it"
+              exit 1
+            fi
+            # LLVM 20 stays off PATH. The mismatch test sets MLIR_TRANSLATE
+            # and CLANG to one major while PATH holds the other.
+            ok_other=0
+            for attempt in 1 2 3 4 5; do
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then
+                ok_other=1
+                break
+              fi
+              echo "apt attempt $attempt failed installing LLVM 20; retry in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            [ "$ok_other" = 1 ] || { echo "LLVM 20 unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+            for t in mlir-opt mlir-translate clang; do
+              test -x "/usr/lib/llvm-20/bin/$t" || { echo "FAIL: /usr/lib/llvm-20/bin/$t missing"; exit 1; }
+              test -x "/usr/lib/llvm-23/bin/$t" || { echo "FAIL: /usr/lib/llvm-23/bin/$t missing"; exit 1; }
+            done
+          fi
+          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         run: |
@@ -497,6 +556,11 @@ jobs:
             command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
             "$t" --version > /tmp/toolver.txt
             head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
           done
 
       - name: Build mindc (MLIR backend)
@@ -540,6 +604,11 @@ jobs:
         # the other substrate is verified on its sibling matrix runner. Every
         # manifest case must atomically publish a measured/deferred receipt;
         # the second target compares that executed set to the manifest set.
+        # `vnni_resolved_toolchain` translates the VNNI module on this job's
+        # toolchain and, where both majors are installed, builds it with
+        # MLIR_TRANSLATE pointing at the other major. Translation does not
+        # execute the kernel, so a runner without AVX-512-VNNI still exercises
+        # the intrinsic declaration that `mlir-translate` checks.
         run: |
           set -euo pipefail
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/mind-xsi-receipts.XXXXXX")"
@@ -550,13 +619,16 @@ jobs:
             --test cross_substrate_identity -- --nocapture
           cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
+            --test vnni_resolved_toolchain -- --nocapture
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_receipts -- --include-ignored --nocapture
 
       - name: Preserve asserting cross-substrate evidence
         if: ${{ always() && steps.xsi_gate.outputs.receipt_dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cross-substrate-evidence-${{ matrix.substrate }}-${{ github.sha }}
+          name: cross-substrate-evidence-${{ matrix.substrate }}-llvm${{ matrix.llvm }}-${{ github.sha }}
           path: ${{ steps.xsi_gate.outputs.receipt_dir }}
           if-no-files-found: error
           retention-days: 30
@@ -593,7 +665,7 @@ jobs:
       - name: Upload per-substrate canary hashes (${{ matrix.substrate }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: canary-hashes-${{ matrix.substrate }}
+          name: canary-hashes-${{ matrix.substrate }}-llvm${{ matrix.llvm }}
           path: ${{ github.workspace }}/canary_hashes_${{ matrix.substrate }}.txt
           if-no-files-found: error
           retention-days: 30
@@ -621,7 +693,7 @@ jobs:
         # byte-compares them. A per-substrate name keeps the two uploads distinct.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: mindfuzz-digest-${{ matrix.substrate }}
+          name: mindfuzz-digest-${{ matrix.substrate }}-llvm${{ matrix.llvm }}
           path: ${{ github.workspace }}/mindfuzz_digest_${{ matrix.substrate }}.txt
           if-no-files-found: error
           retention-days: 7
@@ -634,9 +706,19 @@ jobs:
     # the one the neon (real aarch64) runner computes. This job downloads both
     # runners' digest artifacts and FAILS RED on any mismatch — a real x86 != ARM
     # divergence in the fuzzed corpus can no longer ship green (MIND-CONSTITUTION
-    # §I.4). `needs:` gates it on both matrix legs producing their artifact.
-    name: Fuzzer cross-runner mic@3 identity (avx2 == neon)
+    # §I.4). Each cell compares avx2 against neon for ONE toolchain. A failure
+    # of the other toolchain must not skip this cell: skipping the job before
+    # the matrix expands leaves a single check whose name still contains the
+    # unexpanded matrix expression, and it also drops the compare for the
+    # toolchain that did produce both digests. `!cancelled()` schedules every
+    # cell; a cell whose own substrate artifact is missing still fails closed.
+    name: Fuzzer cross-runner mic@3 identity (avx2 == neon) (LLVM ${{ matrix.llvm }})
     needs: cross_substrate_identity
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -644,13 +726,13 @@ jobs:
       - name: Download avx2 digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: mindfuzz-digest-avx2
+          name: mindfuzz-digest-avx2-llvm${{ matrix.llvm }}
           path: avx2
 
       - name: Download neon digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: mindfuzz-digest-neon
+          name: mindfuzz-digest-neon-llvm${{ matrix.llvm }}
           path: neon
 
       - name: Assert avx2 batch digest == neon batch digest
@@ -738,7 +820,11 @@ jobs:
         run: cargo doc --no-default-features --document-private-items
 
   mindcraft_self_host:
-    name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
+    name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE) (LLVM ${{ matrix.llvm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     # 30 min for the keystone + self-host smokes, plus up to 25 for the twin-emitter
     # fuzzer step (nested debug `cargo test` build of the dump_ref oracle).
@@ -866,27 +952,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mindcraft-self-host-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
-        # The cdylib/self-host emit lowers MIND IR to MLIR text and shells out to
-        # mlir-opt + mlir-translate + clang to produce the .so (the in-process
-        # melior/inkwell LLVM crates were removed 2026-05-21, but the emit still
-        # uses these LLVM/MLIR subprocess tools), so the keystone DOES depend on
-        # this toolchain. Pinned to llvm-20 for parity with the cross-substrate
-        # gate's toolchain and the --emit-shared sub-steps.
+      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
+        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
+        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
+        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
+        # is an upstream failure, and the gate assertions below are unchanged.
         run: |
-          # ports.ubuntu.com (arm64 mirror) has transient outages that red the
-          # ARM leg on an UPSTREAM issue, not a code defect. Retry up to 5x with
-          # backoff + --fix-missing before failing; the byte-identity assertion
-          # itself is unchanged.
+          set -o pipefail
+          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
+            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
+            exit 1
+          fi
           ok=0
           for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            if [ "${{ matrix.llvm }}" = "23" ]; then
+              if ! command -v gpg >/dev/null 2>&1; then
+                sudo apt-get update || true
+                sudo apt-get install -y gnupg
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
+            else
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            fi
             echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         run: |
@@ -904,6 +1007,11 @@ jobs:
             command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
             "$t" --version > /tmp/toolver.txt
             head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
           done
 
       - name: Build mindc (MLIR backend)
@@ -1621,7 +1729,11 @@ jobs:
             --test phase_g_keystone_bootstrap -- --nocapture
 
   executable_miscompile_gate:
-    name: Executable miscompile gate (compile + run + assert)
+    name: Executable miscompile gate (compile + run + assert) (LLVM ${{ matrix.llvm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -1657,21 +1769,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-exec-gate-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
+        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
+        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
+        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
+        # is an upstream failure, and the gate assertions below are unchanged.
         run: |
-          # ports.ubuntu.com (arm64 mirror) has transient outages that red the
-          # ARM leg on an UPSTREAM issue, not a code defect. Retry up to 5x with
-          # backoff + --fix-missing before failing; the byte-identity assertion
-          # itself is unchanged.
+          set -o pipefail
+          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
+            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
+            exit 1
+          fi
           ok=0
           for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            if [ "${{ matrix.llvm }}" = "23" ]; then
+              if ! command -v gpg >/dev/null 2>&1; then
+                sudo apt-get update || true
+                sudo apt-get install -y gnupg
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
+            else
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            fi
             echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         run: |
@@ -1689,6 +1824,11 @@ jobs:
             command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
             "$t" --version > /tmp/toolver.txt
             head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
           done
 
       - name: Build mindc (MLIR backend)
@@ -1705,7 +1845,11 @@ jobs:
         working-directory: ${{ github.workspace }}
 
   executable_semantics_tier:
-    name: Executable-semantics test tier (mlir-build)
+    name: Executable-semantics test tier (mlir-build) (LLVM ${{ matrix.llvm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     timeout-minutes: 45  # build ~317 test harnesses + run ~1913 tests; bound stalls
 
@@ -1802,19 +1946,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-exec-sem-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
+        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
+        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
+        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
+        # is an upstream failure, and the gate assertions below are unchanged.
         run: |
-          # ports.ubuntu.com has transient outages that red a leg on an UPSTREAM
-          # issue, not a code defect. Retry up to 5x with backoff before failing.
+          set -o pipefail
+          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
+            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
+            exit 1
+          fi
           ok=0
           for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            if [ "${{ matrix.llvm }}" = "23" ]; then
+              if ! command -v gpg >/dev/null 2>&1; then
+                sudo apt-get update || true
+                sudo apt-get install -y gnupg
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
+            else
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            fi
             echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         # Fail-closed guard: MIND_BENCH_REQUIRE=1 (set by the gate script) turns a
@@ -1835,6 +2004,11 @@ jobs:
             command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
             "$t" --version > /tmp/toolver.txt
             head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
           done
 
       # run_gate-exempt: scripts/exec_semantics_gate.sh - a cargo-test driver, not
@@ -1867,7 +2041,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: exec-semantics-tier-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: exec-semantics-tier-logs-llvm${{ matrix.llvm }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/mind-tier-*.log
           if-no-files-found: warn
           retention-days: 7

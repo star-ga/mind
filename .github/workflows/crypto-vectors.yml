@@ -41,7 +41,11 @@ env:
 
 jobs:
   crypto_vectors:
-    name: Crypto RFC known-answer vectors (pure-MIND crypto/TLS)
+    name: Crypto RFC known-answer vectors (pure-MIND crypto/TLS) (LLVM ${{ matrix.llvm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -93,20 +97,44 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install cryptography hyperframe hpack kyber-py
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
+        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
+        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
+        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
+        # is an upstream failure, and the gate assertions below are unchanged.
         run: |
-          # ports.ubuntu.com (arm64 mirror) has transient outages that red the
-          # ARM leg on an UPSTREAM issue, not a code defect. Retry up to 5x with
-          # backoff + --fix-missing before failing.
+          set -o pipefail
+          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
+            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
+            exit 1
+          fi
           ok=0
           for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            if [ "${{ matrix.llvm }}" = "23" ]; then
+              if ! command -v gpg >/dev/null 2>&1; then
+                sudo apt-get update || true
+                sudo apt-get install -y gnupg
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
+            else
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            fi
             echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         # Fail-closed guard: if the MLIR toolchain is absent this errors here,
@@ -126,6 +154,11 @@ jobs:
             command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
             "$t" --version > /tmp/toolver.txt
             head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
           done
 
       - name: Build mindc (MLIR backend)
