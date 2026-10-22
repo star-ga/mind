@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2621 | **Est. tokens:** ~4,678,094
-**Generated:** 2026-10-22 02:45 UTC
+**Files:** 2621 | **Est. tokens:** ~4,679,035
+**Generated:** 2026-10-22 03:01 UTC
 
 ## Token Budget Guide
 
@@ -130,9 +130,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,514 |
+| `src/build/` | 13 | ~54,543 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~32,123 |
+| `src/build/native_bridge/` | 8 | ~32,338 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -147,7 +147,7 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 13 | ~105,486 |
+| `src/ir/` | 13 | ~106,183 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
@@ -1954,7 +1954,7 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~7978 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~8193 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1962,7 +1962,7 @@
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~9091 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9120 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3613 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2138,7 +2138,7 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~7179 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic_load.rs` (~994 tok, large) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~16831 tok, huge) — Copyright 2025 STARGA Inc.
