@@ -7,9 +7,7 @@ pub fn sn_read_exact(addr: i64, count: i64) -> i64 {
     let mut done: i64 = 0;
     while done < count {
         let n: i64 = __mind_read(0, addr + done, count - done, 0 - 1);
-        if n <= 0 {
-            return 0;
-        }
+        if n <= 0 { return 0; }
         done = done + n;
     }
     1
@@ -17,30 +15,18 @@ pub fn sn_read_exact(addr: i64, count: i64) -> i64 {
 
 pub fn main() -> i64 {
     let header: i64 = __mind_alloc(16);
-    if sn_read_exact(header, 8) != 1 {
-        return 71;
-    }
+    if sn_read_exact(header, 8) != 1 { return 71; }
     let n: i64 = __mind_load_i64(header);
-    if n < 0 {
-        return 72;
-    }
-    if n > 4194304 {
-        return 72;
-    }
+    if n < 0 { return 72; }
+    if n > 4194304 { return 72; }
     let data: i64 = __mind_alloc(n + 1);
-    if sn_read_exact(data, n) != 1 {
-        return 73;
-    }
+    if sn_read_exact(data, n) != 1 { return 73; }
     let buf: String = String { addr: data, len: n, cap: 0 };
     let es: EmitState = EmitState { buf: buf, next_id: 19, last_id: 23, lets: env_new() };
     let marked: EmitState = hm_mark_source_note(es);
     __mind_store_i64(header, string_len(marked.buf));
     __mind_store_i64(header + 8, marked.next_id);
-    if __mind_write(1, header, 16, 0 - 1) != 16 {
-        return 74;
-    }
-    if __mind_write(1, data, n, 0 - 1) != n {
-        return 75;
-    }
+    if __mind_write(1, header, 16, 0 - 1) != 16 { return 74; }
+    if __mind_write(1, data, n, 0 - 1) != n { return 75; }
     0
 }

@@ -263,45 +263,58 @@ examples/mindc_mind/mindfuzz_self_host_staged/
 # -- gate-input fixtures that call a sealed module (R7 per-file class) --
 # R7 (Amendment F): the transitive "caller-of-sealed-module" class is not
 # approved. Each caller is a gate-input fixture named by its owning check as a
-# MODULE/driver/fixture input; reason is digest-pinned-gate-input with that
-# check's own hash/SOURCE_DRIFT assert as the pin site, and the note names the
-# sealed module it imports. No production example is in this set (every row is
-# named in a check/smoke MODULES or driver list). Positive controls of Q1.3(b):
-# git ls-files --error-unmatch still lists each path; the owning gate's asserted
-# count is unchanged before/after this edit; each path remains in regenerated
-# ANATOMY (anatomy.sh walks git ls-files --cached).
-# digest-pinned-gate-input (examples/mindc_mind/native_c_call_emit_check.py:245-249 SOURCE_DRIFT); imports native_c_call_emit.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_emit_check, manual)
+# MODULE/driver/fixture input; reason is digest-pinned-gate-input bound to a
+# digest pinned OUTSIDE the run itself — the committed catalogue
+# examples/mindc_mind/testdata/h2b_exclusion_pins.json — and the note names the sealed
+# module it imports. A same-run SOURCE_DRIFT self-hash is not an external pin
+# (Schedule R7). No production example is in this set (every row is named in a
+# check/smoke MODULES or driver list). Positive controls of Q1.3(b) are asserted
+# by examples/mindc_mind/h2b_exclusion_controls_check.py (pin, git ls-files,
+# ANATOMY, reason cites the pin site); its --mutant-* flags are the red mutants.
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_c_call_emit.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_emit_check, manual)
 /examples/mindc_mind/native_c_call_emit_driver.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_c_call_plan_check.py:180 hash assert); imports native_c_call_plan.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_plan_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_c_call_plan.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_plan_check, manual)
 /examples/mindc_mind/native_c_call_plan_driver.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_allocator_check.py:26-30 CASE_SHA/MUT_SHA/OWNERSHIP_SHA module set); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
 /examples/mindc_mind/native_dynamic_allocator.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_allocator_check.py driver input; MODULES native_dynamic_allocator.mind); imports native_dynamic_allocator.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic_allocator.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
 /examples/mindc_mind/native_dynamic_allocator_driver.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_writer_check.py fixture input); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_writer_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_writer_check, manual)
 /examples/mindc_mind/native_dynamic_fixture.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES; native_dynamic_image_check.py BASE_WRITER sibling); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
 /examples/mindc_mind/native_dynamic_image.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_image_check.py fixture input); imports native_dynamic.mind, native_dynamic_image.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic.mind, native_dynamic_image.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
 /examples/mindc_mind/native_dynamic_image_fixture.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_layout_check.py:20 CASES_SHA driver input); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_layout_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_layout_check, manual)
 /examples/mindc_mind/native_dynamic_layout_driver.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_image_check.py fixture input); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
 /examples/mindc_mind/native_dynamic_mic_fixture.mind
-# digest-pinned-gate-input (examples/mindc_mind/self_host_native_emission_context_smoke.py:284 context_sha256); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; self_host_native_emission_context_smoke, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; self_host_native_emission_context_smoke, manual)
 /examples/mindc_mind/native_emission_context.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES); imports native_libc_io.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_io_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_libc_io.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_io_check, manual)
 /examples/mindc_mind/native_libc_io_fixture.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES; native_libc_startup_check.py:10-11 CASE_SHA/MUT_SHA set); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
 /examples/mindc_mind/native_libc_startup.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_libc_startup_check.py fixture input); imports native_libc_startup.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_libc_startup.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
 /examples/mindc_mind/native_libc_startup_fixture.mind
-# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json M01 anchor set; NSF/1); imports native_scoped_source_image.mind; gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_scoped_source_image.mind; gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
 /examples/mindc_mind/native_scoped_source_driver.mind
-# digest-pinned-gate-input (examples/mindc_mind/self_host_native_emission_context_smoke.py:248,285 source-image-sha256); imports native_libc_io.mind, native_emission_context.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_libc_io.mind, native_emission_context.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
 /examples/mindc_mind/native_source_image.mind
-# digest-pinned-gate-input (examples/mindc_mind/native_source_driver_check.py fixture input); imports native_source_driver.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); imports native_source_driver.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
 /examples/mindc_mind/testdata/native_source_driver/note_fixture_tail.mind
+#
+# -- restored to parent bytes: IR+mic3 identity unprovable (Q1.1) --------
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); gate: no-ci-gate-yet (owner: L2; self_host_source_note_smoke, manual)
+# restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established
+# under any available composition (standalone and assembled both refuse), so
+# Q1.1 forbids formatting this file
+/examples/mindc_mind/source_note_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); gate: no-ci-gate-yet (owner: L2; self_host_native_string_escape_smoke, manual)
+# restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established
+# under any available composition (standalone and assembled both refuse), so
+# Q1.1 forbids formatting this file
+/examples/mindc_mind/string_escape_driver.mind
 #
 # -- syntax-under-test: `mindc fmt` rewrites the construct the gate tests -
 # syntax-under-test (mindfuzz_self_host regression minimisation, `break;`); gate: mindfuzz_self_host
