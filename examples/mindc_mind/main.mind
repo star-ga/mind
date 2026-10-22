@@ -7103,7 +7103,7 @@ pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
     let t_end: i64 = if tok_kind(toks, pos + 2) == tk_star() {
         ptr_type_end(toks, buf, pos + 2)
     } else {
-        param_type_end(toks, pos + 2)
+        param_type_end(toks, buf, pos + 2)
     };
     if t_end < 0 {
         // Keep a malformed pointer declaration as a poisoned whole item. Do
@@ -7239,15 +7239,62 @@ pub fn ptr_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
     pos + 3
 }
 
-pub fn param_type_end(toks: Vec, pos: i64) -> i64 {
+// Bytes of the token at `pos` spell `word` (`n` bytes, packed little-endian
+// into `packed`, at most 8). Used for the two contextual words of the
+// differentiable tensor type, which lex as plain identifiers.
+pub fn tok_is_word(toks: Vec, buf: i64, pos: i64, packed: i64, n: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, pos);
+    if tok_hi(toks, pos) - lo != n {
+        return 0;
+    }
+    tok_is_word_rest(buf, lo, packed, n, 0)
+}
+
+pub fn tok_is_word_rest(buf: i64, lo: i64, packed: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if load_byte(buf, lo + i) != packed % 256 {
+        return 0;
+    }
+    tok_is_word_rest(buf, lo, packed / 256, n, i + 1)
+}
+
+// `diff tensor<...>`: the reference parser accepts `diff` only as the prefix
+// of `tensor <`, so the qualifier is consumed only in that exact shape. Any
+// other word after `diff` keeps the one-token end and the caller's boundary
+// check refuses it.
+pub fn is_diff_tensor_head(toks: Vec, buf: i64, pos: i64) -> i64 {
+    // "diff" = 0x66666964, "tensor" = 0x726f736e6574 (little-endian bytes).
+    if tok_is_word(toks, buf, pos, 1717987684, 4) == 0 {
+        return 0;
+    }
+    if tok_is_word(toks, buf, pos + 1, 125823003551092, 6) == 0 {
+        return 0;
+    }
+    if tok_kind(toks, pos + 2) != tk_lt() {
+        return 0;
+    }
+    1
+}
+
+pub fn param_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
     let k: i64 = tok_kind(toks, pos);
     // `&T` / `&[T]` — a reference binds tighter than anything that follows it.
     if k == tk_amp() {
-        return param_type_end(toks, pos + 1);
+        return param_type_end(toks, buf, pos + 1);
     }
     // `[T]` / `[T; N]` — balanced, so a nested element type is handled too.
     if k == tk_lbracket() {
         return skip_balanced_bracket(toks, pos + 1, 1);
+    }
+    // `diff tensor<DT[dims]>`: the angle list (literal, symbolic or empty
+    // bracketed shape) is skipped like any generic list after the qualifier.
+    if is_diff_tensor_head(toks, buf, pos) == 1 {
+        return skip_generic_args(toks, pos + 3, 1);
     }
     // `T<..>` — unchanged from the generic handling this replaces.
     if tok_kind(toks, pos + 1) == tk_lt() {
