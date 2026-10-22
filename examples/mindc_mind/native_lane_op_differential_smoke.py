@@ -644,6 +644,14 @@ def self_test() -> int:
                 not _match(Obs("ran", 2, b"", ""), row, path)
                 and _match(Obs("ran", 79, b"", ""), row, path)
                 for path in ("native", "mlir"))))
+    for cid, good_obs in [
+        ("edge_i64_div_zero_helper", Obs("eval_error", 0, b"", "Evaluation error: division by zero")),
+        ("edge_i8_div_min", Obs("ran", 2, b"", "")),
+    ]:
+        checks.append((cid + "_eval_pin", _match(good_obs, cases[cid], "eval")))
+        checks.append((cid + "_wrong_eval", not _match(Obs("eval_error", 0, b"", "unrelated error"), cases[cid], "eval")))
+    row = cases["edge_i32_div_min"]
+    checks.append(("unrelated_type_error", not _match(Obs("eval_error", 0, b"", "Evaluation error: type error\n[E2003] unsupported call"), row, "eval")))
     row = cases["reachable_div_in_import"]
     checks.append((row.cid, "a / b" in row.modules.get("helper.mind", "")
                    and "import helper;" in row.source and "imported_div(21, 3)" in row.source

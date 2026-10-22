@@ -575,7 +575,7 @@ jobs:
         # is the keystone-job step.
         if: matrix.substrate == 'neon'
         run: |
-          python3 scripts/run_gate.py --min-asserted 15 examples/mindc_mind/native_lane_op_differential_smoke.py --self-test
+          python3 scripts/run_gate.py --min-asserted 20 examples/mindc_mind/native_lane_op_differential_smoke.py --self-test
           MINDC_BIN=${{ github.workspace }}/target/debug/mindc MIND_BIN=${{ github.workspace }}/target/debug/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --paths mlir,eval --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
 
@@ -838,8 +838,8 @@ jobs:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     # 30 min for the keystone + self-host smokes, plus up to 25 for the twin-emitter
-    # fuzzer step (nested debug `cargo test` build of the dump_ref oracle), plus
-    # the operator differential (native and MLIR build of each generated program).
+    # fuzzer step (nested debug `cargo test` build of the dump_ref oracle).
+    # Keep the existing job budget; the operator differential must fit it.
     timeout-minutes: 55
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
@@ -1191,7 +1191,7 @@ jobs:
         # 79); expectation follows D1. This job is x86, both LLVM legs, three
         # paths. ARM MLIR == evaluator is a named step in the xsi neon leg.
         run: |
-          python3 scripts/run_gate.py --min-asserted 15 examples/mindc_mind/native_lane_op_differential_smoke.py --self-test
+          python3 scripts/run_gate.py --min-asserted 20 examples/mindc_mind/native_lane_op_differential_smoke.py --self-test
           MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
 

@@ -182,7 +182,7 @@ fn std_symbol_collision_is_refused() {
 ///
 /// L12 re-specification (Amendment H2b/G2 Q3.3, STEER item 8): `/` was this
 /// fixture's out-of-profile construct. L12 proved `/` on the lane ==
-/// MLIR == evaluator (native_lane_op_differential_smoke rows `arith_div_*`),
+/// MLIR == evaluator (`reachable_div_in_import` in the L12 differential),
 /// so `/` is in-profile on the lane and no longer exercises "reachable
 /// out-of-profile import". An f32 compare is the construct the lane still
 /// refuses AFTER L9 (L9 admits fixed-array reads, so an IndexAccess fixture
