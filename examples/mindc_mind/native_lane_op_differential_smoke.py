@@ -20,20 +20,12 @@ value. A negative or out-of-range result is encoded as a small positive exit
 two's-complement arithmetic, toward-zero division, and a shift count masked
 with `& 63`.
 
-Division edge rows (x/0, x%0, INT_MIN/-1, INT_MIN%-1, on i64 and on the narrow
-signed widths, plus unsigned zero-divisors) are pinned to today's trap: exit
-79 and empty stdout. That pin is what the compiled backends do today.
-Expectation follows D1, which will later define those results; this gate does
-not move the pin. A native-lane named refusal (`outside candidate
-native-lane-v1`, no artifact) is accepted only on rows whose types the lane
-does not admit. A refusal of an admitted i64 operator is a failure. Wrong
-code is a failure on every path. On edge rows only, the evaluator's NAMED
-Evaluation error (division by zero, type-check) is the reference path's form
-of the same refusal/trap; a panic (`abort`) is wrong code and is reported as
-a named blocker, never accepted.
-
-The integer `/` fence test stays as it is until this differential, including
-the i64 edge rows, is green. Re-specifying it is a separate change.
+Division edges have per-path pins (expectation follows D1): compiled paths
+require trap 79; the evaluator requires the measured named error, overflow
+panic, or value. Narrow native types may refuse with lane.type.unsupported.
+The imported division row builds a real helper module on both compiled paths.
+The expression-only evaluator receives the same helper text joined with the
+entry (only the import directive is removed); it has no module loader.
 
 Exit: 0 every row matches; 1 any row does not; 2 BLOCKED (mindc, mind, the
 marked compiler, or prlimit is missing). Prints one verdict line per row and
@@ -50,7 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -173,8 +165,9 @@ class Case:
     allow_native_refusal: bool = False
     follows_d1: bool = False
     # Per-path pin for edge rows (STEER R6): the evaluator's current defined
-    # outcome, measured and printed. None means "same as expect_exit".
-    expect_eval: str = ""  # "", "trap79", "eval_error", "abort"
+    # outcome, measured and printed; empty means the ordinary value pin.
+    expect_eval: str = ""
+    modules: dict[str, str] = field(default_factory=dict)
 
 
 def _bin_direct(op: str, a: int, b: int) -> str:
@@ -299,6 +292,13 @@ def build_corpus(seed: int = SEED) -> list[Case]:
             cid = f"arith_{_OP_NAME[op]}_{got}"
             cases.append(Case(cid, _bin_direct(op, a, b), result))
             got += 1
+
+    cases.append(Case(
+        "reachable_div_in_import",
+        "import helper;\nfn main() -> i64 { return imported_div(21, 3); }\n",
+        7, modules={"helper.mind":
+                    "pub fn imported_div(a: i64, b: i64) -> i64 { return a / b; }\n"},
+    ))
 
     specials = [
         ("enc_sub_neg", "-", 3, 10, 21, 22),
@@ -433,7 +433,7 @@ def build_corpus(seed: int = SEED) -> list[Case]:
             # Per-path pin (STEER R6): native/mlir trap 79; the evaluator's
             # current defined outcome is a named error on x/0 and a panic on
             # INT_MIN/-1. Measured 2026-10-21; expectation follows D1.
-            eval_pin = "eval_error" if b == 0 else "abort"
+            eval_pin = "zero" if b == 0 else ("div_overflow" if op == "/" else "mod_overflow")
             cases.append(Case(
                 f"edge_i64_{tag}_{rhs}_{form}",
                 _trap_source(op, a, b, direct),
@@ -456,15 +456,15 @@ def build_corpus(seed: int = SEED) -> list[Case]:
                 TRAP_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
-                expect_eval="eval_error",
+                expect_eval="narrow_z" if ty == "i32" else "zero",
             ))
             cases.append(Case(
                 f"edge_{ty}_{_OP_NAME[op]}_min",
                 _narrow_min(ty, op, min_expr),
-                2,
+                TRAP_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
-                expect_eval="eval_error",
+                expect_eval="narrow_q" if ty == "i32" else "value2",
             ))
     for ty in ("u8", "u16", "u32"):
         for op in ("/", "%"):
@@ -474,7 +474,7 @@ def build_corpus(seed: int = SEED) -> list[Case]:
                 TRAP_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
-                expect_eval="eval_error",
+                expect_eval="narrow_z" if ty == "u32" else "zero",
             ))
 
     ids = [c.cid for c in cases]
@@ -562,9 +562,9 @@ def _observe_eval(mind: str, source: str, env: dict[str, str]) -> Obs:
         return Obs("timeout", None, b"", "eval timeout")
     err = r.stderr or ""
     if r.returncode != 0:
-        return Obs("abort", r.returncode, b"", _last(err) or f"status {r.returncode}")
+        return Obs("abort", r.returncode, r.stdout.encode(), err.strip())
     if "Evaluation error" in err:
-        return Obs("eval_error", None, b"", _last(err))
+        return Obs("eval_error", r.returncode, r.stdout.encode(), err.strip())
     lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
     if not lines:
         return Obs("empty", r.returncode, b"", _last(err))
@@ -577,24 +577,78 @@ def _observe_eval(mind: str, source: str, env: dict[str, str]) -> Obs:
     return Obs("out_of_range", None, b"", f"value={value}")
 
 
-def _match(obs: Obs, case: Case, native: bool) -> bool:
-    if obs.kind == "ran" and obs.exit_code == case.expect_exit and obs.stdout == b"":
-        return True
-    if native and case.allow_native_refusal and obs.kind == "refused":
-        return True
-    # Per-path pin for edge rows (STEER R6): three-way equality is NOT
-    # asserted on those rows. The evaluator's outcome is pinned to its current
-    # defined behaviour (named error / panic), measured and printed, and the
-    # row is labelled "expectation follows D1".
-    if not native and case.follows_d1:
-        want = case.expect_eval
-        if want == "eval_error" and obs.kind == "eval_error":
-            return True
-        if want == "abort" and obs.kind == "abort":
-            return True
-        if want == "trap79" and obs.kind == "ran" and obs.exit_code == TRAP_EXIT:
-            return True
-    return False
+def _match(obs: Obs, case: Case, path: str) -> bool:
+    # Select the evaluator pin BEFORE the common compiled value check. A
+    # compiled trap, unrelated panic or loader failure is not this outcome.
+    if path == "eval" and case.follows_d1:
+        if obs.stdout != b"":
+            return False
+        pin = case.expect_eval
+        if pin == "value2":
+            return obs.kind == "ran" and obs.exit_code == 2
+        if pin == "zero":
+            return (obs.kind == "eval_error" and obs.exit_code == 0
+                    and obs.note == "Evaluation error: division by zero")
+        if pin in ("narrow_q", "narrow_z"):
+            var = pin[-1]
+            message = ("implicit narrowing Scalar[i64] -> Scalar[i32] loses data "
+                       f"for `{var}`; use an explicit `as Scalar[i32]` cast")
+            lines = obs.note.splitlines()
+            return (obs.kind == "eval_error" and obs.exit_code == 0
+                    and lines[:3] == ["Evaluation error: type error",
+                         "[E2004] " + message, "error[type-check][E2004]: " + message])
+        if pin in ("div_overflow", "mod_overflow"):
+            message = ("attempt to divide with overflow" if pin == "div_overflow"
+                       else "attempt to calculate the remainder with overflow")
+            return (obs.kind == "abort" and obs.exit_code == 101
+                    and message in obs.note.splitlines()
+                    and re.search(r"thread 'main'(?: \(\d+\))? panicked at "
+                                  r"(?:[^\n]*[/\\])?src/eval/mod.rs:\d+:\d+:",
+                                  obs.note) is not None)
+        return False
+    if path == "native" and case.allow_native_refusal and obs.kind == "refused":
+        return obs.note == "lane.type.unsupported"
+    return obs.kind == "ran" and obs.exit_code == case.expect_exit and obs.stdout == b""
+
+
+def _eval_source(case: Case) -> str:
+    """Reference closure for this fixed one-helper fixture, not a module resolver."""
+    if not case.modules:
+        return case.source
+    if set(case.modules) != {"helper.mind"} or not case.source.startswith("import helper;\n"):
+        raise ValueError("unsupported reference closure")
+    return case.modules["helper.mind"] + case.source.removeprefix("import helper;\n")
+
+
+def self_test() -> int:
+    from dataclasses import replace
+    cases = {c.cid: c for c in build_corpus()}
+    c = cases["edge_i64_div_min_helper"]
+    panic = "thread 'main' (123) panicked at src/eval/mod.rs:2759:13:\nattempt to divide with overflow"
+    good = Obs("abort", 101, b"", panic)
+    checks = [("named_overflow", _match(good, c, "eval"))]
+    for name, obs in [("segfault", Obs("abort", -11, b"", "segmentation fault")),
+                      ("missing_library", Obs("abort", 127, b"", "missing library")),
+                      ("unrelated_exit", Obs("ran", 79, b"", "")),
+                      ("wrong_panic", replace(good, note="unrelated panic")),
+                      ("wrong_code", replace(good, exit_code=127)),
+                      ("stdout", replace(good, stdout=b"unexpected"))]:
+        checks.append((name, not _match(obs, c, "eval")))
+    checks.append(("mlir_cannot_use_eval_pin", not _match(good, c, "mlir")))
+    for ty in ("i8", "i16", "i32"):
+        for op in ("div", "mod"):
+            row = cases[f"edge_{ty}_{op}_min"]
+            checks.append((row.cid, row.expect_exit == 79 and all(
+                not _match(Obs("ran", 2, b"", ""), row, path)
+                and _match(Obs("ran", 79, b"", ""), row, path)
+                for path in ("native", "mlir"))))
+    row = cases["reachable_div_in_import"]
+    checks.append((row.cid, "a / b" in row.modules.get("helper.mind", "")
+                   and "import helper;" in row.source and "imported_div(21, 3)" in row.source
+                   and "a / b" in _eval_source(row)))
+    for name, ok in checks:
+        gate_assert.check(ok, "contract " + name)
+    return 0 if all(ok for _, ok in checks) else 1
 
 
 def _blocked(msg: str) -> int:
@@ -608,9 +662,12 @@ def main() -> int:
     ap.add_argument("--paths", default="native,mlir,eval",
                     help="comma-joined subset of {native,mlir,eval}; the "
                          "native-lane ELF is x86-only by construction")
+    ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--list", action="store_true",
                     help="print the corpus and exit without building")
     args = ap.parse_args()
+    if args.self_test:
+        return self_test()
     paths = [p.strip() for p in args.paths.split(",") if p.strip()]
     unknown = set(paths) - {"native", "mlir", "eval"}
     if unknown:
@@ -672,29 +729,33 @@ def main() -> int:
             case_dir.mkdir()
             source = case_dir / "main.mind"
             source.write_text(case.source)
+            for name, content in case.modules.items():
+                (case_dir / name).write_text(content)
             native = _observe_build(*_build(
                 mindc, source, case_dir / "native", True, env), case_dir / "native", run_env) if "native" in paths else Obs("skipped", None, b"", "not selected")
             mlir = _observe_build(*_build(
                 mindc, source, case_dir / "mlir", False, env), case_dir / "mlir", run_env) if "mlir" in paths else Obs("skipped", None, b"", "not selected")
-            ev = _observe_eval(mind, case.source, env) if "eval" in paths else Obs("skipped", None, b"", "not selected")
+            ev = _observe_eval(mind, _eval_source(case), env) if "eval" in paths else Obs("skipped", None, b"", "not selected")
             ok = True
             if "native" in paths:
-                ok = ok and _match(native, case, True)
+                ok = ok and _match(native, case, "native")
             if "mlir" in paths:
-                ok = ok and _match(mlir, case, False)
+                ok = ok and _match(mlir, case, "mlir")
             if "eval" in paths:
-                ok = ok and _match(ev, case, False)
+                ok = ok and _match(ev, case, "eval")
             failed += not ok
             gate_assert.check(
                 ok,
                 f"{case.cid} expect_exit={case.expect_exit} "
                 f"native={native.brief()} mlir={mlir.brief()} eval={ev.brief()}",
             )
+            if case.follows_d1:
+                print(f"  note {case.cid}: expectation follows D1; eval_pin={case.expect_eval}")
             if not ok:
                 print(f"  repro {case.cid} expect_exit={case.expect_exit} "
                       f"native={native.brief()} mlir={mlir.brief()} eval={ev.brief()}")
-                if case.follows_d1:
-                    print(f"  note {case.cid}: expectation follows D1")
+                for name, content in {"main.mind": case.source, **case.modules}.items():
+                    print(f"  file {name}: {content!r}")
                 for line in case.source.splitlines():
                     print(f"  | {line}")
             print(f"progress index={index} id={case.cid} "

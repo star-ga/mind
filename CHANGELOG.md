@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — lane operator differential coverage
+- `native_lane_op_differential_smoke.py` checks a seeded scalar corpus,
+  including reachable division in an imported helper. Both LLVM 20 and LLVM 23
+  keystone legs run x86 three-path checks (native-lane ELF, MLIR, evaluator).
+  Both LLVM legs of `cross_substrate_identity` run the same corpus as a named
+  ARM neon MLIR/evaluator step. The native leg is x86-only by construction;
+  ARM neon validation is CI-only until an ARM node is available.
+- Division edges are pinned per path, expectation follows D1: native/MLIR
+  trap 79 (including i8/i16/i32 MIN/-1 division and remainder); unsupported
+  native narrow types require the named `lane.type.unsupported` refusal.
+  The evaluator pins measured values or exact named errors and overflow
+  panics. Unrelated process failures never satisfy an evaluator pin.
+
 ### Added — native variadic C-call emitter component
 - Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
 
