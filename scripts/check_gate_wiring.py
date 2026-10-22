@@ -181,7 +181,7 @@ GATED_EVENTS = ("push", "pull_request")
 # preflight-parity module, and the mindfuzz twin-emitter helper. Both are
 # tracked .py files and both are counted. The ceiling stays an exact
 # inventory with no spare allowance.
-HARNESS_CEILING = 318  # Exact reviewed integration inventory; no spare allowance.
+HARNESS_CEILING = 319  # Declared +1: examples/mindc_mind/native_lane_op_differential_smoke.py (lane-op differential corpus gate with --self-test contracts).
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
