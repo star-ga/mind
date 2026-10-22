@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2621 | **Est. tokens:** ~4,689,710
-**Generated:** 2026-10-22 06:51 UTC
+**Files:** 2621 | **Est. tokens:** ~4,689,829
+**Generated:** 2026-10-22 09:10 UTC
 
 ## Token Budget Guide
 
@@ -114,7 +114,7 @@
 | `.github/workflows/` | 8 | ~12,657 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 33 | ~120,016 |
+| `scripts/` | 33 | ~120,135 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1835,7 +1835,7 @@
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
-- `run_gate.py` (~8970 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
+- `run_gate.py` (~9089 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
 ### `scripts/sdlc/`
 
 - `enforcement_bijection.py` (~1504 tok, huge) — A test must never outlive the rule it asserts.

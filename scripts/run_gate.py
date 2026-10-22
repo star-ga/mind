@@ -592,9 +592,20 @@ def _unset_handle_leg(gates: list[str], jobs: int, timeout: int) -> int:
 
 
 def reap_keystone_group(proc: subprocess.Popen) -> None:
-    """Kill the gate session, including a grandchild the direct child left behind."""
+    """Kill the gate session, including a grandchild the direct child left behind.
+
+    `os.killpg` is Unix-only. The Windows CI matrix row runs this runner under
+    native Python (ci.yml `build_test`), so a bare `os.killpg` is an
+    AttributeError there — not an OSError — and the reaper never fires. Use the
+    process-group kill when the platform offers it, else fall back to killing
+    just the direct child.
+    """
+    killpg = getattr(os, "killpg", None)
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        if killpg is not None:
+            killpg(proc.pid, signal.SIGKILL)
+        elif proc.poll() is None:
+            proc.kill()
     except OSError:
         if proc.poll() is None:
             try:
