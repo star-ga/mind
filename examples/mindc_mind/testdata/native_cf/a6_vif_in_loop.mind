@@ -14,9 +14,23 @@ fn main() -> i64 {
     let mut acc: i64 = 0;
     while i < 6 {
         i = i + 1;
-        let w: i64 = if i % 2 == 0 { 10 } else { 1 };
-        acc = acc + (if i > 3 { let t: i64 = w * 2; t } else { w });
-        out(if i < 4 { i % 2 + 1 } else { let k: i64 = i - 2; k });
+        let w: i64 = if i % 2 == 0 {
+            10
+        } else {
+            1
+        };
+        acc = acc + (if i > 3 {
+            let t: i64 = w * 2;
+            t
+        } else {
+            w
+        });
+        out(if i < 4 {
+            i % 2 + 1
+        } else {
+            let k: i64 = i - 2;
+            k
+        })
     }
     return acc - 2;
 }

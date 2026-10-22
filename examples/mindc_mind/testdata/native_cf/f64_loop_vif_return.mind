@@ -13,7 +13,11 @@ fn scale(x: f64, n: i64) -> f64 {
         if acc > 100.0 {
             return acc - x;
         }
-        acc = if i % 2 == 0 { acc * 2.0 } else { acc + x };
+        acc = if i % 2 == 0 {
+            acc * 2.0
+        } else {
+            acc + x
+        };
     }
     acc
 }

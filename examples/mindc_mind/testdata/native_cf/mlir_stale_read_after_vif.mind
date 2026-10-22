@@ -9,6 +9,11 @@
 // mlir: exit=130
 fn main() -> i64 {
     let mut x: i64 = 100;
-    let z: i64 = (if x > 50 { x = 7; 3 } else { 4 }) * 10 + x;
+    let z: i64 = (if x > 50 {
+        x = 7;
+        3
+    } else {
+        4
+    }) * 10 + x;
     z
 }

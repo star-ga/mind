@@ -116,6 +116,244 @@ examples/mindc_mind/mindfuzz_self_host_staged/
 # Canonical record-array trace fixtures — same rule: deliberate refusal
 # programs are gate inputs, not production examples.
 /examples/mindc_mind/testdata/native_record_trace/
+
+# H2b: per-file exclusions from `mindc check`, never directories (each
+# directory still holds sources the walk must keep checking). The check walk
+# honours this file; `git ls-files` and ANATOMY still list every entry.
+# An excluded file keeps its reviewed bytes (it is not formatted). The line
+# above each path gives its reason class and the gate that executes it;
+# no-ci-gate-yet names the manual gate and the lane that owns wiring it.
+#
+# -- refusal-fixture: deliberate check errors (E2001/E2035) ---------------
+# refusal-fixture; gate: self_host_native_alloc_bounded_smoke
+/examples/mindc_mind/testdata/native_alloc_bounded/dup_struct_name.mind
+# refusal-fixture; gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_refuse_bool_const.mind
+# refusal-fixture; gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_refuse_float_const.mind
+#
+# -- digest-pinned-gate-input: pre-format sha256 pinned elsewhere --------
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_CALL_EMISSION.md:106); gate: no-ci-gate-yet (owner: L2; native_c_call_emit_check, manual)
+/examples/mindc_mind/native_c_call_emit.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_CALL_PLAN.md:130, docs/compiler/NATIVE_C_VARIADIC_PLAN.md:282); gate: no-ci-gate-yet (owner: L2; native_c_call_plan_check, manual)
+/examples/mindc_mind/native_c_call_plan.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_VARIADIC_EMIT.md:195); gate: no-ci-gate-yet (owner: L3; native_c_variadic_emit_check, manual)
+/examples/mindc_mind/native_c_variadic_emit.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_VARIADIC_EMIT.md:196); gate: no-ci-gate-yet (owner: L3; native_c_variadic_emit_check, manual)
+/examples/mindc_mind/native_c_variadic_emit_driver.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_VARIADIC_PLAN.md:280); gate: no-ci-gate-yet (owner: L3; native_c_variadic_plan_check, manual)
+/examples/mindc_mind/native_c_variadic_plan.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_VARIADIC_PLAN.md:281); gate: no-ci-gate-yet (owner: L3; native_c_variadic_plan_check, manual)
+/examples/mindc_mind/native_c_variadic_plan_driver.mind
+# digest-pinned-gate-input (docs/compiler/NATIVE_C_VARIADIC_EMIT.md:197); gate: no-ci-gate-yet (owner: L3; native_c_variadic_emit_check, manual)
+/examples/mindc_mind/native_c_variadic_verify.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_image_check.py:17, examples/mindc_mind/native_dynamic_mic_compatibility.md:15); gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+/examples/mindc_mind/native_dynamic.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_source_driver_check.md:160); gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
+/examples/mindc_mind/native_source_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:377); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/geometry-owner-mutant.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:389); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/geometry.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:401); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/staged-frame-range-mutant.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:413); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/staged-rebase-mutant.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:425); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/staged-rollback-mutant.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:437); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/staged-scope-end-mutant.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:449); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/observers/staged-state.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:11); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A01-branch-local-call-targets.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:49); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A02-nested-foreign-call.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:87); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A03-i64-argument.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:115); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A04-u32-argument.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:143); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A05-f64-argument.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:171); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A06-parameter-callee-shadow.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:199); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A07-unknown-library-symbol.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:227); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A08-reserved-intrinsic-declaration.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:255); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A09-alias-import.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:283); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A10-primitive-type-shadow.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:311); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A11-calls-256.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:349); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/A12-calls-257.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:357); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/C01-no-c-reference.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:387); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/C02-dormant-declaration-reference.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:17); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P01-close-i32-result.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:47); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P02-close-observed-tls-errno.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:78); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P03-read-ebadf.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:112); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P04-write-ebadf.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:146); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P05-empty-nonblocking-pipe.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:184); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P06-positioned-pipe-espipe.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:222); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P07-nio-shortcuts-preserve-errno.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:257); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P08-close-owned-inherited-fd.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:296); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P09-typed-param-loop-live-values.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:327); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P10-nested-argument-once.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-SUPPLEMENT.json:10); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/P11-public-std-and-user-close.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:416); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R01-undeclared-close.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:442); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R02-undeclared-errno.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:468); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R03-duplicate-same-unit.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:494); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R04-wrong-close-parameter.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:520); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R05-wrong-close-result.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:546); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R06-errno-wrong-qualifier.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:572); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R07-errno-wrong-depth.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:598); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R08-local-callee-shadow.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:624); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R09-typed-bool-shadow.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:650); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R10-extra-argument.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:676); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R11-local-body-and-extern.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:702); gate: no-ci-gate-yet (owner: L3; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R12-fixed-looking-variadic.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-CASES.json:728); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R13-nonreturning-call.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-SUPPLEMENT.json:40); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R14-untyped-close-literal.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-SUPPLEMENT.json:66); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R15-private-std-local-edge.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-SUPPLEMENT.json:92); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R16-unresolved-user-import.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/independent-VISIBILITY_SUPPLEMENT.json:9); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/testdata/native_scoped_fixed/sources/R17-public-std-without-import.mind
+#
+# -- digest-pinned-gate-input: exact source text sealed by a gate --------
+# digest-pinned-gate-input (mutation anchors, examples/mindc_mind/native_dynamic_layout_check.py:177-181); gate: no-ci-gate-yet (owner: L2; native_dynamic_layout_check, manual)
+/examples/mindc_mind/native_dynamic_layout.mind
+# digest-pinned-gate-input (mutation anchors, examples/mindc_mind/native_libc_io_check.py:55-71); gate: no-ci-gate-yet (owner: L2; native_libc_io_check, manual)
+/examples/mindc_mind/native_libc_io.mind
+# digest-pinned-gate-input (mutation M01 anchor and variant sha256, examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json:460-466); gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/native_scoped_source_image.mind
+# digest-pinned-gate-input (bytes embedded in the expected bundle, examples/mindc_mind/native_libc_io_check.py:17-26); gate: no-ci-gate-yet (owner: L2; native_libc_io_check, manual)
+/examples/mindc_mind/testdata/native_libc_io/generated_source.mind
+#
+# -- gate-input fixtures that call a sealed module (R7 per-file class) --
+# R7 (Amendment F): the transitive "caller-of-sealed-module" class is not
+# approved. Each caller is a gate-input fixture named by its owning check as a
+# MODULE/driver/fixture input; reason is digest-pinned-gate-input with that
+# check's own hash/SOURCE_DRIFT assert as the pin site, and the note names the
+# sealed module it imports. No production example is in this set (every row is
+# named in a check/smoke MODULES or driver list). Positive controls of Q1.3(b):
+# git ls-files --error-unmatch still lists each path; the owning gate's asserted
+# count is unchanged before/after this edit; each path remains in regenerated
+# ANATOMY (anatomy.sh walks git ls-files --cached).
+# digest-pinned-gate-input (examples/mindc_mind/native_c_call_emit_check.py:245-249 SOURCE_DRIFT); imports native_c_call_emit.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_emit_check, manual)
+/examples/mindc_mind/native_c_call_emit_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_c_call_plan_check.py:180 hash assert); imports native_c_call_plan.mind; gate: no-ci-gate-yet (owner: L2; native_c_call_plan_check, manual)
+/examples/mindc_mind/native_c_call_plan_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_allocator_check.py:26-30 CASE_SHA/MUT_SHA/OWNERSHIP_SHA module set); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
+/examples/mindc_mind/native_dynamic_allocator.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_allocator_check.py driver input; MODULES native_dynamic_allocator.mind); imports native_dynamic_allocator.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_allocator_check, manual)
+/examples/mindc_mind/native_dynamic_allocator_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_writer_check.py fixture input); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_writer_check, manual)
+/examples/mindc_mind/native_dynamic_fixture.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES; native_dynamic_image_check.py BASE_WRITER sibling); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+/examples/mindc_mind/native_dynamic_image.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_image_check.py fixture input); imports native_dynamic.mind, native_dynamic_image.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+/examples/mindc_mind/native_dynamic_image_fixture.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_layout_check.py:20 CASES_SHA driver input); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_layout_check, manual)
+/examples/mindc_mind/native_dynamic_layout_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_dynamic_image_check.py fixture input); imports native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_dynamic_image_check, manual)
+/examples/mindc_mind/native_dynamic_mic_fixture.mind
+# digest-pinned-gate-input (examples/mindc_mind/self_host_native_emission_context_smoke.py:284 context_sha256); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; self_host_native_emission_context_smoke, manual)
+/examples/mindc_mind/native_emission_context.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES); imports native_libc_io.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_io_check, manual)
+/examples/mindc_mind/native_libc_io_fixture.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_libc_io_check.py:9 MODULES; native_libc_startup_check.py:10-11 CASE_SHA/MUT_SHA set); imports native_dynamic_layout.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
+/examples/mindc_mind/native_libc_startup.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_libc_startup_check.py fixture input); imports native_libc_startup.mind, native_dynamic.mind; gate: no-ci-gate-yet (owner: L2; native_libc_startup_check, manual)
+/examples/mindc_mind/native_libc_startup_fixture.mind
+# digest-pinned-gate-input (examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json M01 anchor set; NSF/1); imports native_scoped_source_image.mind; gate: no-ci-gate-yet (owner: L2; NSF/1 catalogue, PRELISTED_NOT_EXECUTED)
+/examples/mindc_mind/native_scoped_source_driver.mind
+# digest-pinned-gate-input (examples/mindc_mind/self_host_native_emission_context_smoke.py:248,285 source-image-sha256); imports native_libc_io.mind, native_emission_context.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
+/examples/mindc_mind/native_source_image.mind
+# digest-pinned-gate-input (examples/mindc_mind/native_source_driver_check.py fixture input); imports native_source_driver.mind; gate: no-ci-gate-yet (owner: L2; native_source_driver_check, manual)
+/examples/mindc_mind/testdata/native_source_driver/note_fixture_tail.mind
+#
+# -- syntax-under-test: `mindc fmt` rewrites the construct the gate tests -
+# syntax-under-test (mindfuzz_self_host regression minimisation, `break;`); gate: mindfuzz_self_host
+/examples/mindc_mind/testdata/mindfuzz_regress/rv3_rand_230_52_m0.mind
+# syntax-under-test (mindfuzz_self_host regression minimisation, `break;`); gate: mindfuzz_self_host
+/examples/mindc_mind/testdata/mindfuzz_regress/rv3_rt_break_flush_carried.mind
+# syntax-under-test (mindfuzz_self_host regression minimisation, `break;`); gate: mindfuzz_self_host
+/examples/mindc_mind/testdata/mindfuzz_regress/rv3_rt_dtk_letcopy_gen1234_p144.mind
+# syntax-under-test (mindfuzz_self_host regression minimisation, `break;`); gate: mindfuzz_self_host
+/examples/mindc_mind/testdata/mindfuzz_regress/rv3_rt_nested_carry_init_s4242_p0231.mind
+# syntax-under-test (mindfuzz_self_host fail-closed minimisation, `break;`); gate: mindfuzz_self_host
+/examples/mindc_mind/testdata/mindfuzz_regress_failclosed/rv3_rand_530_61_m0.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, A9 `break;`/`continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/a9_vif_branch_effects.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, else-if, `break;`/`continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/deep_nesting.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, L2 else-if chain, `break;`/`continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/l2_loop_if_branches.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, L3 `break;`/`continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/l3_break_continue_params.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `break;` in a value-if); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/mlir_break_in_cond_vif.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/mlir_f64_loop_carry_continue.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `break;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/mlir_f64_loop_carry_vif.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `break;`/`continue;` out of a shadowing block); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/mlir_shadow_exit_carry.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/narrow_wrap_loop.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, O1-O3 else-if); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/o_if_else_merges.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/shadow_scopes.mind
+# syntax-under-test (self_host_native_cf_smoke fixtures, `break;`/`continue;`); gate: self_host_native_cf_smoke
+/examples/mindc_mind/testdata/native_cf/shadow_scopes_ssa.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_const_mixed.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_const_narrow_types.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_const_usize.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `K += 2;` compound assignment); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_refuse_const_compound.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_refuse_u64_const_div.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_str_const.mind
+# syntax-under-test (self_host_native_misc_census_smoke A8: top-level consts, `;` optional); gate: self_host_native_misc_census_smoke
+/examples/mindc_mind/testdata/native_misc/a8_str_refuse_i64type.mind
+#
+# deferred: would scope fmt::drift off per glob via [[mindcraft.overrides]] and keep type-check on, stubbed because overrides are parsed but not applied (src/check/mod.rs) and Off maps to Info — upgrade path: wire overrides in src/check, then move these entries there
 # mind-mem's local recall index (a SQLite cache built from this checkout on
 # demand). Machine-local and regenerable; it is not an input to any gate.
 /.mind-mem-index/

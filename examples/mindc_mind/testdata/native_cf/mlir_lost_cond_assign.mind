@@ -9,7 +9,12 @@
 fn main() -> i64 {
     let mut x: i64 = 14;
     let mut c: i64 = 0;
-    while 10 < (if c <= 6 { x = c; x } else { 1 }) && c < 4 {
+    while 10 < (if c <= 6 {
+        x = c;
+        x
+    } else {
+        1
+    }) && c < 4 {
         c = c + 1;
     }
     x
