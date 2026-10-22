@@ -42,6 +42,7 @@ mindfuzz_cross_runner_identity	Fuzzer cross-runner mic@3 identity (avx2 == neon)
 format	Format Check
 docs	Documentation
 mindcraft_self_host	Mindcraft self-host (RFC 0008 Phase G — KEYSTONE) (LLVM 
+native_lane_op_differential	Native-lane operator differential (ARM) (LLVM 
 executable_miscompile_gate	Executable miscompile gate (compile + run + assert) (LLVM 
 executable_semantics_tier	Executable-semantics test tier (mlir-build) (LLVM 
 mindcraft_check	Mindcraft check (RFC 0007 Phase 6)
