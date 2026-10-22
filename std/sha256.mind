@@ -549,7 +549,11 @@ pub fn hash(input: bytes) -> bytes[32] {
         }
     }
 
-    let scratch_len: i64 = if len > 0 { len } else { 1 };
+    let scratch_len: i64 = if len > 0 {
+        len
+    } else {
+        1
+    };
     let scratch: i64 = __mind_alloc(scratch_len);
     if scratch == 0 {
         return 0;
