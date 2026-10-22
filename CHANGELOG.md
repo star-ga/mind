@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — lane gate workflow failure collection
+- Repair YAML and shell syntax in the three newly collected smoke steps.
+  Keep each aggregate failure exit inside its step; preserve the original
+  30-minute cross-substrate and 55-minute keystone job limits.
+- Capture smoke output without a status-masking pipeline in the grown-subset,
+  native byte-identity canary, native float/SIMD, and front-end corpus loops.
+
 ### Added — lane operator differential coverage
 - `native_lane_op_differential_smoke.py` checks a seeded scalar corpus,
   including reachable division in an imported helper. Both LLVM 20 and LLVM 23
