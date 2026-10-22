@@ -180,18 +180,9 @@ fn std_symbol_collision_is_refused() {
 /// An out-of-profile construct in a REACHABLE imported body refuses, and the
 /// diagnostic distinguishes the Rust fence from the frozen parser.
 ///
-/// L12 re-specification (Amendment H2b/G2 Q3.3, STEER item 8): `/` was this
-/// fixture's out-of-profile construct. L12 proved `/` on the lane ==
-/// MLIR == evaluator (`reachable_div_in_import` in the L12 differential),
-/// so `/` is in-profile on the lane and no longer exercises "reachable
-/// out-of-profile import". An f32 compare is the construct the lane still
-/// refuses AFTER L9 (L9 admits fixed-array reads, so an IndexAccess fixture
-/// would go vacuous at Push 4). Justification (L9 rule (c) form): the property
-/// under test is WHOLE-CLOSURE FENCE OWNERSHIP of a reachable import body, not
-/// the particular construct; any construct the lane refuses preserves that
-/// property, and a construct the lane admits does not. `/` is covered by the
-/// named L12 differential rows instead ("reachable `/` in an import: lane ==
-/// MLIR == evaluator").
+/// L12 proves reachable imported `/` via `reachable_div_in_import`.
+/// After L9 admits array reads, an f32 comparison still exercises the
+/// whole-closure fence. Require its named refusal, never a parser failure.
 #[test]
 fn reachable_out_of_profile_import_is_refused_by_the_fence() {
     let p = Project::new("reach_f32cmp");
