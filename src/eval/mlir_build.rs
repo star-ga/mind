@@ -144,20 +144,7 @@ pub fn build_all_with_objects(
     let preset_name = opts.preset;
     let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
         .map_err(BuildError::Internal)?;
-    // The emitter writes the LLVM 20 `vpdpbusd.512` declaration. Which
-    // declaration the translator accepts is a property of the resolved
-    // `mlir-translate`, applied here the same way `nobuiltin` is: after
-    // `resolve_tools`, on the text this build hands to the tools. A module
-    // that never emits the intrinsic is left untouched, so the default
-    // (unset `MIND_INTDOT`) path does not spawn a version probe and does
-    // not change a byte.
-    let lowered = if lowered.contains("llvm.x86.avx512.vpdpbusd.512") {
-        let major = crate::mlir::gemm_tuning::llvm_major_of_tool(&tools.mlir_translate);
-        crate::mlir::gemm_tuning::apply_vpdpbusd_512_declaration(&lowered, major)
-    } else {
-        lowered
-    };
-
+    let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
     let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
     let optimized_mlir = if let Some(pipeline) = combined_pipeline {
         run_mlir_opt(&lowered, &pipeline, tools)?

@@ -431,15 +431,21 @@ jobs:
           - llvm: "23"
             runner: ubuntu-24.04
             substrate: avx2
+            # PATH stays LLVM 23. LLVM 20 is installed beside it so the VNNI
+            # mismatch test can point MLIR_TRANSLATE at the other major.
+            dual_llvm: "1"
           - llvm: "23"
             runner: ubuntu-24.04-arm
             substrate: neon
+            dual_llvm: "0"
           - llvm: "20"
             runner: ubuntu-24.04
             substrate: avx2
+            dual_llvm: "0"
           - llvm: "20"
             runner: ubuntu-24.04-arm
             substrate: neon
+            dual_llvm: "0"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30  # build mindc + run the ELF byte-identity gate; bound stalls
 
@@ -449,6 +455,9 @@ jobs:
       no_proxy: ""
       MIND_BENCH_REQUIRE: "1"
       MIND_INTDOT_VNNI_VERIFY: "1"
+      # "1" only on the avx2 LLVM 23 leg, which installs both majors. The
+      # mismatch test fail-closes a missing second toolchain only then.
+      MIND_DUAL_LLVM: ${{ matrix.dual_llvm }}
 
     steps:
       - name: Checkout
@@ -474,6 +483,7 @@ jobs:
         # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
         # unchanged. The retry is the same 5-attempt backoff: a mirror outage
         # is an upstream failure, and the gate assertions below are unchanged.
+        # The avx2 LLVM 23 leg also installs LLVM 20 off PATH for the mismatch test.
         run: |
           set -o pipefail
           if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
@@ -505,6 +515,29 @@ jobs:
             sleep $((attempt * 20))
           done
           [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+          if [ "${{ matrix.dual_llvm }}" = "1" ]; then
+            if [ "${{ matrix.llvm }}" != "23" ]; then
+              echo "FAIL: the dual-toolchain leg keeps LLVM 23 on PATH and installs LLVM 20 beside it"
+              exit 1
+            fi
+            # LLVM 20 stays off PATH. The mismatch test sets MLIR_TRANSLATE
+            # and CLANG to one major while PATH holds the other.
+            ok_other=0
+            for attempt in 1 2 3 4 5; do
+              sudo apt-get update || true
+              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then
+                ok_other=1
+                break
+              fi
+              echo "apt attempt $attempt failed installing LLVM 20; retry in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            [ "$ok_other" = 1 ] || { echo "LLVM 20 unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+            for t in mlir-opt mlir-translate clang; do
+              test -x "/usr/lib/llvm-20/bin/$t" || { echo "FAIL: /usr/lib/llvm-20/bin/$t missing"; exit 1; }
+              test -x "/usr/lib/llvm-23/bin/$t" || { echo "FAIL: /usr/lib/llvm-23/bin/$t missing"; exit 1; }
+            done
+          fi
           echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
@@ -557,10 +590,11 @@ jobs:
         # the other substrate is verified on its sibling matrix runner. Every
         # manifest case must atomically publish a measured/deferred receipt;
         # the second target compares that executed set to the manifest set.
-        # `gemm_i8_vnni_translates_on_the_resolved_toolchain` translates the
-        # VNNI module to LLVM IR on this job's toolchain. It does not execute
-        # the kernel, so a runner without AVX-512-VNNI still exercises the
-        # intrinsic declaration that `mlir-translate` checks.
+        # `vnni_resolved_toolchain` translates the VNNI module on this job's
+        # toolchain and, where both majors are installed, builds it with
+        # MLIR_TRANSLATE pointing at the other major. Translation does not
+        # execute the kernel, so a runner without AVX-512-VNNI still exercises
+        # the intrinsic declaration that `mlir-translate` checks.
         run: |
           set -euo pipefail
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/mind-xsi-receipts.XXXXXX")"
@@ -569,6 +603,9 @@ jobs:
           cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_identity -- --nocapture
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test vnni_resolved_toolchain -- --nocapture
           cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_receipts -- --include-ignored --nocapture

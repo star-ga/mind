@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1902 | **Est. tokens:** ~3,696,695
-**Generated:** 2026-10-21 23:58 UTC
+**Files:** 1903 | **Est. tokens:** ~3,699,243
+**Generated:** 2026-10-22 01:24 UTC
 
 ## Token Budget Guide
 
@@ -118,7 +118,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,595 |
+| `src/eval/` | 38 | ~141,431 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -132,7 +132,7 @@
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 4 | ~11,488 |
+| `src/mlir/` | 4 | ~11,670 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -149,7 +149,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 416 | ~846,958 |
+| `tests/` | 417 | ~849,488 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1279,7 +1279,7 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~11118 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10954 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -1406,7 +1406,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~5965 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~6147 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.
 - `nobuiltin.rs` (~2532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
@@ -2232,7 +2232,7 @@
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
 - `module_path_reference.rs` (~613 tok, large) — Copyright 2026 STARGA Inc.
-- `module_size_ratchet.rs` (~4094 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_size_ratchet.rs` (~4019 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
@@ -2660,6 +2660,7 @@
 - `verify_pinned_signer.rs` (~993 tok, large) — Copyright 2025 STARGA Inc.
 - `verify_require_signed.rs` (~1966 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~7389 tok, huge) — Copyright 2025 STARGA Inc.
+- `vnni_resolved_toolchain.rs` (~2605 tok, huge) — Copyright 2026 STARGA Inc.
 - `wide_integer_types.rs` (~517 tok, large) — Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).

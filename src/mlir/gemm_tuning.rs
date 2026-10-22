@@ -298,6 +298,22 @@ pub fn llvm_major_of_tool(path: &str) -> Option<u32> {
     crate::diagnostics::toolchain::parse_llvm_major(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// Rewrite `vpdpbusd.512` in `mlir` for the translator at `translate_path`.
+///
+/// `translate_path` is the binary the build driver resolved (`MLIR_TRANSLATE`
+/// when that override is set, otherwise `mlir-translate` on `PATH`). The major
+/// is read from that binary. This is not a second search of `PATH`. A module
+/// that does not emit the intrinsic is returned unchanged and does not spawn
+/// the probe, so the default (`MIND_INTDOT` unset) path does not change a byte.
+pub fn for_translator(mlir: String, translate_path: &str) -> String {
+    if mlir.contains(VPDPBUSD_512) {
+        let major = llvm_major_of_tool(translate_path);
+        apply_vpdpbusd_512_declaration(&mlir, major)
+    } else {
+        mlir
+    }
+}
+
 /// Rewrite `vpdpbusd.512` calls in `mlir` for `llvm_major`.
 ///
 /// The emitter writes the LLVM 20 declaration on every host. When the
