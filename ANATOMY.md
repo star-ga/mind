@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2621 | **Est. tokens:** ~4,678,094
-**Generated:** 2026-10-22 02:45 UTC
+**Files:** 2623 | **Est. tokens:** ~4,696,572
+**Generated:** 2026-10-22 07:37 UTC
 
 ## Token Budget Guide
 
@@ -173,7 +173,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 427 | ~889,598 |
+| `tests/` | 428 | ~893,600 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -217,6 +217,7 @@
 | `tests/cross_substrate_identity/u64-ops/` | 2 | ~1,054 |
 | `tests/fixtures/` | 7 | ~5,820 |
 | `tests/fixtures/f64_abi_negative/` | 3 | ~192 |
+| `tests/fixtures/native_lane/` | 1 | ~14,476 |
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
@@ -2681,6 +2682,9 @@
 - `g2_expected_outcomes.tsv` (~5592 tok, huge) — # Per-fixture G2 capability ratchet; canonical source SHA-256 binds each case.
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
+### `tests/fixtures/native_lane/`
+
+- `request_corpus.txt` (~14476 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
 ### `tests/fixtures/nerve_numerics/`
 
 - `e_nerve_001_bad.mind` (~89 tok, small) — NEGATIVE fixture for E_NERVE_001 (numerics.md@v1 §6 rule 1).
@@ -3041,6 +3045,7 @@
 - `native_historical_intrinsic_refusal.rs` (~1883 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1461 tok, large) — Copyright 2025 STARGA Inc.
+- `native_lane_request_fixtures.rs` (~4002 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
