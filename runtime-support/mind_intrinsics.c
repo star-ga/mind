@@ -342,8 +342,10 @@ MIND_EXPORT int64_t __mind_store_i16(int64_t addr, int64_t val) {
 // a NEGATIVE value on error. Callers test `fd < 0` and nothing finer, which is
 // what lets the two backends disagree harmlessly on the exact negative value: the
 // raw `open` syscall the native-ELF path emits returns `-errno`, while libc's
-// `open` here returns -1 and parks the code in `errno`. Neither value is ever
-// observed by MIND source, so no program output depends on which backend ran.
+// `open` here returns -1 and parks the code in `errno`. The intrinsic promises
+// a negative value on error, not identical numeric error codes across backends.
+// std/fs.mind normalizes that negative result; direct callers must do the same
+// before using it in portable output or evidence.
 //
 // Determinism: registered `Det::Pure` in `src/intrinsics.rs`, the same NAME-level
 // verdict `__mind_read` carries. A path is a declared program input; the fd is an
@@ -359,10 +361,9 @@ MIND_EXPORT int64_t __mind_open(int64_t path_addr) {
     if (path_addr == 0) {
         return -1;
     }
-    /* MUTATION C (temporary): ignore the error, hand back a bogus fd. */
     const char *path = (const char *)(uintptr_t)path_addr;
     int fd = MIND_OPEN_RDONLY(path);
-    return fd < 0 ? (int64_t)999 : (int64_t)fd;
+    return (int64_t)fd;
 }
 
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
