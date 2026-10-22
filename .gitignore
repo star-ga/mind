@@ -305,7 +305,7 @@ examples/mindc_mind/mindfuzz_self_host_staged/
 /examples/mindc_mind/testdata/native_source_driver/note_fixture_tail.mind
 #
 # -- restored to parent bytes: IR+mic3 identity unprovable (Q1.1) --------
-# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); gate: no-ci-gate-yet (owner: L2; self_host_source_note_smoke, manual)
+# digest-pinned-gate-input (examples/mindc_mind/testdata/h2b_exclusion_pins.json); gate: self_host_source_note_smoke
 # restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established
 # under any available composition (standalone and assembled both refuse), so
 # Q1.1 forbids formatting this file
