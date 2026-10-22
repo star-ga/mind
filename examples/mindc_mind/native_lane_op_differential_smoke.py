@@ -518,13 +518,15 @@ def _tools(env: dict[str, str]) -> dict[str, str]:
 
 def _build(mindc: str, src: pathlib.Path, out: pathlib.Path, native: bool,
            env: dict[str, str]) -> tuple[int, str]:
-    cmd = [mindc, "build", str(src), "--target", "cpu", "--emit", "binary",
+    project = (src.parent.parent / "Mind.toml").is_file()
+    cmd = [mindc, "build"] + ([] if project else [str(src)])
+    cmd += ["--target", "cpu", "--emit", "binary",
            "--no-cache", "--out", str(out)]
     cmd += (["--backend", "native", "--native-profile", "bounded"] if native
             else ["--backend", "mlir"])
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True,
-                           timeout=180, cwd=src.parent)
+                           timeout=180, cwd=src.parent.parent if project else src.parent)
     except subprocess.TimeoutExpired:
         return 124, "build timeout"
     return r.returncode, (r.stderr or "") + (r.stdout or "")
@@ -727,10 +729,18 @@ def main() -> int:
         for index, case in enumerate(corpus):
             case_dir = tmp / case.cid
             case_dir.mkdir()
-            source = case_dir / "main.mind"
+            source_dir = case_dir
+            if case.modules:
+                source_dir = case_dir / "src"
+                source_dir.mkdir()
+                (case_dir / "Mind.toml").write_text(
+                    '[package]\nname = "import_div"\nversion = "0.1.0"\n'
+                    '[build]\nentry = "src/main.mind"\n')
+                subprocess.run(["git", "init", "-q", str(case_dir)], check=True)
+            source = source_dir / "main.mind"
             source.write_text(case.source)
             for name, content in case.modules.items():
-                (case_dir / name).write_text(content)
+                (source_dir / name).write_text(content)
             native = _observe_build(*_build(
                 mindc, source, case_dir / "native", True, env), case_dir / "native", run_env) if "native" in paths else Obs("skipped", None, b"", "not selected")
             mlir = _observe_build(*_build(

@@ -207,12 +207,21 @@ fn reachable_out_of_profile_import_is_refused_by_the_fence() {
     assert_ne!(code, 0, "a reachable f32 compare must refuse: {err}");
     assert!(artifact.is_none());
     assert!(
-        err.contains("outside candidate native-lane-v1")
-            || err.contains("frozen native profile")
-            || err.contains("out-of-profile construct")
-            || err.contains("f32"),
+        f32_fence_refusal(&err),
         "the FENCE must own this refusal, not the frozen parser: {err}"
     );
+}
+
+fn f32_fence_refusal(err: &str) -> bool {
+    err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
+        && err.contains("No artifact written.")
+}
+
+#[test]
+fn frozen_parser_f32_error_is_not_a_fence_refusal() {
+    assert!(!f32_fence_refusal("frozen parser rejected f32 syntax"));
+    assert!(!f32_fence_refusal("out-of-profile construct: f32"));
+    assert!(!f32_fence_refusal("frozen native profile rejected f32"));
 }
 
 /// TWO INVOCATION FORMS agree byte-for-byte: an explicit entry path, and no path
