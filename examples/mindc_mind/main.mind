@@ -7263,22 +7263,185 @@ pub fn tok_is_word_rest(buf: i64, lo: i64, packed: i64, n: i64, i: i64) -> i64 {
     tok_is_word_rest(buf, lo, packed / 256, n, i + 1)
 }
 
-// `diff tensor<...>`: the reference parser accepts `diff` only as the prefix
-// of `tensor <`, so the qualifier is consumed only in that exact shape. Any
-// other word after `diff` keeps the one-token end and the caller's boundary
-// check refuses it.
-pub fn is_diff_tensor_head(toks: Vec, buf: i64, pos: i64) -> i64 {
-    // "diff" = 0x66666964, "tensor" = 0x726f736e6574 (little-endian bytes).
-    if tok_is_word(toks, buf, pos, 1717987684, 4) == 0 {
+// Inter-token gaps as the reference parser skips them. `skip_ws` allows only
+// blanks (' ', '\t', '\r'); `skip_ws_and_newlines` also allows newlines and
+// `//` line comments.
+pub fn gap_is_blank(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    let c: i64 = load_byte(buf, lo);
+    if c == 32 {
+        return gap_is_blank(buf, lo + 1, hi);
+    }
+    if c == 9 {
+        return gap_is_blank(buf, lo + 1, hi);
+    }
+    if c == 13 {
+        return gap_is_blank(buf, lo + 1, hi);
+    }
+    0
+}
+
+pub fn gap_is_blank_nl(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    let c: i64 = load_byte(buf, lo);
+    if c == 10 {
+        return gap_is_blank_nl(buf, lo + 1, hi);
+    }
+    if gap_is_blank(buf, lo, lo + 1) == 1 {
+        return gap_is_blank_nl(buf, lo + 1, hi);
+    }
+    if c == 47 {
+        if lo + 1 < hi {
+            if load_byte(buf, lo + 1) == 47 {
+                return gap_skip_line_comment(buf, lo + 2, hi);
+            }
+        }
+    }
+    0
+}
+
+pub fn gap_skip_line_comment(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    if load_byte(buf, lo) == 10 {
+        return gap_is_blank_nl(buf, lo + 1, hi);
+    }
+    gap_skip_line_comment(buf, lo + 1, hi)
+}
+
+pub fn tok_gap_blank(toks: Vec, buf: i64, i: i64) -> i64 {
+    gap_is_blank(buf, tok_hi(toks, i), tok_lo(toks, i + 1))
+}
+
+// The reference parser's `word()` (an identifier, keywords included) and
+// `digits()` (a run of ASCII digits), judged on the token's bytes.
+pub fn span_all_alnum(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    if is_alnum(load_byte(buf, lo)) == 0 {
         return 0;
     }
-    if tok_is_word(toks, buf, pos + 1, 125823003551092, 6) == 0 {
+    span_all_alnum(buf, lo + 1, hi)
+}
+
+pub fn span_all_digits(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 1;
+    }
+    if is_digit(load_byte(buf, lo)) == 0 {
         return 0;
+    }
+    span_all_digits(buf, lo + 1, hi)
+}
+
+pub fn tok_is_rust_word(toks: Vec, buf: i64, i: i64) -> i64 {
+    let lo: i64 = tok_lo(toks, i);
+    let hi: i64 = tok_hi(toks, i);
+    if hi <= lo {
+        return 0;
+    }
+    if is_alpha(load_byte(buf, lo)) == 0 {
+        return 0;
+    }
+    span_all_alnum(buf, lo + 1, hi)
+}
+
+pub fn tok_is_dim(toks: Vec, buf: i64, i: i64) -> i64 {
+    if tok_is_rust_word(toks, buf, i) == 1 {
+        return 1;
+    }
+    let lo: i64 = tok_lo(toks, i);
+    let hi: i64 = tok_hi(toks, i);
+    if hi <= lo {
+        return 0;
+    }
+    span_all_digits(buf, lo, hi)
+}
+
+// End (exclusive token index) of `diff tensor<DT[dims]>` starting at the `diff`
+// token `pos`, read exactly as the reference compiler accepts it: `diff`,
+// newlines or line comments, `tensor`, blanks, `<`, an element type word, an
+// optional `[d, d, ...]` list of digit runs or words (empty and a trailing comma
+// allowed), then `>`. -1 for anything else, including a bare `diff` (refused as
+// a type) and a dotted element type (refused at type-check without a project
+// module table, which a single-source compile never has).
+pub fn diff_tensor_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
+    // "tensor" = 0x726f736e6574 (little-endian bytes).
+    if tok_is_word(toks, buf, pos + 1, 125823003551092, 6) == 0 {
+        return 0 - 1;
+    }
+    if gap_is_blank_nl(buf, tok_hi(toks, pos), tok_lo(toks, pos + 1)) == 0 {
+        return 0 - 1;
     }
     if tok_kind(toks, pos + 2) != tk_lt() {
-        return 0;
+        return 0 - 1;
     }
-    1
+    if tok_gap_blank(toks, buf, pos + 1) == 0 {
+        return 0 - 1;
+    }
+    if tok_gap_blank(toks, buf, pos + 2) == 0 {
+        return 0 - 1;
+    }
+    if tok_is_rust_word(toks, buf, pos + 3) == 0 {
+        return 0 - 1;
+    }
+    tensor_dtype_tail(toks, buf, pos + 3)
+}
+
+// After the element type token `d`: an optional shape list, then `>`.
+pub fn tensor_dtype_tail(toks: Vec, buf: i64, d: i64) -> i64 {
+    if tok_gap_blank(toks, buf, d) == 0 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, d + 1) == tk_lbracket() {
+        return tensor_dims_rest(toks, buf, d + 1);
+    }
+    tensor_close(toks, d + 1)
+}
+
+// `t` is the accepted `[` or `,`; a dimension or the closing `]` follows.
+pub fn tensor_dims_rest(toks: Vec, buf: i64, t: i64) -> i64 {
+    if tok_gap_blank(toks, buf, t) == 0 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, t + 1) == tk_rbracket() {
+        return tensor_after_dims(toks, buf, t + 1);
+    }
+    if tok_is_dim(toks, buf, t + 1) == 0 {
+        return 0 - 1;
+    }
+    if tok_gap_blank(toks, buf, t + 1) == 0 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, t + 2);
+    if k == tk_comma() {
+        return tensor_dims_rest(toks, buf, t + 2);
+    }
+    if k == tk_rbracket() {
+        return tensor_after_dims(toks, buf, t + 2);
+    }
+    0 - 1
+}
+
+// `r` is the `]` closing the shape list; only `>` may follow.
+pub fn tensor_after_dims(toks: Vec, buf: i64, r: i64) -> i64 {
+    if tok_gap_blank(toks, buf, r) == 0 {
+        return 0 - 1;
+    }
+    tensor_close(toks, r + 1)
+}
+
+pub fn tensor_close(toks: Vec, g: i64) -> i64 {
+    if tok_kind(toks, g) == tk_gt() {
+        return g + 1;
+    }
+    0 - 1
 }
 
 pub fn param_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
@@ -7291,10 +7454,10 @@ pub fn param_type_end(toks: Vec, buf: i64, pos: i64) -> i64 {
     if k == tk_lbracket() {
         return skip_balanced_bracket(toks, pos + 1, 1);
     }
-    // `diff tensor<DT[dims]>`: the angle list (literal, symbolic or empty
-    // bracketed shape) is skipped like any generic list after the qualifier.
-    if is_diff_tensor_head(toks, buf, pos) == 1 {
-        return skip_generic_args(toks, pos + 3, 1);
+    // `diff` is only ever the qualifier of `diff tensor<...>`.
+    // "diff" = 0x66666964 (little-endian bytes).
+    if tok_is_word(toks, buf, pos, 1717987684, 4) == 1 {
+        return diff_tensor_type_end(toks, buf, pos);
     }
     // `T<..>` — unchanged from the generic handling this replaces.
     if tok_kind(toks, pos + 1) == tk_lt() {
