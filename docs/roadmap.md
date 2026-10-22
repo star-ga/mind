@@ -2626,6 +2626,26 @@ projected gain and the measured gain differ.
   gates, because condvar pools fail intermittently.
 - **Status:** Proposed. The pool itself shipped; items 1–4 are open.
 
+### 19.6.6 — A capability truth table, and no claim without a row (proposed, 2026-10-22)
+
+19.6.2 disciplines speed claims. Capability claims need the same treatment:
+"byte-identical on ARM", "the native backend covers f64 compare" and "the GPU
+leg matches the CPU canary" are claims too, and today they live in prose
+across the README, the docs and the site.
+
+- **One table,** `docs/capability-status.md`: one row per capability and
+  target, with its state (Implemented, Hardware-tested, Experimental, Scaffold
+  or Planned). A Hardware-tested row carries the commit, the device class, the
+  exact command and the raw output that showed it. Rows for the
+  Rust-independence work link to `docs/RI_DEPENDENCY_MATRIX.md` instead of
+  copying it.
+- **A lint, not a promise.** CI fails when the README or docs state a
+  capability whose row is missing or sits below the claimed state.
+- **Deliverable:** the table seeded from current measurements, plus the lint.
+- **Falsifier:** add one README sentence claiming an unmeasured capability;
+  the lint must fail. Remove it; the lint must pass.
+- **Status:** Proposed. Lands after the current main freeze lifts.
+
 ### Firewall — do not cross it
 
 Do not reorder, split, or widen the accumulation to make the epilogue fit.
