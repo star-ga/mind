@@ -600,7 +600,7 @@ fn main() -> i64 { return f(true); }
 === w3_signed_div | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
 fn main() -> i64 { let x: i64 = -17; return x / 65; }
 
-=== w3_float_div | defect=an f64 entry result: native exits with the truncated value, MLIR with 208 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+=== w3_float_div | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
 fn main() -> f64 { return 17.0 / 2.0; }
 
 === w3_signed_rem | exit=239 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
@@ -684,7 +684,7 @@ fn main() -> i64 { return 7 as i32; }
 === w3_cast_f64_to_i64 | exit=7 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
 fn main() -> i64 { return 7.0 as i64; }
 
-=== w3_cast_i64_to_f64 | defect=an f64 entry result: native exits with the truncated value, MLIR with 208 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+=== w3_cast_i64_to_f64 | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
 fn main() -> f64 { return 7 as f64; }
 
 === w3_halve_int | exit=4 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
@@ -732,7 +732,7 @@ fn main(argc: f64, argv: i64) -> i64 { return 0; }
 === w3_entry_swapped | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
 fn main(argv: i64, argc: i64) -> i64 { return 0; }
 
-=== w3_entry_f64_ret | defect=an f64 entry result: native exits with the truncated value, MLIR with 208 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+=== w3_entry_f64_ret | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
 fn main(argc: i64, argv: i64) -> f64 { return 0.0; }
 
 === w3_alloc_loop_default | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2623 | **Est. tokens:** ~4,696,572
-**Generated:** 2026-10-22 07:37 UTC
+**Files:** 2623 | **Est. tokens:** ~4,696,610
+**Generated:** 2026-10-22 08:02 UTC
 
 ## Token Budget Guide
 
@@ -217,7 +217,7 @@
 | `tests/cross_substrate_identity/u64-ops/` | 2 | ~1,054 |
 | `tests/fixtures/` | 7 | ~5,820 |
 | `tests/fixtures/f64_abi_negative/` | 3 | ~192 |
-| `tests/fixtures/native_lane/` | 1 | ~14,476 |
+| `tests/fixtures/native_lane/` | 1 | ~14,514 |
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
@@ -2684,7 +2684,7 @@
 - `invalid.mind` (~6 tok, tiny)
 ### `tests/fixtures/native_lane/`
 
-- `request_corpus.txt` (~14476 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
+- `request_corpus.txt` (~14514 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
 ### `tests/fixtures/nerve_numerics/`
 
 - `e_nerve_001_bad.mind` (~89 tok, small) — NEGATIVE fixture for E_NERVE_001 (numerics.md@v1 §6 rule 1).
