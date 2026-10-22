@@ -24,7 +24,13 @@
 //! depend on whether the embedded seeds carry the mark. On a refusal the shim
 //! must never run: the refusal comes before the compiler sees an image.
 
-#![cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
+#![cfg(unix)]
+#![cfg(all(
+    unix,
+    feature = "std-surface",
+    target_os = "linux",
+    target_arch = "x86_64"
+))]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

@@ -10,7 +10,13 @@
 //! complete candidate lane. Final qualification uses a newly built compiler
 //! with the marker emitted from its committed source and the full lane corpus.
 
-#![cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
+#![cfg(unix)]
+#![cfg(all(
+    unix,
+    feature = "std-surface",
+    target_os = "linux",
+    target_arch = "x86_64"
+))]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
