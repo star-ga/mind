@@ -447,7 +447,7 @@ jobs:
             substrate: neon
             dual_llvm: "0"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45  # build mindc+mind + ELF byte-identity gate + neon operator step; bound stalls
+    timeout-minutes: 30
 
     env:
       http_proxy: ""
@@ -839,7 +839,7 @@ jobs:
     # 30 min for the keystone + self-host smokes, plus up to 25 for the twin-emitter
     # fuzzer step (nested debug `cargo test` build of the dump_ref oracle), plus
     # the operator differential (native and MLIR build of each generated program).
-    timeout-minutes: 90
+    timeout-minutes: 55
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -1315,8 +1315,8 @@ jobs:
           python3 scripts/run_gate.py examples/mindc_mind/backend_native_bridge_smoke.py || fail=1
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
             python3 scripts/run_gate.py examples/mindc_mind/self_host_native_diag_smoke.py || fail=1
+          exit $fail
         working-directory: ${{ github.workspace }}
-        exit $fail
 
       - name: RH f64-aggregate surface canary (rh_f64_aggregate_canary_smoke.py)
         if: ${{ !cancelled() }}
@@ -1447,8 +1447,8 @@ jobs:
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
               python3 scripts/run_gate.py "examples/mindc_mind/$s.py" "${gate_args[@]}" || fail=1
           done
+          exit $fail
         working-directory: ${{ github.workspace }}
-        exit $fail
 
       - name: Grown-subset capability gates (refs / records / enums / Option / closures / fail-closed / branch carry / float ABI)
         if: ${{ !cancelled() }}
@@ -1481,7 +1481,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1498,6 +1499,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1554,7 +1556,8 @@ jobs:
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
                  python3 scripts/run_gate.py --min-asserted 4 \
-                   "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                   "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed on an announced skip, exactly as the sibling steps:
               # MINDC_SO is set and verified non-empty above, so a SKIP here
               # means the wiring broke, not that the gate is inapplicable.
@@ -1563,6 +1566,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1607,7 +1611,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1624,6 +1629,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1702,7 +1708,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then || fail=1
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1719,13 +1726,13 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
           done
-          [ "$fail" -eq 0 ]
+          exit $fail
         working-directory: ${{ github.workspace }}
-        exit $fail
 
       - name: Differential fuzzer — tc-rule ports vs live mindc (tcdiff)
         if: ${{ !cancelled() }}
