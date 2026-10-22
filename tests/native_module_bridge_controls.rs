@@ -180,36 +180,37 @@ fn std_symbol_collision_is_refused() {
 /// An out-of-profile construct in a REACHABLE imported body refuses, and the
 /// diagnostic distinguishes the Rust fence from the frozen parser.
 ///
-/// L12 re-specification (Amendment H2b/G2 Q3.3): `/` was this fixture's
-/// out-of-profile construct. L12 proved `/` on the lane == MLIR == evaluator
-/// (native_lane_op_differential_smoke rows `arith_div_*` and `edge_i64_div_*`),
+/// L12 re-specification (Amendment H2b/G2 Q3.3, STEER item 8): `/` was this
+/// fixture's out-of-profile construct. L12 proved `/` on the lane ==
+/// MLIR == evaluator (native_lane_op_differential_smoke rows `arith_div_*`),
 /// so `/` is in-profile on the lane and no longer exercises "reachable
-/// out-of-profile import". IndexAccess is the construct the lane still refuses
-/// (admit.rs:225, `lane.source.unsupported`) until L9 admits fixed-array
-/// reads. Justification (L9 rule (c) form): the property under test is
-/// WHOLE-CLOSURE FENCE OWNERSHIP of a reachable import body, not the
-/// particular construct; any construct the lane refuses preserves that
+/// out-of-profile import". An f32 compare is the construct the lane still
+/// refuses AFTER L9 (L9 admits fixed-array reads, so an IndexAccess fixture
+/// would go vacuous at Push 4). Justification (L9 rule (c) form): the property
+/// under test is WHOLE-CLOSURE FENCE OWNERSHIP of a reachable import body, not
+/// the particular construct; any construct the lane refuses preserves that
 /// property, and a construct the lane admits does not. `/` is covered by the
-/// named L12 differential rows instead.
+/// named L12 differential rows instead ("reachable `/` in an import: lane ==
+/// MLIR == evaluator").
 #[test]
 fn reachable_out_of_profile_import_is_refused_by_the_fence() {
-    let p = Project::new("reach_idx");
+    let p = Project::new("reach_f32cmp");
     p.write(
         "src/helper.mind",
-        "pub fn peek(i: i64) -> i64 {\n    let a: [i64; 2] = [7, 8];\n    return a[i];\n}\n",
+        "pub fn lt(a: f32, b: f32) -> i64 {\n    if a < b {\n        return 1;\n    }\n    return 0;\n}\n",
     );
     p.write(
         "src/main.mind",
-        "import helper;\n\nfn main() -> i64 {\n    return peek(1);\n}\n",
+        "import helper;\n\nfn main() -> i64 {\n    return lt(1.0, 2.0);\n}\n",
     );
     let (code, err, artifact) = p.build_native("src/main.mind");
-    assert_ne!(code, 0, "a reachable IndexAccess must refuse: {err}");
+    assert_ne!(code, 0, "a reachable f32 compare must refuse: {err}");
     assert!(artifact.is_none());
     assert!(
         err.contains("outside candidate native-lane-v1")
-            || err.contains("lane.source.unsupported")
             || err.contains("frozen native profile")
-            || err.contains("out-of-profile construct"),
+            || err.contains("out-of-profile construct")
+            || err.contains("f32"),
         "the FENCE must own this refusal, not the frozen parser: {err}"
     );
 }

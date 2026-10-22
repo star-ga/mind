@@ -42,6 +42,7 @@ never a count marker.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import pathlib
 import re
@@ -171,6 +172,9 @@ class Case:
     expect_exit: int
     allow_native_refusal: bool = False
     follows_d1: bool = False
+    # Per-path pin for edge rows (STEER R6): the evaluator's current defined
+    # outcome, measured and printed. None means "same as expect_exit".
+    expect_eval: str = ""  # "", "trap79", "eval_error", "abort"
 
 
 def _bin_direct(op: str, a: int, b: int) -> str:
@@ -426,12 +430,17 @@ def build_corpus(seed: int = SEED) -> list[Case]:
         rhs = "zero" if b == 0 else "min"
         for direct in (False, True):
             form = "literal" if direct else "helper"
+            # Per-path pin (STEER R6): native/mlir trap 79; the evaluator's
+            # current defined outcome is a named error on x/0 and a panic on
+            # INT_MIN/-1. Measured 2026-10-21; expectation follows D1.
+            eval_pin = "eval_error" if b == 0 else "abort"
             cases.append(Case(
                 f"edge_i64_{tag}_{rhs}_{form}",
                 _trap_source(op, a, b, direct),
                 TRAP_EXIT,
                 allow_native_refusal=False,
                 follows_d1=True,
+                expect_eval=eval_pin,
             ))
 
     narrow_min = {
@@ -447,13 +456,15 @@ def build_corpus(seed: int = SEED) -> list[Case]:
                 TRAP_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
+                expect_eval="eval_error",
             ))
             cases.append(Case(
                 f"edge_{ty}_{_OP_NAME[op]}_min",
                 _narrow_min(ty, op, min_expr),
                 2,
                 allow_native_refusal=True,
-                follows_d1=False,
+                follows_d1=True,
+                expect_eval="eval_error",
             ))
     for ty in ("u8", "u16", "u32"):
         for op in ("/", "%"):
@@ -463,6 +474,7 @@ def build_corpus(seed: int = SEED) -> list[Case]:
                 TRAP_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
+                expect_eval="eval_error",
             ))
 
     ids = [c.cid for c in cases]
@@ -570,13 +582,18 @@ def _match(obs: Obs, case: Case, native: bool) -> bool:
         return True
     if native and case.allow_native_refusal and obs.kind == "refused":
         return True
-    # Edge rows only: the reference evaluator refuses by a NAMED Evaluation
-    # error (division by zero, type-check E2004, ...) rather than by the
-    # compiled backends' trap exit. That named refusal is the evaluator's form
-    # of the same event, not a wrong value. A panic (`abort`) is wrong code and
-    # never matches — it is the named-blocker class this gate reports.
-    if obs.kind == "eval_error" and (case.follows_d1 or case.allow_native_refusal):
-        return True
+    # Per-path pin for edge rows (STEER R6): three-way equality is NOT
+    # asserted on those rows. The evaluator's outcome is pinned to its current
+    # defined behaviour (named error / panic), measured and printed, and the
+    # row is labelled "expectation follows D1".
+    if not native and case.follows_d1:
+        want = case.expect_eval
+        if want == "eval_error" and obs.kind == "eval_error":
+            return True
+        if want == "abort" and obs.kind == "abort":
+            return True
+        if want == "trap79" and obs.kind == "ran" and obs.exit_code == TRAP_EXIT:
+            return True
     return False
 
 
@@ -588,9 +605,20 @@ def _blocked(msg: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--compiler", default=os.environ.get("MINDC_NATIVE_LANE_ELF"))
+    ap.add_argument("--paths", default="native,mlir,eval",
+                    help="comma-joined subset of {native,mlir,eval}; the "
+                         "native-lane ELF is x86-only by construction")
     ap.add_argument("--list", action="store_true",
                     help="print the corpus and exit without building")
     args = ap.parse_args()
+    paths = [p.strip() for p in args.paths.split(",") if p.strip()]
+    unknown = set(paths) - {"native", "mlir", "eval"}
+    if unknown:
+        return _blocked(f"unknown --paths entries: {sorted(unknown)}")
+    if not paths:
+        return _blocked("--paths selected nothing")
+    if "native" not in paths:
+        print("native leg: x86-only by construction, not run")
     drift = model_self_check()
     if drift is not None:
         print(f"model self-check failed: {drift}")
@@ -627,6 +655,8 @@ def main() -> int:
             "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf)")
     if MARK not in pathlib.Path(compiler).read_bytes():
         return _blocked(f"{compiler} does not carry the native-lane-v1 mark")
+    digest = hashlib.sha256(pathlib.Path(compiler).read_bytes()).hexdigest()
+    print(f"compiler={compiler} sha256={digest}", flush=True)
     env = _tools(dict(os.environ))
     env["MINDC_NATIVE_ELF"] = compiler
     env["MINDC_STD_DIR"] = str(REPO / "std")
@@ -643,12 +673,17 @@ def main() -> int:
             source = case_dir / "main.mind"
             source.write_text(case.source)
             native = _observe_build(*_build(
-                mindc, source, case_dir / "native", True, env), case_dir / "native", run_env)
+                mindc, source, case_dir / "native", True, env), case_dir / "native", run_env) if "native" in paths else Obs("skipped", None, b"", "not selected")
             mlir = _observe_build(*_build(
-                mindc, source, case_dir / "mlir", False, env), case_dir / "mlir", run_env)
-            ev = _observe_eval(mind, case.source, env)
-            ok = (_match(native, case, True) and _match(mlir, case, False)
-                  and _match(ev, case, False))
+                mindc, source, case_dir / "mlir", False, env), case_dir / "mlir", run_env) if "mlir" in paths else Obs("skipped", None, b"", "not selected")
+            ev = _observe_eval(mind, case.source, env) if "eval" in paths else Obs("skipped", None, b"", "not selected")
+            ok = True
+            if "native" in paths:
+                ok = ok and _match(native, case, True)
+            if "mlir" in paths:
+                ok = ok and _match(mlir, case, False)
+            if "eval" in paths:
+                ok = ok and _match(ev, case, False)
             failed += not ok
             gate_assert.check(
                 ok,

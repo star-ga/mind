@@ -447,7 +447,7 @@ jobs:
             substrate: neon
             dual_llvm: "0"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30  # build mindc + run the ELF byte-identity gate; bound stalls
+    timeout-minutes: 45  # build mindc+mind + ELF byte-identity gate + neon operator step; bound stalls
 
     env:
       http_proxy: ""
@@ -563,10 +563,20 @@ jobs:
             fi
           done
 
-      - name: Build mindc (MLIR backend)
+      - name: Build mindc and mind (MLIR backend)
         run: |
           cargo build --no-default-features \
-            --features "mlir-build std-surface cross-module-imports" --bin mindc
+            --features "mlir-build std-surface cross-module-imports" --bin mindc --bin mind
+
+      - name: Native-lane operator differential (MLIR == evaluator, neon)
+        # ARM cells of the operator differential. The native-lane ELF is
+        # EM_X86_64 by construction (src/build/native_bridge/entry.rs), so the
+        # native leg is x86-only and is not run here. x86 three-path coverage
+        # is the keystone-job step.
+        if: matrix.substrate == 'neon'
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/debug/mindc MIND_BIN=${{ github.workspace }}/target/debug/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --paths mlir,eval --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+        working-directory: ${{ github.workspace }}
 
       - name: Tensor parameter ABI gates (x86/ARM)
         # Both descriptor execution and fail-loud tensor-boundary controls are
@@ -1166,8 +1176,8 @@ jobs:
       - name: Native-lane operator differential (native_lane_op_differential_smoke.py)
         # Three paths: native-lane ELF, MLIR ELF, and the reference evaluator
         # (`mind eval`). Division edge rows stay pinned to today's trap (exit
-        # 79); expectation follows D1. This job is x86, both LLVM legs. The ARM
-        # cells are native_lane_op_differential, not an expansion of this matrix.
+        # 79); expectation follows D1. This job is x86, both LLVM legs, three
+        # paths. ARM MLIR == evaluator is a named step in the xsi neon leg.
         run: |
           MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
@@ -1737,95 +1747,6 @@ jobs:
           cargo test --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test phase_g_keystone_bootstrap -- --nocapture
-
-  native_lane_op_differential:
-    # ARM cells of the operator differential. The keystone job above is
-    # ubuntu-24.04 only, so it covers the x86 LLVM 20/23 cells and this job
-    # covers the ARM cells. It does not repeat the rest of the keystone body.
-    name: Native-lane operator differential (ARM) (LLVM ${{ matrix.llvm }})
-    strategy:
-      fail-fast: false
-      matrix:
-        llvm: ["23", "20"]
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 70
-    env:
-      MIND_BENCH_REQUIRE: "1"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (nightly)
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-lane-op-${{ matrix.llvm }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-lane-op-${{ matrix.llvm }}-
-
-      - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
-
-      - name: Verify toolchain on PATH
-        run: |
-          set -e
-          for t in mlir-opt mlir-translate clang; do
-            command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
-            "$t" --version > /tmp/toolver.txt
-            head -1 /tmp/toolver.txt
-            if ! grep -Eq "(^|[^0-9])${{ matrix.llvm }}[.][0-9]" /tmp/toolver.txt; then
-              echo "FAIL: $t is not LLVM/MLIR ${{ matrix.llvm }}"
-              cat /tmp/toolver.txt
-              exit 1
-            fi
-          done
-
-      - name: Build mindc and mind
-        run: |
-          cargo build --release --no-default-features \
-            --features "mlir-build std-surface cross-module-imports" --bin mindc --bin mind
-
-      - name: Native-lane operator differential (ARM)
-        run: |
-          MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
-        working-directory: ${{ github.workspace }}
 
   executable_miscompile_gate:
     name: Executable miscompile gate (compile + run + assert) (LLVM ${{ matrix.llvm }})
