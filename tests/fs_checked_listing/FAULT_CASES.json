@@ -1,0 +1,228 @@
+{
+  "schema": "FSC_FAULT_CASES/1",
+  "status": "PREEXECUTION_UNREVIEWED",
+  "baseline": {
+    "exit": 0,
+    "stdout": "0\n",
+    "stderr": ""
+  },
+  "cases": [
+    {
+      "id": "S00",
+      "mode": 0,
+      "fail_ordinal": 0,
+      "purpose": "one copied file then EOF"
+    },
+    {
+      "id": "S01",
+      "mode": 1,
+      "fail_ordinal": 0,
+      "purpose": "open ENOENT"
+    },
+    {
+      "id": "S02",
+      "mode": 2,
+      "fail_ordinal": 0,
+      "purpose": "first read EIO"
+    },
+    {
+      "id": "S03",
+      "mode": 3,
+      "fail_ordinal": 0,
+      "purpose": "one record then EIO"
+    },
+    {
+      "id": "S04",
+      "mode": 4,
+      "fail_ordinal": 0,
+      "purpose": "valid enumeration then close EIO"
+    },
+    {
+      "id": "S05",
+      "mode": 5,
+      "fail_ordinal": 0,
+      "purpose": "empty EOF then close EINTR once"
+    },
+    {
+      "id": "S06",
+      "mode": 6,
+      "fail_ordinal": 0,
+      "purpose": "zero dirent length"
+    },
+    {
+      "id": "S07",
+      "mode": 7,
+      "fail_ordinal": 0,
+      "purpose": "read count above buffer"
+    },
+    {
+      "id": "S08",
+      "mode": 8,
+      "fail_ordinal": 0,
+      "purpose": "empty enumeration with zero budgets"
+    },
+    {
+      "id": "S09",
+      "mode": 9,
+      "fail_ordinal": 0,
+      "purpose": "two blocks preserve exact bytes/order"
+    },
+    {
+      "id": "S10",
+      "mode": 10,
+      "fail_ordinal": 0,
+      "purpose": "positive invalid close status"
+    },
+    {
+      "id": "S11",
+      "mode": 11,
+      "fail_ordinal": 0,
+      "purpose": "read EACCES wins over close EINTR"
+    },
+    {
+      "id": "S12",
+      "mode": 12,
+      "fail_ordinal": 0,
+      "purpose": "entry count limit after one retained record"
+    },
+    {
+      "id": "S13",
+      "mode": 13,
+      "fail_ordinal": 0,
+      "purpose": "name-byte limit"
+    },
+    {
+      "id": "S14",
+      "mode": 14,
+      "fail_ordinal": 0,
+      "purpose": "five records require vector growth"
+    },
+    {
+      "id": "S15",
+      "mode": 15,
+      "fail_ordinal": 0,
+      "purpose": "read EINTR stops without retry"
+    },
+    {
+      "id": "S16",
+      "mode": 16,
+      "fail_ordinal": 0,
+      "purpose": "descriptor zero is valid"
+    },
+    {
+      "id": "S17",
+      "mode": 17,
+      "fail_ordinal": 0,
+      "purpose": "open ENOSYS"
+    },
+    {
+      "id": "S18",
+      "mode": 18,
+      "fail_ordinal": 0,
+      "purpose": "slash in directory name"
+    },
+    {
+      "id": "S19",
+      "mode": 19,
+      "fail_ordinal": 0,
+      "purpose": "unterminated name within record"
+    },
+    {
+      "id": "S20",
+      "mode": 20,
+      "fail_ordinal": 0,
+      "purpose": "valid block then malformed second block"
+    },
+    {
+      "id": "A01",
+      "mode": 14,
+      "fail_ordinal": 1,
+      "purpose": "Refuse path allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A02",
+      "mode": 14,
+      "fail_ordinal": 2,
+      "purpose": "Refuse read block allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A03",
+      "mode": 14,
+      "fail_ordinal": 3,
+      "purpose": "Refuse list header allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A04",
+      "mode": 14,
+      "fail_ordinal": 4,
+      "purpose": "Refuse name1 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A05",
+      "mode": 14,
+      "fail_ordinal": 5,
+      "purpose": "Refuse entry1 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A06",
+      "mode": 14,
+      "fail_ordinal": 6,
+      "purpose": "Refuse initial backing allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A07",
+      "mode": 14,
+      "fail_ordinal": 7,
+      "purpose": "Refuse name2 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A08",
+      "mode": 14,
+      "fail_ordinal": 8,
+      "purpose": "Refuse entry2 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A09",
+      "mode": 14,
+      "fail_ordinal": 9,
+      "purpose": "Refuse name3 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A10",
+      "mode": 14,
+      "fail_ordinal": 10,
+      "purpose": "Refuse entry3 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A11",
+      "mode": 14,
+      "fail_ordinal": 11,
+      "purpose": "Refuse name4 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A12",
+      "mode": 14,
+      "fail_ordinal": 12,
+      "purpose": "Refuse entry4 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A13",
+      "mode": 14,
+      "fail_ordinal": 13,
+      "purpose": "Refuse name5 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A14",
+      "mode": 14,
+      "fail_ordinal": 14,
+      "purpose": "Refuse entry5 allocation; preserve output, free all earlier allocations and close once if opened"
+    },
+    {
+      "id": "A15",
+      "mode": 14,
+      "fail_ordinal": 15,
+      "purpose": "Refuse grown backing allocation; preserve output, free all earlier allocations and close once if opened"
+    }
+  ],
+  "observation": "Every case independently checks expected status, read/open/close counts, consumed descriptor state, input/guard/output preservation, retained byte values and ownership accounting. No source execution occurred."
+}

@@ -1,0 +1,153 @@
+{
+  "schema": "FSC_TEST_SOURCE_INSTRUMENTATION/1",
+  "source_sha256": "338467cc428802e0d5a3147e90c9c98f876fcf9645761da1904e751bce7cc7c5",
+  "result_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+  "scope": "Test-only explicit control-pointer threading and syscall/allocator observations. No product API change. All real syscall semantics require separate original-source execution.",
+  "ordered_exact_replacements": [
+    {
+      "old": "fn fsc_open(path: i64)",
+      "new": "fn fsc_open(path: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_sys_openat(0 - 100, path, 589824, 0)",
+      "new": "fcf_open(path, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "fn fsc_read(fd: i64, block: i64)",
+      "new": "fn fsc_read(fd: i64, block: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_sys_getdents64(fd, block, 4096)",
+      "new": "fcf_read(fd, block, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "fn fsc_close(fd: i64)",
+      "new": "fn fsc_close(fd: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_sys_close(fd)",
+      "new": "fcf_close(fd, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "pub fn fs_dir_list_free(list: i64)",
+      "new": "pub fn fs_dir_list_free(list: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "fn fsc_push(list: i64, entry: i64, max_entries: i64)",
+      "new": "fn fsc_push(list: i64, entry: i64, max_entries: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "max_name_bytes: i64, used_names: i64)",
+      "new": "max_name_bytes: i64, used_names: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "max_name_bytes: i64, out_slot: i64)",
+      "new": "max_name_bytes: i64, out_slot: i64, control: i64)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_alloc(next * 8)",
+      "new": "fcf_alloc(next * 8, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_alloc(size + 1)",
+      "new": "fcf_alloc(size + 1, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_alloc(24)",
+      "new": "fcf_alloc(24, control)",
+      "occurrences": 2
+    },
+    {
+      "old": "__mind_alloc(path_len + 1)",
+      "new": "fcf_alloc(path_len + 1, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_alloc(4104)",
+      "new": "fcf_alloc(4104, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_free(__mind_load_i64(entry))",
+      "new": "fcf_free(__mind_load_i64(entry), control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_free(entry)",
+      "new": "fcf_free(entry, control)",
+      "occurrences": 2
+    },
+    {
+      "old": "__mind_free(entries)",
+      "new": "fcf_free(entries, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_free(list)",
+      "new": "fcf_free(list, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_free(previous)",
+      "new": "fcf_free(previous, control)",
+      "occurrences": 1
+    },
+    {
+      "old": "__mind_free(copy)",
+      "new": "fcf_free(copy, control)",
+      "occurrences": 2
+    },
+    {
+      "old": "__mind_free(path)",
+      "new": "fcf_free(path, control)",
+      "occurrences": 3
+    },
+    {
+      "old": "__mind_free(block)",
+      "new": "fcf_free(block, control)",
+      "occurrences": 2
+    },
+    {
+      "old": "fsc_push(list, entry, max_entries);",
+      "new": "fsc_push(list, entry, max_entries, control);",
+      "occurrences": 1
+    },
+    {
+      "old": "fsc_open(path);",
+      "new": "fsc_open(path, control);",
+      "occurrences": 1
+    },
+    {
+      "old": "fsc_read(fd, block);",
+      "new": "fsc_read(fd, block, control);",
+      "occurrences": 1
+    },
+    {
+      "old": "max_name_bytes, block + 4096);",
+      "new": "max_name_bytes, block + 4096, control);",
+      "occurrences": 1
+    },
+    {
+      "old": "fsc_close(fd);",
+      "new": "fsc_close(fd, control);",
+      "occurrences": 1
+    },
+    {
+      "old": "fs_dir_list_free(list);",
+      "new": "fs_dir_list_free(list, control);",
+      "occurrences": 1
+    }
+  ]
+}
