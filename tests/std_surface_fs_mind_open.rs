@@ -100,7 +100,7 @@ pub fn open_status(path_addr: i64) -> i64 {
         };
         let script = format!(
             r#"
-import ctypes, os, tempfile
+import ctypes, os, resource, tempfile
 lib = ctypes.CDLL('{so}')
 lib.__mind_alloc.restype = ctypes.c_int64; lib.__mind_alloc.argtypes = [ctypes.c_int64]
 lib.__mind_open.restype = ctypes.c_int64; lib.__mind_open.argtypes = [ctypes.c_int64]
@@ -138,8 +138,18 @@ st_r = lib.open_status(ctypes.addressof(pr))
 assert st_r == 1, f'MIND open_status(real) must report success (1), got {{st_r}}'
 
 # 3. read_file_native with every probe-window descriptor live on a decoy.
+# dup2 onto a descriptor at or above RLIMIT_NOFILE's soft limit is EBADF, and
+# 1024 is a common soft default (a systemd service, many CI runners), so the
+# probe raises its own soft limit to cover the window. The hard limit is never
+# exceeded; a hard limit below the window is reported, not silently narrowed.
+WIN_LO, WIN_HI = 900, 1100
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+if soft != resource.RLIM_INFINITY and soft < WIN_HI:
+    assert hard == resource.RLIM_INFINITY or hard >= WIN_HI, (
+        f'RLIMIT_NOFILE hard limit {{hard}} < {{WIN_HI}}: the probe window cannot be made live')
+    resource.setrlimit(resource.RLIMIT_NOFILE, (WIN_HI, hard))
 dfd = os.open(decoy, os.O_RDONLY)
-window = [fd for fd in range(900, 1100) if fd != dfd]
+window = [fd for fd in range(WIN_LO, WIN_HI) if fd != dfd]
 for fd in window:
     os.dup2(dfd, fd)
 cap = 4096
