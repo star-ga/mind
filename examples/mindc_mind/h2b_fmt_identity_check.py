@@ -87,10 +87,20 @@ def main() -> int:
             old = subprocess.check_output(["git", "show", f"{BASE}:{rel}"], cwd=ROOT)
             new = (ROOT / rel).read_bytes()
             if args.mutant_diverge and rel == files[0]:
-                # Semantic change: bump a numeric literal so IR must move.
-                new = new.replace(b"let mut done: i64 = 0;", b"let mut done: i64 = 1;", 1)
-                if new == old:
-                    new = new + b"\n// mutant\n"
+                # Semantic change: a comment is not enough — flip a stored
+                # constant so the emitted IR/mic3 MUST move.
+                for sample in (
+                    b"__mind_store_i64(out, 0);",
+                    b"return 1;",
+                    b"let mut ok: i64 = 1;",
+                ):
+                    mutated = new.replace(sample, sample.replace(b"0;", b"1;").replace(b"return 1;", b"return 2;").replace(b"= 1;", b"= 2;"), 1)
+                    if mutated != new:
+                        new = mutated
+                        break
+                else:
+                    # last resort: rewrite the first function body return
+                    new = new.replace(b"return 0;", b"return 3;", 1)
             stem = tdir / pathlib.Path(rel).stem
             try:
                 ir_a, mic_a = emit_pair(compiler, old, stem.with_name(stem.name + "-base"))
