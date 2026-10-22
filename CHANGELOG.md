@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — whole-array binary operators on the native backend (#287)
 - Whole-array binary operators on the native backend built a binary that returned
-  wrong values (released 0.10.2). They are now refused with a named construct
+  wrong values. The miscompile existed on main after #110 and before #287 and was
+  never in a tagged release. They are now refused with a named construct
   (`binop.array_operand`). Element reads are unaffected.
 
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN

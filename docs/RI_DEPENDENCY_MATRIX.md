@@ -252,9 +252,10 @@ on what the construct DENOTES — the same shape as the `admit_binop` (2026-08-2
    (`[i64; N] + [i64; N]`, a scalar on either side, and the comparisons). The native
    backend built a binary that returned the wrong value. The operand is now refused
    as `binop.array_operand`, ahead of the operator's own name. An element read
-   (`a[i] + b[i]`) is a scalar load and stays admitted. Released 0.10.2 returned 0
-   where 15 is the value for a length-1 addition, and 2 where 1 is the value for the
-   longer additions; those programs now refuse and write no artifact.
+   (`a[i] + b[i]`) is a scalar load and stays admitted. main before #287, measured
+   on main 920d2df2, returned 0 where 15 is the value for a length-1 addition, and
+   2 where 1 is the value for the longer additions; those programs now refuse and
+   write no artifact.
 
 **Blocking, not row 12's to fix — the first-fence wiring over-rejects the readiness
 corpus.** `admit_call` admits only callees DEFINED in the module, so every aggregate

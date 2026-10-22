@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1903 | **Est. tokens:** ~3,699,243
-**Generated:** 2026-10-22 01:24 UTC
+**Files:** 1903 | **Est. tokens:** ~3,700,224
+**Generated:** 2026-10-22 02:11 UTC
 
 ## Token Budget Guide
 
@@ -43,7 +43,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~110,323 |
+| `docs/` | 38 | ~110,572 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -125,7 +125,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 11 | ~100,531 |
+| `src/ir/` | 11 | ~101,025 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
@@ -149,7 +149,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 417 | ~849,488 |
+| `tests/` | 417 | ~849,726 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -533,7 +533,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~6537 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~6786 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1585 tok, huge) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -1378,7 +1378,7 @@
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
-- `frozen_profile_tests.rs` (~4379 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2245,7 +2245,7 @@
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
-- `native_array_binop_refusal.rs` (~1678 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_array_binop_refusal.rs` (~1916 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
