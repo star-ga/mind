@@ -47,11 +47,13 @@ import std.string;
 // nesting exceeds this cap, bounding native stack growth so a hostile
 // deeply-nested document ([[[[... or {a={a={... ) cannot drive a
 // stack-overflow SIGSEGV. 512 leaves ample native-stack headroom.
-const MAX_DEPTH: i64 = 512
+// Named apart from std/json.mind's MAX_DEPTH: the native std seed is one
+// program, where a duplicate const name refuses every read of it.
+const TOML_MAX_DEPTH: i64 = 512
 
 // toml_max_depth -- exported nesting-depth cap enforced by the value parser.
 pub fn toml_max_depth() -> i64 {
-    MAX_DEPTH
+    TOML_MAX_DEPTH
 }
 
 pub fn tv_kind_str() -> i64 {
@@ -852,7 +854,7 @@ fn parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
 fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let pos: i64 = skip_ws(buf, i, len);
     // Depth guard: fail closed on over-nested untrusted input (no SIGSEGV).
-    if depth > MAX_DEPTH {
+    if depth > TOML_MAX_DEPTH {
         let d: Vec = vec_new();
         let d1: Vec = vec_push(d, pos);
         return vec_push(d1, 0);
