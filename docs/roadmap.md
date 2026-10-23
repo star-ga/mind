@@ -2914,3 +2914,28 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 - Dependency order: mind-inference reference -> mind-nerve benchmark -> MindLLM optional dispatch -> naestro/mind-mem pilots; mind-flow orchestrates experiments and mind/mind-runtime implement only proven optimizations.
 
 **Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
+
+
+---
+
+## Adaptive Speculative Decoding Research (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed, not shipped.  
+**Research reference:** EAGLE-4, *One Flexible Drafter for All Batch Sizes and Hardware*, https://github.com/eagle-hq/EAGLE-4
+
+**License boundary:** EAGLE-4 is source-available, not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; research citation is not a license.
+
+### Scope
+
+Only introduce independently designed candidate selection / bounded cache primitives after profiling, keep compiler general.
+
+### Acceptance gates
+
+- Measure baseline ordinary and current speculative decoding, matched model, hardware, workload and sampling policy; concurrency 1, 8, 32, 64 when supported.
+- Track accepted tokens per verification, target-call cost, drafter overhead, throughput, TTFT, p50/p95 latency, peak memory and cost per token.
+- Verify output-distribution preservation for rejection/acceptance under temperature/top-k/top-p, including boundary cases and RNG reproducibility limitations.
+- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical EAGLE-4 gains.
+- Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
+
+**Software roadmap attribution:** STARGA, Inc. No co-author trailers.
