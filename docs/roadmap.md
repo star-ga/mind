@@ -2939,3 +2939,16 @@ Only introduce independently designed candidate selection / bounded cache primit
 - Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
 
 **Software roadmap attribution:** STARGA, Inc. No co-author trailers.
+
+
+---
+
+## Verified Engineering Delivery Research (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed, not shipped.  
+**Reference:** https://sun-asterisk.us/takumi/ (conceptual market comparison only; no restricted-code reuse).
+
+Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
+
+**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. Naestro OS owns mission UI; mind-law policy, mind-ci verification, mind-flow orchestration, mind-codegraph impact, mind-mem decisions. No co-author trailers.
