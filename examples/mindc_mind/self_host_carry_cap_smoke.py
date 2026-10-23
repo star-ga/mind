@@ -65,8 +65,12 @@ def check_carry(lib):
     _b, buf = cbuf(len(names))
     ctypes.memmove(_b, names, len(names))
     _l, lets = cbuf(8)
-    _lc, lcell = cbuf(8, True)
-    rets = [lib.nb_carry_record(carry, ccell, buf, i * 3, i * 3 + 3, i, lets, lcell) for i in range(N)]
+    # The eighth argument is entry_n, a let-env prefix LENGTH, not a cell
+    # pointer. nb_lets_lookup_rest walks that many records. This fixture has
+    # no lets, so the prefix is 0 and the lookup returns the -1 sentinel
+    # without reading `lets`. Passing a pointer walks a huge count and
+    # overflows the stack.
+    rets = [lib.nb_carry_record(carry, ccell, buf, i * 3, i * 3 + 3, i, lets, 0) for i in range(N)]
     final = rd(ccell)
     recorded = sum(1 for r in rets if r == 0)
     refused = sum(1 for r in rets if r == -1)

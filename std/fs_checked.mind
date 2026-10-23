@@ -39,9 +39,9 @@ pub fn fs_dir_list_free(list: i64) -> i64 {
             i = i + 1;
         }
         if entries != 0 {
-            __mind_free(entries);
+            __mind_free(entries)
         }
-        __mind_free(list);
+        __mind_free(list)
     }
     0
 }
@@ -68,10 +68,10 @@ fn fsc_push(list: i64, entry: i64, max_entries: i64) -> i64 {
         let previous: i64 = __mind_load_i64(list);
         let _ = fsc_copy(replacement, previous, count * 8);
         if previous != 0 {
-            __mind_free(previous);
+            __mind_free(previous)
         }
         __mind_store_i64(list, replacement);
-        __mind_store_i64(list + 16, next);
+        __mind_store_i64(list + 16, next)
     }
     let entries: i64 = __mind_load_i64(list);
     __mind_store_i64(entries + count * 8, entry);
@@ -81,8 +81,7 @@ fn fsc_push(list: i64, entry: i64, max_entries: i64) -> i64 {
 
 // Validate and copy one returned block. used_names addresses a private word.
 // No field is loaded until enough bytes for its entire dirent header exist.
-fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64,
-             max_name_bytes: i64, used_names: i64) -> i64 {
+fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64, max_name_bytes: i64, used_names: i64) -> i64 {
     if nbytes <= 0 {
         return 0 - 5;
     }
@@ -97,8 +96,7 @@ fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64,
             status = 0 - 5;
         } else {
             let record: i64 = block + cursor;
-            let record_len: i64 = (__mind_load_i8(record + 16) & 255)
-                + 256 * (__mind_load_i8(record + 17) & 255);
+            let record_len: i64 = (__mind_load_i8(record + 16) & 255) + 256 * (__mind_load_i8(record + 17) & 255);
             if record_len < 20 || record_len > remaining {
                 status = 0 - 5;
             } else {
@@ -167,10 +165,10 @@ fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64,
                                         __mind_store_i64(entry + 16, flags);
                                         status = fsc_push(list, entry, max_entries);
                                         if status == 0 {
-                                            __mind_store_i64(used_names, used + size + 1);
+                                            __mind_store_i64(used_names, used + size + 1)
                                         } else {
                                             __mind_free(copy);
-                                            __mind_free(entry);
+                                            __mind_free(entry)
                                         }
                                     }
                                 }
@@ -188,8 +186,7 @@ fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64,
 // On success only: writes one owned Vec<DirEntry> handle to out_slot.
 // Every failure leaves out_slot unchanged and frees all temporary allocations.
 // The pointer/length storage must be valid; this is not an arbitrary-pointer validator.
-pub fn fs_read_dir_checked(path_addr: i64, path_len: i64, max_entries: i64,
-                          max_name_bytes: i64, out_slot: i64) -> i64 {
+pub fn fs_read_dir_checked(path_addr: i64, path_len: i64, max_entries: i64, max_name_bytes: i64, out_slot: i64) -> i64 {
     if path_addr <= 0 || path_len <= 0 || out_slot <= 0 {
         return 0 - 22;
     }
@@ -263,8 +260,7 @@ pub fn fs_read_dir_checked(path_addr: i64, path_len: i64, max_entries: i64,
                 if nread == 0 {
                     eof = 1;
                 } else {
-                    status = fsc_block(list, block, nread, max_entries,
-                                       max_name_bytes, block + 4096);
+                    status = fsc_block(list, block, nread, max_entries, max_name_bytes, block + 4096);
                 }
             }
         }
@@ -281,7 +277,7 @@ pub fn fs_read_dir_checked(path_addr: i64, path_len: i64, max_entries: i64,
     }
     __mind_free(block);
     if status == 0 {
-        __mind_store_i64(out_slot, list);
+        __mind_store_i64(out_slot, list)
     } else {
         let _ = fs_dir_list_free(list);
     }

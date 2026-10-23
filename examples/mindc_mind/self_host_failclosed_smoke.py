@@ -270,7 +270,6 @@ REFUSED = [
     ("float % float", M("let f:f64=5.0; let g:f64=f % 2.0; return 0;"), "0B"),
     ("narrowing cast of float", M("let f:f64=2.5; return f as i8;"), "0B"),
     ("float condition", M("let f:f64=1.5; if f { return 1; } return 2;"), "0B"),
-    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
     # (an unknown method `.foo()` is still out-of-subset; zero-arg `.len()` on an
     # array LANDED — see the SUPPORTED cases below)
@@ -315,6 +314,10 @@ REFUSED = [
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
 SUPPORTED = [
+    # Decimal literals lower to correctly rounded binary64. 0.1 as i64 truncates
+    # to 0. general_float_netverify.py locks the same value. Refusing 0B here
+    # was the dyadic-only gate, which this emitter no longer applies.
+    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), 0),
     ("array descriptor survives let alias", M("let a=[4,5]; let b=a; return b[1];"), 5),
     ("raw handle field index",
      "struct S { h: i64 } fn main()->i64{ let a:i64=__mind_alloc(16); "
