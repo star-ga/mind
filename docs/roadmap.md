@@ -2890,3 +2890,27 @@ the fixed-point path, and the result is visual enough to show on the site.
 - How large can the grid get before the propagation queue needs a bounded-memory design?
 
 Proposed; a showcase, not on the critical path. Depends on the RNG decision in Phase 24.
+
+
+---
+
+## Byte-Level Distillation Research Track (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed; no implementation or performance claims.  
+**Research:** K. Marathe et al., *Breaking the Token Ceiling: Distilling Smaller, Stronger Byte Models* (2026), https://arxiv.org/abs/2609.12303
+
+This paper studies decoder-only byte versus token models and token-teacher-to-byte-student supervision via approximate Marginalize-It and exact End-of-Token (EOT). Raw bytes are not synonymous with byte-level BPE. Paper-specific scaling estimates do not constitute STARGA results.
+
+### Project scope
+
+Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, EOT masking and raw UTF-8 buffer operations only where prototypes show bottlenecks. Keep the language tokenizer-agnostic and require deterministic CPU reference verification.
+
+### Validation, dependencies and release gates
+
+- Verify full teacher-vocabulary byte-prefix probabilities against exhaustive small-vocabulary oracles, including EOT mass, UTF-8 multibyte strings, shared prefixes and token endings. Top-k truncation must not be called exact.
+- Compare token and byte baselines with matched data, compute, model capability and honest serving-cost accounting. Report bytes-per-byte, quality, p50/p95 latency per output character, peak memory and reproducibility.
+- Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
+- Dependency order: mind-inference reference -> mind-nerve benchmark -> MindLLM optional dispatch -> naestro/mind-mem pilots; mind-flow orchestrates experiments and mind/mind-runtime implement only proven optimizations.
+
+**Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
