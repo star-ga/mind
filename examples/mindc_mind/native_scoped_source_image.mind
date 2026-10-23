@@ -88,6 +88,7 @@ pub fn nsf_reserved_ok(src: i64, length: i64) -> i64 {
 
 pub fn nsf_scope_fail(scope: i64, scratch: i64, diag: i64, code: i64, detail: i64) -> i64 {
     let _free: i64 = nb_fc_free(scope);
+    __mind_free(scope);
     __mind_free(scratch);
     nsi_error(diag, code, detail)
 }
@@ -412,7 +413,7 @@ pub fn nsf_compile(source: i64, length: i64, hash: i64, user_lo: i64, route: i64
     let scope: i64 = nsf_capture(source, length, hash, user_lo, diag);
     if scope == 0 { return string_new(); }
     let w: i64 = __mind_alloc(1152);
-    if w == 0 { nb_fc_free(scope); nsi_error(diag, 2, 0); return string_new(); }
+    if w == 0 { nb_fc_free(scope); __mind_free(scope); nsi_error(diag, 2, 0); return string_new(); }
     nsi_zero(w, 1152);
     nsi_text_init(w);
     let mut i: i64 = 0;
@@ -420,19 +421,22 @@ pub fn nsf_compile(source: i64, length: i64, hash: i64, user_lo: i64, route: i64
     nfn_copy_src_bytes(w + 592, hash, 32, 0);
     nsi_request(w, 1, 0);
     let ctx: i64 = nsf_context(w + 48, scope);
-    if ctx == 0 { nb_fc_free(scope); __mind_free(w); nsi_error(diag, 3, 0); return string_new(); }
+    if ctx == 0 { nb_fc_free(scope); __mind_free(scope); __mind_free(w); nsi_error(diag, 3, 0); return string_new(); }
     if nec_check(ctx) != 1 { nec_free(ctx); __mind_free(w); nsi_error(diag, 3, 1); return string_new(); }
     let captured: i64 = __mind_load_i64(scope + 8);
     let tokens: Vec = lex(captured, length);
-    let parts: i64 = nb_lower_parts_hb_route(tokens, captured, w + 592, user_lo, route, ctx);
+    let parts: i64 = __mind_alloc(192);
     if parts == 0 { nec_free(ctx); __mind_free(w); nsi_error(diag, 4, 0); return string_new(); }
+    let status: i64 = nb_lower_parts_hb_route(tokens, captured, w + 592, user_lo, route, ctx, parts);
+    if status == 0 { __mind_free(parts); nec_free(ctx); __mind_free(w); nsi_error(diag, 4, 0); return string_new(); }
     __mind_store_i64(parts + 176, ctx);
     if nsi_bind_io(parts, w, diag) == 0 {
-        nb_parts_free(parts); __mind_free(w); return string_new();
+        nb_parts_free(parts); __mind_free(parts); __mind_free(w); return string_new();
     }
     let image: String = nsf_complete(parts, w, diag);
     nio_free(__mind_load_i64(w + 752));
     nb_parts_free(parts);
+    __mind_free(parts);
     __mind_free(w);
     image
 }

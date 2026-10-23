@@ -346,12 +346,14 @@ pub fn nsi_compile(source: i64, length: i64, hash: i64, user_lo: i64, route: i64
     }
     if nsi_bind_io(parts, w, diagnostic) == 0 {
         let _parts: i64 = nb_parts_free(parts);
+        __mind_free(parts);
         __mind_free(w);
         return string_new();
     }
     let image: String = nsi_from_parts(parts, w, diagnostic);
     let _io: i64 = nio_free(__mind_load_i64(w + 752));
     let _parts: i64 = nb_parts_free(parts);
+    __mind_free(parts);
     __mind_free(w);
     image
 }

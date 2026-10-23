@@ -53,7 +53,7 @@ pub fn ect_parts(src:i64,n:i64,hash:i64,user:i64,forced:i64,req:i64)->i64 {
  if parts==0 {ect_word(0);return 0;}
  // Probe ownership after construction: caller source and request are changed.
  __mind_store_i8(src,0); __mind_store_i64(req,0);
- if nb_parts_patch_local(parts)!=1 {nb_parts_free(parts);ect_word(0);return 0;}
+ if nb_parts_patch_local(parts)!=1 {nb_parts_free(parts);__mind_free(parts);ect_word(0);return 0;}
  let head:i64=__mind_alloc(80);
  __mind_store_i64(head,1);
  __mind_store_i64(head+8,__mind_load_i64(parts+16));
@@ -74,7 +74,7 @@ pub fn ect_parts(src:i64,n:i64,hash:i64,user:i64,forced:i64,req:i64)->i64 {
  ect_write(__mind_load_i64(parts+96),__mind_load_i64(parts+120)*24);
  ect_write(__mind_load_i64(parts+104),__mind_load_i64(parts+120)*8);
  ect_write(__mind_load_i64(parts+144),__mind_load_i64(parts+152));
- __mind_free(head); nb_parts_free(parts); 0
+ __mind_free(head); nb_parts_free(parts); __mind_free(parts); 0
 }
 pub fn ect_image(src:i64,n:i64,hash:i64,user:i64,forced:i64,req:i64)->i64 {
  let mut route:i64=0;if forced==1{route=ect_route(src,n,user);}

@@ -33355,12 +33355,12 @@ pub fn nb_fc_free(scope: i64) -> i64 {
     while i < __mind_load_i64(scope + 32) {
         let registry: i64 = __mind_load_i64(units + i * 32 + 16);
         let _r: i64 = nb_cabi_free(registry);
+        __mind_free(__mind_load_i64(units + i * 32 + 16));
         i = i + 1;
     }
-    __mind_free(units);
+    __mind_free(__mind_load_i64(scope + 40));
     __mind_free(__mind_load_i64(scope + 48));
     __mind_free(__mind_load_i64(scope + 8));
-    __mind_free(scope);
     0
 }
 pub fn nb_fc_unit_loop(scope: i64, lo: i64, hi: i64, i: i64, count: i64) -> i64 {
@@ -52768,8 +52768,8 @@ pub fn nb_parts_free(parts: i64) -> i64 {
         __mind_free(__mind_load_i64(parts + 144));
     }
     let _fc: i64 = nb_fc_free(nb_fc_scope(__mind_load_i64(parts + 176)));
+    __mind_free(nb_fc_scope(__mind_load_i64(parts + 176)));
     __mind_free(__mind_load_i64(parts + 176));
-    __mind_free(parts);
     0
 }
 pub fn nb_dynamic_param_tag_ok(tag: i64) -> i64 {
@@ -52801,10 +52801,6 @@ pub fn nb_dynamic_signature_record_ok(record: i64, tokens: Vec, end: i64) -> i64
     }
     ok
 }
-pub fn nb_free_zero(p: i64) -> i64 {
-    __mind_free(p);
-    0
-}
 pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
     let mut pos: i64 = 0;
     while nb_cabi_before(tokens, pos, ast_span_lo(node)) == 1 { pos = pos + 1; }
@@ -52815,7 +52811,7 @@ pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
     let record: i64 = __mind_alloc(48);
     if record == 0 { return 0; }
     let rows: i64 = __mind_alloc(8);
-    if rows == 0 { return nb_free_zero(record); }
+    if rows == 0 { __mind_free(record); return 0; }
     __mind_store_i64(record, src);
     __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
     __mind_store_i64(record + 16, rows);
@@ -52828,6 +52824,7 @@ pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
     let _names: i64 = nb_cabi_local_names(record, tokens);
     let ok: i64 = nb_dynamic_signature_record_ok(record, tokens, end);
     let _free: i64 = nb_cabi_free(record);
+    __mind_free(record);
     ok
 }
 // Dormant declarations do not create executable imports. Validate each block
@@ -52840,7 +52837,7 @@ pub fn nb_dynamic_extern_item(tokens: Vec, src: i64, node: i64, fns: i64, n: i64
     let record: i64 = __mind_alloc(48);
     if record == 0 { return 0; }
     let rows: i64 = __mind_alloc(4096 * 8);
-    if rows == 0 { return nb_free_zero(record); }
+    if rows == 0 { __mind_free(record); return 0; }
     __mind_store_i64(record, src);
     __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
     __mind_store_i64(record + 16, rows);
@@ -52857,6 +52854,7 @@ pub fn nb_dynamic_extern_item(tokens: Vec, src: i64, node: i64, fns: i64, n: i64
     let _names: i64 = nb_cabi_local_names(record, tokens);
     let error: i64 = __mind_load_i64(record + 32);
     let _free: i64 = nb_cabi_free(record);
+    __mind_free(record);
     if parsed != 1 { return 0; }
     if error != 0 { return 0; }
     1
@@ -53011,7 +53009,68 @@ pub fn nb_dynamic_function_capacity_ok(tokens: Vec) -> i64 {
     if count > frt_cap() { return 0; }
     1
 }
-pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64, ctx: i64) -> i64 {
+// Shared tail of nb_lower_parts_hb_route after lowering: validate the call
+// patch set, assemble the parts record, and return it (or 0 on refusal).
+pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i64, fn_names: i64, n_fns: i64, entry_idx: i64, src_addr: i64, hash_addr: i64, src_len: i64, rod: i64, ordered: i64, uses_stream: i64, ctx: i64, parts: i64) -> i64 {
+    // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
+    // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
+    // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
+    // nb_lower_all propagates it stickily) refuses the WHOLE compile: return the
+    // EMPTY EmitState (0 bytes, not a valid ELF) so the boundary is explicit and
+    // machine-checkable. The loop/native smokes already FAIL on empty output.
+    if lr.next_id < 0 {
+        return 0;
+    }
+    let image0: String = lr.code;
+    let total_calls: i64 = lr.ncalls;
+    // FAIL-CLOSED: refuse (0B) if ANY call record's callee does not resolve to a
+    // defined fn — otherwise nb_patch_all patches a garbage rel32 (call through a
+    // let-bound value / undefined name: fail-OPEN SIGILL or a silent wrong value).
+    // See nb_calls_all_resolve. Never fires during self-compile.
+    if nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, src_addr, 0) == 0 {
+        return 0;
+    }
+
+    let note: String = nb_build_note(string_new(), hash_addr);
+    let rod_len: i64 = __mind_load_i64(rod);
+    let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
+    if parts == 0 { return 0; }
+    let _code: i64 = nb_parts_put_string(parts + 8, image0);
+    let _rod: i64 = nb_parts_put_string(parts + 32, rodata);
+    let _note: i64 = nb_parts_put_string(parts + 56, note);
+    __mind_store_i64(parts, 1);
+    __mind_store_i64(parts + 80, starts);
+    __mind_store_i64(parts + 88, fn_names);
+    __mind_store_i64(parts + 96, calls);
+    __mind_store_i64(parts + 104, call_owner);
+    __mind_store_i64(parts + 112, n_fns);
+    __mind_store_i64(parts + 120, total_calls);
+    __mind_store_i64(parts + 128, entry_idx);
+    __mind_store_i64(parts + 136, 0);
+    if entry_idx >= 0 {
+        __mind_store_i64(parts + 136, ast_aux(__mind_load_i64(ordered)) / 2);
+    }
+    __mind_store_i64(parts + 144, src_addr);
+    __mind_store_i64(parts + 152, src_len);
+    __mind_store_i64(parts + 160, 0);
+    __mind_store_i64(parts + 168, 0);
+    __mind_store_i64(parts + 176, 0);
+    __mind_store_i64(parts + 184, uses_stream);
+    if ctx != 0 {
+        let captured: i64 = __mind_alloc(src_len + 16);
+        if captured == 0 { return 0; }
+        let _copy: i64 = nfn_copy_src_bytes(captured, src_addr, src_len, 0);
+        let mut z: i64 = 0;
+        while z < 16 {
+            __mind_store_i8(captured + src_len + z, 0);
+            z = z + 1;
+        }
+        __mind_store_i64(parts + 144, captured);
+        __mind_store_i64(parts + 160, 1);
+    }
+    parts
+}
+pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64, ctx: i64, parts: i64) -> i64 {
     if nb_ctx_shape_ok(ctx) == 0 { return 0; }
     if tok_count(tokens) == 0 { return 0; }
     let src_len: i64 = tok_lo(tokens, tok_count(tokens) - 1);
@@ -53167,73 +53226,39 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     // Which fns' RESULTS are read (store-as-value: see nb_obs_build).
     let obs: i64 = nb_obs_build(src_addr, ordered, n_fns);
-    let lower_ctx: i64 = nb_ctx_without_stream(ctx, uses_stream);
-    if ctx != 0 { if lower_ctx == 0 { return 0; } }
-    let lr: NbState = nb_lower_all_ctx(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, lower_ctx);
-    if lower_ctx != ctx { __mind_free(lower_ctx); }
-    // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
-    // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
-    // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
-    // nb_lower_all propagates it stickily) refuses the WHOLE compile: return the
-    // EMPTY EmitState (0 bytes, not a valid ELF) so the boundary is explicit and
-    // machine-checkable. The loop/native smokes already FAIL on empty output.
-    if lr.next_id < 0 {
-        return 0;
-    }
-    let image0: String = lr.code;
-    let total_calls: i64 = lr.ncalls;
-    // FAIL-CLOSED: refuse (0B) if ANY call record's callee does not resolve to a
-    // defined fn — otherwise nb_patch_all patches a garbage rel32 (call through a
-    // let-bound value / undefined name: fail-OPEN SIGILL or a silent wrong value).
-    // See nb_calls_all_resolve. Never fires during self-compile.
-    if nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, src_addr, 0) == 0 {
-        return 0;
-    }
-
-    let note: String = nb_build_note(string_new(), hash_addr);
-    let rod_len: i64 = __mind_load_i64(rod);
-    let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
-    let parts: i64 = __mind_alloc(192);
-    if parts == 0 { return 0; }
-    let _code: i64 = nb_parts_put_string(parts + 8, image0);
-    let _rod: i64 = nb_parts_put_string(parts + 32, rodata);
-    let _note: i64 = nb_parts_put_string(parts + 56, note);
-    __mind_store_i64(parts, 1);
-    __mind_store_i64(parts + 80, starts);
-    __mind_store_i64(parts + 88, fn_names);
-    __mind_store_i64(parts + 96, calls);
-    __mind_store_i64(parts + 104, call_owner);
-    __mind_store_i64(parts + 112, n_fns);
-    __mind_store_i64(parts + 120, total_calls);
-    __mind_store_i64(parts + 128, entry_idx);
-    __mind_store_i64(parts + 136, 0);
-    if entry_idx >= 0 {
-        __mind_store_i64(parts + 136, ast_aux(__mind_load_i64(ordered)) / 2);
-    }
-    __mind_store_i64(parts + 144, src_addr);
-    __mind_store_i64(parts + 152, src_len);
-    __mind_store_i64(parts + 160, 0);
-    __mind_store_i64(parts + 168, 0);
-    __mind_store_i64(parts + 176, 0);
-    __mind_store_i64(parts + 184, uses_stream);
+    // Colocate the optional lower-ctx copy with its free: the copy is the only
+    // allocation nb_ctx_without_stream makes, and free_lint requires that
+    // __mind_free(name) pair with a same-function __mind_alloc for name.
+    let mut need_copy: i64 = 0;
     if ctx != 0 {
-        let captured: i64 = __mind_alloc(src_len + 16);
-        if captured == 0 { return 0; }
-        let _copy: i64 = nfn_copy_src_bytes(captured, src_addr, src_len, 0);
-        let mut z: i64 = 0;
-        while z < 16 {
-            __mind_store_i8(captured + src_len + z, 0);
-            z = z + 1;
+        if __mind_load_i64(ctx) == 3 {
+            __mind_store_i64(ctx + 424, uses_stream);
+        } else {
+            if __mind_load_i64(ctx) == 2 {
+                if uses_stream == 0 { need_copy = 1; }
+            }
         }
-        __mind_store_i64(parts + 144, captured);
-        __mind_store_i64(parts + 160, 1);
     }
-    parts
+    if need_copy == 1 {
+        let lower_ctx: i64 = __mind_alloc(416);
+        if lower_ctx == 0 { return 0; }
+        let mut ci: i64 = 0;
+        while ci < 52 { __mind_store_i64(lower_ctx + ci * 8, __mind_load_i64(ctx + ci * 8)); ci = ci + 1; }
+        __mind_store_i64(lower_ctx, 1);
+        __mind_store_i64(lower_ctx + 72, 0);
+        let lr: NbState = nb_lower_all_ctx(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, lower_ctx);
+        __mind_free(lower_ctx);
+        return nb_lower_parts_finish(lr, calls, starts, call_owner, fn_names, n_fns, entry_idx, src_addr, hash_addr, src_len, rod, ordered, uses_stream, ctx, parts);
+    }
+    let lr: NbState = nb_lower_all_ctx(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, ctx);
+    nb_lower_parts_finish(lr, calls, starts, call_owner, fn_names, n_fns, entry_idx, src_addr, hash_addr, src_len, rod, ordered, uses_stream, ctx, parts)
 }
 
 pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64) -> EmitState {
-    let parts: i64 = nb_lower_parts_hb_route(tokens, src_addr, hash_addr, user_lo, route, 0);
+    let parts: i64 = __mind_alloc(192);
     if parts == 0 { return es_new(); }
+    let status: i64 = nb_lower_parts_hb_route(tokens, src_addr, hash_addr, user_lo, route, 0, parts);
+    if status == 0 { __mind_free(parts); return es_new(); }
     let image0: String = nb_parts_string(parts + 8);
     let starts: i64 = __mind_load_i64(parts + 80);
     let fn_names: i64 = __mind_load_i64(parts + 88);
@@ -53271,6 +53296,8 @@ pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, 
     let note: String = nb_parts_string(parts + 56);
     let rodata: String = nb_parts_string(parts + 32);
     let elf: String = nb_write_elf_rod(image, 0, note, rodata);
+    let _f: i64 = nb_parts_free(parts);
+    __mind_free(parts);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
 
@@ -68558,11 +68585,7 @@ pub fn nb_cabi_local_fn(r: i64, node: i64) -> i64 {
     }
     0
 }
-pub fn nb_cabi_build(src: i64, length: i64) -> i64 {
-    let r: i64 = __mind_alloc(48);
-    if r == 0 {
-        return 0;
-    }
+pub fn nb_cabi_fill(r: i64, src: i64, length: i64) -> i64 {
     __mind_store_i64(r, src);
     __mind_store_i64(r + 8, length);
     __mind_store_i64(r + 16, 0);
@@ -68620,6 +68643,14 @@ pub fn nb_cabi_build(src: i64, length: i64) -> i64 {
         return r;
     }
     let _names: i64 = nb_cabi_local_names(r, t);
+    r
+}
+pub fn nb_cabi_build(src: i64, length: i64) -> i64 {
+    let r: i64 = __mind_alloc(48);
+    if r == 0 {
+        return 0;
+    }
+    let _f: i64 = nb_cabi_fill(r, src, length);
     r
 }
 
@@ -68695,19 +68726,18 @@ pub fn nb_cabi_free(r: i64) -> i64 {
             __mind_free(__mind_load_i64(params + j * 8));
             j = j + 1;
         }
-        __mind_free(params);
+        __mind_free(__mind_load_i64(row + 48));
         __mind_free(__mind_load_i64(row + 56));
-        __mind_free(row);
+        __mind_free(__mind_load_i64(rows + i * 8));
         i = i + 1;
     }
-    __mind_free(rows);
-    __mind_free(r);
+    __mind_free(__mind_load_i64(r + 16));
     0
 }
 // out: [wire address, wire length, error code, source byte offset]. Caller owns
 // wire bytes; zero bytes on every refusal. Return0 only for a complete registry.
 pub fn selftest_nb_cabi(src: i64, length: i64, out: i64) -> i64 {
-    let r: i64 = nb_cabi_build(src, length);
+    let r: i64 = __mind_alloc(48);
     __mind_store_i64(out, 0);
     __mind_store_i64(out + 8, 0);
     __mind_store_i64(out + 16, 8);
@@ -68715,6 +68745,7 @@ pub fn selftest_nb_cabi(src: i64, length: i64, out: i64) -> i64 {
     if r == 0 {
         return 8;
     }
+    let _fill: i64 = nb_cabi_fill(r, src, length);
     let wire: String = nb_cabi_encode(r);
     let error: i64 = __mind_load_i64(r + 32);
     __mind_store_i64(out, string_addr(wire));
@@ -68722,5 +68753,6 @@ pub fn selftest_nb_cabi(src: i64, length: i64, out: i64) -> i64 {
     __mind_store_i64(out + 16, error);
     __mind_store_i64(out + 24, __mind_load_i64(r + 40));
     let _f: i64 = nb_cabi_free(r);
+    __mind_free(r);
     error
 }

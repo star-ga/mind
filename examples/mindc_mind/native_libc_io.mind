@@ -308,6 +308,7 @@ pub fn nio_build(profile:i64,diag:i64)->i64 {
         let offset:i64=if r==0 { 0 } else { __mind_load_i64(r+40) };
         let error:i64=if r==0 { 0 } else { __mind_load_i64(r+32) };
         let _free:i64=nb_cabi_free(r);
+        __mind_free(r);
         __mind_free(string_addr(source));
         return nio_error(diag,3,offset,error);
     }
@@ -315,6 +316,7 @@ pub fn nio_build(profile:i64,diag:i64)->i64 {
     let code:String=nio_code();
     let out:i64=nio_bundle(r,source,wire,code,diag);
     let _free:i64=nb_cabi_free(r);
+    __mind_free(r);
     __mind_free(string_addr(source));
     __mind_free(string_addr(wire));
     __mind_free(string_addr(code));
