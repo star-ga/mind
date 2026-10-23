@@ -1611,6 +1611,46 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             .entry(name)
             .or_insert((param_types, ret_type));
     }
+    // Imported `extern "C"` declarations are not MIND functions. Emitting them
+    // as `fn_signatures` would `func.call` them and widen a narrow C return
+    // to i64. `ExternFnDecl` is what selects `llvm.call` and the C return map.
+    // A local function of the same name keeps the MIND signature. A local
+    // extern block later in this module overwrites this decl when it is lowered.
+    #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
+    {
+        let imported_externs = crate::project::active_module_table::with(|table| {
+            table
+                .map(|table| table.unique_exported_externs())
+                .unwrap_or_default()
+        });
+        let repr_c = ir.repr_c_structs.clone();
+        let mut decls = Vec::new();
+        for ext in imported_externs {
+            if ir.fn_signatures.contains_key(&ext.name) {
+                continue;
+            }
+            let param_types: Vec<String> = ext
+                .param_types
+                .iter()
+                .flat_map(|ty| extern_type_to_mlir_multi_for(ty, &repr_c, ext.callconv))
+                .collect();
+            let ret_type = ext
+                .ret_type
+                .as_ref()
+                .map(|ty| extern_ret_type_to_mlir_for(ty, &repr_c, ext.callconv));
+            decls.push(crate::ir::Instr::ExternFnDecl {
+                name: ext.name,
+                param_types,
+                ret_type,
+                is_varargs: ext.is_varargs,
+                vararg_hints: Vec::new(),
+                callconv: ext.callconv,
+            });
+        }
+        for decl in decls.into_iter().rev() {
+            ir.instrs.insert(0, decl);
+        }
+    }
     #[cfg(all(feature = "std-surface", not(feature = "cross-module-imports")))]
     for (name, param_types, ret_type) in crate::type_checker::bundled_std_fn_signatures()
         .iter()
