@@ -181,12 +181,7 @@ GATED_EVENTS = ("push", "pull_request")
 # preflight-parity module, and the mindfuzz twin-emitter helper. Both are
 # tracked .py files and both are counted. The ceiling stays an exact
 # inventory with no spare allowance.
-HARNESS_CEILING = 320  # Exact reviewed integration inventory; no spare allowance.
-# 318 -> 320 counts the two H2b exclusion/format-identity guards added by
-# lane C2 (examples/mindc_mind/h2b_exclusion_controls_check.py and
-# examples/mindc_mind/h2b_fmt_identity_check.py). They buy the Q1.3(b)
-# positive controls and the Q1.1 identity proof as executable gates; their
-# red mutants live inside each file (--mutant-*), not in a third script.
+HARNESS_CEILING = 318  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
