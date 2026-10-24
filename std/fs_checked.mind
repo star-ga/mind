@@ -1,0 +1,285 @@
+// Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
+// Uses the raw __mind_sys_* ABI; unsupported hosts return -ENOSYS.
+// This module does not change std.fs.read_dir or its compatibility behavior.
+// See tests/fs_checked_listing/CONTRACT.md for ownership, bounds and status.
+
+fn fsc_copy(dst: i64, src: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+fn fsc_open(path: i64) -> i64 {
+    // O_RDONLY | O_DIRECTORY | O_CLOEXEC; final symlinks follow legacy behavior.
+    __mind_sys_openat(0 - 100, path, 589824, 0)
+}
+
+fn fsc_read(fd: i64, block: i64) -> i64 {
+    __mind_sys_getdents64(fd, block, 4096)
+}
+
+fn fsc_close(fd: i64) -> i64 {
+    // Exactly one attempt, including EINTR. Never retry a possibly consumed fd.
+    __mind_sys_close(fd)
+}
+
+// Owns a successful listing only. Null is allowed; forged/reused handles are not.
+pub fn fs_dir_list_free(list: i64) -> i64 {
+    if list != 0 {
+        let entries: i64 = __mind_load_i64(list);
+        let count: i64 = __mind_load_i64(list + 8);
+        let mut i: i64 = 0;
+        while i < count {
+            let entry: i64 = __mind_load_i64(entries + i * 8);
+            __mind_free(__mind_load_i64(entry));
+            __mind_free(entry);
+            i = i + 1;
+        }
+        if entries != 0 {
+            __mind_free(entries)
+        }
+        __mind_free(list)
+    }
+    0
+}
+
+// On failure the caller still owns entry. Growth frees the previous backing.
+fn fsc_push(list: i64, entry: i64, max_entries: i64) -> i64 {
+    let count: i64 = __mind_load_i64(list + 8);
+    let cap: i64 = __mind_load_i64(list + 16);
+    if count >= max_entries {
+        return 0 - 75;
+    }
+    if count == cap {
+        let mut next: i64 = 4;
+        if cap > 0 {
+            next = cap * 2;
+        }
+        if next > max_entries {
+            next = max_entries;
+        }
+        let replacement: i64 = __mind_alloc(next * 8);
+        if replacement == 0 {
+            return 0 - 12;
+        }
+        let previous: i64 = __mind_load_i64(list);
+        let _ = fsc_copy(replacement, previous, count * 8);
+        if previous != 0 {
+            __mind_free(previous)
+        }
+        __mind_store_i64(list, replacement);
+        __mind_store_i64(list + 16, next)
+    }
+    let entries: i64 = __mind_load_i64(list);
+    __mind_store_i64(entries + count * 8, entry);
+    __mind_store_i64(list + 8, count + 1);
+    0
+}
+
+// Validate and copy one returned block. used_names addresses a private word.
+// No field is loaded until enough bytes for its entire dirent header exist.
+fn fsc_block(list: i64, block: i64, nbytes: i64, max_entries: i64, max_name_bytes: i64, used_names: i64) -> i64 {
+    if nbytes <= 0 {
+        return 0 - 5;
+    }
+    if nbytes > 4096 {
+        return 0 - 5;
+    }
+    let mut cursor: i64 = 0;
+    let mut status: i64 = 0;
+    while cursor < nbytes && status == 0 {
+        let remaining: i64 = nbytes - cursor;
+        if remaining < 20 {
+            status = 0 - 5;
+        } else {
+            let record: i64 = block + cursor;
+            let record_len: i64 = (__mind_load_i8(record + 16) & 255) + 256 * (__mind_load_i8(record + 17) & 255);
+            if record_len < 20 || record_len > remaining {
+                status = 0 - 5;
+            } else {
+                if record_len % 8 != 0 {
+                    status = 0 - 5;
+                } else {
+                    let name: i64 = record + 19;
+                    let bound: i64 = record_len - 19;
+                    let mut size: i64 = 0;
+                    let mut found: i64 = 0;
+                    while size < bound && found == 0 {
+                        let b: i64 = __mind_load_i8(name + size) & 255;
+                        if b == 0 {
+                            found = 1;
+                        } else {
+                            if b == 47 {
+                                status = 0 - 5;
+                            }
+                            size = size + 1;
+                        }
+                    }
+                    if found == 0 || size == 0 {
+                        status = 0 - 5;
+                    }
+                    let mut skip: i64 = 0;
+                    if size == 1 {
+                        if (__mind_load_i8(name) & 255) == 46 {
+                            skip = 1;
+                        }
+                    }
+                    if size == 2 {
+                        if (__mind_load_i8(name) & 255) == 46 {
+                            if (__mind_load_i8(name + 1) & 255) == 46 {
+                                skip = 1;
+                            }
+                        }
+                    }
+                    if status == 0 && skip == 0 {
+                        let used: i64 = __mind_load_i64(used_names);
+                        if size + 1 > max_name_bytes - used {
+                            status = 0 - 75;
+                        } else {
+                            if __mind_load_i64(list + 8) >= max_entries {
+                                status = 0 - 75;
+                            } else {
+                                let copy: i64 = __mind_alloc(size + 1);
+                                if copy == 0 {
+                                    status = 0 - 12;
+                                } else {
+                                    let _ = fsc_copy(copy, name, size + 1);
+                                    let entry: i64 = __mind_alloc(24);
+                                    if entry == 0 {
+                                        __mind_free(copy);
+                                        status = 0 - 12;
+                                    } else {
+                                        let kind: i64 = __mind_load_i8(record + 18) & 255;
+                                        let mut flags: i64 = 0;
+                                        if kind == 4 {
+                                            flags = 1;
+                                        }
+                                        if kind == 8 {
+                                            flags = 2;
+                                        }
+                                        __mind_store_i64(entry, copy);
+                                        __mind_store_i64(entry + 8, size);
+                                        __mind_store_i64(entry + 16, flags);
+                                        status = fsc_push(list, entry, max_entries);
+                                        if status == 0 {
+                                            __mind_store_i64(used_names, used + size + 1)
+                                        } else {
+                                            __mind_free(copy);
+                                            __mind_free(entry)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    cursor = cursor + record_len;
+                }
+            }
+        }
+    }
+    status
+}
+
+// On success only: writes one owned Vec<DirEntry> handle to out_slot.
+// Every failure leaves out_slot unchanged and frees all temporary allocations.
+// The pointer/length storage must be valid; this is not an arbitrary-pointer validator.
+pub fn fs_read_dir_checked(path_addr: i64, path_len: i64, max_entries: i64, max_name_bytes: i64, out_slot: i64) -> i64 {
+    if path_addr <= 0 || path_len <= 0 || out_slot <= 0 {
+        return 0 - 22;
+    }
+    if path_len > 4095 {
+        return 0 - 36;
+    }
+    if path_addr > 9223372036854775807 - path_len {
+        return 0 - 22;
+    }
+    if out_slot > 9223372036854775807 - 8 || out_slot % 8 != 0 {
+        return 0 - 22;
+    }
+    if out_slot < path_addr + path_len && path_addr < out_slot + 8 {
+        return 0 - 22;
+    }
+    if max_entries < 0 || max_name_bytes < 0 {
+        return 0 - 22;
+    }
+    // Bound all entry/name allocations and simultaneous old/new vector backing.
+    if max_entries > (9223372036854775807 - 8224) / 40 {
+        return 0 - 75;
+    }
+    if max_name_bytes > 9223372036854775807 - 8224 - max_entries * 40 {
+        return 0 - 75;
+    }
+    let mut i: i64 = 0;
+    let mut invalid: i64 = 0;
+    while i < path_len {
+        if (__mind_load_i8(path_addr + i) & 255) == 0 {
+            invalid = 1;
+        }
+        i = i + 1;
+    }
+    if invalid != 0 {
+        return 0 - 22;
+    }
+    let path: i64 = __mind_alloc(path_len + 1);
+    if path == 0 {
+        return 0 - 12;
+    }
+    let _ = fsc_copy(path, path_addr, path_len);
+    __mind_store_i8(path + path_len, 0);
+    // Private used-name word follows the 4096-byte syscall buffer.
+    let block: i64 = __mind_alloc(4104);
+    if block == 0 {
+        __mind_free(path);
+        return 0 - 12;
+    }
+    __mind_store_i64(block + 4096, 0);
+    let list: i64 = __mind_alloc(24);
+    if list == 0 {
+        __mind_free(block);
+        __mind_free(path);
+        return 0 - 12;
+    }
+    __mind_store_i64(list, 0);
+    __mind_store_i64(list + 8, 0);
+    __mind_store_i64(list + 16, 0);
+    let fd: i64 = fsc_open(path);
+    __mind_free(path);
+    let mut status: i64 = 0;
+    if fd < 0 {
+        status = fd;
+    } else {
+        let mut eof: i64 = 0;
+        while eof == 0 && status == 0 {
+            let nread: i64 = fsc_read(fd, block);
+            if nread < 0 {
+                status = nread;
+            } else {
+                if nread == 0 {
+                    eof = 1;
+                } else {
+                    status = fsc_block(list, block, nread, max_entries, max_name_bytes, block + 4096);
+                }
+            }
+        }
+        let close_status: i64 = fsc_close(fd);
+        if status == 0 {
+            if close_status != 0 {
+                if close_status < 0 {
+                    status = close_status;
+                } else {
+                    status = 0 - 5;
+                }
+            }
+        }
+    }
+    __mind_free(block);
+    if status == 0 {
+        __mind_store_i64(out_slot, list)
+    } else {
+        let _ = fs_dir_list_free(list);
+    }
+    status
+}
