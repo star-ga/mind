@@ -14,7 +14,8 @@ fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
     collect_fn_names(instrs, &mut defined);
     let module = IRModule::new();
     let mut aggs = std::collections::BTreeSet::new();
-    admit_instrs_in(instrs, &defined, &module, &mut aggs)
+    // false: this helper mirrors profile_frozen_admits, which keeps every refusal.
+    admit_instrs_in(instrs, &defined, &module, &mut aggs, false)
 }
 
 fn fndef(body: Vec<Instr>) -> Instr {

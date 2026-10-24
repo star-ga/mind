@@ -663,7 +663,8 @@ fn admit_merged_program(
     let ir = if lane_v1 {
         // Specific guards own their pinned kinds. The lane fence still runs
         // on a program those guards accept, and it still refuses first for
-        // every other construct.
+        // every other construct. `lane_guards_before_fence` names a whole-array
+        // binop `binop.array_operand` before the source fence below.
         match admission::lane_guards_before_fence(path, &ast, text, merged, std_sources, reserved)?
         {
             admission::LaneLowering::Ready(ir) => {

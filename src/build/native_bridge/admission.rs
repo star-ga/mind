@@ -337,6 +337,12 @@ pub(super) enum LaneLowering {
 /// such a copy that the user image does not define is `closure.unresolved_edge`,
 /// not `lane.call.unknown`. An image with no identical copy is unchanged: a
 /// closed private collision still omits the seed (`omit_private_seed`).
+///
+/// Whole-array binops: the lane source fence names an array literal
+/// `lane.source.unsupported` before it looks at the operator. The frozen
+/// fence's `admit_binop_use` runs on the IR this function already lowered and
+/// names that operand `binop.array_operand`. Element reads stay for the source
+/// fence. Scalar operators the lane admits are not refused here.
 pub(super) fn lane_guards_before_fence(
     path: &str,
     ast: &Module,
@@ -383,6 +389,16 @@ pub(super) fn lane_guards_before_fence(
                 return Err(format!("{} ({})", refusal.detail, refusal.kind));
             }
         }
+    }
+    // Before the lane source fence. An array literal used as a binop operand
+    // is `binop.array_operand` here; the source fence would otherwise name the
+    // literal and hide the operand.
+    if let Err(rejection) = crate::ir::frozen_profile::admit_binop_array_operands(&ir) {
+        return Err(format!(
+            "`{path}` is not in the frozen native profile \
+             (out-of-profile construct: {}). No artifact written.",
+            rejection.construct
+        ));
     }
     Ok(LaneLowering::Ready(ir))
 }
