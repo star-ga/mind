@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1903 | **Est. tokens:** ~3,700,224
-**Generated:** 2026-10-22 02:11 UTC
+**Files:** 1903 | **Est. tokens:** ~3,700,261
+**Generated:** 2026-10-24 23:34 UTC
 
 ## Token Budget Guide
 
@@ -43,7 +43,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~110,572 |
+| `docs/` | 38 | ~110,609 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -431,7 +431,7 @@
 - `token_pricing.toml` (~972 tok, large) — [pricing]
 ### `docs/`
 
-- `architecture.md` (~965 tok, large) — Architecture
+- `architecture.md` (~972 tok, large) — Architecture
 - `ARRAY_SEMANTICS.md` (~8111 tok, huge) — MIND array semantics — normative architecture record
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
@@ -472,7 +472,7 @@
 ### `docs/`
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
+- `independence-audit-plan-20260925.md` (~4789 tok, huge) — Independence audit and plan — 2026-09-25
 - `INDEPENDENCE_ROADMAP.md` (~18828 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1134 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core

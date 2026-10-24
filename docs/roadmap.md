@@ -634,6 +634,95 @@ deliberately, recorded here so nobody re-proposes them.
 
 ---
 
+## Phase 11.7 — Numeric honesty: inexact constants, drift, float equality (proposed, 2026-10-24, audit pending)
+
+### Motivation — deterministic is not the same as exact
+
+Determinism makes a rounding error identical on every substrate. It does not remove the error. `0.1` has no exact binary
+form: f64 stores `0.1000000000000000055…`, and Q16.16 stores `6554/65536 = 0.100006103515625`, which is +6.1e-6 too large.
+Here is the error after accumulating a 0.1 s tick for 100 hours (3.6 M ticks), computed exactly:
+
+| Representation | Error after 100 h |
+|---|---|
+| f64, `t += 0.1` | −1.2e-5 s |
+| f32, `t += 0.1` | −12,975 s (3.6 h lost: each add rounds to an f32 grid that gets coarser as `t` grows) |
+| Q16.16, `t += 0.1` | +22 s with a wide accumulator. In Q16.16 itself the sum leaves the type's range at 32,768 s (9.1 h). |
+| 1991 Patriot (integer tick count × 1/10 chopped to 24 bits) | 0.34 s, enough to miss the incoming missile at Dhahran |
+
+The Patriot failure was **fixed-point**, not IEEE-754, and that is MIND's default deterministic tier. Rounding 0.1 to
+Q16.16 gives a constant error 64× larger than the Patriot's chopped 1/10. The second half of the Patriot root cause was
+**inconsistent conversion**. A software update gave some code paths a more precise time conversion and left others on the
+old one, so when two timestamps were subtracted their errors no longer cancelled.
+
+mindc checks none of this today:
+- `lint::q16_overflow` covers only `i32 × i32` products. Nothing flags accumulating an inexact constant, or a Q16.16 value
+  that grows without bound.
+- Q16.16 constants are converted by hand, each with its own rounding convention. One example is a `6553` documented as
+  "0.1"; that is truncation, and round-to-nearest gives 6554.
+- The dense-literal path converts decimal → f64 → ×65536 → round, which rounds twice. A literal just below a half-LSB tie
+  (`0.000007629394531249999999999`) should become 0 and becomes 1.
+- `==` on f32/f64 compiles without a warning.
+
+Determinism already makes these bugs reproducible: the same bits on every machine, so a replay or a test finds them every
+time. This phase makes them visible **at compile time**.
+
+### Deliverables
+
+**D1 — `lint::inexact_accumulation` (warn).** Flags a loop-carried `x = x + c` / `x += c` where `c` is an inexact constant
+(Q16.16, f32, f64), and any Q16.16 accumulator in a loop with no proven trip bound. The message gives the stored value, the
+error per iteration, and the overflow horizon for Q16.16. The fix-it suggests an integer tick count with one scale applied
+once (`t = n * c`), or integer nanoseconds as `std/time` already uses. Conservative like `q16_overflow`: a miss is
+acceptable, a false positive is not.
+
+**D2 — `lint::float_eq` (warn).** Flags `==` / `!=` with an f32/f64 operand. A comparison against an exactly representable
+constant (`0.0`, `1.0`, `0.5`, …) is exempt. The fix-it points to D4.
+
+**D3 — One canonical decimal → Q16.16 conversion.** Add a Q16 literal form (or a `const fn`) that converts straight from
+the decimal digits with integer arithmetic and states one tie rule. Keep the current half-away-from-zero rule, so the only
+bytes that change are literals hit by the double rounding. This replaces the f64 path in `dense_elem_bits` and ends
+hand-converted constants: one conversion, used everywhere, which is the Patriot fix.
+
+**D4 — `std/detmath` comparison helpers.** `approx_eq(a, b, abs_tol, rel_tol)` for f64, plus a Q16.16 counterpart
+measured in LSBs. Both deterministic, with the semantics documented.
+
+**D5 — Exact decimal for money (extends Phase 11.6).** Add `std/decimal.mind`: a fixed-scale decimal (an integer mantissa
+× 10^-k, on i64 or on the 11.6 bigint) with an explicit rounding mode, half-even by default. `"0.10"` parses exactly and
+never passes through f64. This is separate from the 11.6 rational type: money needs a fixed scale and rounding rules, not
+`p/q`.
+
+**D6 — Exhibit and acceptance test: `examples/clock_drift.mind`.** Simulate 100 h of 0.1 s ticks three ways: Q16.16
+accumulation, an integer tick count × scale, and exact decimal. D1 fires on the first and stays silent on the other two.
+All three outputs are byte-identical across x86, ARM and GPU. The drift is deterministic too: the same wrong answer
+everywhere, now flagged before it ships.
+
+**D7 — Research, gated on 11.6 D1: static error bound.** For Q16.16 and strict-f64 expressions, compute a worst-case
+rounding-error bound at compile time and record it as an opt-in evidence sidecar. It must not change default artifact
+bytes and must not bump `mic@N`. Acceptance: on N kernels, the bound contains the error observed against the 11.6 exact
+oracle for every tested input, and it is never vacuous (no more than 10× the largest observed error). This moves the claim
+from "the same answer everywhere" to "the same answer everywhere, and at most ε from the exact one".
+
+### Explicitly NOT in scope
+
+- The compiler never changes arithmetic on its own: no automatic decimal, no compensated summation inserted behind the
+  author's back, no reordering. The answer stays what the procedure computes. These items diagnose; they do not rewrite.
+- `==` keeps its exact meaning. Tolerance comparison is a helper you call, not a default.
+
+### Gates
+
+- D1, D2: diagnostics only. Keystone 7/7 and the cross-substrate canaries stay byte-identical with the lints on and off.
+- Each lint ships a fixture that fires, a fixture that stays silent, and a mutation check: disable the rule and the firing
+  fixture's test goes red.
+- D3: the tie literal above converts to 0. Scan every `.mind` file in the ecosystem (MIND-Law, MIND-Nerve, mind-inference,
+  std, examples) for literals whose bytes change. Re-bless a canary only with a recorded justification.
+- Run D1 and D2 over MIND-Law, MIND-Nerve and mind-inference and record the hits as a triage list. Do not auto-fix them.
+
+### Sequencing
+
+D1, D2 and D6 come first: small, diagnostics only, no byte changes. D4 is small. D3 touches lowering, so it comes after #284
+lands. D5 is built as part of 11.6. D7 starts after 11.6 D1.
+
+---
+
 ## Phase 12 — Enterprise Runtime & Edge Deployments
 
 ### Goals  
