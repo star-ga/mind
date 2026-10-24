@@ -1,0 +1,11 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -182,7 +182,7 @@
+     __mind_store_i64(plan + 8, total);
+     __mind_store_i64(plan + 16, fixed);
+     __mind_store_i64(plan + 48, ((stack + 15) / 16) * 16);
+-    __mind_store_i64(plan + 56, __mind_load_i64(plan + 32));
++    __mind_store_i64(plan + 56, __mind_load_i64(plan + 32) + stack / 8);
+     __mind_store_i64(plan + 64, result);
+     __mind_store_i64(plan + 72, ncp_result_class(result));
+     __mind_store_i64(plan + 80, ncp_width(result));

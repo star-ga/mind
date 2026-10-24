@@ -1,0 +1,208 @@
+// Copyright 2026 STARGA Inc.
+// Standalone Linux x86-64 LP64 libc startup and returning main adapter.
+// Requires std.string, nb_le/nb_i64le and native_dynamic_layout.mind.
+// Input buffers must be live, immutable and disjoint from metadata64 bytes.
+pub fn nsa_code_size() -> i64 {
+    365
+}
+pub fn nsa_adapter_offset() -> i64 {
+    135
+}
+pub fn nsa_libc_fixup() -> i64 {
+    115
+}
+pub fn nsa_init_fixup() -> i64 {
+    221
+}
+pub fn nsa_main_fixup() -> i64 {
+    302
+}
+
+pub fn nsa_zero(metadata: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(metadata + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+pub fn nsa_range(offset: i64, length: i64, total: i64) -> i64 {
+    if offset < 0 {
+        return 0;
+    }
+    if length < 1 {
+        return 0;
+    }
+    if length > total {
+        return 0;
+    }
+    if offset > total - length {
+        return 0;
+    }
+    1
+}
+// Called only after each complete range has passed nsa_range.
+pub fn nsa_disjoint(a: i64, an: i64, b: i64, bn: i64) -> i64 {
+    if a + an <= b {
+        return 1;
+    }
+    if b + bn <= a {
+        return 1;
+    }
+    0
+}
+pub fn nsa_symbols_ok(symbols: i64, total: i64) -> i64 {
+    if __mind_load_i64(symbols) != 1 {
+        return 0;
+    }
+    let start: i64 = __mind_load_i64(symbols + 8);
+    let runtime: i64 = __mind_load_i64(symbols + 16);
+    let runtime_size: i64 = __mind_load_i64(symbols + 24);
+    let init: i64 = __mind_load_i64(symbols + 32);
+    let main: i64 = __mind_load_i64(symbols + 40);
+    let main_size: i64 = __mind_load_i64(symbols + 48);
+    if nsa_range(start, nsa_code_size(), total) == 0 {
+        return 0;
+    }
+    if nsa_range(runtime, runtime_size, total) == 0 {
+        return 0;
+    }
+    if nsa_range(main, main_size, total) == 0 {
+        return 0;
+    }
+    if init < 0 {
+        return 0;
+    }
+    if init >= runtime_size {
+        return 0;
+    }
+    if nsa_disjoint(start, nsa_code_size(), runtime, runtime_size) == 0 {
+        return 0;
+    }
+    if nsa_disjoint(start, nsa_code_size(), main, main_size) == 0 {
+        return 0;
+    }
+    if nsa_disjoint(runtime, runtime_size, main, main_size) == 0 {
+        return 0;
+    }
+    let argc: i64 = __mind_load_i64(symbols + 56);
+    if argc < 0 {
+        return 0;
+    }
+    if argc > 2 {
+        return 0;
+    }
+    if __mind_load_i64(symbols + 64) != 7 {
+        return 0;
+    }
+    let import_id: i64 = __mind_load_i64(symbols + 72);
+    if import_id < 0 {
+        return 0;
+    }
+    if import_id > 255 {
+        return 0;
+    }
+    1
+}
+pub fn nsa_emit(request: i64, symbols: i64, metadata: i64) -> String {
+    let _clear: i64 = nsa_zero(metadata);
+    let layout: i64 = __mind_alloc(256);
+    if layout == 0 {
+        return string_new();
+    }
+    if ndl_plan(request, layout) != 0 {
+        __mind_free(layout);
+        return string_new();
+    }
+    if nsa_symbols_ok(symbols, __mind_load_i64(request + 8)) == 0 {
+        __mind_free(layout);
+        return string_new();
+    }
+    let start: i64 = __mind_load_i64(symbols + 8);
+    let init_target: i64 = __mind_load_i64(symbols + 16) + __mind_load_i64(symbols + 32);
+    let main_target: i64 = __mind_load_i64(symbols + 40);
+    let init_delta: i64 = init_target - (start + nsa_init_fixup() + 4);
+    let main_delta: i64 = main_target - (start + nsa_main_fixup() + 4);
+    // The checked low code window is smaller than signed rel32 reach.
+    let context: i64 = __mind_load_i64(layout + 88);
+    let arena: i64 = __mind_load_i64(layout + 120);
+    let stack_top: i64 = __mind_load_i64(layout + 168);
+    __mind_free(layout);
+    let code: String = nsa_blob_p1(string_new(), context, arena, stack_top, init_delta, main_delta);
+    if string_len(code) != nsa_code_size() {
+        __mind_free(string_addr(code));
+        return string_new();
+    }
+    __mind_store_i64(metadata + 8, 0);
+    __mind_store_i64(metadata + 16, nsa_adapter_offset());
+    __mind_store_i64(metadata + 24, nsa_code_size());
+    __mind_store_i64(metadata + 32, nsa_libc_fixup());
+    __mind_store_i64(metadata + 40, __mind_load_i64(symbols + 72));
+    __mind_store_i64(metadata + 48, 1);
+    __mind_store_i64(metadata, 1);
+    code
+}
+
+// BEGIN GENERATED RUNTIME
+pub fn nsa_blob_p1(code: String, context: i64, arena: i64, stack_top: i64, init_delta: i64, main_delta: i64) -> String {
+    let b1: String = nb_le(code, 3142184241, 4);
+    let b2: String = nb_le(b1, context, 8);
+    let b3: String = nb_le(b2, 20661425512612681, 7);
+    let b4: String = nb_le(b3, 20653728927873923, 7);
+    let b5: String = nb_le(b4, 6847248542491529, 7);
+    let b6: String = nb_le(b5, 71636790929558344, 7);
+    let b7: String = nb_le(b6, 20349174943842303, 7);
+    let b8: String = nb_le(b7, 32520569083942029, 7);
+    let b9: String = nb_le(b8, 39767309753600288, 7);
+    let b10: String = nb_le(b9, 13585055797015108, 7);
+    let b11: String = nb_le(b10, 23152778520934472, 7);
+    let b12: String = nb_le(b11, 20551561470030164, 7);
+    let b13: String = nb_le(b12, 17318855, 7);
+    let b14: String = nb_le(b13, 17325314364115789, 7);
+    let b15: String = nb_le(b14, 19642985683615779, 7);
+    let b16: String = nb_le(b15, 14057138104614961, 7);
+    let b17: String = nb_le(b16, 94478028992, 7);
+    let b18: String = nb_le(b17, 77786338230272, 7);
+    let b19: String = nb_le(b18, 3887595520, 7);
+    let b20: String = nb_le(b19, 38641601904313615, 7);
+    let b21: String = nb_le(b20, 18389612560995301, 7);
+    let b22: String = nb_le(b21, 2511848412234070, 7);
+    let b23: String = nb_le(b22, 48201, 2);
+    let b24: String = nb_le(b23, context, 8);
+    let b25: String = nb_le(b24, 23152778520934472, 7);
+    let b26: String = nb_le(b25, 10137743245979988, 7);
+    let b27: String = nb_le(b26, 20547673310004495, 7);
+    let b28: String = nb_le(b27, 37452669008510083, 7);
+    let b29: String = nb_le(b28, 56122681254215822, 7);
+    let b30: String = nb_le(b29, 37452802624338249, 7);
+    let b31: String = nb_le(b30, 32714082993832064, 7);
+    let b32: String = nb_le(b31, 23794846707034148, 7);
+    let b33: String = nb_le(b32, 15220772, 3);
+    let b34: String = nb_le(b33, init_delta, 4);
+    let b35: String = nb_le(b34, 51871017794045256, 7);
+    nsa_blob_p2(b35, context, arena, stack_top, init_delta, main_delta)
+}
+pub fn nsa_blob_p2(code: String, context: i64, arena: i64, stack_top: i64, init_delta: i64, main_delta: i64) -> String {
+    let b1: String = nb_le(code, arena, 8);
+    let b2: String = nb_le(b1, 38641374694509385, 7);
+    let b3: String = nb_le(b2, 11298910241359944, 7);
+    let b4: String = nb_le(b3, 21545244152072520, 7);
+    let b5: String = nb_le(b4, 20574373119803428, 7);
+    let b6: String = nb_le(b5, 19359415704773769, 7);
+    let b7: String = nb_le(b6, 20266198323300388, 7);
+    let b8: String = nb_le(b7, 188, 1);
+    let b9: String = nb_le(b8, stack_top, 8);
+    let b10: String = nb_le(b9, 39205424162704201, 7);
+    let b11: String = nb_le(b10, 3894944884, 4);
+    let b12: String = nb_le(b11, main_delta, 4);
+    let b13: String = nb_le(b12, 47432, 2);
+    let b14: String = nb_le(b13, context, 8);
+    let b15: String = nb_le(b14, 27456215307094344, 7);
+    let b16: String = nb_le(b15, 3333998200888, 7);
+    let b17: String = nb_le(b16, 20564079010185216, 7);
+    let b18: String = nb_le(b17, 17316463815, 7);
+    let b19: String = nb_le(b18, 20266198327801856, 7);
+    let b20: String = nb_le(b19, 26530525179593859, 7);
+    let b21: String = nb_le(b20, 54990267429772609, 7);
+    b21
+}

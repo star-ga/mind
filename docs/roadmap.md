@@ -16,7 +16,8 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   fail **loud** on the emit path — never a silent miscompile. Keystone 7/7 +
   cross-substrate 8/8 stay byte-identical throughout.
 - ✅ **Integer-determinism cluster** (v0.10.0) – `INT_MIN / -1`, division by
-  zero (`x / 0 = 0`), oversized shifts, and condition truthiness (`if c` tests
+  zero (v0.10.0 defined `x / 0 = 0`; superseded by the deterministic division
+  trap, exit status 79, see docs/errors.md), oversized shifts, and condition truthiness (`if c` tests
   non-zero, not the low bit) all lower deterministically; the narrow-int call
   ABI (i32/u32 across call boundaries) and struct narrow-field ABI are sound.
 - ✅ **Tensor operations tier 1: in-function + return** (v0.10.0) – dense tensor

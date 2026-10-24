@@ -22,9 +22,10 @@
 use libmind::ir::IRModule;
 use libmind::ir::frozen_profile::profile_frozen_admits;
 use libmind::ir::native_closure::{
-    admit_native_closure, defined_fn_names, executable_roots, reachable_from, restrict_to_reachable,
+    admit_native_closure, admit_native_lane_closure, defined_fn_names, executable_roots,
+    reachable_from, restrict_to_reachable,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Lower one merged source text to one IRModule, exactly as the bridge must:
 /// a single parse of the concatenated program, never spliced IR.
@@ -37,6 +38,68 @@ fn lower(src: &str) -> IRModule {
 
 fn roots(names: &[&str]) -> Vec<String> {
     names.iter().map(|s| (*s).to_string()).collect()
+}
+
+fn lane(source: &str) -> Result<(), libmind::ir::native_closure::ClosureRejection> {
+    let ast = libmind::parser::parse(source).unwrap();
+    let ir = lower(source);
+    let bindings = BTreeMap::from([("__mind_alloc".into(), 1)]);
+    admit_native_lane_closure(&ast, &ir, "main", &BTreeSet::new(), &bindings)
+}
+
+#[test]
+fn candidate_intrinsic_is_a_terminal_edge_and_historical_closure_stays_strict() {
+    let src = "fn main() -> i64 { return __mind_alloc(8); }";
+    assert!(lane(src).is_ok());
+    assert_eq!(
+        reachable_from(&lower(src), &roots(&["main"]))
+            .unwrap_err()
+            .kind,
+        "closure.unresolved_edge"
+    );
+}
+
+#[test]
+fn candidate_rejects_forged_intrinsic_and_wrong_arity_including_dead_bodies() {
+    for (call, kind) in [
+        ("__mind_forged(8)", "closure.unresolved_edge"),
+        ("__mind_alloc()", "closure.intrinsic_arity"),
+        ("__mind_alloc(8, 9)", "closure.intrinsic_arity"),
+    ] {
+        let src =
+            format!("fn main() -> i64 {{ return 7; }}\nfn dead() -> i64 {{ return {call}; }}");
+        assert_eq!(lane(&src).unwrap_err().kind, kind, "{src}");
+    }
+}
+
+#[test]
+fn candidate_rejects_unknown_dead_callee_and_retains_duplicate_guard() {
+    let src = "fn main() -> i64 { return 7; }\nfn dead() -> i64 { return absent(); }";
+    assert_eq!(lane(src).unwrap_err().kind, "closure.unresolved_edge");
+    let src = "fn helper() -> i64 { return 1; }\nfn helper() -> i64 { return 2; }\nfn main() -> i64 { return helper(); }";
+    assert_eq!(lane(src).unwrap_err().kind, "closure.duplicate_definition");
+}
+
+#[test]
+fn candidate_intrinsic_definitions_cannot_forge_compiler_bindings() {
+    // Use an independently lowered main to exercise the AST boundary even if
+    // lowering has already refused/dropped an adversarial reserved declaration.
+    let ir = lower("fn main() -> i64 { return 7; }");
+    let bindings = BTreeMap::from([("__mind_alloc".into(), 1)]);
+    for declaration in [
+        "fn __mind_alloc(x: i64) -> i64 { return x; }",
+        "extern \"C\" { fn __mind_alloc(x: f64) -> f64; }",
+    ] {
+        let ast =
+            libmind::parser::parse(&format!("{declaration}\nfn main() -> i64 {{ return 7; }}"))
+                .unwrap();
+        assert_eq!(
+            admit_native_lane_closure(&ast, &ir, "main", &BTreeSet::new(), &bindings)
+                .unwrap_err()
+                .kind,
+            "closure.reserved_intrinsic_definition"
+        );
+    }
 }
 
 /// Whole-module admission REFUSES an uncalled out-of-profile body.

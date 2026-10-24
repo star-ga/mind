@@ -1,0 +1,16 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn scfc_argument(p:i64)->i32 {
+ let before:i64=__mind_load_i64(p);
+ __mind_store_i64(p,before+1);
+ (0-1) as i32
+}
+fn main()->i64 {
+ let p:i64=__mind_alloc(8);
+ if p==0 { return 89; }
+ __mind_store_i64(p,0);
+ let result:i64=close(scfc_argument(p)) as i64;
+ let count:i64=__mind_load_i64(p);
+ __mind_free(p);
+ if result!=0-1 { return 91; }
+ if count!=1 { return 92; } 0
+}

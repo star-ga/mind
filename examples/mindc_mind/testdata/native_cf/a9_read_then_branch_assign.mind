@@ -1,0 +1,22 @@
+// A HOME-lowered read of a variable is a copy: a value-if branch that assigns
+// the same variable later in the SAME expression must not change the value
+// already read (left-to-right evaluation). `mix` takes the HOME path (it
+// returns from inside a loop, which the mic@3 twin does not hash).
+// expect: exit=212
+// stdout:
+// note: 2
+fn mix(n: i64) -> i64 {
+    let mut x: i64 = n;
+    let y: i64 = x + (if x > 0 { x = 100; 1 } else { 2 });
+    let mut i: i64 = 0;
+    while i < 10 {
+        i = i + 1;
+        if i == 3 {
+            return y * 2 + x + (x - (if x == 100 { x = 1; 0 } else { 9 }) * x);
+        }
+    }
+    0
+}
+fn main() -> i64 {
+    mix(5)
+}

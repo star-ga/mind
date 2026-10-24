@@ -1,0 +1,13 @@
+extern "C" { unsafe fn __errno_location()->*mut i32; }
+fn main()->i64 {
+ let ep:i64=__errno_location() as i64;
+ if ep==0 { return 90; }
+ let p:i64=__mind_alloc(8);
+ if p==0 { return 89; }
+ __mind_store_i32(ep,77);
+ let result:i64=__mind_read(9,p,1,0);
+ let observed:i64=__mind_load_i32(ep) as i64;
+ __mind_free(p);
+ if result!=0-1 { return 91; }
+ if observed!=29 { return 92; } 0
+}

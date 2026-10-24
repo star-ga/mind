@@ -1,0 +1,202 @@
+// Copyright 2026 STARGA Inc.
+// MIND assertions and deterministic test-wrapper assembly. Diagnostic only.
+pub fn ve_read(fd: i64, a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_read(fd, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        if got > n - done { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn ve_write(fd: i64, a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_write(fd, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        if got > n - done { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn ve_fill(a: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n { __mind_store_i8(a + i, v); i = i + 1; }
+    0
+}
+pub fn ve_op(code: String, a: i64, b: i64, c: i64) -> String {
+    nb_push(nb_push(nb_push(code, a), b), c)
+}
+pub fn ve_movabs(code: String, value: i64) -> String {
+    nb_le(nb_push(nb_push(code, 72), 184), value, 8)
+}
+// Dedicated wrapper initializes all 512 frame words, preserving its incoming
+// observation pointer in R11, then stores it in the reserved frame-bottom slot.
+pub fn ve_prefix(slots: i64, values: i64, count: i64, reserve: i64) -> String {
+    let mut code: String = nb_push(string_new(), 85);
+    code = ve_op(code, 72, 137, 229);
+    code = nce_stack(code, 4096, 0);
+    code = ve_op(code, 73, 137, 251);
+    code = nb_i32le_signed(ve_op(code, 72, 141, 189), 0 - 4096);
+    code = ve_movabs(code, 5859553999884210513);
+    code = nb_u32(nb_push(code, 185), 512);
+    code = nb_push(code, 252);
+    code = ve_op(code, 243, 72, 171);
+    code = nb_i32le_signed(ve_op(code, 76, 137, 157), 0 - 4096);
+    let mut i: i64 = 0;
+    while i < count {
+        code = ve_movabs(code, __mind_load_i64(values + i * 8));
+        code = nb_store_rax(code, __mind_load_i64(slots + i * 8));
+        i = i + 1;
+    }
+    if reserve > 0 {
+        code = nce_stack(code, reserve, 0);
+        code = ve_op(code, 72, 137, 231);
+        code = ve_movabs(code, 5859553999884210513);
+        code = nb_u32(nb_push(code, 185), reserve / 8);
+        code = ve_op(code, 243, 72, 171);
+        code = nce_stack(code, reserve, 1);
+    }
+    code
+}
+pub fn ve_suffix(code: String) -> String {
+    // Observe RSP before LEAVE: a wrong restore is a normal verdict, not a trap.
+    let mut out: String = nb_i32le_signed(ve_op(code, 76, 139, 149), 0 - 4096);
+    out = ve_op(out, 72, 137, 224);
+    out = ve_op(out, 72, 41, 232);
+    out = nb_push(ve_op(out, 73, 137, 66), 32);
+    // Copy the complete frame to observation[534..1046). The first word is the
+    // dynamic pointer, excluded by the independently frozen comparison mask.
+    out = nb_u32(ve_op(out, 73, 141, 186), 4272);
+    out = nb_i32le_signed(ve_op(out, 72, 141, 181), 0 - 4096);
+    out = nb_u32(nb_push(out, 185), 512);
+    out = ve_op(out, 243, 72, 165);
+    nb_push(nb_push(out, 201), 195)
+}
+pub fn ve_main() -> i64 {
+    let buf: i64 = __mind_alloc(32768);
+    let row: i64 = __mind_alloc(64);
+    let fixed_table: i64 = __mind_alloc(2048);
+    let actual_table: i64 = __mind_alloc(2048);
+    let metadata: i64 = __mind_alloc(40);
+    let receipt: i64 = __mind_alloc(96);
+    if buf == 0 { return 70; }
+    if row == 0 { return 70; }
+    if fixed_table == 0 { return 70; }
+    if actual_table == 0 { return 70; }
+    if metadata == 0 { return 70; }
+    if receipt == 0 { return 70; }
+    if ve_read(0, buf, 192) == 0 { return 71; }
+    if __mind_load_i64(buf) != 1 { return 72; }
+    let nf: i64 = __mind_load_i64(buf + 56);
+    let na: i64 = __mind_load_i64(buf + 64);
+    if nf < 0 { return 72; }
+    if nf > 256 { return 72; }
+    if na < 0 { return 72; }
+    if na > 256 { return 72; }
+    let bytes: i64 = 48 + nf * 48 + na * 64;
+    if ve_read(0, buf + 192, bytes) == 0 { return 71; }
+    if __mind_read(0, receipt, 1, 0 - 1) != 0 { return 72; }
+    let result: i64 = buf + 192;
+    let fixed: i64 = result + 48;
+    let actual: i64 = fixed + nf * 48;
+    let slots: i64 = actual + na * 48;
+    let values: i64 = slots + na * 8;
+    let _z: i64 = ve_fill(row, 64, 0);
+    let mut i: i64 = 0;
+    while i < nf { __mind_store_i64(fixed_table + i * 8, fixed + i * 48); i = i + 1; }
+    i = 0;
+    while i < na { __mind_store_i64(actual_table + i * 8, actual + i * 48); i = i + 1; }
+    __mind_store_i64(row + 16, __mind_load_i64(buf + 16));
+    __mind_store_i64(row + 24, __mind_load_i64(buf + 24));
+    __mind_store_i64(row + 32, __mind_load_i64(buf + 32));
+    __mind_store_i64(row + 40, __mind_load_i64(buf + 40));
+    __mind_store_i64(row + 48, fixed_table);
+    __mind_store_i64(row + 56, result);
+    let total: i64 = __mind_load_i64(buf + 48);
+    // Only this count profile can reach product type-table indexing. Refuse
+    // incomplete wire extents before either product call; out-of-range counts
+    // still reach the product's established count diagnostic without indexing.
+    let declared_fixed: i64 = __mind_load_i64(row + 40);
+    if declared_fixed >= 1 {
+        if total >= declared_fixed {
+            if total <= 256 {
+                if declared_fixed > nf { return 72; }
+                if total > na { return 72; }
+            }
+        }
+    }
+    let frame: i64 = __mind_load_i64(buf + 72);
+    let dst: i64 = __mind_load_i64(buf + 80);
+    let import_id: i64 = __mind_load_i64(buf + 88);
+    let mut slot_arg: i64 = slots;
+    if __mind_load_i64(buf + 96) == 1 { slot_arg = 0; }
+    let expected_error: i64 = __mind_load_i64(buf + 104);
+    let reserve: i64 = __mind_load_i64(buf + 112);
+    let al_count: i64 = __mind_load_i64(buf + 120);
+    let fault: i64 = __mind_load_i64(buf + 128);
+    let _poison: i64 = ve_fill(metadata, 40, 87);
+    let error: i64 = ncve_validate(row, actual_table, total, slot_arg, frame, dst, import_id);
+    let call: String = ncve_emit(row, actual_table, total, slot_arg, frame, dst, import_id, metadata);
+    let _clear: i64 = ve_fill(receipt, 96, 0);
+    __mind_store_i64(receipt, 2);
+    __mind_store_i64(receipt + 8, __mind_load_i64(buf + 8));
+    __mind_store_i64(receipt + 16, error);
+    if error != expected_error { return 1; }
+    if error != 0 || fault == 1 {
+        if string_len(call) != 0 { return 1; }
+        i = 0;
+        while i < 5 { if __mind_load_i64(metadata + i * 8) != 0 { return 1; } i = i + 1; }
+        if ve_write(3, receipt, 96) == 0 { return 73; }
+        return 0;
+    }
+    // Success fixtures deliberately use a single bounded wrapper profile.
+    if frame != 4096 { return 72; }
+    if total != na { return 72; }
+    if na < 1 { return 72; }
+    if reserve < 0 { return 72; }
+    if reserve > 2048 { return 72; }
+    if reserve % 16 != 0 { return 72; }
+    if __mind_load_i64(metadata) != 2 { return 1; }
+    if __mind_load_i64(metadata + 16) != import_id { return 1; }
+    if __mind_load_i64(metadata + 24) != reserve { return 1; }
+    if __mind_load_i64(metadata + 32) != al_count { return 1; }
+    let fixup: i64 = __mind_load_i64(metadata + 8);
+    if fixup < 2 { return 1; }
+    if fixup > string_len(call) - 4 { return 1; }
+    if (__mind_load_i8(string_addr(call) + fixup - 2) & 255) != 255 { return 1; }
+    if __mind_load_i8(string_addr(call) + fixup - 1) != 21 { return 1; }
+    i = 0;
+    while i < 4 { if __mind_load_i8(string_addr(call) + fixup + i) != 0 { return 1; } i = i + 1; }
+    let mut code: String = ve_prefix(slots, values, na, reserve);
+    let start: i64 = string_len(code);
+    i = 0;
+    while i < string_len(call) { code = nb_push(code, __mind_load_i8(string_addr(call) + i) & 255); i = i + 1; }
+    code = ve_suffix(code);
+    let got: i64 = string_len(code);
+    code = nb_le(code, 0, 8);
+    if string_len(code) > 65536 { return 74; }
+    __mind_store_i64(receipt + 24, string_len(code));
+    __mind_store_i64(receipt + 32, start);
+    __mind_store_i64(receipt + 40, start + fixup);
+    __mind_store_i64(receipt + 48, got);
+    __mind_store_i64(receipt + 56, frame);
+    __mind_store_i64(receipt + 64, import_id);
+    __mind_store_i64(receipt + 72, reserve);
+    __mind_store_i64(receipt + 80, al_count);
+    __mind_store_i64(receipt + 88, __mind_load_i64(buf + 144));
+    if ve_write(3, receipt, 96) == 0 { return 73; }
+    if ve_write(3, string_addr(code), string_len(code)) == 0 { return 73; }
+    0
+}
+pub fn main() -> i64 {
+    let status: i64 = ve_main();
+    if status > 1 { return status; }
+    let a: i64 = __mind_alloc(8);
+    if a == 0 { return 70; }
+    __mind_store_i8(a, 49 - status);
+    __mind_store_i8(a + 1, 10);
+    if ve_write(1, a, 2) == 0 { return 73; }
+    status
+}

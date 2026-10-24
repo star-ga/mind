@@ -1,0 +1,11 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -42,7 +42,7 @@
+         if dt == 11 { return 6; }
+         let st: i64 = ncv_type(source);
+         if st <= 0 { return 9; }
+-        if ncv_type_equal(declared, source) == 0 { return 10; }
++        if 0 == 1 { return 10; }
+         return 0;
+     }
+     if ncv_type(source) <= 0 { return 9; }

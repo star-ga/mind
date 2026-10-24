@@ -1,0 +1,150 @@
+// Copyright 2026 STARGA Inc.
+// Synthetic ELF writer fixture. Raw instruction bytes are test data only;
+// not the compiler's general typed extern call lowering or startup feature.
+
+pub fn nd_hex_nibble(b: i64) -> i64 {
+    if b >= 97 { if b <= 102 { return b - 87; } }
+    if b >= 48 { if b <= 57 { return b - 48; } }
+    0 - 1
+}
+pub fn nd_hex(s: String) -> String {
+    if string_len(s) % 2 != 0 { return string_new(); }
+    let mut out: String = string_new();
+    let mut i: i64 = 0;
+    while i < string_len(s) {
+        let a: i64 = nd_hex_nibble(string_get_byte(s, i));
+        let b: i64 = nd_hex_nibble(string_get_byte(s, i + 1));
+        if a < 0 { return string_new(); }
+        if b < 0 { return string_new(); }
+        out = nb_push(out, a * 16 + b);
+        i = i + 2;
+    }
+    out
+}
+pub fn nd_fixture(case_number: i64) -> String {
+    let mut mode: i64 = case_number;
+    if mode >= 200 { mode = mode - 200; }
+    else { if mode >= 100 { mode = mode - 100; } }
+    let mut code: String = nd_hex("31ed4989d15e4889e24883e4f050544531c031c948bf2510400000000000ff1500000000f4554889e5534883ec0889fbff150000000085c07e0489d8eb05b8630000004883c4085b5dc3");
+    let mut imports: Vec = vec_new();
+    let mut patches: Vec = vec_new();
+    let mut interp: String = "/lib64/ld-linux-x86-64.so.2";
+    let mut soname: String = "libc.so.6";
+    let mut name: String = "getpid";
+    let mut ver: String = "GLIBC_2.2.5";
+    let mut entry: i64 = 0;
+    if mode == 2 { name = "nd_missing_dynamic_symbol_20261015"; }
+    if mode == 3 { ver = "GLIBC_999.999"; }
+    if mode == 14 { name = "bad-name"; }
+    if mode == 15 { ver = ""; }
+    if mode == 16 { interp = "relative/loader"; }
+    if mode == 17 { soname = "bad/libc.so.6"; }
+    let a: i64 = nd_import("__libc_start_main", "GLIBC_2.34");
+    let b: i64 = nd_import(name, ver);
+    if mode == 1 {
+        imports = vec_push(vec_push(imports, b), a);
+        patches = vec_push(vec_push(patches, nd_patch(32, 1)), nd_patch(50, 0));
+    } else {
+        imports = vec_push(vec_push(imports, a), b);
+        patches = vec_push(vec_push(patches, nd_patch(32, 0)), nd_patch(50, 1));
+    }
+    if mode == 10 { entry = 0 - 1; }
+    if mode == 11 { entry = string_len(code); }
+    if mode == 12 { imports = vec_new(); }
+    if mode == 13 { vec_set(imports, 1, a); }
+    if mode == 18 { __mind_store_i64(vec_get(patches, 0), 9223372036854775807); }
+    if mode == 19 { __mind_store_i64(vec_get(patches, 0) + 8, 2); }
+    if mode == 20 { __mind_store_i8(string_addr(code) + 32, 1); }
+    if mode == 21 { __mind_store_i8(string_addr(code) + 30, 144); }
+    if mode == 22 { patches = vec_push(patches, nd_patch(32, 0)); }
+    if mode == 23 { imports = vec_push(imports, nd_import("close", "GLIBC_2.2.5")); }
+    if mode == 24 { code = String { addr: 1, len: 1048577, cap: 1048577 }; }
+    if mode == 25 { imports = Vec { addr: 1, len: 257, cap: 257 }; }
+    if mode == 26 { patches = Vec { addr: 1, len: 4097, cap: 4097 }; }
+    if mode == 27 { __mind_store_i64(vec_get(patches, 0), 0 - 1); }
+    if mode == 28 { __mind_store_i64(vec_get(patches, 0) + 8, 0 - 1); }
+    if mode == 29 { __mind_store_i64(b + 8, 9223372036854775807); }
+    if mode == 30 { __mind_store_i64(b, 9223372036854775807); }
+    if mode == 31 { __mind_store_i64(b + 16, 0); }
+    if mode == 32 { code = String { addr: 1, len: 74, cap: 0 }; }
+    if mode == 33 { imports = Vec { addr: 1, len: 2, cap: 0 }; }
+    if mode == 34 { patches = Vec { addr: 9223372036854775807, len: 2, cap: 2 }; }
+    if mode == 40 {
+        let mut i: i64 = 2;
+        while i < 256 {
+            let name: String = string_push_i64("nd_unreachable_", i);
+            imports = vec_push(imports, nd_import(name, "GLIBC_2.2.5"));
+            patches = vec_push(patches, nd_patch(string_len(code) + 2, i));
+            code = nd_bytes(code, string_addr(nd_hex("ff1500000000")), 6);
+            i = i + 1;
+        }
+    }
+    if mode == 42 {
+        let mut i: i64 = 2;
+        while i < 4096 {
+            patches = vec_push(patches, nd_patch(string_len(code) + 2, 1));
+            code = nd_bytes(code, string_addr(nd_hex("ff1500000000")), 6);
+            i = i + 1;
+        }
+    }
+    if mode == 43 { code = nd_to(code, 1048576); }
+    if mode == 46 {
+        imports = vec_push(imports, nd_import("nd_missing_unreachable", "GLIBC_2.2.5"));
+        patches = vec_push(patches, nd_patch(string_len(code) + 2, 2));
+        code = nd_bytes(code, string_addr(nd_hex("ff1500000000")), 6);
+    }
+    if mode == 47 {
+        // Read resolved GOT first and write its nonzero pointer bytes to stdout;
+        // then write the SAME value back. Full RELRO must fault only at the write.
+        code = nd_bytes(string_new(), string_addr(code), 37);
+        let body: String = nd_hex("554889e55348bb0030400000000000488b03504889e6ba08000000bf01000000b8010000000f0558488903b84d0000005b5dc3");
+        code = nd_bytes(code, string_addr(body), string_len(body));
+        imports = vec_new();
+        imports = vec_push(imports, a);
+        patches = vec_new();
+        patches = vec_push(patches, nd_patch(32, 0));
+    }
+    if mode == 48 {
+        // Write known return-77 machine code onto the OS stack, echo it, then
+        // call it. The NX stack must fault at instruction fetch, not at the write.
+        code = nd_bytes(string_new(), string_addr(code), 37);
+        let body: String = nd_hex("554889e548b8b84d000000c30000504889e6ba08000000bf01000000b8010000000f054889e0ffd04883c4085dc3");
+        code = nd_bytes(code, string_addr(body), string_len(body));
+        imports = vec_new();
+        imports = vec_push(imports, a);
+        patches = vec_new();
+        patches = vec_push(patches, nd_patch(32, 0));
+    }
+    if case_number >= 200 { return code; }
+    if case_number >= 100 {
+        return nb_push(string_new(), nd_validate(code, entry, imports, patches, interp, soname));
+    }
+    let result: String = nd_write_elf(code, entry, imports, patches, interp, soname);
+    if mode < 2 {
+        // The writer must leave caller-owned placeholders and import order intact.
+        if __mind_load_i32(string_addr(code) + 32) != 0 { return string_new(); }
+        if __mind_load_i32(string_addr(code) + 50) != 0 { return string_new(); }
+        if mode == 1 { if vec_get(imports, 0) != b { return string_new(); } }
+        if mode == 0 { if vec_get(imports, 0) != a { return string_new(); } }
+    }
+    result
+}
+pub fn main() -> i64 {
+    let mut mode: i64 = 0;
+    if __mind_argc() > 1 {
+        let p: i64 = __mind_argv(1);
+        let mut i: i64 = 0;
+        while __mind_load_i8(p + i) != 0 {
+            mode = mode * 10 + __mind_load_i8(p + i) - 48;
+            i = i + 1;
+        }
+    }
+    let out: String = nd_fixture(mode);
+    let mut pos: i64 = 0;
+    while pos < string_len(out) {
+        let n: i64 = __mind_write(1, string_addr(out) + pos, string_len(out) - pos, 0 - 1);
+        if n <= 0 { return 70; }
+        pos = pos + n;
+    }
+    0
+}

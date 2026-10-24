@@ -258,6 +258,12 @@ Measurement notes for the current rows:
   everywhere, but the 3 end-to-end tests that drive `mindc build` are
   `#[cfg(feature = "mlir-build")]` and only this tier's feature set has it, so 7 is an
   `exec` number and 4 is what the others would see.
+* `std_process_wait_surface` holds the `std/process.mind` checked-wait functions
+  (`exit_error`, `exit_core`, `exit_stopped`, `wait_flags`, `child_exec_errno`,
+  `child_spawn_errno`). They were split out of `std_surface_net_fs_process`, which
+  is at its line budget, so the new file would otherwise be protected only by the
+  aggregate floor. It is `#![cfg(feature = "std-surface")]`; measured 1 executed in
+  `exec`, and listed there only.
 * `fail_closed_capability_skip_stub_exec` is the ONE with a file-level cfg,
   `#![cfg(unix)]`, because it spawns a POSIX shell stub and `ci.yml`'s `build_test`
   matrix also runs `windows-latest`. Every tier here runs on a unix host, so the row

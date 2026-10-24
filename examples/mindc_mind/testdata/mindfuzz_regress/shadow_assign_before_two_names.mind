@@ -1,0 +1,15 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// An unshadowed outer name written before and after the shadow takes its LAST write.
+fn main() -> i64 {
+    let mut a: i64 = 1;
+    let mut x: i64 = 0;
+    let mut z: i64 = 0;
+    if a >= 1 {
+        x = 5;
+        z = 4;
+        let mut x: i64 = 7;
+        x = 9;
+        z = 6;
+    }
+    return x + z;
+}

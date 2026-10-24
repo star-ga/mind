@@ -312,7 +312,7 @@ sum:
 | Operation | Why it breaks cancellation |
 |---|---|
 | `>>` (the Q16.16 rescale after a product) | Arithmetic shift is not additive: `(a>>16) + (b>>16) != (a+b)>>16` in general. Each dropped low bit is an unrecoverable rounding. |
-| Integer division | Same reason; also MIND defines `x/0 == 0`, which is not a ring operation. |
+| Integer division | Same reason; also MIND defines `x/0` as a trap (exit status 79), which is not a ring operation. |
 | Saturating / clamping calls (e.g. `kernel.clamp`) | Deliberately non-wrapping — that is their purpose — so `+x`/`-x` no longer annihilate. |
 | Narrowing casts (`i64 -> i32`) | Changes modulus mid-expression; terms cancel in different rings. |
 

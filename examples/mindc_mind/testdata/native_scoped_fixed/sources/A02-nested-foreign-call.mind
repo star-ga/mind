@@ -1,0 +1,2 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn main()->i64 {let x:i64=close(close((0-1) as i32)) as i64;if x!=0-1{return 91;}0}

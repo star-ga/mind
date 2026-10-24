@@ -23,6 +23,7 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 # stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import ResolvedSo, resolve_so  # noqa: E402
+from _selfhost_sources import NATIVE_STD_MODULES, SourceBundle, capture_bundle  # noqa: E402
 
 _SO: ResolvedSo | None = None
 
@@ -41,11 +42,7 @@ def so() -> ResolvedSo:
         _SO = resolve_so()
     return _SO
 
-_STDLIB_MODULES = [
-    "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
-    "json", "map", "net", "process", "reactor", "regex", "ring", "sha256",
-    "string", "time", "toml", "tui", "vec",
-]
+_STDLIB_MODULES = list(NATIVE_STD_MODULES)
 
 _FROZEN = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 _FROZEN_MANIFEST = _HERE / "testdata" / "selfhost_loop" / "MANIFEST.txt"
@@ -98,19 +95,45 @@ def mode_conflict(advance: list[str], reseed: list[str]) -> str | None:
     )
 
 
-def build_seed() -> tuple[bytes, bytes, int]:
+#: --advance hop counts. Two hops is the most a sound advance needs: stage1 and
+#: stage2 compile the same source, so stage2 != stage3 is a miscompile, never a
+#: reason for a third hop (docs/INDEPENDENCE_ROADMAP.md, seed-advance policy).
+ADVANCE_HOPS = ("1", "2")
+
+
+def requested_hops(argv: list[str], advance: list[str],
+                   reseed: list[str]) -> tuple[int | None, str | None]:
+    """(hops, refusal) for `--hops N` / `--hops=N`; (None, None) when absent.
+
+    Strict and checked before anything is read or run: a repeated flag, a
+    missing or unknown value, or a hop count on a mode that has no pure-MIND
+    hops (--reseed, or no mode) is a refusal, never a default.
+    """
+    found = [argv[i + 1] if i + 1 < len(argv) else None
+             for i, arg in enumerate(argv) if arg == "--hops"]
+    found += [arg[len("--hops="):] for arg in argv if arg.startswith("--hops=")]
+    tail = "Nothing has been read, run or written."
+    if not found:
+        return None, None
+    if len(found) > 1:
+        return None, f"BLOCKED: --hops was given {len(found)} times; give it once. {tail}"
+    if found[0] not in ADVANCE_HOPS:
+        shown = "no value" if found[0] is None else repr(found[0])
+        return None, f"BLOCKED: --hops takes 1 or 2, got {shown}. {tail}"
+    if not advance:
+        why = (f"--reseed ({', '.join(reseed)}) mints the seed from Rust output and "
+               f"has no pure-MIND hops" if reseed else "no --advance was requested")
+        return None, (f"BLOCKED: --hops qualifies --advance only; {why}. {tail} The "
+                      f"policy's next seed advance is `--advance --hops 2`.")
+    return int(found[0]), None
+
+
+def build_seed(bundle: SourceBundle | None = None) -> tuple[bytes, bytes, int]:
     """Return (combined_source, stdin_image, user_lo). combined_source is the exact
     byte stream compiled; stdin_image is [8B user_lo][8B src_len][combined_source]."""
-    std_dir = _REPO / "std"
-    std_blob = b"\n".join(
-        (std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES
-    ) + b"\n"
-    main = (_HERE / "main.mind").read_bytes()
-    driver = (_HERE / "selfhost_driver.mind").read_bytes()
-    combined = std_blob + main + b"\n" + driver
-    user_lo = len(std_blob)
-    stdin_image = struct.pack("<qq", user_lo, len(combined)) + combined
-    return combined, stdin_image, user_lo
+    if bundle is None:
+        bundle = capture_bundle(_REPO, native_std_modules=tuple(_STDLIB_MODULES))
+    return bundle.native_bytes, bundle.stdin_image, bundle.user_lo
 
 
 def stage0_emit(combined: bytes, user_lo: int) -> bytes:
@@ -134,7 +157,7 @@ def run_elf(elf_path: pathlib.Path, stdin_image: bytes) -> bytes:
     Raises on non-zero exit or empty output (fail-closed)."""
     r = subprocess.run(
         [str(elf_path)], input=stdin_image, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, timeout=120,
+        stderr=subprocess.PIPE, timeout=int(os.environ.get("MIND_SELFHOST_TIMEOUT_SECS", "120")),
     )
     if r.returncode != 0:
         raise RuntimeError(
@@ -218,8 +241,9 @@ def manifest_text(stage1: bytes, *, published_by: str, receipt: dict[str, str]) 
     The receipt is the reason the two-file publication is auditable at all. It
     records the sha256 of the ELF this manifest was written FOR, so a pair torn
     apart by a crash between the two replacements is detectable by comparing
-    `stage1_sha256` against the file on disk — which is the honest answer to
-    "these two paths cannot be replaced atomically together".
+    the `stage1.elf` row (the fixture's file name, whatever stage produced its
+    bytes) against the file on disk — which is the honest answer to "these two
+    paths cannot be replaced atomically together".
 
     Every field is DERIVED from the run's inputs and outputs. There is no
     timestamp: a timestamp cannot be re-derived, so it proves nothing and would
@@ -375,10 +399,16 @@ def publish_fixture(stage1: bytes, manifest: str) -> None:
     _discard(staged)
 
 
-def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
+def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
+               hops: int = 1) -> int:
     """ADVANCE: let the EXISTING frozen pure-MIND stage0 compile the CURRENT
     source, prove the result is a fixed point, corroborate it with a fresh Rust
     oracle, and only then publish it as the new frozen bootstrap.
+
+    hops=1 publishes stage1 and needs stage1 == stage2 == stage3. hops=2 (the
+    codegen-change advance) publishes stage2: stage1 carries the OLD codegen and
+    may differ, but stage2 == stage3 and oracle == stage2 are required. Both
+    derive every stage from the old pure-MIND seed.
 
     The difference from ordinary verification is exactly one assertion: the new
     fixed point MAY differ from the old frozen ELF. Everything else is stricter,
@@ -390,6 +420,9 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
     pure-MIND seed chain is never broken and the residual trusting-trust surface
     does not grow.
     """
+    if type(hops) is not int or str(hops) not in ADVANCE_HOPS:
+        print(f"BLOCKED: --advance hops must be 1 or 2, got {hops!r}; nothing written.")
+        return 2
     if not _FROZEN.exists():
         print(f"BLOCKED: --advance needs the existing frozen bootstrap seed at "
               f"{_FROZEN} — it is what compiles the new source. There is nothing "
@@ -442,17 +475,31 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
             print(f"  FAIL  [ADVANCE] {name} is not a static ELF ({len(blob)}B) — "
                   f"nothing written.")
             return 1
-    if not (stage1 == stage2 == stage3):
-        print("  FAIL  [ADVANCE] the new source is NOT self-reproducing:")
-        if stage1 != stage2:
-            print(f"        stage1 != stage2 (sizes {len(stage1)} vs {len(stage2)})")
+    if hops == 2:
         if stage2 != stage3:
-            print(f"        stage2 != stage3 (sizes {len(stage2)} vs {len(stage3)})")
-        print("        Nothing written — a non-fixed-point compiler must never "
-              "become the seed.")
-        return 1
-    print(f"  PASS  [ADVANCE] stage1 == stage2 == stage3 — fixed point "
-          f"proved ({h1})")
+            print(f"  FAIL  [ADVANCE --hops 2] stage2 != stage3 (sizes {len(stage2)} vs "
+                  f"{len(stage3)}): stage1 and stage2 compile the same source, so this is "
+                  f"a miscompile or nondeterminism, not a codegen change. Nothing written.")
+            return 1
+        published, h_pub, pub_stage = stage2, h2, "stage2"
+        print(f"  PASS  [ADVANCE --hops 2] stage2 == stage3 — fixed point proved ({h2}); "
+              f"intermediate stage1 {h1} is NOT published")
+    else:
+        if not (stage1 == stage2 == stage3):
+            print("  FAIL  [ADVANCE] the new source is NOT self-reproducing:")
+            if stage1 != stage2:
+                print(f"        stage1 != stage2 (sizes {len(stage1)} vs {len(stage2)})")
+            if stage2 != stage3:
+                print(f"        stage2 != stage3 (sizes {len(stage2)} vs {len(stage3)})")
+            print("        Nothing written — a non-fixed-point compiler must never "
+                  "become the seed.")
+            if stage1 != stage2 and stage2 == stage3:  # the codegen-change shape
+                print("        stage2 == stage3: the source changed codegen. Re-run with "
+                      "`--advance --hops 2` (pure-MIND); never re-mint from Rust output.")
+            return 1
+        published, h_pub, pub_stage = stage1, h1, "stage1"
+        print(f"  PASS  [ADVANCE] stage1 == stage2 == stage3 — fixed point "
+              f"proved ({h1})")
 
     # ORACLE — required, never deferred. A new fixed point that only the old
     # compiler agrees with is one compiler's opinion; the independently built
@@ -480,10 +527,12 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
               f"({len(oracle_elf)}B) — nothing written.")
         return 1
     h_oracle = hashlib.sha256(oracle_elf).hexdigest()
-    if oracle_elf != stage1:
+    # The oracle corroborates the PUBLISHED image (stage2 under two hops), never
+    # an old-codegen intermediate this run does not freeze.
+    if oracle_elf != published:
         print(f"  FAIL  [ADVANCE] oracle output ({h_oracle}) != the new fixed point "
-              f"({h1}). Two independent compilers disagree about the current "
-              f"source, so neither may be frozen; nothing written.")
+              f"{pub_stage} ({h_pub}). Two independent compilers disagree about the "
+              f"current source, so neither may be frozen; nothing written.")
         return 1
     print(f"  PASS  [ADVANCE] fresh Rust oracle output == new fixed point "
           f"({h_oracle}) — independent agreement proved")
@@ -505,20 +554,28 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
               f"that was already proved. Nothing was written; re-run.")
         return 1
 
-    receipt = {
-        "advanced_from_seed_sha256": h_old,
+    src_rows = {
         "combined_source_sha256": hashlib.sha256(combined).hexdigest(),
         "combined_source_bytes": str(len(combined)),
         "user_lo": str(user_lo),
-        "stage1_sha256": h1,
-        "stage2_sha256": h2,
-        "stage3_sha256": h3,
-        "oracle_sha256": h_oracle,
-        "oracle_provenance": oracle.provenance,
     }
+    oracle_rows = {"oracle_sha256": h_oracle, "oracle_provenance": oracle.provenance}
+    published_by = "self_host_loop_smoke.py --advance"
+    if hops == 1:  # key order unchanged: byte-identical to earlier one-hop receipts
+        receipt = {"advanced_from_seed_sha256": h_old, **src_rows, "stage1_sha256": h1,
+                   "stage2_sha256": h2, "stage3_sha256": h3, **oracle_rows}
+    else:
+        # No `stage1_sha256` row: in a one-hop receipt that key is the published
+        # hash. A reader keyed on it finds nothing instead of the intermediate's.
+        receipt = {"advance_hops": "2", "advanced_from_seed_sha256": h_old, **src_rows,
+                   "intermediate_stage1_sha256": h1, "stage2_sha256": h2,
+                   "stage3_sha256": h3, "published_stage": pub_stage, **oracle_rows,
+                   "seed_chain": "PURE-MIND two-hop: old seed -> stage1 (intermediate, "
+                                 "not published) -> stage2 (published) == stage3 == oracle"}
+        published_by += " --hops 2"
     try:
-        publish_fixture(stage1, manifest_text(
-            stage1, published_by="self_host_loop_smoke.py --advance", receipt=receipt
+        publish_fixture(published, manifest_text(
+            published, published_by=published_by, receipt=receipt
         ))
     except PublicationTorn as e:
         detail = "; ".join(f"{k}: {v}" for k, v in e.backups.items())
@@ -533,9 +590,10 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int) -> int:
               f"anything was touched; nothing is half-advanced.")
         return 1
 
-    moved = " (unchanged bytes)" if stage1 == old_seed else ""
-    print(f"  ADVANCED  frozen bootstrap advanced by the OLD pure-MIND stage0:\n"
-          f"            {h_old}\n         -> {h1}{moved} ({len(stage1)}B)\n"
+    moved = " (unchanged bytes)" if published == old_seed else ""
+    via = "" if hops == 1 else f"\n         via {h1} (intermediate stage1, not published)"
+    print(f"  ADVANCED  frozen bootstrap advanced by the OLD pure-MIND stage0 ({hops} hop{'s' * (hops - 1)}):\n"
+          f"            {h_old}{via}\n         -> {h_pub}{moved} ({len(published)}B)\n"
           f"            corroborated by a {oracle.provenance} Rust oracle "
           f"({h_oracle})\n"
           f"            wrote {_FROZEN} and {_FROZEN_MANIFEST}")
@@ -598,6 +656,10 @@ def main(argv: list[str] | None = None, env=None) -> int:
     if conflict is not None:
         print(conflict)
         return 2
+    hops, hops_refusal = requested_hops(argv, advance_req, reseed_req)
+    if hops_refusal is not None:
+        print(hops_refusal)
+        return 2
 
     combined, stdin_image, user_lo = build_seed()
     mode = "advance" if advance_req else ("reseed" if reseed_req else "verify")
@@ -610,7 +672,7 @@ def main(argv: list[str] | None = None, env=None) -> int:
           f"seed={len(stdin_image)}B  mode={mode}")
 
     if advance_req:
-        return do_advance(combined, stdin_image, user_lo)
+        return do_advance(combined, stdin_image, user_lo, hops=hops or 1)
     if reseed_req:
         return do_reseed(combined, stdin_image, user_lo)
 
@@ -709,8 +771,10 @@ def main(argv: list[str] | None = None, env=None) -> int:
                   f"THIS change with `self_host_loop_smoke.py --advance` (MINDC_SO "
                   f"set): the OLD frozen compiler compiles the new source and the "
                   f"fresh oracle must agree, so the pure-MIND seed chain stays "
-                  f"unbroken. `--reseed` re-mints the seed from RUST output and is "
-                  f"only for a bootstrap that cannot be advanced at all.")
+                  f"unbroken. If the change alters codegen (stage1 != stage2), use "
+                  f"`--advance --hops 2`. `--reseed` re-mints the seed from RUST "
+                  f"output and is only a disclosed, reviewed exception for a "
+                  f"bootstrap the old seed cannot compile at all.")
         return 1
     if not so().is_fresh:
         # The mirror of the FAIL case, and the more dangerous half: stale bytes

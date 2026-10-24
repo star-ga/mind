@@ -1,0 +1,19 @@
+// Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+// vids when the probe ran at base0 = 0, so a param-aliased carried var gained a
+// phantom source and an extra copy pair was planned.
+fn fz(p0: i64, p1: i64, p2: i64) -> i64 {
+    let mut a: i64 = p0;
+    let mut y: i64 = p1;
+    let mut z: i64 = p2;
+    let mut c: i64 = 0;
+    while c < 3 {
+        a = (a + p0);
+        y = (y + a);
+        z = (z + y);
+        c = (c + 1);
+    }
+    return ((a + y) + z);
+}
+fn main() -> i64 {
+    return fz(2, 5, 7);
+}

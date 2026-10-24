@@ -1,0 +1,30 @@
+// measured-report's synthesize-path footprint: 256+512+4+6+8 MiB = 786 MiB of
+// live blocks, more than the 768 MiB bounded arena. Each block is touched at
+// both ends. Expected stdout "big\n", exit 2*(1+2+3+4+5) = 30.
+fn touch(p: i64, n: i64, v: i64) -> i64 {
+    __mind_store_i8(p, v);
+    __mind_store_i8(p + n - 1, v);
+    __mind_load_i8(p) + __mind_load_i8(p + n - 1)
+}
+fn say(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i8(buf, a);
+    __mind_store_i8(buf + 1, b);
+    __mind_store_i8(buf + 2, c);
+    __mind_store_i8(buf + 3, d);
+    __mind_write(1, buf, 4, 0 - 1)
+}
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(268435456);
+    let b: i64 = __mind_alloc(536870912);
+    let c: i64 = __mind_alloc(4194304);
+    let d: i64 = __mind_alloc(6291456);
+    let e: i64 = __mind_alloc(8388608);
+    let ta: i64 = touch(a, 268435456, 1);
+    let tb: i64 = touch(b, 536870912, 2);
+    let tc: i64 = touch(c, 4194304, 3);
+    let td: i64 = touch(d, 6291456, 4);
+    let te: i64 = touch(e, 8388608, 5);
+    let w: i64 = say(98, 105, 103, 10);
+    ta + tb + tc + td + te + w - 4
+}

@@ -1,0 +1,75 @@
+// The same shadow scoping on the SSA lowering (no return inside a loop, so the
+// mic@3 twin keeps these functions and the note stays the IR trace hash):
+// g14 35 (shadow read after the loop), g02 5 (shadow init reads the outer
+// value), g12 33 (re-let in one body), g22 9 (body-level shadow, continue).
+// expect: exit=82
+// stdout: JFHJ
+// note: 1
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn g14() -> i64 {
+    let x: i64 = 5;
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 3 {
+        let x: i64 = i * 10;
+        acc = acc + x;
+        i = i + 1;
+    }
+    return acc + x;
+}
+fn g02() -> i64 {
+    let mut t: i64 = 1;
+    let mut k: i64 = 0;
+    while k < 4 {
+        let mut t: i64 = t + 100;
+        t = t + 1;
+        if t > 1000 {
+            break;
+        }
+        k = k + 1;
+    }
+    t = t + k;
+    return t;
+}
+fn g12() -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3 {
+        let a: i64 = i;
+        let a: i64 = a + 10;
+        s = s + a;
+        i = i + 1;
+        if s > 500 {
+            break;
+        }
+    }
+    return s;
+}
+fn g22() -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 6 {
+        i = i + 1;
+        let s: i64 = s + 500;
+        if i % 2 == 0 {
+            continue;
+        }
+    }
+    return s + 9;
+}
+fn main() -> i64 {
+    let a: i64 = g14();
+    let b: i64 = g02();
+    let c: i64 = g12();
+    let d: i64 = g22();
+    out(a);
+    out(b);
+    out(c);
+    out(d);
+    return a + b + c + d;
+}

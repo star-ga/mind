@@ -1,0 +1,13 @@
+// Allocation without free past the address-space limit: the native image must
+// stop with the deterministic out-of-memory exit (70, "error: native arena
+// exhausted" on stderr), never a segfault. Native-only contract (the C runtime
+// returns 0 from malloc instead).
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    while i < 100 {
+        let p: i64 = __mind_alloc(67108864);
+        __mind_store_i64(p, i);
+        i = i + 1;
+    }
+    3
+}

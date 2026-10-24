@@ -1,5 +1,10 @@
 # Self-host LOOP gate contract
 
+The default source bytes are now captured through the internal
+[compiler source bundle](selfhost_source_bundle.md). With no extra components,
+the library, native source and stdin image remain byte-identical to the
+historical construction. Explicit component bundles have a separate captured
+CPU-oracle API; they do not alter the normal seed/advance/reseed contract.
 
 Self-host LOOP gate (Rust-independence #14, roadmap A7 + RI-E1) — the PERMANENT proof
 that MIND reproduces its own compiler with Rust+LLVM out of the loop, for the scalar-i64
@@ -32,12 +37,27 @@ is DEMOTED from seed to a re-freeze / drift oracle.
     same bytes. Only when every one of those checks passes does it publish
     testdata/selfhost_loop/{stage1.elf,MANIFEST.txt}. The old compiler is what
     compiles the new source, so the trust chain is continuous.
+  * TWO-HOP ADVANCE (--advance --hops 2): the bootstrap policy's answer to a
+    source change that alters CODEGEN (docs/INDEPENDENCE_ROADMAP.md, "Bootstrap
+    seed-advance policy"). stage1 = old seed on the current source still carries
+    the OLD codegen, so stage1 != stage2 is expected and is NOT refused; stage1
+    is the unpublished intermediate. stage2 is published, and only when
+    stage2 == stage3 AND the fresh oracle emits exactly stage2. Every stage still
+    descends from the old pure-MIND seed. The receipt records advance_hops 2,
+    intermediate_stage1_sha256, published_stage stage2 and a PURE-MIND seed_chain
+    row, and carries no stage1_sha256 row (that key means "published hash" in a
+    one-hop receipt). --hops accepts 1 or 2 only: stage1 and stage2 compile the
+    same source, so stage2 != stage3 is a miscompile or nondeterminism, never a
+    reason for a third hop.
   * RESEED (--reseed / MIND_SELFHOST_RESEED=1) — LEGACY, Rust-seeded: the ONLY
     mode that uses the `.so` as the SEED. It mints the frozen bootstrap from
     Rust output rather than from the previous pure-MIND compiler, so it breaks
     the pure-MIND seed chain for that hop. Prefer --advance for ordinary source
     drift; keep --reseed only for a bootstrap that genuinely cannot be advanced
-    (e.g. the old seed cannot compile the new source at all).
+    (e.g. the old seed cannot compile the new source at all). Under the bootstrap
+    policy it is a DISCLOSED, REVIEWED exception: the change that commits it says
+    so, and its receipt's seed_chain row records "the pure-MIND seed chain is
+    broken for that hop".
   * --advance and --reseed are MUTUALLY EXCLUSIVE, in flag and environment form
     alike, and the conflict is refused before anything is read, run or written.
 
@@ -63,18 +83,25 @@ FAIL-CLOSED (never skips when asked to run):
   * stage1 (from frozen) != frozen fixture           -> FAIL exit 1  (should be impossible;
         run_elf(frozen) reproduces frozen by construction)
   * .so present AND fresh .so output != frozen        -> FAIL exit 1  (source drifted;
-        re-freeze with --reseed in the same change)
+        advance in the same change with --advance, or --advance --hops 2 when
+        the change alters codegen; never a silent --reseed)
   * .so unavailable (drift oracle cannot run)        -> SKIP line + exit 1, unless
         MIND_SELFHOST_LOOP_ORACLE_DEFERRED=1 records a deliberate one-leg run
         (which still reports asserted=1, so a --min-asserted 2 caller refuses it)
   --advance and --reseed requested together     -> BLOCKED exit 2  (before any read/run/write)
+  --hops without --advance, with --reseed, repeated, without a value, or not
+        1 or 2                                     -> BLOCKED exit 2  (before any read/run/write)
   --advance only:
   * frozen bootstrap seed missing                     -> BLOCKED exit 2  (nothing to advance FROM)
   * old seed refuses the current source               -> FAIL exit 1     (nothing written)
-  * stage1 != stage2 or stage2 != stage3              -> FAIL exit 1     (nothing written)
+  * stage1 != stage2 or stage2 != stage3              -> FAIL exit 1     (nothing written;
+        when stage2 == stage3 the refusal names --advance --hops 2)
   * a stage is not a static ELF                       -> FAIL exit 1     (nothing written)
   * oracle .so missing / not a fresh build            -> BLOCKED exit 2  (nothing written)
   * oracle output != the new fixed point              -> FAIL exit 1     (nothing written)
+  --advance --hops 2: the refusals above, except stage1 != stage2, plus
+  * stage2 != stage3                                  -> FAIL exit 1     (nothing written)
+  * oracle output != stage2 (even if == stage1)       -> FAIL exit 1     (nothing written)
   * publication fails part-way                        -> FAIL exit 1     (old files rolled back)
   The oracle leg of --advance is NOT deferrable: MIND_SELFHOST_LOOP_ORACLE_DEFERRED
   records a deliberate one-leg VERIFICATION run and has no effect on publication.
@@ -86,4 +113,5 @@ Run:
   python3 examples/mindc_mind/self_host_loop_smoke.py                       # PRIMARY + oracle(if .so)
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py    # + .so drift oracle
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --advance  # advance the seed
+  MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --advance --hops 2  # codegen change
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --reseed   # LEGACY re-mint

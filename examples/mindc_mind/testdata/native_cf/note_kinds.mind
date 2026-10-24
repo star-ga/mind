@@ -1,0 +1,9 @@
+// A program the mic@3 twin can hash keeps the IR trace-hash note (n_type 1).
+// expect: exit=7
+// stdout:
+// note: 1
+fn main() -> i64 {
+    let a: i64 = 3;
+    let b: i64 = a + 4;
+    b
+}

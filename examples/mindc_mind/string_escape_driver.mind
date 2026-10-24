@@ -1,0 +1,52 @@
+pub fn main() -> i64 {
+    let h:i64=__mind_alloc(56);
+    if __mind_read(0,h,56,0-1)!=56 {return 81;}
+    let mode:i64=__mind_load_i64(h);
+    let lo:i64=__mind_load_i64(h+8);
+    let hi:i64=__mind_load_i64(h+16);
+    let off:i64=__mind_load_i64(h+24);
+    let n:i64=__mind_load_i64(h+32);
+    let len:i64=__mind_load_i64(h+40);
+    let answer:i64=__mind_alloc(32);
+    if mode==1 {
+        __mind_store_i64(answer,nb_rod_room(off,n));
+        if __mind_write(1,answer,8,0-1)!=8 {return 82;}
+        return 0;
+    }
+    if mode==2 {
+        let src:i64=__mind_alloc(n*2);
+        let mut i:i64=0;
+        while i<n {__mind_store_i8(src+i*2,92); __mind_store_i8(src+i*2+1,110);i=i+1;}
+        let got:i64=nb_string_decoded_length(src,0,n*2);
+        __mind_store_i64(answer,got);
+        __mind_store_i64(answer+8,nb_rod_room(0,got));
+        let dst:i64=__mind_alloc(n+16);
+        __mind_store_i64(dst,12345678);__mind_store_i64(dst+8+n,87654321);
+        let copied:i64=nb_rod_decoded_copy(dst,8,src,0,n*2);
+        i=0;
+        let mut good:i64=0;
+        while i<n {if __mind_load_i8(dst+8+i)==10 {good=good+1;}i=i+1;}
+        __mind_store_i64(answer+16,good);
+        let mut canary:i64=0;
+        if __mind_load_i64(dst)==12345678 {canary=canary+1;}
+        if __mind_load_i64(dst+8+n)==87654321 {canary=canary+1;}
+        if copied==n {canary=canary+1;}
+        __mind_store_i64(answer+24,canary);
+        if __mind_write(1,answer,32,0-1)!=32 {return 83;}
+        return 0;
+    }
+    let src:i64=__mind_alloc(len+8);
+    if len>0 {if __mind_read(0,src,len,0-1)!=len {return 84;}}
+    let got:i64=nb_string_decoded_length(src,lo,hi);
+    __mind_store_i64(answer,got);
+    if __mind_write(1,answer,8,0-1)!=8 {return 85;}
+    if got<0 {return 0;}
+    let dst:i64=__mind_alloc(got+16);
+    __mind_store_i64(dst,12345678);__mind_store_i64(dst+8+got,87654321);
+    let copied:i64=nb_rod_decoded_copy(dst,8,src,lo,hi);
+    if copied!=got {return 86;}
+    if __mind_load_i64(dst)!=12345678 {return 87;}
+    if __mind_load_i64(dst+8+got)!=87654321 {return 88;}
+    if __mind_write(1,dst+8,got,0-1)!=got {return 89;}
+    0
+}

@@ -1,0 +1,11 @@
+// Regression class: post-loop reads resolve to the while's dominating exit ids.
+fn main() -> i64 {
+    let a: i64 = 3;
+    let mut x: i64 = 1;
+    if a > 1 {
+        x = (a + 4);
+        let x: i64 = 9;
+        let z: i64 = (x + 1);
+    }
+    return x;
+}

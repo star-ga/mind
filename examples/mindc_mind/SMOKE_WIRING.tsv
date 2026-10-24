@@ -18,19 +18,27 @@
 # fast_keystone.sh "runs the SAME set"; fast_keystone.sh claimed "CI protects
 # each landed rung" — both were false).
 #
-# deferred: six `gate` rows below are UNWIRED because they are RED at this commit,
+# deferred: four `gate` rows below are UNWIRED because they are RED at this commit,
 # not because they are unimportant. They are recorded here with their exact
 # failing case so the gap is visible instead of implied; wiring them into CI is
 # blocked on FIXING them (each note names what must change). Do not wire a red
 # gate to make this list look tidy, and do not delete a red gate to make CI green.
+_cf_corpus	none	helper	Generator + independent interpreter of the control-flow corpus imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
+_cf_giant	none	helper	Capacity program generators (giant flat lists, deep trees, many functions, giant tokens) with independently computed expectations, imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
+_cf_oracle	none	helper	Oracle .so heap checks (main.mind free contract, malloc-checked .so child, self-emit) imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
 _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refusal control imported by self_host_tc_unknown_call_smoke.
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
+_mindfuzz_twin_emit	none	helper	Twin-emitter half of mindfuzz_self_host (source emitter, self-host and reference note oracles, runtime exit check, minimizer, batch builder); not a gate — running it directly is a no-op.
 _selfhost_loop_reseed	none	helper	Focused legacy Rust-seeded publication path imported by self_host_loop_smoke.py; not a gate — running it directly is a no-op.
 _selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
+_selfhost_sources	none	helper	Immutable internal compiler source capture and library/native view materialization; imported bootstrap orchestration, not product runtime or native admission.
+_shadow_scope_lang	none	helper	Mini-language of self_host_native_shadow_scope_smoke (lexically scoped model interpreter, printer, seeded generator, alpha-renamer), imported by that smoke; not a gate - running it directly is a no-op.
 
 _stdlib_manifest	none	helper	Shared reader for testdata/stdlib_manifest.txt (seed_modules/bundled_modules/seed_blob), imported by the self-host smokes and the twin of mindc.rs::frozen_std_seed_modules; not a gate — running it directly is a no-op.
+_w8_native	none	helper	Shared harness of the W8 float smokes (self_host_native_f64_lit_smoke, self_host_native_f64_intrinsics_smoke): derives a stage1 compiler from main.mind with the frozen seed and compiles a program natively; imported by them, not a gate - running it directly is a no-op.
 backend_native_bridge_smoke	ci	gate	
 bootstrap_smoke	ci	gate	
+selfhost_source_bundle_check	none	gate	deferred: CI must provision exact reviewed native compiler and freshly rebuilt CPU shell hashes before wiring this captured component build gate. Explicit unit-only mode does not claim backend parity. No seed or admission change.
 branch_shadow_crossbackend_smoke	ci	gate	
 closure_netverify	ci,keystone	gate	
 collect_field_strings_smoke	ci	gate	
@@ -49,7 +57,7 @@ method_calls_smoke	ci	gate
 mic3_flip_smoke	ci,keystone,preflight	gate	
 mic3_oracle_smoke	ci	gate	
 mic3_primitives_smoke	ci,keystone,preflight	gate	
-mindfuzz_self_host	none	gate	RED at this commit: real twin-emitter mic@3 divergence over the generated space (measured `--count 12`: 4/6 compared programs diverged, first diverge @ byte 68 selfhost=0x00 rust=0x05; the known if-body-lets SSA-id class, minimal repro staged under tests/mindfuzz_cross_substrate/staged/). deferred: wire into CI once the self-host/Rust mic@3 id-namespace divergence is fixed; a full default run also needs a budget above the ~180s used here.
+mindfuzz_self_host	ci	gate	
 mod_operator_smoke	ci,keystone	gate	
 multi_let_smoke	ci	gate	
 now_ns_smoke	none	gate	RED at this commit: `mindc build` cannot lower std.time — warning[type-check][E2024] `__mind_now_ns` is not registered in STD_SURFACE_INTRINSICS, so the substrate compile for std.time fails. deferred: wire once __mind_now_ns is in the Rust/MLIR intrinsic table (or the smoke is retargeted at the native-ELF self-host path that does implement it).
@@ -65,16 +73,18 @@ self_host_argv_smoke	ci	gate
 self_host_array_smoke	ci	gate	
 self_host_arridx_mic3_smoke	ci	gate	
 self_host_body_smoke	ci,keystone	gate	
+self_host_bounded_profile_smoke	ci	gate	Bounded native profile (768 MiB arena + 1 MiB guard + 384 MiB stack): pinned seed derives from the frozen default seed, self-reproduces and runs consumer programs under RLIMIT_AS=2 GiB, and refuses arena exhaustion (incl. the fill_0..fill_4 cap boundary), stack overflow and bad layouts fail-closed. CI only: three whole self-compiles (~4 min) are too slow for fast_keystone.sh / preflight.
+self_host_native_alloc_bounded_smoke	ci	gate	Bounded native allocator (W11c): derives the tree's bounded compiler natively (B2 == B3 under RLIMIT_AS=2 GiB), checks the allocator runtime blob byte-for-byte against its assembly source (testdata/native_alloc_bounded/rt/), runs the C stress harness over it, runs every native_alloc_bounded fixture natively and through MLIR under the cap (small-footprint alloc/free/realloc loops, C-runtime edge cases, deterministic out-of-memory exit 70) and the compiler's own arena reclaim code natively. CI only: three whole self-compiles (~5 min) are too slow for fast_keystone.sh / preflight.
 self_host_carry_cap_smoke	ci,keystone	gate	
 self_host_cast_mic3_smoke	ci	gate	
 self_host_alias_controls_smoke	ci	gate	
 self_host_check_driver_smoke	ci	gate	
-self_host_continue_smoke	none	gate	RED at this commit: nested_for_continue HANGS (the harness reports `HUNG (must fail-close or terminate, never hang)`) — issue #308/#286 regression gate. deferred: wire once nested `continue` inside a range-for either lowers correctly or refuses fail-closed; a hanging case must never be wired into CI as-is.
+self_host_continue_smoke	ci	gate	Nested-loop dead tails after `continue`/`break` and exit-edge write-back of carried vars, compiled by the frozen pure-MIND seed (what `mindc build --backend native` runs): 40 fixtures + 3 no-hang shapes + 3 dead-tail identical-code pairs; a hang is a hard FAIL. Wired in the change that advanced the frozen seed (two-hop) to a compiler carrying nb_truncate_dead, nb_while_carry_wnest and nb_loops_exit_writeback.
 self_host_dtype_tag_smoke	ci	gate	
 self_host_else_if_smoke	ci	gate	
 self_host_failclosed_smoke	ci,keystone	gate	
 self_host_float_lit_exact_smoke	ci,keystone	gate	
-self_host_for_smoke	none	gate	RED at this commit: 4 of 16 range-for cases fail — continue_at2 / continue_sum / continue_ge all `native entry failed closed (empty ELF)`, and shadow_outer diverges (self-host exit 3, want 100: the loop VAR stays loop-local instead of restoring the outer binding). deferred: same root cause as self_host_continue_smoke; wire both together once continue-in-for lowers.
+self_host_for_smoke	ci,keystone	gate	
 self_host_if_region_carry_smoke	ci,keystone	gate	
 self_host_ifret_chain_mic3_smoke	ci	gate	
 self_host_letpath_failclose_smoke	ci	gate	
@@ -91,7 +101,9 @@ self_host_native_avx2_dot_f32_smoke	ci	gate
 self_host_native_blas_dot_i16_smoke	ci	gate	
 self_host_native_blas_dot_q16_smoke	ci	gate	
 self_host_native_cast_conv_smoke	ci	gate	
+self_host_native_cf_smoke	ci	gate	General control-flow corpus, independent reference interpreter, default/bounded capacity checks, diagnosed-refusal controls, and oracle heap checks; helpers are classified separately above.
 self_host_native_diag_smoke	ci	gate	
+self_host_native_div_trap_smoke	ci	gate	
 self_host_native_dot_f32_smoke	ci	gate	
 self_host_native_dot_l1_q16_smoke	ci	gate	
 self_host_native_elf_alignment_smoke	ci	gate	
@@ -111,7 +123,9 @@ self_host_native_genf32_smoke	ci	gate
 self_host_native_intdot_i16_smoke	ci	gate	
 self_host_native_intdot_q16_smoke	ci	gate	
 self_host_native_intdot_smoke	ci	gate	
+self_host_native_main_args_smoke	ci	gate	
 self_host_native_matmul_f32_v_smoke	ci	gate	
+self_host_native_misc_census_smoke	ci	gate	
 self_host_native_narrow_add_i8_smoke	ci,keystone	gate	
 self_host_native_narrow_arith_batch_smoke	ci,keystone	gate	
 self_host_native_narrow_paramret_smoke	ci,keystone	gate	
@@ -122,6 +136,7 @@ self_host_native_record_trace_smoke	ci,keystone	gate	Canonical record-field trac
 self_host_native_scalar_f32_smoke	ci,keystone	gate	
 self_host_native_scalar_f64_smoke	ci	gate	
 self_host_native_scast_smoke	none	gate	RED at this commit: signed-cast precedence — `a + b as i8` must parse as `a + (b as i8)` (300 + (-56) = 244, >>1 = 122) but the pure-MIND emit runs to 122 while live mindc returns 250, i.e. the loose-parse bug is in the Rust reference leg. deferred: wire once the `as` binding-power disagreement between the two front-ends is resolved.
+self_host_native_shadow_scope_smoke	ci	gate	
 self_host_native_simd_dot_f32_smoke	ci	gate	
 self_host_native_simd_dot_i16_smoke	ci	gate	
 self_host_native_simd_dot_q16_smoke	ci	gate	
@@ -181,4 +196,29 @@ rh_f64_aggregate_canary_smoke	ci	gate	RH f64-aggregate executable-path canary. A
 ri_d1_frozen_profile_gate	preflight	gate	RI-D1 readiness gate (#313): proves `mindc build --backend native` is ready to be default FOR THE FROZEN PROFILE. It is a readiness ratchet, so a regression must block a push rather than only be noticed at flip time. RED at this commit and known to be: 3 of its 5 IN_PROFILE programs (float_as_i64, struct_return, narrow_u8_wrap) are refused `call.undefined_or_builtin` because they lower to compiler intrinsic calls (__mind_alloc/__mind_store_i64/__mind_load_i64/__mind_conv_i64) that admit_call does not admit — an OVER-rejection, fail-closed and safe, but it means the allowlist is not in bijection with this corpus (src/ir/frozen_profile.rs, admit_instrs_in). deferred: wire into CI together with the (op, operand_type)-keyed intrinsic admission that file already defers; wiring it red would block every push on a known gap.
 self_host_native_scalar_narrow_smoke	ci,keystone	gate	RI-D/#10 native-float slice 1a (saturating f64 -> signed narrow, i8/i16/i32). The earlier `symbol absent (narrow rung not built)` was ENVIRONMENTAL, now proven so: the rung and this gate both landed in 5fdbfbaf, which reached this line only on the SECOND parent of the 9d3d5d41 merge, so the in-tree libmindc_mind.so (built off the first parent, before that merge) genuinely lacks the symbol while a cdylib rebuilt from the current main.mind exports it. Against that fresh .so the smoke is ALL PASS in ~5s (6 native-vs-oracle folds + 15 live-MLIR exits across i8/i16/i32), so it is wired into fast_keystone.sh, which always builds the .so it points MINDC_SO at.
 dtk_plan_parity_smoke	ci,preflight	gate	The ONLY cross-implementation gate for the DTK register allocator: it checks the pure-MIND nb_dtk_* planner (which SHIPS inside the frozen stage1.elf and is consumed by nb_val_store_rax/_load_rax/_arith_rax/_prologue/_epilogue) against the Rust reference plan_module_k, field-exact, plus fail-closed count==0 on every ineligible class. It was referenced by NO runner and — because it sits one directory deeper, under testdata/ — was invisible to this very lint until the scan was widened. tests/regalloc_dtk_parity.rs is Rust-vs-Rust against hardcoded tables and does not substitute for it. Needs MIND_DTK_SKIP_RUST_REGEN=1 and MINDC_SO so a missing .so fails closed instead of skipping.
+intrinsic_id_table_lint	ci	gate	
+self_host_native_f64_intrinsics_smoke	ci	gate	
+self_host_native_f64_lit_smoke	ci	gate	
 selfhost_so_provenance_smoke	ci,preflight	gate	Stale-oracle provenance contract for the ~47 self-host smokes. `_selfhost_so.resolve_so()` used to hand back whatever MINDC_SO named with no freshness check, and exactly ONE of ~47 importers consulted the fallback flag, so a gitignored months-old in-tree libmindc_mind.so could certify byte-identity in every sibling gate while the self-host loop gate refused the same bytes. This asserts the resolver still REFUSES an oracle it cannot prove fresh and that no smoke opts out without being named here. Pure stdlib: no toolchain, no build, no .so needed, so it runs in CI and in preflight's --full path alike.
+self_host_native_sys_smoke	ci	gate	Current-source native stage1 filesystem syscalls and positioned I/O versus MLIR, plus bootstrap byte-neutrality: literal -1 read/write sites and the changed emitter functions compile identically under the frozen seed and stage1.
+self_host_native_process_smoke	ci	gate	Native process, clock, directory syscalls versus MLIR with success and error paths.
+native_dynamic_writer_check	none	wip	Explicit-instrument standalone ELF writer diagnostic; requires a caller-selected verified native compiler. Production compiler integration and CI execution remain open; local results do not imply a CI run.
+native_cabi_registry_smoke	none	gate	Manual source-typed MCABI001 registry gate; requires pre-enumerated cases and separately built current native driver/fresh oracle. deferred: wire CI with the generic C ABI integration once its bounded driver/oracle construction is a runner dependency; this metadata slice enables no imports or production profile.
+self_host_source_note_smoke	ci	gate	Build current MIND compiler from the bounded seed; validate PT_NOTE bounds/refusals and literal preservation with source-hash provenance. No frozen seeds are changed.
+native_dynamic_layout_check	none	gate	Manual standalone MIND dynamic-layout gate with frozen fixtures, explicit hashed native compiler and fresh MLIR compiler, overlap/state controls and actual source mutations. deferred: wire CI with bounded compiler prerequisites during dynamic-runtime integration; planner success enables no production admission.
+self_host_native_io_smoke	none	gate	Manual exact four-argument I/O parity gate; requires a source-bound bounded native compiler and official MLIR compiler. deferred: CI artifact construction must precede this runner. Preserves raw and legacy compatibility controls; does not establish libc TLS errno or C ABI admission.
+native_c_call_plan_check	none	gate	Manual scalar SysV metadata gate; frozen expected cases and explicit hash-checked current native/MLIR compiler builds. deferred: CI must first construct the source-bound current compiler; historical frozen seed alone refuses this diagnostic. Does not execute foreign calls or qualify a pin.
+native_c_call_emit_check	none	gate	Manual fixed-scalar C call emission, actual ABI fixture execution and source-mutation gate. deferred: CI must construct the source-bound native/MLIR instruments and diagnostic ABI fixture. Standalone emitter does not admit production foreign calls or change a pin.
+native_dynamic_allocator_check	none	gate	Manual MIND allocator-emitter gate; frozen runtime cases and source mutations, native/MLIR emitted-byte equality, independent assembly/C diagnostic and original static-byte control. deferred: wire CI once source-bound bounded compiler and diagnostic tools are runner dependencies. No startup, libc integration or native admission.
+native_dynamic_image_check	none	gate	Manual checked-layout ELF image extension gate with frozen structural/loader/protection cases, exact native/MLIR bytes, original writer regressions and actual source mutations. deferred: wire CI with explicit bounded source-bound compiler prerequisites during dynamic-runtime integration; this component does not enable imports, startup or production admission.
+native_source_driver_check	none	gate	Manual MIND source-input adapter gate; original framing and source-note controls, actual source mutations, explicit hash-checked compiler/runtime instruments and bounded resources. deferred: CI requires the source-bound candidate compiler and reviewed SHA dependency; this diagnostic does not qualify a pin or enable official CLI admission. Nested testdata helpers enumerate inputs and are not standalone gates.
+native_libc_startup_check	none	gate	Manual standalone MIND libc startup gate with frozen cases, hash-bound native/MLIR compiler and sibling allocator/image modules, actual loader execution and source mutations. deferred: CI requires those current compiler/module prerequisites; no production startup admission or qualified pin is enabled.
+self_host_native_string_escape_smoke	none	gate	Manual frozen string value, constant binding, malformed match-arrow and decoder bounds gate with explicit hashed native/MLIR instruments. deferred: CI must construct the source-bound compiler before execution. Does not claim arbitrary String ownership parity or qualify a pin.
+string_borrowed_check	none	gate	Manual explicit MIND-body borrowed-string parity, capacity boundaries, source mutations and separate C-shim sanitizer check. deferred: CI must construct hash-bound native and current CPU compiler/runtime prerequisites; no consumer qualification is implied.
+native_libc_binding_check	none	gate	Manual source-to-libc declaration binding gate; freezes exact expected bytes, builds native/MLIR diagnostics, checks source/plan forgery and signedness views, and compiles source mutants. deferred: CI needs captured-source compiler/module prerequisites. Every declaration retains callready0; no production call or pin admission.
+native_libc_io_check	none	gate	Manual fixed libc I/O recipe gate with frozen metadata/runtime cases, exact native/MLIR bundles and images, actual libc TLS errno/file effects, existing-runtime reference and source mutations. deferred: CI requires source-bound compiler and dynamic component prerequisites; no production intrinsic-site admission or qualified pin.
+self_host_native_emission_context_smoke	none	gate	Manual source-lowering/context and source-image candidate gate with explicit hash-bound native/MLIR instruments and a separate pointer-origin catalogue. deferred: production I/O and foreign-call integration, original retained failures and independent boundary review remain open; CI must construct the current source-bound prerequisites before wiring. Does not qualify a consumer pin.
+native_stream_io_check	none	gate	Manual exact-source stream-I/O image transport with hash-bound native/CPU drivers, original and separately versioned fixture catalogues, image byte parity and historical no-I/O comparisons. deferred: CI prerequisite construction and production CLI/consumer qualification; no pin promotion or replacement of original acceptance contracts.
+native_c_variadic_plan_check	none	gate	Manual bounded scalar SysV variadic metadata gate with frozen MIND assertions, native/MLIR byte parity, owned-output checks and six source mutations. deferred: CI requires exact source-bound compiler prerequisites; no call emission, source admission or consumer pin qualification.
+native_lane_value_shapes_smoke	ci	gate	native-lane-v1 value-shape gate: store results read as the defined 0 (stack dirtied first), full-width i64<->f64 conversion edges, diverging-branch merges and main(argc, argv) behind the explicit-layout runtime prefix, each built through mindc with the reseeded bounded stage1.elf (carries the nblane01 mark) as --compiler and with MLIR, and checked against independently computed values.
+native_c_variadic_emit_check	none	gate	Manual bounded SysV variadic real-call gate with frozen MIND construction/verdicts, independent C/assembly observations and actual source mutations. deferred: CI needs explicit reviewed compiler/tool identities; no frontend admission or consumer pin qualification.

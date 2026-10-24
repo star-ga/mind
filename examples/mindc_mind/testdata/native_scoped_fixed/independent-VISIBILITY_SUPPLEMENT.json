@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "status": "PRELISTED_NOT_EXECUTED",
+  "id": "R17-public-std-without-import",
+  "purpose": "Public cross-unit function still requires explicit std.net import in the new scoped profile.",
+  "source": {
+    "path": "sources/R17-public-std-without-import.mind",
+    "bytes": 276,
+    "sha256": "6af608592e63a314cc47024e2d57127fbab02f72d27bab58af9f4201d286cd7b"
+  },
+  "packet": {
+    "path": "packets/R17-public-std-without-import.bin",
+    "bytes": 395803,
+    "sha256": "e653c5beb877403bd72764f0a684c3dbed13ab747dfdb8d23bf8e72430e6e385"
+  },
+  "full_source_sha256": "614259b2bf4acf38348cb27e70dc0c1f3199c5795dc5ba7b4e9471c2cbd876ad",
+  "user_lo": 395479,
+  "routes": [
+    "automatic",
+    "HOME"
+  ],
+  "expected_admission": "refuse",
+  "expected_compile": {
+    "normal_refusal": true,
+    "elf_bytes": 0,
+    "same_exact_native_and_cpu_diagnostic": true,
+    "diagnostic_code": "freeze with new profile wire before execution"
+  }
+}
