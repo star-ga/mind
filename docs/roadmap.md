@@ -2952,3 +2952,208 @@ Only introduce independently designed candidate selection / bounded cache primit
 Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
 
 **Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. Naestro OS owns mission UI; mind-law policy, mind-ci verification, mind-flow orchestration, mind-codegraph impact, mind-mem decisions. No co-author trailers.
+
+## OCaml-competitive language and ecosystem hardening (2026-10-24)
+
+> **Author: starga. Status: proposed; not shipped.** This is a cross-repository,
+> implementation-gated plan, not an assertion that MIND currently surpasses OCaml.
+> Inherits the existing fail-closed, canonical-mic@3, keystone, cross-substrate
+> and no-unverified-performance-claims requirements. Preserve open-core compiler
+> and language interfaces; commercial accelerator optimizations remain in
+> `mind-runtime`. Never change frozen Core v1 semantics without an RFC and
+> explicit versioning.
+
+### Research basis and actual consumer blockers
+
+- OCaml: [modules and interfaces](https://ocaml.org/docs/modules),
+  [first-class modules](https://ocaml.org/docs/first-class-modules),
+  [effect handlers](https://ocaml.org/manual/5.5/effects.html),
+  [Dune](https://github.com/ocaml/dune), [Merlin](https://github.com/ocaml/merlin).
+- MIND compiler: `docs/INDEPENDENCE_ROADMAP.md`, RFC 0010,
+  current modules/import/linker/ABI restrictions and capability gates.
+- `mind-flow/COMPILER_REQUIREMENTS.md`: `FieldAccess` value-position lowering
+  panic, aggregate call ABI, and native build blocked on the tested compiler.
+- `mind-parser/docs/MIND_GAPS.md`: G-01/04/07/08/09/11/14/16/19/22/24/25/
+  26/27/28/29/30; these are consumer-reported gaps, not necessarily still
+  reproduced on HEAD. Recheck on current compiler before declaring one open.
+- `mind-grammar`, `mind-spec`, `mind-codegraph`, `mind-ci`,
+  `mind-mem`, `mind-nerve`, `mind-law`, `naestro`, and private
+  `mind-runtime`: integration/conformance consumers; protect licensing boundaries.
+
+### P0 — Fix the full-language integration path before expanding syntax
+
+1. **MOC-01: Complete aggregate and cross-module ABI.** Preserve type identities,
+   aggregate ownership, alignment, value/reference ABI, function parameter/return
+   lowering and source-module ownership for structs, enums, arrays, strings,
+   nested Option/Result and tensors. Eliminate `FieldAccess` value-position
+   panic with typed lowering and diagnostic errors (never a const-0 placeholder).
+   **Gates:** `mind-flow` pure-MIND project builds and runs native end-to-end;
+   imported aggregates pass identity and layout tests; ABI comparisons on
+   x86_64 and aarch64; unsupported cases fail closed.
+2. **MOC-02: Strong module abstraction.** Implement module-scoped symbol mangling,
+   private/internal linkage, stable public interface metadata, signature
+   sealing, opaque types, qualified imports and separate compilation. Then add
+   parameterized modules/functors with applicative/generative identity rules,
+   bounded specialization and deterministic output naming. First-class modules
+   are a separately gated follow-on with explicit dynamic dispatch cost.
+   **Gates:** duplicate private helper names link; independent packages cannot
+   access sealed internals; 10+ separate modules compile and link with stable
+   interface hashes; private/public leakage rejected.
+3. **MOC-03: Reliable dependency/package graph.** Resolve `Mind.toml` path,
+   registry and pinned git dependencies with semver-aware solver, immutable
+   lockfile, hashes, offline mode, workspace members, cyclic-import diagnostics,
+   cross-package `import`, build-script capabilities, and supply-chain policy.
+   Derive cache invalidation from public interface hashes, not arbitrary
+   timestamps. **Gates:** build `mind-parser` without vendoring `std` or
+   duplicated test sources; reproducible offline build from pinned lock; test
+   graph cycles and malicious symlinks.
+4. **MOC-04: Link/run every documented standard-library surface.** Close
+   mismatches between typecheck, MLIR/native emission and final linker for
+   `std.fs/net/regex/time`; native argv, closed resource handles and robust
+   diagnostics. **Gates:** runnable integration tests use actual bundled
+   stdlib; no undefined symbols, panics or externally duplicated std sources.
+5. **MOC-05: Whole-program evidence and signing contract.** Include resolved
+   module graph, package-lock digest, interface signatures, optimization profile
+   and backend in evidence manifests; expose a bounded runtime API for reading
+   the current artifact's trace hash. Keep artifact signing distinct from
+   signing application payloads. **Gates:** independent replay validates
+   all dependency bytes; mutation of any import invalidates evidence; unsigned
+   artifacts must never be misrepresented as signed.
+
+### P1 — Match or exceed OCaml expressiveness without sacrificing verification
+
+6. **MOC-06: Principled type inference.** Define bidirectional typing,
+   constrained let-polymorphism, generalization/value restriction for mutable
+   state, explicit higher-rank bounds, unification diagnostics, type-directed
+   completions and deterministic inference traces. Preserve static tensor
+   shapes and declared effects rather than weakening them. **Gates:** golden
+   inferred-type corpus, principal-type checks in admitted fragment, mutation
+   and polymorphic-reference rejection tests, stable error spans.
+7. **MOC-07: Exhaustive algebraic data types and pattern matching.** Add
+   nested records/tuples/variants, guards, or-patterns and exhaustiveness/
+   redundancy checking via a documented pattern-matrix algorithm; guard
+   cases must not be counted as complete unless provable. **Gates:**
+   property-based pattern exhaustiveness tests, nested cases compile/run
+   across modules, malformed shapes fail closed.
+8. **MOC-08: Typed effects plus bounded algebraic handlers.** Separate static
+   effect rows (IO, network, randomness, clock, accelerator, governance) from
+   runtime continuation semantics. Implement one-shot resumable effects first;
+   specify cancellation, finalizers, ownership and panic unwinding. Make
+   policy authorization a checked capability/effect boundary, not merely an
+   advisory handler. **Gates:** compiler rejects undeclared effects;
+   denied capabilities never execute underlying actions; deterministic
+   replay with explicit effect inputs; continuation cannot resume twice.
+9. **MOC-09: Region, borrow and ownership maturation.** Finish RFC 0010
+   escape analysis, generation handles, provenance-safe pointers, FFI ABI,
+   explicit unsafe obligations and deterministic destruction. Favor opt-in
+   proof-preserving inference, retain visible lifetime semantics for governed
+   code. **Gates:** compile-fail corpus for UAF/double-free/alias escapes,
+   sanitizer and fuzz checks, stable foreign-call layout.
+10. **MOC-10: Deterministic multicore structured concurrency.** Define
+    task scopes, cancellation propagation, channels, bounded queues,
+    race-free ownership transfer, fair scheduling policy and replayable
+    completion ordering. Allow throughput mode and deterministic mode to
+    be explicitly different profiles. **Gates:** TSAN/race tests, stable
+    deterministic replay receipt and crash/cancellation fault injection.
+11. **MOC-11: Async networking and hardened standard library.** Build
+    event reactor, sockets incl. IPv6/timeouts/DNS, TLS 1.3 certificate
+    validation, Unicode NFC/IDNA, compression, HTTP/2, mmap/fsync,
+    constant-time comparison, program-data signature APIs, terminal and
+    interactive line I/O. Prefer reviewed protocols and pinned test vectors
+    over custom cryptographic invention. **Gates:** `mind-parser` HTTPS and
+    interactive server native E2E, standards-based TLS and security tests.
+12. **MOC-12: High-level abstractions without runtime tax.** Evaluate traits,
+    associated types, constrained generics, closures, iterators, zero-cost
+    specialization and tensor/shape generic signatures against code size,
+    soundness and compile-time budgets. **Gates:** no dynamic allocations in
+    representative zero-cost iterator paths; coherent trait resolution;
+    monomorphization budget tracked.
+
+### P1/P2 — Compiler performance and developer experience
+
+13. **MOC-13: Optimizing native backend.** Extend pure-MIND native codegen
+    through structured SSA lowering, liveness/register allocation, instruction
+    scheduling, bounds-check elimination with proofs, vectorization, PGO/LTO
+    and target-specific lowering. Keep MLIR/LLVM optional until measured
+    parity; never remove a faster, correct fallback prematurely.
+    **Gates:** comparable OCaml `ocamlopt` benchmarks on pinned hardware,
+    runtime and cold/warm build, p50/p95 latency, binary size, RAM,
+    energy, determinism and numerical correctness; publish wins and losses.
+14. **MOC-14: Demand-driven incremental build engine.** Persistent parse/
+    typed-IR/object cache with content hashes, interface-based invalidation,
+    deterministic parallel scheduling, crash-safe cache metadata and remote
+    cache trust receipts. **Gates:** editing a private function rebuilds
+    only affected targets; public ABI change invalidates dependents; clean
+    and cached builds yield the same canonical outputs.
+15. **MOC-15: IDE quality comparable to Merlin.** LSP driven by the actual
+    parser/typechecker: go-to-definition, references, rename, semantic
+    highlighting, hover types/effects/shapes, inlay hints, completion,
+    diagnostics, code actions and workspace-wide symbol search. Align
+    `mind-grammar` and `mind-codegraph` on one symbol identity.
+    **Gates:** multilingual/editor fixture suite, rename across packages,
+    no stale offsets, p95 interactive latency budgets.
+16. **MOC-16: Interactive REPL and debugger.** Native/interpretive parity,
+    type/shape inspect, breakpoints, step/reverse via replay receipts,
+    source maps, profiler, heap and effect trace, crash repro bundles.
+    **Gates:** debugger matches optimized build sources; replay a reported
+    failure from a checked-in sealed fixture.
+17. **MOC-17: Property fuzzing and differential compilers.** Coverage-guided
+    syntax/IR mutation, typed program generation, metamorphic checks,
+    reference interpreter ↔ native ↔ MLIR ↔ hardware differential testing,
+    minimized failing cases, deterministic fuzz seeds.
+    **Gates:** every newly fixed miscompile adds permanent corpus case;
+    corpus survives all codegen flag combinations.
+18. **MOC-18: Cross-repository compatibility dashboard.** Machine-readable
+    consumer matrix for `mind-flow`, `mind-law`, `mind-parser`,
+    `mind-nerve`, `mind-ci`, `mind-mem`, `naestro`, and
+    `mind-runtime`: `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
+    `CROSS-ISA`, `SIGNED` must be different fields. Require pinned
+    compiler SHA, source SHA, backend and test log artifact. **Gates:**
+    no source-complete project advertised as fully native without an
+    executing and independently reproducible binary.
+
+### P2 research differentiators beyond OCaml's typical language surface
+
+19. **MOC-19: Proof-carrying tensor/effect optimization.** Attach machine-
+    checkable shape, alias, bounds and effect preconditions to each
+    optimization; reject rewrites missing a valid proof or independent
+    equivalence test. Distinguish bit-exact semantics from explicitly
+    approximate fast-math profiles.
+20. **MOC-20: Governed execution integration.** Typed capability manifests
+    and audit receipts interoperate with `mind-law`, `mind-flow`,
+    `mind-mem`, and `naestro`; no external process or service can be
+    governed solely by in-process types, so runtime mediation,
+    authorization, and hostile-boundary tests are required.
+21. **MOC-21: Reproducible heterogeneous kernels.** Explicit backend
+    equivalence classes, fixed reduction trees, deterministic RNG input
+    models, reproducible GPU execution where supported, and truthful
+    capability negotiation. **Gates:** CPU↔GPU byte-identity only claimed
+    for named operations, datatypes and devices with independent real-
+    hardware reference hashes.
+22. **MOC-22: Controlled evolutionary codegen search.** Candidate pass
+    schedules and kernels from offline search are accepted only after
+    formal/static validation where applicable, differential oracles,
+    pinned benchmark reproducibility and cross-substrate conformance.
+    Every generated optimization must remain inspectable and removable.
+
+### Execution order and milestone acceptance
+
+- **Milestone A:** MOC-01/02/04: `mind-flow` native executable, imported
+  aggregate ABI, same-named module-private functions, native linked stdlib.
+- **Milestone B:** MOC-03/05/14/18: dependency graph and build provenance;
+  `mind-parser` consumes real packages with no copied stdlib modules;
+  signed versus unsigned evidence statuses are explicit.
+- **Milestone C:** MOC-06/07/09/12: richer static language verified by
+  compiler/interpreter/native differential suites.
+- **Milestone D:** MOC-08/10/11: governed effects, deterministic tasks, and
+  HTTPS/interactive runtime verified end-to-end.
+- **Milestone E:** MOC-13/15/16/17/19–22: rigorous speed/IDE and differentiated
+  proofs, with side-by-side OCaml comparisons and published reproducible runs.
+
+**Definition of 'better than OCaml':** make **specific**, reproducible
+workload claims (deterministic numerical computation, safety, integration,
+reproducible builds, and compiler speed) while matching indispensable
+OCaml abstraction/developer-experience capabilities. Do not assert
+universal language superiority, full Rust-independence, comprehensive
+cross-device float determinism, or performance wins before the corresponding
+end-to-end acceptance tests exist.
