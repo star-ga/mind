@@ -15,6 +15,7 @@ struct Source<'a> {
     functions: &'a Functions,
     result: Ty,
     loops: usize,
+    loop_calls: &'a mut BTreeSet<String>,
 }
 impl Source<'_> {
     fn block(&mut self, nodes: &[Node], env: &mut BTreeMap<String, Ty>) -> Check<Ty> {
@@ -50,7 +51,11 @@ impl Source<'_> {
                 Ok(Ty::I64)
             }
             Node::Neg { operand, .. } => {
-                let ty = value(self.node(operand, env)?);
+                let source_ty = self.node(operand, env)?;
+                if source_ty == Ty::Bool {
+                    return reject("lane.bool.width");
+                }
+                let ty = value(source_ty);
                 // Runtime f64 negation currently lowers through an integer
                 // zero (eval/lower.rs), losing a uniformly typed subtraction.
                 // Literal negation folds directly to ConstF64 and is safe here.
@@ -64,7 +69,11 @@ impl Source<'_> {
                 }
             }
             Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
-                equal(self.node(operand, env)?, Ty::I64)?;
+                let ty = self.node(operand, env)?;
+                if ty == Ty::Bool {
+                    return reject("lane.bool.width");
+                }
+                equal(ty, Ty::I64)?;
                 Ok(Ty::I64)
             }
             Node::Let {
@@ -73,11 +82,20 @@ impl Source<'_> {
                 value: init,
                 ..
             } => {
-                let ty = value(self.node(init, env)?);
+                let init_ty = self.node(init, env)?;
+                let mut ty = if init_ty == Ty::Bool {
+                    Ty::Bool
+                } else {
+                    value(init_ty)
+                };
                 if let Some(ann) = ann {
-                    equal(ty, scalar(ann)?)?;
+                    let annotated = scalar(ann)?;
+                    equal(ty, annotated)?;
+                    if annotated == Ty::Bool {
+                        ty = Ty::Bool;
+                    }
                 }
-                if !matches!(ty, Ty::I64 | Ty::F64) {
+                if !matches!(ty, Ty::I64 | Ty::Bool | Ty::F64) {
                     return reject("lane.source.binding_type");
                 }
                 env.insert(name.clone(), ty);
@@ -95,7 +113,38 @@ impl Source<'_> {
                     .iter()
                     .map(|a| self.node(a, env))
                     .collect::<Check<Vec<_>>>()?;
-                call_type(callee, &types, self.functions)
+                let result = call_type(callee, &types, self.functions)?;
+                // Validate the ordinary signature first so wrong types/arity keep
+                // their existing diagnostics. A dynamic size has no positivity proof.
+                let size = match callee.as_str() {
+                    "__mind_alloc" => args.first(),
+                    "__mind_realloc" => args.get(1),
+                    _ => None,
+                };
+                if let Some(size) = size {
+                    fn positive(node: &Node) -> bool {
+                        match node {
+                            Node::Lit(Literal::Int(n), _) => *n > 0,
+                            Node::Paren(inner, _) => positive(inner),
+                            _ => false,
+                        }
+                    }
+                    if !positive(size) {
+                        return reject("lane.alloc.size_positive");
+                    }
+                }
+                if self.loops > 0 {
+                    // Native free does not reclaim arena storage. Do not admit
+                    // repeated frees (including calls through helper functions)
+                    // as evidence that repeated allocations fit in the arena.
+                    if callee == "__mind_free" {
+                        return reject("lane.alloc.free_in_loop");
+                    }
+                    if self.functions.contains_key(callee) {
+                        self.loop_calls.insert(callee.clone());
+                    }
+                }
+                Ok(result)
             }
             Node::Return { value, .. } => {
                 let ty = match value {
@@ -127,8 +176,8 @@ impl Source<'_> {
                 }
             }
             Node::While { cond, body, .. } => {
-                equal(self.node(cond, env)?, Ty::I64)?;
                 self.loops += 1;
+                equal(self.node(cond, env)?, Ty::I64)?;
                 self.block(body, &mut env.clone())?;
                 self.loops -= 1;
                 Ok(Ty::Unit)
@@ -270,6 +319,7 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
             }
         }
     }
+    let mut loop_calls = BTreeSet::new();
     let mut globals = BTreeMap::new();
     for node in &source.items {
         if let Node::Const {
@@ -288,6 +338,7 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
                     functions: &functions,
                     result: Ty::Unit,
                     loops: 0,
+                    loop_calls: &mut loop_calls,
                 }
                 .node(value, &mut globals.clone())?;
                 if let Some(ty) = ty {
@@ -320,6 +371,7 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
                         functions: &functions,
                         result: sig.result,
                         loops: 0,
+                        loop_calls: &mut loop_calls,
                     }
                     .block(&fd.body, &mut env)?;
                     equal(got, sig.result)
@@ -343,6 +395,39 @@ fn source_facts(source: &ast::Module) -> Check<Functions> {
         };
         checked.map_err(|r| r.located(node.span().start()))?;
     }
+    // Keep established source refusals ahead of the entry ABI restriction.
+    if functions
+        .get("main")
+        .is_some_and(|sig| sig.result == Ty::F64)
+    {
+        return Err(LaneProfileRejection::new("lane.entry.f64_result").in_function("main"));
+    }
+    // Close the set of helpers reachable from a loop. Rechecking with loop
+    // context also covers mutual recursion without recursing in this walker.
+    let mut checked = BTreeSet::new();
+    while let Some(name) = loop_calls.iter().find(|n| !checked.contains(*n)).cloned() {
+        checked.insert(name.clone());
+        for node in &source.items {
+            if let Node::FnDef(fd, _) = node {
+                if fd.name != name {
+                    continue;
+                }
+                let sig = &functions[&name];
+                let mut env = globals.clone();
+                for (p, ty) in fd.params.iter().zip(&sig.params) {
+                    env.insert(p.name.clone(), *ty);
+                }
+                Source {
+                    functions: &functions,
+                    result: sig.result,
+                    loops: 1,
+                    loop_calls: &mut loop_calls,
+                }
+                .block(&fd.body, &mut env)
+                .map_err(|r| r.in_function(&name))?;
+            }
+        }
+    }
     Ok(functions)
 }
 
@@ -357,6 +442,7 @@ fn get(env: &Values, id: &ValueId) -> Check<Ty> {
         .ok_or(LaneProfileRejection::new("lane.ir.untyped_value"))
 }
 fn put(env: &mut Values, id: ValueId, ty: Ty) -> Check<()> {
+    let ty = if ty == Ty::Bool { Ty::I64 } else { ty };
     if let Some(old) = env.insert(id, ty) {
         equal(ty, old)?;
     }

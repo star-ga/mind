@@ -43,7 +43,7 @@ fn primitive_positive_controls() {
         "fn main() -> i64 { let x = 1; while x < 3 || x == 4 { if x == 2 { return x; } x = x + 1; } return x; }",
         "fn f(x: f64) -> f64 { return (0.0 - x) / 2.0; }",
         "fn f(x: i64) -> i64 { return !x; }",
-        "fn main() -> f64 { let x = 1.0; let i = 0; while i < 3 { x = x * 2.0; i = i + 1; } return x; }",
+        "fn f() -> f64 { let x = 1.0; let i = 0; while i < 3 { x = x * 2.0; i = i + 1; } return x; } fn main() -> i64 { return f() as i64; }",
         "fn main() -> i64 { let x = 1; if x == 1 { let x = 2.0; __mind_f64_to_bits(x); } return x; }",
         "fn f(c: i64) -> i64 { let x = if c { return 7; } else { 2 }; return x; }",
         "fn f(c: i64) -> f64 { let x = if c { return 7.0; } else { 2.0 }; return x; }",
@@ -514,4 +514,61 @@ fn probe_refusals_are_admitted_or_located() {
     assert_eq!(err.construct, "lane.extern.unimplemented");
     assert_eq!(err.function, None);
     assert_eq!(err.at, Some(externs.find("extern").unwrap()));
+}
+
+#[test]
+fn silent_mismatch_admission_refusals() {
+    for (source, kind) in [
+        (
+            "fn main() -> i64 { return __mind_alloc(0); }",
+            "lane.alloc.size_positive",
+        ),
+        (
+            "fn main() -> i64 { return __mind_alloc(0 - 16); }",
+            "lane.alloc.size_positive",
+        ),
+        (
+            "fn f(n: i64) -> i64 { return __mind_alloc(n); } fn main() -> i64 { return f(0); }",
+            "lane.alloc.size_positive",
+        ),
+        (
+            "fn main() -> i64 { return __mind_realloc(0, 0); }",
+            "lane.alloc.size_positive",
+        ),
+        (
+            "fn main() -> i64 { while 1 { __mind_free(0); } return 0; }",
+            "lane.alloc.free_in_loop",
+        ),
+        (
+            "fn f() -> i64 { return __mind_free(0); } fn g() -> i64 { return f(); } fn main() -> i64 { while 1 { g(); } return 0; }",
+            "lane.alloc.free_in_loop",
+        ),
+        (
+            "fn main() -> i64 { while __mind_free(0) { } return 0; }",
+            "lane.alloc.free_in_loop",
+        ),
+        (
+            "fn f(b: bool) -> i64 { return !b; } fn main() -> i64 { return f(2); }",
+            "lane.bool.width",
+        ),
+        (
+            "fn f(b: bool) -> i64 { return b == true; } fn main() -> i64 { return f(3); }",
+            "lane.bool.width",
+        ),
+        (
+            "fn f(b: bool) -> i64 { return b + 10; } fn main() -> i64 { return f(true); }",
+            "lane.bool.width",
+        ),
+        (
+            "fn f(b: bool) -> i64 { let c = b; return !c; } fn main() -> i64 { return f(2); }",
+            "lane.bool.width",
+        ),
+        (
+            "fn f(b: bool) -> i64 { return -b; } fn main() -> i64 { return f(true); }",
+            "lane.bool.width",
+        ),
+        ("fn main() -> f64 { return 1.0; }", "lane.entry.f64_result"),
+    ] {
+        assert_eq!(admits(source).unwrap_err().construct, kind, "{source}");
+    }
 }

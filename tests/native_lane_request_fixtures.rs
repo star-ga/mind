@@ -18,9 +18,7 @@
 //! * `refused=TEXT`: the native build exits 3, writes no artifact and names
 //!   TEXT. A wave refusal that the lane enforces under its own kind is pinned
 //!   here; a refusal that a later lane lifts is edited by that lane.
-//! * `defect=WHY`: the lane builds it today and the result differs from MLIR.
-//!   `open_defects_are_refused_or_match_mlir` is ignored until a compiler
-//!   change makes each one a named refusal or a parity case.
+//! The former 13 silent mismatches are pinned named refusals in this suite.
 //!
 //! The RED leg (`red=3`) runs the same records through a `mindc` whose
 //! embedded seed predates native-lane-v1, named by `MIND_LANE_PRESEED_MINDC`:
@@ -63,7 +61,6 @@ enum Expect {
     Exit(i32),
     Parity,
     Refused(String),
-    Defect(String),
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +79,6 @@ fn parse_head(head: &str) -> Case {
     let expect = match fields[1].split_once('=') {
         Some(("exit", n)) => Expect::Exit(n.parse().expect("exit code")),
         Some(("refused", text)) if !text.is_empty() => Expect::Refused(text.to_string()),
-        Some(("defect", why)) if !why.is_empty() => Expect::Defect(why.to_string()),
         None if fields[1] == "parity" => Expect::Parity,
         _ => panic!("unknown expectation in record head: {head}"),
     };
@@ -364,7 +360,7 @@ fn ported_refusals_are_named_and_write_nothing() {
         assert_refused(&case, &native_build(&p, &case, &Compiler::Lane), text);
         ran += 1;
     }
-    assert_eq!(ran, 115, "refusal records checked");
+    assert_eq!(ran, 128, "refusal records checked");
 }
 
 #[test]
@@ -377,8 +373,7 @@ fn the_corpus_is_complete_and_well_formed() {
     let count = |f: &dyn Fn(&Case) -> bool| cases.iter().filter(|c| f(c)).count();
     assert_eq!(count(&|c| matches!(c.expect, Expect::Exit(_))), 41);
     assert_eq!(count(&|c| c.expect == Expect::Parity), 3);
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 115);
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Defect(_))), 13);
+    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 128);
     assert_eq!(count(&|c| c.bounded), 3);
     assert_eq!(count(&|c| c.red), 138);
     for case in &cases {
@@ -440,35 +435,4 @@ fn red_leg_a_pre_lane_compiler_refuses_every_red_record() {
         "{TARGET} RED leg: {green} GREEN records and {refused} other records refused (exit 3)"
     );
     assert_eq!((green, refused), (37, 101), "RED records checked");
-}
-
-/// Each open defect must end as a named refusal or as parity with MLIR.
-#[test]
-#[ignore = "open defects: native-lane-v1 builds these and the result differs from MLIR"]
-fn open_defects_are_refused_or_match_mlir() {
-    let mut open = Vec::new();
-    for case in corpus() {
-        let Expect::Defect(why) = &case.expect else {
-            continue;
-        };
-        let p = project(&case);
-        let built = native_build(&p, &case, &Compiler::Lane);
-        if built.code == 3 && built.artifact.is_none() {
-            continue;
-        }
-        let Some(pair) = build_and_run_both(&case) else {
-            return;
-        };
-        if pair.native != pair.mlir {
-            open.push(format!(
-                "{}: native exit {} vs MLIR exit {} ({why})",
-                case.id, pair.native.0, pair.mlir.0
-            ));
-        }
-    }
-    assert!(
-        open.is_empty(),
-        "silent native != MLIR:\n{}",
-        open.join("\n")
-    );
 }

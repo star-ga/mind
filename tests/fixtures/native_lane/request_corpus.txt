@@ -11,8 +11,7 @@
 #   parity        both build; exits and stdout are equal (the value is owned by
 #                 another contract and is not pinned here)
 #   refused=TEXT  the native build exits 3, writes nothing and names TEXT
-#   defect=WHY    native-lane-v1 builds it and the result differs from MLIR; the
-#                 ignored open-defect test requires a named refusal or parity
+# All 13 former silent mismatches are pinned named refusals.
 # red=3: a pre-lane compiler refuses the program with exit 3 (the RED leg).
 # The corpus is plain text, not `.mind` files, so the front-end differential
 # corpus under tests/fixtures (G2) does not pick up these deliberately
@@ -76,7 +75,7 @@ fn main() -> i64 { let p: i64 = __mind_alloc(8); return 1; }
 === w1_conv | exit=0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_intrinsic_outside_the_frozen_table_stays_refused
 fn main() -> i64 { let x: i64 = 7; return __mind_bits_to_f64(x) as i64; }
 
-=== w1_alloc_zero | defect=alloc size <= 0: native returns an arena pointer, the C runtime returns 0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+=== w1_alloc_zero | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
 fn main() -> i64 {
     let p: i64 = __mind_alloc(0);
     if p == 0 {
@@ -85,7 +84,7 @@ fn main() -> i64 {
     return 2;
 }
 
-=== w1_alloc_negative | defect=alloc size <= 0: native returns an arena pointer, the C runtime returns 0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+=== w1_alloc_negative | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
 fn main() -> i64 {
     let p: i64 = __mind_alloc(16);
     __mind_store_i64(p, 7);
@@ -97,7 +96,7 @@ fn main() -> i64 {
     return __mind_load_i64(p);
 }
 
-=== w1_alloc_variable | defect=alloc size <= 0 through a parameter: native pointer, C runtime 0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+=== w1_alloc_variable | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
 fn mk(n: i64) -> i64 {
     return __mind_alloc(n);
 }
@@ -110,7 +109,7 @@ fn main() -> i64 {
     return 2;
 }
 
-=== w1_realloc_zero | defect=realloc to size 0: native returns a pointer, the C runtime returns 0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+=== w1_realloc_zero | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
 fn main() -> i64 {
     let p: i64 = __mind_alloc(16);
     let q: i64 = __mind_realloc(p, 0);
@@ -337,7 +336,7 @@ fn main() -> i64 { let a: i64 = 300; return w8(a) + 50; }
 import std.io;
 fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 10); let n: i64 = 1; return print_bytes(p, n) + 40; }
 
-=== r3_free_loop | defect=free is a no-op on the native arena: 2000 x 1 MB traps natively, MLIR exits 33 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
+=== r3_free_loop | refused=native-lane-v1 (lane.alloc.free_in_loop) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
 fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, i); a = a + __mind_load_i64(p) - i; let f: i64 = __mind_free(p); a = a + f; i = i + 1; } return a + 33; }
 
 === r3_big_alloc | exit=9 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
@@ -576,31 +575,31 @@ fn main() -> i64 { return f(256); }
 fn g() -> bool { let a: i64 = 256; return a; }
 fn main() -> i64 { let b = g(); if b { return 1; } return 2; }
 
-=== bool_not_lit | defect=a non-canonical bool argument: `!b` is i1 on MLIR, b == 0 natively | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+=== bool_not_lit | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
 fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
 fn main() -> i64 { return f(2); }
 
-=== bool_not_var | defect=a non-canonical bool argument: `!b` is i1 on MLIR, b == 0 natively | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+=== bool_not_var | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
 fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
 fn main() -> i64 { let a: i64 = 2; return f(a); }
 
-=== bool_not_wrap | defect=a non-canonical bool returned by a `-> bool` wrapper: `!b` diverges | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+=== bool_not_wrap | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
 fn g(a: i64) -> bool { return a; }
 fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
 fn main() -> i64 { return f(g(2)); }
 
-=== bool_eq_true | defect=a non-canonical bool compared with `true` diverges | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+=== bool_eq_true | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
 fn f(b: bool) -> i64 { if b == true { return 1; } return 2; }
 fn main() -> i64 { return f(3); }
 
-=== bool_arith | defect=arithmetic on a bool parameter: i1 on MLIR (1), i64 natively (11) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::arithmetic_on_a_bool_parameter_is_refused
+=== bool_arith | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::arithmetic_on_a_bool_parameter_is_refused
 fn f(b: bool) -> i64 { return b + 10; }
 fn main() -> i64 { return f(true); }
 
 === w3_signed_div | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
 fn main() -> i64 { let x: i64 = -17; return x / 65; }
 
-=== w3_float_div | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+=== w3_float_div | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
 fn main() -> f64 { return 17.0 / 2.0; }
 
 === w3_signed_rem | exit=239 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
@@ -684,7 +683,7 @@ fn main() -> i64 { return 7 as i32; }
 === w3_cast_f64_to_i64 | exit=7 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
 fn main() -> i64 { return 7.0 as i64; }
 
-=== w3_cast_i64_to_f64 | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+=== w3_cast_i64_to_f64 | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
 fn main() -> f64 { return 7 as f64; }
 
 === w3_halve_int | exit=4 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
@@ -732,7 +731,7 @@ fn main(argc: f64, argv: i64) -> i64 { return 0; }
 === w3_entry_swapped | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
 fn main(argv: i64, argc: i64) -> i64 { return 0; }
 
-=== w3_entry_f64_ret | defect=an f64 result from main: native exits with the truncated value, MLIR with an unspecified one (208 on LLVM 20, 16 on LLVM 23) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+=== w3_entry_f64_ret | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
 fn main(argc: i64, argv: i64) -> f64 { return 0.0; }
 
 === w3_alloc_loop_default | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
