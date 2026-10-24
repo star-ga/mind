@@ -33768,12 +33768,7 @@ pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
 // actual call still meets the schema1 refusal. The caller frees only this copy.
 pub fn nb_ctx_without_stream(ctx: i64, uses: i64) -> i64 {
     if ctx == 0 { return 0; }
-    if __mind_load_i64(ctx) == 3 {
-        __mind_store_i64(ctx + 424, uses);
-        return ctx;
-    }
-    if __mind_load_i64(ctx) != 2 { return ctx; }
-    if uses != 0 { return ctx; }
+    if nb_ctx_stream_prepare(ctx, uses) == 0 { return ctx; }
     let copy: i64 = __mind_alloc(416);
     if copy == 0 { return 0; }
     let mut i: i64 = 0;
@@ -52652,6 +52647,31 @@ pub fn hm_route_add(route: i64, item: i64) -> i64 {
     0
 }
 
+// Gate entry: run the mic@3 twin's refusal walk over a combined source. Writes
+// the name span_lo of each refused function to out[0..cap) and returns the
+// refusal count (-1: a non-function item or the arena refused). Any refusal
+// zeroes nb_trace_hash, so selftest_native_elf_u self-emits 0 bytes.
+pub fn selftest_twin_refusals(src_addr: i64, src_len: i64, user_lo: i64, out: i64, cap: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let route: i64 = __mind_alloc(hm_route_cap() * 8 + 16);
+    if route == 0 { return 0 - 1; }
+    __mind_store_i64(route, 0);
+    let _fr: EmitState = nb_build_mic3_from_tokens_r(tokens, src_addr, src_len, user_lo, route);
+    let n: i64 = __mind_load_i64(route);
+    let m: i64 = if n < cap {
+        n
+    } else {
+        cap
+    };
+    let mut i: i64 = 0;
+    while i < m {
+        __mind_store_i64(out + i * 8, __mind_load_i64(route + 8 + i * 8));
+        i = i + 1;
+    }
+    __mind_free(route);
+    n
+}
+
 // ---- FLOAT fail-closed pre-gate (B0 poison-boundary residual) ----
 //
 // The general whole-program path (this h/hb family) has NO float support and NO
@@ -53070,6 +53090,19 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
     }
     parts
 }
+// Prepare ctx for lowering: kind 3 records the stream use in place (ctx+424)
+// and returns 0; kind 2 with no stream use returns 1, meaning the caller must
+// lower with a private copy whose stream slots are cleared; otherwise 0.
+pub fn nb_ctx_stream_prepare(ctx: i64, uses: i64) -> i64 {
+    if ctx == 0 { return 0; }
+    if __mind_load_i64(ctx) == 3 {
+        __mind_store_i64(ctx + 424, uses);
+        return 0;
+    }
+    if __mind_load_i64(ctx) != 2 { return 0; }
+    if uses != 0 { return 0; }
+    1
+}
 pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64, ctx: i64, parts: i64) -> i64 {
     if nb_ctx_shape_ok(ctx) == 0 { return 0; }
     if tok_count(tokens) == 0 { return 0; }
@@ -53226,19 +53259,13 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     // Which fns' RESULTS are read (store-as-value: see nb_obs_build).
     let obs: i64 = nb_obs_build(src_addr, ordered, n_fns);
-    // Colocate the optional lower-ctx copy with its free: the copy is the only
-    // allocation nb_ctx_without_stream makes, and free_lint requires that
-    // __mind_free(name) pair with a same-function __mind_alloc for name.
-    let mut need_copy: i64 = 0;
-    if ctx != 0 {
-        if __mind_load_i64(ctx) == 3 {
-            __mind_store_i64(ctx + 424, uses_stream);
-        } else {
-            if __mind_load_i64(ctx) == 2 {
-                if uses_stream == 0 { need_copy = 1; }
-            }
-        }
-    }
+    // The optional lower-ctx copy is made here, not through nb_ctx_without_stream,
+    // because free_lint requires that __mind_free(name) pair with a same-function
+    // __mind_alloc for name. The decision is the early-return helper, not a
+    // mutable flag set in a nested if/else: the mic@3 twin refuses that form
+    // here, nb_trace_hash returns 0 and the strict selftest_native_elf_u
+    // self-emit is empty.
+    let need_copy: i64 = nb_ctx_stream_prepare(ctx, uses_stream);
     if need_copy == 1 {
         let lower_ctx: i64 = __mind_alloc(416);
         if lower_ctx == 0 { return 0; }
