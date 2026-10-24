@@ -123,7 +123,8 @@ Only items that remove a dependency move the headline; coverage is reported sepa
 (RI_DEPENDENCY_MATRIX "coverage vs dependency").
 
 1. Pre-dispatch routing: the compiler chooses native or MLIR per program before compiling, prints
-   the route and records it in the evidence. No global default flip.
+   the route and records it in the evidence. The unflagged default becomes this route
+   (roadmap Phase 28); explicit `--backend` flags stay explicit, and `--backend native` fails closed.
 2. Admission keyed on (operation, operand type) from `FnDef.value_types`, so features already
    implemented in the self-host reach `mindc build`. RI-D1 gate in CI.
 3. Import-driven standard-library resolution for the native path (RI row 14).

@@ -92,6 +92,11 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   `src/native` backend (Phase 15) has been deleted. See the README for what
   remains on the broader Rust-independence effort (MLIR/mindc itself is still
   Rust — this closes the native-ELF track specifically).
+- **Independence plan of record** – the measured state, tracks and targets for
+  Rust / MLIR / LLVM independence, correctness-first ordering and the
+  state-of-the-art gates live in
+  [`docs/independence-audit-plan-20260925.md`](independence-audit-plan-20260925.md);
+  Phases 27–30 below are its roadmap form.
 - **Ed25519/ML-DSA signing (opt-in)** – cryptographic signing of the
   already-emitted, tamper-evident evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
@@ -110,6 +115,13 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   [`docs/rfcs/DRAFT-deterministic-format-frontend.md`](rfcs/DRAFT-deterministic-format-frontend.md).
 - **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, metrics.
 - **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry.
+
+### Housekeeping
+
+- [ ] `docs/architecture.md` names `src/native` as the normative backend; that
+      tree no longer exists and the native backend is `examples/mindc_mind/main.mind`
+      SECTION 4c. Done when `grep -n 'src/native' docs/architecture.md` returns only
+      historical notes.
 
 ## In Progress
 
@@ -2383,6 +2395,11 @@ and is not.
       dimensions that are ranges rather than small enums, instead of adding a new
       one. Rung 3 of the write-avoidance ladder: it is already present and has
       never been used.
+- [ ] **Publish the matrix.** The enumerated cells are written to a generated,
+      committed `docs/conformance-matrix.md` (target × operation × status, with
+      every exclusion and its reason) that the site's backend-targets page
+      renders. A hardware-status row on the site is never a conformance result;
+      this matrix is.
 
 ### Why this is worth doing now
 
@@ -2417,6 +2434,164 @@ systematic version of that accident.
 - Does the substrate dimension multiply or partition? `avx2` and `neon` are not
   flags we set; they are hardware we run on. Cells requiring both may only be
   checkable in the dual-arch CI matrix, not locally.
+
+## Phase 27 — One semantics, two engines (proposed, 2026-10-24)
+
+**Status: evidence complete, not scoped.** `docs/ENGINE_CONSUMER_LIST.md` measured
+nine hand-written implementations of MIND's scalar semantics and eight distinct
+answers to `x / 0` and `INT_MIN / -1`. The contract is already normative
+(mind-spec `determinism.md` §1: `x / 0 = 0`, `x % 0 = 0`, `INT_MIN / -1 = INT_MIN`);
+only the two code generators hold it. The shipped interpreter (`mind eval`,
+`mind repl`, `mindc test`, the conformance value oracle) returns an error on
+`x / 0` and panics the compiler process on `INT_MIN / -1`.
+
+The rule of record: two hand-written implementations of any construct, the Rust
+reference and the self-host MIND implementation. Differential oracles are tests,
+not engines, and stay.
+
+### Order of work
+1. **Interpreter conforms.** Route every interpreter `Div`/`Mod` (and the IR
+   preview evaluator's) through one shared helper implementing the §1 table.
+   A program on a defined edge becomes executable instead of crashing.
+2. **Parity gate across every execution path.** The int-determinism fixtures
+   (today gated on the MLIR `.so` only) run on the interpreter, the MLIR `.so`
+   and the native ELF, and must agree bit-for-bit; disagreement names the path.
+3. **Surplus engines, by the ladder (wire → substitute → relocate → gate → delete):**
+   the IR preview evaluator is substituted by the interpreter; the second
+   IR→MLIR emitter is gated now and substituted once its ten tensor/shape ops are
+   carried by the canonical lowering; the C fallbacks in `runtime-support` get one
+   named authority per symbol and a differential gate against `std/*.mind`; the
+   self-host MLIR-text emitter stays until the recorded operator decision changes.
+4. **Ratchet.** `docs/ENGINE_CONSUMER_LIST.md` is re-measured at each landing;
+   the count of hand-written semantics engines may only go down (nine → five).
+
+### Done when
+- `mind eval '7 / 0'` prints `0` and
+  `mind eval '(0 - 9223372036854775807 - 1) / (0 - 1)'` prints
+  `-9223372036854775808`, both exit 0, in debug and release builds.
+- `mindc conformance --profile cpu` carries one cell per §1 edge, and a CI gate
+  runs those cells on all three execution paths and requires identical output.
+- Mutation: replacing the shared helper's division with a bare `/` turns the
+  gate red on two paths.
+- The mind-spec conformance gap list no longer lists the interpreter's
+  division edges.
+
+### Firewall
+- No engine reads the parity gate; the gate reports, never decides.
+- No retirement without a substitute that is already wired and gated.
+
+## Phase 28 — Native by default: routed, recorded, fail-closed (proposed, 2026-10-24)
+
+**Status: not started.** `mindc build` with no `--backend` flag selects `mlir`
+today. The native backend is the normative path and MLIR → LLVM is the optional
+one; the default must say so in code, not only in prose.
+
+### Order of work
+1. **Pre-dispatch routing, native first.** Before compiling, the driver runs the
+   native admission check on the program; admitted programs build native,
+   everything else routes to MLIR. The route is printed once and recorded in the
+   evidence chain (`evidence_chain.route`), so a verifier can tell which backend
+   produced the bytes.
+2. **Explicit flags stay explicit.** `--backend native` fails closed on any
+   construct the native subset cannot lower (never a silent MLIR fallback);
+   `--backend mlir` forces MLIR. Only the unflagged default changes.
+3. **Widen admission by (operation, operand type)** from the type checker's
+   value types, so constructs the self-host already lowers reach the default
+   route; the admission profile is the published conformance matrix (Phase 19.3).
+4. **Docs in the same change:** the mindlang.dev docs landing, architecture page,
+   Ask FAQ entries and the MLIR-tools README stop describing `mlir` as the default;
+   the `/roadmap` entry moves from "Shipped, opt-in" to "Default, routed".
+
+### Done when
+- On a host with no `mlir-opt`, `clang` or LLVM installed, `mindc build` with no
+  flags builds and runs every program in the native admission profile, and
+  `mindc verify` on each artifact reports `route = native`.
+- A program outside the profile builds via MLIR with the route printed and
+  recorded; `--backend native` on the same program exits non-zero with the
+  construct named.
+- Keystone 7/7, cross-substrate and the self-host fixed point are unchanged.
+- The claims gate (`scripts/check_claims.py`) forbids the phrase
+  "The default `mlir` build is unaffected" on every public surface.
+
+## Phase 29 — Optimizing native tier (proposed, 2026-10-24)
+
+**Status: not started.** Native code runs about 6.5× slower than gcc -O2 on the
+measured Collatz workload. Self-hosting closes the independence loop; it does not
+close this gap. The tier is built on mic@3 ("compile what you hash") so the
+optimized IR is the IR the evidence chain anchors.
+
+### Rungs, each gated before the next
+| Rung | Work | Speed gate (geomean over the published workload set, same machine, strict FP) |
+|---|---|---|
+| 1 | Liveness + linear-scan register allocation; no spills for ≤ 12 live values | ≤ 3× gcc -O2 |
+| 2 | Inlining; SCCP; GVN; LICM | ≤ 2× gcc -O2 |
+| 3 | Instruction selection with a deterministic cost table; loop strength reduction | ≤ 1.25× gcc -O2 |
+| 4 | Vectorization with pinned reduction order; int-dot rungs on the native path | ≥ best of gcc / clang -O3, bit-identical x86-64 and AArch64 |
+
+The workload set is fixed before rung 1 and committed with its reference hashes:
+the Collatz foil plus at least three integer and one strict-FP program from
+`examples/`. Collatz is never the headline.
+
+### Done when (per rung)
+- A receipt committed under `bench/results/` with command, toolchain digests,
+  `trace_hash` of each artifact and the measured numbers; the speed gate holds.
+- Keystone 7/7 + cross-substrate byte-identity green; `-O0` and `-O<rung>`
+  outputs of the same source carry different `trace_hash` and both verify.
+- Mutation: reordering a reduction in rung 4 changes the cross-substrate hash
+  and turns the gate red.
+
+### Firewall
+- No pass may read host state (CPU model, time, environment) — a pass that does
+  is a determinism leak, not an optimization.
+- Deleting MLIR / LLVM / clang from the build path happens only after rung 4
+  holds (plan Track 2.8).
+
+## Phase 30 — End-to-end compile latency (proposed, 2026-10-24)
+
+**Status: not started.** The frontend runs in microseconds and that number is
+published; the end-to-end number (parse → emission → link → runnable) is not.
+Self-compilation runs at ~3.0K lines/s with 4.0 GB peak RSS, single-threaded.
+
+### Order of work
+1. **Measure end to end first.** A `compile_latency` gate times three fixed
+   programs (hello, the Collatz foil, the seeded self-host module) from source
+   to runnable artifact on both backends and records p50/p95, peak RSS and the
+   phase split (frontend, lowering, emission, link). The numbers are published
+   on the site performance page beside the frontend rows, with the same scope
+   line discipline the homepage uses.
+2. **Split `main.mind` into modules** (prerequisite for incremental work).
+3. **Content-addressed incremental rebuilds** whose keys are the evidence
+   hashes; `-j1` and `-jN` byte-identical.
+4. **Cold-start and link:** integrated linker per OS on the native path; no
+   external tool in the default route.
+
+### Targets (from the plan of record)
+Edit-to-diagnostic p95 ≤ 20 ms at 100K lines; incremental rebuild ≤ 50 ms at
+100K lines, byte-identical to a clean build; cold throughput ≥ 150K lines/s/core
+end to end on the debug tier.
+
+### Done when
+- The `compile_latency` gate runs in CI on every landing and fails on a > 5 %
+  p95 regression against the committed baseline.
+- The site performance page shows end-to-end rows with command, toolchain and
+  `trace_hash` receipts, next to the frontend rows.
+- An incremental rebuild after a one-line edit produces an artifact whose bytes
+  and `trace_hash` equal a clean build's.
+
+## One grammar (proposed, 2026-10-24)
+
+One machine-checked grammar at the current surface
+(`mind-spec/spec/v1.0/grammar-*.ebnf`) is the source for the Rust parser, the
+pure-MIND parser, the spec prose and the editor grammar. Syntax gaps are triaged
+by measured downstream use (today 82 of 534 downstream `.mind` files pass
+`mindc check`; the first errors are parse errors), and each gap is either
+implemented or rejected with a fix-it.
+
+Done when: a CI check in mind-grammar fails if a token class or keyword in the
+spec's lexical grammar has no scope in `source.mind.json`; the two parsers accept
+and reject the same corpus (the gap corpus plus the downstream census), reported
+as one number per landing; the downstream `check` pass rate is published on the
+`/roadmap` page and may only go up.
 
 ## Conformance-change report in CI (proposed, 2026-10-03)
 

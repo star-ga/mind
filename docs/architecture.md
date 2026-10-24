@@ -47,7 +47,7 @@ Key invariants:
 
 ## Backend Architecture
 
-The **NATIVE-ELF backend** (`src/native`) is the normative self-host target.
+The **NATIVE-ELF backend** (`examples/mindc_mind/main.mind`, SECTION 4c) is the normative self-host target.
 It is determinism-by-construction: the native ELF is a pure function of the IR,
 with no MLIR-text intermediate required on the self-host path. The pure-MIND
 front-end emits the full seeded module (21 stdlib modules + main.mind, 1 055 777 B)
