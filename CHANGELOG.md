@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — native-lane request corpus (native-wave2 / native-wave3 programs)
+- `tests/native_lane_request_fixtures.rs` runs 172 programs from the native-wave2 and
+  native-wave3 checkpoints and from the native admission requests
+  (`tests/fixtures/native_lane/request_corpus.txt`) on native-lane-v1. 44 build
+  natively and match the MLIR backend (exit code and stdout); 115 are refused with a
+  named lane kind and no artifact. A compiler whose seed predates the lane refuses 138
+  of them with exit 3 (the ignored RED leg, run with `MIND_LANE_PRESEED_MINDC`).
+- 13 programs build on the lane and exit differently from MLIR: allocation sizes of 0
+  or less (the C runtime returns 0, the native arena a pointer), 2000 allocations of
+  1 MB freed in a loop (the native build traps), a non-canonical `bool` argument used
+  with `!`, `== true` or arithmetic, and an `f64` result from `main`. They stay in an
+  ignored open-defect test until each is a named refusal or matches MLIR.
+
 ### Added — native variadic C-call emitter component
 - Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
 
