@@ -222,182 +222,414 @@ pub fn nsf_manifest(index: i64, out: i64) -> i64 {
 pub fn nsf_module_index(src: i64, lo: i64, hi: i64) -> i64 {
     if hi - lo == 5 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 97 { ok = 0; }
-        if ok == 1 { return 0; }
+        if __mind_load_i8(src + lo + 0) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 97 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 0;
+        }
     }
     if hi - lo == 5 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 115 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 121 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 99 { ok = 0; }
-        if ok == 1 { return 1; }
+        if __mind_load_i8(src + lo + 0) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 121 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 99 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 1;
+        }
     }
     if hi - lo == 4 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 98 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 108 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 115 { ok = 0; }
-        if ok == 1 { return 2; }
+        if __mind_load_i8(src + lo + 0) != 98 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 108 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 2;
+        }
     }
     if hi - lo == 3 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 99 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 108 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 105 { ok = 0; }
-        if ok == 1 { return 3; }
+        if __mind_load_i8(src + lo + 0) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 108 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 105 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 3;
+        }
     }
     if hi - lo == 2 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 102 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 115 { ok = 0; }
-        if ok == 1 { return 4; }
+        if __mind_load_i8(src + lo + 0) != 102 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 4;
+        }
     }
     if hi - lo == 2 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 111 { ok = 0; }
-        if ok == 1 { return 5; }
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 5;
+        }
     }
     if hi - lo == 8 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 95 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 99 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 6) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 7) != 110 { ok = 0; }
-        if ok == 1 { return 6; }
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 95 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 7) != 110 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 6;
+        }
     }
     if hi - lo == 7 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 117 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 6) != 103 { ok = 0; }
-        if ok == 1 { return 7; }
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 117 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 7;
+        }
     }
     if hi - lo == 4 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 106 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 115 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 110 { ok = 0; }
-        if ok == 1 { return 8; }
+        if __mind_load_i8(src + lo + 0) != 106 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 8;
+        }
     }
     if hi - lo == 3 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 109 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 112 { ok = 0; }
-        if ok == 1 { return 9; }
+        if __mind_load_i8(src + lo + 0) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 112 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 9;
+        }
     }
     if hi - lo == 3 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 116 { ok = 0; }
-        if ok == 1 { return 10; }
+        if __mind_load_i8(src + lo + 0) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 116 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 10;
+        }
     }
     if hi - lo == 7 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 112 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 99 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 115 { ok = 0; }
-        if __mind_load_i8(src + lo + 6) != 115 { ok = 0; }
-        if ok == 1 { return 11; }
+        if __mind_load_i8(src + lo + 0) != 112 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 11;
+        }
     }
     if hi - lo == 7 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 99 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 116 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 6) != 114 { ok = 0; }
-        if ok == 1 { return 12; }
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 114 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 12;
+        }
     }
     if hi - lo == 5 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 103 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 120 { ok = 0; }
-        if ok == 1 { return 13; }
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 103 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 120 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 13;
+        }
     }
     if hi - lo == 4 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 103 { ok = 0; }
-        if ok == 1 { return 14; }
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 14;
+        }
     }
     if hi - lo == 6 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 115 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 104 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 97 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 50 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 53 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 54 { ok = 0; }
-        if ok == 1 { return 15; }
+        if __mind_load_i8(src + lo + 0) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 104 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 50 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 53 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 54 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 15;
+        }
     }
     if hi - lo == 6 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 115 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 116 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 114 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 4) != 110 { ok = 0; }
-        if __mind_load_i8(src + lo + 5) != 103 { ok = 0; }
-        if ok == 1 { return 16; }
+        if __mind_load_i8(src + lo + 0) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 16;
+        }
     }
     if hi - lo == 4 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 116 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 105 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 109 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 101 { ok = 0; }
-        if ok == 1 { return 17; }
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 101 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 17;
+        }
     }
     if hi - lo == 4 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 116 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 111 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 109 { ok = 0; }
-        if __mind_load_i8(src + lo + 3) != 108 { ok = 0; }
-        if ok == 1 { return 18; }
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 108 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 18;
+        }
     }
     if hi - lo == 3 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 116 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 117 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 105 { ok = 0; }
-        if ok == 1 { return 19; }
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 117 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 105 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 19;
+        }
     }
     if hi - lo == 3 {
         let mut ok: i64 = 1;
-        if __mind_load_i8(src + lo + 0) != 118 { ok = 0; }
-        if __mind_load_i8(src + lo + 1) != 101 { ok = 0; }
-        if __mind_load_i8(src + lo + 2) != 99 { ok = 0; }
-        if ok == 1 { return 20; }
+        if __mind_load_i8(src + lo + 0) != 118 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 99 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 20;
+        }
     }
     0 - 1
 }

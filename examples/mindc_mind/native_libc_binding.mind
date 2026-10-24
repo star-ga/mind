@@ -1812,6 +1812,7 @@ pub fn ncb_lib_varargs(catalog: i64) -> i64 {
 
 pub fn ncb_release(registry: i64, snapshot: i64, wire: i64, catalog: i64) -> i64 {
     let _r: i64 = nb_cabi_free(registry);
+    __mind_free(registry);
     __mind_free(snapshot);
     __mind_free(wire);
     __mind_free(catalog);

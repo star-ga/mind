@@ -16,7 +16,16 @@ fn main() -> i64 {
     let mut c: i64 = 0;
     while c < 3 {
         c = c + 1;
-        v = v + (if y > 0 { (if c != y { y = 17; 4 } else { 20 }) } else { 0 });
+        v = v + (if y > 0 {
+            (if c != y {
+                y = 17;
+                4
+            } else {
+                20
+            })
+        } else {
+            0
+        });
     }
     v + y
 }

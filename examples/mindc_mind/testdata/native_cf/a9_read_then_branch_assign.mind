@@ -7,12 +7,22 @@
 // note: 2
 fn mix(n: i64) -> i64 {
     let mut x: i64 = n;
-    let y: i64 = x + (if x > 0 { x = 100; 1 } else { 2 });
+    let y: i64 = x + (if x > 0 {
+        x = 100;
+        1
+    } else {
+        2
+    });
     let mut i: i64 = 0;
     while i < 10 {
         i = i + 1;
         if i == 3 {
-            return y * 2 + x + (x - (if x == 100 { x = 1; 0 } else { 9 }) * x);
+            return y * 2 + x + (x - (if x == 100 {
+                x = 1;
+                0
+            } else {
+                9
+            }) * x);
         }
     }
     0

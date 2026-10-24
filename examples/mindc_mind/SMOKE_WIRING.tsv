@@ -136,7 +136,7 @@ self_host_native_record_trace_smoke	ci,keystone	gate	Canonical record-field trac
 self_host_native_scalar_f32_smoke	ci,keystone	gate	
 self_host_native_scalar_f64_smoke	ci	gate	
 self_host_native_scast_smoke	none	gate	RED at this commit: signed-cast precedence — `a + b as i8` must parse as `a + (b as i8)` (300 + (-56) = 244, >>1 = 122) but the pure-MIND emit runs to 122 while live mindc returns 250, i.e. the loose-parse bug is in the Rust reference leg. deferred: wire once the `as` binding-power disagreement between the two front-ends is resolved.
-self_host_native_shadow_scope_smoke	ci	gate	
+self_host_native_shadow_scope_smoke	ci	gate	CI invokes this gate with --bridge. The no-arg leg builds stage1 from the frozen seed and does not consult a compiler; the sweep must pass the workflow argv, not a hand exemption.
 self_host_native_simd_dot_f32_smoke	ci	gate	
 self_host_native_simd_dot_i16_smoke	ci	gate	
 self_host_native_simd_dot_q16_smoke	ci	gate	
@@ -222,3 +222,5 @@ native_stream_io_check	none	gate	Manual exact-source stream-I/O image transport 
 native_c_variadic_plan_check	none	gate	Manual bounded scalar SysV variadic metadata gate with frozen MIND assertions, native/MLIR byte parity, owned-output checks and six source mutations. deferred: CI requires exact source-bound compiler prerequisites; no call emission, source admission or consumer pin qualification.
 native_lane_value_shapes_smoke	ci	gate	native-lane-v1 value-shape gate: store results read as the defined 0 (stack dirtied first), full-width i64<->f64 conversion edges, diverging-branch merges and main(argc, argv) behind the explicit-layout runtime prefix, each built through mindc with the reseeded bounded stage1.elf (carries the nblane01 mark) as --compiler and with MLIR, and checked against independently computed values.
 native_c_variadic_emit_check	none	gate	Manual bounded SysV variadic real-call gate with frozen MIND construction/verdicts, independent C/assembly observations and actual source mutations. deferred: CI needs explicit reviewed compiler/tool identities; no frontend admission or consumer pin qualification.
+h2b_exclusion_controls_check	ci	gate	H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7): every per-file .gitignore exclusion is tracked and present in ANATOMY; the catalogue matches its committed expected path set; each named owning gate is non-vacuous; caller rows carry external digest pins and sealed-import notes. Mutant flags are the red controls.
+h2b_fmt_identity_check	ci	gate	H2b layout-only format identity (Ruling Q1.1): every formatted .mind file emits byte-identical IR and mic3 under one mindc for the pre-format and post-format bytes. Requires MINDC_BIN. --mutant-diverge is the red control.

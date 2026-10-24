@@ -11,6 +11,11 @@ fn out(v: i64) -> i64 {
 }
 fn main() -> i64 {
     let mut x: i64 = 1;
-    out(if x > 0 { x = 8; x } else { 0 });
+    out(if x > 0 {
+        x = 8;
+        x
+    } else {
+        0
+    });
     x
 }

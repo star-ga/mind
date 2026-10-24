@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2621 | **Est. tokens:** ~4,678,094
-**Generated:** 2026-10-22 02:45 UTC
+**Files:** 2624 | **Est. tokens:** ~4,697,605
+**Generated:** 2026-10-23 18:12 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~32,112 |
+| `./` | 34 | ~38,930 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -64,28 +64,28 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 286 | ~798,281 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,163 |
+| `examples/mindc_mind/` | 288 | ~804,525 |
+| `examples/mindc_mind/testdata/` | 4 | ~6,567 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
-| `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,262 |
+| `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,315 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
-| `examples/mindc_mind/testdata/native_cf/` | 24 | ~5,978 |
+| `examples/mindc_mind/testdata/native_cf/` | 24 | ~6,169 |
 | `examples/mindc_mind/testdata/native_c_variadic_emit/` | 150 | ~278,449 |
 | `examples/mindc_mind/testdata/native_c_variadic_plan/` | 147 | ~89,226 |
 | `examples/mindc_mind/testdata/native_dynamic_allocator/` | 4 | ~6,741 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_lane_values/` | 2 | ~988 |
 | `examples/mindc_mind/testdata/native_libc_binding/` | 1 | ~149 |
-| `examples/mindc_mind/testdata/native_libc_io/` | 7 | ~15,200 |
+| `examples/mindc_mind/testdata/native_libc_io/` | 7 | ~15,275 |
 | `examples/mindc_mind/testdata/native_libc_startup/` | 3 | ~1,539 |
 | `examples/mindc_mind/testdata/native_misc/` | 37 | ~4,969 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
 | `examples/mindc_mind/testdata/native_scoped_fixed/` | 8 | ~17,608 |
 | `examples/mindc_mind/testdata/native_scoped_fixed/observers/` | 7 | ~7,820 |
-| `examples/mindc_mind/testdata/native_scoped_fixed/sources/` | 43 | ~7,299 |
+| `examples/mindc_mind/testdata/native_scoped_fixed/sources/` | 43 | ~7,306 |
 | `examples/mindc_mind/testdata/native_source_driver/` | 4 | ~3,237 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,184 |
 | `examples/mindc_mind/testdata/selfhost_loop_bounded/` | 1 | ~269 |
@@ -114,7 +114,7 @@
 | `.github/workflows/` | 8 | ~12,657 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~23,109 |
-| `scripts/` | 33 | ~119,118 |
+| `scripts/` | 33 | ~120,135 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -173,7 +173,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~207,652 |
-| `tests/` | 427 | ~889,598 |
+| `tests/` | 427 | ~892,300 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -278,7 +278,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~191 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~950 tok, large) — # Rust
+- `.gitignore` (~7768 tok, huge) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -710,6 +710,8 @@
 - `gap_corpus_smoke.py` (~5694 tok, huge)
 - `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
+- `h2b_exclusion_controls_check.py` (~3943 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
+- `h2b_fmt_identity_check.py` (~1320 tok, large) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~947 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -767,7 +769,7 @@
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_emission_context.md` (~3838 tok, huge) — Explicit target context and source-lowered module parts
 - `native_emission_context.mind` (~1214 tok, large) — Copyright 2026 STARGA Inc.
-- `native_fixed_scope_manifest.mind` (~4346 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
 - `native_lane_value_shapes_smoke.py` (~3202 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_binding_check.py` (~6416 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
@@ -899,7 +901,7 @@
 - `self_host_native_scalar_f64_smoke.py` (~1301 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
 - `self_host_native_scalar_narrow_smoke.py` (~1800 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
 - `self_host_native_scast_smoke.py` (~1694 tok, huge)
-- `self_host_native_shadow_scope_smoke.py` (~10437 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
+- `self_host_native_shadow_scope_smoke.py` (~10639 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
 - `self_host_native_simd_dot_f32_smoke.py` (~1606 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
 - `self_host_native_simd_dot_i16_smoke.py` (~1234 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
@@ -957,7 +959,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6302 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~6501 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
@@ -981,6 +983,7 @@
 ### `examples/mindc_mind/testdata/`
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
+- `h2b_exclusion_pins.json` (~2404 tok, huge) — Keys: comment, entries
 ### `examples/mindc_mind/testdata/mindfuzz_regress/`
 
 - `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
@@ -1078,7 +1081,7 @@
 ### `examples/mindc_mind/testdata/native_alloc_bounded/`
 
 - `afl_inc.mind` (~190 tok, small) — Strictly growing alloc/free loop (verifier repro, W11c round 2): each step
-- `alloc_nonpos.mind` (~291 tok, medium) — alloc/realloc/free parity with the C runtime (runtime-support/mind_intrinsics.c):
+- `alloc_nonpos.mind` (~327 tok, medium) — alloc/realloc/free parity with the C runtime (runtime-support/mind_intrinsics.c):
 - `big_increasing.mind` (~159 tok, small) — A 300..319 MB scratch buffer allocated, touched at its last word and freed,
 - `bin_fit_search.mind` (~338 tok, medium) — A free block that fits must be found even when it is not the head of its
 - `dup_struct_name.mind` (~186 tok, small) — Two struct declarations with the same name (W11c). The emitter visits the
@@ -1086,7 +1089,7 @@
 - `grow_big.mind` (~283 tok, medium) — measured-report's synthesize-path footprint: 256+512+4+6+8 MiB = 786 MiB of
 - `interleaved_growth.mind` (~306 tok, medium) — Two buffers grown alternately by __mind_realloc, 8 and 16 bytes per step for
 - `oom_exit.mind` (~111 tok, small) — Allocation without free past the address-space limit: the native image must
-- `r18_free_loop.mind` (~60 tok, small) — fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { let p: i64 = __mind_alloc(1000000); __mind_s
+- `r18_free_loop.mind` (~77 tok, small) — fn main() -> i64 {
 - `realloc_free_neighbour.mind` (~299 tok, medium) — realloc grows a block in place into its free successor (W11c round 3).
 - `realloc_null_zero.mind` (~199 tok, small) — realloc(NULL, 0) (verifier repro edge/e04, W11c round 2). The C runtime's
 ### `examples/mindc_mind/testdata/native_alloc_bounded/rt/`
@@ -1100,25 +1103,25 @@
 - `vec_std.mind` (~341 tok, medium) — std vec_push itself: std/vec.mind vec_new + vec_push growing through
 ### `examples/mindc_mind/testdata/native_cf/`
 
-- `a1_logic_in_cond.mind` (~219 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
-- `a6_vif_in_loop.mind` (~166 tok, small) — A6: a value-if used as a value inside a while body (let init, assignment
-- `a7_vif_nested_expr.mind` (~216 tok, medium) — A7: value-ifs nested inside expressions: binop operands, call arguments
-- `a9_read_then_branch_assign.mind` (~166 tok, small) — A HOME-lowered read of a variable is a copy: a value-if branch that assigns
+- `a1_logic_in_cond.mind` (~230 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
+- `a6_vif_in_loop.mind` (~202 tok, medium) — A6: a value-if used as a value inside a while body (let init, assignment
+- `a7_vif_nested_expr.mind` (~272 tok, medium) — A7: value-ifs nested inside expressions: binop operands, call arguments
+- `a9_read_then_branch_assign.mind` (~192 tok, small) — A HOME-lowered read of a variable is a copy: a value-if branch that assigns
 - `a9_vif_branch_effects.mind` (~212 tok, medium) — A9: value-if branches that assign an enclosing variable, return from the
 - `deep_nesting.mind` (~306 tok, medium) — Arbitrary nesting: six levels of if / while / value-if mixing every exit
-- `f64_loop_vif_return.mind` (~196 tok, small) — f64 values through the HOME lowering: a float accumulator assigned from a
+- `f64_loop_vif_return.mind` (~206 tok, medium) — f64 values through the HOME lowering: a float accumulator assigned from a
 - `l1_return_in_loop.mind` (~306 tok, medium) — L1: `return` inside while bodies, from 1, 2 and 3 levels of nesting, inside
 - `l2_loop_if_branches.mind` (~412 tok, medium) — L2: an `if` inside a loop whose branches hold a call statement, a let, a
 - `l3_break_continue_params.mind` (~314 tok, medium) — L3: break / continue inside functions that take parameters, including
 - `mlir_break_in_cond_vif.mind` (~165 tok, small) — A `break` inside a value-if that sits in an if condition inside a loop. The
 - `mlir_f64_loop_carry_continue.mind` (~190 tok, small) — f64 values through the HOME lowering: || in an if condition inside a loop with
 - `mlir_f64_loop_carry_vif.mind` (~251 tok, medium) — f64 values through the HOME lowering: && in an if condition inside a loop, a float
-- `mlir_lost_branch_assign.mind` (~118 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
-- `mlir_lost_cond_assign.mind` (~124 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
-- `mlir_lost_loop_assign.mind` (~189 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+- `mlir_lost_branch_assign.mind` (~126 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
+- `mlir_lost_cond_assign.mind` (~132 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
+- `mlir_lost_loop_assign.mind` (~217 tok, medium) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
 - `mlir_narrow_loop_carry.mind` (~253 tok, medium) — A narrow i32 parameter copied into an i32 let, multiplied and added past
 - `mlir_shadow_exit_carry.mind` (~380 tok, medium) — Known MLIR-backend defect, pinned: a let that shadows an outer variable
-- `mlir_stale_read_after_vif.mind` (~132 tok, small) — Known MLIR-backend defect, pinned: a variable read AFTER a value-if in the
+- `mlir_stale_read_after_vif.mind` (~140 tok, small) — Known MLIR-backend defect, pinned: a variable read AFTER a value-if in the
 - `narrow_wrap_loop.mind` (~280 tok, medium) — Narrow integer lets (i8 / i16 / i32) through the HOME lowering: every store
 - `note_kinds.mind` (~48 tok, tiny) — A program the mic@3 twin can hash keeps the IR trace-hash note (n_type 1).
 - `o_if_else_merges.mind` (~332 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
@@ -1451,7 +1454,7 @@
 - `generated_source.mind` (~55 tok, small)
 - `metadata_cases.json` (~1292 tok, large)
 - `mutations.json` (~102 tok, small)
-- `reference.mind` (~412 tok, medium) — Copyright 2026 STARGA Inc.
+- `reference.mind` (~487 tok, medium) — Copyright 2026 STARGA Inc.
 - `runtime_cases.json` (~12563 tok, huge)
 - `runtime_main.s` (~514 tok, large) — # Copyright 2026 STARGA Inc.
 - `thunks.s` (~262 tok, medium) — # Copyright 2026 STARGA Inc.
@@ -1622,7 +1625,7 @@
 - `R15-private-std-local-edge.mind` (~8 tok, tiny) — fn main()->i64 { proc_errno() }
 - `R16-unresolved-user-import.mind` (~28 tok, tiny) — fn main()->i64 { close((0-1) as i32) as i64 }
 - `R17-public-std-without-import.mind` (~69 tok, small) — fn main()->i64 {
-- `R18-foreign-local-name-collision.mind` (~33 tok, tiny) — fn f(x:i64)->i64 { x }
+- `R18-foreign-local-name-collision.mind` (~40 tok, tiny) — fn f(x: i64) -> i64 {
 ### `examples/mindc_mind/testdata/native_scoped_fixed/`
 
 - `SUPPLEMENT.json` (~4626 tok, huge) — Keys: schema, status, cases, observer_contract, mutations
@@ -1835,7 +1838,7 @@
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
-- `run_gate.py` (~8072 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
+- `run_gate.py` (~9089 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
 ### `scripts/sdlc/`
 
 - `enforcement_bijection.py` (~1504 tok, huge) — A test must never outlive the rule it asserts.
@@ -2779,7 +2782,7 @@
 - `flat_emit_sibling_const.rs` (~542 tok, large) — Copyright 2026 STARGA Inc.
 - `fmt_bool_literal_roundtrip.rs` (~1958 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~5044 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~7727 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~3956 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
 - `fmt_stdlib_stability.rs` (~2754 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3038,9 +3041,9 @@
 - `native_closure_admission.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
 - `native_embedded_seed.rs` (~2575 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_historical_intrinsic_refusal.rs` (~1883 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_historical_intrinsic_refusal.rs` (~1893 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
-- `native_lane_bridge_controls.rs` (~1461 tok, large) — Copyright 2025 STARGA Inc.
+- `native_lane_bridge_controls.rs` (~1470 tok, large) — Copyright 2025 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.

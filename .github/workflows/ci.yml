@@ -928,6 +928,15 @@ jobs:
         run: python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py
         working-directory: ${{ github.workspace }}
 
+      - name: H2b exclusion positive controls (h2b_exclusion_controls_check.py)
+        # Ruling Q1.3(b) / Schedule R7: every per-file .gitignore exclusion must
+        # still be tracked and present in ANATOMY; the external pin catalogue must
+        # match its committed expected path set (an empty or truncated catalogue
+        # fails); each named owning gate must carry real assertion machinery.
+        # Pure Python, no build artifacts — runs beside the other lints.
+        run: python3 scripts/run_gate.py --min-asserted 100 examples/mindc_mind/h2b_exclusion_controls_check.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native intrinsic id table contract (intrinsic_id_table_lint.py)
         # nb_intrinsic_id / nb_sys_intrinsic_id map each `__mind_*` callee to an id
         # and nb_emit_intrinsic selects its code by `if kind == ID`; an id with no
@@ -1081,6 +1090,16 @@ jobs:
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py examples/mindc_mind/mic3_primitives_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: H2b format identity (h2b_fmt_identity_check.py)
+        # Ruling Q1.1: a file may stay formatted only when --emit-ir and
+        # --emit-mic3 under one mindc are byte-identical for the pre-format and
+        # post-format bytes. Re-measures that proof for every formatted .mind
+        # file against the base revision. Requires a freshly built mindc.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 14 examples/mindc_mind/h2b_fmt_identity_check.py
         working-directory: ${{ github.workspace }}
 
       - name: Whole-module mic@3 self-host FLIP (mic3_flip_smoke.py)

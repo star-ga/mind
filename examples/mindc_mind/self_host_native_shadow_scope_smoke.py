@@ -175,11 +175,21 @@ def split_refusal(lib, src: str, wd: pathlib.Path, name: str):
 
 
 def mindc_bin() -> str:
-    mindc = os.environ.get("MINDC_BIN")
-    if not mindc:
-        from _selfhost_so import resolve_mindc
-        mindc = resolve_mindc()
-    return mindc
+    """Compiler for --bridge / --mlir. A missing file is a hard exit.
+
+    The no-arg leg never calls this: it builds stage1 from the frozen seed.
+    A set MINDC_BIN or MINDC that is not a file, and an unset handle with no
+    release binary in this tree, both stop here. Returning a missing path
+    would build stage1 first and only fail once the bridge leg ran.
+    """
+    env = os.environ.get("MINDC_BIN") or os.environ.get("MINDC")
+    if env:
+        if not pathlib.Path(env).is_file():
+            raise SystemExit(
+                f"FAIL: mindc not found at {env} (from $MINDC_BIN/$MINDC)")
+        return env
+    from _selfhost_so import resolve_mindc
+    return resolve_mindc()
 
 
 def bridge_exit(src: str, wd: pathlib.Path, name: str, compiler):
@@ -558,6 +568,11 @@ def main(argv=None) -> int:
     ap.add_argument("--bridge", action="store_true",
                     default=os.environ.get("SHADOW_BRIDGE") == "1")
     a = ap.parse_args(argv)
+    # --bridge and --mlir both compile with mindc. Fail closed before the
+    # frozen-seed stage1 build, which does not need a compiler and would
+    # otherwise hide a missing binary behind a long, then-green, no-arg leg.
+    if a.bridge or a.mlir:
+        mindc_bin()
     td = pathlib.Path(tempfile.mkdtemp(prefix="shadow_scope_"))
     st = build_stage1(pathlib.Path(tempfile.gettempdir()) / "shadow_scope_stage1_cache")
     print(f"stage1: {st.name}")

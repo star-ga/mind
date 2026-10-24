@@ -76,7 +76,9 @@ pub fn nec_check(ctx: i64) -> i64 {
 
 pub fn nec_free(ctx: i64) -> i64 {
     if ctx != 0 {
-        let _scope: i64 = nb_fc_free(nb_fc_scope(ctx));
+        let scope: i64 = nb_fc_scope(ctx);
+        let _scope: i64 = nb_fc_free(scope);
+        __mind_free(scope);
         __mind_free(ctx);
     }
     0
@@ -110,12 +112,15 @@ pub fn nec_lower_parts_profile(source: i64, length: i64, hash: i64, user_lo: i64
         i = i + 1;
     }
     let tokens: Vec = lex(captured, length);
-    let parts: i64 = nb_lower_parts_hb_route(tokens, captured, hash, user_lo, route, ctx);
+    let parts: i64 = __mind_alloc(192);
+    if parts == 0 { __mind_free(captured); nec_free(ctx); return 0; }
+    let status: i64 = nb_lower_parts_hb_route(tokens, captured, hash, user_lo, route, ctx, parts);
     __mind_free(captured);
-    if parts == 0 { nec_free(ctx); return 0; }
+    if status == 0 { __mind_free(parts); nec_free(ctx); return 0; }
     __mind_store_i64(parts + 176, ctx);
     if nb_parts_local_calls_ok(parts) == 0 {
         nb_parts_free(parts);
+        __mind_free(parts);
         return 0;
     }
     parts
