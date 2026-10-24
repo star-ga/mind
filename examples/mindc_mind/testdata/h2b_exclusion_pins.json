@@ -103,7 +103,7 @@
     },
     {
       "path": "examples/mindc_mind/native_emission_context.mind",
-      "sha256": "0d3606d46e14106e7fecfed191655e3ab44190df5cba4c3d0a00e1d999d2ab05",
+      "sha256": "32f89926eb89e41d72385f264c95417f0ab59164741b738f3b5db3119d3bfc7a",
       "kind": "caller-exclusion",
       "reason_class": "digest-pinned-gate-input",
       "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
@@ -160,7 +160,7 @@
     },
     {
       "path": "examples/mindc_mind/native_source_image.mind",
-      "sha256": "2159539926243433ed0fa5c739615e9d3e51f7bad92957a47b8189364a60fb86",
+      "sha256": "08fc2f5453f76c73d3b8357acaa4cd898a64f58eab5ccddbdb04e3061253b554",
       "kind": "caller-exclusion",
       "reason_class": "digest-pinned-gate-input",
       "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",

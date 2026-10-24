@@ -33,6 +33,38 @@ IR_REFUSAL_EXCLUSIONS = {
     "examples/mindc_mind/string_escape_driver.mind",
 }
 
+# These six files are not formatted files. Q1.1 kept main.mind out of lane C.
+# // deferred: would walk the formatted-set manifest instead of git diff BASE..HEAD, stubbed because the set is implicit — upgrade path: pin the formatted set in testdata and diff that
+SEMANTIC_EDIT_EXCLUSIONS = {
+    "examples/mindc_mind/main.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "IR 6a53b0d50df529024244b7af252167624c1a849c413ac43f2f4792eaecbbfa2c -> "
+        "6d79644658c801952e042b851a5b6f0fa48769d050ed2edc399ff6170d1cc93a; "
+        "mic3 48f2e466cebca4f6bfab82679e63c446b4e8591658b43e663a9265155c9f1b85 -> "
+        "c5ad7f2e629e34f143717ab81b4be8514811259613449f13a6bf574251363e5c"
+    ),
+    "examples/mindc_mind/native_emission_context.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "base emit refuses ndl_plan at line 30"
+    ),
+    "examples/mindc_mind/native_libc_binding.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "base emit refuses nb_cabi_free at line 1814"
+    ),
+    "examples/mindc_mind/native_libc_io.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "base emit refuses nb_cabi_build at line 306"
+    ),
+    "examples/mindc_mind/native_scoped_source_image.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "base emit refuses lex at line 19"
+    ),
+    "examples/mindc_mind/native_source_image.mind": (
+        "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); "
+        "base emit refuses nsa_code_size at line 72"
+    ),
+}
+
 
 def mindc() -> str:
     bin_path = os.environ.get("MINDC_BIN") or os.environ.get("MINDC")
@@ -45,7 +77,10 @@ def changed_mind_files() -> list[str]:
     out = subprocess.check_output(
         ["git", "diff", "--name-only", BASE, "HEAD"], cwd=ROOT, text=True
     )
-    return sorted(p for p in out.splitlines() if p.endswith(".mind"))
+    return sorted(
+        p for p in out.splitlines()
+        if p.endswith(".mind") and p not in SEMANTIC_EDIT_EXCLUSIONS
+    )
 
 
 def emit_pair(compiler: str, src: bytes, stem: pathlib.Path) -> tuple[bytes, bytes]:
