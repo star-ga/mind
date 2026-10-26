@@ -1,0 +1,14 @@
+examples/mindc_mind/native_fixed_scope_manifest.mind
+examples/mindc_mind/testdata/native_alloc_bounded/alloc_nonpos.mind
+examples/mindc_mind/testdata/native_alloc_bounded/r18_free_loop.mind
+examples/mindc_mind/testdata/native_cf/a1_logic_in_cond.mind
+examples/mindc_mind/testdata/native_cf/a6_vif_in_loop.mind
+examples/mindc_mind/testdata/native_cf/a7_vif_nested_expr.mind
+examples/mindc_mind/testdata/native_cf/a9_read_then_branch_assign.mind
+examples/mindc_mind/testdata/native_cf/f64_loop_vif_return.mind
+examples/mindc_mind/testdata/native_cf/mlir_lost_branch_assign.mind
+examples/mindc_mind/testdata/native_cf/mlir_lost_cond_assign.mind
+examples/mindc_mind/testdata/native_cf/mlir_lost_loop_assign.mind
+examples/mindc_mind/testdata/native_cf/mlir_stale_read_after_vif.mind
+examples/mindc_mind/testdata/native_libc_io/reference.mind
+examples/mindc_mind/testdata/native_scoped_fixed/sources/R18-foreign-local-name-collision.mind
