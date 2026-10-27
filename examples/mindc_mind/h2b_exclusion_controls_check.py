@@ -375,7 +375,7 @@ def main() -> int:
             "self_host_native_misc_census_smoke": "94/94",
             "self_host_native_alloc_bounded_smoke": "37/37",
             "mindfuzz_self_host": "100/100",
-            "self_host_native_cf_smoke": "970/970",
+            "self_host_native_cf_smoke": "973/973",
             "self_host_source_note_smoke": "46/46",
         }
         print("R7_TABLE_BEGIN")
