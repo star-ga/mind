@@ -2891,3 +2891,65 @@ the fixed-point path, and the result is visual enough to show on the site.
 - How large can the grid get before the propagation queue needs a bounded-memory design?
 
 Proposed; a showcase, not on the critical path. Depends on the RNG decision in Phase 24.
+
+
+---
+
+## Byte-Level Distillation Research Track (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed; no implementation or performance claims.  
+**Research:** K. Marathe et al., *Breaking the Token Ceiling: Distilling Smaller, Stronger Byte Models* (2026), https://arxiv.org/abs/2609.12303
+
+This paper studies decoder-only byte versus token models and token-teacher-to-byte-student supervision via approximate Marginalize-It and exact End-of-Token (EOT). Raw bytes are not synonymous with byte-level BPE. Paper-specific scaling estimates do not constitute STARGA results.
+
+### Project scope
+
+Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, EOT masking and raw UTF-8 buffer operations only where prototypes show bottlenecks. Keep the language tokenizer-agnostic and require deterministic CPU reference verification.
+
+### Validation, dependencies and release gates
+
+- Verify full teacher-vocabulary byte-prefix probabilities against exhaustive small-vocabulary oracles, including EOT mass, UTF-8 multibyte strings, shared prefixes and token endings. Top-k truncation must not be called exact.
+- Compare token and byte baselines with matched data, compute, model capability and honest serving-cost accounting. Report bytes-per-byte, quality, p50/p95 latency per output character, peak memory and reproducibility.
+- Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
+- Dependency order: mind-inference reference -> mind-nerve benchmark -> MindLLM optional dispatch -> naestro/mind-mem pilots; mind-flow orchestrates experiments and mind/mind-runtime implement only proven optimizations.
+
+**Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
+
+
+---
+
+## Adaptive Speculative Decoding Research (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed, not shipped.  
+**Research reference:** EAGLE-4, *One Flexible Drafter for All Batch Sizes and Hardware*, https://github.com/eagle-hq/EAGLE-4
+
+**License boundary:** EAGLE-4 is source-available, not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; research citation is not a license.
+
+### Scope
+
+Only introduce independently designed candidate selection / bounded cache primitives after profiling, keep compiler general.
+
+### Acceptance gates
+
+- Measure baseline ordinary and current speculative decoding, matched model, hardware, workload and sampling policy; concurrency 1, 8, 32, 64 when supported.
+- Track accepted tokens per verification, target-call cost, drafter overhead, throughput, TTFT, p50/p95 latency, peak memory and cost per token.
+- Verify output-distribution preservation for rejection/acceptance under temperature/top-k/top-p, including boundary cases and RNG reproducibility limitations.
+- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical EAGLE-4 gains.
+- Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
+
+**Software roadmap attribution:** STARGA, Inc. No co-author trailers.
+
+
+---
+
+## Verified Engineering Delivery Research (2026-10-23)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed, not shipped.  
+**Reference:** https://sun-asterisk.us/takumi/ (conceptual market comparison only; no restricted-code reuse).
+
+Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
+
+**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. Naestro OS owns mission UI; mind-law policy, mind-ci verification, mind-flow orchestration, mind-codegraph impact, mind-mem decisions. No co-author trailers.
