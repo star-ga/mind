@@ -181,7 +181,12 @@ GATED_EVENTS = ("push", "pull_request")
 # preflight-parity module, and the mindfuzz twin-emitter helper. Both are
 # tracked .py files and both are counted. The ceiling stays an exact
 # inventory with no spare allowance.
-HARNESS_CEILING = 318  # Exact reviewed integration inventory; no spare allowance.
+# 318 -> 320 counts the two H2b guards declared for the integrator by the C2
+# free-contract stack: examples/mindc_mind/h2b_fmt_identity_check.py and
+# h2b_exclusion_controls_check.py (format-identity walk and exclusion controls).
+# 320 -> 321 takes scripts/open_error_regression.sh from main (#290): the
+# build/transport for tests/open_error_kat.mind; executable assertions are MIND.
+HARNESS_CEILING = 321  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

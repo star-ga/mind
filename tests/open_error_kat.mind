@@ -1,0 +1,47 @@
+// Author: STARGA Inc.
+// Run with an existing owned file, a missing path under an owned empty
+// directory, and a path whose intermediate component is the existing file.
+// No caller-provided PASS flags. The intrinsic's negative/error contract is
+// checked directly, before any read can hide a bogus positive descriptor.
+pub fn main(argc: i64, argv: i64) -> i64 {
+    if argc != 4 {
+        return 64;
+    }
+    let existing: i64 = __mind_load_i64(argv + 8);
+    let absent: i64 = __mind_load_i64(argv + 16);
+    let not_directory: i64 = __mind_load_i64(argv + 24);
+    if __mind_open(0) >= 0 {
+        print(1);
+        return 1;
+    }
+    if __mind_open(absent) >= 0 {
+        print(2);
+        return 1;
+    }
+    if __mind_open(not_directory) >= 0 {
+        print(3);
+        return 1;
+    }
+    let fd: i64 = __mind_open(existing);
+    if fd < 0 {
+        print(4);
+        return 1;
+    }
+    let out: i64 = __mind_alloc(1);
+    if out == 0 {
+        return 75;
+    }
+    if __mind_read(fd, out, 1, 0 - 1) != 1 || __mind_load_i8(out) != 77 {
+        print(5);
+        return 1;
+    }
+    if __mind_read(fd, out, 1, 0 - 1) != 0 {
+        print(6);
+        return 1;
+    }
+    __mind_free(out);
+    // One successful fd is reclaimed at process exit. General descriptor
+    // cleanup remains the separate __mind_close/std.fs obligation.
+    print(0);
+    return 0;
+}
