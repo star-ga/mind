@@ -218,6 +218,13 @@ def gate_is_nonvacuous(gate_name: str) -> tuple[bool, str]:
     return True, f"ASSERT_MARKERS={hits}"
 
 
+
+def _passed(kind: str, subject: str) -> int:
+    """One verdict line per evaluated control, so scripts/gate_assert.py counts
+    each one (rule 2); an internal counter alone is invisible to run_gate."""
+    print(f"[PASS] {kind} {subject}")
+    return 1
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mutant-pin", action="store_true")
@@ -250,7 +257,7 @@ def main() -> int:
             f"CATALOGUE_SIZE {len(entries)} != {EXPECTED_CATALOGUE_SIZE}"
         )
     else:
-        asserted += 1
+        asserted += _passed("CATALOGUE_SIZE", str(len(entries)))
     if catalogue_paths != set(EXPECTED_CATALOGUE_PATHS):
         missing = sorted(set(EXPECTED_CATALOGUE_PATHS) - catalogue_paths)
         extra = sorted(catalogue_paths - set(EXPECTED_CATALOGUE_PATHS))
@@ -258,13 +265,13 @@ def main() -> int:
             f"CATALOGUE_SET_MISMATCH missing={missing} extra={extra}"
         )
     else:
-        asserted += 1
+        asserted += _passed("CATALOGUE_SET", str(len(catalogue_paths)))
     if len(reasons) < EXPECTED_EXCLUSION_FLOOR:
         failures.append(
             f"EXCLUSION_FLOOR {len(reasons)} < {EXPECTED_EXCLUSION_FLOOR}"
         )
     else:
-        asserted += 1
+        asserted += _passed("EXCLUSION_FLOOR", str(len(reasons)))
 
     # --- per-exclusion Q1.3(b) positive controls (ALL exclusions) ----------
     for path, reason in sorted(reasons.items()):
@@ -281,7 +288,7 @@ def main() -> int:
         if not tracked:
             failures.append(f"UNTRACKED {path}")
         else:
-            asserted += 1
+            asserted += _passed("TRACKED", path)
 
         in_anatomy = path in indexed
         if args.mutant_anatomy and path == sorted(catalogue_paths)[0]:
@@ -291,7 +298,7 @@ def main() -> int:
         if not in_anatomy:
             failures.append(f"ANATOMY_MISSING {path}")
         else:
-            asserted += 1
+            asserted += _passed("ANATOMY", path)
 
         # Strict reason-class / gate / owning-gate checks apply to the H2b
         # per-file exclusion block (the 107 rows carrying a Q1.2 reason class).
@@ -303,13 +310,13 @@ def main() -> int:
             if not cls:
                 failures.append(f"REASON_NO_CLASS {path}")
             else:
-                asserted += 1
+                asserted += _passed("REASON_CLASS", path)
 
             gate = reason_gate(reason)
             if not gate:
                 failures.append(f"REASON_NO_GATE {path}")
             else:
-                asserted += 1
+                asserted += _passed("REASON_GATE", path)
 
             gate_name = owning_gate_name(reason)
             ok, detail = gate_is_nonvacuous(gate_name)
@@ -318,7 +325,7 @@ def main() -> int:
             if not ok:
                 failures.append(f"OWNING_GATE {path} {detail}")
             else:
-                asserted += 1
+                asserted += _passed("OWNING_GATE", path)
 
     # --- catalogue-external-digest + pin-site checks -----------------------
     for entry in entries:
@@ -331,7 +338,7 @@ def main() -> int:
         if got != want:
             failures.append(f"PIN_DRIFT {path} want={want} got={got}")
         else:
-            asserted += 1
+            asserted += _passed("PIN", path)
 
         reason = reasons.get(path, "")
         if args.mutant_reason and path == entries[0]["path"]:
@@ -339,23 +346,23 @@ def main() -> int:
         if PIN_SITE not in reason:
             failures.append(f"REASON_NO_PIN_SITE {path} reason={reason!r}")
         else:
-            asserted += 1
+            asserted += _passed("REASON_PIN_SITE", path)
         if entry["kind"] == "caller-exclusion":
             if "imports " not in reason:
                 failures.append(f"REASON_NO_SEALED_IMPORT {path}")
             else:
-                asserted += 1
+                asserted += _passed("SEALED_IMPORT", path)
             if path not in EXPECTED_CALLER_PATHS:
                 failures.append(f"CALLER_UNEXPECTED {path}")
             else:
-                asserted += 1
+                asserted += _passed("CALLER", path)
 
     # --- caller-set floor -------------------------------------------------
     caller_paths = {e["path"] for e in entries if e["kind"] == "caller-exclusion"}
     if len(caller_paths) != EXPECTED_CALLER_SIZE:
         failures.append(f"CALLER_SIZE {len(caller_paths)} != {EXPECTED_CALLER_SIZE}")
     else:
-        asserted += 1
+        asserted += _passed("CALLER_SIZE", str(len(caller_paths)))
 
     # --- R7 table ---------------------------------------------------------
     if args.r7_table or True:

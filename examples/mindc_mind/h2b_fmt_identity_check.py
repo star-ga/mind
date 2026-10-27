@@ -198,6 +198,7 @@ def main() -> int:
                 )
             else:
                 asserted += 1
+                print(f"[PASS] IR_IDENTICAL {rel}", flush=True)
             if mic_a != mic_b:
                 failures.append(
                     f"MIC3_DIVERGE {rel} base={hashlib.sha256(mic_a).hexdigest()[:12]} "
@@ -205,6 +206,7 @@ def main() -> int:
                 )
             else:
                 asserted += 1
+                print(f"[PASS] MIC3_IDENTICAL {rel}", flush=True)
             print(
                 f"IDENTITY {rel} IR_MIC3_IDENTICAL={ir_a == ir_b and mic_a == mic_b}",
                 flush=True,
