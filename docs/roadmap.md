@@ -2911,7 +2911,7 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 - Verify full teacher-vocabulary byte-prefix probabilities against exhaustive small-vocabulary oracles, including EOT mass, UTF-8 multibyte strings, shared prefixes and token endings. Top-k truncation must not be called exact.
 - Compare token and byte baselines with matched data, compute, model capability and honest serving-cost accounting. Report bytes-per-byte, quality, p50/p95 latency per output character, peak memory and reproducibility.
 - Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
-- Dependency order: mind-inference reference -> mind-nerve benchmark -> MindLLM optional dispatch -> naestro/mind-mem pilots; mind-flow orchestrates experiments and mind/mind-runtime implement only proven optimizations.
+- Dependency order: inference reference -> mind-nerve benchmark -> optional model dispatch -> agent/mind-mem pilots; an experiment orchestrator runs the trials, and the compiler and commercial runtime implement only proven optimizations.
 
 **Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
 
@@ -2951,7 +2951,7 @@ Only introduce independently designed candidate selection / bounded cache primit
 
 Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
 
-**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. Naestro OS owns mission UI; mind-law policy, mind-ci verification, mind-flow orchestration, mind-codegraph impact, mind-mem decisions. No co-author trailers.
+**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. The agent layer owns the mission UI; separate components own policy, verification, orchestration, impact analysis and decision memory (mind-mem). No co-author trailers.
 
 ## OCaml-competitive language and ecosystem hardening (2026-10-24)
 
@@ -2971,14 +2971,14 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
   [Dune](https://github.com/ocaml/dune), [Merlin](https://github.com/ocaml/merlin).
 - MIND compiler: `docs/INDEPENDENCE_ROADMAP.md`, RFC 0010,
   current modules/import/linker/ABI restrictions and capability gates.
-- `mind-flow/COMPILER_REQUIREMENTS.md`: `FieldAccess` value-position lowering
+- A pure-MIND workflow consumer's compiler requirements: `FieldAccess` value-position lowering
   panic, aggregate call ABI, and native build blocked on the tested compiler.
-- `mind-parser/docs/MIND_GAPS.md`: G-01/04/07/08/09/11/14/16/19/22/24/25/
-  26/27/28/29/30; these are consumer-reported gaps, not necessarily still
+- A parser consumer's reported compiler gaps (G-01/04/07/08/09/11/14/16/19/22/24/25/
+  26/27/28/29/30); these are consumer-reported gaps, not necessarily still
   reproduced on HEAD. Recheck on current compiler before declaring one open.
-- `mind-grammar`, `mind-spec`, `mind-codegraph`, `mind-ci`,
-  `mind-mem`, `mind-nerve`, `mind-law`, `naestro`, and private
-  `mind-runtime`: integration/conformance consumers; protect licensing boundaries.
+- `mind-grammar`, `mind-spec`, `mind-mem`, `mind-nerve`, internal tooling,
+  governance and agent consumers, and the commercial runtime: integration and
+  conformance consumers; protect licensing boundaries.
 
 ### P0 — Fix the full-language integration path before expanding syntax
 
@@ -2987,7 +2987,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    lowering and source-module ownership for structs, enums, arrays, strings,
    nested Option/Result and tensors. Eliminate `FieldAccess` value-position
    panic with typed lowering and diagnostic errors (never a const-0 placeholder).
-   **Gates:** `mind-flow` pure-MIND project builds and runs native end-to-end;
+   **Gates:** the pure-MIND workflow consumer builds and runs native end-to-end;
    imported aggregates pass identity and layout tests; ABI comparisons on
    x86_64 and aarch64; unsupported cases fail closed.
 2. **MOC-02: Strong module abstraction.** Implement module-scoped symbol mangling,
@@ -3004,7 +3004,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    lockfile, hashes, offline mode, workspace members, cyclic-import diagnostics,
    cross-package `import`, build-script capabilities, and supply-chain policy.
    Derive cache invalidation from public interface hashes, not arbitrary
-   timestamps. **Gates:** build `mind-parser` without vendoring `std` or
+   timestamps. **Gates:** build the parser consumer without vendoring `std` or
    duplicated test sources; reproducible offline build from pinned lock; test
    graph cycles and malicious symlinks.
 4. **MOC-04: Link/run every documented standard-library surface.** Close
@@ -3060,7 +3060,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     validation, Unicode NFC/IDNA, compression, HTTP/2, mmap/fsync,
     constant-time comparison, program-data signature APIs, terminal and
     interactive line I/O. Prefer reviewed protocols and pinned test vectors
-    over custom cryptographic invention. **Gates:** `mind-parser` HTTPS and
+    over custom cryptographic invention. **Gates:** the parser consumer's HTTPS and
     interactive server native E2E, standards-based TLS and security tests.
 12. **MOC-12: High-level abstractions without runtime tax.** Evaluate traits,
     associated types, constrained generics, closures, iterators, zero-cost
@@ -3089,7 +3089,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     parser/typechecker: go-to-definition, references, rename, semantic
     highlighting, hover types/effects/shapes, inlay hints, completion,
     diagnostics, code actions and workspace-wide symbol search. Align
-    `mind-grammar` and `mind-codegraph` on one symbol identity.
+    `mind-grammar` and the code-graph index on one symbol identity.
     **Gates:** multilingual/editor fixture suite, rename across packages,
     no stale offsets, p95 interactive latency budgets.
 16. **MOC-16: Interactive REPL and debugger.** Native/interpretive parity,
@@ -3104,9 +3104,9 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     **Gates:** every newly fixed miscompile adds permanent corpus case;
     corpus survives all codegen flag combinations.
 18. **MOC-18: Cross-repository compatibility dashboard.** Machine-readable
-    consumer matrix for `mind-flow`, `mind-law`, `mind-parser`,
-    `mind-nerve`, `mind-ci`, `mind-mem`, `naestro`, and
-    `mind-runtime`: `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
+    consumer matrix across the public consumers (`mind-mem`, `mind-nerve`,
+    `mind-grammar`, `mind-spec`) and the internal and commercial ones:
+    `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
     `CROSS-ISA`, `SIGNED` must be different fields. Require pinned
     compiler SHA, source SHA, backend and test log artifact. **Gates:**
     no source-complete project advertised as fully native without an
@@ -3120,8 +3120,8 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     equivalence test. Distinguish bit-exact semantics from explicitly
     approximate fast-math profiles.
 20. **MOC-20: Governed execution integration.** Typed capability manifests
-    and audit receipts interoperate with `mind-law`, `mind-flow`,
-    `mind-mem`, and `naestro`; no external process or service can be
+    and audit receipts interoperate with the governance layer, workflow consumers,
+    `mind-mem`, and the agent runtime; no external process or service can be
     governed solely by in-process types, so runtime mediation,
     authorization, and hostile-boundary tests are required.
 21. **MOC-21: Reproducible heterogeneous kernels.** Explicit backend
@@ -3138,10 +3138,10 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 
 ### Execution order and milestone acceptance
 
-- **Milestone A:** MOC-01/02/04: `mind-flow` native executable, imported
+- **Milestone A:** MOC-01/02/04: workflow-consumer native executable, imported
   aggregate ABI, same-named module-private functions, native linked stdlib.
 - **Milestone B:** MOC-03/05/14/18: dependency graph and build provenance;
-  `mind-parser` consumes real packages with no copied stdlib modules;
+  the parser consumer builds from real packages with no copied stdlib modules;
   signed versus unsigned evidence statuses are explicit.
 - **Milestone C:** MOC-06/07/09/12: richer static language verified by
   compiler/interpreter/native differential suites.
