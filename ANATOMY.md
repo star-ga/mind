@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2629 | **Est. tokens:** ~4,702,199
-**Generated:** 2026-10-27 11:10 UTC
+**Files:** 2629 | **Est. tokens:** ~4,702,277
+**Generated:** 2026-10-27 11:17 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,332 |
+| `examples/mindc_mind/` | 288 | ~806,410 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -839,7 +839,7 @@
 - `selfhost_driver.mind` (~5575 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
-- `self_host_failclosed_smoke.py` (~9902 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
+- `self_host_failclosed_smoke.py` (~9980 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1368 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
 - `self_host_for_smoke.py` (~11122 tok, huge) — Permanent battery for the self-host range-`for` loop.
 - `self_host_if_region_carry_smoke.py` (~5264 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
