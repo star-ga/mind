@@ -33,10 +33,14 @@ IR_REFUSAL_EXCLUSIONS = {
     "examples/mindc_mind/string_escape_driver.mind",
 }
 
-# These six files are not formatted files. Q1.1 kept main.mind out of lane C.
+# These seven files are not formatted files. Q1.1 kept main.mind out of lane C.
 # The formatted set is the pinned manifest, not a git-diff walk.
 PINNED_FORMATTED_LIST = "examples/mindc_mind/testdata/h2b_fmt_identity_files.txt"
 SEMANTIC_EDIT_EXCLUSIONS = {
+    "tests/open_error_kat.mind": (
+        "new file from main #290 (fcb44b97), taken by the main merge; it has no "
+        "BASE bytes, so there is no pre/post-format identity to measure"
+    ),
     "examples/mindc_mind/main.mind": (
         "C2fix4 99fa1ac2; REBLESS_C2_20261024 (private re-bless note); C2FIX5_20261024 (private re-bless note); "
         "IR 6a53b0d50df529024244b7af252167624c1a849c413ac43f2f4792eaecbbfa2c -> "
