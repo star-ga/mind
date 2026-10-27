@@ -10027,28 +10027,38 @@ pub(super) fn lower_expr_inner(
         // fail-closed panic below. It produces no meaningful value (it is a
         // statement), so the discarded merge id returned here is correct.
         //
-        // Desugar to `if cond { } else { __mind_assert_fail(<msg-len>); }` and
-        // reuse the existing, battle-tested `If` region-SSA lowering verbatim:
+        // Desugar to `if cond { } else { __mind_assert_fail(msg, start, end); }`
+        // and reuse the existing, battle-tested `If` region-SSA lowering
+        // verbatim:
         //   * cond true  → empty then-branch, falls through (unit 0);
         //   * cond false → else-branch calls the runtime trap intrinsic, which
-        //     `abort()`s deterministically (the same `abort()` path the region/
-        //     genref runtime already relies on — see `runtime-support/
+        //     writes one diagnostic line to stderr and then `abort()`s
+        //     deterministically (the same `abort()` path the region/genref
+        //     runtime already relies on — see `runtime-support/
         //     mind_intrinsics.c`). `__mind_assert_fail` is auto-declared as a
-        //     `func.func private @__mind_assert_fail(i64) -> i64` extern via the
-        //     standard `extern_calls` collection, so no new IR variant, MLIR arm,
-        //     or wire-format change is introduced — keystone bytes are untouched
-        //     (no program in the bootstrap uses `assert`).
+        //     `func.func private @__mind_assert_fail(i64, i64, i64) -> i64`
+        //     extern via the standard `extern_calls` collection, so no new IR
+        //     variant, MLIR arm, or wire-format change is introduced.
         //
-        // The message is diagnostic-only; we pass its byte length as a single
-        // deterministic i64 argument (no pointer bits, no float, identical across
-        // substrates). The trap is unconditional once reached, so the exact
-        // argument value does not affect control flow.
+        // Arguments: the message as a String record (or 0 when the assert has
+        // no message) and the assert's source span. The message String is
+        // materialized only inside the failing branch, so a passing assert
+        // costs nothing extra. Every argument is a compile-time constant or
+        // the literal's bytes: no pointer bits reach the output and the
+        // diagnostic is identical across substrates.
         #[cfg(feature = "std-surface")]
         ast::Node::Assert { cond, msg, span } => lower_out_of_line(|| {
-            let msg_len = msg.as_ref().map_or(0, |m| m.len()) as i64;
+            let message = match msg {
+                Some(text) => ast::Node::Lit(Literal::Str(text.clone()), *span),
+                None => ast::Node::Lit(Literal::Int(0), *span),
+            };
             let trap_call = ast::Node::Call {
                 callee: "__mind_assert_fail".to_string(),
-                args: vec![ast::Node::Lit(Literal::Int(msg_len), *span)],
+                args: vec![
+                    message,
+                    ast::Node::Lit(Literal::Int(span.start() as i64), *span),
+                    ast::Node::Lit(Literal::Int(span.end() as i64), *span),
+                ],
                 span: *span,
             };
             let if_node = ast::Node::If {

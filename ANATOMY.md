@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1903 | **Est. tokens:** ~3,700,224
-**Generated:** 2026-10-22 02:11 UTC
+**Files:** 1903 | **Est. tokens:** ~3,701,282
+**Generated:** 2026-10-27 10:55 UTC
 
 ## Token Budget Guide
 
@@ -93,7 +93,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~12,657 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~21,930 |
+| `runtime-support/` | 1 | ~22,318 |
 | `scripts/` | 32 | ~117,643 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -149,7 +149,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 417 | ~849,726 |
+| `tests/` | 417 | ~850,396 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1055,7 +1055,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~21930 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22318 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
@@ -1601,7 +1601,7 @@
 - `array_store_run.rs` (~2201 tok, huge) — Copyright 2026 STARGA Inc.
 - `array_surface_run.rs` (~829 tok, large) — Copyright 2025 STARGA Inc.
 - `array_u64_element_shift_run.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
-- `assert_parenthesised_message.rs` (~1270 tok, large) — Copyright 2026 STARGA Inc.
+- `assert_parenthesised_message.rs` (~1940 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
