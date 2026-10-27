@@ -13,9 +13,17 @@ whose arm was displaced falls through to a read syscall. That happened once
 reported no conflict. This lint makes that shape fail before anything is built:
 
   1. every id is returned for exactly ONE name across both mapping functions;
-  2. every id except the fall-through id 9 has exactly ONE `if kind == ID` arm;
-  3. every `if kind == ID` arm (below the stream-sentinel range >= 1008) names a
-     mapped id.
+  2. every id except the fall-through id 9 has exactly ONE top-level
+     `if kind == ID` arm in the dispatch function;
+  3. every `if kind == ID` arm at any depth (below the stream-sentinel range
+     >= 1008) names a mapped id.
+
+The dispatch function is read out of main.mind, not hand-named: nb_emit_intrinsic,
+or the function it forwards `(code, kind, ..)` to when it holds no arm itself (the
+source-image context refactor moved every arm into nb_emit_intrinsic_ctx and left
+nb_emit_intrinsic a one-line wrapper, after which this lint saw 0 arms for every
+id). A dispatch arm is a statement of that function's body (4-space indent); the
+nested `if ctx != 0` stream re-routes of ids 8 and 9 are not second arms.
 
 Every run first mutates the text in memory (a duplicate id, a dropped arm, an orphan
 arm) and requires each mutant to be rejected, so a lint that cannot fail is caught.
@@ -41,14 +49,26 @@ def fn_body(src: str, name: str) -> str:
     return src[start:end]
 
 
+def dispatch_fn(src: str) -> tuple[str, str]:
+    """(name, body) of the function holding the `if kind == ID` dispatch."""
+    name, seen = EMIT_FN, set()
+    while True:
+        body = fn_body(src, name)
+        fwd = re.search(r"^    (\w+)\(code, kind\b", body, re.M)
+        if re.search(r"\bif kind == \d+ \{", body) or fwd is None or name in seen:
+            return name, body
+        seen.add(name)
+        name = fwd.group(1)
+
+
 def problems(src: str) -> list[str]:
     out: list[str] = []
     ids: collections.Counter[int] = collections.Counter()
     for fn in MAP_FNS:
         ids.update(int(x) for x in re.findall(r"\breturn (\d+);", fn_body(src, fn)))
-    arms = collections.Counter(
-        int(x) for x in re.findall(r"\bif kind == (\d+) \{", fn_body(src, EMIT_FN))
-    )
+    emit_fn, body = dispatch_fn(src)
+    arms = collections.Counter(int(x) for x in re.findall(r"^    if kind == (\d+) \{", body, re.M))
+    every_arm = collections.Counter(int(x) for x in re.findall(r"\bif kind == (\d+) \{", body))
     for i, n in sorted(ids.items()):
         if n != 1:
             out.append(f"id {i} is returned for {n} names (ids must be unique)")
@@ -56,8 +76,8 @@ def problems(src: str) -> list[str]:
         if i == FALLTHROUGH_ID:
             continue
         if arms[i] != 1:
-            out.append(f"id {i} has {arms[i]} emit arms in {EMIT_FN} (want exactly 1)")
-    for a in sorted(arms):
+            out.append(f"id {i} has {arms[i]} emit arms in {emit_fn} (want exactly 1)")
+    for a in sorted(every_arm):
         if a < 1008 and a not in ids:
             out.append(f"emit arm `kind == {a}` names no mapped id")
     if not ids:

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2626 | **Est. tokens:** ~4,700,016
-**Generated:** 2026-10-27 10:56 UTC
+**Files:** 2626 | **Est. tokens:** ~4,700,289
+**Generated:** 2026-10-27 11:00 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,002 |
+| `examples/mindc_mind/` | 288 | ~806,275 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -712,7 +712,7 @@
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `h2b_exclusion_controls_check.py` (~3935 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
 - `h2b_fmt_identity_check.py` (~2268 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
-- `intrinsic_id_table_lint.py` (~947 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
+- `intrinsic_id_table_lint.py` (~1220 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
 - `method_callee_smoke.py` (~1390 tok, large)
