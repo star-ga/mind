@@ -48,7 +48,9 @@ pub(crate) use module_bindings::{
     BindingKind as EvalBindingKind, Bindings as EvalBindings, BindingsGuard as EvalBindingsGuard,
     owned_symbol as eval_owned_symbol,
 };
-use module_bindings::{OwnerGuard as EvalOwnerGuard, bound_symbol as eval_bound_symbol};
+use module_bindings::{
+    ImportedCall, OwnerGuard as EvalOwnerGuard, bound_symbol as eval_bound_symbol, imported_call,
+};
 use module_bindings::{current_owner as current_eval_owner, symbol_display_name};
 pub mod materialization;
 /// Narrow-int surface prescan (see narrow_scan.rs); always compiled because the
@@ -815,6 +817,22 @@ fn resolve_user_fn(callee: &str, span: Span) -> Result<Option<UserFn>, EvalError
         if let Some(local) = fn_table_lookup(&eval_owned_symbol(&owner, callee)) {
             return Ok(Some(local));
         }
+    }
+    // A bare call into an exported function of an imported sibling module,
+    // in the same order the type checker resolves it: lexical first, then the
+    // owner's own imports.
+    match imported_call(callee) {
+        ImportedCall::Unique(target) => {
+            if let Some(imported) = fn_table_lookup(&target) {
+                return Ok(Some(imported));
+            }
+        }
+        ImportedCall::Ambiguous => {
+            return Err(EvalError::UnsupportedMsg(format!(
+                "call to `{callee}` is ambiguous: more than one imported module exports it"
+            )));
+        }
+        ImportedCall::None => {}
     }
     Ok(fn_table_lookup(callee).or_else(|| {
         callee
