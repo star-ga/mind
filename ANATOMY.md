@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1903 | **Est. tokens:** ~3,700,224
-**Generated:** 2026-10-22 02:11 UTC
+**Files:** 1903 | **Est. tokens:** ~3,700,225
+**Generated:** 2026-10-27 10:41 UTC
 
 ## Token Budget Guide
 
@@ -98,7 +98,7 @@
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
-| `sdk/ts/mic-map/` | 6 | ~15,510 |
+| `sdk/ts/mic-map/` | 6 | ~15,511 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/scripts/` | 1 | ~499 |
 | `sdk/ts/mic-map/src/` | 9 | ~12,181 |
@@ -1148,7 +1148,7 @@
 
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `package.json` (~210 tok, medium) — Keys: name, version, description, type, private
-- `package-lock.json` (~12351 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
+- `package-lock.json` (~12352 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
 - `README.md` (~152 tok, small) — @mind/mic-map
 ### `sdk/ts/mic-map/scripts/`
 
