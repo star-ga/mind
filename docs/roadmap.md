@@ -3157,3 +3157,34 @@ OCaml abstraction/developer-experience capabilities. Do not assert
 universal language superiority, full Rust-independence, comprehensive
 cross-device float determinism, or performance wins before the corresponding
 end-to-end acceptance tests exist.
+
+## Frontier scientific computation (2026-10-26)
+
+**Owner:** STARGA, Inc.  
+**Status:** Proposed; not implemented. Changes no release gate, compiler pin or production claim.
+
+**Objective.** Long-horizon, reproducible symbolic scientific computation that can
+re-derive difficult published symbolic results with independent checks, strict
+provenance and measured resources.
+
+**Compiler profile to investigate.** Arbitrary-precision integer and rational
+interfaces; a canonical symbolic DAG representation; bounded expression
+simplification; deterministic rewrite evaluation; C ABI and stdlib support;
+streaming output; compile-time and memory profiles with safe resource refusal.
+Native, MLIR and evaluator parity and reproducible codegen are required, with
+benchmarks against matched baselines.
+
+**Acceptance and sequencing.**
+
+1. Existing release-blocking obligations come first; full-language native
+   independence and the current release gates stay primary.
+2. Freeze a small, independently known symbolic benchmark and its exact reference
+   before any implementation.
+3. Positive, negative, mutated and interrupted-then-restarted cases, including
+   false-positive rejection.
+4. Independent checking through a distinct implementation or a mathematically
+   checkable certificate; solver output alone is not proof.
+5. Record source, toolchain and dependency hashes, inputs, assumptions, outputs and
+   CPU, memory, wall-time and cost, with immutable provenance.
+6. Report measured baseline comparisons and limitations; scale complexity only after
+   the earlier tiers pass.
