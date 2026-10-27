@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2624 | **Est. tokens:** ~4,697,605
-**Generated:** 2026-10-23 18:12 UTC
+**Files:** 2626 | **Est. tokens:** ~4,700,016
+**Generated:** 2026-10-27 10:56 UTC
 
 ## Token Budget Guide
 
@@ -64,8 +64,8 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~804,525 |
-| `examples/mindc_mind/testdata/` | 4 | ~6,567 |
+| `examples/mindc_mind/` | 288 | ~806,002 |
+| `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
@@ -87,7 +87,7 @@
 | `examples/mindc_mind/testdata/native_scoped_fixed/observers/` | 7 | ~7,820 |
 | `examples/mindc_mind/testdata/native_scoped_fixed/sources/` | 43 | ~7,306 |
 | `examples/mindc_mind/testdata/native_source_driver/` | 4 | ~3,237 |
-| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,184 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,138 |
 | `examples/mindc_mind/testdata/selfhost_loop_bounded/` | 1 | ~269 |
 | `examples/mindc_mind/testdata/string_borrowed/` | 1 | ~869 |
 | `examples/mind_mirror_v04/` | 2 | ~3,836 |
@@ -156,7 +156,7 @@
 | `src/ir/native_lane_profile/` | 4 | ~14,403 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 7 | ~19,684 |
+| `src/mlir/` | 8 | ~20,431 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -710,8 +710,8 @@
 - `gap_corpus_smoke.py` (~5694 tok, huge)
 - `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
-- `h2b_exclusion_controls_check.py` (~3943 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
-- `h2b_fmt_identity_check.py` (~1320 tok, large) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
+- `h2b_exclusion_controls_check.py` (~3935 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
+- `h2b_fmt_identity_check.py` (~2268 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~947 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -768,7 +768,7 @@
 - `native_dynamic.mind` (~4642 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_writer_check.py` (~3640 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_emission_context.md` (~3838 tok, huge) — Explicit target context and source-lowered module parts
-- `native_emission_context.mind` (~1214 tok, large) — Copyright 2026 STARGA Inc.
+- `native_emission_context.mind` (~1271 tok, large) — Copyright 2026 STARGA Inc.
 - `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
 - `native_lane_value_shapes_smoke.py` (~3202 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
@@ -776,12 +776,12 @@
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
 - `native_libc_binding_fixture.mind` (~1063 tok, large) — Copyright 2026 STARGA Inc. Diagnostic binary transport, never admission.
 - `native_libc_binding.md` (~3820 tok, huge) — Source-bound libc declaration metadata
-- `native_libc_binding.mind` (~16138 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_libc_binding.mind` (~16144 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_binding_mutations.tsv` (~147 tok, small) — name	source_change	required_detection
 - `native_libc_io_check.py` (~5500 tok, huge) — Source-bound fixed libc I/O thunk diagnostics; no production admission."""
 - `native_libc_io_fixture.mind` (~2121 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_io.md` (~2089 tok, huge) — Fixed libc intrinsic I/O component
-- `native_libc_io.mind` (~3126 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_libc_io.mind` (~3137 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_startup_cases.tsv` (~362 tok, medium) — # Predeclared standalone startup contract. stderr empty except documented loader
 - `native_libc_startup_check.py` (~6391 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
 - `native_libc_startup_fixture.mind` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
@@ -792,13 +792,13 @@
 - `native_posix.md` (~1979 tok, huge) — Linux x86-64 POSIX substrate
 - `native_scoped_source_driver.mind` (~2228 tok, huge) — STARGA Inc. NSF_STDIN_V2 source compiler transport.
 - `native_scoped_source_image.md` (~1925 tok, huge) — Scoped fixed C calls: NSF/1 candidate
-- `native_scoped_source_image.mind` (~4955 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_scoped_source_image.mind` (~5023 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_source_driver_check.md` (~2601 tok, huge) — Reproducing the source-input adapter diagnostic
 - `native_source_driver_check.py` (~5775 tok, huge) — Explicit-instrument NSI_STDIN_V1 diagnostic, not compiler qualification.
 - `native_source_driver.md` (~906 tok, large) — Native source-input adapter
 - `native_source_driver.mind` (~2228 tok, huge) — STARGA Inc. NSI_STDIN_V1 source compiler transport.
 - `native_source_image.md` (~2374 tok, huge) — Source-lowered Linux libc image candidate
-- `native_source_image.mind` (~3966 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_source_image.mind` (~3979 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_stream_io_case_corrections.json` (~5416 tok, huge) — Keys: original_contract, original_sha256, corrected_contract, corrected_sha256, changes
 - `native_stream_io_cases.json` (~3715 tok, huge) — Keys: contract, cases
 - `native_stream_io_cases_v2.json` (~4374 tok, huge) — Keys: contract, cases
@@ -860,14 +860,14 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
-- `self_host_native_cf_smoke.py` (~9900 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
+- `self_host_native_cf_smoke.py` (~10272 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_div_trap_smoke.py` (~9537 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
 - `self_host_native_elf_smoke.py` (~10999 tok, huge)
-- `self_host_native_emission_context_smoke.py` (~8836 tok, huge) — Independent diagnostic transport for native emission contexts.
+- `self_host_native_emission_context_smoke.py` (~8846 tok, huge) — Independent diagnostic transport for native emission contexts.
 - `self_host_native_f64_intrinsics_smoke.py` (~4928 tok, huge) — W8c smoke: float builtins/intrinsics in the pure-MIND native compiler.
 - `self_host_native_f64_lit_smoke.py` (~3079 tok, huge) — W8b smoke: correctly rounded decimal -> binary64 float literals in the pure-MIND
 - `self_host_native_fp_binop_smoke.py` (~1095 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
@@ -984,6 +984,7 @@
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
 - `h2b_exclusion_pins.json` (~2404 tok, huge) — Keys: comment, entries
+- `h2b_fmt_identity_files.txt` (~233 tok, medium) — examples/mindc_mind/native_fixed_scope_manifest.mind
 ### `examples/mindc_mind/testdata/mindfuzz_regress/`
 
 - `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
@@ -1643,7 +1644,7 @@
 - `MANIFEST.txt` (~269 tok, medium) — # Frozen BOUNDED-profile self-host compiler seed: the pure-MIND compiler
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
-- `MANIFEST.txt` (~358 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
+- `MANIFEST.txt` (~312 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
@@ -2188,6 +2189,7 @@
 - `const_globals.rs` (~4744 tok, huge) — Copyright 2025 STARGA Inc.
 - `div_trap.rs` (~1541 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~6147 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `id_subst.rs` (~747 tok, large) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `nobuiltin.rs` (~2532 tok, huge) — Copyright 2025 STARGA Inc.
 - `staged_opt.rs` (~1708 tok, huge) — Copyright 2025 STARGA Inc.
