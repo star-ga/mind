@@ -4,8 +4,6 @@
 
 //! Operation-scoped runnable capability checks for fixed-array struct fields.
 
-#![cfg(feature = "std-surface")]
-
 use crate::ast::{Module, Node, Span as AstSpan};
 use crate::diagnostics::{Diagnostic, Span};
 
