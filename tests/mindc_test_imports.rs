@@ -825,18 +825,25 @@ fn private_bare_call_is_refused() {
 
 #[test]
 fn bare_call_exported_by_two_imports_is_refused() {
+    // The entry file's own ambiguous bare call is already refused by the type
+    // checker (E2003). A dependency's is deferred to evaluation, so it must be
+    // refused there as ambiguous, never resolved to either exporter.
     let root = project(
         "eval_import_bare_ambiguous",
         r#"
-import left;
-import right;
+import mid;
 
 #[test]
-fn ambiguous_bare_call_is_refused() {
-    assert value() == 41, "two exporters";
+fn ambiguous_bare_call_in_dependency_is_refused() {
+    assert mid.pick() == 41, "two exporters";
 }
 "#,
     );
+    fs::write(
+        root.join("src/mid.mind"),
+        "export { pick }\nimport left;\nimport right;\nfn pick() -> i64 { return value(); }\n",
+    )
+    .expect("write dependency module");
     fs::write(
         root.join("src/left.mind"),
         "export { value }\nfn value() -> i64 { return 41; }\n",
@@ -851,4 +858,5 @@ fn ambiguous_bare_call_is_refused() {
     let text = output_text(&output);
     assert!(!output.status.success(), "{text}");
     assert!(text.contains("0 passed; 1 failed"), "{text}");
+    assert!(text.contains("call to `value` is ambiguous"), "{text}");
 }
