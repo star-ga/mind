@@ -3188,3 +3188,100 @@ benchmarks against matched baselines.
    CPU, memory, wall-time and cost, with immutable provenance.
 6. Report measured baseline comparisons and limitations; scale complexity only after
    the earlier tiers pass.
+
+## Measured toolchain gaps (2026-10-27)
+
+> **Status: proposed; not shipped unless a draft PR is named.** Each item was
+> reproduced with `mind 0.10.2` (`core-ir=1.0`, release features) on a minimal
+> program. Small fixes are in separate draft PRs; the items below are the
+> larger ones. Every item states its determinism and benchmark risk. Common
+> rules: a `std/*.mind` addition changes the std artifact digest, so any pinned
+> oracle hash covering that module is re-blessed deliberately in the same
+> change, never blind; a language feature stays out of `std/` until the
+> self-host front end (`examples/mindc_mind/main.mind`) parses it; a lowering
+> change keeps every existing canary output byte-identical (keystone 7/7,
+> cross-substrate canaries, `mic3_flip_smoke.py`) and passes the one-sided +10%
+> criterion gate.
+
+Fixed in draft PRs (listed for traceability):
+
+- `mindc test` now resolves a bare call to an exported function of an imported
+  project module (`import util; util_add(1, 2)`), as `check` and native builds
+  do. Before, every such test failed with `unsupported operation`.
+- A failing native `assert` now writes
+  `mind: assertion failed at source span S..E: <message>` to stderr before the
+  unchanged `abort()`; before, the process died with status 134 and no output.
+- `std.fs` gains `append_string(path, buf, len)` (`O_WRONLY | O_CREAT |
+  O_APPEND`), so an append-only log no longer needs read-modify-write or a
+  temp file plus rename (MG-06 below keeps the remaining portability work).
+
+Open items:
+
+1. **MG-01: Fail-closed import resolution in `build`/`run`.** `mindc run` links
+   every source of a `Mind.toml` package whatever the `import` lines say:
+   `import bogus.util;` and the project-root-relative `import src.util;` both
+   build and run, while `check` and `test` refuse the `src.util` spelling
+   (E2003 `unsupported call` at each use).
+   Resolve imports in the build path with the same resolver as `check`, and
+   decide whether the `src.`-prefixed spelling is a supported alias (then
+   accept it everywhere) or an error (then refuse it everywhere, with a
+   migration note). *Risk:* programs that build today only because of the
+   lenient path start failing; the change touches link selection only, so
+   emitted artifacts for correctly-importing programs must stay byte-identical
+   (verify over `std/` and `examples/` with the mic@3 digest).
+2. **MG-02: Source location in native trap messages.** The assert diagnostic
+   names a byte span, because lowering has no source map. Carry file and
+   line:column for each trap site into lowering (a per-module table, not
+   pointer bits) and print `file:line:col`; also let `mindc run` name the
+   signal when the child dies by one. *Risk:* adds constants to the failing
+   branch only; programs without `assert` must stay byte-identical.
+3. **MG-03: `"text".to_bytes()` and unknown string methods.** A method call on
+   a String receiver lowers to the std free function `string_<method>`; no
+   `string_to_bytes` exists, so the call passes `mindc check` and fails at link
+   (`undefined reference to string_to_bytes`). Two parts: (a) add
+   `string_to_bytes(s: String) -> bytes` to `std/string.mind`, producing the
+   growable `bytes` record that `std.sha256.hash` consumes; (b) make `mindc
+   check` refuse a String-receiver method whose `string_<method>` resolves
+   nowhere (std.string, the module, or its imports), keyed on the resolved
+   callee rather than the call shape, so the error surfaces at check time.
+   *Risk:* (a) changes the std.string digest, and std.string is linked into the
+   self-host compiler, so its pinned outputs need a deliberate re-bless; land it
+   after the native-compiler integration branch that also edits
+   `std/string.mind`. (b) is checker-only; prove it rejects nothing that builds
+   today by running `mindc check std/ examples/` before and after.
+4. **MG-04: `mindc test` evaluator parity.** The test evaluator refuses
+   `__mind_realloc` (`unsupported operation`), every `std.fs` call, and byte
+   access on a string literal (`string_addr`, `string_get_byte`, `"abc"[1]`:
+   `unknown field .addr`), all of which run natively. Tests that need them must
+   be native-only today. Implement them in the evaluator against the same
+   memory model as native (literal bytes materialized in evaluator memory;
+   `std.fs` behind an explicit effect capability the test opts into). *Risk:*
+   evaluator-only, so the keystone does not exercise it; gate each construct
+   with an evaluator-versus-native differential test. No artifact bytes move.
+5. **MG-05: `check` passes what `run` refuses (E6009).** `mindc check` accepts,
+   and `mindc run` then refuses with `E6009 unsupported lowering operation
+   'struct field read'`: string `+` concatenation, `.length` on a String, and
+   push/index through an `array<Struct>` struct field. Either lower them
+   (string concat via `string_push_str`, `.length` via `string_len`, aggregate
+   array fields via the vec runtime) or report the same E6009 from `check`.
+   Overlaps MOC-01 (aggregate ABI) and MOC-04 (link/run every std surface).
+   *Risk:* new lowering must leave all existing canary outputs byte-identical
+   and keep the criterion gate; a check-time refusal must be proven against
+   `std/` and `examples/` so it rejects nothing that lowers today.
+6. **MG-06: Per-target POSIX constants in `std.fs`.** The `std.fs` open flags
+   (`o_creat` 64, `o_trunc` 512, and the new `o_append` 1024) are the Linux
+   values; other targets number them differently (for example `O_APPEND` is 8
+   on macOS). Select the table per target at build time, or route opens through
+   one runtime entry point that takes a portable mode. *Risk:* a std change, so
+   the std.fs digest moves and is re-blessed deliberately; Linux artifacts must
+   stay byte-identical.
+7. **MG-07: Byte escapes in string literals.** `"\x00"` is refused (`unknown
+   string escape \x`), so binary record separators and NUL terminators need
+   `string_push_byte`. Add `\xNN` (two hex digits, a single byte, refused when
+   it would make the literal invalid UTF-8 unless the literal is a byte
+   string) to the Rust lexer, the formatter (round-trip the spelling) and the
+   self-host lexer in `main.mind`, in that order. *Risk:* a language feature:
+   keep it out of `std/` until the self-host front end parses it; the mic@3
+   string table already carries raw bytes, so existing artifacts stay
+   byte-identical; add NUL-in-literal tests for every path that hands a String
+   to a C API.
