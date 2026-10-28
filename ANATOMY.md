@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2635 | **Est. tokens:** ~4,717,228
-**Generated:** 2026-10-28 07:58 UTC
+**Files:** 2635 | **Est. tokens:** ~4,717,532
+**Generated:** 2026-10-28 08:34 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,664 |
+| `examples/mindc_mind/` | 288 | ~806,968 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,212 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -713,7 +713,7 @@
 - `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `h2b_exclusion_controls_check.py` (~4102 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
-- `h2b_fmt_identity_check.py` (~2350 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
+- `h2b_fmt_identity_check.py` (~2654 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1220 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)

@@ -33,10 +33,31 @@ IR_REFUSAL_EXCLUSIONS = {
     "examples/mindc_mind/string_escape_driver.mind",
 }
 
-# These seven files are not formatted files. Q1.1 kept main.mind out of lane C.
+# These fifteen files are outside the H2b formatted set. Q1.1 kept main.mind out of lane C.
+# The eight seed-batch entries (S6b, S6a, #289) are std or test changes made after
+# the H2b base; they belong to the seed batch, not to H2b's fourteen formatted files.
 # The formatted set is the pinned manifest, not a git-diff walk.
 PINNED_FORMATTED_LIST = "examples/mindc_mind/testdata/h2b_fmt_identity_files.txt"
 SEMANTIC_EDIT_EXCLUSIONS = {
+    "std/string.mind": (
+        "seed batch S6b b8f15059: mindc fmt only, outside the H2b set; measured "
+        "with this gate's method, --emit-ir (a44f5f7576fc97ed) and --emit-mic3 "
+        "(8894e266cface944) are byte-identical for the 93238e8e and formatted bytes"
+    ),
+    "std/sha256.mind": (
+        "seed batch: S6b b8f15059 format, then #289 8c94109e bounded scratch, "
+        "sha256_checked and the trapping legacy entry (a semantic edit)"
+    ),
+    "std/toml.mind": (
+        "seed batch S6b 64e105d6: the toml depth cap gets its own name (semantic edit)"
+    ),
+    "std/iouring.mind": (
+        "seed batch S6a 697dff69: bounded completion waits (semantic edit)"
+    ),
+    "tests/sha256_allocation_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_legacy_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_memory_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_repeated_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
     "tests/open_error_kat.mind": (
         "new file from main #290 (fcb44b97), taken by the main merge; it has no "
         "BASE bytes, so there is no pre/post-format identity to measure"
