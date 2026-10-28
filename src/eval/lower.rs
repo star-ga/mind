@@ -21,6 +21,9 @@ use std::collections::HashMap as StdHashMap;
 /// ABI and struct resolution retain their explicit standard-library types.
 type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 
+#[cfg(feature = "std-surface")]
+#[path = "assert_trap.rs"]
+mod assert_trap;
 #[cfg(feature = "ffi-c-user")]
 #[path = "callable_exports.rs"]
 mod callable_exports;
@@ -10027,40 +10030,14 @@ pub(super) fn lower_expr_inner(
         // fail-closed panic below. It produces no meaningful value (it is a
         // statement), so the discarded merge id returned here is correct.
         //
-        // Desugar to `if cond { } else { __mind_assert_fail(msg, start, end); }`
-        // and reuse the existing, battle-tested `If` region-SSA lowering
-        // verbatim:
-        //   * cond true  → empty then-branch, falls through (unit 0);
-        //   * cond false → else-branch calls the runtime trap intrinsic, which
-        //     writes one diagnostic line to stderr and then `abort()`s
-        //     deterministically (the same `abort()` path the region/genref
-        //     runtime already relies on — see `runtime-support/
-        //     mind_intrinsics.c`). `__mind_assert_fail` is auto-declared as a
-        //     `func.func private @__mind_assert_fail(i64, i64, i64) -> i64`
-        //     extern via the standard `extern_calls` collection, so no new IR
-        //     variant, MLIR arm, or wire-format change is introduced.
-        //
-        // Arguments: the message as a String record (or 0 when the assert has
-        // no message) and the assert's source span. The message String is
-        // materialized only inside the failing branch, so a passing assert
-        // costs nothing extra. Every argument is a compile-time constant or
-        // the literal's bytes: no pointer bits reach the output and the
-        // diagnostic is identical across substrates.
+        // Desugar to `if cond { } else { <trap> }` and reuse the existing,
+        // battle-tested `If` region-SSA lowering verbatim: cond true → empty
+        // then-branch, falls through (unit 0); cond false → the else-branch
+        // trap call built by `assert_trap::trap_call` (which documents its
+        // arguments) reports the failure and `abort()`s deterministically.
         #[cfg(feature = "std-surface")]
         ast::Node::Assert { cond, msg, span } => lower_out_of_line(|| {
-            let message = match msg {
-                Some(text) => ast::Node::Lit(Literal::Str(text.clone()), *span),
-                None => ast::Node::Lit(Literal::Int(0), *span),
-            };
-            let trap_call = ast::Node::Call {
-                callee: "__mind_assert_fail".to_string(),
-                args: vec![
-                    message,
-                    ast::Node::Lit(Literal::Int(span.start() as i64), *span),
-                    ast::Node::Lit(Literal::Int(span.end() as i64), *span),
-                ],
-                span: *span,
-            };
+            let trap_call = assert_trap::trap_call(msg.as_deref(), *span);
             let if_node = ast::Node::If {
                 cond: cond.clone(),
                 then_branch: Vec::new(),

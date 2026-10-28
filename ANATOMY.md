@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1906 | **Est. tokens:** ~3,703,014
-**Generated:** 2026-10-28 08:16 UTC
+**Files:** 1907 | **Est. tokens:** ~3,703,435
+**Generated:** 2026-10-28 08:38 UTC
 
 ## Token Budget Guide
 
@@ -118,7 +118,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,431 |
+| `src/eval/` | 39 | ~141,852 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1264,6 +1264,7 @@
 - `abi_gate_struct_ops.rs` (~2875 tok, huge) — Copyright 2026 STARGA Inc.
 - `abi_gate_tensor.rs` (~1232 tok, large) — Tensor-shape admission rules for the runnable artifact ABI gate.
 - `assert_check.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
+- `assert_trap.rs` (~421 tok, medium) — Copyright 2026 STARGA Inc.
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
 - `canonical_lowering.rs` (~4108 tok, huge) — Copyright 2026 STARGA Inc.
