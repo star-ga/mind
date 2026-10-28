@@ -3468,3 +3468,10 @@ transformer block runs under `--require-strict-fp`.
 - Which proof tool GP-06 uses, and how it stays outside the trusted base, is decided by RFC.
 - Licence policy for translations of HumanEval, MBPP and McEval-Hard (GP-01).
 - No milestone dates are set; each item is sequenced after the gate it depends on.
+## Research watch — implicit geometry as a tensor library workload (2026-10-28)
+
+**Status: proposed; review REQUIRED before implementation; no change to core language/spec/runtime scheduled.**
+
+Candidate: express signed-distance / general implicit-field evaluation as ordinary typed numerical tensor operations, including analytic primitives, transforms and CSG via min/max/negation. Use a user-space library prototype rather than adding compiler keywords, normative specification or GPU-specific primitives.
+
+**Review gates:** precise sign, coordinate, unit, true-distance versus zero-level-set semantics; scalar golden cases; non-smooth min/max gradients and tie policies; Q16.16 saturation; numerical precision and cross-substrate parity limited to proven compiler/runtime scopes. Benchmark batching against a conventional scalar implementation. Require evidence from [mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md) and [rfn-mind](https://github.com/star-ga/rfn-mind/blob/main/docs/roadmap.md) before promoting a standalone library/RFC. Runtime-specialized GPU kernels require separate profiling and approval; protect existing roadmap priorities.
