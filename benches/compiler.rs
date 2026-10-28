@@ -190,7 +190,7 @@ mod e2e {
     /// passes its own clang link step (`-O3 -march=x86-64-v3 -ffp-contract=off`,
     /// shared PIC, pthread) plus `-fwrapv`; rustc gets `-C opt-level=3`, edition
     /// 2021, overflow checks off, `cdylib`. Same set as the recorded T2 sweep.
-    const CLANG_FLAGS: [&str; 8] = [
+    const CLANG_FLAGS: &[&str] = &[
         "-O3",
         "-march=x86-64-v3",
         "-ffp-contract=off",
@@ -200,7 +200,7 @@ mod e2e {
         "-pthread",
         "-o",
     ];
-    const RUSTC_FLAGS: [&str; 9] = [
+    const RUSTC_FLAGS: &[&str] = &[
         "--edition",
         "2021",
         "-C",
@@ -251,7 +251,7 @@ mod e2e {
     /// One `mindc src --emit-shared out.so` with the runtime-object cache rooted at
     /// `xdg`. `MINDC_RUNTIME_OBJ_CACHE=0` disables that cache on compilers that
     /// honour it; the fresh `XDG_CACHE_HOME` makes the run cold on every compiler.
-    fn emit_shared(mindc: &Path, src: &Path, out: &Path, xdg: &Path, cold: bool) -> bool {
+    fn emit_shared_cmd(mindc: &Path, src: &Path, out: &Path, xdg: &Path, cold: bool) -> Command {
         let mut cmd = Command::new(mindc);
         cmd.arg(src)
             .arg("--emit-shared")
@@ -260,20 +260,27 @@ mod e2e {
         if cold {
             cmd.env("MINDC_RUNTIME_OBJ_CACHE", "0");
         }
-        run_ok(&mut cmd)
+        cmd
+    }
+
+    fn emit_shared(mindc: &Path, src: &Path, out: &Path, xdg: &Path, cold: bool) -> bool {
+        run_ok(&mut emit_shared_cmd(mindc, src, out, xdg, cold))
     }
 
     /// `mindc build --backend native src --out elf`, from the repo root: the native
     /// bridge resolves `stage1.elf` and `std/` relative to the working directory.
+    fn build_native_cmd(mindc: &Path, src: &Path, out: &Path) -> Command {
+        let mut cmd = Command::new(mindc);
+        cmd.current_dir(manifest_dir())
+            .args(["build", "--backend", "native"])
+            .arg(src)
+            .arg("--out")
+            .arg(out);
+        cmd
+    }
+
     fn build_native(mindc: &Path, src: &Path, out: &Path) -> bool {
-        run_ok(
-            Command::new(mindc)
-                .current_dir(manifest_dir())
-                .args(["build", "--backend", "native"])
-                .arg(src)
-                .arg("--out")
-                .arg(out),
-        )
+        run_ok(&mut build_native_cmd(mindc, src, out))
     }
 
     fn read(path: &Path) -> Vec<u8> {
@@ -351,6 +358,12 @@ mod e2e {
 
     pub(super) fn run(c: &mut Criterion) {
         let Some(tools) = probe() else { return };
+        // `MINDC_BASE` selects the gate's measurement: a same-run paired A/B of
+        // two compilers instead of the criterion rows (see `paired`).
+        if let Some(base) = std::env::var_os("MINDC_BASE").filter(|p| !p.is_empty()) {
+            paired::run(&tools, Path::new(&base));
+            return;
+        }
         // Interleaved by shape: each MIND row is followed immediately by its C and
         // Rust equivalents, so a pair compared by `--require-faster` is measured
         // seconds apart under the same box load.
@@ -462,56 +475,92 @@ mod e2e {
         g.finish();
     }
 
-    /// Same-session reference rows: the equivalent C and Rust program for `shape`
-    /// through `clang` and `rustc`, each self-skipping when its tool is absent.
-    fn bench_reference(c: &mut Criterion, tools: &Tools, shape: &str) {
+    /// One staged reference compile: the equivalent C or Rust program for a shape.
+    struct RefRow {
+        row: &'static str,
+        tool: PathBuf,
+        src: PathBuf,
+        flags: &'static [&'static str],
+        work: PathBuf,
+    }
+
+    impl RefRow {
+        /// rustc writes its temporaries next to `-o`; keep them in `work`.
+        fn command(&self, out: &Path) -> Command {
+            let mut cmd = Command::new(&self.tool);
+            cmd.current_dir(&self.work)
+                .args(&self.flags[..self.flags.len() - 1])
+                .arg(&self.src)
+                .arg(self.flags[self.flags.len() - 1])
+                .arg(out);
+            cmd
+        }
+    }
+
+    /// Stage the clang and rustc reference sources for `shape` in `work`, keeping
+    /// only the rows whose tool is present and whose untimed compile succeeds.
+    fn stage_references(tools: &Tools, shape: &str, work: &Path) -> Vec<RefRow> {
         let Some((c_src, rs_src)) = reference_sources(shape) else {
-            return;
+            return Vec::new();
         };
-        let work = tmp();
         let rows = [
             (
                 "clang_c_to_so",
                 tools.clang.as_ref(),
                 "c",
                 c_src,
-                &CLANG_FLAGS[..],
+                CLANG_FLAGS,
             ),
             (
                 "rustc_cdylib",
                 tools.rustc.as_ref(),
                 "rs",
                 rs_src,
-                &RUSTC_FLAGS[..],
+                RUSTC_FLAGS,
             ),
         ];
+        let mut staged = Vec::new();
         for (row, tool, ext, text, flags) in rows {
             let Some(tool) = tool else { continue };
-            let src = work.path().join(format!("{shape}_{row}.{ext}"));
+            let src = work.join(format!("{shape}_{row}.{ext}"));
             std::fs::write(&src, text).expect("compiler::e2e: cannot stage a reference source");
-            let out = work.path().join(format!("{shape}_{row}.so"));
-            // rustc writes its temporaries next to `-o`; keep them in `work`.
-            let compile = |out: &Path| {
-                run_ok(
-                    Command::new(tool)
-                        .current_dir(work.path())
-                        .args(&flags[..flags.len() - 1])
-                        .arg(&src)
-                        .arg(flags[flags.len() - 1])
-                        .arg(out),
-                )
+            let r = RefRow {
+                row,
+                tool: tool.clone(),
+                src,
+                flags,
+                work: work.to_path_buf(),
             };
-            if !compile(&out) {
+            if !run_ok(&mut r.command(&work.join(format!("{shape}_{row}.so")))) {
                 eprintln!("compiler::e2e_reference: {row}/{shape} did not compile; skipped");
                 continue;
             }
+            staged.push(r);
+        }
+        staged
+    }
+
+    /// Same-session reference rows: the equivalent C and Rust program for `shape`
+    /// through `clang` and `rustc`, each self-skipping when its tool is absent.
+    fn bench_reference(c: &mut Criterion, tools: &Tools, shape: &str) {
+        let work = tmp();
+        for r in stage_references(tools, shape, work.path()) {
+            let out = work.path().join(format!("{shape}_{}.so", r.row));
             let mut g = group_for(c, "e2e_reference", 10);
-            g.bench_function(BenchmarkId::new(row, shape), |b| {
-                b.iter(|| assert!(compile(black_box(&out)), "{row} failed in the timed loop"));
+            g.bench_function(BenchmarkId::new(r.row, shape), |b| {
+                b.iter(|| {
+                    assert!(
+                        run_ok(&mut r.command(black_box(&out))),
+                        "{} failed in the timed loop",
+                        r.row
+                    )
+                });
             });
             g.finish();
         }
     }
+
+    mod paired;
 }
 
 /// Benchmark the WEDGE path, not just the parser: canonical mic@3 serialization

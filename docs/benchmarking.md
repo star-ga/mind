@@ -52,14 +52,82 @@ MIND rows, so a comparison is same-box and same-session. Each self-skips when it
 tool is absent. Run the whole end-to-end set with
 `cargo bench --bench compiler --features "mlir-build std-surface cross-module-imports" -- e2e_`.
 
-`bench-gate.yml`'s `e2e-gate` job grades the `e2e_compile_shared` and `e2e_native`
-rows one-sided +10% against `.bench-baseline-2026-10-28-e2e.txt`, and
-`tools/bench_gate.py --require-faster A,B` asserts a same-run ordering
-(`median(A) < median(B)`, inconclusive above the spread band). Reference rows are
-never floored: another toolchain's speed is not a MIND regression. A MIND-versus-
-clang/rustc ordering may be stated as a result only once `--require-faster` asserts
-it, green, on the build host and on a hosted runner. The frontend (T1) job and its
-floor are separate and unchanged.
+### The end-to-end gate: same-run paired A/B
+
+An absolute end-to-end floor cannot be the pass/fail instrument: one build host
+measured the same commands 18-31% apart between sessions with load, three times
+the +10% regression the gate exists to catch, and against a hosted runner an
+absolute build-host number means nothing. `bench-gate.yml`'s `e2e-gate` job
+therefore decides by a **same-run paired A/B**, and
+`.bench-baseline-2026-10-28-e2e.txt` is record-only history (a
+`continue-on-error` step), never a verdict.
+
+**What is measured.** Two `mindc` binaries, both `cargo build --release
+--features "mlir-build std-surface cross-module-imports"` in the same job with
+the same toolchain (LLVM 20, version printed), the sha256 of each printed in
+the log: the candidate (`MINDC`) and the base (`MINDC_BASE`). Not the
+bench-profile `mindc` `cargo bench` builds for itself (a different binary).
+Rows: 3 warm, 3 cold, 4 native, inputs pinned; the pre-checks stay (cold ==
+warm bytes, native == committed oracle, on the candidate). Whether candidate
+and base emit byte-identical artefacts per shape is recorded, not a block (a
+codegen change may legitimately alter bytes). On a build host both arms run
+under one `taskset -c <4 physical cores>` + `nice -n 15`; on a hosted runner
+there is no pinning (both arms share the noise, which is the point).
+
+**Base in CI.** `pull_request` / `workflow_dispatch`: the merge-base of `HEAD`
+and `origin/main` (or the dispatch input `base`). `push` to main:
+`github.event.before`, falling back to `HEAD^1` when it is the zero sha. The
+base is checked out in a worktree and built into its own target dir, cached by
+key `e2e-base-<base sha>`. A base that does not build is exit 4 with the
+reason (a wiring defect, never a pass). Base and candidate with equal sha256 is
+an A/A null control: it prints `null_control=1`, still runs, and must PASS.
+
+**Sampling.** Per row, N pairs: warm 40, cold 20, native 60 (minimums; a row
+with fewer pairs is exit 4). 2 untimed spawns per arm per row first. Pair i: i
+even runs base then candidate, i odd candidate then base (ABBA cancels position
+and linear drift). Timing is the wall clock around one `Command::status()`;
+cold gets a fresh `XDG_CACHE_HOME` per spawn, created outside the timed region.
+Raw pairs are written to `bench-e2e-pairs.tsv` (`row  i  order  t_base_ns
+t_cand_ns`) and uploaded as a job artifact with `bench-e2e.out`; the bench also
+prints bencher lines (median, +/- sd) for the candidate arm, which the record
+steps reuse. Rows of a tier must all be present (3/3/4) or exit 4.
+
+**Statistic and decision rule** (in `tools/bench_gate.py --pairs FILE`, nowhere
+else). d_i = ln(t_cand_i / t_base_i). Pool all pairs of a tier (warm N=120, cold
+60, native 240). R̂ = exp(median d). One-sided distribution-free 95% lower bound
+on the median: L95 = k-th smallest d with
+k = max{k : P(Bin(N,½) ≤ k−1) ≤ 0.05} (N=40 → k=15, N=120 → k=51); U95
+symmetric (the (N−k+1)-th smallest). Per tier: **FAIL iff L95 > ln 1.03** (the
+candidate is proven ≥3% slower at 95% one-sided). **NOISY iff U95 − L95 >
+ln 1.12**; a noisy tier is excluded and the gate is INCONCLUSIVE (exit 2),
+re-run once automatically, then exit 2 with "host could not measure: not a
+regression verdict". PASS (exit 0) iff all three tiers are trusted and none
+FAILs. A tier whose L95 is above ln 1.03 FAILs even when its interval is wide:
+the lower bound proves the slowdown, the width only limits proving its absence.
+Exit codes: 0 PASS, 1 FAIL (never retried), 2 INCONCLUSIVE, 4 malformed input
+or a missing/unbuildable arm. Per-row R̂, L95, U95 and N are printed; the
+decision is per tier only.
+
+Why 1.03 and not 1.10: with a pair-σ of about 0.15 (warm/cold) the pooled
+standard error of the median is about 1.8%, so a no-change run fails with
+p ≈ 0.05% per tier while a true +10% fails with power ≥ 99% (native, heavier
+tailed, ≥ 90% at N=240). A proven 3-10% slowdown is a stop-and-decide,
+consistent with the one-sided policy; a speedup of any size passes. +10% stays
+the stated regression the gate exists to catch; 1.03 is the decision bound that
+catches it.
+
+The same run also records the reference rows, and `tools/bench_gate.py
+--require-faster A,B` reports a same-run ordering (`median(A) < median(B)`,
+inconclusive above the spread band) in a step that cannot fail the job.
+Reference rows are never floored: another toolchain's speed is not a MIND
+regression. A MIND-versus-clang/rustc ordering may be stated as a result only
+once `--require-faster` asserts it, green, on the build host and on a hosted
+runner. The frontend (T1) job and its floor are separate and unchanged.
+
+Run the gate's measurement locally with two release binaries:
+`MINDC=<cand> MINDC_BASE=<base> taskset -c <4 physical cores> nice -n 15 cargo
+bench --bench compiler --features "mlir-build std-surface cross-module-imports"
+-- e2e_`, then `python3 tools/bench_gate.py --pairs bench-e2e-pairs.tsv`.
 
 ### The mind-ray discipline (T3)
 

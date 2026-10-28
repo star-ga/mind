@@ -1,17 +1,21 @@
 === End-to-end floor (T2 warm/cold + T2-native), recorded 2026-10-28 ===
 
-What this file is. The absolute floor the `e2e-gate` job of
-.github/workflows/bench-gate.yml grades `cargo bench --bench compiler -- e2e_`
-against, read with `--floor-prefix ''` (every row below is a full criterion id).
-It is separate from .bench-baseline-2026-06-01-correctness.txt, which guards the
-frontend (T1) budget and is unchanged. Tiers are defined in docs/benchmarking.md.
+What this file is. RECORD-ONLY history of the end-to-end tiers: the absolute
+medians each end-to-end speed item is measured against, so its gain is visible
+in this file's history. It is NOT a verdict. The `e2e-gate` job of
+.github/workflows/bench-gate.yml decides by a same-run paired A/B of the base
+and candidate `mindc` (tools/bench_gate.py --pairs, rule in
+docs/benchmarking.md) and only RECORDS the candidate against these rows, in a
+continue-on-error step read with `--floor-prefix ''` (every row below is a full
+criterion id). It is separate from .bench-baseline-2026-06-01-correctness.txt,
+which guards the frontend (T1) budget and is unchanged. Tiers are defined in
+docs/benchmarking.md.
 
 What was measured. The compiler is origin/main ecd8be99, i.e. BEFORE the
 end-to-end speed work (runtime-object cache switch, tool-identity memo, native
-front-end work). Each later item's gain shows up as a new floor in this file's
-history, measured the same way. `mindc` built with
-`--features "mlir-build std-surface cross-module-imports"`, release profile,
-LLVM 20.1.8 (`mlir-opt`, `mlir-translate`, `clang`).
+front-end work). `mindc` is a release build (`cargo build --release --features
+"mlir-build std-surface cross-module-imports"`), LLVM 20.1.8 (`mlir-opt`,
+`mlir-translate`, `clang`).
 
   - e2e_compile_shared/warm/<shape>: `mindc src --emit-shared out.so` with the
     runtime-object cache primed.
@@ -21,28 +25,22 @@ LLVM 20.1.8 (`mlir-opt`, `mlir-translate`, `clang`).
     repository root, on the pinned backend_native_bridge corpus; every output
     was byte-identical to its committed oracle ELF.
 
-How. A wall-clock harness (perf_counter around one spawned process), 40 timed
-runs per row after 2 untimed rounds, every row interleaved in a per-round
-shuffled order in ONE session, pinned with taskset to 4 idle physical cores
-(both SMT threads) of a Linux build host: Xeon E5-2699 v3 (Haswell-EP), 2 x 18
-cores, SMT on, other unrelated jobs running on the other socket. The value on
-each row is the MEDIAN, which is what criterion's bencher line reports and what
-tools/bench_gate.py compares. Spread is given as p10/p90 beside each row.
+How. A wall-clock harness (one spawned process per sample), 40 timed runs per
+row after 2 untimed rounds, every row interleaved in a per-round shuffled order
+in ONE session, on a Linux x86-64 build host, 4 pinned physical cores. The
+value on each row is the MEDIAN. Spread is given as p10/p90 beside each row.
 The release mindc built from this commit and from origin/main are
 byte-identical (same sha256), and both were timed in the same session as an
 A/A control: their medians differ by at most 7.1% (local_call), all other rows
 within 3.6%.
 
-Why +10% one-sided. Same policy as the frontend floor: a speedup of any size
-passes; a regression beyond +10% on a trustworthy (spread <= 12%) measurement is
-a stop-and-decide signal. The in-session A/A noise (<= 7.1%) sits inside the
-band. Process-spawn timings carry a load-dependent tail; criterion rows whose
-std-dev exceeds 12% of the median are graded INCONCLUSIVE, never as a pass.
-These values come from the build host, not from a hosted runner: the T2 and
-reference commands, measured earlier the same day on the same host under lighter
-load, were 18-25% faster on every row (MIND and reference alike), so a cross-machine comparison against this
-floor is a backstop, not a precision instrument. Re-record it on the build host,
-never from a hosted runner.
+Why record-only. The same commands on the same host measured 18-31% apart
+between sessions with load (MIND and reference rows alike), three times the
++10% regression the gate exists to catch; and against a hosted runner an
+absolute build-host number means nothing. A floor wide enough never to trip on
+load could not catch +10%. So no verdict is ever taken from these rows: the
+paired A/B decides, and these rows only record history. Re-record them on the
+build host, never from a hosted runner.
 
 Same-session reference toolchains (NOT floored: another toolchain's speed is not
 a MIND regression; they are compared only by --require-faster in the same run).

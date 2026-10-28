@@ -551,13 +551,38 @@ def main() -> int:
 
         wf_text = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
         e2e_job = wf_text[wf_text.find("\n  e2e-gate:"):] if "\n  e2e-gate:" in wf_text else ""
+        floor_step = step_block(e2e_job, "Record the candidate against the e2e floor")
+        decide_step = step_block(e2e_job, "Paired A/B bench and decision")
+        build_step = step_block(e2e_job, "Build the base and candidate mindc")
         for label, ok in (
             ("workflow has an e2e-gate job", bool(e2e_job)),
             ("e2e-gate runs the e2e_ benches under pipefail",
-             "set -eo pipefail" in e2e_job and "cargo bench --bench compiler" in e2e_job
-             and "-- e2e_" in e2e_job),
-            ("e2e-gate grades against the committed e2e floor with full ids",
-             any(f.name in e2e_job for f in e2e_floors) and "--floor-prefix ''" in e2e_job),
+             "set -o pipefail" in decide_step and "cargo bench --bench compiler" in decide_step
+             and "-- e2e_" in decide_step),
+            ("e2e-gate records the committed e2e floor with full ids",
+             any(f.name in floor_step for f in e2e_floors) and "--floor-prefix ''" in floor_step),
+            ("the e2e floor is record-only (continue-on-error), never the verdict",
+             "continue-on-error: true" in floor_step
+             and not any(f.name in decide_step for f in e2e_floors)),
+            ("the e2e decision is the paired A/B comparator",
+             "tools/bench_gate.py --pairs" in decide_step and "MINDC_BASE:" in decide_step
+             and "continue-on-error" not in decide_step),
+            ("both arms are release builds of mindc with the gate's features",
+             build_step.count("cargo build --release --features \"$features\" --bin mindc") == 2
+             and 'cp Cargo.lock "$RUNNER_TEMP/e2e-base/Cargo.lock"' in build_step
+             and 'features="mlir-build std-surface cross-module-imports"' in build_step
+             and "sha256sum" in build_step),
+            ("an unbuildable base is exit 4, not a pass",
+             "does not build" in build_step and "exit 4" in build_step),
+            ("base: merge-base for PR/dispatch, before (zero sha -> HEAD^1) for push",
+             "git merge-base HEAD origin/main" in e2e_job and "github.event.before" in e2e_job
+             and "base=HEAD^1" in e2e_job and "fetch-depth: 0" in e2e_job),
+            ("base build cached by base sha",
+             "key: e2e-base-${{ steps.base.outputs.sha }}" in e2e_job),
+            ("raw pairs uploaded with a sha-pinned action",
+             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in e2e_job
+             and "bench-e2e-pairs.tsv" in e2e_job),
+            ("e2e-gate timeout is 90 minutes", "timeout-minutes: 90" in e2e_job),
             ("e2e-gate does not touch the frontend floor",
              ".bench-baseline-2026-06-01-correctness.txt" not in e2e_job),
         ):
@@ -571,11 +596,243 @@ def main() -> int:
             if not ok:
                 failures.append(label)
 
+    check_paired(failures)
+
     if failures:
         print(f"\n{len(failures)} bench-gate contract test(s) FAILED")
         return 1
     print("\nbench-gate fail-closed contract: all cases OK")
     return 0
+
+
+# --- SAME-RUN PAIRED A/B (--pairs) ------------------------------------------
+PAIR_ROWS = {
+    "warm": ([f"e2e_compile_shared/warm/{s}" for s in ("small", "medium", "large")], 40),
+    "cold": ([f"e2e_compile_shared/cold/{s}" for s in ("small", "medium", "large")], 20),
+    "native": ([f"e2e_native/{s}" for s in ("const_return", "add", "local_call", "while_sum")], 60),
+}
+
+
+def step_block(job: str, name_prefix: str) -> str:
+    """The text of one workflow step (from its `- name:` line to the next step)."""
+    start = job.find(f"- name: {name_prefix}")
+    if start < 0:
+        return ""
+    end = job.find("\n      - name:", start + 1)
+    return job[start:] if end < 0 else job[start:end]
+
+
+def step_script(job: str, name_prefix: str) -> str:
+    """The `run: |` body of one workflow step, dedented."""
+    block = step_block(job, name_prefix)
+    lines = block.split("\n")
+    try:
+        at = next(i for i, ln in enumerate(lines) if ln.strip() == "run: |")
+    except StopIteration:
+        return ""
+    body = [ln for ln in lines[at + 1:]]
+    indent = min(len(ln) - len(ln.lstrip()) for ln in body if ln.strip())
+    return "\n".join(ln[indent:] for ln in body) + "\n"
+
+
+def spread(n: int, sigma: float) -> list[float]:
+    """n deterministic, symmetric N(0, sigma) quantiles in a fixed scrambled order."""
+    from statistics import NormalDist
+
+    q = [NormalDist(0.0, sigma).inv_cdf((j + 0.5) / n) if sigma else 0.0 for j in range(n)]
+    return [q[(j * 7) % n] for j in range(n)] if n % 7 else q
+
+
+def pairs_text(ds: dict[str, list[float]], *, meta: str = "", order=None) -> str:
+    """A bench-e2e-pairs.tsv with the given per-row log-ratios (base = 100 ms)."""
+    import math
+
+    out = ["# mind e2e paired A/B v1",
+           meta or "# cand_sha256=aa\n# base_sha256=bb\n# null_control=0",
+           "row\ti\torder\tt_base_ns\tt_cand_ns"]
+    for row, values in ds.items():
+        for i, d in enumerate(values):
+            o = order(i) if order else ("BC" if i % 2 == 0 else "CB")
+            out.append(f"{row}\t{i}\t{o}\t100000000\t{round(1e8 * math.exp(d))}")
+    return "\n".join(out) + "\n"
+
+
+def tiers(ratio: dict[str, float] | float = 1.0, sigma: float = 0.15,
+          n: dict[str, int] | None = None) -> dict[str, list[float]]:
+    import math
+
+    ds: dict[str, list[float]] = {}
+    for tier, (rows, minimum) in PAIR_ROWS.items():
+        r = ratio.get(tier, 1.0) if isinstance(ratio, dict) else ratio
+        for row in rows:
+            count = (n or {}).get(row, minimum)
+            ds[row] = [math.log(r) + x for x in spread(count, sigma)]
+    return ds
+
+
+def check_paired(failures: list[str]) -> None:
+    import importlib.util as ilu
+    import math
+
+    spec = ilu.spec_from_file_location("bench_gate_paired", GATE)
+    bg = ilu.module_from_spec(spec)
+    spec.loader.exec_module(bg)
+
+    # k is the exact one-sided 95% rank: P(Bin(n,1/2) <= k-1) <= 0.05 < P(<= k).
+    def cdf(n: int, j: int) -> float:
+        return sum(math.comb(n, i) for i in range(j + 1)) / 2**n
+
+    rank_ok = bg.median_rank(40) == 15 and bg.median_rank(120) == 51 and all(
+        cdf(n, bg.median_rank(n) - 1) <= 0.05 < cdf(n, bg.median_rank(n))
+        for n in range(5, 301)
+    )
+    print(f"[{'PASS' if rank_ok else 'FAIL'}] pairs: k is the exact binomial rank "
+          f"(n=40 -> {bg.median_rank(40)}, n=120 -> {bg.median_rank(120)})")
+    if not rank_ok:
+        failures.append("pairs: median_rank is not the exact one-sided 95% binomial rank")
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+
+        def grade(text: str, *extra: str) -> subprocess.CompletedProcess[str]:
+            f = d / "pairs.tsv"
+            f.write_text(text)
+            return subprocess.run([sys.executable, str(GATE), "--pairs", str(f), *extra],
+                                  capture_output=True, text=True)
+
+        warm = PAIR_ROWS["warm"][0]
+        # k-th smallest pooled warm d (k=51 of 120) sits exactly on the boundary.
+        def boundary(zeros: int) -> dict[str, list[float]]:
+            ds = tiers(sigma=0.0)
+            pooled = [0.0] * zeros + [0.05] * (120 - zeros)
+            for j, row in enumerate(warm):
+                ds[row] = pooled[j::3]
+            return ds
+
+        slow_rows = tiers(sigma=0.02)
+        for row in warm[1:]:
+            slow_rows[row] = [math.log(1.20) + x for x in spread(40, 0.02)]
+        native_slow = tiers(sigma=0.02)
+        for row in PAIR_ROWS["native"][0][1:]:
+            native_slow[row] = [math.log(1.20) + x for x in spread(60, 0.02)]
+        a_a = grade(pairs_text(tiers()))
+        null_meta = "# cand_sha256=cc\n# base_sha256=cc\n# null_control=1"
+        null_slow = grade(pairs_text(tiers(ratio=1.10), meta=null_meta))
+        noisy = grade(pairs_text(tiers(sigma=0.6)))
+        cases = [
+            ("pairs: A/A, sigma 0.15 -> exit 0 (positive control)", a_a.returncode, 0),
+            ("pairs: candidate +10% on every tier -> exit 1", grade(pairs_text(tiers(ratio=1.10))).returncode, 1),
+            ("pairs: candidate 10% faster -> exit 0 (one-sided)", grade(pairs_text(tiers(ratio=0.90))).returncode, 0),
+            ("pairs: only native +10% -> exit 1 (per-tier decision)",
+             grade(pairs_text(tiers(ratio={"native": 1.10}))).returncode, 1),
+            ("pairs: +2% on every tier (inside the 3% bound) -> exit 0",
+             grade(pairs_text(tiers(ratio=1.02, sigma=0.02))).returncode, 0),
+            ("pairs: 50 of 120 warm pairs at 0 -> L95 is the 51st = 0.05 -> exit 1",
+             grade(pairs_text(boundary(50))).returncode, 1),
+            ("pairs: 51 of 120 warm pairs at 0 -> L95 = 0 -> exit 0",
+             grade(pairs_text(boundary(51))).returncode, 0),
+            ("pairs: two of three warm rows +20% -> pooled tier fails -> exit 1",
+             grade(pairs_text(slow_rows)).returncode, 1),
+            ("pairs: three of four native rows +20% -> pooled tier fails -> exit 1",
+             grade(pairs_text(native_slow)).returncode, 1),
+            ("pairs: ABBA order broken (all base-first) -> exit 4",
+             grade(pairs_text(tiers(), order=lambda i: "BC")).returncode, 4),
+            ("pairs: ABBA order swapped (odd base-first) -> exit 4",
+             grade(pairs_text(tiers(), order=lambda i: "CB" if i % 2 == 0 else "BC")).returncode, 4),
+            ("pairs: a warm row with 39 pairs -> exit 4",
+             grade(pairs_text(tiers(n={warm[0]: 39}))).returncode, 4),
+            ("pairs: a native row with 59 pairs -> exit 4",
+             grade(pairs_text(tiers(n={"e2e_native/add": 59}))).returncode, 4),
+            ("pairs: a missing cold row -> exit 4",
+             grade(pairs_text({k: v for k, v in tiers().items()
+                               if k != "e2e_compile_shared/cold/large"})).returncode, 4),
+            ("pairs: an unknown row -> exit 4",
+             grade(pairs_text({**tiers(), "e2e_native/extra": spread(60, 0.1)})).returncode, 4),
+            ("pairs: identical sha (null control) still graded: +10% -> exit 1",
+             null_slow.returncode, 1),
+            ("pairs: interval wider than 12% -> exit 2 (inconclusive, never a pass)",
+             noisy.returncode, 2),
+            ("pairs: wide but proven slower (+50%, sigma 0.6) -> exit 1, not inconclusive",
+             grade(pairs_text(tiers(ratio={"warm": 1.5}, sigma=0.6))).returncode, 1),
+            ("pairs: no header -> exit 4",
+             grade(pairs_text(tiers()).replace("row\ti\torder\tt_base_ns\tt_cand_ns\n", "")).returncode, 4),
+            ("pairs: a zero time -> exit 4",
+             grade(pairs_text(tiers()).replace("\t100000000\t", "\t0\t", 1)).returncode, 4),
+            ("pairs: a duplicated pair -> exit 4",
+             grade(pairs_text(tiers()) + "e2e_native/add\t0\tBC\t100000000\t100000000\n").returncode, 4),
+            ("pairs: --pairs combined with --current -> exit 4",
+             grade(pairs_text(tiers()), "--current", str(d / "pairs.tsv")).returncode, 4),
+            ("pairs: missing file -> exit 4",
+             subprocess.run([sys.executable, str(GATE), "--pairs", str(d / "absent.tsv")],
+                            capture_output=True, text=True).returncode, 4),
+        ]
+        for label, out, want in (
+            ("pairs: PASS line names every tier", a_a.stdout,
+             "e2e paired gate: PASS (warm OK, cold OK, native OK)"),
+            ("pairs: null control is reported", grade(pairs_text(tiers(), meta=null_meta)).stdout,
+             "null_control=1"),
+            ("pairs: inconclusive says it is not a regression verdict", noisy.stdout,
+             "host could not measure: not a regression verdict"),
+            ("pairs: per-row R/L95/U95/N printed", a_a.stdout, "e2e_native/while_sum"),
+            ("pairs: asserted counts trusted tiers", a_a.stdout, "asserted=3"),
+        ):
+            cases.append((label, want in out, True))
+
+        # The decision step itself, run with a fake cargo that serves fixtures in
+        # turn: FAIL is never retried, INCONCLUSIVE is re-run exactly once.
+        wf = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
+        job = wf[wf.find("\n  e2e-gate:"):]
+        script = step_script(job, "Paired A/B bench and decision")
+        (d / "tools").symlink_to(HERE)
+        fake = d / "bin"
+        fake.mkdir()
+        (fake / "cargo").write_text(
+            "#!/bin/sh\n"
+            "n=$(cat \"$FAKE/count\" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > \"$FAKE/count\"\n"
+            "[ -f \"$FAKE/run$n.tsv\" ] || { echo no-fixture >&2; exit 101; }\n"
+            "cp \"$FAKE/run$n.tsv\" \"$MIND_E2E_PAIRS\"\n"
+            "echo \"fake bench run $n\"\n"
+        )
+        (fake / "cargo").chmod(0o755)
+        fixtures = {
+            "pass": pairs_text(tiers()),
+            "fail": pairs_text(tiers(ratio=1.10)),
+            "noisy": pairs_text(tiers(sigma=0.6)),
+        }
+
+        def step(*runs: str) -> tuple[int, int, str]:
+            fx = d / "fx"
+            if fx.exists():
+                for f in fx.iterdir():
+                    f.unlink()
+            fx.mkdir(exist_ok=True)
+            for i, name in enumerate(runs, 1):
+                (fx / f"run{i}.tsv").write_text(fixtures[name])
+            env = dict(os.environ, PATH=f"{fake}{os.pathsep}{os.environ['PATH']}", FAKE=str(fx),
+                       MIND_E2E_PAIRS=str(d / "bench-e2e-pairs.tsv"))
+            r = subprocess.run(["bash", "-e", "-c", script], cwd=d, env=env,
+                               capture_output=True, text=True)
+            count = int((fx / "count").read_text()) if (fx / "count").exists() else 0
+            return r.returncode, count, r.stdout + r.stderr
+
+        for label, runs, want_rc, want_runs in (
+            ("step: PASS -> rc 0 after one run", ("pass",), 0, 1),
+            ("step: FAIL -> rc 1, never retried", ("fail", "pass"), 1, 1),
+            ("step: INCONCLUSIVE then PASS -> rc 0 after exactly two runs", ("noisy", "pass"), 0, 2),
+            ("step: INCONCLUSIVE twice -> rc 2 after exactly two runs", ("noisy", "noisy", "pass"), 2, 2),
+            ("step: bench did not complete -> rc 4", (), 4, 1),
+        ):
+            rc, count, log = step(*runs)
+            ok = rc == want_rc and count == want_runs and bool(script)
+            print(f"[{'PASS' if ok else 'FAIL'}] {label} (rc {rc}, runs {count})")
+            if not ok:
+                failures.append(f"{label}: rc {rc}, runs {count}\n{log}")
+
+    for label, got, want in cases:
+        ok = got == want
+        print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got}, want {want})")
+        if not ok:
+            failures.append(label)
 
 
 if __name__ == "__main__":
