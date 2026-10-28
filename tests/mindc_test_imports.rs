@@ -750,3 +750,6 @@ fn empty_digest_matches() -> i64 {
         assert!(text.contains("1 passed; 0 failed"), "{text}");
     }
 }
+
+#[path = "support/mindc_test_bare_imports.rs"]
+mod bare_imports;

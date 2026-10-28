@@ -18,6 +18,8 @@ use std::collections::HashMap;
 
 use crate::ast::Span;
 
+use super::{EvalError, UserFn, fn_table_lookup};
+
 const OWNER_PREFIX: &str = "\0mind-eval-owner\0";
 
 pub(crate) fn owned_symbol(owner: &str, name: &str) -> String {
@@ -46,6 +48,10 @@ pub(crate) enum BindingKind {
 pub(crate) struct Bindings {
     calls: HashMap<(String, Span), String>,
     values: HashMap<(String, Span), String>,
+    /// Bare (unqualified) calls a module may make into the exported functions
+    /// of the sibling modules it imports, keyed by `(owner, name)`. `None`
+    /// records an ambiguity: two imported siblings export the same name.
+    imported_calls: HashMap<(String, String), Option<String>>,
 }
 
 impl Bindings {
@@ -64,6 +70,69 @@ impl Bindings {
             BindingKind::Call => self.calls.insert(key, target),
             BindingKind::Value => self.values.insert(key, target),
         };
+    }
+
+    /// Record that `owner` imports `target_owner`, which exports `symbol`, so
+    /// a bare `symbol(..)` call in `owner` reaches it. A second, different
+    /// exporter of the same name makes the bare call ambiguous.
+    #[cfg(any(feature = "cross-module-imports", test))]
+    pub(crate) fn insert_imported_call(&mut self, owner: &str, target_owner: &str, symbol: &str) {
+        let target = owned_symbol(target_owner, symbol);
+        self.imported_calls
+            .entry((owner.to_string(), symbol.to_string()))
+            .and_modify(|slot| {
+                if slot.as_deref() != Some(target.as_str()) {
+                    *slot = None;
+                }
+            })
+            .or_insert(Some(target));
+    }
+}
+
+/// Resolution of a bare call through the current owner's imports.
+pub(super) enum ImportedCall {
+    /// No imported sibling exports this name.
+    None,
+    /// Exactly one imported sibling exports it.
+    Unique(String),
+    /// More than one imported sibling exports it.
+    Ambiguous,
+}
+
+pub(super) fn imported_call(name: &str) -> ImportedCall {
+    let Some(owner) = current_owner() else {
+        return ImportedCall::None;
+    };
+    BINDINGS.with(|bindings| {
+        match bindings
+            .borrow()
+            .imported_calls
+            .get(&(owner, name.to_string()))
+        {
+            None => ImportedCall::None,
+            Some(Some(target)) => ImportedCall::Unique(target.clone()),
+            Some(None) => ImportedCall::Ambiguous,
+        }
+    })
+}
+
+/// Resolve a bare `callee` in the current owner's scope, in the order the type
+/// checker resolves it: the owner's own definition first, then the unique
+/// export of one of the owner's imports. A name exported by two imports is an
+/// ambiguity and is refused, never resolved to either exporter.
+pub(super) fn owner_scoped_fn(callee: &str) -> Result<Option<UserFn>, EvalError> {
+    let Some(owner) = current_owner() else {
+        return Ok(None);
+    };
+    if let Some(local) = fn_table_lookup(&owned_symbol(&owner, callee)) {
+        return Ok(Some(local));
+    }
+    match imported_call(callee) {
+        ImportedCall::Unique(target) => Ok(fn_table_lookup(&target)),
+        ImportedCall::Ambiguous => Err(EvalError::UnsupportedMsg(format!(
+            "call to `{callee}` is ambiguous: more than one imported module exports it"
+        ))),
+        ImportedCall::None => Ok(None),
     }
 }
 
@@ -151,5 +220,24 @@ mod tests {
             panic!("exercise unwind restoration");
         });
         assert_eq!(current_owner().as_deref(), Some("crate.a"));
+    }
+
+    #[test]
+    fn bare_imported_calls_are_owner_scoped_and_ambiguity_is_kept() {
+        let mut bindings = Bindings::default();
+        bindings.insert_imported_call("crate.a", "crate.left", "value");
+        bindings.insert_imported_call("crate.a", "crate.left", "value");
+        bindings.insert_imported_call("crate.b", "crate.left", "value");
+        bindings.insert_imported_call("crate.b", "crate.right", "value");
+        let _bindings = BindingsGuard::install(bindings, Some("crate.a".into()));
+        assert!(matches!(
+            imported_call("value"),
+            ImportedCall::Unique(target) if target == owned_symbol("crate.left", "value")
+        ));
+        assert!(matches!(imported_call("other"), ImportedCall::None));
+        let _owner = OwnerGuard::enter(Some("crate.b"));
+        assert!(matches!(imported_call("value"), ImportedCall::Ambiguous));
+        let _none = OwnerGuard::enter(None);
+        assert!(matches!(imported_call("value"), ImportedCall::None));
     }
 }
