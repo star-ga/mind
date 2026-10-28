@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2629 | **Est. tokens:** ~4,702,531
-**Generated:** 2026-10-28 06:03 UTC
+**Files:** 2629 | **Est. tokens:** ~4,702,998
+**Generated:** 2026-10-28 07:37 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,664 |
+| `examples/mindc_mind/` | 288 | ~807,131 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -863,7 +863,7 @@
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
 - `self_host_native_cf_smoke.py` (~10061 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
-- `self_host_native_div_trap_smoke.py` (~9537 tok, huge)
+- `self_host_native_div_trap_smoke.py` (~9998 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
@@ -887,7 +887,7 @@
 - `self_host_native_intdot_q16_smoke.py` (~1111 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_io_smoke.py` (~2583 tok, huge) — Author: STARGA Inc. Exact four-argument I/O parity and raw-ABI controls.
-- `self_host_native_main_args_smoke.py` (~2417 tok, huge)
+- `self_host_native_main_args_smoke.py` (~2423 tok, huge)
 - `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
 - `self_host_native_misc_census_smoke.py` (~2963 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.

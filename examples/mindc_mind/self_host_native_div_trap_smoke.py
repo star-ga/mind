@@ -11,10 +11,12 @@ Language rule (docs/errors.md, "Integer division trap"):
     for every count including >= 64 and negative counts.
 
 Both backends must implement exactly that, so this gate runs every program
-through the pure-MIND native emitter (seeded `selftest_native_elf_u`, the
-production native path) AND through the MLIR build of the same source, and
-compares both against a Python model computed independently of either emitter.
-Exit code AND stdout are compared.
+through the pure-MIND native emitter (seeded `selftest_native_elf_stage`, the
+stage-driver entry of the production native path) AND through the MLIR build of
+the same source, and compares both against a Python model computed
+independently of either emitter. Exit code AND stdout are compared. Every
+native image is also checked against the strict IR-note entry
+`selftest_native_elf_u` (NoteCheck below).
 
   * the MATRIX program computes the full sign matrix of `/` and `%` over
     {INT_MIN, INT_MIN+1, -7, -2, -1, 0, 1, 2, 7, INT_MAX} (all non-trapping
@@ -655,9 +657,40 @@ def host_fold_checks(so, d: pathlib.Path) -> bool:
     return ok
 
 
+class NoteCheck:
+    """The stage entry's image, cross-checked against the strict entry.
+
+    selftest_native_elf_u emits only when the mic@3 twin hashes the whole
+    program; the stage entry lowers the functions the twin rejects on the HOME
+    path and marks the image with a SOURCE note (PT_NOTE n_type 2). So every
+    image must be byte-identical to the strict entry's image with an IR note
+    (n_type 1), or the strict entry must refuse and the image carry n_type 2.
+    deferred: the twin refuses every construction of a record with a narrow
+    (bool/8/16/32-bit) field (srt_canonical_word_field: the reference packs those
+    fields), so those rows carry source notes -- upgrade path: model the packed
+    record layout in the twin, then those rows flip to IR notes here.
+    """
+
+    def __init__(self, so):
+        self.stage = SelfHost(so, "selftest_native_elf_stage")
+        self.strict = SelfHost(so)
+        self.counts = {1: 0, 2: 0}
+        self.bad = []
+
+    def elf(self, prog: str) -> bytes:
+        elf = self.stage.elf(prog)
+        if elf:
+            ref = self.strict.elf(prog)
+            want = 1 if ref else 2
+            if elf[-44] != want or (ref and ref != elf):
+                self.bad.append(f"n_type {elf[-44]} want {want}, strict image {len(ref)}B")
+            self.counts[want] += 1
+        return elf
+
+
 def main() -> int:
     so = resolve_so()
-    sh = SelfHost(so)
+    sh = NoteCheck(so)
     print(f"[div-trap smoke] so={so} mindc={mindc_bin()}")
     ok = True
     with tempfile.TemporaryDirectory(prefix="w2trap-") as td:
@@ -744,6 +777,11 @@ def main() -> int:
             ok = ok and good
             check(good, f"{name}: native=(exit {gn[0]}) mlir=(exit {gm[0]}) expected=(exit {want_exit})")
         ok = host_fold_checks(so, d) and ok
+    # both note kinds must occur, or one leg of the cross-check never ran
+    good = not sh.bad and sh.counts[1] > 0 and sh.counts[2] > 0
+    ok = ok and good
+    check(good, f"native notes: {sh.counts[1]} IR notes byte-equal to the strict entry, "
+          f"{sh.counts[2]} source notes where the strict entry refuses, {len(sh.bad)} wrong {sh.bad[:3]}")
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
               "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees, "
