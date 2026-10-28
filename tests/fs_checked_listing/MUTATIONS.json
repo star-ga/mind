@@ -1,0 +1,160 @@
+{
+  "schema": "FSC_TEST_MUTATIONS/1",
+  "status": "PREEXECUTION_UNREVIEWED",
+  "cases": [
+    {
+      "id": "M01",
+      "mode": 2,
+      "fail_ordinal": 0,
+      "old": "status = nread;",
+      "new": "status = 0;\n                eof = 1;",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "5161fbb7142cde7a95d02df9647fb4191b52da0fac55a4597d339cea1771fe6e",
+      "main_sha256": "eb96301635adf7fa75ea2483c02595e4f3f0efd549e593a5e14e3501414aadf3",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "10200\n0\n-5\n80200\n0\n1\n170200\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M02",
+      "mode": 4,
+      "fail_ordinal": 0,
+      "old": "if close_status != 0 {",
+      "new": "if 0 != 0 {",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "6925b852ab96a29d8a6bac9326d593ef1a99db5761cf1abbf0a8a47b01cdca97",
+      "main_sha256": "539a54a15dce9a2a283245bd5c6b40cace12a07bef17b66207bd1150fbf40f74",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "10400\n0\n-5\n80400\n0\n1\n170400\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M03",
+      "mode": 13,
+      "fail_ordinal": 0,
+      "old": "if size + 1 > max_name_bytes - used {",
+      "new": "if 0 > 1 {",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "d11acd0c86d19857fed403b398cf42dd37a7d1c238c0f1004f986033538ffa4f",
+      "main_sha256": "475b55903c6ee6504606b432b6b4550bf2600c33364ad0e9b2bf3099225a4a2a",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "11300\n0\n-75\n31300\n2\n1\n81300\n0\n1\n171300\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M04",
+      "mode": 19,
+      "fail_ordinal": 0,
+      "old": "if found == 0 || size == 0 {",
+      "new": "if size == 0 {",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "99970cd1407460c6a19218fd6bdf3eba5c321e17bbd18ee6bd24effac298ae7e",
+      "main_sha256": "ca7d235046ff3c5d16d3fe4e277e7d73adb8d70c95518978e070145dc5446895",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "11900\n0\n-5\n31900\n2\n1\n81900\n0\n1\n171900\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M05",
+      "mode": 1,
+      "fail_ordinal": 0,
+      "old": "    let fd: i64 = fsc_open(path, control);",
+      "new": "    __mind_store_i64(out_slot, list);\n    let fd: i64 = fsc_open(path, control);",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "5d0b66aa285e37a196efb40fcac7fd28cf1d89e0f40725c26b0a4e7eac83d0c6",
+      "main_sha256": "e9e5c376a2ac3e45fb53f897d7897f73924cf339d1d417221ea01e805b45323f",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "80100\n0\n1\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M06",
+      "mode": 0,
+      "fail_ordinal": 0,
+      "old": "let close_status: i64 = fsc_close(fd, control);",
+      "new": "let close_status: i64 = 0;",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "367413b9546ce591feff3b41589c908d6e52509760247009d82838275b778923",
+      "main_sha256": "c53a006444c87489026b0d8fb6aab706c6743dfdc0ec0f49d7dfd5b84ae27e03",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "40000\n0\n1\n50000\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M07",
+      "mode": 0,
+      "fail_ordinal": 0,
+      "old": "    fcf_free(block, control);\n    if status == 0 {",
+      "new": "    if status == 0 {",
+      "occurrences": 1,
+      "source_sha256": "54e1c55019e2f2719349b397226566354c74a68122d6c9a293d9dda79e81b819",
+      "mutant_sha256": "6b0f233c1d56666dc19deebc92d1f5a92f93dd9bcc0771ab2f88acc87ceee7f3",
+      "main_sha256": "c53a006444c87489026b0d8fb6aab706c6743dfdc0ec0f49d7dfd5b84ae27e03",
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "170000\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    }
+  ]
+}

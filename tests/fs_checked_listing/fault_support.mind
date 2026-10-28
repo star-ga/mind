@@ -1,0 +1,188 @@
+// Author: STARGA Inc. Test-only syscall and allocation observations.
+// This source is linked only with the explicitly instrumented module variant.
+// No actual directory descriptor is opened by these simulated syscall helpers.
+// Control: mode, alloc_calls, fail_ordinal, live, frees, invalid,
+//          opens, reads, closes, descriptor_owned, reserved...; registry at128.
+
+fn fcf_zero(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn fcf_add(control: i64, offset: i64, amount: i64) -> i64 {
+    __mind_store_i64(control + offset, __mind_load_i64(control + offset) + amount);
+    0
+}
+
+fn fcf_alloc(n: i64, control: i64) -> i64 {
+    let _ = fcf_add(control, 8, 1);
+    if __mind_load_i64(control + 8) == __mind_load_i64(control + 16) {
+        return 0;
+    }
+    let p: i64 = __mind_alloc(n);
+    if p == 0 {
+        let _ = fcf_add(control, 40, 1);
+        return 0;
+    }
+    let mut index: i64 = 0;
+    let mut slot: i64 = 0;
+    while index < 64 && slot == 0 {
+        let candidate: i64 = control + 128 + index * 16;
+        if __mind_load_i64(candidate) == 0 {
+            slot = candidate;
+        }
+        index = index + 1;
+    }
+    if slot == 0 {
+        __mind_free(p);
+        let _ = fcf_add(control, 40, 1);
+        return 0;
+    }
+    __mind_store_i64(slot, p);
+    __mind_store_i64(slot + 8, n);
+    let _ = fcf_add(control, 24, 1);
+    p
+}
+
+fn fcf_free(p: i64, control: i64) -> i64 {
+    let mut index: i64 = 0;
+    let mut slot: i64 = 0;
+    while index < 64 && slot == 0 {
+        let candidate: i64 = control + 128 + index * 16;
+        if p != 0 && __mind_load_i64(candidate) == p {
+            slot = candidate;
+        }
+        index = index + 1;
+    }
+    if slot == 0 {
+        // Reject double/foreign/null free without deliberately crashing the test.
+        let _ = fcf_add(control, 40, 1);
+        return 0;
+    }
+    __mind_store_i64(slot, 0);
+    __mind_store_i64(slot + 8, 0);
+    let _ = fcf_add(control, 24, 0 - 1);
+    let _ = fcf_add(control, 32, 1);
+    __mind_free(p);
+    0
+}
+
+fn fcf_open(path: i64, control: i64) -> i64 {
+    let _ = fcf_add(control, 48, 1);
+    if (__mind_load_i8(path) & 255) != 46 || (__mind_load_i8(path + 1) & 255) != 0 {
+        let _ = fcf_add(control, 40, 1);
+    }
+    let mode: i64 = __mind_load_i64(control);
+    if mode == 1 { return 0 - 2; }
+    if mode == 17 { return 0 - 38; }
+    __mind_store_i64(control + 72, 1);
+    if mode == 16 { return 0; }
+    17
+}
+
+fn fcf_fd(control: i64, fd: i64) -> i64 {
+    let expected: i64 = if __mind_load_i64(control) == 16 { 0 } else { 17 };
+    if fd != expected || __mind_load_i64(control + 72) != 1 {
+        let _ = fcf_add(control, 40, 1);
+    }
+    0
+}
+
+fn fcf_record(p: i64, name: i64, kind: i64) -> i64 {
+    let _ = fcf_zero(p, 24);
+    __mind_store_i64(p, 1);
+    __mind_store_i8(p + 16, 24);
+    __mind_store_i8(p + 18, kind);
+    __mind_store_i8(p + 19, name);
+    0
+}
+
+fn fcf_read(fd: i64, block: i64, control: i64) -> i64 {
+    let _ = fcf_fd(control, fd);
+    let _ = fcf_add(control, 56, 1);
+    let nth: i64 = __mind_load_i64(control + 56);
+    let mode: i64 = __mind_load_i64(control);
+    if mode == 2 { return 0 - 5; }
+    if mode == 15 { return 0 - 4; }
+    if mode == 5 || mode == 8 { return 0; }
+    if mode == 3 && nth == 2 { return 0 - 5; }
+    if mode == 11 && nth == 2 { return 0 - 13; }
+    if mode == 7 { return 4097; }
+    if mode == 6 {
+        let _ = fcf_record(block, 97, 8);
+        __mind_store_i8(block + 16, 0);
+        return 24;
+    }
+    if mode == 18 {
+        let _ = fcf_record(block, 47, 8);
+        return 24;
+    }
+    if mode == 19 {
+        let _ = fcf_record(block, 97, 8);
+        let mut i: i64 = 20;
+        while i < 24 {
+            __mind_store_i8(block + i, 97);
+            i = i + 1;
+        }
+        // Beyond-record byte is readable in the 4096-byte allocation but is
+        // deliberately outside this record's declared name extent.
+        __mind_store_i8(block + 24, 0);
+        if nth == 1 { return 24; }
+        return 0;
+    }
+    if mode == 20 && nth == 2 {
+        let _ = fcf_record(block, 98, 8);
+        __mind_store_i8(block + 16, 0);
+        return 24;
+    }
+    if mode == 9 && nth == 2 {
+        let _ = fcf_record(block, 255, 0);
+        return 24;
+    }
+    if nth > 1 { return 0; }
+    let _ = fcf_record(block, 97, 8);
+    if mode == 12 {
+        let _ = fcf_record(block + 24, 98, 8);
+        return 48;
+    }
+    if mode == 14 {
+        let mut i: i64 = 1;
+        while i < 5 {
+            let _ = fcf_record(block + 24 * i, 97 + i, 8);
+            i = i + 1;
+        }
+        return 120;
+    }
+    24
+}
+
+fn fcf_close(fd: i64, control: i64) -> i64 {
+    let _ = fcf_fd(control, fd);
+    let _ = fcf_add(control, 64, 1);
+    // Closing may have consumed the descriptor even when it reports EINTR.
+    __mind_store_i64(control + 72, 0);
+    let mode: i64 = __mind_load_i64(control);
+    if mode == 4 { return 0 - 5; }
+    if mode == 5 || mode == 11 { return 0 - 4; }
+    if mode == 10 { return 1; }
+    0
+}
+
+// Post-observation cleanup of test-detected leaks, never masking the live count.
+fn fcf_cleanup(control: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 64 {
+        let slot: i64 = control + 128 + i * 16;
+        let p: i64 = __mind_load_i64(slot);
+        if p != 0 {
+            __mind_free(p);
+            __mind_store_i64(slot, 0);
+        }
+        i = i + 1;
+    }
+    0
+}

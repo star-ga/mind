@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2636 | **Est. tokens:** ~4,726,497
-**Generated:** 2026-10-28 16:05 UTC
+**Files:** 2651 | **Est. tokens:** ~4,746,537
+**Generated:** 2026-10-28 16:11 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 289 | ~815,405 |
-| `examples/mindc_mind/testdata/` | 5 | ~6,804 |
+| `examples/mindc_mind/testdata/` | 5 | ~6,810 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
@@ -130,9 +130,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,514 |
+| `src/build/` | 13 | ~54,756 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~32,123 |
+| `src/build/native_bridge/` | 9 | ~35,136 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -162,7 +162,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,781 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~72,637 |
+| `src/project/` | 21 | ~72,718 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -172,7 +172,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 43 | ~212,866 |
+| `std/` | 44 | ~215,401 |
 | `tests/` | 432 | ~898,867 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -220,6 +220,7 @@
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
+| `tests/fs_checked_listing/` | 13 | ~14,163 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -1651,7 +1652,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~835 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~841 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/testdata/string_borrowed/`
 
 - `reference.c` (~869 tok, large) — Copyright STARGA Inc. Reference infrastructure only, not MIND implementation.
@@ -1969,9 +1970,10 @@
 - `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
 - `namespace.rs` (~5743 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
+- `print.rs` (~3013 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~9091 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9333 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3613 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2254,8 +2256,8 @@
 - `single_file_scope.rs` (~7065 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5153 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3670 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~4508 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3746 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4513 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -2345,6 +2347,7 @@
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4186 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
+- `fs_checked.mind` (~2535 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
 - `fs.mind` (~5043 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
@@ -2800,6 +2803,23 @@
 - `for_continue_step_injection.rs` (~1306 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `for_each_run.rs` (~805 tok, large) — Copyright 2025 STARGA Inc.
 - `for_hygiene_run.rs` (~1424 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
+### `tests/fs_checked_listing/`
+
+- `CONTRACT.md` (~1575 tok, huge) — Checked directory listing development contract
+- `EVIDENCE.md` (~1238 tok, large) — Checked directory-listing qualification
+- `FAULT_CASES.json` (~1457 tok, large) — Keys: schema, status, baseline, cases, observation
+- `fault_driver.mind` (~1328 tok, large) — Author: STARGA Inc. Explicit expected syscall and allocation observations.
+- `fault_main.mind` (~31 tok, tiny) — Author: STARGA Inc. All predeclared synthetic cases, no real syscall authority.
+- `fault_support.mind` (~1371 tok, large) — Author: STARGA Inc. Test-only syscall and allocation observations.
+- `import.mind` (~143 tok, small) — Author: STARGA Inc. Exercise the embedded module through its public import.
+- `INSTRUMENTATION.json` (~1041 tok, large) — Keys: schema, source_sha256, result_sha256, scope, ordered_exact_replacements
+- `Mind.toml` (~38 tok, tiny) — [package]
+- `MUTATIONS.json` (~1407 tok, large) — Keys: schema, status, cases
+- `real.mind` (~1534 tok, huge) — Author: STARGA Inc. Original API and real Linux raw syscalls.
+- `TEST_PLAN.md` (~1238 tok, large) — Checked-listing acceptance plan
+- `unit.mind` (~1762 tok, huge) — Author: STARGA Inc. Independent expected fields; no parser result as oracle.
+### `tests/`
+
 - `g2_differential_mlir.rs` (~10566 tok, huge) — Copyright 2025 STARGA Inc.
 - `gate_assert_count_contract_test.py` (~7131 tok, huge) — Gate test: the assertion count must be EVIDENCE, never a printed integer.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.

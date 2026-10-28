@@ -78,6 +78,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.async",
     "std.blas",
     "std.fs",
+    "std.fs_checked",
     "std.http",
     "std.io_canon",
     "std.iouring",
