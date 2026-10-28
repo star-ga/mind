@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2629 | **Est. tokens:** ~4,702,526
-**Generated:** 2026-10-27 12:03 UTC
+**Files:** 2629 | **Est. tokens:** ~4,702,531
+**Generated:** 2026-10-28 06:03 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,659 |
+| `examples/mindc_mind/` | 288 | ~806,664 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -692,7 +692,7 @@
 - `branch_shadow_crossbackend_smoke.py` (~2039 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~8467 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
-- `_cf_oracle.py` (~1752 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
+- `_cf_oracle.py` (~1968 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1215 tok, large)
@@ -861,7 +861,7 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
-- `self_host_native_cf_smoke.py` (~10272 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
+- `self_host_native_cf_smoke.py` (~10061 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_div_trap_smoke.py` (~9537 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.

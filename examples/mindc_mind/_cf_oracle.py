@@ -150,3 +150,23 @@ def child(mode: str, so_path: str, out: str, blob: bytes, fixtures, corpus_srcs,
         print(f"{MARK} self-emit bytes={len(elf)}", flush=True)
         return 0
     raise SystemExit(f"unknown child mode {mode}")
+
+
+def twin_child(so_path: str, out: str, blob: bytes, self_src: bytes) -> int:
+    """Write the twin's refusal count, then each refused function's name."""
+    so = ctypes.CDLL(so_path)
+    fn = so.selftest_twin_refusals
+    fn.restype = ctypes.c_int64
+    fn.argtypes = [ctypes.c_int64] * 5
+    comb = blob + self_src
+    buf = ctypes.create_string_buffer(comb, len(comb))
+    cap = 64
+    spans = (ctypes.c_int64 * cap)()
+    n = fn(ctypes.cast(buf, ctypes.c_void_p).value, len(comb), len(blob), ctypes.addressof(spans), cap)
+    names = []
+    for i in range(min(max(n, 0), cap)):
+        m = re.match(rb"[A-Za-z_][A-Za-z_0-9]*", comb[spans[i]:spans[i] + 128])
+        names.append(m.group(0).decode() if m else f"@{spans[i]}")
+    pathlib.Path(out).write_text("\n".join([str(n)] + names) + "\n")
+    print(f"{MARK} twin refusals={n}", flush=True)
+    return 0

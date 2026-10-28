@@ -525,28 +525,8 @@ def so_child(mode: str, so_path: str, out: str) -> int:
     corpus = [src.encode() for _, src, _, _ in C.corpus(11, 40)]
     self_src = (_HERE / "main.mind").read_bytes() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
     if mode == "twin":
-        return twin_child(so_path, out, self_src)
+        return O.twin_child(so_path, out, BLOB, self_src)
     return O.child(mode, so_path, out, BLOB, fixtures, corpus, self_src)
-
-
-def twin_child(so_path: str, out: str, self_src: bytes) -> int:
-    """Write the twin's refusal count, then each refused function's name."""
-    so = ctypes.CDLL(so_path)
-    fn = so.selftest_twin_refusals
-    fn.restype = ctypes.c_int64
-    fn.argtypes = [ctypes.c_int64] * 5
-    comb = BLOB + self_src
-    buf = ctypes.create_string_buffer(comb, len(comb))
-    cap = 64
-    spans = (ctypes.c_int64 * cap)()
-    n = fn(ctypes.cast(buf, ctypes.c_void_p).value, len(comb), len(BLOB), ctypes.addressof(spans), cap)
-    names = []
-    for i in range(min(max(n, 0), cap)):
-        m = re.match(rb"[A-Za-z_][A-Za-z_0-9]*", comb[spans[i]:spans[i] + 128])
-        names.append(m.group(0).decode() if m else f"@{spans[i]}")
-    pathlib.Path(out).write_text("\n".join([str(n)] + names) + "\n")
-    print(f"{O.MARK} twin refusals={n}", flush=True)
-    return 0
 
 
 def bounded_section(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, cases) -> None:
