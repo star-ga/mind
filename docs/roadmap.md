@@ -3006,7 +3006,9 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    Derive cache invalidation from public interface hashes, not arbitrary
    timestamps. **Gates:** build the parser consumer without vendoring `std` or
    duplicated test sources; reproducible offline build from pinned lock; test
-   graph cycles and malicious symlinks.
+   graph cycles and malicious symlinks; every registry archive is byte-reproducible
+   from its source and carries a signed provenance record that `mindc` verifies
+   offline (signing contract: Phase 19.1).
 4. **MOC-04: Link/run every documented standard-library surface.** Close
    mismatches between typecheck, MLIR/native emission and final linker for
    `std.fs/net/regex/time`; native argv, closed resource handles and robust
@@ -3048,7 +3050,10 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    explicit unsafe obligations and deterministic destruction. Favor opt-in
    proof-preserving inference, retain visible lifetime semantics for governed
    code. **Gates:** compile-fail corpus for UAF/double-free/alias escapes,
-   sanitizer and fuzz checks, stable foreign-call layout.
+   sanitizer and fuzz checks, stable foreign-call layout, and a published safety
+    statement that lists each guarantee the region and generation-check model makes,
+    the test that enforces it and the stated exclusions. A guarantee without an
+    enforcing test is not published.
 10. **MOC-10: Deterministic multicore structured concurrency.** Define
     task scopes, cancellation propagation, channels, bounded queues,
     race-free ownership transfer, fair scheduling policy and replayable
@@ -3285,3 +3290,181 @@ Open items:
    string table already carries raw bytes, so existing artifacts stay
    byte-identical; add NUL-in-literal tests for every path that hands a String
    to a C API.
+
+## Compiler and language gap program (2026-10-28)
+
+> **Status: proposed; not shipped.** Each item was checked against this repository on
+> 2026-10-28 (roadmap, README, `docs/determinism.md`, `docs/cli.md`, `docs/ops.md`,
+> `docs/type-system.md`). Work already on the roadmap is referenced, not repeated:
+> MOC-03, MOC-09, MOC-12, MOC-14, MOC-15, MOC-16, Phase 11, Phase 17.6, Phase 19.1,
+> Phase 19.6.2, Phase 10, Phase 22. Common rules: every item keeps the fail-closed,
+> canonical-mic@3, keystone and cross-substrate requirements. The open-source compiler
+> emits for the CPU; GPU execution stays in the commercial runtime.
+
+### GP-01 — Compiler-verified corpus and translated benchmark track
+
+Build a licence-clean public corpus of MIND programs. Every file passes `mindc check`,
+every test passes `mindc test`, and a manifest lists each file's licence and evidence
+hash. Translate HumanEval, MBPP and McEval-Hard into MIND and publish them with the
+same harness, prompts, and a receipt for every reported pass@1.
+
+*Why:* generators have little MIND in their training data, so a public pass rate is the
+measurable state of AI-writability.
+
+**Gates:** an independent checkout reproduces 100% `check` and `test` pass on the corpus;
+every published pass@1 links to a receipt that another party can re-run.
+
+### GP-02 — `mindc check` as a blocking gate for generators
+
+Build three things. (a) A partial-program mode, `mindc check --partial`, that reports only
+diagnostics no appended code could resolve, so a prefix cut at a statement boundary is not
+rejected for code that has not been written yet. (b) A versioned JSON diagnostic schema
+with the exit-code contract in `docs/cli.md` (0 / 1 / 2) stated as the gate contract. (c)
+Machine-applicable fix-its for the most common error classes, building on the Improved
+Diagnostics entry in progress. Decide, from GP-01 failures, which std names are visible
+without an import.
+
+*Why:* a strict checker used as a blocking gate is the measured lever for generator
+reliability; exposing it through an editor protocol alone is not.
+
+**Gates:** every statement-boundary prefix of every GP-01 file yields zero partial-mode
+diagnostics unless the full file also fails at that location; the JSON shape is pinned by
+a schema-version field and a golden test; for the ten most common error classes on GP-01,
+applying the fix-it yields a clean check in at least 90% of firings; the prelude decision
+is recorded with the before and after share of missing-import failures.
+
+### GP-03 — Machine-readable grammar and type export
+
+Build `mindc grammar --format ebnf|json` and a type-environment export, both generated
+from the parser and type checker rather than written by hand. CI regenerates them and
+fails on drift without a version bump. This is the input a generator needs to constrain
+its output. Mask generation stays a separate evaluation under the grammar-constrained
+decoding entry above.
+
+*Why:* a generator that knows the exact legal token set and type environment produces
+fewer compile errors.
+
+**Gates:** on a fixed set of generated inputs, the exported grammar and the parser agree
+on accept or reject for 100% of cases; the export parses 100% of the GP-01 corpus; CI
+fails on drift; the export version is recorded in the stability policy (`docs/ir-stability.md`).
+
+### GP-04 — Language completion and 1.0 source stability
+
+Closures, static-dispatch traits and slice call arguments are shipped in part: Phase-1
+closures (one capture, one parameter), `trait`/`impl` desugared before IR emit, and
+`&[T]` / `&mut [T]` at call boundaries. Remaining work, in four parts:
+
+- **Closures beyond Phase 1:** multi-capture and multi-parameter closures (rejected with
+  E2600 today), unannotated and non-`i64` captures (typed capture syntax with per-slot
+  environment types), and closures passed to, returned from, or stored in functions.
+- **Traits beyond static dispatch:** trait objects and dynamic dispatch, or a spec
+  statement that they are out of scope.
+- **Slices beyond the call boundary:** local slice bindings (E2032) and nested or
+  struct-field slices (E2033).
+- **Generic shape parameters:** not shipped.
+
+Also complete the `Vec`, `String` and `Map` surface. MOC-12 evaluates the cost of these
+abstractions; this item commits to shipping the remainder once MOC-12's gates pass. Then
+publish a source-stability policy with a stated deprecation window, and tag 1.0 against it.
+
+*Why:* their absence blocks idiomatic library code, for developers and for generators alike.
+
+**Gates:** each construct compiles and runs on the native path and in the `mindc test`
+evaluator (MG-04 parity), with a permanent fixture; a program of at least 10,000 lines
+builds with no stubs; the stability policy is published before the 1.0 tag.
+
+### GP-05 — Published compile-time program
+
+Build three things. (a) A published end-to-end table of `mindc` source-to-native time,
+for the LLVM path and the native backend, against `clang` and `rustc` on identical
+programs, measured at the T2 tier of `docs/benchmarking.md`. (b) Incremental compilation
+through the MOC-14 engine. (c) A long-lived compiler daemon that serves builds, the MOC-15
+language server and the GP-02 gate, reported as a cold and steady pair under the T3 rule.
+
+*Why:* the only published compile-time numbers measure the frontend, so end-to-end and
+incremental cost is unmeasured against peers.
+
+**Gates:** the table regenerates from a checked-in script on pinned hardware, with exact
+commands and raw output; a single-function edit in a 10,000-line project rebuilds in at
+most 50 ms p95 warm, and a small project in at most 30 ms p50 as a stretch target; any
+runtime row follows the measurement protocol in Phase 19.6.2.
+
+### GP-06 — Mechanized determinism contract and translation validation
+
+Build two things. (a) A machine-checked model of the integer and Q16.16 semantics and of
+canonicalisation to mic@3 bytes, checked by a proof tool that sits outside the compiler's
+build and trusted base. (b) Per-build translation validation: where the MLIR path is
+available, the native backend's output is compared with it for every emitted function in
+the fixture corpus, and a disagreement fails the build.
+
+*Why:* the determinism claim currently rests on tests over sampled inputs; a machine-checked
+model and per-build validation cover the emitted code itself.
+
+**Gates:** the canonicalisation result is checked with no axioms beyond those stated in
+the model; translation validation covers at least 95% of emitted functions in the fixture
+corpus; the public miscompilation counter reports zero open items in each release.
+
+*Firewall:* no proof tool becomes a dependency of `mindc`. This keeps the decision recorded
+under Phase 13.5.
+
+### GP-07 — Public pages state the shipped state
+
+Update `docs/determinism.md`, the README and this roadmap so GPU identity is stated at the
+scope that is gated. Integer (Class A) kernels are byte-identical across GPU, CPU and ARM
+in the commercial runtime's CI, as shown by the cross-substrate canary that passed on
+2026-10-27 on an NVIDIA sm_89 GPU. Floating-point GPU kernels remain roadmap. Refer to the
+commercial runtime by name, without links to private repositories.
+
+*Why:* the determinism page says GPU identity is roadmap, which understates what the
+commercial runtime's CI already gates.
+
+**Gates:** the README, `docs/determinism.md` and this roadmap state the same GPU scope,
+enforced by a CI text check that fails when the sentences differ; every shipped GPU claim
+names the gate that enforces it. This item is a documentation change and lands as its own
+change, not with this roadmap entry.
+
+### GP-08 — Open interop funnel
+
+Build an open-source Python binding for the CPU path and a `wasm32-wasip1` target. This
+extends the Phase 10 Python-bindings deliverable (`mindlang`) with the gates below and
+does not duplicate it. The repository has only a benchmark-only pyo3 module
+(`src/python.rs`), no installable Python package and no wasm32 target. The C ABI is the only open
+foreign interface, and the wasm32 target is a planned tier-2 entry in the independence
+audit plan.
+
+*Why:* adoption starts with a single install step, and the funnel needs one open binding
+before any commercial one.
+
+**Gates:** the binding installs from a package index on Linux x86-64 and AArch64 and runs
+a documented example in CI; `wasm32-wasip1` output for each Core fixture gives the same
+result hash as the x86 and ARM runs; both targets are gated in the cross-substrate suite.
+
+### GP-09 — Conformance grows beyond the Core v1 operator set
+
+Build a published operator catalogue. Core v1 has 17 operators (`docs/ops.md`), and
+`tensor.matmul`, `tensor.transpose` and `tensor.conv2d` are already among them. Every
+operator added carries a bit-identity fixture on AVX2 and NEON. The first slice is the
+Phase 11 intrinsics not yet in the catalogue (`zeros`, `ones`, `softmax`, `randn`),
+followed by attention, layer normalisation, convolution variants beyond `conv2d`,
+quantisation and scatter.
+
+*Why:* 17 operators cannot express the forward pass of a real model.
+
+**Gates:** the catalogue count equals the fixture count; each operator gives identical AVX2
+and NEON hashes in CI; the catalogue reaches 100 operators with fixtures; a reference
+transformer block runs under `--require-strict-fp`.
+
+### Firewall — do not cross it
+
+- No GPU identity claim wider than the gated scope in GP-07.
+- No benchmark number published without its script, receipt and peer baseline.
+- GPU deterministic kernels belong to the commercial runtime and are not planned in this
+  open-source roadmap.
+
+### Open questions — answer before this gets a milestone
+
+- Licence of the Python binding (GP-08): open source, or commercial as the public docs
+  describe today? This is an operator decision.
+- Which proof tool GP-06 uses, and how it stays outside the trusted base, is decided by RFC.
+- Licence policy for translations of HumanEval, MBPP and McEval-Hard (GP-01).
+- No milestone dates are set; each item is sequenced after the gate it depends on.
