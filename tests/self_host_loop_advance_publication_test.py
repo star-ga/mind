@@ -510,8 +510,9 @@ def case_two_hop_publishes_stage2_once_stage2_equals_stage3() -> None:
             check(f"two hop receipt: {key}", rows.get(key), value)
         check("two hop receipt: no ambiguous stage1_sha256 row",
               "stage1_sha256" in rows, False)
-        check("two hop receipt: names the pure-MIND chain",
-              rows.get("seed_chain", "").startswith("PURE-MIND two-hop"), True)
+        check("two hop receipt: the computed chain names the intermediate, then stage2",
+              rows.get("seed_chain", "").endswith(
+                  f" -> {sha(INTERMEDIATE)}:intermediate -> {sha(NEW_POINT)}"), True)
         check("two hop receipt: names the publishing mode",
               rows.get("published-by"), "self_host_loop_smoke.py --advance --hops 2")
         check("two hop receipt: the pinned row is stage2's",

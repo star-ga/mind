@@ -29,7 +29,7 @@ _cf_oracle	none	helper	Oracle .so heap checks (main.mind free contract, malloc-c
 _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refusal control imported by self_host_tc_unknown_call_smoke.
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
 _mindfuzz_twin_emit	none	helper	Twin-emitter half of mindfuzz_self_host (source emitter, self-host and reference note oracles, runtime exit check, minimizer, batch builder); not a gate — running it directly is a no-op.
-_selfhost_loop_reseed	none	helper	Focused legacy Rust-seeded publication path imported by self_host_loop_smoke.py; not a gate — running it directly is a no-op.
+_selfhost_loop_reseed	none	helper	Seed-provenance support imported by self_host_loop_smoke.py: the legacy Rust-seeded publication path, the receipt writer and the seed-chain walk/verifier; not a gate — running it directly is a no-op.
 _selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
 _selfhost_sources	none	helper	Immutable internal compiler source capture and library/native view materialization; imported bootstrap orchestration, not product runtime or native admission.
 _shadow_scope_lang	none	helper	Mini-language of self_host_native_shadow_scope_smoke (lexically scoped model interpreter, printer, seeded generator, alpha-renamer), imported by that smoke; not a gate - running it directly is a no-op.
@@ -89,7 +89,7 @@ self_host_if_region_carry_smoke	ci,keystone	gate
 self_host_ifret_chain_mic3_smoke	ci	gate	
 self_host_letpath_failclose_smoke	ci	gate	
 self_host_lockstep_smoke	ci	gate	
-self_host_loop_smoke	ci,preflight	gate	
+self_host_loop_smoke	ci,preflight	gate	Self-host LOOP gate: the frozen pure-MIND stage0 reproduces itself and a fresh oracle finds no source drift (preflight + ci); `--verify-chain` (ci, build-free) re-derives the seed chain from the receipts on every ref back to the chain root and BLOCKs on shallow history.
 self_host_match_smoke	ci	gate	
 self_host_matchscalar_mic3_smoke	ci	gate	
 self_host_mic3_float_valueif_smoke	ci	gate	

@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import types
 
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
@@ -24,6 +25,8 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import ResolvedSo, resolve_so  # noqa: E402
 from _selfhost_sources import NATIVE_STD_MODULES, SourceBundle, capture_bundle  # noqa: E402
+from _selfhost_loop_reseed import (SEED_CHAIN_ROOT, git_receipt_history,  # noqa: E402,F401
+                                   manifest_text, old_seed_chain, verify_chain)
 
 _SO: ResolvedSo | None = None
 
@@ -55,6 +58,16 @@ ADVANCE_ENV = "MIND_SELFHOST_ADVANCE"
 #: place, and so the rollback path can be exercised by a test without a
 #: filesystem the harness cannot create.
 _replace = os.replace
+
+
+def _receipt_history() -> list[tuple[str, str]]:
+    """Every receipt on every ref; a synthetic history in the harness controls."""
+    return git_receipt_history(_REPO)
+
+
+def _harness() -> types.SimpleNamespace:
+    """This script's live globals: run_gate exec()s it, so sys.modules[__name__] is not it."""
+    return types.SimpleNamespace(**globals())
 
 
 def requested_modes(argv: list[str], env) -> tuple[list[str], list[str]]:
@@ -233,41 +246,6 @@ def run_loop_from_seed(seed_exe: pathlib.Path, stdin_image: bytes,
     p2 = _write_exec(td, "stage2.elf", stage2)
     stage3 = _derive(3, p2, stdin_image)
     return stage1, stage2, stage3
-
-
-def manifest_text(stage1: bytes, *, published_by: str, receipt: dict[str, str]) -> str:
-    """The MANIFEST.txt body: a human header, the provenance receipt, one row.
-
-    The receipt is the reason the two-file publication is auditable at all. It
-    records the sha256 of the ELF this manifest was written FOR, so a pair torn
-    apart by a crash between the two replacements is detectable by comparing
-    the `stage1.elf` row (the fixture's file name, whatever stage produced its
-    bytes) against the file on disk — which is the honest answer to "these two
-    paths cannot be replaced atomically together".
-
-    Every field is DERIVED from the run's inputs and outputs. There is no
-    timestamp: a timestamp cannot be re-derived, so it proves nothing and would
-    make an otherwise reproducible file differ on every run.
-    """
-    h1 = hashlib.sha256(stage1).hexdigest()
-    lines = [
-        "# Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0",
-        "# compiler that reproduces itself byte-identically (stage1==stage2==stage3)",
-        "# and seeds the PRIMARY reproduction-independence loop. NOT skippable in CI.",
-        f"# published-by\t{published_by}",
-        "#",
-        "# PROVENANCE RECEIPT — every value below is derived from this run's inputs",
-        "# and outputs and is reproducible by re-running the same mode on the same",
-        "# tree. No timestamp is recorded: it could not be re-derived and would only",
-        "# make this file differ from itself.",
-    ]
-    lines += [f"# {k}\t{v}" for k, v in receipt.items()]
-    lines += [
-        "#",
-        "# name\tsize_bytes\tsha256",
-        f"stage1.elf\t{len(stage1)}\t{h1}",
-    ]
-    return "\n".join(lines) + "\n"
 
 
 class PublicationTorn(RuntimeError):
@@ -500,6 +478,16 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
         published, h_pub, pub_stage = stage1, h1, "stage1"
         print(f"  PASS  [ADVANCE] stage1 == stage2 == stage3 — fixed point "
               f"proved ({h1})")
+    if published == old_seed:
+        print("BLOCKED: --advance would republish the current seed unchanged; nothing written.")
+        return 2
+    # The receipt's seed_chain row is derived from the refs, never typed: an old
+    # seed whose chain does not resolve back to the root is never advanced FROM.
+    old_chain, problem = old_seed_chain(_harness(), h_old)
+    if problem is not None:
+        print(f"BLOCKED: --advance cannot derive the seed_chain row for the old seed "
+              f"{h_old}: {problem}. Nothing written.")
+        return 2
 
     # ORACLE — required, never deferred. A new fixed point that only the old
     # compiler agrees with is one compiler's opinion; the independently built
@@ -561,17 +549,18 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
     }
     oracle_rows = {"oracle_sha256": h_oracle, "oracle_provenance": oracle.provenance}
     published_by = "self_host_loop_smoke.py --advance"
-    if hops == 1:  # key order unchanged: byte-identical to earlier one-hop receipts
+    chain = " -> ".join(old_chain + [f"{h1}:intermediate"] * (hops - 1) + [h_pub])
+    if hops == 1:  # earlier one-hop key order, then the computed chain row
         receipt = {"advanced_from_seed_sha256": h_old, **src_rows, "stage1_sha256": h1,
-                   "stage2_sha256": h2, "stage3_sha256": h3, **oracle_rows}
+                   "stage2_sha256": h2, "stage3_sha256": h3, **oracle_rows,
+                   "seed_chain": chain}
     else:
         # No `stage1_sha256` row: in a one-hop receipt that key is the published
         # hash. A reader keyed on it finds nothing instead of the intermediate's.
         receipt = {"advance_hops": "2", "advanced_from_seed_sha256": h_old, **src_rows,
                    "intermediate_stage1_sha256": h1, "stage2_sha256": h2,
                    "stage3_sha256": h3, "published_stage": pub_stage, **oracle_rows,
-                   "seed_chain": "PURE-MIND two-hop: old seed -> stage1 (intermediate, "
-                                 "not published) -> stage2 (published) == stage3 == oracle"}
+                   "seed_chain": chain}
         published_by += " --hops 2"
     try:
         publish_fixture(published, manifest_text(
@@ -590,10 +579,9 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
               f"anything was touched; nothing is half-advanced.")
         return 1
 
-    moved = " (unchanged bytes)" if published == old_seed else ""
     via = "" if hops == 1 else f"\n         via {h1} (intermediate stage1, not published)"
     print(f"  ADVANCED  frozen bootstrap advanced by the OLD pure-MIND stage0 ({hops} hop{'s' * (hops - 1)}):\n"
-          f"            {h_old}{via}\n         -> {h_pub}{moved} ({len(published)}B)\n"
+          f"            {h_old}{via}\n         -> {h_pub} ({len(published)}B)\n"
           f"            corroborated by a {oracle.provenance} Rust oracle "
           f"({h_oracle})\n"
           f"            wrote {_FROZEN} and {_FROZEN_MANIFEST}")
@@ -660,6 +648,13 @@ def main(argv: list[str] | None = None, env=None) -> int:
     if hops_refusal is not None:
         print(hops_refusal)
         return 2
+
+    if "--verify-chain" in argv:  # read-only and build-free: before any source is read
+        if advance_req or reseed_req or hops is not None:
+            print("BLOCKED: --verify-chain is read-only; it takes no --advance, --reseed "
+                  "or --hops. Nothing has been read, run or written.")
+            return 2
+        return verify_chain(_harness())
 
     combined, stdin_image, user_lo = build_seed()
     mode = "advance" if advance_req else ("reseed" if reseed_req else "verify")
