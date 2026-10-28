@@ -18,6 +18,8 @@ use std::collections::HashMap;
 
 use crate::ast::Span;
 
+use super::{EvalError, UserFn, fn_table_lookup};
+
 const OWNER_PREFIX: &str = "\0mind-eval-owner\0";
 
 pub(crate) fn owned_symbol(owner: &str, name: &str) -> String {
@@ -112,6 +114,26 @@ pub(super) fn imported_call(name: &str) -> ImportedCall {
             Some(None) => ImportedCall::Ambiguous,
         }
     })
+}
+
+/// Resolve a bare `callee` in the current owner's scope, in the order the type
+/// checker resolves it: the owner's own definition first, then the unique
+/// export of one of the owner's imports. A name exported by two imports is an
+/// ambiguity and is refused, never resolved to either exporter.
+pub(super) fn owner_scoped_fn(callee: &str) -> Result<Option<UserFn>, EvalError> {
+    let Some(owner) = current_owner() else {
+        return Ok(None);
+    };
+    if let Some(local) = fn_table_lookup(&owned_symbol(&owner, callee)) {
+        return Ok(Some(local));
+    }
+    match imported_call(callee) {
+        ImportedCall::Unique(target) => Ok(fn_table_lookup(&target)),
+        ImportedCall::Ambiguous => Err(EvalError::UnsupportedMsg(format!(
+            "call to `{callee}` is ambiguous: more than one imported module exports it"
+        ))),
+        ImportedCall::None => Ok(None),
+    }
 }
 
 thread_local! {
