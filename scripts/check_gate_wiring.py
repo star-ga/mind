@@ -116,10 +116,7 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-# 264 -> 265 adds .github/scripts/pr_review.py, the pull-request review and
-# public-leak checker. pr-review.yml runs it from the BASE branch so a pull
-# request cannot weaken its own check, which needs a tracked file to read back.
-HARNESS_CEILING = 265  # Adds the pull-request review and public-leak checker.
+HARNESS_CEILING = 265  # 264 -> 265: .github/scripts/pr_review.py, the PR review and leak checker.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
