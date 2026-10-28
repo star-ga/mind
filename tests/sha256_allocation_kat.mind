@@ -1,0 +1,60 @@
+// Author: STARGA Inc.
+// Allocation-fault observer. Append after an instrumented std/sha256.mind.
+// Mode1: scratch allocation of raw sha256 fails. Modes2/3/4: scratch,
+// output, or inner sha256 allocation fails in hash(bytes), respectively.
+fn sa_unchanged(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if __mind_load_i8(p + i) != 90 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+pub fn main(argc: i64, argv: i64) -> i64 {
+    if argc != 2 {
+        return 64;
+    }
+    let arg: i64 = __mind_load_i64(argv + 8);
+    let mode: i64 = __mind_load_i8(arg) - 48;
+    if mode < 1 || mode > 4 || __mind_load_i8(arg + 1) != 0 {
+        return 64;
+    }
+    let input: i64 = __mind_alloc(24);
+    let record: i64 = __mind_alloc(24);
+    let output: i64 = __mind_alloc(48);
+    if input == 0 || record == 0 || output == 0 {
+        return 75;
+    }
+    __mind_store_i64(input, 97);
+    __mind_store_i64(input + 8, 98);
+    __mind_store_i64(input + 16, 99);
+    __mind_store_i64(record, input);
+    __mind_store_i64(record + 8, 3);
+    __mind_store_i64(record + 16, 3);
+    let mut i: i64 = 0;
+    while i < 48 {
+        __mind_store_i8(output + i, 90);
+        i = i + 1;
+    }
+    let mut ok: i64 = 1;
+    if mode == 1 {
+        if sha256_checked(input, 1, output + 8) != -2 || sa_unchanged(output, 48) != 1 {
+            ok = 0;
+        }
+    } else {
+        if hash(record) != 0 {
+            ok = 0;
+        }
+    }
+    __mind_free(input);
+    __mind_free(record);
+    __mind_free(output);
+    if ok != 1 {
+        print(1);
+        return 1;
+    }
+    print(0);
+    return 0;
+}

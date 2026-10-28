@@ -12,3 +12,4 @@ examples/mindc_mind/testdata/native_cf/mlir_lost_loop_assign.mind
 examples/mindc_mind/testdata/native_cf/mlir_stale_read_after_vif.mind
 examples/mindc_mind/testdata/native_libc_io/reference.mind
 examples/mindc_mind/testdata/native_scoped_fixed/sources/R18-foreign-local-name-collision.mind
+std/string.mind

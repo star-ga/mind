@@ -1,4 +1,4 @@
-// std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+// std/sha256.mind — FIPS 180-4 SHA-256 in MIND.
 //
 // u32 arithmetic is emulated on i64: every intermediate result is masked
 // with `& 4294967295` (= 0xFFFFFFFF) to discard the high 32 bits.
@@ -17,13 +17,19 @@
 // Public API:
 //   pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64
 //     Reads in_len bytes at in_addr, writes 32-byte big-endian digest to
-//     out_addr (one byte per offset, H0 high byte first).
-//     Returns 0 on success, 1 for invalid numeric ranges, 2 for allocation
-//     refusal; failure leaves output untouched. Length is 0..2^60-1 bytes.
-//     Readable input and writable output storage remain caller preconditions.
-//     Temporary message/state/schedule allocations are freed before return.
+//     out_addr (one byte per offset, H0 high byte first), returns 0.
+//     Invalid arguments or allocation failure trap: historical callers often
+//     discard the return value and must never consume an unwritten digest.
+//   pub fn sha256_checked(in_addr: i64, in_len: i64, out_addr: i64) -> i64
+//     Returns -1 for invalid lengths/address arithmetic, -2 on allocation
+//     failure, 0 on success. On failure output is unchanged. Empty input may
+//     be null. Callers of this entry MUST check the result before using output.
+//     Uses 704 bytes of temporary heap storage, released before return.
+//     The caller owns readable input and writable output; they may overlap.
 //
-// Determinism: pure integer arithmetic, no floats, no external calls.
+// Determinism: integer arithmetic, no floats or hidden input sources.
+// Runtime dependencies: byte/word loads and stores, allocation/free and the
+// nonreturning __mind_assert_fail trap used by the legacy entry on failure.
 
 // ---------------------------------------------------------------------------
 // u32-on-i64 primitives
@@ -325,7 +331,7 @@ fn w_set(w_addr: i64, i: i64, v: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// compress_block — process one 64-byte block with a borrowed 512-byte schedule.
+// compress_block — process one 64-byte block.
 //
 // block_addr: pointer to 64 bytes of message (one byte per offset).
 // h_addr: pointer to 8*8=64-byte heap region holding h[0..7] stride-8.
@@ -333,7 +339,7 @@ fn w_set(w_addr: i64, i: i64, v: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 fn compress_block(block_addr: i64, h_addr: i64, w_addr: i64) -> i64 {
-    // Borrow one initialized-per-block W schedule from the caller.
+    // Reuse the caller-owned 64-word schedule (512 bytes).
 
     // W[0..15]: pack four consecutive message bytes (big-endian) into each
     // 32-bit word.
@@ -399,7 +405,7 @@ fn compress_block(block_addr: i64, h_addr: i64, w_addr: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// sha256 — public entry point.
+// sha256_checked — checked entry point.
 //
 // Pads the message (FIPS 180-4 §5.1.1), processes all 64-byte blocks,
 // then serialises the 8-word digest big-endian into out_addr.
@@ -415,74 +421,69 @@ fn compress_block(block_addr: i64, h_addr: i64, w_addr: i64) -> i64 {
 // For in_len = 56 → 128 bytes (0x80 pushes past the 56-mod-64 mark).
 // ---------------------------------------------------------------------------
 
-pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
-    // Validate every caller-derived range before subtraction, multiplication,
-    // addition, allocation, input read, or output write.
-    if in_len < 0 {
-        return 1;
+pub fn sha256_checked(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    // Keep bit-count multiplication and all address additions in signed i64.
+    // This validates arithmetic, not the caller's pointer ownership.
+    if in_len < 0 || in_len > 1152921504606846975 {
+        return -1;
     }
-    if in_len > 1152921504606846975 {
-        return 1;
+    if in_addr < 0 || in_addr > 9223372036854775807 - in_len {
+        return -1;
     }
-    if out_addr <= 0 {
-        return 1;
+    if in_len > 0 && in_addr == 0 {
+        return -1;
     }
-    if out_addr > 9223372036854775776 {
-        return 1;
-    }
-    if in_addr < 0 {
-        return 1;
-    }
-    if in_len > 0 {
-        if in_addr == 0 {
-            return 1;
-        }
-        if in_addr > 9223372036854775807 - (in_len - 1) {
-            return 1;
-        }
+    if out_addr <= 0 || out_addr > 9223372036854775775 {
+        return -1;
     }
 
+    // One allocation: schedule[512], state[64], final blocks[128]. No
+    // allocation depends on message length or the number of blocks.
+    let work: i64 = __mind_alloc(704);
+    if work == 0 {
+        return -2;
+    }
+    let w_addr: i64 = work;
+    let h_addr: i64 = work + 512;
+    let buf: i64 = work + 576;
+    let mut hi: i64 = 0;
+    while hi < 8 {
+        __mind_store_i64(h_addr + hi * 8, h_init(hi));
+        hi = hi + 1;
+    }
+
+    // Consume complete input blocks directly. Output is written only after
+    // all input has been read, preserving the overlapping-buffer contract.
+    let full_bytes: i64 = in_len - in_len % 64;
+    let mut block_off: i64 = 0;
+    while block_off < full_bytes {
+        compress_block(in_addr + block_off, h_addr, w_addr);
+        block_off = block_off + 64;
+    }
+
+    // Only the final one or two blocks require copying/padding.
     let tail: i64 = in_len % 64;
-    let pad_zeros: i64 = if tail < 56 {
-        55 - tail
+    let padded_len: i64 = if tail < 56 {
+        64
     } else {
-        119 - tail
+        128
     };
-    let padded_len: i64 = in_len + 1 + pad_zeros + 8;
-
-    let buf: i64 = __mind_alloc(padded_len);
-    if buf == 0 {
-        return 2;
-    }
-    let h_addr: i64 = __mind_alloc(64);
-    if h_addr == 0 {
-        __mind_free(buf);
-        return 2;
-    }
-    let w_addr: i64 = __mind_alloc(512);
-    if w_addr == 0 {
-        __mind_free(h_addr);
-        __mind_free(buf);
-        return 2;
-    }
-
     let mut ci: i64 = 0;
-    while ci < in_len {
-        __mind_store_i8(buf + ci, __mind_load_i8(in_addr + ci));
+    while ci < tail {
+        __mind_store_i8(buf + ci, __mind_load_i8(in_addr + full_bytes + ci));
         ci = ci + 1;
     }
-    __mind_store_i8(buf + in_len, 128);
-
-    let pad_start: i64 = in_len + 1;
-    let pad_end: i64 = pad_start + pad_zeros;
-    let mut zi: i64 = pad_start;
-    while zi < pad_end {
+    __mind_store_i8(buf + tail, 128);
+    let mut zi: i64 = tail + 1;
+    while zi < padded_len - 8 {
         __mind_store_i8(buf + zi, 0);
         zi = zi + 1;
     }
 
+    // Append the 64-bit big-endian message bit-length.
     let bit_len: i64 = in_len * 8;
     let len_off: i64 = padded_len - 8;
+    // High 32 bits (zero for messages < 2^29 bytes, but written correctly).
     let blen_hi: i64 = (bit_len >> 32) & 4294967295;
     let blen_lo: i64 = bit_len & 4294967295;
     __mind_store_i8(buf + len_off + 0, (blen_hi >> 24) & 255);
@@ -494,12 +495,7 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
     __mind_store_i8(buf + len_off + 6, (blen_lo >> 8) & 255);
     __mind_store_i8(buf + len_off + 7, blen_lo & 255);
 
-    let mut hi: i64 = 0;
-    while hi < 8 {
-        __mind_store_i64(h_addr + hi * 8, h_init(hi));
-        hi = hi + 1;
-    }
-
+    // Process the final padded blocks with the same schedule/state.
     let num_blocks: i64 = padded_len / 64;
     let mut blk: i64 = 0;
     while blk < num_blocks {
@@ -507,7 +503,7 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
         blk = blk + 1;
     }
 
-    // No failing operation remains: output becomes observable only here.
+    // Serialise digest: 8 words × 4 bytes big-endian = 32 bytes.
     let mut di: i64 = 0;
     while di < 8 {
         let word: i64 = __mind_load_i64(h_addr + di * 8);
@@ -518,56 +514,66 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
         di = di + 1;
     }
 
-    __mind_free(w_addr);
-    __mind_free(h_addr);
-    __mind_free(buf);
+    __mind_free(work);
     0
 }
 
-// Ergonomic wrapper: return an owned 32-byte digest, or null on refusal.
+// Compatibility entry: failure cannot be ignored by existing callers. Invoke
+// the nonreturning runtime trap directly; an optional assertion interpreter
+// must not be able to disable this check. Backends without this intrinsic
+// must refuse the module rather than synthesize a successful return.
+pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    let status: i64 = sha256_checked(in_addr, in_len, out_addr);
+    if status != 0 {
+        __mind_assert_fail(0)
+    }
+    return 0;
+}
+
+// Ergonomic wrapper: hash a growable `bytes` value, return a 32-byte digest.
 // Return type is bytes[32] (a fixed-size buffer = i64 handle ABI), so handing
 // back the i64 pointer to the 32-byte output buffer is correct. Input `bytes`
 // is the growable vec record [addr|len|cap] whose u8 elements are stored at
 // 8-byte stride; copy them into a stride-1 scratch buffer the raw entry reads.
+// Returns null for invalid length/address arithmetic or allocation failure.
+// On success the caller owns and must free the returned 32-byte allocation.
+// The caller supplies an owned readable vec record and element storage;
+// integer checks cannot establish pointer ownership or actual allocation size.
 pub fn hash(input: bytes) -> bytes[32] {
+    if input <= 0 || input > 9223372036854775783 {
+        return 0;
+    }
     let data: i64 = __mind_load_i64(input + 0);
     let len: i64 = __mind_load_i64(input + 8);
-
-    if len < 0 {
+    if len < 0 || len > 1152921504606846975 {
         return 0;
     }
-    if len > 1152921504606846975 {
+    if data < 0 || data > 9223372036854775807 - len * 8 {
         return 0;
     }
-    if len > 0 {
-        if data <= 0 {
-            return 0;
-        }
-        let last_stride: i64 = (len - 1) * 8;
-        if data > 9223372036854775800 - last_stride {
-            return 0;
-        }
+    if len > 0 && data == 0 {
+        return 0;
     }
-
-    let scratch_len: i64 = if len > 0 { len } else { 1 };
+    let scratch_len: i64 = if len > 0 {
+        len
+    } else {
+        1
+    };
     let scratch: i64 = __mind_alloc(scratch_len);
     if scratch == 0 {
         return 0;
     }
-
     let mut ci: i64 = 0;
     while ci < len {
         __mind_store_i8(scratch + ci, __mind_load_i64(data + ci * 8) & 255);
         ci = ci + 1;
     }
-
     let out: i64 = __mind_alloc(32);
     if out == 0 {
         __mind_free(scratch);
         return 0;
     }
-
-    let status: i64 = sha256(scratch, len, out);
+    let status: i64 = sha256_checked(scratch, len, out);
     __mind_free(scratch);
     if status != 0 {
         __mind_free(out);

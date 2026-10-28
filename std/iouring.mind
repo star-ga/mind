@@ -46,10 +46,27 @@
 // devmem-TCP selftest uses. Same machinery, hardware buffer later; bytes
 // byte-identical, anchor unchanged.
 //
-// ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
-// (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
-// bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
-// __mind_*_i32 4-byte intrinsics so a head/tail store never clobbers a neighbour.
+// ABI: io_uring_params is 120 bytes (features u32 @20, sq_off @40, cq_off @80);
+// sqe 64 bytes (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data
+// u64@32); cqe 16 bytes (user_data u64@0, res i32@8, flags u32@12). All ring
+// fields are u32, accessed via the __mind_*_i32 4-byte intrinsics so a head/tail
+// store never clobbers a neighbour. __mind_load_i32 ZERO-extends, so the one
+// SIGNED field, cqe.res, is sign-extended on reap (io_cqe_res): an error CQE
+// reads as -errno, never as a 4-billion "byte count".
+//
+// Errors and bounds. Every failure is a NEGATIVE return of one of two kinds:
+// the kernel's own -errno (-1 ..= -4095: io_uring_setup / io_uring_enter /
+// io_uring_register via errno, or a CQE res), passed through unchanged; or one
+// of the typed codes below (iouring_err_*, all <= -4096, outside the errno
+// range), for conditions this surface detects itself. Every completion wait is
+// BOUNDED: io_ring_enter waits at most io_ring_wait_bound_ns() (5 s) through
+// IORING_ENTER_EXT_ARG, and a multishot wait (io_ring_wait_multishot) ends at
+// the first terminal CQE (no IORING_CQE_F_MORE, or a negative res) instead of
+// waiting for completions the kernel will never post. A kernel that cannot
+// bound a wait (no IORING_FEAT_EXT_ARG, Linux < 5.11) is refused at ring setup
+// with iouring_err_kernel_feature(), never allowed to block forever. The bound
+// only decides WHEN a stuck wait gives up; it never changes the value or the
+// bytes of an operation that completed.
 
 // ── libc / syscall surface ──────────────────────────────────────────────────
 extern "C" {
@@ -71,6 +88,7 @@ extern "C" {
     unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
     unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
     unsafe fn close(fd: i32) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
 }
 // libc wrappers for the otherwise arch-specific syscalls (memfd_create,
 // ftruncate, fcntl, ioctl, open, sched_*affinity) — the libc form keeps these
@@ -87,6 +105,82 @@ fn sys_io_uring_enter() -> i64 {
 // IORING_OFF_SQES file offset for the SQE mmap.
 fn off_sqes() -> i64 {
     268435456
+}
+
+// ── Typed failure codes (all <= -4096: never a Linux errno) ─────────────────
+// A bounded wait expired before the completions it was waiting for arrived.
+pub fn iouring_err_wait_timeout() -> i64 {
+    0 - 4097
+}
+// The kernel lacks an io_uring feature this surface requires: the single-mmap
+// ring layout (IORING_FEAT_SINGLE_MMAP, Linux 5.4) or a timeout on
+// io_uring_enter (IORING_FEAT_EXT_ARG, Linux 5.11 — without it no wait can be
+// bounded). Reported by io_ring_try_new_flags at setup.
+pub fn iouring_err_kernel_feature() -> i64 {
+    0 - 4098
+}
+// A multishot request ended — a CQE without IORING_CQE_F_MORE and res >= 0 —
+// before it delivered the completions the caller needed.
+pub fn iouring_err_multishot_ended() -> i64 {
+    0 - 4099
+}
+// Bytes moved through the ring did not match the bytes that were sent.
+pub fn iouring_err_data_mismatch() -> i64 {
+    0 - 4100
+}
+
+// IORING_CQE_F_MORE: the request will post more CQEs. Its absence (or a
+// negative res) marks the LAST CQE a multishot request will ever post.
+pub fn iouring_cqe_f_more() -> i64 {
+    2
+}
+// IORING_FEAT_SINGLE_MMAP (1) | IORING_FEAT_EXT_ARG (256): the two kernel
+// features every ring of this module needs (see iouring_err_kernel_feature).
+fn iouring_required_features() -> i64 {
+    257
+}
+// IORING_FEAT_EXT_ARG: io_uring_enter accepts a timeout (Linux 5.11).
+pub fn iouring_feat_ext_arg() -> i64 {
+    256
+}
+
+// Upper bound, in nanoseconds, on every completion wait io_ring_enter makes
+// (5 s). The ops in this module complete in microseconds on a loopback socket
+// or a local file; the bound exists only so a completion that never comes (a
+// request the kernel rejected, a peer that never sends) returns instead of
+// hanging the caller.
+pub fn io_ring_wait_bound_ns() -> i64 {
+    5000000000
+}
+
+// errno of the last failed libc call on this thread. libc's syscall(2) and
+// mmap(2) wrappers return -1 and park the kernel's code in errno; reading it
+// immediately after the call is what lets this module return the documented
+// -errno instead of a bare -1 that every failure shares.
+fn io_errno() -> i64 {
+    let slot: i64 = __errno_location() as i64;
+    __mind_load_i32(slot)
+}
+
+// Map a libc syscall(2) result to this module's convention: >= 0 unchanged, a
+// failure becomes -errno. Must be applied directly to the syscall result, with
+// no libc call in between (errno is per-call scratch).
+fn io_sys_result(r: i64) -> i64 {
+    if r < 0 {
+        let e: i64 = io_errno();
+        if e > 0 {
+            return 0 - e;
+        }
+    }
+    r
+}
+
+// Store `v` into the optional i64 out-slot `slot` (0 = caller does not care).
+fn io_set_slot(slot: i64, v: i64) -> i64 {
+    if slot != 0 {
+        __mind_store_i64(slot, v)
+    }
+    0
 }
 // io_uring opcodes used here: NOP=0, SEND=26, RECV=27.
 pub fn iouring_op_nop() -> i64 {
@@ -134,17 +228,30 @@ pub fn iouring_op_write() -> i64 {
     23
 }
 
-// Ring handle (96 bytes): the post-setup state the submit/reap paths need.
+// Ring handle (104 bytes): the post-setup state the submit/reap paths need.
 //   0 fd | 8 sring(==cring) | 16 sqes | 24 sq_ring_sz | 32 sqes_sz
 //   40 sq_off_tail | 48 sq_off_array | 56 sq_mask
 //   64 cq_off_head | 72 cq_off_tail | 80 cq_off_cqes | 88 cq_mask
+//   96 features (io_uring_params.features: the IORING_FEAT_* bits of this kernel)
 
 // Create an io_uring with `entries` SQ slots and `setup_flags` in the
-// io_uring_params flags field (@8), mmap its rings, and return a handle, or 0 on
-// failure. entries should be a power of two. setup_flags=0 is the default ring.
-pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
+// io_uring_params flags field (@8), mmap its rings, and return a handle — or 0,
+// with the REASON stored in the i64 slot `err_out` (0 = not wanted; 0 is stored
+// there on success). The reason is what the kernel answered, never a guess:
+//   -errno from io_uring_setup: -ENOSYS (38, kernel without io_uring), -EPERM
+//     (1, disabled by sysctl kernel.io_uring_disabled or a seccomp policy),
+//     -EINVAL (22, a setup flag or ring size this kernel does not accept),
+//     -ENOMEM (12, ring memory over RLIMIT_MEMLOCK where the kernel accounts it);
+//   -errno from mapping the rings;
+//   iouring_err_kernel_feature() when the kernel lacks IORING_FEAT_SINGLE_MMAP
+//     or IORING_FEAT_EXT_ARG (without the latter no wait could be bounded).
+// This is the setup-time feature probe. entries should be a power of two;
+// setup_flags=0 is the default ring.
+pub fn io_ring_try_new_flags(entries: i64, setup_flags: i64, err_out: i64) -> i64 {
+    let _ = io_set_slot(err_out, 0);
     let p: i64 = __mind_alloc(120);
     if p == 0 {
+        let _ = io_set_slot(err_out, 0 - 12);
         return 0;
     }
     let mut z: i64 = 0;
@@ -155,9 +262,17 @@ pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
     // io_uring_params.flags @8 — e.g. IORING_SETUP_IOPOLL (1) for busy-polled
     // completions on the NVMe O_DIRECT fast path (no completion IRQ).
     __mind_store_i32(p + 8, setup_flags);
-    let fd: i64 = syscall(sys_io_uring_setup(), entries, p, 0, 0, 0, 0);
+    let fd: i64 = io_sys_result(syscall(sys_io_uring_setup(), entries, p, 0, 0, 0, 0));
     if fd < 0 {
         let _ = __mind_free(p);
+        let _ = io_set_slot(err_out, fd);
+        return 0;
+    }
+    let features: i64 = __mind_load_i32(p + 20);
+    if (features & iouring_required_features()) != iouring_required_features() {
+        let _ = close(fd as i32);
+        let _ = __mind_free(p);
+        let _ = io_set_slot(err_out, iouring_err_kernel_feature());
         return 0;
     }
     let sq_entries: i64 = __mind_load_i32(p + 0);
@@ -172,22 +287,26 @@ pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
     let sq_ring_sz: i64 = sq_off_array + sq_entries * 4;
     let sring: i64 = mmap(0, sq_ring_sz, 3, 32769, fd as i32, 0);
     if sring < 0 {
+        let e: i64 = 0 - io_errno();
         let _ = close(fd as i32);
         let _ = __mind_free(p);
+        let _ = io_set_slot(err_out, e);
         return 0;
     }
     let sqes_sz: i64 = sq_entries * 64;
     let sqes: i64 = mmap(0, sqes_sz, 3, 32769, fd as i32, off_sqes());
     if sqes < 0 {
+        let e: i64 = 0 - io_errno();
         let _ = munmap(sring, sq_ring_sz);
         let _ = close(fd as i32);
         let _ = __mind_free(p);
+        let _ = io_set_slot(err_out, e);
         return 0;
     }
     let sq_mask: i64 = __mind_load_i32(sring + sq_off_mask);
     let cq_mask: i64 = __mind_load_i32(sring + cq_off_mask);
 
-    let h: i64 = __mind_alloc(96);
+    let h: i64 = __mind_alloc(104);
     __mind_store_i64(h + 0, fd);
     __mind_store_i64(h + 8, sring);
     __mind_store_i64(h + 16, sqes);
@@ -200,8 +319,19 @@ pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
     __mind_store_i64(h + 72, cq_off_tail);
     __mind_store_i64(h + 80, cq_off_cqes);
     __mind_store_i64(h + 88, cq_mask);
+    __mind_store_i64(h + 96, features);
     let _ = __mind_free(p);
     h
+}
+
+// io_ring_try_new_flags without the reason: a handle, or 0 on failure.
+pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
+    io_ring_try_new_flags(entries, setup_flags, 0)
+}
+
+// The IORING_FEAT_* bits the kernel reported when ring `h` was set up.
+pub fn io_ring_features(h: i64) -> i64 {
+    __mind_load_i64(h + 96)
 }
 
 // Default ring (no setup flags) — the common case.
@@ -281,15 +411,68 @@ pub fn io_ring_publish(h: i64, n: i64) -> i64 {
     0
 }
 
-// Submit `n_submit` SQEs and wait for `n_wait` completions. Returns the
-// io_uring_enter result (number consumed, or a negative errno).
-pub fn io_ring_enter(h: i64, n_submit: i64, n_wait: i64) -> i64 {
+// Submit `n_submit` published SQEs, then wait until at least `n_wait`
+// completions are available OR `timeout_ns` nanoseconds pass — whichever comes
+// first. n_wait <= 0 submits without waiting. The timeout is relative and rides
+// IORING_ENTER_EXT_ARG: struct io_uring_getevents_arg (24 B: sigmask u64 @0 = 0,
+// sigmask_sz u32 @8 = 0, pad/min_wait_usec u32 @12 = 0, ts u64 @16) pointing at
+// a struct __kernel_timespec (tv_sec @0, tv_nsec @8).
+// Returns the io_uring_enter result: the number of SQEs consumed when n_submit >
+// 0 — the kernel reports that count even when the wait then expired, so ALWAYS
+// count what io_ring_reap returns rather than reading this as "n_wait arrived" —
+// else 0 when the wait was satisfied, or -errno (-62 ETIME: nothing submitted
+// and the wait expired; -4 EINTR: a signal arrived). timeout_ns < 0 -> -EINVAL.
+// A ring without IORING_FEAT_EXT_ARG is refused by io_ring_try_new_flags; this
+// re-checks and returns iouring_err_kernel_feature() rather than block unbounded.
+pub fn io_ring_enter_timeout(h: i64, n_submit: i64, n_wait: i64, timeout_ns: i64) -> i64 {
+    if h == 0 {
+        return 0 - 22;
+    }
     let fd: i64 = __mind_load_i64(h + 0);
-    syscall(sys_io_uring_enter(), fd, n_submit, n_wait, 1, 0, 0)
+    if n_wait <= 0 {
+        return io_sys_result(syscall(sys_io_uring_enter(), fd, n_submit, 0, 1, 0, 0));
+    }
+    if timeout_ns < 0 {
+        return 0 - 22;
+    }
+    if (__mind_load_i64(h + 96) & iouring_feat_ext_arg()) == 0 {
+        return iouring_err_kernel_feature();
+    }
+    let arg: i64 = __mind_alloc(40);
+    if arg == 0 {
+        return 0 - 12;
+    }
+    let sec: i64 = timeout_ns / 1000000000;
+    __mind_store_i64(arg + 0, 0);
+    __mind_store_i64(arg + 8, 0);
+    __mind_store_i64(arg + 16, arg + 24);
+    __mind_store_i64(arg + 24, sec);
+    __mind_store_i64(arg + 32, timeout_ns - sec * 1000000000);
+    // IORING_ENTER_GETEVENTS (1) | IORING_ENTER_EXT_ARG (8) = 9; argsz = 24.
+    let r: i64 = io_sys_result(syscall(sys_io_uring_enter(), fd, n_submit, n_wait, 9, arg, 24));
+    let _ = __mind_free(arg);
+    r
+}
+
+// Submit `n_submit` SQEs and wait for `n_wait` completions, bounded by
+// io_ring_wait_bound_ns(). Same return contract as io_ring_enter_timeout.
+pub fn io_ring_enter(h: i64, n_submit: i64, n_wait: i64) -> i64 {
+    io_ring_enter_timeout(h, n_submit, n_wait, io_ring_wait_bound_ns())
+}
+
+// cqe.res is a SIGNED 32-bit field; __mind_load_i32 zero-extends, so restore
+// the sign — otherwise -EINVAL reads as 4294967274 and no error is detectable.
+fn io_cqe_res(cqe: i64) -> i64 {
+    let raw: i64 = __mind_load_i32(cqe + 8);
+    if raw >= 2147483648 {
+        return raw - 4294967296;
+    }
+    raw
 }
 
 // Drain available completions into the caller arrays `out_ud` / `out_res`
 // (i64 each), up to `max`, and advance the CQ head. Returns the count drained.
+// Each res is the sign-extended cqe.res: >= 0 on success, -errno on failure.
 // NOTE: physical CQE order is non-deterministic — the reactor feeds these into
 // std.io_canon (canon_push) and sorts by the content key before reacting.
 pub fn io_ring_reap(h: i64, out_ud: i64, out_res: i64, max: i64) -> i64 {
@@ -313,7 +496,7 @@ pub fn io_ring_reap(h: i64, out_ud: i64, out_res: i64, max: i64) -> i64 {
                 let idx: i64 = head - (head / centries) * centries;
                 let cqe: i64 = cqes + idx * 16;
                 __mind_store_i64(out_ud + count * 8, __mind_load_i64(cqe + 0));
-                __mind_store_i64(out_res + count * 8, __mind_load_i32(cqe + 8));
+                __mind_store_i64(out_res + count * 8, io_cqe_res(cqe));
                 head = head + 1;
                 count = count + 1;
             }
@@ -348,7 +531,7 @@ pub fn io_ring_reap_full(h: i64, out_ud: i64, out_res: i64, out_flags: i64, max:
                 let idx: i64 = head - (head / centries) * centries;
                 let cqe: i64 = cqes + idx * 16;
                 __mind_store_i64(out_ud + count * 8, __mind_load_i64(cqe + 0));
-                __mind_store_i64(out_res + count * 8, __mind_load_i32(cqe + 8));
+                __mind_store_i64(out_res + count * 8, io_cqe_res(cqe));
                 __mind_store_i64(out_flags + count * 8, __mind_load_i32(cqe + 12));
                 head = head + 1;
                 count = count + 1;
@@ -357,6 +540,94 @@ pub fn io_ring_reap_full(h: i64, out_ud: i64, out_res: i64, out_flags: i64, max:
     }
     __mind_store_i32(head_addr, head);
     count
+}
+
+// Wait for the completions of ONE already-submitted multishot request tagged
+// `user_data` (a RECV with IORING_RECV_MULTISHOT, an ACCEPT with
+// IORING_ACCEPT_MULTISHOT, ...). Every CQE reaped meanwhile — of ANY user_data,
+// so a caller sharing the ring loses nothing — is recorded in `out` as three
+// i64s {user_data @0, res @8, flags @16} (24 B per record, room for `max`); the
+// record count is stored in the i64 slot `out_count`. Stops at the FIRST of:
+//   * `want` CQEs of `user_data` recorded                          -> 0
+//   * a TERMINAL CQE of `user_data`: no IORING_CQE_F_MORE, or a negative res.
+//     The kernel posts nothing more for the request, so waiting on would hang
+//     (e.g. a kernel that rejects the request posts ONE -EINVAL CQE)  -> 1
+//   * `out` full                                                     -> 2
+//   * no CQE within `timeout_ns` of the previous one          -> iouring_err_wait_timeout()
+//   * io_uring_enter failing                                         -> its -errno
+// Every wait is bounded by `timeout_ns` and the loop by 2*max+8 rounds, so the
+// whole call is bounded. A record with negative res carries the kernel's reason.
+// A null ring or `out`, or max < 1, is refused with -EINVAL before any wait.
+pub fn io_ring_wait_multishot(h: i64, user_data: i64, want: i64, timeout_ns: i64, out: i64, max: i64, out_count: i64) -> i64 {
+    let _ = io_set_slot(out_count, 0);
+    if h == 0 {
+        return 0 - 22;
+    }
+    if out == 0 {
+        return 0 - 22;
+    }
+    if max < 1 {
+        return 0 - 22;
+    }
+    let ud: i64 = __mind_alloc(8);
+    let res: i64 = __mind_alloc(8);
+    let fl: i64 = __mind_alloc(8);
+    let mut n: i64 = 0;
+    let mut got: i64 = 0;
+    let mut rounds: i64 = 0;
+    // 3 = still waiting; any other value is the final status.
+    let mut status: i64 = 3;
+    while status == 3 {
+        if got >= want {
+            status = 0;
+        } else {
+            if n >= max {
+                status = 2;
+            } else {
+                if rounds >= max * 2 + 8 {
+                    status = iouring_err_wait_timeout();
+                } else {
+                    rounds = rounds + 1;
+                    if io_ring_reap_full(h, ud, res, fl, 1) == 1 {
+                        let u: i64 = __mind_load_i64(ud + 0);
+                        let r: i64 = __mind_load_i64(res + 0);
+                        let f: i64 = __mind_load_i64(fl + 0);
+                        __mind_store_i64(out + n * 24, u);
+                        __mind_store_i64(out + n * 24 + 8, r);
+                        __mind_store_i64(out + n * 24 + 16, f);
+                        n = n + 1;
+                        if u == user_data {
+                            got = got + 1;
+                            if r < 0 {
+                                status = 1;
+                            } else {
+                                if (f & iouring_cqe_f_more()) == 0 {
+                                    status = 1;
+                                }
+                            }
+                        }
+                    } else {
+                        // CQ empty: wait (bounded) for the next completion.
+                        let er: i64 = io_ring_enter_timeout(h, 0, 1, timeout_ns);
+                        if er == 0 - 62 {
+                            status = iouring_err_wait_timeout();
+                        } else {
+                            if er < 0 {
+                                if er != 0 - 4 {
+                                    status = er;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = io_set_slot(out_count, n);
+    let _ = __mind_free(ud);
+    let _ = __mind_free(res);
+    let _ = __mind_free(fl);
+    status
 }
 
 // Release the rings, the fd, and the handle.
@@ -369,12 +640,18 @@ pub fn io_ring_free(h: i64) -> i64 {
 }
 
 // Round-trip a single NOP through the ring; returns the completed `user_data`
-// (== the value passed) on success, or a negative code on failure.
+// (== the value passed) on success, or a negative code on failure: the ring
+// setup reason from io_ring_try_new_flags (-errno, or iouring_err_kernel_feature),
+// an io_uring_enter -errno, or iouring_err_wait_timeout() if no CQE arrived.
 pub fn io_uring_nop(user_data: i64) -> i64 {
-    let h: i64 = io_ring_new(1);
+    let err: i64 = __mind_alloc(8);
+    let h: i64 = io_ring_try_new_flags(1, 0, err);
     if h == 0 {
-        return 0 - 1;
+        let e: i64 = __mind_load_i64(err + 0);
+        let _ = __mind_free(err);
+        return e;
     }
+    let _ = __mind_free(err);
     let _ = io_ring_submit_op(h, 0, iouring_op_nop(), 0, 0, 0, user_data);
     let _ = io_ring_publish(h, 1);
     let er: i64 = io_ring_enter(h, 1, 1);
@@ -385,7 +662,7 @@ pub fn io_uring_nop(user_data: i64) -> i64 {
     let ud: i64 = __mind_alloc(8);
     let res: i64 = __mind_alloc(8);
     let n: i64 = io_ring_reap(h, ud, res, 1);
-    let mut got: i64 = 0 - 4;
+    let mut got: i64 = iouring_err_wait_timeout();
     if n == 1 {
         got = __mind_load_i64(ud + 0);
     }
@@ -460,7 +737,7 @@ pub fn io_uring_socketpair_echo(msg: i64, len: i64) -> i64 {
 // Returns 0 on success or a negative errno (kernel without REGISTER_BUFFERS).
 pub fn io_ring_register_buffers(h: i64, iovecs: i64, nr: i64) -> i64 {
     let fd: i64 = __mind_load_i64(h + 0);
-    syscall(427, fd, 0, iovecs, nr, 0, 0)
+    io_sys_result(syscall(427, fd, 0, iovecs, nr, 0, 0))
 }
 
 // Submit a fixed-buffer op at `slot`: like io_ring_submit_op but also sets the
@@ -591,7 +868,7 @@ pub fn io_ring_register_pbuf_ring(h: i64, ring_addr: i64, entries: i64, bgid: i6
     __mind_store_i8(reg + 12, bgid);
     __mind_store_i8(reg + 13, bgid / 256);
     let fd: i64 = __mind_load_i64(h + 0);
-    let r: i64 = syscall(427, fd, 22, reg, 1, 0, 0);
+    let r: i64 = io_sys_result(syscall(427, fd, 22, reg, 1, 0, 0));
     let _ = __mind_free(reg);
     r
 }
@@ -874,7 +1151,7 @@ pub fn io_ring_register_files_sparse(h: i64, n: i64) -> i64 {
         i = i + 1;
     }
     let fd: i64 = __mind_load_i64(h + 0);
-    let r: i64 = syscall(427, fd, 2, arr, n, 0, 0);
+    let r: i64 = io_sys_result(syscall(427, fd, 2, arr, n, 0, 0));
     let _ = __mind_free(arr);
     r
 }
@@ -957,8 +1234,20 @@ pub fn io_uring_direct_descriptor_demo() -> i64 {
 
 // Submit a multishot buffer-select RECV at `slot`: BUFFER_SELECT + buf_group as
 // in io_ring_submit_recv_provided, plus IORING_RECV_MULTISHOT in the SQE ioprio.
+// `len` MUST be 0: each receive is bounded by the provided buffer the kernel
+// selects. A nonzero length is a per-receive cap only newer kernels understand;
+// older ones (Linux 6.6 among them) reject it with a single terminal -EINVAL CQE.
+// Refusing it HERE keeps the surface's behaviour identical on every kernel:
+// a nonzero `len` returns -EINVAL (-22) and writes nothing, so the caller must
+// not publish the slot. Returns 0 when the SQE was written.
 pub fn io_ring_submit_recv_multishot(h: i64, slot: i64, fd: i64, len: i64, bgid: i64, user_data: i64) -> i64 {
-    let _ = io_ring_submit_recv_provided(h, slot, fd, len, bgid, user_data);
+    if len != 0 {
+        return 0 - 22;
+    }
+    let r: i64 = io_ring_submit_recv_provided(h, slot, fd, 0, bgid, user_data);
+    if r < 0 {
+        return r;
+    }
     let sring: i64 = __mind_load_i64(h + 8);
     let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
     let entries: i64 = __mind_load_i64(h + 56) + 1;
@@ -969,41 +1258,177 @@ pub fn io_ring_submit_recv_multishot(h: i64, slot: i64, fd: i64, len: i64, bgid:
     0
 }
 
+// Verify the records of a multishot recv (`user_data` 2) left by
+// io_ring_wait_multishot: count the completions that landed exactly `len`
+// bytes of `msg` in their kernel-selected buffer (bid = flags>>16, buffer bid i
+// at data + i*256, `nbuf` buffers). Returns iouring_err_data_mismatch() if any
+// completion carried other bytes; else that count if it reached `nbuf`; else
+// the FIRST negative res (the kernel's reason the request ended early); else
+// the short count.
+fn io_msrecv_verify(cq: i64, count: i64, data: i64, nbuf: i64, msg: i64, len: i64) -> i64 {
+    let mut ok: i64 = 0;
+    let mut bad: i64 = 0;
+    let mut kerr: i64 = 0;
+    let mut k: i64 = 0;
+    while k < count {
+        if __mind_load_i64(cq + k * 24) == 2 {
+            let rr: i64 = __mind_load_i64(cq + k * 24 + 8);
+            let f: i64 = __mind_load_i64(cq + k * 24 + 16);
+            let bid: i64 = f / 65536;
+            if rr < 0 {
+                if kerr == 0 {
+                    kerr = rr;
+                }
+            } else {
+                // IORING_CQE_F_BUFFER (1) must be set and the bid in range,
+                // or the completion did not land in one of OUR buffers.
+                if (f & 1) == 1 {
+                    if bid < nbuf {
+                        if rr == len {
+                            let d: i64 = data + bid * 256;
+                            let mut same: i64 = 1;
+                            let mut j: i64 = 0;
+                            while j < len {
+                                if __mind_load_i8(d + j) != __mind_load_i8(msg + j) {
+                                    same = 0;
+                                }
+                                j = j + 1;
+                            }
+                            if same == 1 {
+                                ok = ok + 1;
+                            } else {
+                                bad = bad + 1;
+                            }
+                        } else {
+                            bad = bad + 1;
+                        }
+                    } else {
+                        bad = bad + 1;
+                    }
+                } else {
+                    bad = bad + 1;
+                }
+            }
+        }
+        k = k + 1;
+    }
+    if bad > 0 {
+        return iouring_err_data_mismatch();
+    }
+    if ok >= nbuf {
+        return ok;
+    }
+    if kerr < 0 {
+        return kerr;
+    }
+    ok
+}
+
+// Send `n` datagrams of `len` bytes from `msg` on `fd` through ring `h` (user
+// data 1) and require every one to complete in full. Returns 0, the first
+// negative SEND res, iouring_err_data_mismatch() on a short send, or
+// iouring_err_wait_timeout() if not all n completions arrived within the bound.
+fn io_msrecv_send_all(h: i64, fd: i64, msg: i64, len: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    while s < n {
+        let _ = io_ring_submit_op(h, s, iouring_op_send(), fd, msg, len, 1);
+        s = s + 1;
+    }
+    let _ = io_ring_publish(h, n);
+    let er: i64 = io_ring_enter(h, n, n);
+    if er < 0 {
+        return er;
+    }
+    let sud: i64 = __mind_alloc(n * 8);
+    let sres: i64 = __mind_alloc(n * 8);
+    let got: i64 = io_ring_reap(h, sud, sres, n);
+    let mut rc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < got {
+        let r: i64 = __mind_load_i64(sres + i * 8);
+        if rc == 0 {
+            if r < 0 {
+                rc = r;
+            } else {
+                if r != len {
+                    rc = iouring_err_data_mismatch();
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if rc == 0 {
+        if got < n {
+            rc = iouring_err_wait_timeout();
+        }
+    }
+    let _ = __mind_free(sud);
+    let _ = __mind_free(sres);
+    rc
+}
+
 // Phase-3 capstone proof: receive `n` datagrams through ONE multishot recv, each
 // landing in a distinct kernel-selected provided buffer. Build an `n`-buffer
 // provided ring (bid i -> data+i*256); SEND `n` copies of `msg` on fd0 of a
-// DGRAM socketpair (datagrams preserve message boundaries); submit ONE multishot
-// BUFFER_SELECT recv on fd1; drain `n` completions and verify each landed the
-// exact bytes in its buffer (bid taken from cqe.flags>>16). Returns `n` on full
-// byte-identical success, or a negative code (and SKIPS — negative — where the
-// kernel lacks multishot/provided buffers). The zero-copy async server recv,
-// proven to preserve every byte the evidence chain anchors.
+// DGRAM socketpair (datagrams preserve message boundaries) and require all n to
+// complete; submit ONE multishot BUFFER_SELECT recv (sqe.len 0) on fd1; collect
+// its completions with io_ring_wait_multishot — which stops at the first
+// terminal CQE instead of waiting for completions that will never come — and
+// verify each landed the exact bytes in its buffer (bid from cqe.flags>>16).
+// Inputs: 1 <= n <= 16 (16-entry buffer ring, 16 x 256 B data in one 8 KiB
+// region) and 1 <= len <= 256 (one buffer per datagram); otherwise -EINVAL.
+// Returns `n` on full byte-identical success, else the precise reason:
+//   -errno of the failing setup step (socketpair, ring setup, mmap, PBUF_RING
+//     registration — a kernel without provided-buffer rings says -EINVAL);
+//   the kernel's terminal CQE res — -EINVAL (-22) when the kernel rejects
+//     multishot recv itself (Linux < 6.0);
+//   iouring_err_wait_timeout() / iouring_err_multishot_ended() /
+//   iouring_err_data_mismatch() / iouring_err_kernel_feature().
+// The zero-copy async server recv, proven to preserve every byte the evidence
+// chain anchors.
 pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
+    if n < 1 {
+        return 0 - 22;
+    }
+    if n > 16 {
+        return 0 - 22;
+    }
+    if len < 1 {
+        return 0 - 22;
+    }
+    if len > 256 {
+        return 0 - 22;
+    }
     let sv: i64 = __mind_alloc(8);
     // socketpair(AF_UNIX=1, SOCK_DGRAM=2, 0, sv) — datagrams keep message bounds.
     if socketpair(1, 2, 0, sv) < 0 {
+        let e: i64 = 0 - io_errno();
         let _ = __mind_free(sv);
-        return 0 - 10;
+        return e;
     }
     let fd0: i64 = __mind_load_i32(sv + 0);
     let fd1: i64 = __mind_load_i32(sv + 4);
-    let h: i64 = io_ring_new(32);
+    let err: i64 = __mind_alloc(8);
+    let h: i64 = io_ring_try_new_flags(32, 0, err);
+    let setup: i64 = __mind_load_i64(err + 0);
+    let _ = __mind_free(err);
     if h == 0 {
         let _ = close(fd0 as i32);
         let _ = close(fd1 as i32);
         let _ = __mind_free(sv);
-        return 0 - 11;
+        return setup;
     }
     // Page-aligned region: 16-entry buf_ring @ rgn+0 (256B), data buffers @
     // rgn+4096 (256B each, bid i -> rgn+4096+i*256).
     let neg1: i64 = 0 - 1;
     let rgn: i64 = mmap(0, 8192, 3, 34, neg1 as i32, 0);
     if rgn < 0 {
+        let e: i64 = 0 - io_errno();
         let _ = io_ring_free(h);
         let _ = close(fd0 as i32);
         let _ = close(fd1 as i32);
         let _ = __mind_free(sv);
-        return 0 - 12;
+        return e;
     }
     let mut z: i64 = 0;
     while z < 256 {
@@ -1023,72 +1448,47 @@ pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
     // Publish the ring tail (u16 @14 — overlaps bufs[0].resv, set last) = n.
     __mind_store_i8(rgn + 14, n);
     __mind_store_i8(rgn + 15, n / 256);
-    let reg: i64 = io_ring_register_pbuf_ring(h, rgn, 16, 0);
-    if reg < 0 {
-        let _ = munmap(rgn, 8192);
-        let _ = io_ring_free(h);
-        let _ = close(fd0 as i32);
-        let _ = close(fd1 as i32);
-        let _ = __mind_free(sv);
-        return reg;
+    let mut result: i64 = io_ring_register_pbuf_ring(h, rgn, 16, 0);
+    if result == 0 {
+        // Batch 1: SEND n datagrams on fd0; every one must complete in full.
+        result = io_msrecv_send_all(h, fd0, msg, len, n);
     }
-    // Batch 1: SEND n datagrams on fd0.
-    let mut s: i64 = 0;
-    while s < n {
-        let _ = io_ring_submit_op(h, s, iouring_op_send(), fd0, msg, len, 1);
-        s = s + 1;
+    if result == 0 {
+        // Batch 2: ONE multishot recv on fd1 over the reused ring (submit only),
+        // then a bounded wait that ends at the first terminal CQE.
+        let _ = io_ring_submit_recv_multishot(h, 0, fd1, 0, 0, 2);
+        let _ = io_ring_publish(h, 1);
+        result = io_ring_enter(h, 1, 0);
     }
-    let _ = io_ring_publish(h, n);
-    let _ = io_ring_enter(h, n, n);
-    let sud: i64 = __mind_alloc(256);
-    let sres: i64 = __mind_alloc(256);
-    let _ = io_ring_reap(h, sud, sres, n);
-    let _ = __mind_free(sud);
-    let _ = __mind_free(sres);
-    // Batch 2: ONE multishot recv on fd1 over the reused ring; wait for n CQEs.
-    let _ = io_ring_submit_recv_multishot(h, 0, fd1, 256, 0, 2);
-    let _ = io_ring_publish(h, 1);
-    let er: i64 = io_ring_enter(h, 1, n);
-    let mut matched: i64 = 0 - 14;
-    if er >= 0 {
-        let ud: i64 = __mind_alloc(256);
-        let res: i64 = __mind_alloc(256);
-        let fl: i64 = __mind_alloc(256);
-        let count: i64 = io_ring_reap_full(h, ud, res, fl, 32);
-        let mut ok: i64 = 0;
-        let mut k: i64 = 0;
-        while k < count {
-            if __mind_load_i64(ud + k * 8) == 2 {
-                let rr: i64 = __mind_load_i64(res + k * 8);
-                let bid: i64 = __mind_load_i64(fl + k * 8) / 65536;
-                if rr == len {
-                    let d: i64 = rgn + 4096 + bid * 256;
-                    let mut same: i64 = 1;
-                    let mut j: i64 = 0;
-                    while j < len {
-                        if __mind_load_i8(d + j) != __mind_load_i8(msg + j) {
-                            same = 0;
-                        }
-                        j = j + 1;
-                    }
-                    if same == 1 {
-                        ok = ok + 1;
-                    }
+    if result >= 0 {
+        let cq: i64 = __mind_alloc((n + 8) * 24);
+        let cnt: i64 = __mind_alloc(8);
+        let st: i64 = io_ring_wait_multishot(h, 2, n, io_ring_wait_bound_ns(), cq, n + 8, cnt);
+        let count: i64 = __mind_load_i64(cnt + 0);
+        let v: i64 = io_msrecv_verify(cq, count, rgn + 4096, n, msg, len);
+        if v == n {
+            result = n;
+        } else {
+            if v < 0 {
+                result = v;
+            } else {
+                if st < 0 {
+                    result = st;
+                } else {
+                    result = iouring_err_multishot_ended();
                 }
             }
-            k = k + 1;
         }
-        matched = ok;
-        let _ = __mind_free(ud);
-        let _ = __mind_free(res);
-        let _ = __mind_free(fl);
+        let _ = __mind_free(cq);
+        let _ = __mind_free(cnt);
     }
-    let _ = munmap(rgn, 8192);
+    // Tear the ring down BEFORE unmapping the provided buffers it still owns.
     let _ = io_ring_free(h);
     let _ = close(fd0 as i32);
     let _ = close(fd1 as i32);
+    let _ = munmap(rgn, 8192);
     let _ = __mind_free(sv);
-    matched
+    result
 }
 
 // ── Phase 4: deterministic scheduling (reactor core-pinning) ────────────────
@@ -1508,7 +1908,8 @@ pub fn io_uring_storage_rw_demo(path: i64, data: i64, len: i64) -> i64 {
 // reads of a file are never reaped on this kernel. IOPOLL is reaped on RAW block
 // devices (/dev/nvmeXn1) and XFS/iomap; a spare raw NVMe (or XFS) completes it.
 // The path returns a skip (negative) on ext4; the proven deterministic
-// round-trip is `use_iopoll=0`.
+// round-trip is `use_iopoll=0`. A read ring the kernel refuses (e.g. it rejects
+// IORING_SETUP_IOPOLL) returns io_uring_setup's -errno as the reason.
 pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i64) -> i64 {
     // O_CREAT|O_RDWR|O_TRUNC|O_DIRECT = 64|2|512|16384 = 16962, mode 0644 = 420.
     let fd: i64 = io_uring_openat(path, 16962, 420);
@@ -1523,16 +1924,20 @@ pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i6
         let _ = io_uring_close(fd);
         return 0 - 11;
     }
-    let mut rr: i64 = 0;
+    // IORING_SETUP_IOPOLL (1) when requested. A kernel that refuses the flag
+    // answers io_uring_setup with -errno, returned here as the precise reason.
+    let mut setup_flags: i64 = 0;
     if use_iopoll == 1 {
-        rr = io_ring_new_iopoll(4);
-    } else {
-        rr = io_ring_new(4);
+        setup_flags = 1;
     }
+    let rerr: i64 = __mind_alloc(8);
+    let rr: i64 = io_ring_try_new_flags(4, setup_flags, rerr);
+    let rsetup: i64 = __mind_load_i64(rerr + 0);
+    let _ = __mind_free(rerr);
     if rr == 0 {
         let _ = io_ring_free(wr);
         let _ = io_uring_close(fd);
-        return 0 - 12;
+        return rsetup;
     }
     // 4096-aligned write block: alloc 8192, round the address up to 4096.
     let wraw: i64 = __mind_alloc(8192);
@@ -1565,7 +1970,9 @@ pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i6
     let _ = io_ring_submit_raw(rr, 0, iouring_op_read(), fd, 0, rbuf, 4096, 2);
     let _ = io_ring_publish(rr, 1);
     // IOPOLL completions are found by (re-)entering with GETEVENTS — poll until
-    // the read's completion is reaped (bounded so a stuck op can't hang).
+    // the read's completion is reaped (bounded so a stuck op can't hang). On a
+    // plain ring io_ring_enter already waited its full bound, so an empty reap
+    // there ends the loop instead of re-waiting 200000 times.
     let mut rn: i64 = 0 - 1;
     let mut submit_n: i64 = 1;
     let mut tries: i64 = 0;
@@ -1578,6 +1985,10 @@ pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i6
             if io_ring_reap(rr, ud, res, 1) == 1 {
                 rn = __mind_load_i64(res + 0);
                 tries = 200000;
+            } else {
+                if use_iopoll != 1 {
+                    tries = 200000;
+                }
             }
         }
         tries = tries + 1;
@@ -1818,12 +2229,17 @@ pub fn io_ring_submit_accept_multishot(h: i64, slot: i64, fd: i64, user_data: i6
 
 // Demonstrate multishot accept: bind a listener, submit ONE multishot accept,
 // io_uring-CONNECT two clients, and confirm BOTH accepted connections arrive as
-// completions of the single multishot submission. Returns the number of accept
-// completions (2 on success), or a negative code.
+// completions of the single multishot submission (each accepted fd is closed).
+// The wait is io_ring_wait_multishot, so a kernel that ends the accept early
+// returns its reason instead of leaving the caller waiting. Returns 2 on
+// success, else the precise reason: -errno of socket/bind/listen or ring setup
+// (io_ring_try_new_flags); the kernel's terminal accept CQE res (-EINVAL (-22)
+// when the kernel lacks multishot accept, Linux < 5.19);
+// iouring_err_wait_timeout(); iouring_err_multishot_ended().
 pub fn io_uring_multishot_accept_demo() -> i64 {
     let lfd: i64 = socket(2, 1, 0);
     if lfd < 0 {
-        return 0 - 1;
+        return 0 - io_errno();
     }
     let addr: i64 = __mind_alloc(16);
     let mut z: i64 = 0;
@@ -1835,24 +2251,29 @@ pub fn io_uring_multishot_accept_demo() -> i64 {
     __mind_store_i8(addr + 4, 127);
     __mind_store_i8(addr + 7, 1);
     if bind(lfd as i32, addr, 16) < 0 {
+        let be: i64 = 0 - io_errno();
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
-        return 0 - 2;
+        return be;
     }
     if listen(lfd as i32, 8) < 0 {
+        let le: i64 = 0 - io_errno();
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
-        return 0 - 3;
+        return le;
     }
     let alen: i64 = __mind_alloc(8);
     __mind_store_i32(alen + 0, 16);
     let _ = getsockname(lfd as i32, addr, alen);
-    let h: i64 = io_ring_new(8);
+    let err: i64 = __mind_alloc(8);
+    let h: i64 = io_ring_try_new_flags(8, 0, err);
+    let setup: i64 = __mind_load_i64(err + 0);
+    let _ = __mind_free(err);
     if h == 0 {
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
         let _ = __mind_free(alen);
-        return 0 - 4;
+        return setup;
     }
     let c0: i64 = socket(2, 1, 0);
     let c1: i64 = socket(2, 1, 0);
@@ -1860,29 +2281,53 @@ pub fn io_uring_multishot_accept_demo() -> i64 {
     let _ = io_ring_submit_raw(h, 1, iouring_op_connect(), c0, 16, addr, 0, 1);
     let _ = io_ring_submit_raw(h, 2, iouring_op_connect(), c1, 16, addr, 0, 2);
     let _ = io_ring_publish(h, 3);
-    let er: i64 = io_ring_enter(h, 3, 4);
-    let ud: i64 = __mind_alloc(256);
-    let res: i64 = __mind_alloc(256);
-    let mut accepts: i64 = 0;
-    if er >= 0 {
-        let count: i64 = io_ring_reap(h, ud, res, 16);
+    // Submit only; the accept completions are collected by the bounded wait.
+    let mut result: i64 = io_ring_enter(h, 3, 0);
+    if result >= 0 {
+        let cq: i64 = __mind_alloc(16 * 24);
+        let cnt: i64 = __mind_alloc(8);
+        let st: i64 = io_ring_wait_multishot(h, 200, 2, io_ring_wait_bound_ns(), cq, 16, cnt);
+        let count: i64 = __mind_load_i64(cnt + 0);
+        let mut accepts: i64 = 0;
+        let mut kerr: i64 = 0;
         let mut i: i64 = 0;
         while i < count {
-            if __mind_load_i64(ud + i * 8) == 200 {
-                accepts = accepts + 1;
+            if __mind_load_i64(cq + i * 24) == 200 {
+                let r: i64 = __mind_load_i64(cq + i * 24 + 8);
+                if r >= 0 {
+                    accepts = accepts + 1;
+                    let _ = close(r as i32);
+                } else {
+                    if kerr == 0 {
+                        kerr = r;
+                    }
+                }
             }
             i = i + 1;
         }
+        if accepts == 2 {
+            result = 2;
+        } else {
+            if kerr < 0 {
+                result = kerr;
+            } else {
+                if st < 0 {
+                    result = st;
+                } else {
+                    result = iouring_err_multishot_ended();
+                }
+            }
+        }
+        let _ = __mind_free(cq);
+        let _ = __mind_free(cnt);
     }
     let _ = io_ring_free(h);
-    let _ = __mind_free(ud);
-    let _ = __mind_free(res);
     let _ = close(c0 as i32);
     let _ = close(c1 as i32);
     let _ = close(lfd as i32);
     let _ = __mind_free(addr);
     let _ = __mind_free(alen);
-    accepts
+    result
 }
 
 // Loopback echo THROUGHPUT bench: accept a connection, then time `rounds` echo

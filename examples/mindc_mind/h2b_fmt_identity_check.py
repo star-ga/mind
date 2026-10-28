@@ -4,7 +4,8 @@
 Ruling Q1.1: a file may be formatted only when its diff is layout-only AND
 `--emit-ir` + `--emit-mic3` under one mindc are byte-identical for the
 pre-format and post-format bytes. This gate re-measures that proof for the
-pinned fourteen-file formatted set, against the committed base bytes.
+pinned fifteen-file formatted set (H2b's fourteen plus the seed batch's
+format-only std/string.mind), against the committed base bytes.
 
 Files that cannot produce IR under any available composition are NOT formatted
 (restored to parent bytes and pinned in testdata/h2b_exclusion_pins.json);
@@ -33,10 +34,27 @@ IR_REFUSAL_EXCLUSIONS = {
     "examples/mindc_mind/string_escape_driver.mind",
 }
 
-# These seven files are not formatted files. Q1.1 kept main.mind out of lane C.
+# These fourteen files are outside the formatted set. Q1.1 kept main.mind out of lane C.
+# The seven seed-batch entries (S6b, S6a, #289) are semantic std edits or new test
+# files made after the H2b base. The seed batch's one format-only file,
+# std/string.mind (S6b b8f15059), is measured in the pinned set instead.
 # The formatted set is the pinned manifest, not a git-diff walk.
 PINNED_FORMATTED_LIST = "examples/mindc_mind/testdata/h2b_fmt_identity_files.txt"
 SEMANTIC_EDIT_EXCLUSIONS = {
+    "std/sha256.mind": (
+        "seed batch: S6b b8f15059 format, then #289 8c94109e bounded scratch, "
+        "sha256_checked and the trapping legacy entry (a semantic edit)"
+    ),
+    "std/toml.mind": (
+        "seed batch S6b 64e105d6: the toml depth cap gets its own name (semantic edit)"
+    ),
+    "std/iouring.mind": (
+        "seed batch S6a 697dff69: bounded completion waits (semantic edit)"
+    ),
+    "tests/sha256_allocation_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_legacy_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_memory_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
+    "tests/sha256_repeated_kat.mind": ("new file from #289 8c94109e; no BASE bytes"),
     "tests/open_error_kat.mind": (
         "new file from main #290 (fcb44b97), taken by the main merge; it has no "
         "BASE bytes, so there is no pre/post-format identity to measure"
@@ -78,7 +96,7 @@ def mindc() -> str:
     return bin_path
 
 
-PINNED_COUNT = 14
+PINNED_COUNT = 15
 
 
 def walk_mind_files() -> set[str]:

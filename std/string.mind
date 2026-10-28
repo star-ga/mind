@@ -74,15 +74,29 @@ pub fn string_validate_utf8(s: String) -> i64 {
 // Zero diagnoses negative metadata, owned len > cap, or len + 1 overflow.
 // This allocation-free helper does not validate pointers or ownership.
 pub fn string_push_capacity(len: i64, cap: i64) -> i64 {
-    if len < 0 { return 0; }
-    if cap < 0 { return 0; }
-    if len == 9223372036854775807 { return 0; }
+    if len < 0 {
+        return 0;
+    }
+    if cap < 0 {
+        return 0;
+    }
+    if len == 9223372036854775807 {
+        return 0;
+    }
     if cap > 0 {
-        if len > cap { return 0; }
-        if len < cap { return cap; }
+        if len > cap {
+            return 0;
+        }
+        if len < cap {
+            return cap;
+        }
     }
     let needed: i64 = len + 1;
-    let mut next: i64 = if cap == 0 { 16 } else { cap };
+    let mut next: i64 = if cap == 0 {
+        16
+    } else {
+        cap
+    };
     while next < needed {
         if next > 4611686018427387903 {
             next = needed;
