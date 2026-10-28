@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1906 | **Est. tokens:** ~3,701,951
-**Generated:** 2026-10-28 09:22 UTC
+**Files:** 1908 | **Est. tokens:** ~3,703,737
+**Generated:** 2026-10-28 12:59 UTC
 
 ## Token Budget Guide
 
@@ -91,10 +91,11 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~910 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~12,657 |
+| `.github/scripts/` | 1 | ~962 |
+| `.github/workflows/` | 9 | ~13,478 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,939 |
-| `scripts/` | 33 | ~118,190 |
+| `scripts/` | 33 | ~118,193 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1038,6 +1039,9 @@
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 - `required-ci-jobs.tsv` (~752 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+### `.github/scripts/`
+
+- `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~2440 tok, huge) — name: Bench gate
@@ -1046,6 +1050,7 @@
 - `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
+- `pr-review.yml` (~821 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -1066,7 +1071,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9400 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9403 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
