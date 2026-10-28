@@ -3470,8 +3470,48 @@ transformer block runs under `--require-strict-fp`.
 - No milestone dates are set; each item is sequenced after the gate it depends on.
 ## Research watch — implicit geometry as a tensor library workload (2026-10-28)
 
-**Status: proposed; review REQUIRED before implementation; no change to core language/spec/runtime scheduled.**
+**Status: proposed; review REQUIRED before implementation. Not approved,
+implemented, or scheduled.** Application/library research, not a new
+compiler keyword or normative language-specification feature.
 
-Candidate: express signed-distance / general implicit-field evaluation as ordinary typed numerical tensor operations, including analytic primitives, transforms and CSG via min/max/negation. Use a user-space library prototype rather than adding compiler keywords, normative specification or GPU-specific primitives.
+**Numerical candidate.** Evaluate analytic implicit functions,
+signed-distance and zero-level-set predicates, CSG via min/max/negation,
+and transformations over typed tensor grids. With identical Q16.16
+input operands, min/max selects existing bit patterns without rounding;
+this alone neither proves that two machines compute identical *operands*
+nor guarantees geometric correctness, accurate surfaces, or exact
+Euclidean distances after arbitrary CSG.
 
-**Review gates:** precise sign, coordinate, unit, true-distance versus zero-level-set semantics; scalar golden cases; non-smooth min/max gradients and tie policies; Q16.16 saturation; numerical precision and cross-substrate parity limited to proven compiler/runtime scopes. Benchmark batching against a conventional scalar implementation. Require evidence from [mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md) and [rfn-mind](https://github.com/star-ga/rfn-mind/blob/main/docs/roadmap.md) before promoting a standalone library/RFC. Runtime-specialized GPU kernels require separate profiling and approval; protect existing roadmap priorities.
+**Precision qualification.** Signed i32 Q16.16 in millimetres represents
+[-32768, 32767.999985] mm, with a grid spacing of 1/65536 mm
+(~0.01526 micrometres). This is representational spacing, NOT achieved
+CAD tolerance. The 64-bit signed Q32.32 accumulation range and
+three-axis squared-distance sums can overflow even when every coordinate
+is representable. Require bounded local coordinates, tested overflow
+semantics, scaling/tolerance budgets, and wider/adaptive-precision paths
+where needed. RFN's rsqrt LUT with a stated <=2^-8 bound is not a
+qualified CAD distance operator; do not import it as one. Review
+correctly rounded integer square-root or certified intervals if real
+distances are needed; retain squared-distance predicates where valid.
+
+**Qualification and market gates.** Property/fixture tests for near-zero
+sign changes, tangencies, transforms, thin walls and CSG seams;
+independent high-precision reference; CPU scalar parity and AVX2/NEON
+replay with pinned input/output hashes; separate GPU floating-point
+qualification. Benchmark robust geometry and batch performance against
+existing kernels, including nTop-style implicit modeling capabilities
+(not necessarily a directly accessible head-to-head implementation).
+
+Validate real CAD/AM buyer pain separately: public sources establish
+numerical/tolerance robustness problems and slicing artifacts, but do
+not yet establish that x86-versus-ARM bitwise mismatches are a commonly
+purchased-away industrial problem. Interview customers or obtain
+reproducible failing cross-machine cases before asserting market demand,
+regulated qualification benefit, or a unique cross-device advantage.
+
+Only promote to a standalone optional MIND geometry library after
+measurements and review; runtime specialization needs its own profiling
+and approval. Rendering experiments remain with
+[mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md).
+Do not redirect [rfn-mind](https://github.com/star-ga/rfn-mind/blob/main/docs/roadmap.md)
+away from its core long-context/memory validation.
