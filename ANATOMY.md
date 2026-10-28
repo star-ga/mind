@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2635 | **Est. tokens:** ~4,717,532
-**Generated:** 2026-10-28 08:34 UTC
+**Files:** 2635 | **Est. tokens:** ~4,717,816
+**Generated:** 2026-10-28 09:36 UTC
 
 ## Token Budget Guide
 
@@ -64,9 +64,9 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 288 | ~806,968 |
-| `examples/mindc_mind/testdata/` | 5 | ~6,800 |
-| `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,212 |
+| `examples/mindc_mind/` | 288 | ~806,928 |
+| `examples/mindc_mind/testdata/` | 5 | ~6,804 |
+| `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,315 |
@@ -239,7 +239,7 @@
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 163 | ~10,627 |
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
-| `tests/sha256_lifetime/` | 8 | ~11,013 |
+| `tests/sha256_lifetime/` | 8 | ~11,467 |
 | `tests/sha256_lifetime/mutants/` | 8 | ~241 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
@@ -713,7 +713,7 @@
 - `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `h2b_exclusion_controls_check.py` (~4102 tok, huge) — H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
-- `h2b_fmt_identity_check.py` (~2654 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
+- `h2b_fmt_identity_check.py` (~2614 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1220 tok, large) — Native intrinsic id table contract for main.mind (pure text analysis).
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -979,14 +979,14 @@
 - `const_return.mind` (~9 tok, tiny) — fn main() -> i64 {
 - `local_call.elf` (binary, 474 bytes)
 - `local_call.mind` (~23 tok, tiny) — fn helper(x: i64) -> i64 {
-- `MANIFEST.txt` (~631 tok, large) — # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
+- `MANIFEST.txt` (~497 tok, medium) — # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
 - `while_sum.elf` (binary, 581 bytes)
 - `while_sum.mind` (~37 tok, tiny) — fn main() -> i64 {
 ### `examples/mindc_mind/testdata/`
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
 - `h2b_exclusion_pins.json` (~2404 tok, huge) — Keys: comment, entries
-- `h2b_fmt_identity_files.txt` (~233 tok, medium) — examples/mindc_mind/native_fixed_scope_manifest.mind
+- `h2b_fmt_identity_files.txt` (~237 tok, medium) — examples/mindc_mind/native_fixed_scope_manifest.mind
 ### `examples/mindc_mind/testdata/mindfuzz_regress/`
 
 - `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
@@ -3304,7 +3304,7 @@
 - `sha256_legacy_kat.mind` (~605 tok, large) — Author: STARGA Inc.
 ### `tests/sha256_lifetime/`
 
-- `assemble.sh` (~709 tok, large) — Author: STARGA Inc. Source assembly only; executable assertions are MIND.
+- `assemble.sh` (~888 tok, large) — Author: STARGA Inc. Source assembly only; executable assertions are MIND.
 - `cases.json` (~4371 tok, huge) — Keys: cases, real_count, observer_count, mutations, builds
 - `driver.mind` (~1555 tok, huge) — Author: STARGA Inc. All digest, ownership and refusal verdicts execute in MIND.
 ### `tests/sha256_lifetime/mutants/`
@@ -3322,7 +3322,7 @@
 - `observer.mind` (~569 tok, large) — Author: STARGA Inc. Test-only allocation observer; never a product allocator.
 - `raw_driver.mind` (~386 tok, medium) — Author: STARGA Inc. Additive raw-only diagnostic; does not replace full suite.
 - `raw_observed_driver.mind` (~507 tok, large) — Author: STARGA Inc. Additive raw allocation-observer diagnostic; does not replace full suite.
-- `README.md` (~1104 tok, large) — SHA-256 lifetime and refusal controls
+- `README.md` (~1379 tok, large) — SHA-256 lifetime and refusal controls
 - `vectors.mind` (~1812 tok, huge) — Author: STARGA Inc. Frozen known answers; preparation is not subject execution.
 ### `tests/`
 
