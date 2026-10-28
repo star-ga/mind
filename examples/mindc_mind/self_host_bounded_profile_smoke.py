@@ -208,7 +208,7 @@ def manifest_text(seed: bytes, receipt: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def bless(stdin_v2: bytes, combined: bytes) -> None:
+def bless(stdin_v2: bytes, combined: bytes) -> int:
     with tempfile.TemporaryDirectory() as tdn:
         td = pathlib.Path(tdn)
         s1 = derive_from_default(stdin_v2)
@@ -216,6 +216,10 @@ def bless(stdin_v2: bytes, combined: bytes) -> None:
         stages = loop(p1, stdin_v2, td)
         if not all(s == s1 for s in stages):
             raise SystemExit("BLOCKED: derived bounded seed is not a fixed point under the cap")
+    if BOUNDED_SEED.exists() and BOUNDED_SEED.read_bytes() == s1:
+        print("BLOCKED: --bless would republish the current bounded seed unchanged; "
+              "nothing written.")
+        return 2
     BOUNDED_DIR.mkdir(exist_ok=True)
     receipt = {
         "derived_from_seed_sha256": sha(DEFAULT_SEED.read_bytes()),
@@ -232,6 +236,7 @@ def bless(stdin_v2: bytes, combined: bytes) -> None:
     BOUNDED_SEED.chmod(0o755)
     BOUNDED_MANIFEST.write_text(manifest_text(s1, receipt))
     print(f"  BLESSED  {BOUNDED_SEED.relative_to(_REPO)} sha256={sha(s1)}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -239,8 +244,8 @@ def main(argv: list[str]) -> int:
     stdin_v2 = v2_header() + stdin_v1
     oom0 = oom_kills()
     t_start = time.monotonic()
-    if "--bless" in argv:
-        bless(stdin_v2, combined)
+    if "--bless" in argv and bless(stdin_v2, combined) != 0:
+        return 2
 
     print("bounded native profile gate "
           f"(arena={BOUNDED[0]} stack={BOUNDED[1]} guard={BOUNDED[2]}, AS cap={AS_CAP})")

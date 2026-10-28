@@ -44,8 +44,8 @@ is DEMOTED from seed to a re-freeze / drift oracle.
     is the unpublished intermediate. stage2 is published, and only when
     stage2 == stage3 AND the fresh oracle emits exactly stage2. Every stage still
     descends from the old pure-MIND seed. The receipt records advance_hops 2,
-    intermediate_stage1_sha256, published_stage stage2 and a PURE-MIND seed_chain
-    row, and carries no stage1_sha256 row (that key means "published hash" in a
+    intermediate_stage1_sha256, published_stage stage2 and the computed
+    seed_chain row (SEED CHAIN below), and carries no stage1_sha256 row (that key means "published hash" in a
     one-hop receipt). --hops accepts 1 or 2 only: stage1 and stage2 compile the
     same source, so stage2 != stage3 is a miscompile or nondeterminism, never a
     reason for a third hop.
@@ -60,6 +60,30 @@ is DEMOTED from seed to a re-freeze / drift oracle.
     broken for that hop".
   * --advance and --reseed are MUTUALLY EXCLUSIVE, in flag and environment form
     alike, and the conflict is refused before anything is read, run or written.
+  * VERIFY-CHAIN (--verify-chain): read-only and build-free; see SEED CHAIN.
+
+SEED CHAIN (the receipt row and its offline verifier):
+  Every --advance receipt (one or two hops) ends with a COMPUTED row
+      # seed_chain<TAB><link> -> <link> -> ...
+  where a link is `<sha256>` or `<sha256>:intermediate` (a two-hop stage1 that
+  was never published). The first link is the chain root SEED_CHAIN_ROOT
+  (abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00), the last
+  is the published sha. The row is never typed: one function walks
+  `git log --all -- testdata/selfhost_loop/MANIFEST.txt` (every ref and tag; a
+  squash landing leaves intermediate receipts on the evidence tag only), reads
+  each receipt with `git show`, and follows advanced_from_seed_sha256 (plus
+  intermediate_stage1_sha256 for two-hop receipts) back to the root. A seed no
+  receipt on any ref publishes is a `<sha>:dangling` link. --advance derives the
+  chain up to the old seed BEFORE running anything and refuses (BLOCKED exit 2)
+  when it does not resolve. --verify-chain re-derives the chain with the same
+  function and asserts: (i) every link resolves; (ii) sha256 and size of
+  stage1.elf equal the committed MANIFEST row; (iii) a seed_chain row in the head
+  receipt is byte-equal to the derived chain; (iv) without such a row (receipts
+  older than this contract) the derived chain is printed and asserted. It prints
+  one `PASS  [CHAIN] <link> -> <next>` line per link. History before the root
+  (the receipts named in PRE_ROOT_HISTORY) is printed as measured PRE-ROOT lines,
+  counted apart, never a chain link and never a PASS. CI runs it with full
+  history and tags (`fetch-depth: 0`) under --min-asserted 3.
 
 HONEST FRAMING (no overclaim):
   This proves REPRODUCTION-independence — the seed chain is now Rust-free and the
@@ -99,12 +123,22 @@ FAIL-CLOSED (never skips when asked to run):
   * a stage is not a static ELF                       -> FAIL exit 1     (nothing written)
   * oracle .so missing / not a fresh build            -> BLOCKED exit 2  (nothing written)
   * oracle output != the new fixed point              -> FAIL exit 1     (nothing written)
+  * the fixed point IS the current seed (no-op)       -> BLOCKED exit 2  (nothing written)
+  * the old seed's chain does not resolve (dangling,
+        shallow clone, no git)                        -> BLOCKED exit 2  (before anything runs)
   --advance --hops 2: the refusals above, except stage1 != stage2, plus
   * stage2 != stage3                                  -> FAIL exit 1     (nothing written)
   * oracle output != stage2 (even if == stage1)       -> FAIL exit 1     (nothing written)
   * publication fails part-way                        -> FAIL exit 1     (old files rolled back)
   The oracle leg of --advance is NOT deferrable: MIND_SELFHOST_LOOP_ORACLE_DEFERRED
   records a deliberate one-leg VERIFICATION run and has no effect on publication.
+  --verify-chain only:
+  * git unavailable, shallow clone, or fewer than 2
+        historical receipts on the refs               -> BLOCKED exit 2  (never a pass)
+  * a dangling link, a looping or ambiguous chain      -> FAIL exit 1
+  * stage1.elf sha256/size != the committed row        -> FAIL exit 1
+  * head seed_chain row != the derived chain           -> FAIL exit 1
+  * combined with --advance, --reseed or --hops        -> BLOCKED exit 2
   --reseed only (LEGACY):
   * MINDC_SO unset/missing                            -> BLOCKED exit 2  (needs the seed .so)
   * .so emits an empty / non-ELF image                -> FAIL exit 1
@@ -115,3 +149,4 @@ Run:
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --advance  # advance the seed
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --advance --hops 2  # codegen change
   MINDC_SO=/path/to/libmindc_mind.so python3 .../self_host_loop_smoke.py --reseed   # LEGACY re-mint
+  python3 .../self_host_loop_smoke.py --verify-chain   # offline seed-chain check (full clone)

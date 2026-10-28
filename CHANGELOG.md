@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the self-host seed chain is tool-produced and tool-verified
+- `self_host_loop_smoke.py --advance` refuses a no-op: when the new fixed point
+  is the current seed it prints `BLOCKED: --advance would republish the current
+  seed unchanged; nothing written.` and exits 2 before publication (the
+  `(unchanged bytes)` label is gone). The bounded profile's `--bless` refuses the
+  same way.
+- Every `--advance` receipt (one or two hops) now ends with a COMPUTED
+  `seed_chain` row, `<sha256>[:intermediate] -> ... -> <published sha256>`,
+  starting at the chain root `abb0622b…`. One function derives it by walking the
+  receipts on every ref and tag back to the root; the old literal two-hop
+  sentence is gone. An advance whose old seed has no resolvable chain is refused
+  before anything runs.
+- New build-free `--verify-chain` mode, wired in CI with full history: it
+  re-derives the chain, requires every link to resolve, checks `stage1.elf`
+  against the committed MANIFEST row and the head receipt's `seed_chain` row
+  against the derived chain, prints one `PASS [CHAIN]` line per link, and
+  BLOCKs (exit 2, never a pass) on a shallow clone, without git, or with fewer
+  than two historical receipts. Receipts before the root are listed as
+  PRE-ROOT lines, never as chain links.
+- The receipt writer and the chain walk live in the loop's seed-provenance
+  support module, keeping the gate entrypoint under the 800-line ceiling.
+
 ### Fixed — lane gate workflow failure collection
 - Repair YAML and shell syntax in the three newly collected smoke steps.
   Keep each aggregate failure exit inside its step; preserve the original

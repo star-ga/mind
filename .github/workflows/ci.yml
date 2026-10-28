@@ -854,6 +854,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the seed-chain verifier below walks every ref,
+          # and a squash landing leaves the intermediate receipts on the evidence
+          # tag only. A shallow clone makes it BLOCK (rc 2), never pass.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Python for numerical smoke oracles
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -893,6 +899,14 @@ jobs:
         # Synthetic process/oracle controls for seed identity, agreement,
         # publication and rollback. The real compiler loop runs separately.
         run: python3 scripts/run_gate.py tests/self_host_loop_advance_test.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Seed-chain verifier (self_host_loop_smoke.py --verify-chain)
+        # Build-free. Re-derives the frozen seed's chain from the receipts on
+        # every ref back to the chain root, checks stage1.elf against the
+        # committed MANIFEST row and the head receipt's seed_chain row against
+        # the derived chain. One PASS line per link; BLOCKs on shallow history.
+        run: python3 scripts/run_gate.py --min-asserted 3 examples/mindc_mind/self_host_loop_smoke.py --verify-chain
         working-directory: ${{ github.workspace }}
 
       - name: Gate-vacuity sweep (run_gate.py --vacuity-sweep)
