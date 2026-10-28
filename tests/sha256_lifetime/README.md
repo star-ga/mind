@@ -2,6 +2,20 @@
 
 Author: STARGA Inc.
 
+> **Superseded contract.** These controls were written for the reviewed source
+> `a132ee35:std/sha256.mind` (sha256 `95f170a1…`): three scratch allocations per
+> call and raw refusals that return `1` (invalid range) or `2` (allocation
+> refusal). #289 replaced that contract in `std/sha256.mind`: one reused 704-byte
+> scratch, `sha256_checked` returning `-1`/`-2`, and a legacy `sha256` entry that
+> traps instead of returning. The current contract and its suite are
+> `docs/sha256-memory-contract.md`, `scripts/sha256_memory_regression.sh` and
+> `tests/sha256_{memory,allocation,legacy,repeated}_kat.mind`.
+> `assemble.sh` refuses (exit 65) any subject whose sha256 is not a pinned
+> `subject_sha256` in `cases.json`, so the current `std/sha256.mind` and patches
+> applied to it are rejected; the suite still reproduces the a132ee35 evidence
+> from `git show a132ee35:std/sha256.mind`. Porting it to the #289 contract would
+> duplicate that suite's coverage and is not planned.
+
 The executable assertions are MIND. `assemble.sh` only composes sources;
 `cases.json` records the prelisted controls and actual source mutations.
 Compilation errors, crashes and timeouts never count as mutation detection.
@@ -39,10 +53,12 @@ baseline source files byte for byte.
 
 ## Reproduction
 
-Use the reviewed subject source and an explicitly selected compiler. For example:
+Use the reviewed subject source (`a132ee35:std/sha256.mind`, not the current
+file) and an explicitly selected compiler. For example:
 
 ```sh
-bash tests/sha256_lifetime/assemble.sh std/sha256.mind observed /tmp/sha-observed
+git show a132ee35:std/sha256.mind > /tmp/sha-subject.mind
+bash tests/sha256_lifetime/assemble.sh /tmp/sha-subject.mind observed /tmp/sha-observed
 cd /tmp/sha-observed
 "$MINDC_BIN" build main.mind --backend mlir --target cpu --emit binary \
   --optimize debug --no-cache --out program
@@ -51,7 +67,7 @@ cd /tmp/sha-observed
 
 A passing baseline exits 0 with empty stdout/stderr. Each mutant exits its
 specific failing case number from `cases.json`, also with empty streams. Copy
-`std/sha256.mind` to a fresh temporary directory, apply one `mutants/Mxx.patch`
+the reviewed subject to a fresh temporary directory, apply one `mutants/Mxx.patch`
 there, and assemble that copy with `observed`; never patch the working product
 in place. Patches are tied to the reviewed source, so a failed patch application
 requires review rather than a fuzzy rewrite.

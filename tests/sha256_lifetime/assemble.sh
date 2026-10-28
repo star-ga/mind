@@ -12,6 +12,16 @@ case "$profile" in
   observed|raw-observed) observed=1 ;;
   *) exit 64 ;;
 esac
+# The controls assert the a132ee35 contract (three scratch allocations, return
+# 1/2 on refusal). #289 replaced it (one 704-byte scratch, sha256_checked -1/-2,
+# trapping legacy entry), whose suite is scripts/sha256_memory_regression.sh.
+# Refuse any subject that is not the reviewed source or one of its pinned
+# mutants, so these controls never run against a contract they do not describe.
+subject_sha=$(sha256sum "$subject" | cut -d' ' -f1)
+if ! grep -q "\"subject_sha256\": \"$subject_sha\"" "$here/cases.json"; then
+  echo "assemble.sh: subject $subject_sha is not a pinned subject in cases.json (reviewed source a132ee35:std/sha256.mind or one of its mutants); superseded by #289, see README.md" >&2
+  exit 65
+fi
 mkdir -p "$out"
 # Namespace only the subject functions to avoid binding the compiler's bundled
 # std.sha256 accidentally. No constants, operators or control flow change.

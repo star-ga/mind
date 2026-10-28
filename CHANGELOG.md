@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added — native variadic C-call emitter component
 - Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
 
+### Fixed — std.sha256 uses bounded scratch and never returns an unwritten digest
+- The raw entry used to allocate a fresh 512-byte schedule per message block, plus a
+  padded copy of the message and the hash state, and did not check allocation failure.
+  Repeated hashing could exhaust memory. It now uses one 704-byte scratch, reused for
+  every block and freed before it returns; whole input blocks are read in place and only
+  the final one or two padded blocks are copied.
+- New `sha256_checked(input, len, out)`: returns 0 after writing exactly 32 bytes, `-1`
+  for an invalid length or address range, `-2` when the scratch allocation fails. On
+  failure the output is not written.
+- `sha256(input, len, out)` keeps its zero-returning success ABI, but on any failure it
+  now calls the runtime trap `__mind_assert_fail` instead of returning, so a caller that
+  ignores the return value can no longer read an uninitialized digest. The intrinsic is
+  registered in the std surface with its existing determinism class. Backends that cannot
+  execute it refuse the program.
+- `hash(bytes)` returns 0 after freeing its temporaries when an allocation fails.
+- Contract and reproduction: `docs/sha256-memory-contract.md`,
+  `scripts/sha256_memory_regression.sh` (KATs, 100,000 repeated hashes under a 32 MiB
+  address-space cap, allocation faults, source mutations, legacy trap). The older
+  `tests/sha256_lifetime` controls describe the replaced contract; they are kept as the
+  record of that review and refuse any other subject.
+- `std/sha256.mind` is a native-seed module, so this change moves the std seed blob
+  (part of the seed batch; see the std.iouring entry).
+
 ### Fixed — std.iouring waits are bounded and report the kernel's reason
 - On Linux 6.6 `io_uring_multishot_recv_demo` hung: it armed a multishot RECV with
   `sqe.len = 256`, which that kernel rejects with one terminal `-EINVAL` CQE, then waited
@@ -28,8 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accept demos and the O_DIRECT round-trip return that reason instead of a bare -1.
   `io_uring_register` results are `-errno` too. The surface's own codes (`iouring_err_*`)
   are all at or below -4096, outside the errno range.
-- `std/iouring.mind` is a native-seed module, so this change moves the std seed blob
-  (`SEED_BLOB_SHA256` 199f304b… -> 8e29ed8b…). Until the next seed event advances the
+- `std/iouring.mind` is a native-seed module, so this change moves the std seed blob.
+  Measured on its own over the pre-batch std, it moved `SEED_BLOB_SHA256` 199f304b… ->
+  8e29ed8b…; in the seed batch (with the std.sha256 and json/toml changes) the blob is
+  45218a70… (`stdlib_manifest_lint.py --print-seed-sha256`). Until the next seed event advances the
   frozen self-host seeds (`self_host_loop_smoke.py --advance`, then the bounded seed and the
   manifest pin), the native backend refuses to build against the unpinned blob and the
   self-host loop verifies a new fixed point (0c9036e6…) instead of the frozen seed.
