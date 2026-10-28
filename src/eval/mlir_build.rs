@@ -17,11 +17,9 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::Command;
+use std::process::{Child, Command, ExitStatus, Stdio};
 #[cfg(feature = "mlir-build")]
-use std::process::Stdio;
-#[cfg(feature = "mlir-build")]
-use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 #[cfg(feature = "mlir-build")]
 use std::time::Duration;
 #[cfg(feature = "mlir-build")]
@@ -85,6 +83,14 @@ pub enum BuildError {
 }
 
 #[cfg(feature = "mlir-build")]
+#[path = "mlir_build_pipe.rs"]
+mod pipe;
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_tests.rs"]
+mod tests;
+
+#[cfg(feature = "mlir-build")]
 pub fn resolve_tools() -> Result<BuildTools, BuildError> {
     fn resolve(env: &str, default: &str, label: &'static str) -> Result<String, BuildError> {
         match std::env::var(env) {
@@ -146,17 +152,24 @@ pub fn build_all_with_objects(
         .map_err(BuildError::Internal)?;
     let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
     let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
-    let optimized_mlir = if let Some(pipeline) = combined_pipeline {
-        run_mlir_opt(&lowered, &pipeline, tools)?
+    // mlir-opt and mlir-translate run concurrently (see `pipe`): translate's
+    // startup overlaps opt's run, and it still receives exactly the text that
+    // becomes `optimized_mlir`. The `.mlir` file is written before translate's
+    // outcome is surfaced, so a translate failure leaves it behind as before.
+    let (optimized_mlir, llvm_ir) = if let Some(pipeline) = combined_pipeline {
+        let piped = pipe::run_mlir_opt_into_translate(&lowered, &pipeline, tools)?;
+        if let Some(path) = opts.emit_mlir_file {
+            write_text_file(path, &piped.optimized_mlir)?;
+        }
+        let llvm_ir = piped.llvm_ir?;
+        (piped.optimized_mlir, llvm_ir)
     } else {
-        lowered
+        if let Some(path) = opts.emit_mlir_file {
+            write_text_file(path, &lowered)?;
+        }
+        let llvm_ir = run_mlir_translate(&lowered, tools)?;
+        (lowered, llvm_ir)
     };
-
-    if let Some(path) = opts.emit_mlir_file {
-        write_text_file(path, &optimized_mlir)?;
-    }
-
-    let llvm_ir = run_mlir_translate(&optimized_mlir, tools)?;
 
     if let Some(path) = opts.emit_llvm_file {
         write_text_file(path, &llvm_ir)?;
@@ -891,45 +904,17 @@ fn run_command(
     timeout: Duration,
     label: &'static str,
 ) -> Result<CommandOutput, BuildError> {
-    use std::io::Read;
-    use std::thread;
-
-    let mut cmd = Command::new(program);
-    cmd.args(args.iter().map(|s| s.as_str()));
-    if input.is_some() {
-        cmd.stdin(Stdio::piped());
+    let stdin = if input.is_some() {
+        Stdio::piped()
     } else {
-        cmd.stdin(Stdio::null());
-    }
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => BuildError::ToolMissing(label),
-        _ => BuildError::Io(err),
-    })?;
+        Stdio::null()
+    };
+    let mut child = spawn_tool(program, args, stdin, label)?;
 
     // Drain stdout and stderr on background threads to prevent pipe-buffer
     // deadlock when child output exceeds the OS pipe buffer (typically 64 KiB).
-    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-
-    let stdout_buf_clone = Arc::clone(&stdout_buf);
-    let stdout_thread = stdout_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stdout_buf_clone.lock().unwrap());
-        })
-    });
-
-    let stderr_buf_clone = Arc::clone(&stderr_buf);
-    let stderr_thread = stderr_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stderr_buf_clone.lock().unwrap());
-        })
-    });
+    let stdout_thread = drain_pipe(child.stdout.take());
+    let stderr_thread = drain_pipe(child.stderr.take());
 
     // Write stdin after launching the drain threads so the child can read its
     // input while we drain its output — mutual progress guaranteed.
@@ -940,45 +925,80 @@ fn run_command(
         }
     }
 
-    // Poll for child termination with timeout.
-    let start = Instant::now();
-    let status = loop {
+    let status = wait_with_timeout(&mut child, Instant::now(), timeout, label)?;
+
+    Ok(CommandOutput {
+        stdout: join_drain(stdout_thread),
+        stderr: join_drain(stderr_thread),
+        status,
+    })
+}
+
+/// Spawn one build tool with piped stdout/stderr and the given stdin.
+#[cfg(feature = "mlir-build")]
+fn spawn_tool(
+    program: &str,
+    args: &[String],
+    stdin: Stdio,
+    label: &'static str,
+) -> Result<Child, BuildError> {
+    let mut cmd = Command::new(program);
+    cmd.args(args.iter().map(|s| s.as_str()));
+    cmd.stdin(stdin);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.spawn().map_err(|err| match err.kind() {
+        std::io::ErrorKind::NotFound => BuildError::ToolMissing(label),
+        _ => BuildError::Io(err),
+    })
+}
+
+/// Read `pipe` to EOF on a background thread. A read error keeps the bytes
+/// received before it, as `read_to_end` does.
+#[cfg(feature = "mlir-build")]
+fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Option<JoinHandle<Vec<u8>>> {
+    pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    })
+}
+
+#[cfg(feature = "mlir-build")]
+fn join_drain(handle: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    handle.and_then(|t| t.join().ok()).unwrap_or_default()
+}
+
+/// Poll `child` until it exits, killing it once `timeout` has elapsed since
+/// `start`.
+#[cfg(feature = "mlir-build")]
+fn wait_with_timeout(
+    child: &mut Child,
+    start: Instant,
+    timeout: Duration,
+    label: &'static str,
+) -> Result<ExitStatus, BuildError> {
+    loop {
         match child.try_wait() {
-            Ok(Some(s)) => break s,
+            Ok(Some(status)) => return Ok(status),
             Ok(None) => {
                 if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    kill_and_reap(child);
                     return Err(BuildError::Timeout(label));
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
             Err(err) => return Err(BuildError::Io(err)),
         }
-    };
-
-    // Join drain threads before reading the buffers.
-    if let Some(t) = stdout_thread {
-        let _ = t.join();
     }
-    if let Some(t) = stderr_thread {
-        let _ = t.join();
-    }
+}
 
-    let stdout = Arc::try_unwrap(stdout_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
-    let stderr = Arc::try_unwrap(stderr_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
-
-    Ok(CommandOutput {
-        stdout,
-        stderr,
-        status,
-    })
+#[cfg(feature = "mlir-build")]
+fn kill_and_reap(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(feature = "mlir-build")]
