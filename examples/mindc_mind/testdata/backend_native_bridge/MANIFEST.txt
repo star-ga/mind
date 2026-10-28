@@ -5,7 +5,13 @@
 # (gate: backend_native_bridge_smoke.py).
 #
 # compiler:  testdata/selfhost_loop/stage1.elf (frozen pure-MIND stage0)
-# std_blob:  21 modules, sha256 6c269ee7082a993dc48f83e70fdccf19f2b6252a479c22f40dc9a454c4e464bc (380832 bytes)
+# std_blob:  21 modules, sha256 45218a70f89f04c4f1fa67079368dd30007cc4426be33fef0068988b6a23259a (416331 bytes)
+#            Re-pinned in the seed batch (S6b, S6a, #289). The previous pin dated from the
+#            std at 1a952e65, so this also carries every std edit made since. With the same stage1.elf the
+#            previous blob 6c269ee7... (380832 bytes) still reproduces the previous
+#            oracles byte for byte; under the new blob every program keeps its size and
+#            differs only in the last 32 bytes, inside its PT_NOTE (the IR trace hash
+#            over program + std). Code, headers and exit codes are unchanged.
 # programs:  each row's source is <name>.mind in this directory; the gate reads the
 #            manifest and iterates every row. Previously the gate hardcoded ONE
 #            program, so "byte anchor" meant a single 492-byte artifact and a
@@ -17,10 +23,10 @@
 # wire:      stdin [8B user_lo LE][8B src_len LE][std_blob ++ program]; ELF -> stdout
 #
 # name  size_bytes  sha256  expected_exit_code
-add           492  2c6f923330882fa1324bbf4170d9f805a486f76225436c564f69a24d2f022c26  5
-const_return  397  8734bc4c3ee1962760222135855ca7f1290c41e5ceeb03a8ac944328679a8b9b  7
-local_call    474  f72c53019d3e83afcdf4a86afa63020a7b720f12e952bfbc4697551d0192c520  7
-while_sum     581  e442c8a5fb3b82061126a4d4c114a66de5af972dbbccf73f13a80b8bbe0738c0  45
+add           492  7cc371591672c2bf2475cf1df55e083bad55693844967a5336ffb4b878e0f4ba  5
+const_return  397  f6aa8328d4b936d2eb3e7bd039630dee9ac963d022207c00bfd1b340a28940bc  7
+local_call    474  a8a317c90f0cfe82b972bc6ad6b7c7e85d34994ed51643e29421dc148218a61c  7
+while_sum     581  0cd92dbeea2118da51437c2407b06665cd1e73a378783ff317b5610a0a2f191d  45
 #
 # Old-Rust divergence (native_elf_oracle/add.elf, sha b20651a5..., same 492B): 31 of 492
 # bytes differ, ALL in the tail (bytes 461-492). ELF header, entry (0x400120), program

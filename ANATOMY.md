@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2635 | **Est. tokens:** ~4,717,094
-**Generated:** 2026-10-28 07:34 UTC
+**Files:** 2635 | **Est. tokens:** ~4,717,228
+**Generated:** 2026-10-28 07:58 UTC
 
 ## Token Budget Guide
 
@@ -66,7 +66,7 @@
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 288 | ~806,664 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
-| `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
+| `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,212 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 14 | ~3,315 |
@@ -813,13 +813,13 @@
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 0426560120b6bd4a54b91e152355a871488e106c46469b5c729241507538d304
-- `_ref_if_ret.note` (~16 tok, tiny) — b0cc34901fd5c87484c12c89fa35b7fc570d0358cdf61dc81da32a6d38e9c416
-- `_ref_main.note` (~16 tok, tiny) — 951133fe82a0003a0f52674f2623a11dc54de536a29138df2af4c5883b0d8ac8
+- `_ref_add.note` (~16 tok, tiny) — 7845476f31a3b3a6610ed88cb2637054ff99d6f4416d9fb0b397325740671369
+- `_ref_if_ret.note` (~16 tok, tiny) — 2f90bbd2730df8e68db0c4ed2823bfb349efab70dbc0c442c09d8a9081bab4bc
+- `_ref_main.note` (~16 tok, tiny) — 9fcd32aa84dfea01e2c0ae7c470d625f22f8ae965039ef3f4cf509a8e157ed30
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
-- `_ref_recursion.note` (~16 tok, tiny) — 1cbc38cbed2cf3a7fad50c8f10d60defb87265b6e289138dd7829430e78b257b
-- `_ref_struct_field.note` (~16 tok, tiny) — 85a8fe983d6f699e93ac5af4aac5618d845f5eefa39d2817a04f45f39a4dbae5
-- `_ref_value_if.note` (~16 tok, tiny) — 3503accb2c43483044139f0819f9921aa0bd358db0ecc6f50d41833545aa30ae
+- `_ref_recursion.note` (~16 tok, tiny) — 566e05f687134addad6e84a919ec92fbafadb5549c8d52a92ed0b742c5fb6a58
+- `_ref_struct_field.note` (~16 tok, tiny) — eb0559a9e4edd3f4f6647134dcbf6498936a5fcbf47a34e2926a15046b0f9849
+- `_ref_value_if.note` (~16 tok, tiny) — 9c7d48e76caa37a152590cbbc81a8fc51b66aae766ec9b1eccf56908843fb8ec
 - `rh_f64_aggregate_canary_smoke.py` (~1597 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 - `ri_d1_frozen_profile_gate.py` (~4276 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
@@ -979,7 +979,7 @@
 - `const_return.mind` (~9 tok, tiny) — fn main() -> i64 {
 - `local_call.elf` (binary, 474 bytes)
 - `local_call.mind` (~23 tok, tiny) — fn helper(x: i64) -> i64 {
-- `MANIFEST.txt` (~497 tok, medium) — # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
+- `MANIFEST.txt` (~631 tok, large) — # Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MI
 - `while_sum.elf` (binary, 581 bytes)
 - `while_sum.mind` (~37 tok, tiny) — fn main() -> i64 {
 ### `examples/mindc_mind/testdata/`
