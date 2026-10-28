@@ -3468,3 +3468,41 @@ transformer block runs under `--require-strict-fp`.
 - Which proof tool GP-06 uses, and how it stays outside the trusted base, is decided by RFC.
 - Licence policy for translations of HumanEval, MBPP and McEval-Hard (GP-01).
 - No milestone dates are set; each item is sequenced after the gate it depends on.
+
+## Research watch — implicit geometry as a tensor library workload (2026-10-28)
+
+**Status: proposed; review REQUIRED before implementation. Not approved,
+implemented, or scheduled.** Application/library research, not a new
+compiler keyword or normative language-specification feature.
+
+**Numerical candidate.** Evaluate analytic implicit functions,
+signed-distance and zero-level-set predicates, CSG via min/max/negation,
+and transformations over typed tensor grids. With identical Q16.16
+input operands, min/max selects existing bit patterns without rounding;
+this alone neither proves that two machines compute identical *operands*
+nor guarantees geometric correctness, accurate surfaces, or exact
+Euclidean distances after arbitrary CSG.
+
+**Precision qualification.** Signed i32 Q16.16 in millimetres represents
+[-32768, 32767.999985] mm, with a grid spacing of 1/65536 mm
+(~0.01526 micrometres). This is representational spacing, NOT achieved
+CAD tolerance. The 64-bit signed Q32.32 accumulation range and
+three-axis squared-distance sums can overflow even when every coordinate
+is representable. Require bounded local coordinates, tested overflow
+semantics, scaling/tolerance budgets, and wider/adaptive-precision paths
+where needed. An approximate lookup-table square root is not a
+qualified CAD distance operator. Review
+correctly rounded integer square-root or certified intervals if real
+distances are needed; retain squared-distance predicates where valid.
+
+**Qualification gates.** Property/fixture tests for near-zero
+sign changes, tangencies, transforms, thin walls and CSG seams;
+independent high-precision reference; CPU scalar parity and AVX2/NEON
+replay with pinned input/output hashes; separate GPU floating-point
+qualification. Benchmark robust geometry and batch performance against
+existing kernels.
+
+Only promote to a standalone optional MIND geometry library after
+measurements and review; runtime specialization needs its own profiling
+and approval. Rendering experiments remain with
+[mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md).
