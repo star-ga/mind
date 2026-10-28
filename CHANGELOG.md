@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receipts on every ref and tag back to the root; the old literal two-hop
   sentence is gone. An advance whose old seed has no resolvable chain is refused
   before the oracle runs or anything is written.
-- New build-free `--verify-chain` mode, wired in CI with full history: it
+- New build-free `--verify-chain` mode, run in CI with full history from the
+  advancement harness controls (not as a second CI argument list of the
+  compiler-dependent loop smoke, which the vacuity sweep and the loop-gate
+  wiring guards would read as a compiler-free loop gate): it
   re-derives the chain, requires every link to resolve, checks `stage1.elf`
   against the committed MANIFEST row and the head receipt's `seed_chain` row
   against the derived chain, prints one `PASS [CHAIN]` line per link, and

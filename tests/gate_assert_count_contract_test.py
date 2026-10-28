@@ -338,11 +338,8 @@ def case_loop_gate_is_wired_with_both_legs_required() -> None:
             if "run_gate.py" not in line or "self_host_loop_smoke" not in line:
                 continue
             checked += 1
-            # A floor of at least 2 (the --verify-chain call site asserts 3).
-            words = line.split()
-            at = words.index("--min-asserted") + 1 if "--min-asserted" in words else 0
-            floor = int(words[at]) if 0 < at < len(words) and words[at].isdigit() else 0
-            check(f"{rel}: loop gate demands both legs", floor >= 2, True)
+            check(f"{rel}: loop gate demands both legs",
+                  "--min-asserted 2" in line, True)
     check("loop-gate call sites found", checked >= 2, True)
 
 

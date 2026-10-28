@@ -855,7 +855,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history and tags: the seed-chain verifier below walks every ref,
+          # Full history and tags: the seed-chain verifier (run by the advancement
+          # harness controls step below) walks every ref,
           # and a squash landing leaves the intermediate receipts on the evidence
           # tag only. A shallow clone makes it BLOCK (rc 2), never pass.
           fetch-depth: 0
@@ -898,15 +899,12 @@ jobs:
       - name: Bootstrap advancement harness controls
         # Synthetic process/oracle controls for seed identity, agreement,
         # publication and rollback. The real compiler loop runs separately.
+        # One case also runs the build-free seed-chain verifier
+        # (self_host_loop_smoke.py --verify-chain, floor 3) on THIS repository's
+        # refs. It is nested here on purpose: as a second CI argv of the
+        # compiler-dependent loop smoke it would pass the vacuity sweep with no
+        # compiler and count as loop-gate wiring while running neither leg.
         run: python3 scripts/run_gate.py tests/self_host_loop_advance_test.py
-        working-directory: ${{ github.workspace }}
-
-      - name: Seed-chain verifier (self_host_loop_smoke.py --verify-chain)
-        # Build-free. Re-derives the frozen seed's chain from the receipts on
-        # every ref back to the chain root, checks stage1.elf against the
-        # committed MANIFEST row and the head receipt's seed_chain row against
-        # the derived chain. One PASS line per link; BLOCKs on shallow history.
-        run: python3 scripts/run_gate.py --min-asserted 3 examples/mindc_mind/self_host_loop_smoke.py --verify-chain
         working-directory: ${{ github.workspace }}
 
       - name: Gate-vacuity sweep (run_gate.py --vacuity-sweep)
