@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2630 | **Est. tokens:** ~4,710,438
-**Generated:** 2026-10-28 07:24 UTC
+**Files:** 2630 | **Est. tokens:** ~4,710,863
+**Generated:** 2026-10-28 07:39 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 289 | ~814,367 |
+| `examples/mindc_mind/` | 289 | ~814,792 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -772,7 +772,7 @@
 - `native_emission_context.mind` (~1271 tok, large) — Copyright 2026 STARGA Inc.
 - `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
-- `native_lane_op_differential_smoke.py` (~7464 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
+- `native_lane_op_differential_smoke.py` (~7889 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
 - `native_lane_value_shapes_smoke.py` (~3202 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_binding_check.py` (~6416 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret

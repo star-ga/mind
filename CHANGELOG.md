@@ -22,8 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ARM neon MLIR/evaluator step. The native leg is x86-only by construction;
   ARM neon validation is CI-only until an ARM node is available.
 - Division edges are pinned per path, expectation follows D1: native/MLIR
-  trap 79 (including i8/i16/i32 MIN/-1 division and remainder); unsupported
-  native narrow types require the named `lane.type.unsupported` refusal.
+  trap 79 on a zero divisor and on i64 `INT_MIN / -1` and `INT_MIN % -1`;
+  i8/i16/i32 `MIN / -1` gives `MIN` and `MIN % -1` gives `0` with no trap, as
+  docs/errors.md defines and the division-trap smoke already pins on both
+  backends; unsupported native narrow types require the named
+  `lane.type.unsupported` refusal.
   The evaluator pins measured values or exact named errors and overflow
   panics. Unrelated process failures never satisfy an evaluator pin.
 

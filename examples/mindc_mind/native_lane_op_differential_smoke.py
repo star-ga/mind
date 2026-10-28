@@ -21,7 +21,10 @@ two's-complement arithmetic, toward-zero division, and a shift count masked
 with `& 63`.
 
 Division edges have per-path pins (expectation follows D1): compiled paths
-require trap 79; the evaluator requires the measured named error, overflow
+require trap 79, except the narrow signed MIN / -1 and MIN % -1 rows, which
+docs/errors.md ("Integer division trap") defines as MIN and 0 (the divisor-1
+result, no trap) and which self_host_native_div_trap_smoke.py pins the same way
+on both backends; the evaluator requires the measured named error, overflow
 panic, or value. Narrow native types may refuse with lane.type.unsupported.
 The imported division row builds a real helper module on both compiled paths.
 The expression-only evaluator receives the same helper text joined with the
@@ -52,6 +55,9 @@ import gate_assert  # noqa: E402
 SEED = 20261021
 MARK = b"\x48\xb8nblane01"
 TRAP_EXIT = 79
+# Exit of _narrow_min when the documented narrow MIN / -1 result (MIN, or 0 for
+# `%`) is observed; 1 is a wrong value and TRAP_EXIT a trap the contract forbids.
+NARROW_MIN_EXIT = 2
 INT_MIN = -1 << 63
 INT_MAX = (1 << 63) - 1
 MIN_PROGRAMS = 64
@@ -461,7 +467,7 @@ def build_corpus(seed: int = SEED) -> list[Case]:
             cases.append(Case(
                 f"edge_{ty}_{_OP_NAME[op]}_min",
                 _narrow_min(ty, op, min_expr),
-                TRAP_EXIT,
+                NARROW_MIN_EXIT,
                 allow_native_refusal=True,
                 follows_d1=True,
                 expect_eval="narrow_q" if ty == "i32" else "value2",
@@ -637,12 +643,31 @@ def self_test() -> int:
                       ("stdout", replace(good, stdout=b"unexpected"))]:
         checks.append((name, not _match(obs, c, "eval")))
     checks.append(("mlir_cannot_use_eval_pin", not _match(good, c, "mlir")))
+    # i64 INT_MIN/-1 stays the trap on the compiled paths (the narrow flip
+    # below must not reach it): 79 accepted, the wrapped value rejected.
+    for cid in ("edge_i64_div_min_helper", "edge_i64_mod_min_literal"):
+        row = cases[cid]
+        checks.append((cid + "_compiled_trap", row.expect_exit == TRAP_EXIT and all(
+            _match(Obs("ran", TRAP_EXIT, b"", ""), row, path)
+            and not _match(Obs("ran", 4, b"", ""), row, path)
+            for path in ("native", "mlir"))))
     for ty in ("i8", "i16", "i32"):
         for op in ("div", "mod"):
+            # Narrow MIN/-1 is defined (MIN, remainder 0), never the trap:
+            # the documented value is accepted, the trap and a wrong value
+            # (exit 1) are rejected on both compiled paths.
             row = cases[f"edge_{ty}_{op}_min"]
-            checks.append((row.cid, row.expect_exit == 79 and all(
-                not _match(Obs("ran", 2, b"", ""), row, path)
-                and _match(Obs("ran", 79, b"", ""), row, path)
+            checks.append((row.cid, row.expect_exit == NARROW_MIN_EXIT and all(
+                _match(Obs("ran", NARROW_MIN_EXIT, b"", ""), row, path)
+                and not _match(Obs("ran", TRAP_EXIT, b"", ""), row, path)
+                and not _match(Obs("ran", 1, b"", ""), row, path)
+                for path in ("native", "mlir"))))
+            # Positive control: the zero-divisor row of the same type still
+            # requires the trap, so the flip above did not loosen it.
+            zrow = cases[f"edge_{ty}_{op}_zero"]
+            checks.append((zrow.cid, zrow.expect_exit == TRAP_EXIT and all(
+                _match(Obs("ran", TRAP_EXIT, b"", ""), zrow, path)
+                and not _match(Obs("ran", NARROW_MIN_EXIT, b"", ""), zrow, path)
                 for path in ("native", "mlir"))))
     for cid, good_obs in [
         ("edge_i64_div_zero_helper", Obs("eval_error", 0, b"", "Evaluation error: division by zero")),
