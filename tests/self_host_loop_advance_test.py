@@ -124,6 +124,23 @@ def case_verify_chain_passes_and_fails_closed() -> None:
                   "PASS  [CHAIN] " in out, False)
 
 
+def case_verify_chain_walks_a_two_hop_receipt() -> None:
+    """A two-hop receipt in history adds its intermediate as a link: the shape of
+    the real root -> intermediate -> seed hop the head receipt descends from."""
+    mid = sha(OTHER_LINK)
+    two_hop = ("two-hop", receipt(OLD_SEED, **{"advance_hops": "2", FROM: ROOT,
+                                             "intermediate_stage1_sha256": mid}))
+    head = receipt(NEW_POINT, **{FROM: sha(OLD_SEED)})
+    want = " -> ".join([ROOT, f"{mid}:intermediate", sha(OLD_SEED), sha(NEW_POINT)])
+    with Sandbox() as sb:
+        rc, out = _verify(sb, head, lambda: [("head", head), two_hop])
+        check("two-hop history: verify-chain passes", rc, 0)
+        check("two-hop history: the derived chain names the intermediate",
+              f"derived seed_chain\t{want}\n" in out, True)
+        check("two-hop history: one PASS [CHAIN] line per link",
+              out.count("PASS  [CHAIN] "), 4)
+
+
 OTHER_LINK = b"not-a-seed"
 
 

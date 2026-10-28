@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2657 | **Est. tokens:** ~4,757,594
-**Generated:** 2026-10-28 21:05 UTC
+**Files:** 2657 | **Est. tokens:** ~4,757,832
+**Generated:** 2026-10-28 21:12 UTC
 
 ## Token Budget Guide
 
@@ -175,7 +175,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 433 | ~902,381 |
+| `tests/` | 433 | ~902,619 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -3331,7 +3331,7 @@
 - `self_host_loop_advance_contract_test.py` (~6964 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
 - `self_host_loop_advance_publication_test.py` (~7642 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
 - `_self_host_loop_advance_support.py` (~1910 tok, huge) — Shared fixtures for the self-host loop advancement controls.
-- `self_host_loop_advance_test.py` (~2225 tok, huge) — Runner for the self-host LOOP advancement harness controls.
+- `self_host_loop_advance_test.py` (~2463 tok, huge) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
 - `sha256_allocation_kat.mind` (~409 tok, medium) — Author: STARGA Inc.
 - `sha256_legacy_kat.mind` (~605 tok, large) — Author: STARGA Inc.
