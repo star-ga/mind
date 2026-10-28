@@ -3051,9 +3051,9 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    proof-preserving inference, retain visible lifetime semantics for governed
    code. **Gates:** compile-fail corpus for UAF/double-free/alias escapes,
    sanitizer and fuzz checks, stable foreign-call layout, and a published safety
-    statement that lists each guarantee the region and generation-check model makes,
-    the test that enforces it and the stated exclusions. A guarantee without an
-    enforcing test is not published.
+   statement that lists each guarantee the region and generation-check model makes,
+   the test that enforces it and the stated exclusions. A guarantee without an
+   enforcing test is not published.
 10. **MOC-10: Deterministic multicore structured concurrency.** Define
     task scopes, cancellation propagation, channels, bounded queues,
     race-free ownership transfer, fair scheduling policy and replayable
