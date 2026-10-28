@@ -157,7 +157,6 @@ const SHARED_TEMP_BACKLOG: &[(&str, usize)] = &[
     ("std_surface_cdylib_link.rs", 2),
     ("std_surface_i32_intrinsics.rs", 1),
     ("std_surface_io_canon.rs", 1),
-    ("std_surface_iouring.rs", 2),
     ("std_surface_phase_d_env_override.rs", 1),
     ("std_surface_promotion_compose.rs", 1),
     ("std_surface_self_emit_shared.rs", 1),
