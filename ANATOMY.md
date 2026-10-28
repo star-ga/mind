@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1914 | **Est. tokens:** ~3,728,898
-**Generated:** 2026-10-28 17:24 UTC
+**Files:** 1914 | **Est. tokens:** ~3,730,677
+**Generated:** 2026-10-28 21:03 UTC
 
 ## Token Budget Guide
 
@@ -50,7 +50,7 @@
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~3,910 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 35 | ~171,406 |
+| `docs/rfcs/` | 35 | ~173,185 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -519,7 +519,7 @@
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
-- `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
+- `0011-async-and-structured-concurrency.md` (~6670 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `0012-tensor-native-syntax.md` (~12947 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `0013-cli-agent-harness-stack.md` (~6776 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5605 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
