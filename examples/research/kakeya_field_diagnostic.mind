@@ -1,0 +1,18 @@
+// Kakeya-inspired deterministic directional-field diagnostic.
+// This is a finite directional-crossing toy, NOT a Kakeya set,
+// local-smoothing theorem implementation, or a proof of any conjecture.
+// Integer-only arithmetic for minimal compiler-surface compatibility.
+// Expected return: 24 (8 directions x 3 steps).
+fn main() -> i64 {
+    let mut checksum: i64 = 0;
+    let mut direction: i64 = 0;
+    while direction < 8 {
+        let mut step: i64 = 0;
+        while step < 3 {
+            checksum = checksum + 1;
+            step = step + 1;
+        }
+        direction = direction + 1;
+    }
+    checksum
+}
