@@ -116,7 +116,7 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-HARNESS_CEILING = 263  # Includes the manifest-bound canonical record-trace gate.
+HARNESS_CEILING = 264  # Adds native MIND file-open regression reproduction transport.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
