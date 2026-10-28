@@ -643,32 +643,22 @@ def self_test() -> int:
                       ("stdout", replace(good, stdout=b"unexpected"))]:
         checks.append((name, not _match(obs, c, "eval")))
     checks.append(("mlir_cannot_use_eval_pin", not _match(good, c, "mlir")))
-    # i64 INT_MIN/-1 stays the trap on the compiled paths (the narrow flip
-    # below must not reach it): 79 accepted, the wrapped value rejected.
+    # Row pins `code`; `code` accepted, every `bad` exit rejected, both compiled paths.
+    def pinned(row, code, *bad):
+        return row.expect_exit == code and all(
+            _match(Obs("ran", code, b"", ""), row, p)
+            and not any(_match(Obs("ran", x, b"", ""), row, p) for x in bad)
+            for p in ("native", "mlir"))
+    # i64 INT_MIN/-1 keeps the compiled-path trap (the narrow flip must not reach it).
     for cid in ("edge_i64_div_min_helper", "edge_i64_mod_min_literal"):
-        row = cases[cid]
-        checks.append((cid + "_compiled_trap", row.expect_exit == TRAP_EXIT and all(
-            _match(Obs("ran", TRAP_EXIT, b"", ""), row, path)
-            and not _match(Obs("ran", 4, b"", ""), row, path)
-            for path in ("native", "mlir"))))
+        checks.append((cid + "_compiled_trap", pinned(cases[cid], TRAP_EXIT, 4)))
     for ty in ("i8", "i16", "i32"):
         for op in ("div", "mod"):
-            # Narrow MIN/-1 is defined (MIN, remainder 0), never the trap:
-            # the documented value is accepted, the trap and a wrong value
-            # (exit 1) are rejected on both compiled paths.
-            row = cases[f"edge_{ty}_{op}_min"]
-            checks.append((row.cid, row.expect_exit == NARROW_MIN_EXIT and all(
-                _match(Obs("ran", NARROW_MIN_EXIT, b"", ""), row, path)
-                and not _match(Obs("ran", TRAP_EXIT, b"", ""), row, path)
-                and not _match(Obs("ran", 1, b"", ""), row, path)
-                for path in ("native", "mlir"))))
-            # Positive control: the zero-divisor row of the same type still
-            # requires the trap, so the flip above did not loosen it.
-            zrow = cases[f"edge_{ty}_{op}_zero"]
-            checks.append((zrow.cid, zrow.expect_exit == TRAP_EXIT and all(
-                _match(Obs("ran", TRAP_EXIT, b"", ""), zrow, path)
-                and not _match(Obs("ran", NARROW_MIN_EXIT, b"", ""), zrow, path)
-                for path in ("native", "mlir"))))
+            # Narrow MIN/-1 is defined (MIN, remainder 0): value accepted, trap and wrong
+            # value (exit 1) rejected; positive control: the zero-divisor row still traps.
+            row, zrow = cases[f"edge_{ty}_{op}_min"], cases[f"edge_{ty}_{op}_zero"]
+            checks.append((row.cid, pinned(row, NARROW_MIN_EXIT, TRAP_EXIT, 1)))
+            checks.append((zrow.cid, pinned(zrow, TRAP_EXIT, NARROW_MIN_EXIT)))
     for cid, good_obs in [
         ("edge_i64_div_zero_helper", Obs("eval_error", 0, b"", "Evaluation error: division by zero")),
         ("edge_i8_div_min", Obs("ran", 2, b"", "")),
