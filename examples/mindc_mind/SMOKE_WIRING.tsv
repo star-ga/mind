@@ -89,7 +89,7 @@ self_host_if_region_carry_smoke	ci,keystone	gate
 self_host_ifret_chain_mic3_smoke	ci	gate	
 self_host_letpath_failclose_smoke	ci	gate	
 self_host_lockstep_smoke	ci	gate	
-self_host_loop_smoke	ci,preflight	gate	Self-host LOOP gate: the frozen pure-MIND stage0 reproduces itself and a fresh oracle finds no source drift (preflight + ci); `--verify-chain` (ci, build-free) re-derives the seed chain from the receipts on every ref back to the chain root and BLOCKs on shallow history.
+self_host_loop_smoke	ci,preflight	gate	Self-host LOOP gate: the frozen pure-MIND stage0 reproduces itself and a fresh oracle finds no source drift (preflight + ci); `--verify-chain` (build-free; run in ci by tests/self_host_loop_advance_test.py, not as its own ci argv) re-derives the seed chain from the receipts on every ref back to the chain root and BLOCKs on shallow history.
 self_host_match_smoke	ci	gate	
 self_host_matchscalar_mic3_smoke	ci	gate	
 self_host_mic3_float_valueif_smoke	ci	gate	

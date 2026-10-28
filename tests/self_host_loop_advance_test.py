@@ -19,7 +19,8 @@ from _self_host_loop_advance_support import (
     FAILURES, IMAGE, INTERMEDIATE, NEW_POINT, OLD_SEED, SRC, USER_LO, Sandbox,
     StubOracle, captured, check, loop, receipt_rows, sha, stub_loop,
 )
-from _selfhost_loop_reseed import ChainBlocked, git_receipt_history, walk_seed_chain
+from _selfhost_loop_reseed import (ChainBlocked, git_receipt_history, parse_receipt,
+                                   walk_seed_chain)
 
 ROOT = loop.SEED_CHAIN_ROOT
 FROM = "advanced_from_seed_sha256"
@@ -30,8 +31,9 @@ def receipt(seed: bytes, **rows: str) -> str:
     return loop.manifest_text(seed, published_by="synthetic", receipt=rows)
 
 
-#: Every case in this run walks THIS history, never the repository's own refs:
+#: Every in-process case walks THIS history, never the repository's own refs:
 #: one synthetic receipt that publishes the sandbox's OLD_SEED from the root.
+#: (case_repository_seed_chain_verifies runs the real verifier in a subprocess.)
 ROOT_HOP = ("synthetic-root-hop", receipt(OLD_SEED, **{FROM: ROOT}))
 
 
@@ -172,6 +174,32 @@ def case_git_history_is_refused_on_a_shallow_clone() -> None:
         check("git history: a shallow clone is refused", "shallow" in refused, True)
 
 
+REPO = pathlib.Path(__file__).resolve().parents[1]
+REPO_CHAIN = ["scripts/run_gate.py", "--min-asserted", "3",
+              "examples/mindc_mind/self_host_loop_smoke.py", "--verify-chain"]
+
+
+def case_repository_seed_chain_verifies() -> None:
+    """A-B2 wiring: the real --verify-chain on THIS repository's refs, under the
+    gate runner with floor 3. Nested here, never a second CI argv of the
+    compiler-dependent loop smoke (that argv would pass the vacuity sweep with no
+    compiler and count as loop-gate wiring while running neither leg). Needs full
+    history and tags: a shallow clone BLOCKs (rc 2) and fails this case."""
+    proc = subprocess.run([sys.executable, *REPO_CHAIN], cwd=REPO, capture_output=True,
+                          text=True, timeout=600, check=False)
+    lines = (proc.stdout + proc.stderr).splitlines()
+    why = next((ln.strip() for ln in lines if "BLOCKED" in ln or "FAIL" in ln), "")
+    links = [ln.split()[2] for ln in lines if ln.strip().startswith("PASS  [CHAIN] ")]
+    _, published, _ = parse_receipt(
+        (REPO / "examples/mindc_mind/testdata/selfhost_loop/MANIFEST.txt").read_text())
+    check("repository chain: run_gate --min-asserted 3 --verify-chain passes",
+          (proc.returncode, why), (0, ""))
+    check("repository chain: at least 3 links", len(links) >= 3, True)
+    check("repository chain: first link is the chain root", links[:1], [ROOT])
+    check("repository chain: last link is the committed stage1.elf sha",
+          links[-1:], [published])
+
+
 def main() -> int:
     loop._receipt_history = lambda: [ROOT_HOP]
     cases = [value for name, value in globals().items()
@@ -192,7 +220,8 @@ def main() -> int:
           "--advance --hops 2 publishes stage2 only once stage2 == stage3 and "
           "the oracle agrees with it, a no-op advance is refused, every receipt "
           "carries a seed_chain row derived from the refs, --verify-chain fails "
-          "closed on a dangling, altered or shallow chain, --reseed records the "
+          "closed on a dangling, altered or shallow chain and passes on this "
+          "repository's refs, --reseed records the "
           "broken seed chain, every ordinary refusal preserves the fixture, failed "
           "rollback is reported with recoverable copies, and ordinary verification "
           "is unweakened. (Harness controls: synthetic images, stub oracle — not "

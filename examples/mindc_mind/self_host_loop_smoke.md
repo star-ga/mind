@@ -83,7 +83,11 @@ SEED CHAIN (the receipt row and its offline verifier):
   one `PASS  [CHAIN] <link> -> <next>` line per link. History before the root
   (the receipts named in PRE_ROOT_HISTORY) is printed as measured PRE-ROOT lines,
   counted apart, never a chain link and never a PASS. CI runs it with full
-  history and tags (`fetch-depth: 0`) under --min-asserted 3.
+  history and tags (`fetch-depth: 0`) under --min-asserted 3, from one case of
+  tests/self_host_loop_advance_test.py (the "Bootstrap advancement harness
+  controls" step), never as a second CI argv of this smoke: this smoke is
+  compiler-dependent, so a build-free argv of it would pass the vacuity sweep
+  with no compiler and count as LOOP-gate wiring while running neither leg.
 
 HONEST FRAMING (no overclaim):
   This proves REPRODUCTION-independence — the seed chain is now Rust-free and the
