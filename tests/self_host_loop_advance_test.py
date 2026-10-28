@@ -75,7 +75,7 @@ def case_advance_writes_a_computed_seed_chain_row() -> None:
 
 
 def case_advance_blocked_when_the_old_seed_has_no_chain() -> None:
-    """No receipt on any ref publishes the old seed: refused before anything runs."""
+    """No receipt on any ref publishes the old seed: refused before the oracle and publication."""
     with Sandbox() as sb:
         log: list[bytes] = []
         sb.patch(_receipt_history=lambda: [], run_elf=stub_loop((NEW_POINT,) * 3, log),
@@ -84,7 +84,7 @@ def case_advance_blocked_when_the_old_seed_has_no_chain() -> None:
         check("unchained seed: refused with rc 2", rc, 2)
         check("unchained seed: names the dangling seed",
               f"{sha(OLD_SEED)} is published by no receipt" in out, True)
-        check("unchained seed: nothing ran", log, [])
+        check("unchained seed: refused before the oracle is consulted", "oracle =" in out, False)
         check("unchained seed: fixture untouched", sb.unchanged(), True)
 
 

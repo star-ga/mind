@@ -125,7 +125,7 @@ FAIL-CLOSED (never skips when asked to run):
   * oracle output != the new fixed point              -> FAIL exit 1     (nothing written)
   * the fixed point IS the current seed (no-op)       -> BLOCKED exit 2  (nothing written)
   * the old seed's chain does not resolve (dangling,
-        shallow clone, no git)                        -> BLOCKED exit 2  (before anything runs)
+        shallow clone, no git)                        -> BLOCKED exit 2  (before the oracle; nothing written)
   --advance --hops 2: the refusals above, except stage1 != stage2, plus
   * stage2 != stage3                                  -> FAIL exit 1     (nothing written)
   * oracle output != stage2 (even if == stage1)       -> FAIL exit 1     (nothing written)

@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starting at the chain root `abb0622b…`. One function derives it by walking the
   receipts on every ref and tag back to the root; the old literal two-hop
   sentence is gone. An advance whose old seed has no resolvable chain is refused
-  before anything runs.
+  before the oracle runs or anything is written.
 - New build-free `--verify-chain` mode, wired in CI with full history: it
   re-derives the chain, requires every link to resolve, checks `stage1.elf`
   against the committed MANIFEST row and the head receipt's `seed_chain` row

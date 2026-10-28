@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import types
 
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
@@ -62,6 +63,11 @@ _replace = os.replace
 def _receipt_history() -> list[tuple[str, str]]:
     """Every receipt on every ref; a synthetic history in the harness controls."""
     return git_receipt_history(_REPO)
+
+
+def _harness() -> types.SimpleNamespace:
+    """This script's live globals: run_gate exec()s it, so sys.modules[__name__] is not it."""
+    return types.SimpleNamespace(**globals())
 
 
 def requested_modes(argv: list[str], env) -> tuple[list[str], list[str]]:
@@ -403,13 +409,6 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
     old_seed = _FROZEN.read_bytes()
     h_old = hashlib.sha256(old_seed).hexdigest()
     print(f"  old seed = frozen pure-MIND stage0 ELF: {len(old_seed)}B sha256={h_old}")
-    # The receipt's seed_chain row is derived from the refs, never typed; the
-    # chain up to the old seed must resolve BEFORE anything runs.
-    old_chain, problem = old_seed_chain(sys.modules[__name__], h_old)
-    if problem is not None:
-        print(f"BLOCKED: --advance cannot derive the seed_chain row for the old seed "
-              f"{h_old}: {problem}. Nothing written.")
-        return 2
 
     # The old seed runs FIRST, on the current source, from a PRIVATE SNAPSHOT of
     # the exact bytes just hashed — never from the live `_FROZEN` path. Hashing
@@ -481,6 +480,13 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
               f"proved ({h1})")
     if published == old_seed:
         print("BLOCKED: --advance would republish the current seed unchanged; nothing written.")
+        return 2
+    # The receipt's seed_chain row is derived from the refs, never typed: an old
+    # seed whose chain does not resolve back to the root is never advanced FROM.
+    old_chain, problem = old_seed_chain(_harness(), h_old)
+    if problem is not None:
+        print(f"BLOCKED: --advance cannot derive the seed_chain row for the old seed "
+              f"{h_old}: {problem}. Nothing written.")
         return 2
 
     # ORACLE — required, never deferred. A new fixed point that only the old
@@ -648,7 +654,7 @@ def main(argv: list[str] | None = None, env=None) -> int:
             print("BLOCKED: --verify-chain is read-only; it takes no --advance, --reseed "
                   "or --hops. Nothing has been read, run or written.")
             return 2
-        return verify_chain(sys.modules[__name__])
+        return verify_chain(_harness())
 
     combined, stdin_image, user_lo = build_seed()
     mode = "advance" if advance_req else ("reseed" if reseed_req else "verify")
