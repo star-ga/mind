@@ -33,6 +33,16 @@ to the gate is just adding them to the champion file — no code change here.
 The gate also requires a minimum number of trustworthy frontier fixtures. A
 partial result with noisy rows is inconclusive and cannot pass as a complete
 frontier assertion.
+
+Ordering assertions (--require-faster A,B, repeatable) compare two benches of the
+SAME current run: the pair passes only if current(A) < current(B), strictly. This
+is how a same-box, same-session head-to-head (e.g. a MIND end-to-end compile
+against an external toolchain timed in the same criterion run) is asserted
+without a stored cross-machine number. One-sided like everything else here: A
+being faster by any margin passes. A pair whose A or B spread exceeds
+--max-rel-variance is INCONCLUSIVE (exit 2), never a pass; a pair naming a bench
+the run did not produce is malformed input (exit 4). Every asserted pair adds one
+to `asserted=`.
 """
 
 from __future__ import annotations
@@ -169,6 +179,17 @@ def parse_reference(path: Path | None, prefix: str | None = None) -> dict[str, f
     return out
 
 
+def parse_pair(raw: str) -> tuple[str, str]:
+    """Parse one ``--require-faster`` value ``"A,B"`` into two full bench ids."""
+    parts = [p.strip() for p in raw.split(",")]
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"--require-faster expects 'A,B' (two bench ids), got {raw!r}")
+    a, b = parts
+    if a == b:
+        raise ValueError(f"--require-faster compares a bench with itself: {raw!r}")
+    return a, b
+
+
 def parse_current(path: Path) -> dict[str, tuple[float, float | None]]:
     """Read criterion bench output into ``{name: (microseconds, rel_variance)}``.
 
@@ -281,6 +302,14 @@ def main() -> int:
         help="require all three canonical compiler_pipeline/parse_typecheck_ir "
         "fixtures in every supplied reference and current run",
     )
+    ap.add_argument(
+        "--require-faster",
+        action="append",
+        default=[],
+        metavar="A,B",
+        help="assert current(A) < current(B) for two benches of this run "
+        "(repeatable; one-sided; noisy pair -> inconclusive exit 2).",
+    )
     args = ap.parse_args()
 
     try:
@@ -290,6 +319,7 @@ def main() -> int:
         # so they only gate those benches (never a same-named fixture elsewhere).
         floor = parse_reference(args.floor, prefix=args.floor_prefix)
         current = parse_current(args.current)
+        pairs = [parse_pair(raw) for raw in args.require_faster]
     except (OSError, ValueError) as exc:
         print("asserted=0")
         print(f"::error::bench gate input is malformed or unreadable: {exc}")
@@ -387,6 +417,35 @@ def main() -> int:
                 verdict = "OK"
         rows.append((name, ch, fl, c, delta, rel_var, verdict))
 
+    # Ordering assertions: both sides come from THIS run (same box, same
+    # session), so no stored reference is involved and no cross-machine number
+    # can leak into the verdict.
+    pair_rows: list[tuple[str, str, float, float, str]] = []
+    pair_failed: list[str] = []
+    pair_missing: list[str] = []
+    pair_noisy: list[str] = []
+    pairs_asserted = 0
+    for a, b in pairs:
+        ca = current.get(a)
+        cb = current.get(b)
+        if ca is None or cb is None:
+            pair_missing.append(f"{a} < {b} (current {a}={ca}, {b}={cb})")
+            print(f"::error::--require-faster {a},{b}: the run produced no measurement for "
+                  f"{a if ca is None else b}")
+            continue
+        (va, sa), (vb, sb) = ca, cb
+        if any(sp is not None and sp > args.max_rel_variance for sp in (sa, sb)):
+            verdict = "NOISY"
+            pair_noisy.append(f"{a},{b}")
+        else:
+            pairs_asserted += 1
+            if va < vb:
+                verdict = "OK"
+            else:
+                verdict = "FAIL"
+                pair_failed.append(f"{a} ({va:.3f}µs) is not faster than {b} ({vb:.3f}µs)")
+        pair_rows.append((a, b, va, vb, verdict))
+
     print()
     hdr = f"{'bench':<16} {'champion':>10} {'floor':>10} {'current':>10} {'Δchamp':>9} {'spread':>7}  gate"
     print(hdr)
@@ -396,11 +455,17 @@ def main() -> int:
         sp = f"{rel_var:.1%}" if rel_var is not None else " n/a"
         print(f"{name:<16} {chs:>10} {fls:>10} {c:>9.3f}µ {delta:>+8.2%} {sp:>7}  {verdict}")
     print()
+    if pair_rows:
+        print(f"{'require-faster A < B':<48} {'A':>12} {'B':>12} {'A/B':>7}  gate")
+        for a, b, va, vb, verdict in pair_rows:
+            print(f"{a + ' < ' + b:<48} {va:>11.3f}µ {vb:>11.3f}µ {va / vb:>7.3f}  {verdict}")
+        print()
 
     noisy = [r[0] for r in rows if r[6] == "NOISY"]
     # Machine-readable count consumed by the shared gate runner. Only complete,
-    # low-variance fixture comparisons contribute to the assertion count.
-    print(f"asserted={trusted}")
+    # low-variance fixture comparisons and low-variance ordering pairs
+    # contribute to the assertion count.
+    print(f"asserted={trusted + pairs_asserted}")
     if required_noisy:
         print(
             "::error::--require-pipeline canonical fixture(s) are noisy: "
@@ -408,6 +473,10 @@ def main() -> int:
             "the pipeline frontier is not asserted even when other benches are trusted."
         )
         return 2
+    if pair_failed:
+        print("::error::--require-faster ordering violated on a trustworthy measurement:")
+        for line in pair_failed:
+            print(f"  - {line}")
     if failed:
         print(
             "::error::pipeline regression exceeded "
@@ -417,6 +486,16 @@ def main() -> int:
             "rationale + a confirmation run."
         )
         return 1
+    if pair_failed:
+        return 1
+    if pair_missing:
+        print(
+            f"::error::bench gate FAILED: {len(pair_missing)} --require-faster pair(s) name a "
+            "bench the run did not produce; an ordering nobody measured is not asserted."
+        )
+        for m in pair_missing:
+            print(f"  - {m}")
+        return 4
     if missing:
         print(
             f"::error::bench gate FAILED: {len(missing)} watched bench(es) produced no "
@@ -426,6 +505,12 @@ def main() -> int:
         for m in missing:
             print(f"  - {m}")
         return 4
+    if pair_noisy:
+        print(
+            f"::error::--require-faster pair(s) {pair_noisy} are INCONCLUSIVE (spread > "
+            f"{args.max_rel_variance:.0%}); the ordering is not asserted. Re-run on an idle host."
+        )
+        return 2
     if trusted < args.min_trusted:
         print(
             f"::error::bench gate FAILED: only {trusted} trustworthy frontier "

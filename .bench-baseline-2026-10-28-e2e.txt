@@ -1,0 +1,80 @@
+=== End-to-end floor (T2 warm/cold + T2-native), recorded 2026-10-28 ===
+
+What this file is. The absolute floor the `e2e-gate` job of
+.github/workflows/bench-gate.yml grades `cargo bench --bench compiler -- e2e_`
+against, read with `--floor-prefix ''` (every row below is a full criterion id).
+It is separate from .bench-baseline-2026-06-01-correctness.txt, which guards the
+frontend (T1) budget and is unchanged. Tiers are defined in docs/benchmarking.md.
+
+What was measured. The compiler is origin/main ecd8be99, i.e. BEFORE the
+end-to-end speed work (runtime-object cache switch, tool-identity memo, native
+front-end work). Each later item's gain shows up as a new floor in this file's
+history, measured the same way. `mindc` built with
+`--features "mlir-build std-surface cross-module-imports"`, release profile,
+LLVM 20.1.8 (`mlir-opt`, `mlir-translate`, `clang`).
+
+  - e2e_compile_shared/warm/<shape>: `mindc src --emit-shared out.so` with the
+    runtime-object cache primed.
+  - e2e_compile_shared/cold/<shape>: the same with a fresh, empty
+    XDG_CACHE_HOME per run (and MINDC_RUNTIME_OBJ_CACHE=0).
+  - e2e_native/<shape>: `mindc build --backend native src --out elf` from the
+    repository root, on the pinned backend_native_bridge corpus; every output
+    was byte-identical to its committed oracle ELF.
+
+How. A wall-clock harness (perf_counter around one spawned process), 40 timed
+runs per row after 2 untimed rounds, every row interleaved in a per-round
+shuffled order in ONE session, pinned with taskset to 4 idle physical cores
+(both SMT threads) of a Linux build host: Xeon E5-2699 v3 (Haswell-EP), 2 x 18
+cores, SMT on, other unrelated jobs running on the other socket. The value on
+each row is the MEDIAN, which is what criterion's bencher line reports and what
+tools/bench_gate.py compares. Spread is given as p10/p90 beside each row.
+The release mindc built from this commit and from origin/main are
+byte-identical (same sha256), and both were timed in the same session as an
+A/A control: their medians differ by at most 7.1% (local_call), all other rows
+within 3.6%.
+
+Why +10% one-sided. Same policy as the frontend floor: a speedup of any size
+passes; a regression beyond +10% on a trustworthy (spread <= 12%) measurement is
+a stop-and-decide signal. The in-session A/A noise (<= 7.1%) sits inside the
+band. Process-spawn timings carry a load-dependent tail; criterion rows whose
+std-dev exceeds 12% of the median are graded INCONCLUSIVE, never as a pass.
+These values come from the build host, not from a hosted runner: the T2 and
+reference commands, measured earlier the same day on the same host under lighter
+load, were 18-25% faster on every row (MIND and reference alike), so a cross-machine comparison against this
+floor is a backstop, not a precision instrument. Re-record it on the build host,
+never from a hosted runner.
+
+Same-session reference toolchains (NOT floored: another toolchain's speed is not
+a MIND regression; they are compared only by --require-faster in the same run).
+Medians from the same session, in milliseconds:
+
+  clang_c_to_so/small: median 132.1 ms (p10 118.1, p90 152.2)
+  clang_c_to_so/medium: median 135.9 ms (p10 122.8, p90 152.7)
+  clang_c_to_so/large: median 144.2 ms (p10 127.3, p90 171.7)
+  clang_c_to_so/const_return: median 136.1 ms (p10 113.1, p90 156.0)
+  clang_c_to_so/add: median 130.7 ms (p10 113.5, p90 154.6)
+  clang_c_to_so/local_call: median 136.5 ms (p10 120.2, p90 152.2)
+  clang_c_to_so/while_sum: median 135.1 ms (p10 115.6, p90 156.2)
+  rustc_cdylib/small: median 103.4 ms (p10 93.5, p90 122.2)
+  rustc_cdylib/medium: median 107.6 ms (p10 89.8, p90 126.9)
+  rustc_cdylib/large: median 115.5 ms (p10 97.1, p90 132.5)
+  rustc_cdylib/const_return: median 105.9 ms (p10 88.0, p90 125.6)
+  rustc_cdylib/add: median 107.4 ms (p10 86.6, p90 127.2)
+  rustc_cdylib/local_call: median 107.2 ms (p10 90.7, p90 131.9)
+  rustc_cdylib/while_sum: median 104.6 ms (p10 88.3, p90 129.3)
+
+The MIND-native vs clang/rustc ordering is recorded by the e2e-gate job but not
+asserted yet; no faster-than claim is made from these numbers.
+
+Frozen floor (bencher format, full ids, nanoseconds; median of n=40):
+
+test e2e_compile_shared/warm/small ... bench: 384570214 ns/iter   # n=40 p10 321.3 ms, p90 430.3 ms
+test e2e_compile_shared/warm/medium ... bench: 375870112 ns/iter   # n=40 p10 317.1 ms, p90 432.9 ms
+test e2e_compile_shared/warm/large ... bench: 392840468 ns/iter   # n=40 p10 357.4 ms, p90 445.2 ms
+test e2e_compile_shared/cold/small ... bench: 1937475307 ns/iter   # n=40 p10 1764.2 ms, p90 2128.3 ms
+test e2e_compile_shared/cold/medium ... bench: 1912635390 ns/iter   # n=40 p10 1624.6 ms, p90 2194.6 ms
+test e2e_compile_shared/cold/large ... bench: 1885763201 ns/iter   # n=40 p10 1670.1 ms, p90 2155.7 ms
+test e2e_native/const_return ... bench: 701409513 ns/iter   # n=40 p10 578.3 ms, p90 847.9 ms
+test e2e_native/add ... bench: 687335425 ns/iter   # n=40 p10 573.2 ms, p90 950.2 ms
+test e2e_native/local_call ... bench: 683713358 ns/iter   # n=40 p10 574.4 ms, p90 925.1 ms
+test e2e_native/while_sum ... bench: 686145336 ns/iter   # n=40 p10 558.7 ms, p90 856.6 ms

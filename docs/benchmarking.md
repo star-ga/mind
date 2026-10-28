@@ -19,8 +19,47 @@ not interchangeable, and the cross-tier comparison rule (§2) is absolute.
 |------|-------------|------------------|----------------|
 | **T0 — Kernel-only** | one in-process call into an already-loaded compiled kernel; no process spawn, no dlopen, no I/O | steady-state execution throughput of the emitted machine code | `benches/det_matmul_*.rs` (criterion `iter` loop) |
 | **T1 — Frontend-only** | source string → parse → typecheck → IR (`compile_source`), in-process | compiler **frontend** latency only — **no codegen, no MLIR, no LLVM, no link** | `benches/compiler.rs::compiler_pipeline` |
-| **T2 — Process wall-clock** | `mindc src --emit-shared out.so` as a spawned process: frontend + MLIR-text + `mlir-opt` + LLVM + `clang` link, including process startup | end-to-end compile latency a user actually feels | `benches/compiler.rs::e2e_compile_shared` (T2 sweep) |
+| **T2 — Process wall-clock** | `mindc src --emit-shared out.so` as a spawned process: frontend + MLIR-text + `mlir-opt` + LLVM + `clang` link, including process startup. **Always the pair `(cold, warm)`** (below) | end-to-end compile latency a user actually feels | `benches/compiler.rs::e2e_compile_shared/{cold,warm}` |
+| **T2-native — Process wall-clock, native backend** | `mindc build --backend native src --out elf` as a spawned process: the self-host front end plus the pure-MIND ELF writer, no MLIR, no LLVM, no `clang`; output byte-pinned to `backend_native_bridge/*.elf` | end-to-end source-to-executable latency on the LLVM-free path | `benches/compiler.rs::e2e_native` |
 | **T3 — Persistent cold / steady** | first request after a cold start vs. steady-state after warm-up, for a long-lived process (the mind-ray discipline) | service latency separated into cold-start and warm paths | service harnesses (out of tree) |
+
+### T2 is a `(cold, warm)` pair
+
+`--emit-shared` links a compiled C runtime into every `.so`, and `mindc` caches
+that object (content-addressed on the clang binary's identity, its environment,
+the flags and the embedded C source) under
+`$XDG_CACHE_HOME/mind/runtime-obj`. A T2 number is therefore two numbers, exactly
+as T3 is:
+
+- **cold** — every sample runs with a fresh, empty `XDG_CACHE_HOME` (and
+  `MINDC_RUNTIME_OBJ_CACHE=0` on compilers that honour it), so it pays the runtime
+  compile: what a first build on a clean machine or CI runner costs;
+- **warm** — the cache is primed once before timing: what every later build costs.
+
+A warm T2 number quoted alone hides the first-build cost; a cold one quoted alone
+overstates every later build. Report both, labelled. The bench's untimed pre-check
+asserts the cold, cache-filling and cache-hit builds emit **byte-identical** `.so`
+files: a cache may change time, never bytes.
+
+### Same-session references and the end-to-end gate
+
+`e2e_reference/clang_c_to_so/<shape>` and `e2e_reference/rustc_cdylib/<shape>` time
+the equivalent C and Rust program (wrapping arithmetic on all three sides; clang
+with `mindc`'s own link flags `-O3 -march=x86-64-v3 -ffp-contract=off -fwrapv
+-shared -fPIC -pthread`, rustc with `-C opt-level=3 -C overflow-checks=off
+--crate-type cdylib`) in the **same criterion run**, interleaved by shape with the
+MIND rows, so a comparison is same-box and same-session. Each self-skips when its
+tool is absent. Run the whole end-to-end set with
+`cargo bench --bench compiler --features "mlir-build std-surface cross-module-imports" -- e2e_`.
+
+`bench-gate.yml`'s `e2e-gate` job grades the `e2e_compile_shared` and `e2e_native`
+rows one-sided +10% against `.bench-baseline-2026-10-28-e2e.txt`, and
+`tools/bench_gate.py --require-faster A,B` asserts a same-run ordering
+(`median(A) < median(B)`, inconclusive above the spread band). Reference rows are
+never floored: another toolchain's speed is not a MIND regression. A MIND-versus-
+clang/rustc ordering may be stated as a result only once `--require-faster` asserts
+it, green, on the build host and on a hosted runner. The frontend (T1) job and its
+floor are separate and unchanged.
 
 ### The mind-ray discipline (T3)
 
@@ -139,6 +178,8 @@ Before a MIND performance number leaves the repo:
 - [ ] **Frontend (T1) numbers are labelled frontend-only** — never presented as
       end-to-end compile time.
 - [ ] **Persistent-service (T3) numbers report `(cold, steady)`**, both labelled.
+- [ ] **End-to-end (T2) numbers report `(cold, warm)`**, both labelled; T2-native
+      numbers say they are the native backend.
 - [ ] **Execution (T0) numbers report GMAC/s + roofline %**, with the ISA-peak
       constant cited as an estimate.
 - [ ] **The machine state is recorded in full**, not just the CPU name. A T0

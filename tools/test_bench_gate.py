@@ -453,6 +453,118 @@ def main() -> int:
                 if not ok:
                     failures.append(label)
 
+        # --- ORDERING ASSERTIONS (--require-faster A,B) ---------------------
+        # Same-run head-to-head: current(A) < current(B), strictly, one-sided,
+        # with the same >12% spread inconclusive band as every other row.
+        e2e_rows = (
+            "test e2e_native/add ... bench: 60000000 ns/iter (+/- 900000)\n"
+            "test e2e_reference/rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 900000)\n"
+            "test e2e_reference/clang_c_to_so/add ... bench: 100000000 ns/iter (+/- 900000)\n"
+        )
+        rf_faster = d / "rf-faster.out"
+        rf_faster.write_text(GOOD_CURRENT + e2e_rows)
+        rf_slower = d / "rf-slower.out"
+        rf_slower.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 520000000"))
+        rf_equal = d / "rf-equal.out"
+        rf_equal.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 90000000"))
+        rf_noisy = d / "rf-noisy.out"
+        # 20 ms spread on a 90 ms median = 22% > the 12% default band.
+        rf_noisy.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 900000)",
+            "rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 20000000)"))
+        pair_rustc = ("--require-faster", "e2e_native/add,e2e_reference/rustc_cdylib/add")
+        pair_clang = ("--require-faster", "e2e_native/add,e2e_reference/clang_c_to_so/add")
+        rf_base = ("--baseline", str(base))
+
+        def rf_run(current: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(GATE), *rf_base, "--current", str(current), *extra],
+                capture_output=True, text=True,
+            )
+
+        rf_pass = rf_run(rf_faster, *pair_rustc, *pair_clang)
+        rf_fail = rf_run(rf_slower, *pair_rustc, *pair_clang)
+        cases += [
+            ("require-faster A<B on both pairs -> exit 0 (positive control)",
+             rf_pass.returncode, 0),
+            ("require-faster A>B -> exit 1 (the ordering enforcement path)",
+             rf_fail.returncode, 1),
+            ("require-faster A==B -> exit 1 (strict: a tie is not faster)",
+             rf_run(rf_equal, *pair_rustc).returncode, 1),
+            ("require-faster pair over the spread band -> exit 2 (inconclusive, not a pass)",
+             rf_run(rf_noisy, *pair_rustc).returncode, 2),
+            ("require-faster naming an unmeasured bench -> exit 4 (fail closed)",
+             rf_run(good, *pair_rustc).returncode, 4),
+            ("require-faster malformed single id -> exit 4",
+             rf_run(rf_faster, "--require-faster", "e2e_native/add").returncode, 4),
+            ("require-faster bench against itself -> exit 4",
+             rf_run(rf_faster, "--require-faster", "e2e_native/add,e2e_native/add").returncode, 4),
+            ("without --require-faster the slower pair is recorded, not asserted -> exit 0",
+             rf_run(rf_slower).returncode, 0),
+        ]
+        for label, output, want in (
+            ("asserted counts 3 fixtures + 2 ordering pairs", rf_pass.stdout, "asserted=5"),
+            ("a violated pair still counts as asserted", rf_fail.stdout, "asserted=5"),
+            ("noisy pair is not counted as asserted", rf_run(rf_noisy, *pair_rustc).stdout,
+             "asserted=3"),
+            ("violated pair is named in the verdict", rf_fail.stdout,
+             "e2e_native/add (520000.000µs) is not faster than e2e_reference/rustc_cdylib/add"),
+        ):
+            ok = want in output
+            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
+            if not ok:
+                failures.append(f"{label}: {output}")
+
+        # --- THE COMMITTED END-TO-END FLOOR --------------------------------
+        # Full-id floor read with --floor-prefix ''. Every row must parse, and
+        # every row must be millisecond-class: an e2e floor that parsed to
+        # microseconds would be a unit slip that makes the gate unfailable.
+        e2e_floors = sorted((HERE.parent).glob(".bench-baseline-*-e2e.txt"))
+        ok = len(e2e_floors) >= 1
+        print(f"[{'PASS' if ok else 'FAIL'}] an end-to-end floor file is committed")
+        if not ok:
+            failures.append("no .bench-baseline-*-e2e.txt floor committed")
+        for floor_path in e2e_floors:
+            fp = _bg.parse_reference(floor_path, prefix="")
+            want_ids = {
+                *(f"e2e_compile_shared/{c}/{s}" for c in ("warm", "cold")
+                  for s in ("small", "medium", "large")),
+                *(f"e2e_native/{s}" for s in ("const_return", "add", "local_call", "while_sum")),
+            }
+            missing_ids = sorted(want_ids - fp.keys())
+            ok = not missing_ids
+            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} carries every gated e2e id")
+            if not ok:
+                failures.append(f"{floor_path.name} missing {missing_ids}")
+            bad_units = sorted(k for k, v in fp.items() if not 10_000.0 <= v <= 60_000_000.0)
+            ok = not bad_units and bool(fp)
+            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} rows are millisecond-class")
+            if not ok:
+                failures.append(f"{floor_path.name} rows outside 10 ms..60 s: {bad_units}")
+            stray = sorted(k for k in fp if not k.startswith(("e2e_compile_shared/", "e2e_native/")))
+            ok = not stray
+            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} floors no reference toolchain")
+            if not ok:
+                failures.append(f"{floor_path.name} floors external toolchain rows: {stray}")
+
+        wf_text = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
+        e2e_job = wf_text[wf_text.find("\n  e2e-gate:"):] if "\n  e2e-gate:" in wf_text else ""
+        for label, ok in (
+            ("workflow has an e2e-gate job", bool(e2e_job)),
+            ("e2e-gate runs the e2e_ benches under pipefail",
+             "set -eo pipefail" in e2e_job and "cargo bench --bench compiler" in e2e_job
+             and "-- e2e_" in e2e_job),
+            ("e2e-gate grades against the committed e2e floor with full ids",
+             any(f.name in e2e_job for f in e2e_floors) and "--floor-prefix ''" in e2e_job),
+            ("e2e-gate does not touch the frontend floor",
+             ".bench-baseline-2026-06-01-correctness.txt" not in e2e_job),
+        ):
+            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
+            if not ok:
+                failures.append(label)
+
         for label, got, want in cases:
             ok = got == want
             print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got}, want {want})")

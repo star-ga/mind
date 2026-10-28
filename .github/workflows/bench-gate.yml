@@ -53,6 +53,18 @@ on:
       - 'tools/bench_gate.py'
       - '.bench-baseline-*.txt'
       - '.github/workflows/bench-gate.yml'
+      # The e2e-gate job times the whole toolchain path, so everything a T2 or
+      # T2-native compile executes is an input: the build driver and MLIR emitter,
+      # the C runtime linked into every .so, the std sources the native bridge
+      # reads, the frozen self-host front end, and the pinned native corpus.
+      # (Its floor, .bench-baseline-2026-10-28-e2e.txt, is matched by the glob above.)
+      - 'src/build/**'
+      - 'src/mlir/**'
+      - 'src/bin/**'
+      - 'runtime-support/**'
+      - 'std/**'
+      - 'examples/mindc_mind/testdata/selfhost_loop/stage1.elf'
+      - 'examples/mindc_mind/testdata/backend_native_bridge/**'
   pull_request:
     paths:
       - 'src/parser/**'
@@ -84,6 +96,18 @@ on:
       - 'tools/bench_gate.py'
       - '.bench-baseline-*.txt'
       - '.github/workflows/bench-gate.yml'
+      # The e2e-gate job times the whole toolchain path, so everything a T2 or
+      # T2-native compile executes is an input: the build driver and MLIR emitter,
+      # the C runtime linked into every .so, the std sources the native bridge
+      # reads, the frozen self-host front end, and the pinned native corpus.
+      # (Its floor, .bench-baseline-2026-10-28-e2e.txt, is matched by the glob above.)
+      - 'src/build/**'
+      - 'src/mlir/**'
+      - 'src/bin/**'
+      - 'runtime-support/**'
+      - 'std/**'
+      - 'examples/mindc_mind/testdata/selfhost_loop/stage1.elf'
+      - 'examples/mindc_mind/testdata/backend_native_bridge/**'
   workflow_dispatch:
 
 permissions:
@@ -191,3 +215,103 @@ jobs:
             --current bench.out \
             --require-pipeline \
             --threshold 0.10
+
+  # End-to-end tier (docs/benchmarking.md T2 + T2-native). Separate from the
+  # frontend job above, which is unchanged and keeps guarding the T1 budget.
+  e2e-gate:
+    name: End-to-end compile gate (T2 warm/cold + T2-native, +10% one-sided)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-gate-e2e-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install MLIR toolchain (LLVM 20)
+        # The LLVM 20 leg of ci.yml's keystone install: the Ubuntu 24.04 package,
+        # the same 5-attempt backoff for an upstream mirror outage.
+        run: |
+          set -o pipefail
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get update || true
+            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        # Same shape as ci.yml: each tool runs WITHOUT a pipe so `-e` sees its
+        # real status. An absent tool must fail here, not make the T2 rows
+        # self-skip and leave the gate to report them missing later.
+        run: |
+          set -e
+          for t in mlir-opt mlir-translate clang rustc; do
+            command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
+            "$t" --version > /tmp/toolver.txt
+            head -1 /tmp/toolver.txt
+          done
+          for t in mlir-opt mlir-translate clang; do
+            "$t" --version > /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])20[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR 20"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
+          done
+
+      - name: Run criterion bench (end-to-end tiers)
+        # Direct cargo bench / tools/bench_gate.py calls in this job are covered by
+        # the run_gate-exempt declarations at the top of this file and in the
+        # frontend job; the comparator publishes asserted=<N>.
+        # `-- e2e_` selects e2e_compile_shared/{warm,cold}, e2e_native and
+        # e2e_reference in ONE run, interleaved by shape, so the MIND rows and the
+        # clang/rustc rows share this runner and this session. The untimed
+        # pre-checks panic (failing this step) if a cached build's bytes differ
+        # from a cold build's, or a native ELF differs from its committed oracle.
+        run: |
+          # pipefail: without it this step reports TEE's status, and a bench that
+          # failed to build or panicked would leave a truncated bench-e2e.out.
+          set -eo pipefail
+          cargo bench --bench compiler \
+            --features "mlir-build std-surface cross-module-imports" -- e2e_ \
+            --output-format bencher \
+            | tee bench-e2e.out
+
+      - name: Enforce +10% one-sided regression vs the end-to-end floor
+        run: |
+          python3 tools/bench_gate.py \
+            --floor .bench-baseline-2026-10-28-e2e.txt \
+            --floor-prefix '' \
+            --current bench-e2e.out \
+            --threshold 0.10 \
+            --min-trusted 3
+
+      - name: Record the MIND-native vs clang/rustc ordering (not yet asserted)
+        # Recorded, not asserted: the ordering becomes a hard gate (these two
+        # --require-faster lines move into the step above) once the native
+        # front-end work lands and the pair is green on the build host AND on
+        # this runner. Until then the verdict is printed and cannot fail the job.
+        continue-on-error: true
+        run: |
+          python3 tools/bench_gate.py \
+            --floor .bench-baseline-2026-10-28-e2e.txt \
+            --floor-prefix '' \
+            --current bench-e2e.out \
+            --threshold 0.10 \
+            --min-trusted 3 \
+            --require-faster e2e_native/add,e2e_reference/rustc_cdylib/add \
+            --require-faster e2e_native/add,e2e_reference/clang_c_to_so/add
