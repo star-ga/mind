@@ -3468,6 +3468,7 @@ transformer block runs under `--require-strict-fp`.
 - Which proof tool GP-06 uses, and how it stays outside the trusted base, is decided by RFC.
 - Licence policy for translations of HumanEval, MBPP and McEval-Hard (GP-01).
 - No milestone dates are set; each item is sequenced after the gate it depends on.
+
 ## Research watch — implicit geometry as a tensor library workload (2026-10-28)
 
 **Status: proposed; review REQUIRED before implementation. Not approved,
@@ -3489,29 +3490,19 @@ CAD tolerance. The 64-bit signed Q32.32 accumulation range and
 three-axis squared-distance sums can overflow even when every coordinate
 is representable. Require bounded local coordinates, tested overflow
 semantics, scaling/tolerance budgets, and wider/adaptive-precision paths
-where needed. RFN's rsqrt LUT with a stated <=2^-8 bound is not a
-qualified CAD distance operator; do not import it as one. Review
+where needed. An approximate lookup-table square root is not a
+qualified CAD distance operator. Review
 correctly rounded integer square-root or certified intervals if real
 distances are needed; retain squared-distance predicates where valid.
 
-**Qualification and market gates.** Property/fixture tests for near-zero
+**Qualification gates.** Property/fixture tests for near-zero
 sign changes, tangencies, transforms, thin walls and CSG seams;
 independent high-precision reference; CPU scalar parity and AVX2/NEON
 replay with pinned input/output hashes; separate GPU floating-point
 qualification. Benchmark robust geometry and batch performance against
-existing kernels, including nTop-style implicit modeling capabilities
-(not necessarily a directly accessible head-to-head implementation).
-
-Validate real CAD/AM buyer pain separately: public sources establish
-numerical/tolerance robustness problems and slicing artifacts, but do
-not yet establish that x86-versus-ARM bitwise mismatches are a commonly
-purchased-away industrial problem. Interview customers or obtain
-reproducible failing cross-machine cases before asserting market demand,
-regulated qualification benefit, or a unique cross-device advantage.
+existing kernels.
 
 Only promote to a standalone optional MIND geometry library after
 measurements and review; runtime specialization needs its own profiling
 and approval. Rendering experiments remain with
 [mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md).
-Do not redirect [rfn-mind](https://github.com/star-ga/rfn-mind/blob/main/docs/roadmap.md)
-away from its core long-context/memory validation.
