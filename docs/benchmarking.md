@@ -35,6 +35,25 @@ Reporting a single number for a persistent service is a category error. T3
 latency hides the cold cost; a cold number presented as "the" latency slanders
 the steady path. Both, labelled, or neither.
 
+### T2 cold vs warm: the runtime-support object cache
+
+Every `--emit-shared` output links the bundled runtime-support C object. mindc
+compiles it once and keeps it in a content-addressed disk cache
+(`<user cache dir>/mind/runtime-obj/`), so a T2 number is either **warm** (cache
+hit) or **cold** (the C runtime is recompiled). Report which one, and never quote
+one as the other.
+
+- **Warm:** run with the default environment after one priming build.
+- **Cold:** set `MINDC_RUNTIME_OBJ_CACHE=0`. The cache is then neither read nor
+  written, and the clang identity probe that computes the cache key is skipped.
+  A fresh empty `XDG_CACHE_HOME` per run measures the same cold path plus the
+  cache write.
+
+`MINDC_RUNTIME_OBJ_CACHE=0` is a **measurement knob only**. The cache is
+output-neutral by construction, so the emitted `.so` is byte-identical with and
+without it (pinned by `tests/runtime_obj_overlap.rs`). Do not use it to work
+around a build problem: a build that differs with the cache off is a defect.
+
 ---
 
 ## 2. The rule: never compare numbers across tiers

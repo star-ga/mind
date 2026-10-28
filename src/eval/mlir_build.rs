@@ -141,44 +141,64 @@ pub fn build_all_with_objects(
     opts: &BuildOptions<'_>,
     extra_objects: &[std::path::PathBuf],
 ) -> Result<BuildProducts, BuildError> {
-    let preset_name = opts.preset;
-    let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
-        .map_err(BuildError::Internal)?;
-    let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
-    let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
-    let optimized_mlir = if let Some(pipeline) = combined_pipeline {
-        run_mlir_opt(&lowered, &pipeline, tools)?
-    } else {
-        lowered
-    };
+    // The runtime-support object depends only on `tools` and the target
+    // triple — never on the MLIR — so it is started on its own thread before
+    // the mlir-opt / mlir-translate leg and joined right before the shared
+    // link that consumes it. Its cache probe (or cold clang compile) then
+    // overlaps the MLIR leg instead of running after it. Output-identical by
+    // construction: the same inputs reach the same tool, and the object is
+    // still linked in full. Each subprocess keeps its own `tools.timeout`.
+    // A scoped thread is joined on every exit path, so an mlir-opt /
+    // mlir-translate error returns exactly as before (the overlapped object
+    // is discarded and its temp file removed).
+    std::thread::scope(|scope| {
+        let runtime_job = opts
+            .emit_shared
+            .map(|_| scope.spawn(|| compile_runtime_support_obj(tools, opts.target_triple)));
 
-    if let Some(path) = opts.emit_mlir_file {
-        write_text_file(path, &optimized_mlir)?;
-    }
+        let preset_name = opts.preset;
+        let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
+            .map_err(BuildError::Internal)?;
+        let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
+        let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
+        let optimized_mlir = if let Some(pipeline) = combined_pipeline {
+            run_mlir_opt(&lowered, &pipeline, tools)?
+        } else {
+            lowered
+        };
 
-    let llvm_ir = run_mlir_translate(&optimized_mlir, tools)?;
+        if let Some(path) = opts.emit_mlir_file {
+            write_text_file(path, &optimized_mlir)?;
+        }
 
-    if let Some(path) = opts.emit_llvm_file {
-        write_text_file(path, &llvm_ir)?;
-    }
+        let llvm_ir = run_mlir_translate(&optimized_mlir, tools)?;
 
-    if let Some(path) = opts.emit_obj_file {
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false, &[])?;
-    }
+        if let Some(path) = opts.emit_llvm_file {
+            write_text_file(path, &llvm_ir)?;
+        }
 
-    if let Some(path) = opts.emit_shared {
-        // Phase 6.5 Stage 1b: compile the runtime-support stub to a temp .o
-        // and link it into the shared library so vec_new / vec_push /
-        // __mind_load_i64 etc. are resolved without an external dependency.
-        let runtime_obj = compile_runtime_support_obj(tools, opts.target_triple)?;
-        let mut extra = vec![runtime_obj.path().to_path_buf()];
-        extra.extend(extra_objects.iter().cloned());
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
-    }
+        if let Some(path) = opts.emit_obj_file {
+            run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false, &[])?;
+        }
 
-    Ok(BuildProducts {
-        optimized_mlir,
-        llvm_ir,
+        if let (Some(path), Some(job)) = (opts.emit_shared, runtime_job) {
+            // Phase 6.5 Stage 1b: link the runtime-support stub into the
+            // shared library so vec_new / vec_push / __mind_load_i64 etc. are
+            // resolved without an external dependency. Join first: a clang
+            // failure in the overlapped compile surfaces here as the same
+            // `BuildError` the serial path returned.
+            let runtime_obj = job.join().map_err(|_| {
+                BuildError::Internal("runtime-support compile thread panicked".into())
+            })??;
+            let mut extra = vec![runtime_obj.path().to_path_buf()];
+            extra.extend(extra_objects.iter().cloned());
+            run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
+        }
+
+        Ok(BuildProducts {
+            optimized_mlir,
+            llvm_ir,
+        })
     })
 }
 
@@ -528,6 +548,20 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
     "MACOSX_DEPLOYMENT_TARGET",
 ];
 
+/// Set to `0` to bypass the runtime-support `.o` disk cache entirely (no
+/// read, no write). A measurement knob for COLD-path timing only: the cache
+/// is output-neutral, so the emitted bytes are identical either way.
+#[cfg(feature = "mlir-build")]
+const RUNTIME_OBJ_CACHE_ENV: &str = "MINDC_RUNTIME_OBJ_CACHE";
+
+/// Whether the runtime-obj cache is on for a given `MINDC_RUNTIME_OBJ_CACHE`
+/// value. Only the exact value `0` disables it; unset or anything else keeps
+/// the historical (cached) behaviour.
+#[cfg(feature = "mlir-build")]
+fn runtime_obj_cache_enabled(value: Option<&str>) -> bool {
+    value.map(str::trim) != Some("0")
+}
+
 /// Compute the on-disk cache path for the runtime-support `.o`, or `None`
 /// if no cache directory is available.
 ///
@@ -540,6 +574,11 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
 /// (path + size + mtime + version), not merely its `--version` banner.
 #[cfg(feature = "mlir-build")]
 fn runtime_obj_cache_path(tools: &BuildTools, args: &[String]) -> Option<std::path::PathBuf> {
+    // Checked before the clang identity probe, so a disabled cache costs no
+    // `--version` spawn, no read and no write.
+    if !runtime_obj_cache_enabled(std::env::var(RUNTIME_OBJ_CACHE_ENV).ok().as_deref()) {
+        return None;
+    }
     let cache_dir = dirs::cache_dir()?.join("mind").join("runtime-obj");
 
     let clang_identity = clang_identity_string(&tools.clang);
@@ -1000,3 +1039,7 @@ fn decode_to_string(bytes: &[u8]) -> String {
         String::from_utf8_lossy(bytes).trim().to_string()
     }
 }
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_overlap_tests.rs"]
+mod overlap_tests;
