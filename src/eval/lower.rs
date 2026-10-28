@@ -21,6 +21,9 @@ use std::collections::HashMap as StdHashMap;
 /// ABI and struct resolution retain their explicit standard-library types.
 type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 
+#[cfg(feature = "std-surface")]
+#[path = "assert_trap.rs"]
+mod assert_trap;
 #[cfg(feature = "ffi-c-user")]
 #[path = "callable_exports.rs"]
 mod callable_exports;
@@ -10027,30 +10030,14 @@ pub(super) fn lower_expr_inner(
         // fail-closed panic below. It produces no meaningful value (it is a
         // statement), so the discarded merge id returned here is correct.
         //
-        // Desugar to `if cond { } else { __mind_assert_fail(<msg-len>); }` and
-        // reuse the existing, battle-tested `If` region-SSA lowering verbatim:
-        //   * cond true  → empty then-branch, falls through (unit 0);
-        //   * cond false → else-branch calls the runtime trap intrinsic, which
-        //     `abort()`s deterministically (the same `abort()` path the region/
-        //     genref runtime already relies on — see `runtime-support/
-        //     mind_intrinsics.c`). `__mind_assert_fail` is auto-declared as a
-        //     `func.func private @__mind_assert_fail(i64) -> i64` extern via the
-        //     standard `extern_calls` collection, so no new IR variant, MLIR arm,
-        //     or wire-format change is introduced — keystone bytes are untouched
-        //     (no program in the bootstrap uses `assert`).
-        //
-        // The message is diagnostic-only; we pass its byte length as a single
-        // deterministic i64 argument (no pointer bits, no float, identical across
-        // substrates). The trap is unconditional once reached, so the exact
-        // argument value does not affect control flow.
+        // Desugar to `if cond { } else { <trap> }` and reuse the existing,
+        // battle-tested `If` region-SSA lowering verbatim: cond true → empty
+        // then-branch, falls through (unit 0); cond false → the else-branch
+        // trap call built by `assert_trap::trap_call` (which documents its
+        // arguments) reports the failure and `abort()`s deterministically.
         #[cfg(feature = "std-surface")]
         ast::Node::Assert { cond, msg, span } => lower_out_of_line(|| {
-            let msg_len = msg.as_ref().map_or(0, |m| m.len()) as i64;
-            let trap_call = ast::Node::Call {
-                callee: "__mind_assert_fail".to_string(),
-                args: vec![ast::Node::Lit(Literal::Int(msg_len), *span)],
-                span: *span,
-            };
+            let trap_call = assert_trap::trap_call(msg.as_deref(), *span);
             let if_node = ast::Node::If {
                 cond: cond.clone(),
                 then_branch: Vec::new(),

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1909 | **Est. tokens:** ~3,706,031
-**Generated:** 2026-10-28 13:40 UTC
+**Files:** 1910 | **Est. tokens:** ~3,707,510
+**Generated:** 2026-10-28 13:48 UTC
 
 ## Token Budget Guide
 
@@ -94,7 +94,7 @@
 | `.github/scripts/` | 1 | ~962 |
 | `.github/workflows/` | 9 | ~13,478 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~21,939 |
+| `runtime-support/` | 1 | ~22,327 |
 | `scripts/` | 33 | ~118,193 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -119,7 +119,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~142,362 |
+| `src/eval/` | 39 | ~142,783 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -150,7 +150,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 418 | ~850,086 |
+| `tests/` | 418 | ~850,756 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1061,7 +1061,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~21939 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22327 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
@@ -1269,6 +1269,7 @@
 - `abi_gate_struct_ops.rs` (~2866 tok, huge) — Copyright 2026 STARGA Inc.
 - `abi_gate_tensor.rs` (~1232 tok, large) — Tensor-shape admission rules for the runnable artifact ABI gate.
 - `assert_check.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
+- `assert_trap.rs` (~421 tok, medium) — Copyright 2026 STARGA Inc.
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
 - `canonical_lowering.rs` (~4108 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1608,7 +1609,7 @@
 - `array_store_run.rs` (~2201 tok, huge) — Copyright 2026 STARGA Inc.
 - `array_surface_run.rs` (~829 tok, large) — Copyright 2025 STARGA Inc.
 - `array_u64_element_shift_run.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
-- `assert_parenthesised_message.rs` (~1270 tok, large) — Copyright 2026 STARGA Inc.
+- `assert_parenthesised_message.rs` (~1940 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
