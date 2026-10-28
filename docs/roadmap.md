@@ -97,7 +97,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
   emits for the **CPU**. GPU and accelerator execution across the broader
   chip-target set ships today in the commercial
-  `mind-runtime`, available to consumers under a commercial license. What is on
+  the commercial runtime, available to consumers under a commercial license. What is on
   the roadmap is **bit-identical determinism** across those substrates.
 - **Deterministic distributed runtime** – the commercial runtime ships NCCL/Gloo
   collectives, RingAllReduce, and pipeline parallelism today; making them
@@ -184,7 +184,7 @@ lowered ops, never author-declared — the same inferred-and-attested discipline
 `f32` conservation obligation could only ever be a tolerance check, and a
 tolerance comparison is not itself bit-identical across substrates.
 
-**The reference workload is a specimen, not an oracle.** `rfn-mind`'s
+**The reference workload is a specimen, not an oracle.** The workload's
 `laplacian.mind` mixes three saturating adds with one wrapping `<< 2` in a single
 expression, so it is `E2305` — *not* provable. Verified counterexample in RFC
 §5.4.1: a constant field at `Q16_MAX` under `Periodic` boundary, whose Laplacian
@@ -306,13 +306,13 @@ All new features are gated behind new keyword/token checks that fail immediately
 Turn `mindc` from an executable-only compiler into a library-emitting one,
 so MIND code can be consumed by C, Python, Rust, and other runtimes via a
 stable C ABI. This is the foundation Phase-2 native inference paths
-(mind-nerve, MindLLM, rfn-mind) compile against.
+(mind-nerve and the internal consumers) compile against.
 
 ### Motivation
 Today: `Mind.toml`'s `[exports]` section is parsed but silently dropped.
 `Node::Export` is parsed and discarded. The .so produced has no AOT
 symbols for user `pub fn` — runtimes embed source and re-parse on dlopen.
-The mind-runtime embedded parser has drifted from mindc's surface parser;
+The commercial runtime's embedded parser has drifted from mindc's surface parser;
 shipping `.mic` IR instead of source is the canonical path forward.
 
 ### Compile-speed invariant (non-negotiable)
@@ -341,7 +341,7 @@ worth-it decision, not an auto-block).
    manifest-declared symbols into the IR export list before codegen.
 4. **Document `mic@1` IR consumption pattern.** Canonical parse happens at
    compile time; runtimes consume `.mic` via `ir::load()`. Embedded
-   runtime parser is deprecated. mind-nerve, MindLLM, rfn-mind switch from
+   runtime parser is deprecated. mind-nerve and the internal consumers switch from
    shipping source to shipping `.mic` artifacts.
 5. **`--profile=<default|systems|embedded>` CLI flag.** Wire the
    ProfileTag from `src/cache/fingerprint.rs` through the build pipeline
@@ -397,7 +397,7 @@ scripts.
 - mind-nerve's `Mind.toml [exports] c_abi = [...]` works end-to-end.
 - mind-nerve build flow documents `mind compile --emit-ir` and the
   runtime loads `.mic` instead of `.mind`.
-- MindLLM, rfn-mind, mind-mem repeat the same pattern.
+- The other consumers, mind-mem included, repeat the same pattern.
 - Cross-arch bit-identity gate (mind-nerve task #57) unblocked by 0.3.0.
 - p95 ≤ 30 ms on 4-core CPU — already met on the Phase 1 PyTorch path via
   the `mind-nerve-routed` UNIX-socket daemon (23 ms p95 after warmup,
@@ -434,7 +434,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   is ≤10% of runtime is not worth optimizing.
 - Inference-shaped bench cases: add decode shapes (small M = 1..256, large N/K, the
   GEMV regime) and prefill shapes (M = 2k..8k) taken from the real layer
-  dimensions `mind-inference` runs. Today `det_matmul_i8` covers square 16..512
+  dimensions the inference pipeline runs. Today `det_matmul_i8` covers square 16..512
   only, which does not represent either phase.
 - Re-sweep blocking constants (`I8_MC/KC/NC`, `Q16_*`) after every structural
   kernel change — each value is pinned by one sweep against one kernel shape, and
@@ -459,7 +459,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   - Validate that PolarQuant rotation + Lloyd-Max codebook + QJL residual correction
     can be expressed and compiled as pure MIND (requires Phase 10.5 struct/enum)
   - Benchmark: quantize/dequantize 1M KV vectors at 3-bit, measure throughput vs Python
-  - This is the first real-world mind-inference kernel that exercises struct, enum,
+  - This is the first real-world inference-pipeline kernel that exercises struct, enum,
     const, bitwise ops, and tensor ops together — ideal Phase 10.5 integration test
   - Grounded in recent KV-cache quantization research.
 
@@ -511,7 +511,7 @@ width is substrate-dependent, the index is not).
 | 4 | Remaining stage-1 classifiers (JSON, TOON, TOML-int) | per-format canary | mind-det-gemm |
 | 5 | Streaming chunker + cross-chunk straddle carry-buffer | boundary canary (split == unsplit) | mind-dev |
 | 6 | ARM bless of the neon index line on real aarch64 | canary bless ceremony | mind-cross-substrate |
-| 7 | GPU rung — behind the open-core `GPUBackend` contract; concrete impl in the commercial runtime (mind-runtime) | tracked privately | commercial runtime |
+| 7 | GPU rung — behind the open-core `GPUBackend` contract; concrete impl in the commercial runtime | tracked privately | commercial runtime |
 
 ### Rails
 
@@ -525,7 +525,7 @@ width is substrate-dependent, the index is not).
   redefined, weakened, or bypassed.
 - The GPU rung is behind the open-core `GPUBackend` contract
   (`src/runtime/gpu.rs:15`); the concrete kernel and device
-  runtime are commercial-runtime work, tracked privately (mind-runtime).
+  runtime are commercial-runtime work, tracked privately.
 
 ---
 
@@ -617,7 +617,7 @@ deliberately, recorded here so nobody re-proposes them.
   GMP is faster and we will not pretend otherwise.
 - The Ramanujan-summation *argument* (a divergent series gets a finite value from a
   stated **procedure**, not from convergence) is positioning prose, documented in
-  naestro's `docs/ANTI-MODE-COLLAPSE.md` §C4. It is **not** a compiler feature and
+  the agent layer's anti-mode-collapse design notes. It is **not** a compiler feature and
   must not be implied to be one.
 
 ---
@@ -733,8 +733,8 @@ Introduce language-level support for observation-dependent computation. MIND alr
     proof-assistant program (small checkable kernel; properties carried in
     the artifact) without adopting a dependent-type rewrite or a Lean/Coq
     dependency. Downstream consumer + falsifiable-promotion criteria are
-    tracked in `rfn-mind/docs/roadmap.md` → Research watch → *Proof-carrying
-    artifact*; the certificate-generation machinery is owned here (compiler)
+    tracked in the reference workload's research watch (*Proof-carrying
+    artifact*); the certificate-generation machinery is owned here (compiler)
     because that is where the evidence chain lives.
 - **`observe` keyword** — explicit measurement operator for superposition states
   ```mind
@@ -746,7 +746,7 @@ Introduce language-level support for observation-dependent computation. MIND alr
 ### Integration
 - MIND compiler validates `@axis` annotations at type-check time
 - MLIR lowering preserves axis metadata for runtime evidence chain
-- MIND-Law governance modules use `@axis` to declare invariant coverage
+- Governance-layer modules use `@axis` to declare invariant coverage
 
 ---
 
@@ -1447,7 +1447,7 @@ This is the same separation discipline used by `[invariant]` conflict resolution
 - **Adding invariants without a separation strategy.** New invariants must declare *which separation principle* makes them coexist with existing ones. If none applies, the conflict is real and a redesign is required.
 - **Driving design from the analogy.** TRIZ is a checklist for direction, not a generator. Features come from product needs and consumer pull; TRIZ filters them, it does not invent them.
 
-### Runtime Layer (Mind-Runtime)
+### Runtime Layer (commercial runtime)
 
 The frontend IFR above governs the compiler. The runtime layer has a *different* IFR with different optima — including one law that is explicitly inverted from the frontend rule. Both layers live in this repository and must stay coherent under both criteria.
 
@@ -1633,7 +1633,7 @@ json/toml/regex, fs/process, cross-platform binary releases). What's
 missing is the *network and concurrency* half — and a CLI agent is
 the cleanest external dogfood target for that work. Each piece below
 also unlocks downstream consumers independently: TLS unlocks any
-secure I/O, async I/O unlocks mind-inference's serving layer, MCP
+secure I/O, async I/O unlocks the inference pipeline's serving layer, MCP
 client unlocks tool-using MIND programs, TUI primitives unlock
 operator-facing MIND tools.
 
@@ -1726,7 +1726,7 @@ Phase 15 self-host work landing first and the TLS scope decision.
 
 - Full ratatui-class TUI framework (a minimal one is in Tier 1; rich
   widgets are a separate later effort)
-- HTTP server (this phase is client-only; server is mind-inference's
+- HTTP server (this phase is client-only; server is the inference pipeline's
   concern in Phase 12)
 - WebSocket (not required for the SSE-based MCP/LLM demo; future RFC)
 - HTTP/2 / HTTP/3 (HTTP/1.1 is sufficient for SSE; defer)
@@ -2119,7 +2119,7 @@ the fleet, a dependency hub every release gates on. A spec (preimage layout, cha
 vectors) fails softly: implementations drift, but shared vectors *detect* drift, whereas
 coupling is structural. This is the mic@3 pattern and it is already known to work here.
 
-**Firewall — do not cross it.** MIND-Law's I13 states that structural admissibility must not
+**Firewall — do not cross it.** The governance layer's I13 states that structural admissibility must not
 enter the optimization loop: no gradient, no reward, no penalty term, separate evidence
 stream, no action identifiers — "the moment a structural boundary becomes a metric, it
 ceases to function as a boundary." Prediction confidence must therefore never confer
@@ -2144,9 +2144,9 @@ and every one of them answers it correctly and in isolation:
 | Layer | Anchors | Mechanism |
 |---|---|---|
 | `mind` compiler | identity of an **artifact** | `trace_hash = mini_sha256(emit_mic3(ir))` on canonical mic@3 bytes (RFC 0016/0021) |
-| Naestro kernel | identity of a **decision** | routing lineage + `kernel.replay` |
+| Agent kernel | identity of a **decision** | routing lineage + `kernel.replay` |
 | `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
-| `mind-law` | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
+| Governance layer | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
 | `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
 | `arch-mind` | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
 
@@ -2178,11 +2178,11 @@ Proposed surface:
 
 - A **composite preimage** — an ordered, canonically-serialized tuple of the six
   member hashes plus a chain-format tag. No clock, no randomness, no map
-  iteration order (the MIND-Law evidence-preimage discipline applies verbatim).
+  iteration order (the governance layer's evidence-preimage discipline applies verbatim).
 - `anchor_hash = mini_sha256(composite_preimage)`, carried as an **additive**
   mic@3 MAP key so unsigned artifacts stay byte-identical and no `mic@N` bump
   is required.
-- **Partial anchors are first-class.** A compile with no Naestro decision above
+- **Partial anchors are first-class.** A compile with no agent-kernel decision above
   it must produce a valid anchor over the members that exist, with absent members
   explicitly recorded as absent — never silently omitted, never zero-filled.
   A schema that can only express the full six is a schema nobody can emit.
@@ -2192,7 +2192,7 @@ Proposed surface:
 
 ### Firewall — do not cross it
 
-MIND-Law's **I13** holds: structural admissibility must not enter the
+The governance layer's **I13** holds: structural admissibility must not enter the
 optimization loop. The composite anchor is an evidence artifact, not a score.
 It must never be reduced to a single quality number, and a high anchor coverage
 must never confer authority to relax an invariant. Six chains agreeing is not
@@ -2205,13 +2205,13 @@ permission.
    survives adding a seventh layer. This decision is load-bearing for wire
    stability and cannot be deferred to implementation.
 2. **Who emits.** `mindc` is the only member that sees the artifact, but it does
-   not see the Naestro decision or the mind-mem belief state. Does the anchor get
+   not see the agent-kernel decision or the mind-mem belief state. Does the anchor get
    emitted at compile time with the members available and *extended* later, or
    assembled by a separate tool at release time? An extendable chain is more
    useful and much harder to keep deterministic.
 3. **Cross-repo hash-format drift.** The six mechanisms do not currently agree
    on a hash function or an encoding (`mini_sha256` here, HMAC-SHA256 in
-   arch-mind, ECDSA-backed witnesses in MIND-Law). The spec must pin one
+   arch-mind, ECDSA-backed witnesses in the governance layer). The spec must pin one
    composite format without forcing six migrations.
 4. **Does anyone buy it.** Same honesty test applied to Phase 18: name the
    buyer who needs the *conjunction* rather than one chain, or this is a demo
@@ -2635,7 +2635,7 @@ different kernel and goes through the full re-bless protocol, not this phase.
 ### Open questions — answer before this gets a milestone
 
 - Which consumers actually run an element-wise op after GEMM today
-  (mind-inference layers, MIND-Law scoring)? That decides which epilogue ops
+  (inference-pipeline layers, governance scoring)? That decides which epilogue ops
   are worth supporting first.
 - Is the measured cost of the second pass large enough to matter at the
   sizes we ship? Measure under 19.6.2 before building.
@@ -2696,7 +2696,7 @@ Why this matters for MIND specifically:
 **Scope.**
 - Hosted assistance for MIND: docs answers (Ask SI), the public MCP server for coding agents and IDEs, and a knowledge base, all drawing on one shared, versioned corpus with citations.
 - Code services: syntax checking with the compiler's own parser, explaining compiler errors, symbol lookup from the code graph, and help porting code from other languages to MIND.
-- Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, MIND-Flow and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
+- Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, workflow orchestration and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
 - Local MCP server, `mindc mcp`: the hosted docs tools offline, from a docs snapshot that matches the installed compiler version, plus toolchain tools that only a local server can run (check a file with real diagnostics, explain an error from the user's build, build with an evidence record, verify an artifact). Ships with the compiler over stdio, for air-gapped and regulated environments and for users who want no query to leave the machine.
 - Governance: every answer and every self-improvement step bounded by declared invariants, with a tamper-evident evidence record per request; improvements change data only and ship after evaluation and approval.
 
@@ -2960,7 +2960,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 > Inherits the existing fail-closed, canonical-mic@3, keystone, cross-substrate
 > and no-unverified-performance-claims requirements. Preserve open-core compiler
 > and language interfaces; commercial accelerator optimizations remain in
-> `mind-runtime`. Never change frozen Core v1 semantics without an RFC and
+> the commercial runtime. Never change frozen Core v1 semantics without an RFC and
 > explicit versioning.
 
 ### Research basis and actual consumer blockers
