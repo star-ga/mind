@@ -25,10 +25,9 @@
 //! track only what `FieldAccess` lowering needs (struct-name bindings),
 //! which keeps the pass O(n) over the AST with a small constant.
 //!
-//! Gated under `feature = "std-surface"` — non-feature builds construct
+//! Gated under `feature = "std-surface"` by its `mod` declaration in
+//! `src/eval/mod.rs` — non-feature builds construct
 //! the empty map for free and never enter this module.
-
-#![cfg(feature = "std-surface")]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

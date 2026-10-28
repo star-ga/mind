@@ -191,7 +191,9 @@ GATED_EVENTS = ("push", "pull_request")
 # 322 -> 323 takes scripts/sha256_memory_regression.sh from #289 (seed batch):
 # the frozen-byte transport for the native SHA-256 memory/fault KATs
 # (tests/sha256_*_kat.mind); executable assertions are MIND.
-HARNESS_CEILING = 323  # Exact reviewed integration inventory; no spare allowance.
+# 323 -> 324 takes .github/scripts/pr_review.py from main (#305): the PR review
+# and public-leak checker.
+HARNESS_CEILING = 324  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

@@ -98,7 +98,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
   emits for the **CPU**. GPU and accelerator execution across the broader
   chip-target set ships today in the commercial
-  `mind-runtime`, available to consumers under a commercial license. What is on
+  the commercial runtime, available to consumers under a commercial license. What is on
   the roadmap is **bit-identical determinism** across those substrates.
 - **Deterministic distributed runtime** – the commercial runtime ships NCCL/Gloo
   collectives, RingAllReduce, and pipeline parallelism today; making them
@@ -185,7 +185,7 @@ lowered ops, never author-declared — the same inferred-and-attested discipline
 `f32` conservation obligation could only ever be a tolerance check, and a
 tolerance comparison is not itself bit-identical across substrates.
 
-**The reference workload is a specimen, not an oracle.** `rfn-mind`'s
+**The reference workload is a specimen, not an oracle.** The workload's
 `laplacian.mind` mixes three saturating adds with one wrapping `<< 2` in a single
 expression, so it is `E2305` — *not* provable. Verified counterexample in RFC
 §5.4.1: a constant field at `Q16_MAX` under `Periodic` boundary, whose Laplacian
@@ -307,13 +307,13 @@ All new features are gated behind new keyword/token checks that fail immediately
 Turn `mindc` from an executable-only compiler into a library-emitting one,
 so MIND code can be consumed by C, Python, Rust, and other runtimes via a
 stable C ABI. This is the foundation Phase-2 native inference paths
-(mind-nerve, MindLLM, rfn-mind) compile against.
+(mind-nerve and the internal consumers) compile against.
 
 ### Motivation
 Today: `Mind.toml`'s `[exports]` section is parsed but silently dropped.
 `Node::Export` is parsed and discarded. The .so produced has no AOT
 symbols for user `pub fn` — runtimes embed source and re-parse on dlopen.
-The mind-runtime embedded parser has drifted from mindc's surface parser;
+The commercial runtime's embedded parser has drifted from mindc's surface parser;
 shipping `.mic` IR instead of source is the canonical path forward.
 
 ### Compile-speed invariant (non-negotiable)
@@ -342,7 +342,7 @@ worth-it decision, not an auto-block).
    manifest-declared symbols into the IR export list before codegen.
 4. **Document `mic@1` IR consumption pattern.** Canonical parse happens at
    compile time; runtimes consume `.mic` via `ir::load()`. Embedded
-   runtime parser is deprecated. mind-nerve, MindLLM, rfn-mind switch from
+   runtime parser is deprecated. mind-nerve and the internal consumers switch from
    shipping source to shipping `.mic` artifacts.
 5. **`--profile=<default|systems|embedded>` CLI flag.** Wire the
    ProfileTag from `src/cache/fingerprint.rs` through the build pipeline
@@ -398,7 +398,7 @@ scripts.
 - mind-nerve's `Mind.toml [exports] c_abi = [...]` works end-to-end.
 - mind-nerve build flow documents `mind compile --emit-ir` and the
   runtime loads `.mic` instead of `.mind`.
-- MindLLM, rfn-mind, mind-mem repeat the same pattern.
+- The other consumers, mind-mem included, repeat the same pattern.
 - Cross-arch bit-identity gate (mind-nerve task #57) unblocked by 0.3.0.
 - p95 ≤ 30 ms on 4-core CPU — already met on the Phase 1 PyTorch path via
   the `mind-nerve-routed` UNIX-socket daemon (23 ms p95 after warmup,
@@ -435,7 +435,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   is ≤10% of runtime is not worth optimizing.
 - Inference-shaped bench cases: add decode shapes (small M = 1..256, large N/K, the
   GEMV regime) and prefill shapes (M = 2k..8k) taken from the real layer
-  dimensions `mind-inference` runs. Today `det_matmul_i8` covers square 16..512
+  dimensions the inference pipeline runs. Today `det_matmul_i8` covers square 16..512
   only, which does not represent either phase.
 - Re-sweep blocking constants (`I8_MC/KC/NC`, `Q16_*`) after every structural
   kernel change — each value is pinned by one sweep against one kernel shape, and
@@ -460,7 +460,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   - Validate that PolarQuant rotation + Lloyd-Max codebook + QJL residual correction
     can be expressed and compiled as pure MIND (requires Phase 10.5 struct/enum)
   - Benchmark: quantize/dequantize 1M KV vectors at 3-bit, measure throughput vs Python
-  - This is the first real-world mind-inference kernel that exercises struct, enum,
+  - This is the first real-world inference-pipeline kernel that exercises struct, enum,
     const, bitwise ops, and tensor ops together — ideal Phase 10.5 integration test
   - Grounded in recent KV-cache quantization research.
 
@@ -512,7 +512,7 @@ width is substrate-dependent, the index is not).
 | 4 | Remaining stage-1 classifiers (JSON, TOON, TOML-int) | per-format canary | mind-det-gemm |
 | 5 | Streaming chunker + cross-chunk straddle carry-buffer | boundary canary (split == unsplit) | mind-dev |
 | 6 | ARM bless of the neon index line on real aarch64 | canary bless ceremony | mind-cross-substrate |
-| 7 | GPU rung — behind the open-core `GPUBackend` contract; concrete impl in the commercial runtime (mind-runtime) | tracked privately | commercial runtime |
+| 7 | GPU rung — behind the open-core `GPUBackend` contract; concrete impl in the commercial runtime | tracked privately | commercial runtime |
 
 ### Rails
 
@@ -526,7 +526,7 @@ width is substrate-dependent, the index is not).
   redefined, weakened, or bypassed.
 - The GPU rung is behind the open-core `GPUBackend` contract
   (`src/runtime/gpu.rs:15`); the concrete kernel and device
-  runtime are commercial-runtime work, tracked privately (mind-runtime).
+  runtime are commercial-runtime work, tracked privately.
 
 ---
 
@@ -618,7 +618,7 @@ deliberately, recorded here so nobody re-proposes them.
   GMP is faster and we will not pretend otherwise.
 - The Ramanujan-summation *argument* (a divergent series gets a finite value from a
   stated **procedure**, not from convergence) is positioning prose, documented in
-  naestro's `docs/ANTI-MODE-COLLAPSE.md` §C4. It is **not** a compiler feature and
+  the agent layer's anti-mode-collapse design notes. It is **not** a compiler feature and
   must not be implied to be one.
 
 ---
@@ -734,8 +734,8 @@ Introduce language-level support for observation-dependent computation. MIND alr
     proof-assistant program (small checkable kernel; properties carried in
     the artifact) without adopting a dependent-type rewrite or a Lean/Coq
     dependency. Downstream consumer + falsifiable-promotion criteria are
-    tracked in `rfn-mind/docs/roadmap.md` → Research watch → *Proof-carrying
-    artifact*; the certificate-generation machinery is owned here (compiler)
+    tracked in the reference workload's research watch (*Proof-carrying
+    artifact*); the certificate-generation machinery is owned here (compiler)
     because that is where the evidence chain lives.
 - **`observe` keyword** — explicit measurement operator for superposition states
   ```mind
@@ -747,7 +747,7 @@ Introduce language-level support for observation-dependent computation. MIND alr
 ### Integration
 - MIND compiler validates `@axis` annotations at type-check time
 - MLIR lowering preserves axis metadata for runtime evidence chain
-- MIND-Law governance modules use `@axis` to declare invariant coverage
+- Governance-layer modules use `@axis` to declare invariant coverage
 
 ---
 
@@ -1448,7 +1448,7 @@ This is the same separation discipline used by `[invariant]` conflict resolution
 - **Adding invariants without a separation strategy.** New invariants must declare *which separation principle* makes them coexist with existing ones. If none applies, the conflict is real and a redesign is required.
 - **Driving design from the analogy.** TRIZ is a checklist for direction, not a generator. Features come from product needs and consumer pull; TRIZ filters them, it does not invent them.
 
-### Runtime Layer (Mind-Runtime)
+### Runtime Layer (commercial runtime)
 
 The frontend IFR above governs the compiler. The runtime layer has a *different* IFR with different optima — including one law that is explicitly inverted from the frontend rule. Both layers live in this repository and must stay coherent under both criteria.
 
@@ -1634,7 +1634,7 @@ json/toml/regex, fs/process, cross-platform binary releases). What's
 missing is the *network and concurrency* half — and a CLI agent is
 the cleanest external dogfood target for that work. Each piece below
 also unlocks downstream consumers independently: TLS unlocks any
-secure I/O, async I/O unlocks mind-inference's serving layer, MCP
+secure I/O, async I/O unlocks the inference pipeline's serving layer, MCP
 client unlocks tool-using MIND programs, TUI primitives unlock
 operator-facing MIND tools.
 
@@ -1727,7 +1727,7 @@ Phase 15 self-host work landing first and the TLS scope decision.
 
 - Full ratatui-class TUI framework (a minimal one is in Tier 1; rich
   widgets are a separate later effort)
-- HTTP server (this phase is client-only; server is mind-inference's
+- HTTP server (this phase is client-only; server is the inference pipeline's
   concern in Phase 12)
 - WebSocket (not required for the SSE-based MCP/LLM demo; future RFC)
 - HTTP/2 / HTTP/3 (HTTP/1.1 is sufficient for SSE; defer)
@@ -2120,7 +2120,7 @@ the fleet, a dependency hub every release gates on. A spec (preimage layout, cha
 vectors) fails softly: implementations drift, but shared vectors *detect* drift, whereas
 coupling is structural. This is the mic@3 pattern and it is already known to work here.
 
-**Firewall — do not cross it.** MIND-Law's I13 states that structural admissibility must not
+**Firewall — do not cross it.** The governance layer's I13 states that structural admissibility must not
 enter the optimization loop: no gradient, no reward, no penalty term, separate evidence
 stream, no action identifiers — "the moment a structural boundary becomes a metric, it
 ceases to function as a boundary." Prediction confidence must therefore never confer
@@ -2145,9 +2145,9 @@ and every one of them answers it correctly and in isolation:
 | Layer | Anchors | Mechanism |
 |---|---|---|
 | `mind` compiler | identity of an **artifact** | `trace_hash = mini_sha256(emit_mic3(ir))` on canonical mic@3 bytes (RFC 0016/0021) |
-| Naestro kernel | identity of a **decision** | routing lineage + `kernel.replay` |
+| Agent kernel | identity of a **decision** | routing lineage + `kernel.replay` |
 | `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
-| `mind-law` | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
+| Governance layer | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
 | `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
 | `arch-mind` | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
 
@@ -2179,11 +2179,11 @@ Proposed surface:
 
 - A **composite preimage** — an ordered, canonically-serialized tuple of the six
   member hashes plus a chain-format tag. No clock, no randomness, no map
-  iteration order (the MIND-Law evidence-preimage discipline applies verbatim).
+  iteration order (the governance layer's evidence-preimage discipline applies verbatim).
 - `anchor_hash = mini_sha256(composite_preimage)`, carried as an **additive**
   mic@3 MAP key so unsigned artifacts stay byte-identical and no `mic@N` bump
   is required.
-- **Partial anchors are first-class.** A compile with no Naestro decision above
+- **Partial anchors are first-class.** A compile with no agent-kernel decision above
   it must produce a valid anchor over the members that exist, with absent members
   explicitly recorded as absent — never silently omitted, never zero-filled.
   A schema that can only express the full six is a schema nobody can emit.
@@ -2193,7 +2193,7 @@ Proposed surface:
 
 ### Firewall — do not cross it
 
-MIND-Law's **I13** holds: structural admissibility must not enter the
+The governance layer's **I13** holds: structural admissibility must not enter the
 optimization loop. The composite anchor is an evidence artifact, not a score.
 It must never be reduced to a single quality number, and a high anchor coverage
 must never confer authority to relax an invariant. Six chains agreeing is not
@@ -2206,13 +2206,13 @@ permission.
    survives adding a seventh layer. This decision is load-bearing for wire
    stability and cannot be deferred to implementation.
 2. **Who emits.** `mindc` is the only member that sees the artifact, but it does
-   not see the Naestro decision or the mind-mem belief state. Does the anchor get
+   not see the agent-kernel decision or the mind-mem belief state. Does the anchor get
    emitted at compile time with the members available and *extended* later, or
    assembled by a separate tool at release time? An extendable chain is more
    useful and much harder to keep deterministic.
 3. **Cross-repo hash-format drift.** The six mechanisms do not currently agree
    on a hash function or an encoding (`mini_sha256` here, HMAC-SHA256 in
-   arch-mind, ECDSA-backed witnesses in MIND-Law). The spec must pin one
+   arch-mind, ECDSA-backed witnesses in the governance layer). The spec must pin one
    composite format without forcing six migrations.
 4. **Does anyone buy it.** Same honesty test applied to Phase 18: name the
    buyer who needs the *conjunction* rather than one chain, or this is a demo
@@ -2636,7 +2636,7 @@ different kernel and goes through the full re-bless protocol, not this phase.
 ### Open questions — answer before this gets a milestone
 
 - Which consumers actually run an element-wise op after GEMM today
-  (mind-inference layers, MIND-Law scoring)? That decides which epilogue ops
+  (inference-pipeline layers, governance scoring)? That decides which epilogue ops
   are worth supporting first.
 - Is the measured cost of the second pass large enough to matter at the
   sizes we ship? Measure under 19.6.2 before building.
@@ -2697,7 +2697,7 @@ Why this matters for MIND specifically:
 **Scope.**
 - Hosted assistance for MIND: docs answers (Ask SI), the public MCP server for coding agents and IDEs, and a knowledge base, all drawing on one shared, versioned corpus with citations.
 - Code services: syntax checking with the compiler's own parser, explaining compiler errors, symbol lookup from the code graph, and help porting code from other languages to MIND.
-- Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, MIND-Flow and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
+- Ecosystem integration: the code graph, governance metrics, governed memory, intent routing, workflow orchestration and the other ecosystem products feed and cross-check each other, with fallbacks so one component's outage does not take the others down.
 - Local MCP server, `mindc mcp`: the hosted docs tools offline, from a docs snapshot that matches the installed compiler version, plus toolchain tools that only a local server can run (check a file with real diagnostics, explain an error from the user's build, build with an evidence record, verify an artifact). Ships with the compiler over stdio, for air-gapped and regulated environments and for users who want no query to leave the machine.
 - Governance: every answer and every self-improvement step bounded by declared invariants, with a tamper-evident evidence record per request; improvements change data only and ship after evaluation and approval.
 
@@ -2912,7 +2912,7 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 - Verify full teacher-vocabulary byte-prefix probabilities against exhaustive small-vocabulary oracles, including EOT mass, UTF-8 multibyte strings, shared prefixes and token endings. Top-k truncation must not be called exact.
 - Compare token and byte baselines with matched data, compute, model capability and honest serving-cost accounting. Report bytes-per-byte, quality, p50/p95 latency per output character, peak memory and reproducibility.
 - Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
-- Dependency order: mind-inference reference -> mind-nerve benchmark -> MindLLM optional dispatch -> naestro/mind-mem pilots; mind-flow orchestrates experiments and mind/mind-runtime implement only proven optimizations.
+- Dependency order: inference reference -> mind-nerve benchmark -> optional model dispatch -> agent/mind-mem pilots; an experiment orchestrator runs the trials, and the compiler and commercial runtime implement only proven optimizations.
 
 **Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
 
@@ -2952,7 +2952,7 @@ Only introduce independently designed candidate selection / bounded cache primit
 
 Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
 
-**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. Naestro OS owns mission UI; mind-law policy, mind-ci verification, mind-flow orchestration, mind-codegraph impact, mind-mem decisions. No co-author trailers.
+**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. The agent layer owns the mission UI; separate components own policy, verification, orchestration, impact analysis and decision memory (mind-mem). No co-author trailers.
 
 ## OCaml-competitive language and ecosystem hardening (2026-10-24)
 
@@ -2961,7 +2961,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 > Inherits the existing fail-closed, canonical-mic@3, keystone, cross-substrate
 > and no-unverified-performance-claims requirements. Preserve open-core compiler
 > and language interfaces; commercial accelerator optimizations remain in
-> `mind-runtime`. Never change frozen Core v1 semantics without an RFC and
+> the commercial runtime. Never change frozen Core v1 semantics without an RFC and
 > explicit versioning.
 
 ### Research basis and actual consumer blockers
@@ -2972,14 +2972,14 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
   [Dune](https://github.com/ocaml/dune), [Merlin](https://github.com/ocaml/merlin).
 - MIND compiler: `docs/INDEPENDENCE_ROADMAP.md`, RFC 0010,
   current modules/import/linker/ABI restrictions and capability gates.
-- `mind-flow/COMPILER_REQUIREMENTS.md`: `FieldAccess` value-position lowering
+- A pure-MIND workflow consumer's compiler requirements: `FieldAccess` value-position lowering
   panic, aggregate call ABI, and native build blocked on the tested compiler.
-- `mind-parser/docs/MIND_GAPS.md`: G-01/04/07/08/09/11/14/16/19/22/24/25/
-  26/27/28/29/30; these are consumer-reported gaps, not necessarily still
+- A parser consumer's reported compiler gaps (G-01/04/07/08/09/11/14/16/19/22/24/25/
+  26/27/28/29/30); these are consumer-reported gaps, not necessarily still
   reproduced on HEAD. Recheck on current compiler before declaring one open.
-- `mind-grammar`, `mind-spec`, `mind-codegraph`, `mind-ci`,
-  `mind-mem`, `mind-nerve`, `mind-law`, `naestro`, and private
-  `mind-runtime`: integration/conformance consumers; protect licensing boundaries.
+- `mind-grammar`, `mind-spec`, `mind-mem`, `mind-nerve`, internal tooling,
+  governance and agent consumers, and the commercial runtime: integration and
+  conformance consumers; protect licensing boundaries.
 
 ### P0 — Fix the full-language integration path before expanding syntax
 
@@ -2988,7 +2988,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    lowering and source-module ownership for structs, enums, arrays, strings,
    nested Option/Result and tensors. Eliminate `FieldAccess` value-position
    panic with typed lowering and diagnostic errors (never a const-0 placeholder).
-   **Gates:** `mind-flow` pure-MIND project builds and runs native end-to-end;
+   **Gates:** the pure-MIND workflow consumer builds and runs native end-to-end;
    imported aggregates pass identity and layout tests; ABI comparisons on
    x86_64 and aarch64; unsupported cases fail closed.
 2. **MOC-02: Strong module abstraction.** Implement module-scoped symbol mangling,
@@ -3005,9 +3005,11 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    lockfile, hashes, offline mode, workspace members, cyclic-import diagnostics,
    cross-package `import`, build-script capabilities, and supply-chain policy.
    Derive cache invalidation from public interface hashes, not arbitrary
-   timestamps. **Gates:** build `mind-parser` without vendoring `std` or
+   timestamps. **Gates:** build the parser consumer without vendoring `std` or
    duplicated test sources; reproducible offline build from pinned lock; test
-   graph cycles and malicious symlinks.
+   graph cycles and malicious symlinks; every registry archive is byte-reproducible
+   from its source and carries a signed provenance record that `mindc` verifies
+   offline (signing contract: Phase 19.1).
 4. **MOC-04: Link/run every documented standard-library surface.** Close
    mismatches between typecheck, MLIR/native emission and final linker for
    `std.fs/net/regex/time`; native argv, closed resource handles and robust
@@ -3049,7 +3051,10 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    explicit unsafe obligations and deterministic destruction. Favor opt-in
    proof-preserving inference, retain visible lifetime semantics for governed
    code. **Gates:** compile-fail corpus for UAF/double-free/alias escapes,
-   sanitizer and fuzz checks, stable foreign-call layout.
+   sanitizer and fuzz checks, stable foreign-call layout, and a published safety
+   statement that lists each guarantee the region and generation-check model makes,
+   the test that enforces it and the stated exclusions. A guarantee without an
+   enforcing test is not published.
 10. **MOC-10: Deterministic multicore structured concurrency.** Define
     task scopes, cancellation propagation, channels, bounded queues,
     race-free ownership transfer, fair scheduling policy and replayable
@@ -3061,7 +3066,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     validation, Unicode NFC/IDNA, compression, HTTP/2, mmap/fsync,
     constant-time comparison, program-data signature APIs, terminal and
     interactive line I/O. Prefer reviewed protocols and pinned test vectors
-    over custom cryptographic invention. **Gates:** `mind-parser` HTTPS and
+    over custom cryptographic invention. **Gates:** the parser consumer's HTTPS and
     interactive server native E2E, standards-based TLS and security tests.
 12. **MOC-12: High-level abstractions without runtime tax.** Evaluate traits,
     associated types, constrained generics, closures, iterators, zero-cost
@@ -3090,7 +3095,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     parser/typechecker: go-to-definition, references, rename, semantic
     highlighting, hover types/effects/shapes, inlay hints, completion,
     diagnostics, code actions and workspace-wide symbol search. Align
-    `mind-grammar` and `mind-codegraph` on one symbol identity.
+    `mind-grammar` and the code-graph index on one symbol identity.
     **Gates:** multilingual/editor fixture suite, rename across packages,
     no stale offsets, p95 interactive latency budgets.
 16. **MOC-16: Interactive REPL and debugger.** Native/interpretive parity,
@@ -3105,9 +3110,9 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     **Gates:** every newly fixed miscompile adds permanent corpus case;
     corpus survives all codegen flag combinations.
 18. **MOC-18: Cross-repository compatibility dashboard.** Machine-readable
-    consumer matrix for `mind-flow`, `mind-law`, `mind-parser`,
-    `mind-nerve`, `mind-ci`, `mind-mem`, `naestro`, and
-    `mind-runtime`: `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
+    consumer matrix across the public consumers (`mind-mem`, `mind-nerve`,
+    `mind-grammar`, `mind-spec`) and the internal and commercial ones:
+    `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
     `CROSS-ISA`, `SIGNED` must be different fields. Require pinned
     compiler SHA, source SHA, backend and test log artifact. **Gates:**
     no source-complete project advertised as fully native without an
@@ -3121,8 +3126,8 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     equivalence test. Distinguish bit-exact semantics from explicitly
     approximate fast-math profiles.
 20. **MOC-20: Governed execution integration.** Typed capability manifests
-    and audit receipts interoperate with `mind-law`, `mind-flow`,
-    `mind-mem`, and `naestro`; no external process or service can be
+    and audit receipts interoperate with the governance layer, workflow consumers,
+    `mind-mem`, and the agent runtime; no external process or service can be
     governed solely by in-process types, so runtime mediation,
     authorization, and hostile-boundary tests are required.
 21. **MOC-21: Reproducible heterogeneous kernels.** Explicit backend
@@ -3139,10 +3144,10 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 
 ### Execution order and milestone acceptance
 
-- **Milestone A:** MOC-01/02/04: `mind-flow` native executable, imported
+- **Milestone A:** MOC-01/02/04: workflow-consumer native executable, imported
   aggregate ABI, same-named module-private functions, native linked stdlib.
 - **Milestone B:** MOC-03/05/14/18: dependency graph and build provenance;
-  `mind-parser` consumes real packages with no copied stdlib modules;
+  the parser consumer builds from real packages with no copied stdlib modules;
   signed versus unsigned evidence statuses are explicit.
 - **Milestone C:** MOC-06/07/09/12: richer static language verified by
   compiler/interpreter/native differential suites.
@@ -3189,3 +3194,316 @@ benchmarks against matched baselines.
    CPU, memory, wall-time and cost, with immutable provenance.
 6. Report measured baseline comparisons and limitations; scale complexity only after
    the earlier tiers pass.
+
+## Measured toolchain gaps (2026-10-27)
+
+> **Status: proposed; not shipped unless a draft PR is named.** Each item was
+> reproduced with `mind 0.10.2` (`core-ir=1.0`, release features) on a minimal
+> program. Small fixes are in separate draft PRs; the items below are the
+> larger ones. Every item states its determinism and benchmark risk. Common
+> rules: a `std/*.mind` addition changes the std artifact digest, so any pinned
+> oracle hash covering that module is re-blessed deliberately in the same
+> change, never blind; a language feature stays out of `std/` until the
+> self-host front end (`examples/mindc_mind/main.mind`) parses it; a lowering
+> change keeps every existing canary output byte-identical (keystone 7/7,
+> cross-substrate canaries, `mic3_flip_smoke.py`) and passes the one-sided +10%
+> criterion gate.
+
+Fixed in draft PRs (listed for traceability):
+
+- `mindc test` now resolves a bare call to an exported function of an imported
+  project module (`import util; util_add(1, 2)`), as `check` and native builds
+  do. Before, every such test failed with `unsupported operation`.
+- A failing native `assert` now writes
+  `mind: assertion failed at source span S..E: <message>` to stderr before the
+  unchanged `abort()`; before, the process died with status 134 and no output.
+- `std.fs` gains `append_string(path, buf, len)` (`O_WRONLY | O_CREAT |
+  O_APPEND`), so an append-only log no longer needs read-modify-write or a
+  temp file plus rename (MG-06 below keeps the remaining portability work).
+
+Open items:
+
+1. **MG-01: Fail-closed import resolution in `build`/`run`.** `mindc run` links
+   every source of a `Mind.toml` package whatever the `import` lines say:
+   `import bogus.util;` and the project-root-relative `import src.util;` both
+   build and run, while `check` and `test` refuse the `src.util` spelling
+   (E2003 `unsupported call` at each use).
+   Resolve imports in the build path with the same resolver as `check`, and
+   decide whether the `src.`-prefixed spelling is a supported alias (then
+   accept it everywhere) or an error (then refuse it everywhere, with a
+   migration note). *Risk:* programs that build today only because of the
+   lenient path start failing; the change touches link selection only, so
+   emitted artifacts for correctly-importing programs must stay byte-identical
+   (verify over `std/` and `examples/` with the mic@3 digest).
+2. **MG-02: Source location in native trap messages.** The assert diagnostic
+   names a byte span, because lowering has no source map. Carry file and
+   line:column for each trap site into lowering (a per-module table, not
+   pointer bits) and print `file:line:col`; also let `mindc run` name the
+   signal when the child dies by one. *Risk:* adds constants to the failing
+   branch only; programs without `assert` must stay byte-identical.
+3. **MG-03: `"text".to_bytes()` and unknown string methods.** A method call on
+   a String receiver lowers to the std free function `string_<method>`; no
+   `string_to_bytes` exists, so the call passes `mindc check` and fails at link
+   (`undefined reference to string_to_bytes`). Two parts: (a) add
+   `string_to_bytes(s: String) -> bytes` to `std/string.mind`, producing the
+   growable `bytes` record that `std.sha256.hash` consumes; (b) make `mindc
+   check` refuse a String-receiver method whose `string_<method>` resolves
+   nowhere (std.string, the module, or its imports), keyed on the resolved
+   callee rather than the call shape, so the error surfaces at check time.
+   *Risk:* (a) changes the std.string digest, and std.string is linked into the
+   self-host compiler, so its pinned outputs need a deliberate re-bless; land it
+   after the native-compiler integration branch that also edits
+   `std/string.mind`. (b) is checker-only; prove it rejects nothing that builds
+   today by running `mindc check std/ examples/` before and after.
+4. **MG-04: `mindc test` evaluator parity.** The test evaluator refuses
+   `__mind_realloc` (`unsupported operation`), every `std.fs` call, and byte
+   access on a string literal (`string_addr`, `string_get_byte`, `"abc"[1]`:
+   `unknown field .addr`), all of which run natively. Tests that need them must
+   be native-only today. Implement them in the evaluator against the same
+   memory model as native (literal bytes materialized in evaluator memory;
+   `std.fs` behind an explicit effect capability the test opts into). *Risk:*
+   evaluator-only, so the keystone does not exercise it; gate each construct
+   with an evaluator-versus-native differential test. No artifact bytes move.
+5. **MG-05: `check` passes what `run` refuses (E6009).** `mindc check` accepts,
+   and `mindc run` then refuses with `E6009 unsupported lowering operation
+   'struct field read'`: string `+` concatenation, `.length` on a String, and
+   push/index through an `array<Struct>` struct field. Either lower them
+   (string concat via `string_push_str`, `.length` via `string_len`, aggregate
+   array fields via the vec runtime) or report the same E6009 from `check`.
+   Overlaps MOC-01 (aggregate ABI) and MOC-04 (link/run every std surface).
+   *Risk:* new lowering must leave all existing canary outputs byte-identical
+   and keep the criterion gate; a check-time refusal must be proven against
+   `std/` and `examples/` so it rejects nothing that lowers today.
+6. **MG-06: Per-target POSIX constants in `std.fs`.** The `std.fs` open flags
+   (`o_creat` 64, `o_trunc` 512, and the new `o_append` 1024) are the Linux
+   values; other targets number them differently (for example `O_APPEND` is 8
+   on macOS). Select the table per target at build time, or route opens through
+   one runtime entry point that takes a portable mode. *Risk:* a std change, so
+   the std.fs digest moves and is re-blessed deliberately; Linux artifacts must
+   stay byte-identical.
+7. **MG-07: Byte escapes in string literals.** `"\x00"` is refused (`unknown
+   string escape \x`), so binary record separators and NUL terminators need
+   `string_push_byte`. Add `\xNN` (two hex digits, a single byte, refused when
+   it would make the literal invalid UTF-8 unless the literal is a byte
+   string) to the Rust lexer, the formatter (round-trip the spelling) and the
+   self-host lexer in `main.mind`, in that order. *Risk:* a language feature:
+   keep it out of `std/` until the self-host front end parses it; the mic@3
+   string table already carries raw bytes, so existing artifacts stay
+   byte-identical; add NUL-in-literal tests for every path that hands a String
+   to a C API.
+
+## Compiler and language gap program (2026-10-28)
+
+> **Status: proposed; not shipped.** Each item was checked against this repository on
+> 2026-10-28 (roadmap, README, `docs/determinism.md`, `docs/cli.md`, `docs/ops.md`,
+> `docs/type-system.md`). Work already on the roadmap is referenced, not repeated:
+> MOC-03, MOC-09, MOC-12, MOC-14, MOC-15, MOC-16, Phase 11, Phase 17.6, Phase 19.1,
+> Phase 19.6.2, Phase 10, Phase 22. Common rules: every item keeps the fail-closed,
+> canonical-mic@3, keystone and cross-substrate requirements. The open-source compiler
+> emits for the CPU; GPU execution stays in the commercial runtime.
+
+### GP-01 — Compiler-verified corpus and translated benchmark track
+
+Build a licence-clean public corpus of MIND programs. Every file passes `mindc check`,
+every test passes `mindc test`, and a manifest lists each file's licence and evidence
+hash. Translate HumanEval, MBPP and McEval-Hard into MIND and publish them with the
+same harness, prompts, and a receipt for every reported pass@1.
+
+*Why:* generators have little MIND in their training data, so a public pass rate is the
+measurable state of AI-writability.
+
+**Gates:** an independent checkout reproduces 100% `check` and `test` pass on the corpus;
+every published pass@1 links to a receipt that another party can re-run.
+
+### GP-02 — `mindc check` as a blocking gate for generators
+
+Build three things. (a) A partial-program mode, `mindc check --partial`, that reports only
+diagnostics no appended code could resolve, so a prefix cut at a statement boundary is not
+rejected for code that has not been written yet. (b) A versioned JSON diagnostic schema
+with the exit-code contract in `docs/cli.md` (0 / 1 / 2) stated as the gate contract. (c)
+Machine-applicable fix-its for the most common error classes, building on the Improved
+Diagnostics entry in progress. Decide, from GP-01 failures, which std names are visible
+without an import.
+
+*Why:* a strict checker used as a blocking gate is the measured lever for generator
+reliability; exposing it through an editor protocol alone is not.
+
+**Gates:** every statement-boundary prefix of every GP-01 file yields zero partial-mode
+diagnostics unless the full file also fails at that location; the JSON shape is pinned by
+a schema-version field and a golden test; for the ten most common error classes on GP-01,
+applying the fix-it yields a clean check in at least 90% of firings; the prelude decision
+is recorded with the before and after share of missing-import failures.
+
+### GP-03 — Machine-readable grammar and type export
+
+Build `mindc grammar --format ebnf|json` and a type-environment export, both generated
+from the parser and type checker rather than written by hand. CI regenerates them and
+fails on drift without a version bump. This is the input a generator needs to constrain
+its output. Mask generation stays a separate evaluation under the grammar-constrained
+decoding entry above.
+
+*Why:* a generator that knows the exact legal token set and type environment produces
+fewer compile errors.
+
+**Gates:** on a fixed set of generated inputs, the exported grammar and the parser agree
+on accept or reject for 100% of cases; the export parses 100% of the GP-01 corpus; CI
+fails on drift; the export version is recorded in the stability policy (`docs/ir-stability.md`).
+
+### GP-04 — Language completion and 1.0 source stability
+
+Closures, static-dispatch traits and slice call arguments are shipped in part: Phase-1
+closures (one capture, one parameter), `trait`/`impl` desugared before IR emit, and
+`&[T]` / `&mut [T]` at call boundaries. Remaining work, in four parts:
+
+- **Closures beyond Phase 1:** multi-capture and multi-parameter closures (rejected with
+  E2600 today), unannotated and non-`i64` captures (typed capture syntax with per-slot
+  environment types), and closures passed to, returned from, or stored in functions.
+- **Traits beyond static dispatch:** trait objects and dynamic dispatch, or a spec
+  statement that they are out of scope.
+- **Slices beyond the call boundary:** local slice bindings (E2032) and nested or
+  struct-field slices (E2033).
+- **Generic shape parameters:** not shipped.
+
+Also complete the `Vec`, `String` and `Map` surface. MOC-12 evaluates the cost of these
+abstractions; this item commits to shipping the remainder once MOC-12's gates pass. Then
+publish a source-stability policy with a stated deprecation window, and tag 1.0 against it.
+
+*Why:* their absence blocks idiomatic library code, for developers and for generators alike.
+
+**Gates:** each construct compiles and runs on the native path and in the `mindc test`
+evaluator (MG-04 parity), with a permanent fixture; a program of at least 10,000 lines
+builds with no stubs; the stability policy is published before the 1.0 tag.
+
+### GP-05 — Published compile-time program
+
+Build three things. (a) A published end-to-end table of `mindc` source-to-native time,
+for the LLVM path and the native backend, against `clang` and `rustc` on identical
+programs, measured at the T2 tier of `docs/benchmarking.md`. (b) Incremental compilation
+through the MOC-14 engine. (c) A long-lived compiler daemon that serves builds, the MOC-15
+language server and the GP-02 gate, reported as a cold and steady pair under the T3 rule.
+
+*Why:* the only published compile-time numbers measure the frontend, so end-to-end and
+incremental cost is unmeasured against peers.
+
+**Gates:** the table regenerates from a checked-in script on pinned hardware, with exact
+commands and raw output; a single-function edit in a 10,000-line project rebuilds in at
+most 50 ms p95 warm, and a small project in at most 30 ms p50 as a stretch target; any
+runtime row follows the measurement protocol in Phase 19.6.2.
+
+### GP-06 — Mechanized determinism contract and translation validation
+
+Build two things. (a) A machine-checked model of the integer and Q16.16 semantics and of
+canonicalisation to mic@3 bytes, checked by a proof tool that sits outside the compiler's
+build and trusted base. (b) Per-build translation validation: where the MLIR path is
+available, the native backend's output is compared with it for every emitted function in
+the fixture corpus, and a disagreement fails the build.
+
+*Why:* the determinism claim currently rests on tests over sampled inputs; a machine-checked
+model and per-build validation cover the emitted code itself.
+
+**Gates:** the canonicalisation result is checked with no axioms beyond those stated in
+the model; translation validation covers at least 95% of emitted functions in the fixture
+corpus; the public miscompilation counter reports zero open items in each release.
+
+*Firewall:* no proof tool becomes a dependency of `mindc`. This keeps the decision recorded
+under Phase 13.5.
+
+### GP-07 — Public pages state the shipped state
+
+Update `docs/determinism.md`, the README and this roadmap so GPU identity is stated at the
+scope that is gated. Integer (Class A) kernels are byte-identical across GPU, CPU and ARM
+in the commercial runtime's CI, as shown by the cross-substrate canary that passed on
+2026-10-27 on an NVIDIA sm_89 GPU. Floating-point GPU kernels remain roadmap. Refer to the
+commercial runtime by name, without links to private repositories.
+
+*Why:* the determinism page says GPU identity is roadmap, which understates what the
+commercial runtime's CI already gates.
+
+**Gates:** the README, `docs/determinism.md` and this roadmap state the same GPU scope,
+enforced by a CI text check that fails when the sentences differ; every shipped GPU claim
+names the gate that enforces it. This item is a documentation change and lands as its own
+change, not with this roadmap entry.
+
+### GP-08 — Open interop funnel
+
+Build an open-source Python binding for the CPU path and a `wasm32-wasip1` target. This
+extends the Phase 10 Python-bindings deliverable (`mindlang`) with the gates below and
+does not duplicate it. The repository has only a benchmark-only pyo3 module
+(`src/python.rs`), no installable Python package and no wasm32 target. The C ABI is the only open
+foreign interface, and the wasm32 target is a planned tier-2 entry in the independence
+audit plan.
+
+*Why:* adoption starts with a single install step, and the funnel needs one open binding
+before any commercial one.
+
+**Gates:** the binding installs from a package index on Linux x86-64 and AArch64 and runs
+a documented example in CI; `wasm32-wasip1` output for each Core fixture gives the same
+result hash as the x86 and ARM runs; both targets are gated in the cross-substrate suite.
+
+### GP-09 — Conformance grows beyond the Core v1 operator set
+
+Build a published operator catalogue. Core v1 has 17 operators (`docs/ops.md`), and
+`tensor.matmul`, `tensor.transpose` and `tensor.conv2d` are already among them. Every
+operator added carries a bit-identity fixture on AVX2 and NEON. The first slice is the
+Phase 11 intrinsics not yet in the catalogue (`zeros`, `ones`, `softmax`, `randn`),
+followed by attention, layer normalisation, convolution variants beyond `conv2d`,
+quantisation and scatter.
+
+*Why:* 17 operators cannot express the forward pass of a real model.
+
+**Gates:** the catalogue count equals the fixture count; each operator gives identical AVX2
+and NEON hashes in CI; the catalogue reaches 100 operators with fixtures; a reference
+transformer block runs under `--require-strict-fp`.
+
+### Firewall — do not cross it
+
+- No GPU identity claim wider than the gated scope in GP-07.
+- No benchmark number published without its script, receipt and peer baseline.
+- GPU deterministic kernels belong to the commercial runtime and are not planned in this
+  open-source roadmap.
+
+### Open questions — answer before this gets a milestone
+
+- Licence of the Python binding (GP-08): open source, or commercial as the public docs
+  describe today? This is an operator decision.
+- Which proof tool GP-06 uses, and how it stays outside the trusted base, is decided by RFC.
+- Licence policy for translations of HumanEval, MBPP and McEval-Hard (GP-01).
+- No milestone dates are set; each item is sequenced after the gate it depends on.
+
+## Research watch — implicit geometry as a tensor library workload (2026-10-28)
+
+**Status: proposed; review REQUIRED before implementation. Not approved,
+implemented, or scheduled.** Application/library research, not a new
+compiler keyword or normative language-specification feature.
+
+**Numerical candidate.** Evaluate analytic implicit functions,
+signed-distance and zero-level-set predicates, CSG via min/max/negation,
+and transformations over typed tensor grids. With identical Q16.16
+input operands, min/max selects existing bit patterns without rounding;
+this alone neither proves that two machines compute identical *operands*
+nor guarantees geometric correctness, accurate surfaces, or exact
+Euclidean distances after arbitrary CSG.
+
+**Precision qualification.** Signed i32 Q16.16 in millimetres represents
+[-32768, 32767.999985] mm, with a grid spacing of 1/65536 mm
+(~0.01526 micrometres). This is representational spacing, NOT achieved
+CAD tolerance. The 64-bit signed Q32.32 accumulation range and
+three-axis squared-distance sums can overflow even when every coordinate
+is representable. Require bounded local coordinates, tested overflow
+semantics, scaling/tolerance budgets, and wider/adaptive-precision paths
+where needed. An approximate lookup-table square root is not a
+qualified CAD distance operator. Review
+correctly rounded integer square-root or certified intervals if real
+distances are needed; retain squared-distance predicates where valid.
+
+**Qualification gates.** Property/fixture tests for near-zero
+sign changes, tangencies, transforms, thin walls and CSG seams;
+independent high-precision reference; CPU scalar parity and AVX2/NEON
+replay with pinned input/output hashes; separate GPU floating-point
+qualification. Benchmark robust geometry and batch performance against
+existing kernels.
+
+Only promote to a standalone optional MIND geometry library after
+measurements and review; runtime specialization needs its own profiling
+and approval. Rendering experiments remain with
+[mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md).

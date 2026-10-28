@@ -160,18 +160,58 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 // Seven RFC 0005 intrinsics
 // ---------------------------------------------------------------------------
 
-// __mind_assert_fail(msg_len) — deterministic conditional-trap target for the
-// `assert cond, "msg"` statement (#203). `mindc` lowers `assert` to
-// `if cond { } else { __mind_assert_fail(<msg-len>); }`, so this is reached
-// ONLY when the asserted condition is false. It aborts the process via the
-// same `abort()` path the region / GenRef runtime already uses on its own
-// unrecoverable invariants — a single deterministic SIGABRT, identical across
-// CPU/ARM (no pointer bits, no float, no clock). The i64 argument is the
-// message byte length, carried for diagnostics; control flow does not depend
-// on it. Declared `(i64) -> i64` to match the auto-generated extern signature
-// (`func.func private @__mind_assert_fail(i64) -> i64`); it never returns.
-MIND_EXPORT int64_t __mind_assert_fail(int64_t msg_len) {
-    (void)msg_len;
+// __mind_assert_fail(msg, span_start, span_end) — deterministic conditional-trap
+// target for the `assert cond, "msg"` statement (#203). `mindc` lowers `assert`
+// to `if cond { } else { __mind_assert_fail(msg, start, end); }`, so this is
+// reached ONLY when the asserted condition is false. It first writes ONE line to
+// stderr naming the assert's source span (byte offsets into its source file,
+// the same convention as the compiler's lowering diagnostics) and its message:
+//
+//   mind: assertion failed at source span 41..58: x must be 2
+//
+// then aborts the process via the same `abort()` path the region / GenRef
+// runtime already uses on its own unrecoverable invariants — a single
+// deterministic SIGABRT, identical across CPU/ARM. The line carries only
+// compile-time constants and the literal's bytes (no pointer bits, no float, no
+// clock, no locale), through the same raw unbuffered fd write as `print_bytes`.
+// `msg` is the address of the message's 3-field String record
+// `{addr, len, cap}`, or 0 when the assert has no message. Declared
+// `(i64, i64, i64) -> i64` to match the auto-generated extern signature; it
+// never returns.
+static int mind_assert_fmt_i64(char *out, int64_t value) {
+    char digits[20];
+    int n = 0;
+    int len = 0;
+    uint64_t mag = (value < 0) ? (~(uint64_t)value + 1ULL) : (uint64_t)value;
+    do {
+        digits[n++] = (char)('0' + (int)(mag % 10ULL));
+        mag /= 10ULL;
+    } while (mag != 0 && n < (int)sizeof(digits));
+    if (value < 0) out[len++] = '-';
+    while (n > 0) out[len++] = digits[--n];
+    return len;
+}
+
+MIND_EXPORT int64_t __mind_assert_fail(int64_t msg, int64_t span_start, int64_t span_end) {
+    static const char head[] = "mind: assertion failed at source span ";
+    char line[sizeof(head) + 48];
+    int len = (int)sizeof(head) - 1;
+    memcpy(line, head, (size_t)len);
+    len += mind_assert_fmt_i64(line + len, span_start);
+    line[len++] = '.';
+    line[len++] = '.';
+    len += mind_assert_fmt_i64(line + len, span_end);
+    MIND_WRITE(2, line, (size_t)len);
+    if (msg != 0) {
+        const int64_t *rec = (const int64_t *)(intptr_t)msg;
+        const char *bytes = (const char *)(intptr_t)rec[0];
+        int64_t count = rec[1];
+        MIND_WRITE(2, ": ", 2);
+        if (bytes != NULL && count > 0) {
+            MIND_WRITE(2, bytes, (size_t)count);
+        }
+    }
+    MIND_WRITE(2, "\n", 1);
     abort();
     return 0; /* unreachable — abort() does not return */
 }
