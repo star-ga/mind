@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1910 | **Est. tokens:** ~3,704,259
-**Generated:** 2026-10-28 13:20 UTC
+**Files:** 1910 | **Est. tokens:** ~3,704,260
+**Generated:** 2026-10-28 13:52 UTC
 
 ## Token Budget Guide
 
@@ -85,7 +85,7 @@
 | `examples/quant/implied_vol_surface/` | 2 | ~17,191 |
 | `examples/quant/monte_carlo_gbm/` | 2 | ~13,954 |
 | `examples/quant/portfolio_risk/` | 2 | ~19,841 |
-| `examples/research/` | 2 | ~517 |
+| `examples/research/` | 2 | ~518 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
@@ -999,7 +999,7 @@
 ### `examples/research/`
 
 - `kakeya_field_diagnostic.mind` (~124 tok, small) — Kakeya-inspired deterministic directional-field diagnostic.
-- `README.md` (~393 tok, medium) — Scientific-computing research examples (not certified theorems)
+- `README.md` (~394 tok, medium) — Scientific-computing research examples (not certified theorems)
 ### `examples/`
 
 - `tiny_edge_model.mind` (~1876 tok, huge) — Tiny Edge Model Example

@@ -1,7 +1,7 @@
 # Scientific-computing research examples (not certified theorems)
 
 ## Kakeya-inspired directional diagnostic
-`kakeya_field_diagnostic.mind` is a **minimal integer/control-flow compiler smoke**, not an implementation of the Kakeya construction, the restriction conjecture, local smoothing. It counts eight symbolic directions over three steps and returns 24. It is intentionally independent of floats/tensors, since the native-ELF self-hosted subset and full MLIR tensor backend have different readiness.
+`kakeya_field_diagnostic.mind` is a **minimal integer/control-flow compiler smoke**, not an implementation of the Kakeya construction, the restriction conjecture, or local smoothing. It counts eight symbolic directions over three steps and returns 24. It is intentionally independent of floats/tensors, since the native-ELF self-hosted subset and full MLIR tensor backend have different readiness.
 
 Suggested validation (review compiler CLI syntax at the checked-out commit):
 
