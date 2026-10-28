@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2658 | **Est. tokens:** ~4,755,568
-**Generated:** 2026-10-28 18:00 UTC
+**Files:** 2657 | **Est. tokens:** ~4,752,338
+**Generated:** 2026-10-28 18:04 UTC
 
 ## Token Budget Guide
 
@@ -132,9 +132,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,756 |
+| `src/build/` | 13 | ~54,514 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 9 | ~35,138 |
+| `src/build/native_bridge/` | 8 | ~32,125 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -174,7 +174,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 44 | ~215,609 |
+| `std/` | 44 | ~215,634 |
 | `tests/` | 433 | ~900,446 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -1982,10 +1982,9 @@
 - `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
 - `namespace.rs` (~5743 tok, huge) — Copyright 2025 STARGA Inc.
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
-- `print.rs` (~3013 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~9333 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9091 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3615 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2360,7 +2359,7 @@
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4186 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
-- `fs_checked.mind` (~2535 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
+- `fs_checked.mind` (~2560 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
 - `fs.mind` (~5251 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.

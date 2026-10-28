@@ -26,8 +26,6 @@ mod namespace;
 #[cfg(feature = "std-surface")]
 mod outcome;
 #[cfg(feature = "std-surface")]
-mod print;
-#[cfg(feature = "std-surface")]
 mod seed;
 #[cfg(feature = "std-surface")]
 mod shadow;
@@ -265,6 +263,8 @@ pub fn run_native_backend_bridge_profile(
     // (a user function that is an exact private copy of a private seed helper
     // is not a collision; see `namespace::identical_private_seed_copies`).
     // The seed compiler's own refusal is a second fence, with no backend fallback.
+    let fence_source = crate::build::native_image::compose_user_region(&user_sources);
+
     // ADMISSION over the merged program. The fence must reason about the same
     // text the ELF receives, so everything below parses THIS composition once --
     // never each file separately, and never a splice of independently lowered IR
@@ -278,23 +278,6 @@ pub fn run_native_backend_bridge_profile(
     let reserved = crate::ir::native_closure::reserved_names_from_text(&String::from_utf8_lossy(
         std_blob.as_bytes(),
     ));
-    // Numeric statement `print` is not a native-lane intrinsic. Rewrite only
-    // the supported i64 shape into a private helper before admission, so the
-    // fence and the emitted user image are the same bytes. Sources with no
-    // `print` stay byte-identical. Unsupported prints are left in place and
-    // still fail the source-profile refusal.
-    let user_sources = match print::expand_numeric_statement_prints(&user_sources, &reserved) {
-        Ok(print::PrintSources::Same) => user_sources,
-        Ok(print::PrintSources::Expanded(sources)) => sources,
-        Err(msg) => {
-            eprintln!("error[backend-native]: {msg}");
-            process::exit(3);
-        }
-    };
-    // Compose only after the print rewrite. Admission and the emitted image
-    // must be this same byte string. Composing first left `print` in the
-    // fence, so the lane refused it and the helper never reached the compiler.
-    let fence_source = crate::build::native_image::compose_user_region(&user_sources);
     // ONE parse, ONE lower. The admitted module is handed straight to the fence
     // rather than re-derived: two lowerings of the same text are two chances to
     // reason about different programs, and the whole point of this path is that
