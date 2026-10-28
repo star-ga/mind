@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1908 | **Est. tokens:** ~3,703,742
-**Generated:** 2026-10-28 11:05 UTC
+**Files:** 1908 | **Est. tokens:** ~3,703,737
+**Generated:** 2026-10-28 13:34 UTC
 
 ## Token Budget Guide
 
@@ -119,7 +119,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,431 |
+| `src/eval/` | 38 | ~141,426 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1266,7 +1266,7 @@
 ### `src/eval/`
 
 - `abi_gate.rs` (~11329 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
-- `abi_gate_struct_ops.rs` (~2875 tok, huge) — Copyright 2026 STARGA Inc.
+- `abi_gate_struct_ops.rs` (~2866 tok, huge) — Copyright 2026 STARGA Inc.
 - `abi_gate_tensor.rs` (~1232 tok, large) — Tensor-shape admission rules for the runnable artifact ABI gate.
 - `assert_check.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1310,7 +1310,7 @@
 - `inference.rs` (~2555 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~7167 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~7171 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
 - `type_aliases.rs` (~2114 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2228 tok, huge) — Copyright 2025 STARGA Inc.

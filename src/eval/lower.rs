@@ -12439,10 +12439,8 @@ pub fn sysv_classify_struct(
                 if sz == 8 {
                     slot0_has_f64 = true;
                 }
-            } else {
-                if sz == 8 {
-                    slot1_has_f64 = true;
-                }
+            } else if sz == 8 {
+                slot1_has_f64 = true;
             }
             byte_off += sz;
         }

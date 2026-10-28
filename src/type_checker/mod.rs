@@ -918,27 +918,25 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
             }
             if let Some(t) = env.get(name).cloned() {
                 Ok((t, *span))
+            } else if split_enum_variant_path(name)
+                .and_then(|(e, v)| enum_variants_of(&e).map(|vs| vs.iter().any(|x| x == &v)))
+                .unwrap_or(false)
+            {
+                // An enum-variant constructor used as a *value* (`Mode::On`) is a
+                // valid expression but is not a value-env binding. Resolve it via
+                // the enum registry to the i64 ABI (the discriminant) rather than
+                // raising E2002 — matches the loose i64 ABI every other value
+                // form lowers to. (Unit variants only; payload variants such as
+                // `Some(x)` are call expressions handled by `infer_call`.)
+                Ok((ValueType::ScalarI64, *span))
             } else {
-                if split_enum_variant_path(name)
-                    .and_then(|(e, v)| enum_variants_of(&e).map(|vs| vs.iter().any(|x| x == &v)))
-                    .unwrap_or(false)
-                {
-                    // An enum-variant constructor used as a *value* (`Mode::On`) is a
-                    // valid expression but is not a value-env binding. Resolve it via
-                    // the enum registry to the i64 ABI (the discriminant) rather than
-                    // raising E2002 — matches the loose i64 ABI every other value
-                    // form lowers to. (Unit variants only; payload variants such as
-                    // `Some(x)` are call expressions handled by `infer_call`.)
-                    Ok((ValueType::ScalarI64, *span))
-                } else {
-                    Err(TypeErrSpan {
-                        msg: match closest_identifier(name, env) {
-                            Some(s) => format!("unknown identifier `{name}` — did you mean `{s}`?"),
-                            None => format!("unknown identifier `{name}`"),
-                        },
-                        span: *span,
-                    })
-                }
+                Err(TypeErrSpan {
+                    msg: match closest_identifier(name, env) {
+                        Some(s) => format!("unknown identifier `{name}` — did you mean `{s}`?"),
+                        None => format!("unknown identifier `{name}`"),
+                    },
+                    span: *span,
+                })
             }
         }
         Node::Paren(inner, span) => {
