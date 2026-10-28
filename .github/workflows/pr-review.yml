@@ -45,6 +45,10 @@ jobs:
         run: |
           python3 -m pip install --quiet --upgrade anthropic
           # The checker runs from the base branch once it exists there, so a PR cannot weaken its own check.
+          # run_gate-exempt: scripts/pr_review.py - (.github/scripts/pr_review.py) its stdout IS the review
+          # comment body posted by the next step, so runner lines must not be appended to it; its leak verdict
+          # goes to /tmp/leaks.txt, which the "Fail on a leak" step enforces and which is non-empty (red) when
+          # the leak list is missing, so an unchecked run cannot pass.
           git show "$BASE:.github/scripts/pr_review.py" > /tmp/pr_review.py 2>/dev/null || cp .github/scripts/pr_review.py /tmp/pr_review.py
           python3 /tmp/pr_review.py > /tmp/review.md
       - name: Post or update the review comment
