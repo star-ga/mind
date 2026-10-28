@@ -64,17 +64,17 @@ def mindc_bin() -> pathlib.Path:
 class SelfHost:
     """Seeded pure-MIND native-ELF emission (the production native path)."""
 
-    def __init__(self, so_path):
+    def __init__(self, so_path, entry: str = "selftest_native_elf_u"):
         self.lib = ctypes.CDLL(str(so_path))
-        fn = self.lib.selftest_native_elf_u
-        fn.restype = ctypes.c_int64
-        fn.argtypes = [ctypes.c_int64] * 3
+        self.fn = getattr(self.lib, entry)
+        self.fn.restype = ctypes.c_int64
+        self.fn.argtypes = [ctypes.c_int64] * 3
         self.std = std_blob()
 
     def elf(self, prog: str) -> bytes:
         src = self.std + prog.encode()
         sb = ctypes.create_string_buffer(src, len(src))
-        es = self.lib.selftest_native_elf_u(ctypes.cast(sb, ctypes.c_void_p).value, len(src), len(self.std))
+        es = self.fn(ctypes.cast(sb, ctypes.c_void_p).value, len(src), len(self.std))
         if not es:
             return b""
         sh = _RD(es, 0)
