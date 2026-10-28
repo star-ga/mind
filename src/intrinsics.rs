@@ -92,6 +92,7 @@ pub(crate) use crate::intrinsic_contract::{
 // distinct callee in sorted order. Default builds compile out the
 // recogniser entirely.
 pub(crate) const STD_SURFACE_INTRINSICS: &[IntrinsicSpec] = &[
+    IntrinsicSpec::legacy("__mind_assert_fail", 1, Det::Pure), // Nonreturning runtime trap.
     IntrinsicSpec::frozen_native_value("__mind_argc", "argc", NO_I64, IntrinsicEffect::Argc, 10),
     IntrinsicSpec::frozen_native_value("__mind_argv", "argv", ONE_I64, IntrinsicEffect::Argv, 11),
     IntrinsicSpec::frozen_value(
@@ -512,7 +513,6 @@ const UNREGISTERED_PURE_INTRINSICS: &[&str] = &[
     // Aborts, bounds traps, allocator, generation-checked handles, region
     // bookkeeping: effects and arena addresses, not varying results — the `__mind_load/store` `deferred:` above carries the
     // full argument for the allocator family.
-    "__mind_assert_fail",
     "__mind_calloc",
     "__mind_gen_alloc",
     "__mind_gen_deref",
