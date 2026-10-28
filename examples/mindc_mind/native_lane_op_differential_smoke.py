@@ -21,18 +21,16 @@ two's-complement arithmetic, toward-zero division, and a shift count masked
 with `& 63`.
 
 Division edges have per-path pins (expectation follows D1): compiled paths
-require trap 79, except the narrow signed MIN / -1 and MIN % -1 rows, which
-docs/errors.md ("Integer division trap") defines as MIN and 0 (the divisor-1
-result, no trap) and which self_host_native_div_trap_smoke.py pins the same way
-on both backends; the evaluator requires the measured named error, overflow
-panic, or value. Narrow native types may refuse with lane.type.unsupported.
-The imported division row builds a real helper module on both compiled paths.
-The expression-only evaluator receives the same helper text joined with the
-entry (only the import directive is removed); it has no module loader.
+require trap 79, except narrow signed MIN / -1 and MIN % -1, which docs/errors.md
+("Integer division trap") defines as MIN and 0 (no trap); the evaluator requires
+the measured named error, overflow panic, or value. Narrow native types may
+refuse with lane.type.unsupported. The imported division row builds a real
+helper module on compiled paths; the evaluator (no module loader) gets the
+helper text joined with the entry, import directive removed.
 
-Exit: 0 every row matches; 1 any row does not; 2 BLOCKED (mindc, mind, the
-marked compiler, or prlimit is missing). Prints one verdict line per row and
-never a count marker.
+Exit: 0 every row matches; 1 any row or matcher contract (--self-test, which
+every gate run executes first) does not; 2 BLOCKED (mindc, mind, the marked
+compiler, or prlimit is missing). One verdict line per row, no count marker.
 """
 from __future__ import annotations
 
@@ -719,6 +717,8 @@ def main() -> int:
             refuse = " refusal-ok" if c.allow_native_refusal else ""
             print(f"  {c.cid} expect_exit={c.expect_exit}{flag}{refuse}")
         return 0
+    if self_test():  # the matcher contracts run inside every gate run, first
+        return 1
     if not pathlib.Path("/usr/bin/prlimit").exists():
         return _blocked("prlimit not found at /usr/bin/prlimit")
     mindc = os.environ.get("MINDC_BIN", str(REPO / "target" / "release" / "mindc"))

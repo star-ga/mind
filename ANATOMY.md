@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2630 | **Est. tokens:** ~4,711,205
-**Generated:** 2026-10-28 11:38 UTC
+**Files:** 2630 | **Est. tokens:** ~4,711,212
+**Generated:** 2026-10-28 11:53 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 289 | ~815,134 |
+| `examples/mindc_mind/` | 289 | ~815,141 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,800 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -772,7 +772,7 @@
 - `native_emission_context.mind` (~1271 tok, large) — Copyright 2026 STARGA Inc.
 - `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1392 tok, large) — Four-argument native I/O parity
-- `native_lane_op_differential_smoke.py` (~7749 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
+- `native_lane_op_differential_smoke.py` (~7747 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
 - `native_lane_value_shapes_smoke.py` (~3202 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_binding_check.py` (~6416 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
@@ -961,7 +961,7 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6755 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~6764 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
