@@ -186,7 +186,9 @@ GATED_EVENTS = ("push", "pull_request")
 # h2b_exclusion_controls_check.py (format-identity walk and exclusion controls).
 # 320 -> 321 takes scripts/open_error_regression.sh from main (#290): the
 # build/transport for tests/open_error_kat.mind; executable assertions are MIND.
-HARNESS_CEILING = 321  # Exact reviewed integration inventory; no spare allowance.
+# 321 -> 322 takes examples/mindc_mind/native_lane_op_differential_smoke.py
+# (lane-op differential corpus gate with --self-test contracts).
+HARNESS_CEILING = 322  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
