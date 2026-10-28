@@ -163,7 +163,7 @@ fn the_consumer_command_line_builds_with_the_embedded_default_seed() {
     consumer_build("default");
 }
 
-/// The MIND-Lab `w_set` shape (a store intrinsic's result returned and summed)
+/// The downstream consumer `w_set` shape (a store intrinsic's result returned and summed)
 /// plus a full-width `i64 as f64` / `f64 as i64` round trip. Only the
 /// native-lane-v1 admission path binds the intrinsics and admits these casts;
 /// the historical path refuses the program at the closure fence

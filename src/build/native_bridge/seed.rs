@@ -264,7 +264,7 @@ mod tests {
         // `compiler_supports_native_lane_v1` reads these bytes when no
         // MINDC_NATIVE_ELF override is set. A seed without the `nblane01` mark
         // sends every native build down the historical admission branch, which
-        // has no intrinsic bindings and refuses the MIND-Lab programs at the
+        // has no intrinsic bindings and refuses the downstream consumer programs at the
         // closure fence. The reseed that embeds main.mind's
         // `nb_cap_native_lane_v1` must reach BOTH profiles.
         for (what, elf) in [("default", DEFAULT_SEED_ELF), ("bounded", BOUNDED_SEED_ELF)] {

@@ -10,7 +10,7 @@ struct.pack('<d') -- independent of the emitter. Three legs:
      one-digit neighbours, subnormals, the normal/subnormal boundary, DBL_MAX and the
      overflow boundary, long mantissas, `_` separators, exponent forms, the shortest
      repr of random doubles, random decimal strings, every literal in
-     std/detmath.mind and the MIND-Lab report literals.
+     std/detmath.mind and the downstream consumer report literals.
   2. native leg: a stage1 compiler ELF built from this tree's main.mind by the
      frozen pure-MIND seed compiles programs that store
      __mind_f64_to_bits(LITERAL) for a corpus subset and write the words to stdout;
@@ -212,7 +212,7 @@ def native_and_mlir_legs(lits: list[str]) -> int:
     fails = 0
     stage1 = w.build_stage1()
     print(f"[native] stage1 from {w.main_mind_path()} -> {stage1.name}")
-    # MIND-Lab + detmath + fixed edges first (they also feed the MLIR leg), then a
+    # Downstream consumer + detmath + fixed edges first (they also feed the MLIR leg), then a
     # corpus sample. 120 literals per program keeps every fn small.
     head = [s for s in lits if s in set(FIXED) or s in set(detmath_literals())]
     rest = [s for s in lits if s not in set(head)]

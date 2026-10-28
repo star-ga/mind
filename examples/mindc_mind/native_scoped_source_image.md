@@ -5,7 +5,7 @@ Author: STARGA Inc.
 This is an implemented, **not yet executed** source-to-image candidate. It
 connects original MIND declarations to the existing checked libc binding and
 fixed SysV emitter. It does not enable the official native frontend, qualify
-a compiler pin, replace a seed or complete a MIND-Lab consumer gate.
+a compiler pin, replace a seed or complete a downstream consumer gate.
 
 ## Source ownership
 

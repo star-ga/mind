@@ -4,7 +4,7 @@ Author: STARGA Inc.
 
 Status: COMPONENT_TESTED, INDEPENDENT_REVIEW_PASS_WITH_NOTES. This additive component is not connected
 to source admission, import binding or compiler dispatch. No consumer compiler
-pin or MIND-Lab acceptance class is qualified by its presence.
+pin or downstream-consumer acceptance class is qualified by its presence.
 
 `native_c_variadic_emit.mind` implements Linux x86-64 LP64 SysV calls for the
 bounded scalar/pointer types accepted by the [variadic argument planner](NATIVE_C_VARIADIC_PLAN.md).

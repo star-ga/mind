@@ -242,7 +242,7 @@ One build runs at a time. Record exact compiler/LLVM/libc/loader hashes,
 commands, stdout/stderr/exits and cgroup memory.events/peak/swap observations.
 The entry point is manual in SMOKE_WIRING.tsv because CI must supply the exact
 compiler prerequisites. Neither instrument becomes a qualified consumer pin.
-No original MIND-Lab evaluator acceptance class is closed by this component.
+No original downstream-consumer evaluator acceptance class is closed by this component.
 
 ## Integration boundary
 

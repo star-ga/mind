@@ -46,7 +46,7 @@ impl std::error::Error for LoadError {}
 
 /// Load an [`IRModule`] from mic@1 text or a MIC@3 artifact.
 ///
-/// This is the stable runtime-facing entry point used by `mind-runtime` and
+/// This is the stable runtime-facing entry point used by the commercial runtime and
 /// other backends to consume pre-compiled IR without re-running the surface
 /// parser. MIC@3 accepts a body with an optional well-formed MAP epilogue;
 /// signature and evidence verification remain separate operations.

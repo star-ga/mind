@@ -54,7 +54,7 @@ Steps
                profile: a 2500-arm else-if chain in a loop, 800/2800-statement
                let/if-return functions, 520/300/600 reassignments past the SSA
                let-env. Bounded production profile (the frozen seed + v2 header:
-               768 MiB arena, 384 MiB stack; RLIMIT_AS 2 GiB like the MIND-Lab
+               768 MiB arena, 384 MiB stack; RLIMIT_AS 2 GiB like the downstream
                consumer harness): dense if/else trees (2048 leaves, 1024 + 2600
                comment lines); giant FLAT statement lists in every statement
                position (body, then, else, while, value-if, calls, if sequence,
@@ -201,7 +201,7 @@ def derive_stage1(td: pathlib.Path) -> pathlib.Path:
 
 from _cf_giant import BOUNDED  # noqa: E402  (arena, stack, guard)
 CAP_CPU = 600  # CPU seconds per whole-program capacity compile
-AS_CAP = 2 << 30  # the MIND-Lab consumer harness runs every compile and program under this
+AS_CAP = 2 << 30  # the downstream consumer harness runs every compile and program under this
 
 
 def v2_header() -> bytes:

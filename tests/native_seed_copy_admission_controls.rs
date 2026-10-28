@@ -37,7 +37,7 @@ fn build(source: &str) -> (i32, String, Option<Vec<u8>>, Project) {
     (code, err, artifact, p)
 }
 
-/// The measured MIND-Lab shape: vendored private std helpers, comments
+/// The measured downstream consumer shape: vendored private std helpers, comments
 /// differing. Refused as `closure.std_symbol_collision` before this rule.
 #[test]
 fn exact_private_copies_of_seed_helpers_build_and_run() {

@@ -38,7 +38,7 @@ What runs:
      (default 0). Every hand fixture is built with MLIR as well: it must exit with
      the model's value, or, for the fixtures listed in MLIR_DEFECT_FIXTURES, with
      the recorded defect exit (so a change in either backend is noticed).
-     The mlab_* fixtures are the re-declaration shapes of the ten MIND-Lab
+     The mlab_* fixtures are the re-declaration shapes of the ten downstream-consumer
      programs (a block-local name re-declared after the block, the same name in
      both branches, in sibling loop bodies); they are not shadows to the Rust
      guard and must keep separate storage under every compiler.
@@ -369,7 +369,7 @@ FIXTURES.update({
         "s = s + i; continue; } s = s + i; } return s; }", 203),
 })
 
-# The re-declaration shapes the ten MIND-Lab programs (current-ten export) use, with
+# The re-declaration shapes the ten downstream-consumer programs (current-ten export) use, with
 # their memory intrinsics replaced by arithmetic: a block-local `let` followed by an
 # outer `let` of the same name after the block (ec_add `tail`, nn_add `i`), the same
 # name in the then- and else-branch (ec_integer `b`), and the same name in sibling

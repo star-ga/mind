@@ -117,7 +117,7 @@ impl Case {
 const MEMORY: &str = "fn main() -> i64 { let p: i64 = __mind_alloc(8); \
                       __mind_store_i64(p, 37); return __mind_load_i64(p); }";
 
-/// Both memory profiles: MIND-Lab's consumer builds use `bounded`.
+/// Both memory profiles: the downstream consumer's builds use `bounded`.
 const PROFILES: [&[&str]; 2] = [&[], &["--native-profile", "bounded"]];
 
 #[test]

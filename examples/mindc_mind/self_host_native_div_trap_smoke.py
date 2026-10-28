@@ -171,7 +171,7 @@ NARROW_PROGRAM = (
 )
 
 
-# A program that declares `_exit` itself (as MIND-Lab's campaign does) must still
+# A program that declares `_exit` itself (as the downstream consumer's campaign does) must still
 # build on MLIR and trap the same way: the trap trampoline reuses the program's
 # declaration (its i32 parameter is widened to i64 there) instead of adding a
 # second, conflicting one. MLIR-only: the native emitter refuses extern calls.

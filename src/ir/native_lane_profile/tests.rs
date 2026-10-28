@@ -259,7 +259,7 @@ fn call_dst(ir: &mut IRModule, name: &str) -> ValueId {
 
 /// A store result is a statement, or the defined i64 value 0 where a value is
 /// read: MLIR materialises `arith.constant 0` and the marked compiler writes 0
-/// into the result slot (the MIND-Lab `w_set` shape returns it). It never
+/// into the result slot (the downstream consumer `w_set` shape returns it). It never
 /// becomes an f64, and a constant initialiser still refuses it.
 #[test]
 fn store_results_are_statements_or_the_defined_zero() {
@@ -408,7 +408,7 @@ fn rejections_name_the_function_and_offset() {
 
 /// A branch that surely leaves does not reach the merge. Lowering forwards the
 /// other branch's value in its place, so only the reaching side is typed; the
-/// MIND-Lab UTF-8 decoder (`dcu_decode`) has exactly this shape.
+/// The downstream consumer UTF-8 decoder (`dcu_decode`) has exactly this shape.
 #[test]
 fn a_diverging_branch_is_not_typed_at_the_merge() {
     for source in [
@@ -467,7 +467,7 @@ fn divergence_is_recognised_only_when_control_surely_leaves() {
     }]));
 }
 
-/// The refusal classes the MIND-Lab lane-admission probe reported, as generic
+/// The refusal classes the downstream consumer lane-admission probe reported, as generic
 /// shapes. The scalar ones are admitted together; `print` and a C extern block,
 /// which no native-lane compiler implements, refuse at a located source site.
 #[test]

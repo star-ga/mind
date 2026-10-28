@@ -11,7 +11,7 @@ the actual byte count. Positioned operations leave the file cursor unchanged.
 This fixes the previous exception for compile-time `-1`: literal and computed
 forms could previously return different errors or disagree on no-op guards.
 Native normalization does **not** write libc TLS errno. That remains a dynamic
-runtime obligation, including the MIND-Lab campaign's `nc_errno()` use.
+runtime obligation, including the downstream consumer campaign's `nc_errno()` use.
 Raw `__mind_sys_*` and `std.posix` keep their negative-errno contracts.
 
 The pre-offset three-argument compatibility form retains its raw syscall bytes
@@ -76,7 +76,7 @@ and qualify the actual consumers before publishing a compiler pin.
 The new diagnostic runner is classified as manual in `SMOKE_WIRING.tsv` until
 CI supplies its exact source-bound bounded compiler. Existing syscall and
 process gates retain their CI wiring. Passing this slice does not qualify the
-ten MIND-Lab programs or establish general C FFI/errno support.
+ten downstream-consumer programs or establish general C FFI/errno support.
 
 ## Observed verification
 
@@ -97,4 +97,4 @@ observed cgroup peak was 888,647,680 bytes, with zero OOM events.
 Independent source review found no blocker in this slice and explicitly kept
 libc TLS errno and cancellation semantics open. Review of execution receipts
 is distinct from an independent rerun. This evidence supports the scoped I/O
-correction, not a new compiler pin or completion of MIND-Lab qualification.
+correction, not a new compiler pin or completion of downstream-consumer qualification.

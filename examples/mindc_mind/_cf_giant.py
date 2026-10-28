@@ -37,7 +37,7 @@ def giant_program(arms: int) -> tuple:
 
 
 def straight_line_program(blocks: int) -> tuple:
-    """Census X1 shape (MIND-Lab nr_literals): one straight-line function of
+    """Census X1 shape (downstream consumer nr_literals): one straight-line function of
     `blocks` x {let, early-return if, store} — 600+ statements. The mic@3 twin's
     statement planner had a fixed 512-record table and segfaulted the compiler
     on it."""
@@ -82,7 +82,7 @@ def reassign_program(n: int, shape: str) -> tuple:
 
 
 def dense_tree_program(depth: int, pad: int = 0) -> tuple:
-    """Census X1 shape at scale (MIND-Lab cs_ucd_mask is a 2006-node if/else tree
+    """Census X1 shape at scale (the downstream consumer cs_ucd_mask is a 2006-node if/else tree
     over a code point): one function holding a balanced if/else tree of `depth`
     levels (2**depth leaf returns, 4-space indentation), optionally padded with
     `pad` comment lines inside the body. Its source span, not its node count, is

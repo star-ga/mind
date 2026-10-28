@@ -84,7 +84,7 @@ the parser/registry/encoder and executable input wrapper are MIND.
 The normal native compiler's output, historical extern MIC regressions, bounded
 compiler fixed point, and whole-source `mic3_flip_smoke.py` are separate required
 checks. Passing this registry gate does not qualify any of
-the ten MIND-Lab applications or establish a compiler pin. Actual import
+the ten downstream-consumer applications or establish a compiler pin. Actual import
 emission, C startup, width conversions and libc-compatible intrinsic errno
 behavior remain separate work.
 
