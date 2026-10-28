@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `mlir-opt` and `mlir-translate` run concurrently
+- The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
+  `mlir-opt`'s output into it, so the translator's process startup overlaps the
+  optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
+  bench programs got 58-76 ms faster (paired median per program, warm
+  runtime-object cache, two runs of 40 interleaved builds each).
+- Output is unchanged: the translator receives exactly the text that becomes the
+  optimized MLIR, and the build falls back to a serial translate if the forwarded
+  bytes ever differ. Emitted `.so` and `.o` files are byte-identical to the
+  ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
+  reported as `mlir-opt`.
+
 ### Fixed — whole-array binary operators on the native backend (#287)
 - Whole-array binary operators on the native backend built a binary that returned
   wrong values. The miscompile existed on main after #110 and before #287 and was
