@@ -38,6 +38,10 @@ pub fn o_trunc() -> i64 {
     512
 }
 
+pub fn o_append() -> i64 {
+    1024
+}
+
 pub fn seek_set() -> i64 {
     0
 }
@@ -322,6 +326,26 @@ pub fn read_file_native(path_addr: i64, buf_addr: i64, cap: i64) -> i64 {
 // Returns 1 on success, 0 on error.
 pub fn write_string(path_addr: i64, buf_addr: i64, buf_len: i64) -> i64 {
     let flags: i64 = o_wronly() + o_creat() + o_trunc();
+    let fd: i64 = open(path_addr as *const u8, flags as i32, 420) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    let n: i64 = write(fd as i32, buf_addr as *const u8, buf_len);
+    let _ = close(fd as i32);
+    if n == buf_len {
+        1
+    } else {
+        0
+    }
+}
+
+// append_string — append buf_len bytes at buf_addr to the end of path,
+// creating the file (mode 0644) when it does not exist; existing bytes are
+// never truncated or rewritten. Every write lands at the current end of file
+// (O_APPEND), so an append-only log needs no read-modify-write or temp file.
+// Returns 1 when all buf_len bytes were written, 0 on any error or short write.
+pub fn append_string(path_addr: i64, buf_addr: i64, buf_len: i64) -> i64 {
+    let flags: i64 = o_wronly() + o_creat() + o_append();
     let fd: i64 = open(path_addr as *const u8, flags as i32, 420) as i64;
     if fd < 0 {
         return 0;

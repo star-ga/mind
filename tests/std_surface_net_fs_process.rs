@@ -57,6 +57,7 @@ fn fs_mind_parses_and_lowers() {
         "read_to_string",
         "try_read_to_string",
         "write_string",
+        "append_string",
         "read_dir",
         "fs_mkdir",
         "mkdir_p",
@@ -157,6 +158,7 @@ mod cross_module {
         for want in [
             "read_to_string",
             "write_string",
+            "append_string",
             "read_dir",
             "mkdir_p",
             "remove_recursive",

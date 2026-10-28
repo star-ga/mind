@@ -160,7 +160,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("tests/mindc_deps_phase_de.rs", 851),
     ("tests/mindfuzz_cross_substrate.rs", 1486),
     ("tests/return_cond_type_reject.rs", 1007),
-    ("tests/std_surface_net_fs_process.rs", 803),
+    ("tests/std_surface_net_fs_process.rs", 805),
 ];
 
 fn manifest_root() -> PathBuf {
