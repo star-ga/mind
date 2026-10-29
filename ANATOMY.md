@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2657 | **Est. tokens:** ~4,758,291
-**Generated:** 2026-10-28 21:54 UTC
+**Files:** 2659 | **Est. tokens:** ~4,778,811
+**Generated:** 2026-10-29 04:13 UTC
 
 ## Token Budget Guide
 
@@ -132,9 +132,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54,514 |
+| `src/build/` | 13 | ~54,543 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 8 | ~32,125 |
+| `src/build/native_bridge/` | 8 | ~32,340 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -149,13 +149,13 @@
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~1,398 |
-| `src/ir/` | 13 | ~105,488 |
+| `src/ir/` | 13 | ~106,208 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/ir/native_c_abi/` | 1 | ~3,735 |
-| `src/ir/native_lane_profile/` | 4 | ~14,412 |
+| `src/ir/native_lane_profile/` | 4 | ~15,932 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 8 | ~20,431 |
@@ -175,7 +175,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 433 | ~902,980 |
+| `tests/` | 434 | ~906,664 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -219,6 +219,7 @@
 | `tests/cross_substrate_identity/u64-ops/` | 2 | ~1,054 |
 | `tests/fixtures/` | 7 | ~5,820 |
 | `tests/fixtures/f64_abi_negative/` | 3 | ~192 |
+| `tests/fixtures/native_lane/` | 1 | ~14,352 |
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
@@ -1976,7 +1977,7 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~7978 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~8193 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~4117 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1700 tok, huge) — Copyright 2025 STARGA Inc.
 - `entry.rs` (~4376 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1984,7 +1985,7 @@
 - `outcome.rs` (~1026 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~9091 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9120 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `seed.rs` (~3615 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2161,8 +2162,8 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
-- `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~7179 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile_tests.rs` (~4896 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic_load.rs` (~996 tok, large) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~16831 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_c_abi.rs` (~3388 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2174,10 +2175,10 @@
 - `native_closure.rs` (~5238 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
-- `admit.rs` (~6486 tok, huge) — Copyright 2026 STARGA Inc.
+- `admit.rs` (~7407 tok, huge) — Copyright 2026 STARGA Inc.
 - `mod.rs` (~207 tok, medium) — Copyright 2026 STARGA Inc.
-- `tests.rs` (~5315 tok, huge) — Copyright 2026 STARGA Inc.
-- `types.rs` (~2404 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~5811 tok, huge) — Copyright 2026 STARGA Inc.
+- `types.rs` (~2507 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2706,6 +2707,9 @@
 - `g2_expected_outcomes.tsv` (~5592 tok, huge) — # Per-fixture G2 capability ratchet; canonical source SHA-256 binds each case.
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
+### `tests/fixtures/native_lane/`
+
+- `request_corpus.txt` (~14352 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
 ### `tests/fixtures/nerve_numerics/`
 
 - `e_nerve_001_bad.mind` (~89 tok, small) — NEGATIVE fixture for E_NERVE_001 (numerics.md@v1 §6 rule 1).
@@ -3083,6 +3087,7 @@
 - `native_historical_intrinsic_refusal.rs` (~1894 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1470 tok, large) — Copyright 2025 STARGA Inc.
+- `native_lane_request_fixtures.rs` (~3684 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8499 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.

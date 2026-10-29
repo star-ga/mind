@@ -48,7 +48,20 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // ValueId space. The top-level set covers instructions that are not inside a
     // function. `admit_instrs_in` opens a new set at every function boundary.
     let mut aggs = std::collections::BTreeSet::new();
-    admit_instrs_in(&module.instrs, &defined, module, &mut aggs)
+    admit_instrs_in(&module.instrs, &defined, module, &mut aggs, false)
+}
+
+/// Refuse the first binary operator whose operand is an array or tensor value.
+///
+/// The lane profile admits operators [`profile_frozen_admits`] refuses. A
+/// whole-array operand is still `binop.array_operand`, classified by the same
+/// walk and decided by [`admit_binop_use`]. Scalar-operator refusals are not
+/// returned.
+pub(crate) fn admit_binop_array_operands(module: &IRModule) -> Result<(), FrozenProfileRejection> {
+    let mut defined = std::collections::BTreeSet::new();
+    collect_fn_names(&module.instrs, &mut defined);
+    let mut aggs = std::collections::BTreeSet::new();
+    admit_instrs_in(&module.instrs, &defined, module, &mut aggs, true)
 }
 
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
@@ -107,6 +120,21 @@ fn admit_call(
 
 fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
     Err(FrozenProfileRejection { construct })
+}
+
+/// Keep a frozen refusal only when this walk is the full profile, or when the
+/// refusal is the array-operand kind the lane shares.
+fn keep_refusal(
+    array_operands_only: bool,
+    decision: Result<(), FrozenProfileRejection>,
+) -> Result<(), FrozenProfileRejection> {
+    if !array_operands_only {
+        return decision;
+    }
+    match decision {
+        Err(rejection) if rejection.construct == "binop.array_operand" => Err(rejection),
+        _ => Ok(()),
+    }
 }
 
 /// Admit a `BinOp` by OPERATOR. The byte-identity corpus (the RI-D1 readiness gate's
@@ -204,7 +232,10 @@ fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
 /// named `binop.array_operand` rather than `binop.div`. A scalar `/` is still
 /// `binop.div`. `bytes[N]` and slices are not aggregate values: indexing them
 /// lowers to a pointer add, and marking them would refuse that add.
-fn admit_binop_use(
+///
+/// Shared with the lane path ([`admit_binop_array_operands`]). The lane calls
+/// this helper; it does not reimplement the operand test.
+pub(crate) fn admit_binop_use(
     op: &BinOp,
     lhs: ValueId,
     rhs: ValueId,
@@ -297,6 +328,7 @@ fn admit_instrs_in(
     defined: &std::collections::BTreeSet<String>,
     module: &IRModule,
     aggs: &mut std::collections::BTreeSet<ValueId>,
+    array_operands_only: bool,
 ) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
         match instr {
@@ -335,7 +367,7 @@ fn admit_instrs_in(
                 note_aggregate_call(name, *dst, module, aggs);
                 #[cfg(not(feature = "std-surface"))]
                 let _ = dst;
-                admit_call(name, defined)?
+                keep_refusal(array_operands_only, admit_call(name, defined))?
             }
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
@@ -349,7 +381,9 @@ fn admit_instrs_in(
             // The operand class is checked first (`binop.array_operand`): an array or
             // tensor value used as an operand is a different native path from the
             // scalar operator, and the frozen compiler miscompiles it.
-            Instr::BinOp { op, lhs, rhs, .. } => admit_binop_use(op, *lhs, *rhs, aggs)?,
+            Instr::BinOp { op, lhs, rhs, .. } => {
+                keep_refusal(array_operands_only, admit_binop_use(op, *lhs, *rhs, aggs))?
+            }
             // Each function has its own ValueId space. Classify aggregates from
             // this function's signature and body, not from the caller.
             Instr::FnDef { body, .. } => {
@@ -364,7 +398,7 @@ fn admit_instrs_in(
                 {
                     seed_fn_aggregates(name, params, value_types, module, &mut child);
                 }
-                admit_instrs_in(body, defined, module, &mut child)?;
+                admit_instrs_in(body, defined, module, &mut child, array_operands_only)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::While {
@@ -376,8 +410,8 @@ fn admit_instrs_in(
                 ..
             } => {
                 propagate_while(init_ids, live_vars, exit_ids, aggs);
-                admit_instrs_in(cond_instrs, defined, module, aggs)?;
-                admit_instrs_in(body, defined, module, aggs)?;
+                admit_instrs_in(cond_instrs, defined, module, aggs, array_operands_only)?;
+                admit_instrs_in(body, defined, module, aggs, array_operands_only)?;
                 propagate_while(init_ids, live_vars, exit_ids, aggs);
             }
             #[cfg(feature = "std-surface")]
@@ -391,9 +425,9 @@ fn admit_instrs_in(
                 merges,
                 ..
             } => {
-                admit_instrs_in(cond_instrs, defined, module, aggs)?;
-                admit_instrs_in(then_instrs, defined, module, aggs)?;
-                admit_instrs_in(else_instrs, defined, module, aggs)?;
+                admit_instrs_in(cond_instrs, defined, module, aggs, array_operands_only)?;
+                admit_instrs_in(then_instrs, defined, module, aggs, array_operands_only)?;
+                admit_instrs_in(else_instrs, defined, module, aggs, array_operands_only)?;
                 if aggs.contains(then_result) || aggs.contains(else_result) {
                     aggs.insert(*dst);
                 }
@@ -448,35 +482,52 @@ fn admit_instrs_in(
             // re-admitted element-type-keyed (an f64 element is a different store
             // path from an i64 element) rather than by constructor.
             #[cfg(feature = "std-surface")]
-            Instr::ArrayStore { .. } => reject("aggregate.array_store")?,
+            Instr::ArrayStore { .. } => {
+                keep_refusal(array_operands_only, reject("aggregate.array_store"))?
+            }
 
             // ---- OUT OF PROFILE: tensor surface (RI-E) ----
             // The frozen stage1.elf fail-closes on these (readiness gate: tensor
             // programs → error[backend-native]); admitting them would risk a
             // silent miscompile, so reject LOUDLY here first.
-            Instr::ConstTensor(..) => reject("const-tensor")?,
-            Instr::ConstDenseTensor { .. } => reject("const-dense-tensor")?,
-            Instr::Sum { .. } => reject("tensor.sum")?,
-            Instr::Mean { .. } => reject("tensor.mean")?,
-            Instr::Relu { .. } => reject("tensor.relu")?,
-            Instr::ReluGrad { .. } => reject("tensor.relu_grad")?,
-            Instr::Reshape { .. } => reject("tensor.reshape")?,
-            Instr::ExpandDims { .. } => reject("tensor.expand_dims")?,
-            Instr::Squeeze { .. } => reject("tensor.squeeze")?,
-            Instr::Transpose { .. } => reject("tensor.transpose")?,
-            Instr::Dot { .. } => reject("tensor.dot")?,
-            Instr::MatMul { .. } => reject("tensor.matmul")?,
-            Instr::Conv2d { .. } => reject("tensor.conv2d")?,
-            Instr::Conv2dGradInput { .. } => reject("tensor.conv2d_grad_input")?,
-            Instr::Conv2dGradFilter { .. } => reject("tensor.conv2d_grad_filter")?,
-            Instr::Index { .. } => reject("tensor.index")?,
-            Instr::Slice { .. } => reject("tensor.slice")?,
-            Instr::Gather { .. } => reject("tensor.gather")?,
-            Instr::SparseAttr { .. } => reject("sparse_attr")?,
+            // The array-operand walk keeps only `binop.array_operand` and
+            // continues, so a later whole-array binop is still named. The lane
+            // fence still refuses these constructs.
+            Instr::ConstTensor(..) => keep_refusal(array_operands_only, reject("const-tensor"))?,
+            Instr::ConstDenseTensor { .. } => {
+                keep_refusal(array_operands_only, reject("const-dense-tensor"))?
+            }
+            Instr::Sum { .. } => keep_refusal(array_operands_only, reject("tensor.sum"))?,
+            Instr::Mean { .. } => keep_refusal(array_operands_only, reject("tensor.mean"))?,
+            Instr::Relu { .. } => keep_refusal(array_operands_only, reject("tensor.relu"))?,
+            Instr::ReluGrad { .. } => {
+                keep_refusal(array_operands_only, reject("tensor.relu_grad"))?
+            }
+            Instr::Reshape { .. } => keep_refusal(array_operands_only, reject("tensor.reshape"))?,
+            Instr::ExpandDims { .. } => {
+                keep_refusal(array_operands_only, reject("tensor.expand_dims"))?
+            }
+            Instr::Squeeze { .. } => keep_refusal(array_operands_only, reject("tensor.squeeze"))?,
+            Instr::Transpose { .. } => {
+                keep_refusal(array_operands_only, reject("tensor.transpose"))?
+            }
+            Instr::Dot { .. } => keep_refusal(array_operands_only, reject("tensor.dot"))?,
+            Instr::MatMul { .. } => keep_refusal(array_operands_only, reject("tensor.matmul"))?,
+            Instr::Conv2d { .. } => keep_refusal(array_operands_only, reject("tensor.conv2d"))?,
+            Instr::Conv2dGradInput { .. } => {
+                keep_refusal(array_operands_only, reject("tensor.conv2d_grad_input"))?
+            }
+            Instr::Conv2dGradFilter { .. } => {
+                keep_refusal(array_operands_only, reject("tensor.conv2d_grad_filter"))?
+            }
+            Instr::Index { .. } => keep_refusal(array_operands_only, reject("tensor.index"))?,
+            Instr::Slice { .. } => keep_refusal(array_operands_only, reject("tensor.slice"))?,
+            Instr::Gather { .. } => keep_refusal(array_operands_only, reject("tensor.gather"))?,
+            Instr::SparseAttr { .. } => keep_refusal(array_operands_only, reject("sparse_attr"))?,
 
             // ---- OUT OF PROFILE: region + SIMD/BLAS vector ops (RI-E) ----
             #[cfg(feature = "std-surface")]
-            Instr::Region { .. } => reject("region")?,
+            Instr::Region { .. } => keep_refusal(array_operands_only, reject("region"))?,
             #[cfg(feature = "std-surface")]
             Instr::VecLoad { .. }
             | Instr::VecFma { .. }
@@ -484,7 +535,9 @@ fn admit_instrs_in(
             | Instr::VecStore { .. }
             | Instr::VecLoadI32 { .. }
             | Instr::VecMulAddQ16 { .. }
-            | Instr::VecReduceAddI64 { .. } => reject("simd-vector-op")?,
+            | Instr::VecReduceAddI64 { .. } => {
+                keep_refusal(array_operands_only, reject("simd-vector-op"))?
+            }
         }
     }
     Ok(())

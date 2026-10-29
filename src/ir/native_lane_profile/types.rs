@@ -42,6 +42,7 @@ pub(super) fn reject<T>(construct: &'static str) -> Check<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Ty {
     I64,
+    Bool,
     F64,
     Unit,
     /// The result of a store intrinsic. It is a statement where a statement
@@ -56,7 +57,11 @@ pub(super) enum Ty {
 
 /// The type a value read observes: a store result reads as its defined 0.
 pub(super) fn value(ty: Ty) -> Ty {
-    if ty == Ty::Store { Ty::I64 } else { ty }
+    if matches!(ty, Ty::Store | Ty::Bool) {
+        Ty::I64
+    } else {
+        ty
+    }
 }
 #[derive(Clone, Debug)]
 pub(super) struct Signature {
@@ -68,7 +73,8 @@ pub(super) type Values = BTreeMap<ValueId, Ty>;
 
 pub(super) fn scalar(ann: &TypeAnn) -> Check<Ty> {
     match ann {
-        TypeAnn::ScalarI64 | TypeAnn::ScalarBool => Ok(Ty::I64),
+        TypeAnn::ScalarI64 => Ok(Ty::I64),
+        TypeAnn::ScalarBool => Ok(Ty::Bool),
         TypeAnn::ScalarF64 => Ok(Ty::F64),
         TypeAnn::ScalarF32 => reject("lane.type.non_f64_float"),
         TypeAnn::ScalarI32
@@ -194,7 +200,11 @@ fn intrinsic_signature(name: &str) -> Option<Signature> {
 pub(super) fn equal(actual: Ty, wanted: Ty) -> Check<()> {
     // A store result fits a statement slot (Unit) and an i64 value slot.
     let store_fits = actual == Ty::Store && matches!(wanted, Ty::I64 | Ty::Unit);
-    if actual == wanted || actual == Ty::Never || store_fits {
+    if actual == wanted
+        || matches!((actual, wanted), (Ty::Bool, Ty::I64) | (Ty::I64, Ty::Bool))
+        || actual == Ty::Never
+        || store_fits
+    {
         Ok(())
     } else {
         reject("lane.type.mismatch")
@@ -208,6 +218,7 @@ pub(super) fn unify(a: Ty, b: Ty) -> Check<Ty> {
         return Ok(a);
     }
     match (a, b) {
+        (Ty::Bool, Ty::I64) | (Ty::I64, Ty::Bool) => Ok(Ty::Bool),
         (Ty::Store, Ty::I64) | (Ty::I64, Ty::Store) => Ok(Ty::I64),
         _ => reject("lane.type.branch_mismatch"),
     }
@@ -227,6 +238,10 @@ pub(super) fn call_type(name: &str, args: &[Ty], functions: &Functions) -> Check
     Ok(sig.result)
 }
 pub(super) fn binary(op: &BinOp, left: Ty, right: Ty) -> Check<Ty> {
+    // Bool operations have i1 width in MLIR, but word width in the seed.
+    if left == Ty::Bool || right == Ty::Bool {
+        return reject("lane.bool.width");
+    }
     let (left, right) = (value(left), value(right));
     equal(left, right)?;
     if !matches!(left, Ty::I64 | Ty::F64) {

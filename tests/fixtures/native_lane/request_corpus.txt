@@ -1,0 +1,982 @@
+# Native-lane request corpus: the programs of the native-wave2 / native-wave3
+# checkpoints and of the native admission requests, run on native-lane-v1.
+# Driven by tests/native_lane_request_fixtures.rs. One record per program:
+#
+#   === <id> | <expect> | red=<3|-> | <default|bounded> | <origin>
+#   <MIND source, up to the next `===` line>
+#
+# expect:
+#   exit=N        the native artifact and the MLIR artifact both build and exit N
+#                 with identical stdout
+#   parity        both build; exits and stdout are equal (the value is owned by
+#                 another contract and is not pinned here)
+#   refused=TEXT  the native build exits 3, writes nothing and names TEXT
+# All 13 former silent mismatches are pinned named refusals.
+# red=3: a pre-lane compiler refuses the program with exit 3 (the RED leg).
+# The corpus is plain text, not `.mind` files, so the front-end differential
+# corpus under tests/fixtures (G2) does not pick up these deliberately
+# ill-typed and duplicate-declaration programs.
+
+=== w1_io_shape | exit=73 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::the_memory_and_io_intrinsics_build_and_run
+fn fill(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, 65 + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(32);
+    fill(p, 4);
+    __mind_store_i8(p + 4, 10);
+    let mut sent: i64 = 0;
+    while sent < 5 {
+        let n: i64 = __mind_write(1, p + sent, 5 - sent, 0 - 1);
+        sent = sent + n;
+    }
+    __mind_store_i64(p + 8, 1000);
+    let q: i64 = __mind_realloc(p, 64);
+    let kept: i64 = __mind_load_i64(q + 8) + __mind_load_i8(q + 3);
+    let freed: i64 = __mind_free(q);
+    return kept - 1000 + sent + freed;
+}
+
+=== w1_narrow | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::narrow_memory_and_wrap_intrinsics_build_and_run
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 0 - 1);
+    __mind_store_i16(p, 70000);
+    __mind_store_i32(p + 8, 0 - 2);
+    let a: i64 = __mind_load_i16(p);
+    let b: i64 = __mind_load_i32(p + 8);
+    let w: i64 = __mind_wrap_i8(300) + __mind_wrap_i16(65535) + __mind_wrap_i32(4294967297);
+    if a != 4464 { return 1; }
+    if b != 4294967294 { return 2; }
+    if __mind_load_i8(p + 2) != 255 { return 3; }
+    return w + 100;
+}
+
+=== w1_discard | exit=3 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::reading_a_store_result_is_refused
+fn main() -> i64 { let p: i64 = __mind_alloc(8); let r: i64 = __mind_store_i64(p, 5); return r + 3; }
+
+=== w1_offset | exit=0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_io_offset_not_proven_minus_one_is_refused
+fn rd(p: i64, off: i64) -> i64 { return __mind_read(0, p, 8, off); }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); return rd(p, 0 - 1); }
+
+=== w1_offset_zero | parity | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_io_offset_not_proven_minus_one_is_refused (pwrite at offset 0 on a pipe: the failure value is not pinned here)
+fn main() -> i64 { let p: i64 = __mind_alloc(8); return __mind_write(1, p, 1, 0); }
+
+=== w1_redefine | refused=native-lane-v1 (lane.source.function_contract) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_program_definition_of_an_intrinsic_is_refused
+fn __mind_alloc(x: i64) -> i64 { return 0; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); return 1; }
+
+=== w1_conv | exit=0 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_intrinsic_outside_the_frozen_table_stays_refused
+fn main() -> i64 { let x: i64 = 7; return __mind_bits_to_f64(x) as i64; }
+
+=== w1_alloc_zero | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(0);
+    if p == 0 {
+        return 1;
+    }
+    return 2;
+}
+
+=== w1_alloc_negative | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 7);
+    let q: i64 = __mind_alloc(0 - 16);
+    if q == 0 {
+        return 1;
+    }
+    __mind_store_i64(q, 99);
+    return __mind_load_i64(p);
+}
+
+=== w1_alloc_variable | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+fn mk(n: i64) -> i64 {
+    return __mind_alloc(n);
+}
+
+fn main() -> i64 {
+    let p: i64 = mk(0);
+    if p == 0 {
+        return 1;
+    }
+    return 2;
+}
+
+=== w1_realloc_zero | refused=native-lane-v1 (lane.alloc.size_positive) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_alloc_size_not_proven_positive_is_refused
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    let q: i64 = __mind_realloc(p, 0);
+    if q == 0 {
+        return 1;
+    }
+    return 2;
+}
+
+=== w1_wrap_f64 | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_operand_to_an_intrinsic_is_refused
+fn main() -> i64 {
+    let x: f64 = 300.0;
+    return __mind_wrap_i8(x);
+}
+
+=== w1_alloc_f64 | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_operand_to_an_intrinsic_is_refused
+fn main() -> i64 {
+    let n: f64 = 16.0;
+    let p: i64 = __mind_alloc(n);
+    __mind_store_i64(p, 3);
+    return __mind_load_i64(p);
+}
+
+=== w1_store_f64 | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_operand_to_an_intrinsic_is_refused
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    let x: f64 = 1.5;
+    __mind_store_i64(p, x);
+    let v: i64 = __mind_load_i64(p);
+    if v == 1 {
+        return 1;
+    }
+    if v == 0 {
+        return 0;
+    }
+    return 2;
+}
+
+=== w1_load_f64_addr | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_operand_to_an_intrinsic_is_refused
+fn main() -> i64 {
+    let p: f64 = 8.0;
+    return __mind_load_i8(p);
+}
+
+=== w1_load_as_f64 | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_intrinsic_result_used_as_a_float_is_refused
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, 4609434218613702656);
+    let y: f64 = __mind_load_i64(p);
+    if y == 1.5 {
+        return 1;
+    }
+    if y > 1000.0 {
+        return 3;
+    }
+    return 2;
+}
+
+=== w1_open_missing | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::io_error_results_match_the_mlir_backend
+fn main() -> i64 {
+    let path: i64 = __mind_alloc(64);
+    __mind_store_i8(path + 0, 47);
+    __mind_store_i8(path + 1, 110);
+    __mind_store_i8(path + 2, 111);
+    __mind_store_i8(path + 3, 110);
+    __mind_store_i8(path + 4, 101);
+    __mind_store_i8(path + 5, 120);
+    __mind_store_i8(path + 6, 105);
+    __mind_store_i8(path + 7, 115);
+    __mind_store_i8(path + 8, 116);
+    __mind_store_i8(path + 9, 101);
+    __mind_store_i8(path + 10, 110);
+    __mind_store_i8(path + 11, 116);
+    __mind_store_i8(path + 12, 45);
+    __mind_store_i8(path + 13, 109);
+    __mind_store_i8(path + 14, 105);
+    __mind_store_i8(path + 15, 110);
+    __mind_store_i8(path + 16, 100);
+    __mind_store_i8(path + 17, 45);
+    __mind_store_i8(path + 18, 100);
+    __mind_store_i8(path + 19, 105);
+    __mind_store_i8(path + 20, 114);
+    __mind_store_i8(path + 21, 47);
+    __mind_store_i8(path + 22, 110);
+    __mind_store_i8(path + 23, 111);
+    __mind_store_i8(path + 24, 47);
+    __mind_store_i8(path + 25, 115);
+    __mind_store_i8(path + 26, 117);
+    __mind_store_i8(path + 27, 99);
+    __mind_store_i8(path + 28, 104);
+    __mind_store_i8(path + 29, 47);
+    __mind_store_i8(path + 30, 102);
+    __mind_store_i8(path + 31, 105);
+    __mind_store_i8(path + 32, 108);
+    __mind_store_i8(path + 33, 101);
+    __mind_store_i8(path + 34, 0);
+    let fd: i64 = __mind_open(path);
+    return fd + 100;
+}
+
+=== w1_bad_fd | parity | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::io_error_results_match_the_mlir_backend (the I/O failure value (-1 today on both backends) is not pinned here)
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i8(buf, 65);
+    let w: i64 = __mind_write(99, buf, 1, 0 - 1);
+    let r: i64 = __mind_read(99, buf, 1, 0 - 1);
+    let z: i64 = __mind_write(1, buf, 0, 0 - 1);
+    return w + 100 + r * 3 + z;
+}
+
+=== w1_null_and_empty | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::io_error_results_match_the_mlir_backend
+fn main() -> i64 {
+    let path: i64 = __mind_alloc(16);
+    __mind_store_i8(path + 0, 47);
+    __mind_store_i8(path + 1, 100);
+    __mind_store_i8(path + 2, 101);
+    __mind_store_i8(path + 3, 118);
+    __mind_store_i8(path + 4, 47);
+    __mind_store_i8(path + 5, 122);
+    __mind_store_i8(path + 6, 101);
+    __mind_store_i8(path + 7, 114);
+    __mind_store_i8(path + 8, 111);
+    __mind_store_i8(path + 9, 0);
+    let fd: i64 = __mind_open(path);
+    if fd < 3 {
+        return 1;
+    }
+    let buf: i64 = __mind_alloc(8);
+    let a: i64 = __mind_read(fd, 0, 8, 0 - 1);
+    let b: i64 = __mind_write(99, buf, 0, 0 - 1);
+    let c: i64 = __mind_write(1, buf, 0 - 5, 0 - 1);
+    let d: i64 = if c < 0 { 0 } else { 50 };
+    return 200 + a + b * 2 + d;
+}
+
+=== w3_shadow | exit=42 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_program_shadowing_an_unimported_std_name_builds_and_runs
+fn rotr32(x: i64, n: i64) -> i64 { return x + n; }
+fn bsig0(x: i64) -> i64 { return rotr32(x, 2) + 1; }
+fn main() -> i64 { return bsig0(39); }
+
+=== w3b_vec | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_call_into_seed_std_resolves_and_runs (flips when the native lane calls std seed functions)
+import std.vec;
+
+fn main() -> i64 {
+    let v = vec_new();
+    return vec_len(v) + vec_cap(v) + 42;
+}
+
+=== w3b_vec_push | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_linked_std_body_with_an_unproven_alloc_size_is_refused
+import std.vec;
+
+fn main() -> i64 {
+    let v = vec_new();
+    let w = vec_push(v, 7);
+    return vec_get(w, 0);
+}
+
+=== w3_import_collision | refused=closure.std_symbol_collision | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::defining_a_name_of_an_imported_std_module_is_refused
+import std.vec;
+
+fn vec_len(v: i64) -> i64 {
+    return 3;
+}
+
+fn main() -> i64 {
+    return vec_len(0);
+}
+
+=== w3_shadowed_callee | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_std_function_calling_a_shadowed_name_is_refused
+import std.io;
+
+fn string_push_byte(s: i64, b: i64) -> i64 {
+    return b;
+}
+
+fn main() -> i64 {
+    let s = string_push_ansi_sgr(string_push_byte(0, 1), 31);
+    return 0;
+}
+
+=== w3_std_shift | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_intrinsic_std_linkage.rs::linked_std_shifts_are_admitted_but_float_callers_refuse (wave2 refused it: links std seed function `rotr32`) (flips when the native lane calls std seed functions)
+import std.sha256;
+
+fn main() -> i64 {
+    return bsig0(5);
+}
+
+=== w3_std_shift_f64 | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_intrinsic_std_linkage.rs::linked_std_shifts_are_admitted_but_float_callers_refuse
+import std.sha256;
+
+fn main() -> i64 {
+    return bsig0(5.0);
+}
+
+=== r3_wrap_through_fn | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+fn w8(x: i64) -> i64 { return __mind_wrap_i8(x); }
+fn main() -> i64 { let f: f64 = 300.0; return w8(f) + 50; }
+
+=== r3_store_through_fn | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+fn put(p: i64, v: i64) -> i64 { __mind_store_i64(p, v); return 0; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); let f: f64 = 2.0; put(p, f); return __mind_load_i64(p) & 255; }
+
+=== r3_write_through_fn | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+fn emit(p: i64, n: i64) -> i64 { return __mind_write(1, p, n, 0 - 1); }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 65); let n: f64 = 1.0; let r: i64 = emit(p, n); if r == 1 { return 1; } return 2; }
+
+=== r3_f64_returned_as_i64 | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+fn g() -> i64 { let f: f64 = 2.5; return f; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, g()); if __mind_load_i64(p) == 2 { return 1; } return 3; }
+
+=== r3_std_wrapper_f64 | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+import std.io;
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 65); let n: f64 = 1.0; return print_bytes(p, n); }
+
+=== r3_std_arg_f64 | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_float_reaching_an_intrinsic_through_a_wrapper_is_refused
+import std.sha256;
+fn main() -> i64 { let x: f64 = 1.5; if mask32(x) == 0 { return 1; } return 2; }
+
+=== r3_wrap_int | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::integers_through_wrappers_build_and_run
+fn w8(x: i64) -> i64 { return __mind_wrap_i8(x); }
+fn main() -> i64 { let a: i64 = 300; return w8(a) + 50; }
+
+=== r3_std_wrapper_int | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::integers_through_wrappers_build_and_run (flips when the native lane calls std seed functions)
+import std.io;
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 10); let n: i64 = 1; return print_bytes(p, n) + 40; }
+
+=== r3_free_loop | refused=native-lane-v1 (lane.alloc.free_in_loop) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
+fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, i); a = a + __mind_load_i64(p) - i; let f: i64 = __mind_free(p); a = a + f; i = i + 1; } return a + 33; }
+
+=== r3_big_alloc | exit=9 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
+fn main() -> i64 { let p: i64 = __mind_alloc(900000000); if p == 0 { return 5; } __mind_store_i64(p + 899999992, 9); return __mind_load_i64(p + 899999992); }
+
+=== r3_free_once | exit=33 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
+fn main() -> i64 { let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, 30); let v: i64 = __mind_load_i64(p); let f: i64 = __mind_free(p); return v + f + 3; }
+
+=== nw_u64_intr_param_cmp | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn big(y: u64) -> i64 { if y > 5 { return 1; } return 2; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); return big(__mind_load_i64(p)); }
+
+=== nw_u8_let_intr | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 300); let v: u8 = __mind_load_i64(p); if v > 100 { return 1; } return 2; }
+
+=== nw_u16_param_intr | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn f(x: u16) -> i64 { if x > 1000 { return 1; } return 2; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 65537); return f(__mind_load_i64(p)); }
+
+=== nw_u64_intr_ret_cmp | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn get(p: i64) -> u64 { return __mind_load_i64(p); }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); if get(p) > 5 { return 1; } return 2; }
+
+=== nw_u32_param_lit | refused=native-lane-v1 (lane.type.unsupported) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn f(v: u32) -> i64 { if v > 200 { return 2; } return 3; }
+fn main() -> i64 { return f(4294967396); }
+
+=== nw_u8_let_lit | refused=native-lane-v1 (lane.type.unsupported) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn main() -> i64 { let v: u8 = 300; if v > 100 { return 1; } return 2; }
+
+=== nw_u8_to_std_i64_param | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_a_non_i64_integer_slot_is_refused
+fn main() -> i64 { let v: u8 = 300; return mask32(v); }
+
+=== nw_i64_intr_param_cmp | exit=2 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_an_i64_slot_still_builds
+fn big(y: i64) -> i64 { if y > 5 { return 1; } return 2; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); return big(__mind_load_i64(p)); }
+
+=== nw_i64_let_intr | exit=1 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_value_reaching_an_i64_slot_still_builds
+fn get(p: i64) -> i64 { return __mind_load_i64(p); }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 300); let v: i64 = get(p); if v > 100 { return 1; } return 2; }
+
+=== sc_Vec | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Vec { h: i64 }
+fn main() -> i64 { let v = Vec { h: 33 }; return v.h; }
+
+=== sc_String | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct String { h: i64 }
+fn main() -> i64 { let v = String { h: 33 }; return v.h; }
+
+=== sc_Map | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Map { h: i64 }
+fn main() -> i64 { let v = Map { h: 33 }; return v.h; }
+
+=== sc_File | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct File { h: i64 }
+fn main() -> i64 { let v = File { h: 33 }; return v.h; }
+
+=== sc_Value | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Value { h: i64 }
+fn main() -> i64 { let v = Value { h: 33 }; return v.h; }
+
+=== sc_Box | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Box { h: i64 }
+fn main() -> i64 { let v = Box { h: 33 }; return v.h; }
+
+=== sc_Text | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Text { h: i64 }
+fn main() -> i64 { let v = Text { h: 33 }; return v.h; }
+
+=== sc_TermSize | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct TermSize { h: i64 }
+fn main() -> i64 { let v = TermSize { h: 33 }; return v.h; }
+
+=== sc_Args | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+struct Args { h: i64 }
+fn main() -> i64 { let v = Args { h: 33 }; return v.h; }
+
+=== sc_block | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash
+module m { struct File { a: i64 } }
+fn main() -> i64 { return 7; }
+
+=== sc_pt | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_not_named_like_a_seed_struct_still_builds
+struct Pt { x: i64, y: i64 }
+fn main() -> i64 { let p = Pt { x: 4, y: 5 }; return p.x * 10 + p.y; }
+
+=== sc_lower | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_not_named_like_a_seed_struct_still_builds
+struct value { h: i64 }
+fn main() -> i64 { let v = value { h: 9 }; return v.h; }
+
+=== sc_enum | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_not_named_like_a_seed_struct_still_builds
+enum Value { A, B }
+fn main() -> i64 { return 7; }
+
+=== ds_same | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+struct Q { h: i64 }
+struct Q { h: i64 }
+fn main() -> i64 { return 1; }
+
+=== ds_used | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+struct Q { h: i64 }
+struct Q { h: i64 }
+fn main() -> i64 { let q = Q { h: 5 }; return q.h; }
+
+=== ds_fields | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+struct Q { h: i64 }
+struct Q { a: i64, b: i64 }
+fn main() -> i64 { let q = Q { a: 5, b: 6 }; return q.b; }
+
+=== ds_mod_top | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+module m { struct Q { h: i64 } }
+struct Q { h: i64 }
+fn main() -> i64 { return 1; }
+
+=== ds_two_mods | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+module a { struct Q { h: i64 } }
+module b { struct Q { h: i64 } }
+fn main() -> i64 { return 1; }
+
+=== ds_nested | refused=native-lane-v1 (lane.source.unsupported) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_declared_twice_in_the_program_is_refused_not_a_crash
+fn main() -> i64 { struct Q { h: i64 } struct Q { h: i64 } return 3; }
+
+=== ds_struct_enum | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_sharing_a_name_with_an_enum_still_builds
+struct Q { h: i64 }
+enum Q { A, B }
+fn main() -> i64 { return 1; }
+
+=== ds_two_structs | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_struct_sharing_a_name_with_an_enum_still_builds
+struct P { h: i64 }
+struct Q { h: i64 }
+fn main() -> i64 { let p = P { h: 2 }; let q = Q { h: 5 }; return p.h * q.h; }
+
+=== st_unused_i32_fields | refused=native-lane-v1 (lane.source.top_level) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_unused_non_i64_struct_field_still_builds
+struct Effect {
+    tag: i32,
+    code: i32,
+}
+
+enum Decision {
+    Allow,
+    Deny,
+}
+
+fn main() {
+    return 0
+}
+
+=== f64_launder_ret | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 7); let x: f64 = __mind_load_i64(p); return x; }
+
+=== f64_let_operand | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn main() -> i64 { let a: i64 = 4621819117588971520; let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); let x: f64 = a; if x > 5.0 { return 1; } return 2; }
+
+=== f64_param_wrap | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn big(x: f64) -> i64 { if x > 5.0 { return 1; } return 2; }
+fn w(a: i64) -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); return big(a); }
+fn main() -> i64 { return w(4621819117588971520); }
+
+=== f64_ret_operand | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn g(a: i64) -> f64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); return a; }
+fn main() -> i64 { if g(4621819117588971520) > 5.0 { return 1; } return 2; }
+
+=== f64_launder_i64_param | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn g(y: i64) -> i64 { if y > 5 { return 1; } return 2; }
+fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 7); let x: f64 = __mind_load_i64(p); return g(x); }
+
+=== f64_from_i64_field | refused=native-lane-v1 (lane.source.top_level) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+struct S { v: i64 }
+fn main() -> i64 { let s = S { v: 7 }; let x: f64 = s.v; return x; }
+
+=== f64_param_int_literal | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_value_not_proven_f64_reaching_an_f64_slot_is_refused
+fn big(x: f64) -> i64 { if x > 5.0 { return 1; } return 2; }
+fn main() -> i64 { return big(7); }
+
+=== f64_into_i64_ret | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn f() -> i64 { let x: f64 = 2.5; return x; }
+fn main() -> i64 { return f(); }
+
+=== f64_into_i64_let | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn main() -> i64 { let b: f64 = 2.5; let a: i64 = b; return a; }
+
+=== f64_into_i64_param | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn g(y: i64) -> i64 { if y > 5 { return 1; } return 2; }
+fn main() -> i64 { return g(2.5); }
+
+=== f64_shadow_assign | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn main() -> i64 { let mut x: i64 = 1; if x == 1 { let mut x: f64 = 1.0; } x = 2.5; return x; }
+
+=== f64_if_into_i64_let | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn main() -> i64 { let c: i64 = 1; let a: i64 = if c == 1 { 1.5 } else { 2.5 }; return a; }
+
+=== f64_match_into_i64_let | refused=native-lane-v1 (lane.source.unsupported) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn main() -> i64 { let c: i64 = 1; let a: i64 = match c { 1 => 1.5, _ => 2.5 }; return a; }
+
+=== f64_if_name_into_i64_let | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn main() -> i64 { let c: i64 = 1; let y = if c == 1 { 1.5 } else { 2.5 }; let a: i64 = y; return a; }
+
+=== f64_if_name_into_i64_ret | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn g(c: i64) -> i64 { let y = if c == 1 { 1.5 } else { 2.5 }; return y; }
+fn main() -> i64 { return g(1); }
+
+=== f64_into_unannotated_ret | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_f64_value_reaching_a_non_f64_slot_is_refused
+fn h() { return 1.5; }
+fn main() -> i64 { let a: i64 = h(); return a; }
+
+=== f64_ok_param | exit=3 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_proven_f64_slot_still_builds
+fn k(x: f64, y: f64) -> i64 { if x < y { return 1; } return 2; }
+fn main() -> i64 { let a: f64 = 1.5; let b: f64 = a * 2.0; return k(a, b) + k(3.0, 0.0 - 1.0); }
+
+=== f64_ok_ret | exit=4 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_proven_f64_slot_still_builds
+fn h(x: f64) -> f64 { return x * 2.0; }
+fn main() -> i64 { let a: f64 = h(1.5); if a > 2.5 { return 4; } return 5; }
+
+=== f64_ok_untyped | exit=1 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_proven_f64_slot_still_builds
+fn k(x: f64) -> i64 { if x > 1.0 { return 1; } return 2; }
+fn main() -> i64 { let a = 1.5; return k(a); }
+
+=== f64_ok_tail | exit=4 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_proven_f64_slot_still_builds
+fn h(x: f64) -> f64 { x * 2.0 }
+fn main() -> i64 { if h(1.5) > 2.5 { return 4; } return 5; }
+
+=== f64_if_int | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_unannotated_float_assigned_an_integer_is_refused
+fn main() -> i64 { let mut x = 0.5; let c: i64 = 1; if c > 0 { x = 5; } if x > 2.0 { return 1; } return 2; }
+
+=== f64_loop_int | refused=native-lane-v1 (lane.type.mismatch) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::an_unannotated_float_assigned_an_integer_is_refused
+fn main() -> i64 { let mut x = 0.5; let mut i: i64 = 0; while i < 3 { x = i; i = i + 1; } if x > 2.0 { return 1; } return 2; }
+
+=== bool_param_intr_operand | exit=1 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_slot_fed_an_i64_matches_the_mlir_result
+fn f(b: bool) -> i64 { if b { return 1; } return 2; }
+fn main() -> i64 { let a: i64 = 2; let p: i64 = __mind_alloc(8); __mind_store_i64(p, a); return f(a); }
+
+=== bool_param_lit | exit=1 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_slot_fed_an_i64_matches_the_mlir_result
+fn f(b: bool) -> i64 { if b { return 1; } return 2; }
+fn main() -> i64 { return f(256); }
+
+=== bool_ret_i64var | exit=1 | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_slot_fed_an_i64_matches_the_mlir_result
+fn g() -> bool { let a: i64 = 256; return a; }
+fn main() -> i64 { let b = g(); if b { return 1; } return 2; }
+
+=== bool_not_lit | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
+fn main() -> i64 { return f(2); }
+
+=== bool_not_var | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
+fn main() -> i64 { let a: i64 = 2; return f(a); }
+
+=== bool_not_wrap | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+fn g(a: i64) -> bool { return a; }
+fn f(b: bool) -> i64 { if !b { return 1; } return 2; }
+fn main() -> i64 { return f(g(2)); }
+
+=== bool_eq_true | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::a_bool_parameter_used_at_i1_width_refuses_a_noncanonical_i64
+fn f(b: bool) -> i64 { if b == true { return 1; } return 2; }
+fn main() -> i64 { return f(3); }
+
+=== bool_arith | refused=native-lane-v1 (lane.bool.width) | red=- | default | native-wave2 checkpoint (38cc419b) tests/native_bridge_refusals.rs::arithmetic_on_a_bool_parameter_is_refused
+fn f(b: bool) -> i64 { return b + 10; }
+fn main() -> i64 { return f(true); }
+
+=== w3_signed_div | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> i64 { let x: i64 = -17; return x / 65; }
+
+=== w3_float_div | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> f64 { return 17.0 / 2.0; }
+
+=== w3_signed_rem | exit=239 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> i64 { let x: i64 = -17; return x % 65; }
+
+=== w3_float_rem | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> f64 { return 17.0 % 2.0; }
+
+=== w3_signed_shl | exit=222 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> i64 { let x: i64 = -17; return x << 65; }
+
+=== w3_float_shl | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> f64 { return 17.0 << 2.0; }
+
+=== w3_signed_shr | exit=247 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> i64 { let x: i64 = -17; return x >> 65; }
+
+=== w3_float_shr | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::signed_integer_ops_pass_and_float_ops_refuse
+fn main() -> f64 { return 17.0 >> 2.0; }
+
+=== w3_u64_params_div | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: u64) -> u64 { return x / y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_f64_div | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: f64) -> u64 { return x / y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_locals_div | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn main() -> i64 { let x: u64 = 17; let y: u64 = 2; let z = x / y; return 0; }
+
+=== w3_u64_params_rem | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: u64) -> u64 { return x % y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_f64_rem | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: f64) -> u64 { return x % y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_locals_rem | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn main() -> i64 { let x: u64 = 17; let y: u64 = 2; let z = x % y; return 0; }
+
+=== w3_u64_params_shl | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: u64) -> u64 { return x << y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_f64_shl | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: f64) -> u64 { return x << y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_locals_shl | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn main() -> i64 { let x: u64 = 17; let y: u64 = 2; let z = x << y; return 0; }
+
+=== w3_u64_params_shr | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: u64) -> u64 { return x >> y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_f64_shr | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn f(x: u64, y: f64) -> u64 { return x >> y; } fn main() -> i64 { return 0; }
+
+=== w3_u64_locals_shr | refused=native-lane-v1 (lane.type.unsupported) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::unsigned_ops_need_explicit_unsigned_operands
+fn main() -> i64 { let x: u64 = 17; let y: u64 = 2; let z = x >> y; return 0; }
+
+=== w3_conv_i32 | refused=pure-MIND compiler rejected the program (exit 3) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return __mind_conv_i32(7); }
+
+=== w3_conv_i32_arity | refused=native-lane-v1 (lane.call.arity) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return __mind_conv_i32(7, 7); }
+
+=== w3_conv_i64 | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return __mind_conv_i64(7.0); }
+
+=== w3_conv_i64_arity | refused=native-lane-v1 (lane.call.arity) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return __mind_conv_i64(7.0, 7.0); }
+
+=== w3_conv_f64 | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> f64 { return __mind_conv_f64(7); }
+
+=== w3_conv_f64_arity | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> f64 { return __mind_conv_f64(7, 7); }
+
+=== w3_conv_unknown | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return __mind_conv_unknown(1); }
+
+=== w3_cast_i32 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return 7 as i32; }
+
+=== w3_cast_f64_to_i64 | exit=7 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> i64 { return 7.0 as i64; }
+
+=== w3_cast_i64_to_f64 | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::census_conversions_pass_but_unknown_and_wrong_arity_refuse
+fn main() -> f64 { return 7 as f64; }
+
+=== w3_halve_int | exit=4 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
+fn halve(x: i64) -> i64 { return x / 2; } fn main() -> i64 { return halve(8); }
+
+=== w3_halve_f64_arg | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
+fn halve(x: i64) -> i64 { return x / 2; } fn main() -> i64 { return halve(8.0); }
+
+=== w3_bad_ret_div | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
+fn bad() -> i64 { return 8.0; } fn main() -> i64 { return bad() / 2; }
+
+=== w3_conv_i64_from_int | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
+fn cast(x: f64) -> i64 { return __mind_conv_i64(x); } fn main() -> i64 { return cast(8); }
+
+=== w3_conv_i64_bad_f64_ret | refused=native-lane-v1 (lane.type.mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::numeric_proofs_follow_callers_and_returns
+fn bad() -> f64 { return 8; } fn main() -> i64 { return __mind_conv_i64(bad()); }
+
+=== w3_ptr_const_u8 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 4096 as *const u8; return 0; }
+
+=== w3_ptr_const_i32 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 4096 as *const i32; return 0; }
+
+=== w3_ptr_const_from_f64 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 1.5 as *const u8; return 0; }
+
+=== w3_ptr_mut_u8 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 4096 as *mut u8; return 0; }
+
+=== w3_ptr_mut_i32 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 4096 as *mut i32; return 0; }
+
+=== w3_ptr_mut_from_f64 | refused=native-lane-v1 (lane.source.cast) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::byte_pointer_casts_pass_other_pointees_refuse
+fn main() -> i64 { let p = 1.5 as *mut u8; return 0; }
+
+=== w3_entry_argc_argv | exit=1 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+fn main(argc: i64, argv: i64) -> i64 { return argc; }
+
+=== w3_entry_one | refused=native.entry_main_has_params | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+fn main(n: i64) -> i64 { return 0; }
+
+=== w3_entry_f64_argc | refused=native.entry_main_has_params | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+fn main(argc: f64, argv: i64) -> i64 { return 0; }
+
+=== w3_entry_swapped | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+fn main(argv: i64, argc: i64) -> i64 { return 0; }
+
+=== w3_entry_f64_ret | refused=native-lane-v1 (lane.entry.f64_result) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::argc_argv_entry_passes_only_the_exact_signature
+fn main(argc: i64, argv: i64) -> f64 { return 0.0; }
+
+=== w3_alloc_loop_default | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
+fn main() -> i64 { let mut n: i64 = 0; while n < 2 { let p = __mind_alloc(8); n = n + 1; } return 0; }
+
+=== w3_alloc_loop_bounded | exit=0 | red=3 | bounded | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
+fn main() -> i64 { let mut n: i64 = 0; while n < 2 { let p = __mind_alloc(8); n = n + 1; } return 0; }
+
+=== w3_alloc_big_default | exit=0 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
+fn main() -> i64 { let p = __mind_alloc(600000000); return 0; }
+
+=== w3_alloc_big_bounded | exit=0 | red=3 | bounded | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
+fn main() -> i64 { let p = __mind_alloc(600000000); return 0; }
+
+=== w3_alloc_f64_bounded | refused=native-lane-v1 (lane.type.mismatch) | red=3 | bounded | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
+fn main() -> i64 { return __mind_alloc(8.0); }
+
+=== w3_extern_close | refused=native-lane-v1 (lane.extern.unimplemented) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (flips at the C-ABI extern lane)
+extern "C" { fn close(fd: i64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
+
+=== w3_extern_close_f64 | refused=native-lane-v1 (lane.extern.unimplemented) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+extern "C" { fn close(fd: f64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
+
+=== w3_extern_close_variadic | refused=native-lane-v1 (lane.extern.unimplemented) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+extern "C" { fn close(fd: i64, ...) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
+
+=== w3_extern_open | refused=native-lane-v1 (lane.extern.unimplemented) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (flips at the C-ABI extern lane)
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; } fn main() -> i64 { return open(0, 0, 0); }
+
+=== w3_extern_open_f64_ret | refused=native-lane-v1 (lane.extern.unimplemented) | red=- | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> f64; } fn main() -> i64 { return 0; }
+
+=== w3_entry_extra_param | refused=native.entry_main_has_params | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_bridge_refusals.rs::an_entry_main_with_an_extra_parameter_is_refused
+fn main(argc: i64, argv: i64, extra: i64) -> i64 { if argv == 0 { return 40 + argc; } return 20 + argc; }
+
+=== a_alloc_probe | exit=7 | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_alloc_probe_builds_and_runs_to_exit_7
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, 7);
+    __mind_load_i64(p)
+}
+
+=== a_mem_ops | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_byte_word_memory_ops_build_and_run
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(64);
+    __mind_store_i8(p, 42);
+    __mind_store_i16(p + 8, 1234);
+    __mind_store_i32(p + 16, 567890);
+    __mind_store_i64(p + 24, 9876543210);
+    let v8: i64 = __mind_load_i8(p);
+    let v16: i64 = __mind_load_i16(p + 8);
+    let v32: i64 = __mind_load_i32(p + 16);
+    let v64: i64 = __mind_load_i64(p + 24);
+    if v8 != 42 { return 1; }
+    if v16 != 1234 { return 2; }
+    if v32 != 567890 { return 3; }
+    if v64 != 9876543210 { return 4; }
+    0
+}
+
+=== a_div_mod | parity | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_div_mod_defined_edges_match_mlir (division by zero: the D1 integer-division contract owns the value)
+fn main() -> i64 {
+    let a: i64 = 42;
+    let b: i64 = 6;
+    let z: i64 = 0;
+    if a / b != 7 { return 1; }
+    if 43 % b != 1 { return 2; }
+    // Defined edge cases: div/mod by zero yields 0
+    if a / z != 0 { return 3; }
+    if a % z != 0 { return 4; }
+    0
+}
+
+=== a_shifts | exit=0 | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_shift_ops_match_mlir
+fn main() -> i64 {
+    let x: i64 = 1;
+    let s: i64 = 4;
+    let y: i64 = 64;
+    let s2: i64 = 2;
+    if x << s != 16 { return 1; }
+    if y >> s2 != 16 { return 2; }
+    // Defined edge case: shift count >= 64 is masked by 63
+    let s64: i64 = 64;
+    if x << s64 != 1 { return 3; }
+    0
+}
+
+=== a_unknown_intrinsic | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::unadmitted_intrinsic_is_refused
+fn main() -> i64 {
+    return __mind_unknown_intrinsic(1);
+}
+
+=== a_float_div | exit=1 | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::float_operand_to_div_is_refused
+fn main() -> i64 {
+    let a: f64 = 10.0;
+    let b: f64 = 2.0;
+    if a / b > 1.0 { return 1; }
+    return 0;
+}
+
+=== a_store_result_read | exit=0 | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::discard_only_store_result_cannot_be_read
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    let res: i64 = __mind_store_i64(p, 42);
+    return res;
+}
+
+=== a_ct_eq_shape | exit=101 | red=3 | default | native intrinsic admission request: R-09 ct_eq shape (alloc + load_i8 + >>)
+fn ct_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        acc = acc | (__mind_load_i8(a + i) ^ __mind_load_i8(b + i));
+        i = i + 1;
+    }
+    return ((acc - 1) >> 63) & 1;
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(16);
+    let b: i64 = __mind_alloc(16);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(a + i, 200 + i);
+        __mind_store_i8(b + i, 200 + i);
+        i = i + 1;
+    }
+    let same: i64 = ct_eq(a, b, 16);
+    __mind_store_i8(b + 15, 1);
+    let differ: i64 = ct_eq(a, b, 16);
+    let none: i64 = ct_eq(a, b, 0);
+    return same * 100 + differ * 10 + none;
+}
+
+=== a_nope_intrinsic | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native intrinsic admission request: T3 unregistered __mind_nope
+fn main() -> i64 {
+    return __mind_nope(1);
+}
+
+=== e_value_if_in_while | exit=0 | red=3 | default | value-if inside while request: native_hkdf_loop_probe.mind (std/tls13-client-r01)
+// Reduced from std/hkdf.mind: hkdf_expand's value-if inside a loop.
+fn main() -> i64 {
+    let mut written: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= 1 {
+        let remaining: i64 = 32 - written;
+        let tocopy: i64 = if remaining < 32 { remaining } else { 32 };
+        written = written + tocopy;
+        i = i + 1;
+    }
+    written - 32
+}
+
+=== e_nested_value_if | exit=25 | red=3 | default | value-if inside while request: shape 1: nested if-value in while
+fn main() -> i64 {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 10 {
+        let v: i64 = if i < 5 { if i < 2 { 1 } else { 2 } } else { if i < 8 { 3 } else { 4 } };
+        acc = acc + v;
+        i = i + 1;
+    }
+    acc
+}
+
+=== e_value_if_cond | exit=66 | red=3 | default | value-if inside while request: shape 2: if-value feeding the loop condition
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut steps: i64 = 0;
+    let mut limit: i64 = 9;
+    while i < limit {
+        limit = if steps > 3 { 6 } else { 9 };
+        i = i + 1;
+        steps = steps + 1;
+    }
+    i * 10 + steps
+}
+
+=== e_value_if_early_return | exit=131 | red=3 | default | value-if inside while request: shape 3: if-value with early return in one arm
+fn find(n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut total: i64 = 0;
+    while i < n {
+        let step: i64 = if i == 7 { return total + 100; } else { i };
+        total = total + step;
+        i = i + 1;
+    }
+    total
+}
+
+fn main() -> i64 {
+    find(5) + find(9)
+}
+
+=== e_value_if_i8_loads | exit=3 | red=3 | default | value-if inside while request: shape 4: if-value over i8 loads
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i8(p + i, i * 37);
+        i = i + 1;
+    }
+    let mut hi: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 8 {
+        let b: i64 = __mind_load_i8(p + j);
+        let bump: i64 = if b > 127 { 1 } else { 0 };
+        hi = hi + bump;
+        j = j + 1;
+    }
+    hi
+}
+
+=== e_two_value_ifs | exit=51 | red=3 | default | value-if inside while request: shape 5: two sequential if-values
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 6 {
+        let x: i64 = if i % 2 == 0 { 3 } else { 1 };
+        let y: i64 = if x > 2 { x * 2 } else { x + 10 };
+        a = a + y;
+        i = i + 1;
+    }
+    a
+}
+
+=== e_value_if_while_in_if | exit=120 | red=3 | default | value-if inside while request: shape 6: if-value inside while inside if
+fn vif_steps(flag: i64) -> i64 {
+    let mut s: i64 = 0;
+    if flag > 0 {
+        let mut i: i64 = 0;
+        while i < 4 {
+            let d: i64 = if i < flag { 5 } else { 1 };
+            s = s + d;
+            i = i + 1;
+        }
+    }
+    s
+}
+
+fn main() -> i64 {
+    vif_steps(2) * 10 + vif_steps(0)
+}
+
+=== ctl_return_7 | exit=7 | red=- | default | control: the compiler under test builds and runs a scalar program
+fn main() -> i64 {
+    return 7;
+}
