@@ -152,13 +152,13 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 **Priority:** P1 research/implementation candidate under the C6 native optimizing
 backend, after correctness and canonical-type metadata readiness. This extends
 [RFC 0024](rfcs/0024-loop-collapse.md), not a replacement for its existing
-§#[collapse]§ prove-or-fail contract. Reference:
+`#[collapse]` prove-or-fail contract. Reference:
 [LLVM accumulator tail-recursion elimination commit](https://github.com/llvm/llvm-project/commit/198e62075226809238b06f67c78c6e3875ffb336)
-and Clang optimization remarks §-Rpass=tailcallelim§ / §-Rpass=loop-delete§.
+and Clang optimization remarks `-Rpass=tailcallelim` / `-Rpass=loop-delete`.
 
 **Canonical demonstration:** a pure unsigned recurrence
-§f(0) = true; f(n) = !f(n-1)§ has a two-state orbit and the closed form
-§f(n) = (n & 1) == 0§. There are **two distinct transformations**:
+`f(0) = true; f(n) = !f(n-1)` has a two-state orbit and the closed form
+`f(n) = (n & 1) == 0`. There are **two distinct transformations**:
 eliminating self-recursive calls using an accumulator/loop, then proving that
 the resulting recurrence is periodic and replacing the entire loop with an
 O(1) bitwise expression. A loop-elimination remark by itself does not attest
@@ -179,23 +179,23 @@ the final closed form or the equivalence proof.
    semantics**, and prove the base-case/exit mapping. No generic floating-point
    reassociation, unsafe changes to trap order, or unproven stack behavior.
 3. **PGRO-3 — Bounded periodic-state collapse.** Prove a finite-state
-   transition, its preperiod/period §k§ and the exact iteration count; synthesize
+   transition, its preperiod/period `k` and the exact iteration count; synthesize
    a constant-time modular/lookup closed form where admissible. Start with
-   Boolean period-2 (§f(n)=!f(n-1)§), then bounded §k§ with a strict
-   proof/compile-time budget. Existing Q16.16 fixed-point §E2211§ rejects
+   Boolean period-2 (`f(n)=!f(n-1)`), then bounded `k` with a strict
+   proof/compile-time budget. Existing Q16.16 fixed-point `E2211` rejects
    cycles of period >=2: keep that diagnostic unchanged for the current
-   §#[collapse]§ fixed-point contract; opt-in periodic handling is a **new
+   `#[collapse]` fixed-point contract; opt-in periodic handling is a **new
    proof class**, never silently treating a cycle as a fixed point.
 4. **PGRO-4 — Typed-IR proof witnesses.** Define a versioned, canonical
-   §recurrence-collapse§ receipt containing original and transformed IR
+   `recurrence-collapse` receipt containing original and transformed IR
    commitments, the recurrence parameters, a termination/effect argument and
-   the finite-state or accumulator invariant. Extend §mindc verify§ to check
+   the finite-state or accumulator invariant. Extend `mindc verify` to check
    the witness independently against both IR forms (not merely recompute the
    transformed constant). Do not claim proof validation unless the original
    IR and verifier-checkable witness are actually available; preserve the
-   existing MAP-epilogue / §trace_hash§ boundary and distinguish unsigned
+   existing MAP-epilogue / `trace_hash` boundary and distinguish unsigned
    tamper-evidence from authenticated signing.
-5. **PGRO-5 — Canonical optimizer integration.** Put any §mic@3 -> mic@3§
+5. **PGRO-5 — Canonical optimizer integration.** Put any `mic@3 -> mic@3`
    rewrite upstream of native emitter divergence, with fixed pass ordering,
    stable value numbering, versioned optimization profiles and canonical
    serialization. Respect populated canonical-type metadata: no bypass of
@@ -211,8 +211,8 @@ the final closed form or the equivalence proof.
    Promote only after the complete qualified corpus and self-host/cross-target
    gates pass; unknown gate = HOLD, not PASS.
 
-**Determinism constitution:** optimizing changes the compiled §mic@3§ body,
-binary and §trace_hash§, so **new optimized hashes are expected**. It must not
+**Determinism constitution:** optimizing changes the compiled `mic@3` body,
+binary and `trace_hash`, so **new optimized hashes are expected**. It must not
 change any supported program's observable behavior, nor produce different
 artifacts for identical source + toolchain + target + optimization profile.
 The feature-OFF path must remain byte-identical to its prior baseline. Before
@@ -244,7 +244,7 @@ independently. No new IR, no new evidence primitive, no new repo.
    language whose compiler loses the dimensions its own lowering needs is a
    surface without a substrate.
 
-   The gate stands, but do **not** read the two deferred RFC 0012 §7.2 items as
+   The gate stands, but do **not** read the two deferred RFC 0012 `7.2 items as
    its evidence — neither is actually a shape-threading blocker
    (`docs/design/rfc0012-b2-shape-threading-scope.md`). `.reshape` has **no arm
    in the executable MLIR backend at all** and falls to `UnsupportedOp`, where
@@ -256,7 +256,7 @@ independently. No new IR, no new evidence primitive, no new repo.
 
 **The load-bearing restriction is `ring_q16`, not "Q16.16".** A representation
 does not name an algebra. Native `i32`/`i64` arithmetic wraps two's-complement
-(`docs/determinism.md` §1), which *is* the statement that it forms the ring
+(`docs/determinism.md` `1), which *is* the statement that it forms the ring
 `Z/2^N` — so `sum(laplacian(F)) == 0` holds by cancellation with **no** range
 analysis and **no** no-overflow precondition. Saturating helpers leave that ring
 and break the identity. `E2305` ("proof domain escaped") is inferred from the
@@ -268,13 +268,13 @@ tolerance comparison is not itself bit-identical across substrates.
 **The reference workload is a specimen, not an oracle.** The workload's
 `laplacian.mind` mixes three saturating adds with one wrapping `<< 2` in a single
 expression, so it is `E2305` — *not* provable. Verified counterexample in RFC
-§5.4.1: a constant field at `Q16_MAX` under `Periodic` boundary, whose Laplacian
+`5.4.1: a constant field at `Q16_MAX` under `Periodic` boundary, whose Laplacian
 is mathematically zero, returns `Q16_MAX` everywhere. Parity is therefore gated
 on committed non-saturating vectors, and the gate must additionally **assert the
 known divergence** — a parity gate that cannot show where parity ends is
 measuring its own test set.
 
-**Determinism/performance constitution (RFC §7.1), precommitted before any
+**Determinism/performance constitution (RFC `7.1), precommitted before any
 implementation begins:** `G0` zero-regression exact-byte default path (a program
 not using the feature must produce identical canonical bytes, `trace_hash`, and
 result); `G1` the prover does not initialize unless the opt-in construct is
@@ -285,7 +285,7 @@ proof is compile-time and verifier-time cost, never per-step runtime cost. Two
 kill switches: a new construct that breaks cross-substrate identity does not ship
 as strict, and an abstraction that cannot reach parity with the hand-written
 reference stays experimental. Status is tracked as a GREEN/OPEN/RED gate matrix
-(RFC §8), not a star rating — stars hide exactly the distinction between "good
+(RFC `8), not a star rating — stars hide exactly the distinction between "good
 implementation" and "unproven determinism".
 
 ## Genesis Ecosystem Audit — verified findings (2026-05-29)
@@ -502,7 +502,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
 - Publish results under `docs/benchmarks/*`
 - Full machine-state reporting for every published T0 number: microarchitecture,
   SMT, turbo/governor state, exact compiler flags, baseline, and measurement
-  method (the 7-field rule in [`docs/benchmarking.md`](benchmarking.md) §4).
+  method (the 7-field rule in [`docs/benchmarking.md`](benchmarking.md) `4).
   Backfill the existing GMAC/s numbers before they are cited externally.
 - Per-ISA kernel reference set for the deterministic GEMM/int-dot ladder
   (cache-blocked GEMM, AVX2/AVX-512 VNNI, NEON SDOT/SMMLA, AMX/SME as roadmap
@@ -1764,7 +1764,7 @@ MCP impl are independent and parallelizable once those land.
 
 **Tier 4 — Async I/O (RFC 0011 Phases B–D, the actual blocker behind Tier 2/3):**
 - Phase B — real executor (work-stealing or fixed-pool), still under the `Scheduler` first-class-value model from Phase A
-- Phase C — async I/O primitives (epoll/kqueue/IOCP), `Future<T>` allocated via `GenRef<T>` per RFC 0010 §3.3
+- Phase C — async I/O primitives (epoll/kqueue/IOCP), `Future<T>` allocated via `GenRef<T>` per RFC 0010 `3.3
 - Phase D — `Sender`/`Receiver` channels, `select`/`race`, structured task supervision
 - Acceptance: a `ReplayScheduler` run of the agent reproduces byte-identical transcript across machines
 
@@ -3697,10 +3697,10 @@ DoD the deliverables and definition of done.
 | ID | Item (issue wording) | State | Evidence | Next step |
 |----|----------------------|-------|----------|-----------|
 | D-1 | Define a machine-readable semantic profile manifest and conformance version for strict integer, Q16, scalar f32/f64, supported reductions and explicitly relaxed operations. … unsupported combinations refuse. | Partial | Strict-FP attestation fails closed (`src/ir/fp_mode.rs:243`; `verify --require-strict-fp`, `docs/determinism.md:41`); `mindc conformance --profile` exists (`src/bin/mindc.rs:193`, `tests/conformance/cpu_baseline/`). No per-operator × target × profile manifest and no conformance version on `main`. | Add a `docs/semantic-profiles.toml` schema (strict-int, Q16, f32/f64, relaxed) that `mindc conformance` reads, plus one refusal fixture for an unadmitted combination. |
-| D-2 | Adjudicate all existing scalar oracle disagreements before expanding the native lane. In particular, settle `/ 0`, `% 0`, `INT_MIN / -1`, unsigned arithmetic, signed/narrow shifts, overflow/truncation and integer truthiness across interpreter, native, MLIR and C ABI. | Partial | The spec decision is at `docs/determinism.md:55-62` (`x / 0` = 0, `x % 0` = 0, `INT_MIN / -1` = `INT_MIN`). `docs/ENGINE_CONSUMER_LIST.md:628-646` still records eight different answers across the engines. The exit-79 decision from #284 is pending. The Phase 27 parity-gate plan is only on branch `roadmap/ecosystem-20261024` (`16183451`). | Route every interpreter and IR-interpreter Div/Mod through one shared helper that follows the `docs/determinism.md` §1 table; add a three-path (interpreter, MLIR `.so`, native ELF) edge-vector differential test; record the #284 exit-79 decision in CHANGELOG. |
-| D-3 | Enumerate strict floating-point corner cases: signed zero, infinities, NaN propagation/payload policy, signaling NaNs, rounding modes, subnormals and FTZ/DAZ, conversions, contraction/FMA, associative rewrites, vector-width dependence and host libm. | Partial | `docs/determinism.md:96-106`: the infinity, NaN, `pow`/`powr`, NaN-ordering and rounding (round-to-nearest-even) rows are planned (📋); scalar f64/f32 with no FMA contraction is CI-gated on x86 and ARM64 (line 103). No rows for signed zero, signaling NaN, subnormals/FTZ/DAZ or conversions. | Extend the `docs/determinism.md` §2 table with a bit-exact / normalized / refused verdict for each corner case, and add fixtures to `tests/cross_substrate_identity.rs`. |
+| D-2 | Adjudicate all existing scalar oracle disagreements before expanding the native lane. In particular, settle `/ 0`, `% 0`, `INT_MIN / -1`, unsigned arithmetic, signed/narrow shifts, overflow/truncation and integer truthiness across interpreter, native, MLIR and C ABI. | Partial | The spec decision is at `docs/determinism.md:55-62` (`x / 0` = 0, `x % 0` = 0, `INT_MIN / -1` = `INT_MIN`). `docs/ENGINE_CONSUMER_LIST.md:628-646` still records eight different answers across the engines. The exit-79 decision from #284 is pending. The Phase 27 parity-gate plan is only on branch `roadmap/ecosystem-20261024` (`16183451`). | Route every interpreter and IR-interpreter Div/Mod through one shared helper that follows the `docs/determinism.md` `1 table; add a three-path (interpreter, MLIR `.so`, native ELF) edge-vector differential test; record the #284 exit-79 decision in CHANGELOG. |
+| D-3 | Enumerate strict floating-point corner cases: signed zero, infinities, NaN propagation/payload policy, signaling NaNs, rounding modes, subnormals and FTZ/DAZ, conversions, contraction/FMA, associative rewrites, vector-width dependence and host libm. | Partial | `docs/determinism.md:96-106`: the infinity, NaN, `pow`/`powr`, NaN-ordering and rounding (round-to-nearest-even) rows are planned (📋); scalar f64/f32 with no FMA contraction is CI-gated on x86 and ARM64 (line 103). No rows for signed zero, signaling NaN, subnormals/FTZ/DAZ or conversions. | Extend the `docs/determinism.md` `2 table with a bit-exact / normalized / refused verdict for each corner case, and add fixtures to `tests/cross_substrate_identity.rs`. |
 | D-4 | Finish vector reductions, deterministic transcendental implementations, and accelerator equivalence per operation/dtype/device, never as a blanket all-GPU claim. | Partial | f32 BLAS dot/L1/matmul are on the strict tier (`docs/determinism.md:104`); `std/detmath.mind:1` is a deterministic transcendental tier (Phase 17.6). Tensor `sum`, f64 and GPU reductions keep a ~1e-4 tolerance (`docs/determinism.md:105`); vendored libm is planned (line 106). GP-09 has no fixtures yet. | Pin a fixed-order or superaccumulator tensor `sum` for f32/f64 and add an AVX2-vs-NEON bit-identity fixture for it (GP-09 first slice). |
-| D-5 | Specify explicit entropy, clock, filesystem enumeration, locale, network arrival ordering, scheduler results and environment inputs at the runtime boundary: deterministic given canonical recorded inputs, not independent of the real world. For asynchronous/parallel workloads, define deterministic completion/effect trace ordering or an explicit relaxed admission tier. | Partial | Clock and entropy intrinsics are classified, with a build gate, `--allow-nondeterministic` and `verify --require-deterministic` (`docs/determinism.md:248-290`, `src/intrinsics.rs`). File reads are untainted declared inputs (gap stated at `docs/determinism.md:283-287`). No locale, network-ordering, directory-enumeration-order, scheduler or async trace-order contract on `main`. | Hash declared file inputs into evidence-chain input links (RFC 0016 §4) and add a sorted-enumeration contract test for directory listing. |
+| D-5 | Specify explicit entropy, clock, filesystem enumeration, locale, network arrival ordering, scheduler results and environment inputs at the runtime boundary: deterministic given canonical recorded inputs, not independent of the real world. For asynchronous/parallel workloads, define deterministic completion/effect trace ordering or an explicit relaxed admission tier. | Partial | Clock and entropy intrinsics are classified, with a build gate, `--allow-nondeterministic` and `verify --require-deterministic` (`docs/determinism.md:248-290`, `src/intrinsics.rs`). File reads are untainted declared inputs (gap stated at `docs/determinism.md:283-287`). No locale, network-ordering, directory-enumeration-order, scheduler or async trace-order contract on `main`. | Hash declared file inputs into evidence-chain input links (RFC 0016 `4) and add a sorted-enumeration contract test for directory listing. |
 | D-6 | A changed optimization, instruction selection, cache hit, or compilation route must preserve strict observable behavior. Cache keys include IR, toolchain, target/profile, ABI, flags, dependency interfaces and all behavior-changing feature gates. Reject cache poisoning and noncanonical serialization. | Partial | `55244462` fix: fold compiler + toolchain identity into the artifact cache key; `e6625924` fix(build): sort the walked source set and key the cache on every module. Key tests at `src/build/cache.rs:550-687` cover source, target, optimize, version and fingerprint. Not in the key: feature gates, ABI, dependency interfaces. No poisoning or noncanonical-serialization rejection test. No per-route behaviour-preservation gate (GP-06 is a plan). | Add a cache-poisoning test (corrupt a cached object, expect a fail-closed rebuild) and a test that flipping each behaviour-changing feature gate changes the key. |
 | D-7 | Maintain independent canonical-IR digest, target/toolchain-specific build identity, result digest, effect-trace digest and signing state with domain separation and versioned preimages. Test tampering, stale toolchain pins and mismatched declared/actual conformance. | Partial | `mindc verify` recomputes `trace_hash`, re-derives determinism/fp_mode and pins the signer (`src/bin/mindc.rs:315-373`). Versioned domain tags at `src/eval/mlir_build.rs:548` and `src/project/build_input_snapshot.rs:148` (`mind-build-inputs-v1`). `3ad0a714` ci: gate that JSON is never an evidence-hash preimage. No separate result digest or effect-trace digest. | Add `result_digest` and `effect_trace_digest` fields with their own domain tags to the evidence chain, plus tamper and stale-toolchain-pin negative tests in `mindc verify`. |
 | D-gate | Gate: on x86-64 and arm64 real hardware, repeat execution with different allowed thread counts and process restarts; compare interpreter ↔ native ↔ MLIR for identical declared strict profiles (exit status, stdout/stderr, filesystem/effects, result bytes), include negative/refusal fixtures. | Partial | The `cross_substrate_identity` job runs on x86 and a real arm64 runner (`.github/workflows/ci.yml:418-446`); a thread-count-independence canary exists (`tests/cross_substrate_identity.rs:108`). Missing: a three-way interpreter/native/MLIR comparison of exit, stdout/stderr and effects; process-restart repeats; refusal fixtures under one declared profile. | Add a CI job that runs each strict fixture through the interpreter, a native ELF and an MLIR `.so` on both runners and diffs exit, stdout, stderr and effects. |
