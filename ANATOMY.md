@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1914 | **Est. tokens:** ~3,730,293
-**Generated:** 2026-10-29 06:31 UTC
+**Files:** 1917 | **Est. tokens:** ~3,734,089
+**Generated:** 2026-10-29 07:14 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~32,738 |
+| `./` | 35 | ~32,793 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 39 | ~113,181 |
+| `docs/` | 39 | ~113,434 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 39 | ~142,783 |
+| `src/eval/` | 41 | ~144,353 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 418 | ~850,756 |
+| `tests/` | 419 | ~852,674 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -246,7 +246,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~4049 tok, huge) — [package]
+- `Cargo.toml` (~4104 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -448,7 +448,7 @@
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 ### `docs/`
 
-- `benchmarking.md` (~3940 tok, huge) — Benchmarking methodology — tiers and comparable metrics
+- `benchmarking.md` (~4193 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4363 tok, huge) — MIND Compiler Performance Benchmarks
@@ -1301,7 +1301,9 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~10954 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build_overlap.rs` (~991 tok, large) — Copyright 2026 STARGA Inc.
+- `mlir_build_overlap_tests.rs` (~832 tok, large) — Copyright 2026 STARGA Inc.
+- `mlir_build.rs` (~10701 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -2326,6 +2328,11 @@
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
+### `tests/`
+
+- `runtime_obj_overlap.rs` (~1918 tok, huge) — Copyright 2026 STARGA Inc.
+### `tests/runtime/`
+
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
 ### `tests/`
 

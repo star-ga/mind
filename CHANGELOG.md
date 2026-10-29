@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance — runtime-support object off the `--emit-shared` critical path
+- `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
+  object on a separate thread while mlir-opt and mlir-translate run, and joins it
+  before the shared link. Output bytes are unchanged; a clang failure in that compile
+  still fails the build with the same `subprocess clang failed` error.
+- `MINDC_RUNTIME_OBJ_CACHE=0` bypasses the runtime-support object cache (no read, no
+  write). It is a cold-path measurement knob and does not change output bytes
+  (`docs/benchmarking.md`).
+
 ### Fixed — whole-array binary operators on the native backend (#287)
 - Whole-array binary operators on the native backend built a binary that returned
   wrong values. The miscompile existed on main after #110 and before #287 and was

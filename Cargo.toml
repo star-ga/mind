@@ -173,6 +173,12 @@ required-features = ["std-surface", "mlir-build", "cross-module-imports"]
 name = "public_cpu_native_link"
 required-features = ["mlir-build"]
 
+# Runtime-support object overlap + MINDC_RUNTIME_OBJ_CACHE switch. Drives
+# `mindc --emit-shared` with a wrapped clang, so it needs `mlir-build`.
+[[test]]
+name = "runtime_obj_overlap"
+required-features = ["mlir-build"]
+
 [[test]]
 name = "issue_235_single_file_import"
 required-features = ["mlir-build", "cross-module-imports"]
