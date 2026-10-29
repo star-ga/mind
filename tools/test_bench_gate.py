@@ -52,6 +52,13 @@ def bencher(small_ns: int, medium_ns: int, large_ns: int, spread: int = 50) -> s
     )
 
 
+def report(failures: list[str], label: str, ok: bool, detail: str = "") -> None:
+    """Print one PASS/FAIL line and record the failure, with its detail, when not ok."""
+    print(f"[{'PASS' if ok else 'FAIL'}] {label}")
+    if not ok:
+        failures.append(f"{label}: {detail}" if detail else label)
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -82,9 +89,7 @@ def main() -> int:
          "--require-pipeline" in (HERE / "run_bench_gate.sh").read_text()),
     ]
     for label, ok in wiring_cases:
-        print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-        if not ok:
-            failures.append(label)
+        report(failures, label, ok)
 
     # Execute only the extracted bench block with a fake cargo that fails. This
     # proves the shell records the command failure and never grades stale output.
@@ -132,19 +137,17 @@ def main() -> int:
               and "compiler bench command failed" in failed_bench.stdout
               and "bench logs retained in " in failed_bench.stdout
               and not marker.exists())
-        print(f"[{'PASS' if ok else 'FAIL'}] failed compiler bench is rejected before comparator")
-        if not ok:
-            failures.append(f"failed compiler bench shell control: {failed_bench.stdout + failed_bench.stderr}")
+        report(failures, "failed compiler bench is rejected before comparator", ok,
+               failed_bench.stdout + failed_bench.stderr)
 
         succeeded_bench = subprocess.run(
             ["bash", "-c", shell], cwd=d,
             env=dict(env, PREFLIGHT_FAKE_CARGO_RC="0"),
             capture_output=True, text=True,
         )
-        ok = succeeded_bench.returncode == 0 and marker.exists()
-        print(f"[{'PASS' if ok else 'FAIL'}] successful compiler bench invokes comparator")
-        if not ok:
-            failures.append(f"successful compiler bench shell control: {succeeded_bench.stdout + succeeded_bench.stderr}")
+        report(failures, "successful compiler bench invokes comparator",
+               succeeded_bench.returncode == 0 and marker.exists(),
+               succeeded_bench.stdout + succeeded_bench.stderr)
 
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -212,10 +215,7 @@ def main() -> int:
             ("full run reports asserted=3", run_capture(base, good).stdout, "asserted=3"),
             ("noisy fixture run reports asserted=2", run_capture(base, one_noisy).stdout, "asserted=2"),
         ):
-            ok = want in output
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-            if not ok:
-                failures.append(label)
+            report(failures, label, want in output)
         # --- THE ENFORCEMENT PATH ------------------------------------------
         # Every case above exercises a REFUSAL to measure (exit 4) or the happy
         # path. Not one drove the gate to its actual FAIL verdict, so the only
@@ -295,11 +295,11 @@ def main() -> int:
         champbeat = d / "champbeat.out"
         champbeat.write_text(bencher(2400, 5000, 11800))
 
-        import importlib.util as _ilu2
-        _s2 = _ilu2.spec_from_file_location("bench_gate_ref", GATE)
-        _bg2 = _ilu2.module_from_spec(_s2)
-        _s2.loader.exec_module(_bg2)
-        champ_keys = len(_bg2.parse_reference(champ))
+        import importlib.util as _ilu  # the gate as a module: parsers + median rank
+        _spec = _ilu.spec_from_file_location("bench_gate", GATE)
+        _bg = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_bg)
+        champ_keys = len(_bg.parse_reference(champ))
 
         ratchet = ["--champion", str(champ), "--floor", str(base),
                    "--floor-prefix", "compiler_pipeline/parse_typecheck_ir"]
@@ -408,13 +408,6 @@ def main() -> int:
         # REF_LINE used to match the prose line first and setdefault() locked in
         # its LEFT-hand (superseded) value, so the gate silently enforced the
         # numbers the file exists to REPLACE. Assert the frozen block wins.
-        import importlib.util as _ilu
-        _spec = _ilu.spec_from_file_location(
-            "bench_gate", Path(__file__).resolve().parent / "bench_gate.py"
-        )
-        _bg = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_bg)
-
         rebaselined = d / "rebaselined.txt"
         rebaselined.write_text(
             "Net effect vs the prior baseline:\n"
@@ -433,11 +426,8 @@ def main() -> int:
         want_frozen = {"small_matmul": 2.98, "medium_mlp": 6.93, "large_network": 18.43}
         for name, want_v in want_frozen.items():
             got_v = parsed.get(name)
-            ok = got_v == want_v
-            label = f"frozen block wins over prose transition line ({name})"
-            print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got_v}, want {want_v})")
-            if not ok:
-                failures.append(label)
+            report(failures, f"frozen block wins over prose transition line ({name}) "
+                   f"(got {got_v}, want {want_v})", got_v == want_v)
 
         # And the same check against the REAL committed baseline the CI gate
         # uses, so a future edit to that file cannot reintroduce the bug.
@@ -447,23 +437,359 @@ def main() -> int:
             for name, want_v in want_frozen.items():
                 key = f"compiler_pipeline/parse_typecheck_ir/{name}"
                 got_v = rp.get(key)
-                ok = got_v == want_v
-                label = f"committed baseline parses to frozen value ({name})"
-                print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got_v}, want {want_v})")
-                if not ok:
-                    failures.append(label)
+                report(failures, f"committed baseline parses to frozen value ({name}) "
+                       f"(got {got_v}, want {want_v})", got_v == want_v)
 
+        # --- ORDERING ASSERTIONS (--require-faster A,B) ---------------------
+        # Same-run head-to-head: current(A) < current(B), strictly, one-sided,
+        # with the same >12% spread inconclusive band as every other row.
+        e2e_rows = (
+            "test e2e_native/add ... bench: 60000000 ns/iter (+/- 900000)\n"
+            "test e2e_reference/rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 900000)\n"
+            "test e2e_reference/clang_c_to_so/add ... bench: 100000000 ns/iter (+/- 900000)\n"
+        )
+        rf_faster = d / "rf-faster.out"
+        rf_faster.write_text(GOOD_CURRENT + e2e_rows)
+        rf_slower = d / "rf-slower.out"
+        rf_slower.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 520000000"))
+        rf_equal = d / "rf-equal.out"
+        rf_equal.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 90000000"))
+        rf_noisy = d / "rf-noisy.out"
+        # 20 ms spread on a 90 ms median = 22% > the 12% default band.
+        rf_noisy.write_text(GOOD_CURRENT + e2e_rows.replace(
+            "rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 900000)",
+            "rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 20000000)"))
+        pair_rustc = ("--require-faster", "e2e_native/add,e2e_reference/rustc_cdylib/add")
+        pair_clang = ("--require-faster", "e2e_native/add,e2e_reference/clang_c_to_so/add")
+        rf_base = ("--baseline", str(base))
+
+        def rf_run(current: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(GATE), *rf_base, "--current", str(current), *extra],
+                capture_output=True, text=True,
+            )
+
+        rf_pass = rf_run(rf_faster, *pair_rustc, *pair_clang)
+        rf_fail = rf_run(rf_slower, *pair_rustc, *pair_clang)
+        cases += [
+            ("require-faster A<B on both pairs -> exit 0 (positive control)",
+             rf_pass.returncode, 0),
+            ("require-faster A>B -> exit 1 (the ordering enforcement path)",
+             rf_fail.returncode, 1),
+            ("require-faster A==B -> exit 1 (strict: a tie is not faster)",
+             rf_run(rf_equal, *pair_rustc).returncode, 1),
+            ("require-faster pair over the spread band -> exit 2 (inconclusive, not a pass)",
+             rf_run(rf_noisy, *pair_rustc).returncode, 2),
+            ("require-faster naming an unmeasured bench -> exit 4 (fail closed)",
+             rf_run(good, *pair_rustc).returncode, 4),
+            ("require-faster malformed single id -> exit 4",
+             rf_run(rf_faster, "--require-faster", "e2e_native/add").returncode, 4),
+            ("require-faster bench against itself -> exit 4",
+             rf_run(rf_faster, "--require-faster", "e2e_native/add,e2e_native/add").returncode, 4),
+            ("without --require-faster the slower pair is recorded, not asserted -> exit 0",
+             rf_run(rf_slower).returncode, 0),
+        ]
+        for label, output, want in (
+            ("asserted counts 3 fixtures + 2 ordering pairs", rf_pass.stdout, "asserted=5"),
+            ("a violated pair still counts as asserted", rf_fail.stdout, "asserted=5"),
+            ("noisy pair is not counted as asserted", rf_run(rf_noisy, *pair_rustc).stdout,
+             "asserted=3"),
+            ("violated pair is named in the verdict", rf_fail.stdout,
+             "e2e_native/add (520000.000µs) is not faster than e2e_reference/rustc_cdylib/add"),
+        ):
+            report(failures, label, want in output, output)
+
+        # --- THE COMMITTED END-TO-END FLOOR --------------------------------
+        # Full-id floor read with --floor-prefix ''. Every row must parse, and
+        # every row must be millisecond-class: an e2e floor that parsed to
+        # microseconds would be a unit slip that makes the gate unfailable.
+        e2e_floors = sorted((HERE.parent).glob(".bench-baseline-*-e2e.txt"))
+        report(failures, "an end-to-end floor file is committed", len(e2e_floors) >= 1,
+               "no .bench-baseline-*-e2e.txt floor committed")
+        for floor_path in e2e_floors:
+            fp = _bg.parse_reference(floor_path, prefix="")
+            want_ids = {
+                *(f"e2e_compile_shared/{c}/{s}" for c in ("warm", "cold")
+                  for s in ("small", "medium", "large")),
+                *(f"e2e_native/{s}" for s in ("const_return", "add", "local_call", "while_sum")),
+            }
+            missing_ids = sorted(want_ids - fp.keys())
+            report(failures, f"{floor_path.name} carries every gated e2e id", not missing_ids,
+                   f"missing {missing_ids}")
+            bad_units = sorted(k for k, v in fp.items() if not 10_000.0 <= v <= 60_000_000.0)
+            report(failures, f"{floor_path.name} rows are millisecond-class",
+                   not bad_units and bool(fp), f"rows outside 10 ms..60 s: {bad_units}")
+            stray = sorted(k for k in fp if not k.startswith(("e2e_compile_shared/", "e2e_native/")))
+            report(failures, f"{floor_path.name} floors no reference toolchain", not stray,
+                   f"floors external toolchain rows: {stray}")
+
+        wf_text = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
+        e2e_job = wf_text[wf_text.find("\n  e2e-gate:"):] if "\n  e2e-gate:" in wf_text else ""
+        floor_step = step_block(e2e_job, "Record the candidate against the e2e floor")
+        decide_step = step_block(e2e_job, "Paired A/B bench and decision")
+        build_step = step_block(e2e_job, "Build the base and candidate mindc")
+        for label, ok in (
+            ("workflow has an e2e-gate job", bool(e2e_job)),
+            ("e2e-gate runs the e2e_ benches under pipefail",
+             "set -o pipefail" in decide_step and "cargo bench --bench compiler" in decide_step
+             and "-- e2e_" in decide_step),
+            ("e2e-gate records the committed e2e floor with full ids",
+             any(f.name in floor_step for f in e2e_floors) and "--floor-prefix ''" in floor_step),
+            ("the e2e floor is record-only (continue-on-error), never the verdict",
+             "continue-on-error: true" in floor_step
+             and not any(f.name in decide_step for f in e2e_floors)),
+            ("the e2e decision is the paired A/B comparator",
+             "tools/bench_gate.py --pairs" in decide_step and "MINDC_BASE:" in decide_step
+             and "continue-on-error" not in decide_step),
+            ("both arms are release builds of mindc with the gate's features",
+             build_step.count("cargo build --release --features \"$features\" --bin mindc") == 2
+             and 'cp Cargo.lock "$RUNNER_TEMP/e2e-base/Cargo.lock"' in build_step
+             and 'features="mlir-build std-surface cross-module-imports"' in build_step
+             and "sha256sum" in build_step),
+            ("an unbuildable base is exit 4, not a pass",
+             "does not build" in build_step and "exit 4" in build_step),
+            ("base: merge-base for PR/dispatch, before (zero sha -> HEAD^1) for push",
+             "git merge-base HEAD origin/main" in e2e_job and "github.event.before" in e2e_job
+             and "base=HEAD^1" in e2e_job and "fetch-depth: 0" in e2e_job),
+            ("base build cached by base sha",
+             "key: e2e-base-${{ steps.base.outputs.sha }}" in e2e_job),
+            ("raw pairs uploaded with a sha-pinned action",
+             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in e2e_job
+             and "bench-e2e-pairs.tsv" in e2e_job),
+            ("e2e-gate timeout is 90 minutes", "timeout-minutes: 90" in e2e_job),
+            ("e2e-gate does not touch the frontend floor",
+             ".bench-baseline-2026-06-01-correctness.txt" not in e2e_job),
+        ):
+            report(failures, label, ok)
+
+        cases += check_paired(failures, _bg)
         for label, got, want in cases:
-            ok = got == want
-            print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got}, want {want})")
-            if not ok:
-                failures.append(label)
+            report(failures, f"{label} (got {got}, want {want})", got == want)
 
     if failures:
         print(f"\n{len(failures)} bench-gate contract test(s) FAILED")
         return 1
     print("\nbench-gate fail-closed contract: all cases OK")
     return 0
+
+
+# --- SAME-RUN PAIRED A/B (--pairs) ------------------------------------------
+PAIR_ROWS = {
+    "warm": ([f"e2e_compile_shared/warm/{s}" for s in ("small", "medium", "large")], 40),
+    "cold": ([f"e2e_compile_shared/cold/{s}" for s in ("small", "medium", "large")], 20),
+    "native": ([f"e2e_native/{s}" for s in ("const_return", "add", "local_call", "while_sum")], 60),
+}
+
+
+def step_block(job: str, name_prefix: str) -> str:
+    """The text of one workflow step (from its `- name:` line to the next step)."""
+    start = job.find(f"- name: {name_prefix}")
+    if start < 0:
+        return ""
+    end = job.find("\n      - name:", start + 1)
+    return job[start:] if end < 0 else job[start:end]
+
+
+def step_script(job: str, name_prefix: str) -> str:
+    """The `run: |` body of one workflow step, dedented."""
+    block = step_block(job, name_prefix)
+    lines = block.split("\n")
+    try:
+        at = next(i for i, ln in enumerate(lines) if ln.strip() == "run: |")
+    except StopIteration:
+        return ""
+    body = [ln for ln in lines[at + 1:]]
+    indent = min(len(ln) - len(ln.lstrip()) for ln in body if ln.strip())
+    return "\n".join(ln[indent:] for ln in body) + "\n"
+
+
+def spread(n: int, sigma: float) -> list[float]:
+    """n deterministic, symmetric N(0, sigma) quantiles in a fixed scrambled order."""
+    from statistics import NormalDist
+
+    q = [NormalDist(0.0, sigma).inv_cdf((j + 0.5) / n) if sigma else 0.0 for j in range(n)]
+    return [q[(j * 7) % n] for j in range(n)] if n % 7 else q
+
+
+def pairs_text(ds: dict[str, list[float]], *, meta: str = "", order=None) -> str:
+    """A bench-e2e-pairs.tsv with the given per-row log-ratios (base = 100 ms)."""
+    import math
+
+    out = ["# mind e2e paired A/B v1",
+           meta or "# cand_sha256=aa\n# base_sha256=bb\n# null_control=0",
+           "row\ti\torder\tt_base_ns\tt_cand_ns"]
+    for row, values in ds.items():
+        for i, d in enumerate(values):
+            o = order(i) if order else ("BC" if i % 2 == 0 else "CB")
+            out.append(f"{row}\t{i}\t{o}\t100000000\t{round(1e8 * math.exp(d))}")
+    return "\n".join(out) + "\n"
+
+
+def tiers(ratio: dict[str, float] | float = 1.0, sigma: float = 0.15,
+          n: dict[str, int] | None = None) -> dict[str, list[float]]:
+    import math
+
+    ds: dict[str, list[float]] = {}
+    for tier, (rows, minimum) in PAIR_ROWS.items():
+        r = ratio.get(tier, 1.0) if isinstance(ratio, dict) else ratio
+        for row in rows:
+            count = (n or {}).get(row, minimum)
+            ds[row] = [math.log(r) + x for x in spread(count, sigma)]
+    return ds
+
+
+def check_paired(failures: list[str], bg) -> list[tuple[str, object, object]]:
+    """The --pairs contract; returns (label, got, want) cases for main to grade."""
+    import math
+
+    # k is the exact one-sided 95% rank: P(Bin(n,1/2) <= k-1) <= 0.05 < P(<= k).
+    def cdf(n: int, j: int) -> float:
+        return sum(math.comb(n, i) for i in range(j + 1)) / 2**n
+
+    rank_ok = bg.median_rank(40) == 15 and bg.median_rank(120) == 51 and all(
+        cdf(n, bg.median_rank(n) - 1) <= 0.05 < cdf(n, bg.median_rank(n))
+        for n in range(5, 301)
+    )
+    report(failures, f"pairs: k is the exact binomial rank (n=40 -> {bg.median_rank(40)}, "
+           f"n=120 -> {bg.median_rank(120)})", rank_ok)
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+
+        def grade(text: str, *extra: str) -> subprocess.CompletedProcess[str]:
+            f = d / "pairs.tsv"
+            f.write_text(text)
+            return subprocess.run([sys.executable, str(GATE), "--pairs", str(f), *extra],
+                                  capture_output=True, text=True)
+
+        warm = PAIR_ROWS["warm"][0]
+        # k-th smallest pooled warm d (k=51 of 120) sits exactly on the boundary.
+        def boundary(zeros: int) -> dict[str, list[float]]:
+            ds = tiers(sigma=0.0)
+            pooled = [0.0] * zeros + [0.05] * (120 - zeros)
+            for j, row in enumerate(warm):
+                ds[row] = pooled[j::3]
+            return ds
+
+        slow_rows = tiers(sigma=0.02)
+        for row in warm[1:]:
+            slow_rows[row] = [math.log(1.20) + x for x in spread(40, 0.02)]
+        native_slow = tiers(sigma=0.02)
+        for row in PAIR_ROWS["native"][0][1:]:
+            native_slow[row] = [math.log(1.20) + x for x in spread(60, 0.02)]
+        a_a = grade(pairs_text(tiers()))
+        null_meta = "# cand_sha256=cc\n# base_sha256=cc\n# null_control=1"
+        null_slow = grade(pairs_text(tiers(ratio=1.10), meta=null_meta))
+        noisy = grade(pairs_text(tiers(sigma=0.6)))
+        cases = [
+            ("pairs: A/A, sigma 0.15 -> exit 0 (positive control)", a_a.returncode, 0),
+            ("pairs: candidate +10% on every tier -> exit 1", grade(pairs_text(tiers(ratio=1.10))).returncode, 1),
+            ("pairs: candidate 10% faster -> exit 0 (one-sided)", grade(pairs_text(tiers(ratio=0.90))).returncode, 0),
+            ("pairs: only native +10% -> exit 1 (per-tier decision)",
+             grade(pairs_text(tiers(ratio={"native": 1.10}))).returncode, 1),
+            ("pairs: +2% on every tier (inside the 3% bound) -> exit 0",
+             grade(pairs_text(tiers(ratio=1.02, sigma=0.02))).returncode, 0),
+            ("pairs: 50 of 120 warm pairs at 0 -> L95 is the 51st = 0.05 -> exit 1",
+             grade(pairs_text(boundary(50))).returncode, 1),
+            ("pairs: 51 of 120 warm pairs at 0 -> L95 = 0 -> exit 0",
+             grade(pairs_text(boundary(51))).returncode, 0),
+            ("pairs: two of three warm rows +20% -> pooled tier fails -> exit 1",
+             grade(pairs_text(slow_rows)).returncode, 1),
+            ("pairs: three of four native rows +20% -> pooled tier fails -> exit 1",
+             grade(pairs_text(native_slow)).returncode, 1),
+            ("pairs: ABBA order broken (all base-first) -> exit 4",
+             grade(pairs_text(tiers(), order=lambda i: "BC")).returncode, 4),
+            ("pairs: ABBA order swapped (odd base-first) -> exit 4",
+             grade(pairs_text(tiers(), order=lambda i: "CB" if i % 2 == 0 else "BC")).returncode, 4),
+            ("pairs: a warm row with 39 pairs -> exit 4",
+             grade(pairs_text(tiers(n={warm[0]: 39}))).returncode, 4),
+            ("pairs: a native row with 59 pairs -> exit 4",
+             grade(pairs_text(tiers(n={"e2e_native/add": 59}))).returncode, 4),
+            ("pairs: a missing cold row -> exit 4",
+             grade(pairs_text({k: v for k, v in tiers().items()
+                               if k != "e2e_compile_shared/cold/large"})).returncode, 4),
+            ("pairs: an unknown row -> exit 4",
+             grade(pairs_text({**tiers(), "e2e_native/extra": spread(60, 0.1)})).returncode, 4),
+            ("pairs: identical sha (null control) still graded: +10% -> exit 1",
+             null_slow.returncode, 1),
+            ("pairs: interval wider than 12% -> exit 2 (inconclusive, never a pass)",
+             noisy.returncode, 2),
+            ("pairs: wide but proven slower (+50%, sigma 0.6) -> exit 1, not inconclusive",
+             grade(pairs_text(tiers(ratio={"warm": 1.5}, sigma=0.6))).returncode, 1),
+            ("pairs: no header -> exit 4",
+             grade(pairs_text(tiers()).replace("row\ti\torder\tt_base_ns\tt_cand_ns\n", "")).returncode, 4),
+            ("pairs: a zero time -> exit 4",
+             grade(pairs_text(tiers()).replace("\t100000000\t", "\t0\t", 1)).returncode, 4),
+            ("pairs: a duplicated pair -> exit 4",
+             grade(pairs_text(tiers()) + "e2e_native/add\t0\tBC\t100000000\t100000000\n").returncode, 4),
+            ("pairs: --pairs combined with --current -> exit 4",
+             grade(pairs_text(tiers()), "--current", str(d / "pairs.tsv")).returncode, 4),
+            ("pairs: missing file -> exit 4",
+             subprocess.run([sys.executable, str(GATE), "--pairs", str(d / "absent.tsv")],
+                            capture_output=True, text=True).returncode, 4),
+        ]
+        for label, out, want in (
+            ("pairs: PASS line names every tier", a_a.stdout,
+             "e2e paired gate: PASS (warm OK, cold OK, native OK)"),
+            ("pairs: null control is reported", grade(pairs_text(tiers(), meta=null_meta)).stdout,
+             "null_control=1"),
+            ("pairs: inconclusive says it is not a regression verdict", noisy.stdout,
+             "host could not measure: not a regression verdict"),
+            ("pairs: per-row R/L95/U95/N printed", a_a.stdout, "e2e_native/while_sum"),
+            ("pairs: asserted counts trusted tiers", a_a.stdout, "asserted=3"),
+        ):
+            cases.append((label, want in out, True))
+
+        # The decision step itself, run with a fake cargo that serves fixtures in
+        # turn: FAIL is never retried, INCONCLUSIVE is re-run exactly once.
+        wf = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
+        job = wf[wf.find("\n  e2e-gate:"):]
+        script = step_script(job, "Paired A/B bench and decision")
+        (d / "tools").symlink_to(HERE)
+        fake = d / "bin"
+        fake.mkdir()
+        (fake / "cargo").write_text(
+            "#!/bin/sh\n"
+            "n=$(cat \"$FAKE/count\" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > \"$FAKE/count\"\n"
+            "[ -f \"$FAKE/run$n.tsv\" ] || { echo no-fixture >&2; exit 101; }\n"
+            "cp \"$FAKE/run$n.tsv\" \"$MIND_E2E_PAIRS\"\n"
+            "echo \"fake bench run $n\"\n"
+        )
+        (fake / "cargo").chmod(0o755)
+        fixtures = {
+            "pass": pairs_text(tiers()),
+            "fail": pairs_text(tiers(ratio=1.10)),
+            "noisy": pairs_text(tiers(sigma=0.6)),
+        }
+
+        def step(*runs: str) -> tuple[int, int, str]:
+            fx = d / "fx"
+            if fx.exists():
+                for f in fx.iterdir():
+                    f.unlink()
+            fx.mkdir(exist_ok=True)
+            for i, name in enumerate(runs, 1):
+                (fx / f"run{i}.tsv").write_text(fixtures[name])
+            env = dict(os.environ, PATH=f"{fake}{os.pathsep}{os.environ['PATH']}", FAKE=str(fx),
+                       MIND_E2E_PAIRS=str(d / "bench-e2e-pairs.tsv"))
+            r = subprocess.run(["bash", "-e", "-c", script], cwd=d, env=env,
+                               capture_output=True, text=True)
+            count = int((fx / "count").read_text()) if (fx / "count").exists() else 0
+            return r.returncode, count, r.stdout + r.stderr
+
+        for label, runs, want_rc, want_runs in (
+            ("step: PASS -> rc 0 after one run", ("pass",), 0, 1),
+            ("step: FAIL -> rc 1, never retried", ("fail", "pass"), 1, 1),
+            ("step: INCONCLUSIVE then PASS -> rc 0 after exactly two runs", ("noisy", "pass"), 0, 2),
+            ("step: INCONCLUSIVE twice -> rc 2 after exactly two runs", ("noisy", "noisy", "pass"), 2, 2),
+            ("step: bench did not complete -> rc 4", (), 4, 1),
+        ):
+            rc, count, log = step(*runs)
+            report(failures, f"{label} (rc {rc}, runs {count})",
+                   rc == want_rc and count == want_runs and bool(script), log)
+    return cases
 
 
 if __name__ == "__main__":
