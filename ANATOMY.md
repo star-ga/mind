@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1915 | **Est. tokens:** ~3,715,756
-**Generated:** 2026-10-29 06:03 UTC
+**Files:** 1920 | **Est. tokens:** ~3,740,045
+**Generated:** 2026-10-29 08:14 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~31,518 |
+| `./` | 35 | ~32,793 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -30,8 +30,9 @@
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~83,855 |
+| `benches/` | 28 | ~87,443 |
 | `benches/common/` | 2 | ~2,995 |
+| `benches/e2e/` | 1 | ~3,047 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 13 | ~28,163 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -43,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 39 | ~111,403 |
+| `docs/` | 39 | ~113,434 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -93,7 +94,7 @@
 | `.github/` | 4 | ~910 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~962 |
-| `.github/workflows/` | 9 | ~13,478 |
+| `.github/workflows/` | 9 | ~16,367 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,327 |
 | `scripts/` | 33 | ~118,193 |
@@ -120,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 42 | ~148,732 |
+| `src/eval/` | 44 | ~150,309 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -151,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 418 | ~850,756 |
+| `tests/` | 419 | ~852,674 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -222,7 +223,7 @@
 | `tests/support/` | 10 | ~20,327 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
-| `tools/` | 4 | ~12,993 |
+| `tools/` | 4 | ~20,957 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -241,10 +242,11 @@
 - `.bench-baseline-2026-05-17-phase10-7.txt` (~565 tok, large) — === Phase 10.7 surface baseline (mindc 0.2.11, 2026-05-17) ===
 - `.bench-baseline-2026-05-18-rfc0005.txt` (~781 tok, large) — === RFC 0005 Phase 2 baseline (mindc 0.4.0, 2026-05-18) ===
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) — === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
+- `.bench-baseline-2026-10-28-e2e.txt` (~1220 tok, large) — === End-to-end floor (T2 warm/cold + T2-native), recorded 2026-10-28 ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~4049 tok, huge) — [package]
+- `Cargo.toml` (~4104 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -320,13 +322,18 @@
 - `roofline_peak.rs` (~2327 tok, huge) — Shared roofline denominator for the deterministic GEMM / int-dot benches.
 ### `benches/`
 
-- `compiler.rs` (~3786 tok, huge) — Small program: Simple matrix multiplication
+- `compiler.rs` (~7374 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~605 tok, large) — Copyright 2025 STARGA Inc.
 - `det_gemv_q16_mt.rs` (~3229 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_i16.rs` (~4549 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_i8.rs` (~4988 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16.rs` (~4829 tok, huge) — Copyright 2025-2026 STARGA Inc.
+### `benches/e2e/`
+
+- `paired.rs` (~3047 tok, huge) — Same-run paired A/B of two `mindc` binaries: the end-to-end gate's measurement.
+### `benches/`
+
 - `fft_q16.rs` (~5352 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~1079 tok, large) — File readers
 - `operations.rs` (~1200 tok, large) — Element-wise operations
@@ -441,7 +448,7 @@
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 ### `docs/`
 
-- `benchmarking.md` (~2162 tok, huge) — Benchmarking methodology — tiers and comparable metrics
+- `benchmarking.md` (~4193 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4363 tok, huge) — MIND Compiler Performance Benchmarks
@@ -1051,7 +1058,7 @@
 - `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~2440 tok, huge) — name: Bench gate
+- `bench-gate.yml` (~5329 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~302 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~2070 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
@@ -1294,9 +1301,11 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
+- `mlir_build_overlap.rs` (~1140 tok, large) — Copyright 2026 STARGA Inc.
+- `mlir_build_overlap_tests.rs` (~832 tok, large) — Copyright 2026 STARGA Inc.
 - `mlir_build_pipe.rs` (~2731 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build_proc.rs` (~608 tok, large) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~10711 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10316 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build_tests.rs` (~2853 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2322,6 +2331,11 @@
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
+### `tests/`
+
+- `runtime_obj_overlap.rs` (~1918 tok, huge) — Copyright 2026 STARGA Inc.
+### `tests/runtime/`
+
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
 ### `tests/`
 
@@ -2693,7 +2707,7 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~5201 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~8530 tok, huge) — # Copyright 2025 STARGA Inc.
 ### `tools/mindfuzz/`
 
 - `ci_batch.py` (~1482 tok, large) — MIND-Fuzz deterministic batch GENERATOR -> cross-substrate reference corpus.
@@ -2729,7 +2743,7 @@
 ### `tools/`
 
 - `run_bench_gate.sh` (~535 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
-- `test_bench_gate.py` (~6125 tok, huge) — Regression test for the bench-gate fail-closed contract (tools/bench_gate.py).
+- `test_bench_gate.py` (~10760 tok, huge) — Regression test for the bench-gate fail-closed contract (tools/bench_gate.py).
 
 ---
 *Generated by `anatomy 1.0.0`. Edit descriptions manually — re-run preserves structure.*

@@ -132,66 +132,11 @@ pub fn build_all(
     build_all_with_objects(mlir_src, tools, opts, &[])
 }
 
-/// Like [`build_all`], but links additional caller-provided object files into
-/// the `emit_shared` output (after the runtime-support stub). Used for native
-/// cross-module linking: a consumer cdylib that imports a self-contained `std`
-/// substrate module passes that module's compiled `.o` here so its symbols
-/// resolve natively. With an empty `extra_objects` slice this is identical to
-/// [`build_all`].
 #[cfg(feature = "mlir-build")]
-pub fn build_all_with_objects(
-    mlir_src: &str,
-    tools: &BuildTools,
-    opts: &BuildOptions<'_>,
-    extra_objects: &[std::path::PathBuf],
-) -> Result<BuildProducts, BuildError> {
-    let preset_name = opts.preset;
-    let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
-        .map_err(BuildError::Internal)?;
-    let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
-    let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
-    // mlir-opt and mlir-translate run concurrently (see `pipe`): translate's
-    // startup overlaps opt's run, and it still receives exactly the text that
-    // becomes `optimized_mlir`. The `.mlir` file is written before translate's
-    // outcome is surfaced, so a translate failure leaves it behind as before.
-    let (optimized_mlir, llvm_ir) = if let Some(pipeline) = combined_pipeline {
-        let piped = pipe::run_mlir_opt_into_translate(&lowered, &pipeline, tools)?;
-        if let Some(path) = opts.emit_mlir_file {
-            write_text_file(path, &piped.optimized_mlir)?;
-        }
-        let llvm_ir = piped.llvm_ir?;
-        (piped.optimized_mlir, llvm_ir)
-    } else {
-        if let Some(path) = opts.emit_mlir_file {
-            write_text_file(path, &lowered)?;
-        }
-        let llvm_ir = run_mlir_translate(&lowered, tools)?;
-        (lowered, llvm_ir)
-    };
-
-    if let Some(path) = opts.emit_llvm_file {
-        write_text_file(path, &llvm_ir)?;
-    }
-
-    if let Some(path) = opts.emit_obj_file {
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false, &[])?;
-    }
-
-    if let Some(path) = opts.emit_shared {
-        // Phase 6.5 Stage 1b: compile the runtime-support stub to a temp .o
-        // and link it into the shared library so vec_new / vec_push /
-        // __mind_load_i64 etc. are resolved without an external dependency.
-        let runtime_obj = compile_runtime_support_obj(tools, opts.target_triple)?;
-        let mut extra = vec![runtime_obj.path().to_path_buf()];
-        extra.extend(extra_objects.iter().cloned());
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
-    }
-
-    Ok(BuildProducts {
-        optimized_mlir,
-        llvm_ir,
-    })
-}
+#[path = "mlir_build_overlap.rs"]
+mod overlap;
+#[cfg(feature = "mlir-build")]
+pub use overlap::build_all_with_objects;
 
 #[cfg(feature = "mlir-build")]
 fn combine_pipelines(preset: &str, extra: Option<&str>) -> Option<String> {
@@ -539,6 +484,20 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
     "MACOSX_DEPLOYMENT_TARGET",
 ];
 
+/// Set to `0` to bypass the runtime-support `.o` disk cache entirely (no
+/// read, no write). A measurement knob for COLD-path timing only: the cache
+/// is output-neutral, so the emitted bytes are identical either way.
+#[cfg(feature = "mlir-build")]
+const RUNTIME_OBJ_CACHE_ENV: &str = "MINDC_RUNTIME_OBJ_CACHE";
+
+/// Whether the runtime-obj cache is on for a given `MINDC_RUNTIME_OBJ_CACHE`
+/// value. Only the exact value `0` disables it; unset or anything else keeps
+/// the historical (cached) behaviour.
+#[cfg(feature = "mlir-build")]
+fn runtime_obj_cache_enabled(value: Option<&str>) -> bool {
+    value.map(str::trim) != Some("0")
+}
+
 /// Compute the on-disk cache path for the runtime-support `.o`, or `None`
 /// if no cache directory is available.
 ///
@@ -551,6 +510,11 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
 /// (path + size + mtime + version), not merely its `--version` banner.
 #[cfg(feature = "mlir-build")]
 fn runtime_obj_cache_path(tools: &BuildTools, args: &[String]) -> Option<std::path::PathBuf> {
+    // Checked before the clang identity probe, so a disabled cache costs no
+    // `--version` spawn, no read and no write.
+    if !runtime_obj_cache_enabled(std::env::var(RUNTIME_OBJ_CACHE_ENV).ok().as_deref()) {
+        return None;
+    }
     let cache_dir = dirs::cache_dir()?.join("mind").join("runtime-obj");
 
     let clang_identity = clang_identity_string(&tools.clang);
@@ -957,3 +921,7 @@ fn decode_to_string(bytes: &[u8]) -> String {
         String::from_utf8_lossy(bytes).trim().to_string()
     }
 }
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_overlap_tests.rs"]
+mod overlap_tests;

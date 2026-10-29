@@ -3454,6 +3454,83 @@ quantisation and scatter.
 and NEON hashes in CI; the catalogue reaches 100 operators with fixtures; a reference
 transformer block runs under `--require-strict-fp`.
 
+### GP-10 — First-divergence trace across compiler stages and execution paths
+
+*Status:* proposed, not built.
+
+Build three things, in MIND and tested with `mindc test`. (a) `mindc build --trace-stages
+<file>` in the pure-MIND driver writes one record per compiler stage: the token stream, the
+parsed module, resolved names, the typed module, mic@3 before optimisation, mic@3 after each
+pass of the pinned optimiser schedule once passes exist, and the native emit of each
+function. A record holds the stage id, the item count and a hash of the stage's canonical
+serialisation. (b) A trace-point run of a fixture program records, at every function
+return, the function id, its call index and a hash of the returned value's canonical bytes.
+The interpreter, the native ELF and the MLIR path write the same record format, on x86-64
+and on arm64. (c) `mindc trace-diff <a> <b>` prints the first record that differs and,
+inside a compile stage, the first differing item.
+
+*Why:* the self-host smokes and the self-host fuzzer report the first differing byte of the
+final MLIR, mic@3 or ELF (one of them guesses the subsystem from the surrounding function
+name), and the D-gate, C-gate and GP-06 comparisons judge final results. None of them names
+the stage or the function where two runs part. An order-dependent pass shows up only as a
+cross-substrate red with no local symptom (`docs/INDEPENDENCE_ROADMAP.md`). A few dozen
+hashes per fixture localise it, and two machines exchange hashes instead of artifacts.
+
+**Measurement:** compile time with tracing on, on the T1 and T2 baskets, reported next to
+tracing off. Tracing off does no extra work: the flag is read once by the driver and no
+stage is serialised.
+
+**Gates:** perturbing one optimiser rewrite makes `trace-diff` name that pass and nothing
+earlier; perturbing the native lowering of one operation names the first function that uses
+it, at the native-emit stage; a self-hosted stage traced against the frozen prior stage, and
+the cross-substrate fixtures traced on x86-64 against arm64, give an empty diff; positive
+control: under each perturbation the final artifact hash differs too; a run in which either
+side crashed or wrote no records reports `unverified`, never an empty diff; with tracing
+off, every artifact is byte-identical to a build without this feature (keystone and the
+mic@3 flip smoke unchanged).
+
+*Firewall:* the trace is a diagnostic file. It is never part of the evidence chain or of any
+`trace_hash` preimage. The Python smokes keep their current role and are not extended; each
+retires only once `trace-diff` covers its check.
+
+*Depends on:* the compile-stage records can start on the front end; the native-emit stage
+and the three-path trace points wait on Gate 1 (#284). Architecture audit before
+implementation.
+
+### GP-11 — Identity columns in the cross-language comparison suites
+
+*Status:* proposed, not built.
+
+Build the N-18 portfolio and the S-7 C/C++ comparison on one adapter protocol, and report
+columns peers do not. (a) Each language configuration runs as a separate process that reads
+one request per line (task id and input) and writes one result per line (a hash of the
+output bytes, wall time, peak resident memory); a process serves many requests without
+restarting. The request and result schema lives in one file, and CI checks every adapter
+against that file, not against another adapter. (b) Three identity columns per task and
+configuration: the same request run twice in one process and once in a fresh process; the
+same request on x86-64 and on arm64; the same request at one thread and at N threads. Each
+column reports the first differing output index, or `identical`. (c) The harness, the schema
+check, the identity columns and the table writer are MIND code tested with `mindc test`.
+Each peer adapter is only the shim its language needs to read a request and run the task; it
+holds no comparison logic.
+
+*Why:* 19.6.3 asks every report to show repeated-run hashes, while the comparison rows
+planned in N-18 and S-7 compare speed, memory and size only. Identity is where MIND differs
+from its peers, and a reader can check it from the table.
+
+**Measurement:** the three identity columns beside the existing timing, memory and size
+columns, per task and configuration.
+
+**Gates:** the harness reports MIND identical on all three columns for every strict fixture,
+and reports a deliberately nondeterministic stub (a reduction whose order follows thread
+scheduling) as not identical in the thread column; positive control: the same stub still
+produces valid timing rows; an adapter whose output fails the schema is refused, not scored;
+a task a configuration cannot run is listed as unsupported, never scored as a pass or a
+failure; floating-point tasks get identity rows only under a declared strict profile.
+
+*Depends on:* the N-18 pinned-version manifest. No public number until the table reproduces
+from a clean checkout on another party's machine.
+
 ### Firewall — do not cross it
 
 - No GPU identity claim wider than the gated scope in GP-07.
