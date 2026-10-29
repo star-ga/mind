@@ -1630,22 +1630,23 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             if ir.fn_signatures.contains_key(&ext.name) {
                 continue;
             }
+            let effective_callconv = resolve_callconv(ext.callconv);
             let param_types: Vec<String> = ext
                 .param_types
                 .iter()
-                .flat_map(|ty| extern_type_to_mlir_multi_for(ty, &repr_c, ext.callconv))
+                .flat_map(|ty| extern_type_to_mlir_multi_for(ty, &repr_c, effective_callconv))
                 .collect();
             let ret_type = ext
                 .ret_type
                 .as_ref()
-                .map(|ty| extern_ret_type_to_mlir_for(ty, &repr_c, ext.callconv));
+                .map(|ty| extern_ret_type_to_mlir_for(ty, &repr_c, effective_callconv));
             decls.push(crate::ir::Instr::ExternFnDecl {
                 name: ext.name,
                 param_types,
                 ret_type,
                 is_varargs: ext.is_varargs,
                 vararg_hints: Vec::new(),
-                callconv: ext.callconv,
+                callconv: effective_callconv,
             });
         }
         for decl in decls.into_iter().rev() {

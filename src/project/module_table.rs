@@ -434,15 +434,9 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
         callconv: crate::ast::CallConv,
         function: &crate::ast::ExternFn,
     ) {
-        if exported_externs
-            .iter()
-            .any(|found| found.name == function.name)
-        {
-            return;
-        }
-        exported_externs.push(ExportedExtern {
+        let candidate = ExportedExtern {
             name: function.name.clone(),
-            callconv,
+            callconv: crate::eval::lower::resolve_callconv(callconv),
             is_varargs: function.is_varargs,
             param_types: function
                 .params
@@ -450,7 +444,13 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                 .map(|param| aliases.resolve(&param.ty))
                 .collect(),
             ret_type: function.ret_type.as_ref().map(|ty| aliases.resolve(ty)),
-        });
+        };
+        // Coalesce only identical declarations. Preserve conflicting records
+        // so callers cannot recover a first-wins ABI from an invalid module;
+        // the source checker reports the conflict before any lowering.
+        if !exported_externs.contains(&candidate) {
+            exported_externs.push(candidate);
+        }
     }
 
     let mut exported: Vec<String> = Vec::new();

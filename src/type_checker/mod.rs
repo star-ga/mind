@@ -22,6 +22,8 @@ pub(crate) mod canonical_facts;
 mod cross_module_types;
 mod duplicate_structs;
 #[cfg(feature = "std-surface")]
+mod extern_declarations;
+#[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
 pub mod nerve_lint;
 pub(crate) mod nerve_walk;
@@ -4505,6 +4507,8 @@ pub fn check_module_types_in_file(
     let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
+    #[cfg(feature = "std-surface")]
+    extern_declarations::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]
     let env = {
         let mut env = env.clone();
