@@ -52,6 +52,13 @@ def bencher(small_ns: int, medium_ns: int, large_ns: int, spread: int = 50) -> s
     )
 
 
+def report(failures: list[str], label: str, ok: bool, detail: str = "") -> None:
+    """Print one PASS/FAIL line and record the failure, with its detail, when not ok."""
+    print(f"[{'PASS' if ok else 'FAIL'}] {label}")
+    if not ok:
+        failures.append(f"{label}: {detail}" if detail else label)
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -82,9 +89,7 @@ def main() -> int:
          "--require-pipeline" in (HERE / "run_bench_gate.sh").read_text()),
     ]
     for label, ok in wiring_cases:
-        print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-        if not ok:
-            failures.append(label)
+        report(failures, label, ok)
 
     # Execute only the extracted bench block with a fake cargo that fails. This
     # proves the shell records the command failure and never grades stale output.
@@ -132,19 +137,17 @@ def main() -> int:
               and "compiler bench command failed" in failed_bench.stdout
               and "bench logs retained in " in failed_bench.stdout
               and not marker.exists())
-        print(f"[{'PASS' if ok else 'FAIL'}] failed compiler bench is rejected before comparator")
-        if not ok:
-            failures.append(f"failed compiler bench shell control: {failed_bench.stdout + failed_bench.stderr}")
+        report(failures, "failed compiler bench is rejected before comparator", ok,
+               failed_bench.stdout + failed_bench.stderr)
 
         succeeded_bench = subprocess.run(
             ["bash", "-c", shell], cwd=d,
             env=dict(env, PREFLIGHT_FAKE_CARGO_RC="0"),
             capture_output=True, text=True,
         )
-        ok = succeeded_bench.returncode == 0 and marker.exists()
-        print(f"[{'PASS' if ok else 'FAIL'}] successful compiler bench invokes comparator")
-        if not ok:
-            failures.append(f"successful compiler bench shell control: {succeeded_bench.stdout + succeeded_bench.stderr}")
+        report(failures, "successful compiler bench invokes comparator",
+               succeeded_bench.returncode == 0 and marker.exists(),
+               succeeded_bench.stdout + succeeded_bench.stderr)
 
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -212,10 +215,7 @@ def main() -> int:
             ("full run reports asserted=3", run_capture(base, good).stdout, "asserted=3"),
             ("noisy fixture run reports asserted=2", run_capture(base, one_noisy).stdout, "asserted=2"),
         ):
-            ok = want in output
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-            if not ok:
-                failures.append(label)
+            report(failures, label, want in output)
         # --- THE ENFORCEMENT PATH ------------------------------------------
         # Every case above exercises a REFUSAL to measure (exit 4) or the happy
         # path. Not one drove the gate to its actual FAIL verdict, so the only
@@ -295,11 +295,11 @@ def main() -> int:
         champbeat = d / "champbeat.out"
         champbeat.write_text(bencher(2400, 5000, 11800))
 
-        import importlib.util as _ilu2
-        _s2 = _ilu2.spec_from_file_location("bench_gate_ref", GATE)
-        _bg2 = _ilu2.module_from_spec(_s2)
-        _s2.loader.exec_module(_bg2)
-        champ_keys = len(_bg2.parse_reference(champ))
+        import importlib.util as _ilu  # the gate as a module: parsers + median rank
+        _spec = _ilu.spec_from_file_location("bench_gate", GATE)
+        _bg = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_bg)
+        champ_keys = len(_bg.parse_reference(champ))
 
         ratchet = ["--champion", str(champ), "--floor", str(base),
                    "--floor-prefix", "compiler_pipeline/parse_typecheck_ir"]
@@ -408,13 +408,6 @@ def main() -> int:
         # REF_LINE used to match the prose line first and setdefault() locked in
         # its LEFT-hand (superseded) value, so the gate silently enforced the
         # numbers the file exists to REPLACE. Assert the frozen block wins.
-        import importlib.util as _ilu
-        _spec = _ilu.spec_from_file_location(
-            "bench_gate", Path(__file__).resolve().parent / "bench_gate.py"
-        )
-        _bg = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_bg)
-
         rebaselined = d / "rebaselined.txt"
         rebaselined.write_text(
             "Net effect vs the prior baseline:\n"
@@ -433,11 +426,8 @@ def main() -> int:
         want_frozen = {"small_matmul": 2.98, "medium_mlp": 6.93, "large_network": 18.43}
         for name, want_v in want_frozen.items():
             got_v = parsed.get(name)
-            ok = got_v == want_v
-            label = f"frozen block wins over prose transition line ({name})"
-            print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got_v}, want {want_v})")
-            if not ok:
-                failures.append(label)
+            report(failures, f"frozen block wins over prose transition line ({name}) "
+                   f"(got {got_v}, want {want_v})", got_v == want_v)
 
         # And the same check against the REAL committed baseline the CI gate
         # uses, so a future edit to that file cannot reintroduce the bug.
@@ -447,11 +437,8 @@ def main() -> int:
             for name, want_v in want_frozen.items():
                 key = f"compiler_pipeline/parse_typecheck_ir/{name}"
                 got_v = rp.get(key)
-                ok = got_v == want_v
-                label = f"committed baseline parses to frozen value ({name})"
-                print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got_v}, want {want_v})")
-                if not ok:
-                    failures.append(label)
+                report(failures, f"committed baseline parses to frozen value ({name}) "
+                       f"(got {got_v}, want {want_v})", got_v == want_v)
 
         # --- ORDERING ASSERTIONS (--require-faster A,B) ---------------------
         # Same-run head-to-head: current(A) < current(B), strictly, one-sided,
@@ -512,20 +499,15 @@ def main() -> int:
             ("violated pair is named in the verdict", rf_fail.stdout,
              "e2e_native/add (520000.000µs) is not faster than e2e_reference/rustc_cdylib/add"),
         ):
-            ok = want in output
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-            if not ok:
-                failures.append(f"{label}: {output}")
+            report(failures, label, want in output, output)
 
         # --- THE COMMITTED END-TO-END FLOOR --------------------------------
         # Full-id floor read with --floor-prefix ''. Every row must parse, and
         # every row must be millisecond-class: an e2e floor that parsed to
         # microseconds would be a unit slip that makes the gate unfailable.
         e2e_floors = sorted((HERE.parent).glob(".bench-baseline-*-e2e.txt"))
-        ok = len(e2e_floors) >= 1
-        print(f"[{'PASS' if ok else 'FAIL'}] an end-to-end floor file is committed")
-        if not ok:
-            failures.append("no .bench-baseline-*-e2e.txt floor committed")
+        report(failures, "an end-to-end floor file is committed", len(e2e_floors) >= 1,
+               "no .bench-baseline-*-e2e.txt floor committed")
         for floor_path in e2e_floors:
             fp = _bg.parse_reference(floor_path, prefix="")
             want_ids = {
@@ -534,20 +516,14 @@ def main() -> int:
                 *(f"e2e_native/{s}" for s in ("const_return", "add", "local_call", "while_sum")),
             }
             missing_ids = sorted(want_ids - fp.keys())
-            ok = not missing_ids
-            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} carries every gated e2e id")
-            if not ok:
-                failures.append(f"{floor_path.name} missing {missing_ids}")
+            report(failures, f"{floor_path.name} carries every gated e2e id", not missing_ids,
+                   f"missing {missing_ids}")
             bad_units = sorted(k for k, v in fp.items() if not 10_000.0 <= v <= 60_000_000.0)
-            ok = not bad_units and bool(fp)
-            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} rows are millisecond-class")
-            if not ok:
-                failures.append(f"{floor_path.name} rows outside 10 ms..60 s: {bad_units}")
+            report(failures, f"{floor_path.name} rows are millisecond-class",
+                   not bad_units and bool(fp), f"rows outside 10 ms..60 s: {bad_units}")
             stray = sorted(k for k in fp if not k.startswith(("e2e_compile_shared/", "e2e_native/")))
-            ok = not stray
-            print(f"[{'PASS' if ok else 'FAIL'}] {floor_path.name} floors no reference toolchain")
-            if not ok:
-                failures.append(f"{floor_path.name} floors external toolchain rows: {stray}")
+            report(failures, f"{floor_path.name} floors no reference toolchain", not stray,
+                   f"floors external toolchain rows: {stray}")
 
         wf_text = (HERE.parent / ".github" / "workflows" / "bench-gate.yml").read_text()
         e2e_job = wf_text[wf_text.find("\n  e2e-gate:"):] if "\n  e2e-gate:" in wf_text else ""
@@ -586,17 +562,11 @@ def main() -> int:
             ("e2e-gate does not touch the frontend floor",
              ".bench-baseline-2026-06-01-correctness.txt" not in e2e_job),
         ):
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-            if not ok:
-                failures.append(label)
+            report(failures, label, ok)
 
+        cases += check_paired(failures, _bg)
         for label, got, want in cases:
-            ok = got == want
-            print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got}, want {want})")
-            if not ok:
-                failures.append(label)
-
-    check_paired(failures)
+            report(failures, f"{label} (got {got}, want {want})", got == want)
 
     if failures:
         print(f"\n{len(failures)} bench-gate contract test(s) FAILED")
@@ -670,13 +640,9 @@ def tiers(ratio: dict[str, float] | float = 1.0, sigma: float = 0.15,
     return ds
 
 
-def check_paired(failures: list[str]) -> None:
-    import importlib.util as ilu
+def check_paired(failures: list[str], bg) -> list[tuple[str, object, object]]:
+    """The --pairs contract; returns (label, got, want) cases for main to grade."""
     import math
-
-    spec = ilu.spec_from_file_location("bench_gate_paired", GATE)
-    bg = ilu.module_from_spec(spec)
-    spec.loader.exec_module(bg)
 
     # k is the exact one-sided 95% rank: P(Bin(n,1/2) <= k-1) <= 0.05 < P(<= k).
     def cdf(n: int, j: int) -> float:
@@ -686,10 +652,8 @@ def check_paired(failures: list[str]) -> None:
         cdf(n, bg.median_rank(n) - 1) <= 0.05 < cdf(n, bg.median_rank(n))
         for n in range(5, 301)
     )
-    print(f"[{'PASS' if rank_ok else 'FAIL'}] pairs: k is the exact binomial rank "
-          f"(n=40 -> {bg.median_rank(40)}, n=120 -> {bg.median_rank(120)})")
-    if not rank_ok:
-        failures.append("pairs: median_rank is not the exact one-sided 95% binomial rank")
+    report(failures, f"pairs: k is the exact binomial rank (n=40 -> {bg.median_rank(40)}, "
+           f"n=120 -> {bg.median_rank(120)})", rank_ok)
 
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -823,16 +787,9 @@ def check_paired(failures: list[str]) -> None:
             ("step: bench did not complete -> rc 4", (), 4, 1),
         ):
             rc, count, log = step(*runs)
-            ok = rc == want_rc and count == want_runs and bool(script)
-            print(f"[{'PASS' if ok else 'FAIL'}] {label} (rc {rc}, runs {count})")
-            if not ok:
-                failures.append(f"{label}: rc {rc}, runs {count}\n{log}")
-
-    for label, got, want in cases:
-        ok = got == want
-        print(f"[{'PASS' if ok else 'FAIL'}] {label} (got {got}, want {want})")
-        if not ok:
-            failures.append(label)
+            report(failures, f"{label} (rc {rc}, runs {count})",
+                   rc == want_rc and count == want_runs and bool(script), log)
+    return cases
 
 
 if __name__ == "__main__":
