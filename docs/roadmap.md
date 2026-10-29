@@ -1,3 +1,8 @@
+## Ecosystem research — Alien Science / Lacuna (proposal, 2026-10-29)
+
+- [ ] **Review required / default OFF.** Consume MIND-Lab's offline compiler research hypotheses without modifying MIND compiler correctness or acceptance gates.
+- [ ] See [detailed architecture and acceptance plan](RESEARCH_ECOSYSTEM_ALIEN_LACUNA_20261029.md). Not implemented, benchmarked, or deployed.
+
 # Roadmap
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
