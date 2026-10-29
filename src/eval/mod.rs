@@ -49,7 +49,7 @@ pub(crate) use module_bindings::{
     owned_symbol as eval_owned_symbol,
 };
 use module_bindings::{OwnerGuard as EvalOwnerGuard, bound_symbol as eval_bound_symbol};
-use module_bindings::{current_owner as current_eval_owner, symbol_display_name};
+use module_bindings::{current_owner as current_eval_owner, owner_scoped_fn, symbol_display_name};
 pub mod materialization;
 /// Narrow-int surface prescan (see narrow_scan.rs); always compiled because the
 /// frozen profile's non-f64 float fence must refuse f32/f16/bf16 in every build.
@@ -811,10 +811,8 @@ fn resolve_user_fn(callee: &str, span: Span) -> Result<Option<UserFn>, EvalError
             ))
         });
     }
-    if let Some(owner) = current_eval_owner() {
-        if let Some(local) = fn_table_lookup(&eval_owned_symbol(&owner, callee)) {
-            return Ok(Some(local));
-        }
+    if let Some(scoped) = owner_scoped_fn(callee)? {
+        return Ok(Some(scoped));
     }
     Ok(fn_table_lookup(callee).or_else(|| {
         callee
