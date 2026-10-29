@@ -24,8 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 12 keys no source program reaches through the native build are listed in an
   `UNREACHABLE` table with a one-line reason each (40 keys = 28 rows + 12):
   `lane.source.duplicate_function` (the bridge's ambiguity guard refuses a
-  duplicate definition first) and eleven IR-only `lane.ir.*` checks that an
-  earlier source refusal or a lowering invariant always precedes.
+  duplicate definition first), ten IR-only `lane.ir.*` checks that an earlier
+  source refusal or a lowering invariant always precedes, and
+  `lane.ir.semantic_type`, whose metadata the native bridge never produces (it
+  lowers without a canonical plan).
 
 ### Fixed — the self-host seed chain is tool-produced and tool-verified
 - `self_host_loop_smoke.py --advance` refuses a no-op: when the new fixed point
