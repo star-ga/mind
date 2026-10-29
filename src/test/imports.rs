@@ -154,6 +154,42 @@ fn bind_import_refs(
     Ok(())
 }
 
+/// Bind the bare calls `owner` may make into the exported functions of the
+/// project modules its own imports select, mirroring the type checker's
+/// lexical-then-imported order for unqualified callees. Bundled `std`
+/// modules keep their established resolution and are not bound here.
+#[cfg(feature = "cross-module-imports")]
+fn bind_bare_imported_calls(
+    owner: &str,
+    imports: &[Vec<String>],
+    scope: &crate::project::single_file_scope::ProjectScope,
+    linked_owners: &std::collections::BTreeSet<String>,
+    bindings: &mut EvalBindings,
+) {
+    for import in imports {
+        let Some(target) = scope.resolve_import_path(owner, import) else {
+            continue;
+        };
+        if target == owner || target.starts_with("std.") || !linked_owners.contains(target) {
+            continue;
+        }
+        let Some(source) = scope
+            .sources()
+            .iter()
+            .find(|source| source.module_path() == target)
+        else {
+            continue;
+        };
+        for item in super::top_level::refs(&source.module().items) {
+            if let Node::FnDef(function, _) = item {
+                if scope.resolves_imported_symbol(owner, import, &function.name) {
+                    bindings.insert_imported_call(owner, target, &function.name);
+                }
+            }
+        }
+    }
+}
+
 /// Capture the same manifest-bounded import closure used by `check` and native
 /// builds. Declarations retain an internal lexical owner, while import
 /// references are bound by `(owner file, source span)` to the exact captured
@@ -245,6 +281,13 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                         ..EvalSupport::default()
                     };
                 }
+                bind_bare_imported_calls(
+                    captured.module_path(),
+                    &imports,
+                    &scope,
+                    &linked_owners,
+                    &mut bindings,
+                );
                 let _qualified_guard =
                     crate::project::active_module_table::QualifiedImportsGuard::install(
                         qualified_refs.clone(),
@@ -270,7 +313,8 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                 .filter(|diag| {
                     // The evaluator deliberately defers an unresolved bare
                     // call in a linked module to execution, where it reports
-                    // `unsupported operation`. Explicit namespace references
+                    // `unsupported operation` unless one of that module's own
+                    // imports exports the callee (`bind_bare_imported_calls`). Explicit namespace references
                     // were validated by `bind_import_refs` above, so this
                     // narrow defer cannot allow a private imported symbol or
                     // an arbitrary consumer-local capture.

@@ -139,3 +139,63 @@ fn a_native_build_aborts_on_a_false_parenthesised_assert() {
         }
     }
 }
+
+/// A failing native `assert` names its source span and message on stderr
+/// before it aborts, so the failure is diagnosable without a debugger; a
+/// passing assert prints nothing.
+#[cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
+#[test]
+fn a_failing_native_assert_reports_its_span_and_message() {
+    use std::os::unix::process::ExitStatusExt;
+    let message_assert = "assert x == 2, \"x must be 2\";";
+    let bare_assert = "assert x == 4;";
+    for (target, body, expect) in [
+        (
+            "assert_diag_message",
+            message_assert,
+            Some(": x must be 2\n"),
+        ),
+        ("assert_diag_bare", bare_assert, Some("\n")),
+        ("assert_diag_pass", "assert x == 3, \"x must be 3\";", None),
+    ] {
+        let dir = common::scratch_dir(target);
+        std::fs::write(
+            dir.join("Mind.toml"),
+            "[package]\nname = \"ad\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\noutput = \"ad\"\ntarget = \"cpu\"\n\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"main.mind\"]\n",
+        )
+        .expect("write Mind.toml");
+        let source =
+            format!("fn main() -> i64 {{\n    let x: i64 = 3;\n    {body}\n    return 5;\n}}\n");
+        std::fs::write(dir.join("main.mind"), &source).expect("write main.mind");
+        let out = Command::new(common::mindc_bin())
+            .arg("build")
+            .current_dir(&dir)
+            .output()
+            .expect("run mindc build");
+        if !common::gate::compiled(target, &out) {
+            return;
+        }
+        let run = Command::new(dir.join("target").join("debug").join("ad"))
+            .output()
+            .expect("run the built executable");
+        let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+        match expect {
+            Some(tail) => {
+                assert!(
+                    run.status.signal() == Some(6) || run.status.code() == Some(134),
+                    "{target}: a false assert must abort, got {:?}",
+                    run.status
+                );
+                let start = source.find("assert").expect("assert offset");
+                let head = format!("mind: assertion failed at source span {start}..");
+                assert!(stderr.starts_with(&head), "{target}: stderr {stderr:?}");
+                assert!(stderr.ends_with(tail), "{target}: stderr {stderr:?}");
+                assert_eq!(stderr.lines().count(), 1, "{target}: stderr {stderr:?}");
+            }
+            None => {
+                assert_eq!(run.status.code(), Some(5), "{target}");
+                assert!(stderr.is_empty(), "{target}: stderr {stderr:?}");
+            }
+        }
+    }
+}
