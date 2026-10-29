@@ -57,6 +57,7 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
 /// whole-array operand is still `binop.array_operand`, classified by the same
 /// walk and decided by [`admit_binop_use`]. Scalar-operator refusals are not
 /// returned.
+#[cfg(feature = "std-surface")]
 pub(crate) fn admit_binop_array_operands(module: &IRModule) -> Result<(), FrozenProfileRejection> {
     let mut defined = std::collections::BTreeSet::new();
     collect_fn_names(&module.instrs, &mut defined);
@@ -233,7 +234,7 @@ fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
 /// `binop.div`. `bytes[N]` and slices are not aggregate values: indexing them
 /// lowers to a pointer add, and marking them would refuse that add.
 ///
-/// Shared with the lane path ([`admit_binop_array_operands`]). The lane calls
+/// Shared with the lane path (`admit_binop_array_operands`). The lane calls
 /// this helper; it does not reimplement the operand test.
 pub(crate) fn admit_binop_use(
     op: &BinOp,
