@@ -1,0 +1,2 @@
+// lane.call.unknown: a callee that is neither a user function nor a lane intrinsic.
+fn main() -> i64 { return __mind_forged(8); }

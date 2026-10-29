@@ -1,0 +1,2 @@
+// lane.type.unsupported: an i32 binding.
+fn main() -> i64 { let x: i32 = 1; return 0; }

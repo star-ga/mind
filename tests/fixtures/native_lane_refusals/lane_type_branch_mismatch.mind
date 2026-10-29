@@ -1,0 +1,2 @@
+// lane.type.branch_mismatch: an if expression whose branches differ in type.
+fn main() -> i64 { let c = 1; let x = if c { 1 } else { 2.0 }; return 0; }

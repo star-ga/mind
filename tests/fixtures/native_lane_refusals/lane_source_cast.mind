@@ -1,0 +1,2 @@
+// lane.source.cast: a narrowing cast.
+fn main() -> i64 { let x = 1 as i32; return 0; }

@@ -1,0 +1,2 @@
+// lane.source.string: a string literal.
+fn main() -> i64 { let s = "hi"; return 0; }

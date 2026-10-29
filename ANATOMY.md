@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2659 | **Est. tokens:** ~4,778,818
-**Generated:** 2026-10-29 04:17 UTC
+**Files:** 2688 | **Est. tokens:** ~4,783,344
+**Generated:** 2026-10-29 07:30 UTC
 
 ## Token Budget Guide
 
@@ -175,7 +175,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 434 | ~906,664 |
+| `tests/` | 435 | ~910,337 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -220,6 +220,7 @@
 | `tests/fixtures/` | 7 | ~5,820 |
 | `tests/fixtures/f64_abi_negative/` | 3 | ~192 |
 | `tests/fixtures/native_lane/` | 1 | ~14,352 |
+| `tests/fixtures/native_lane_refusals/` | 28 | ~853 |
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
@@ -2707,6 +2708,36 @@
 - `g2_expected_outcomes.tsv` (~5592 tok, huge) — # Per-fixture G2 capability ratchet; canonical source SHA-256 binds each case.
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
+### `tests/fixtures/native_lane_refusals/`
+
+- `lane_alloc_free_in_loop.mind` (~50 tok, small) — lane.alloc.free_in_loop: native free does not reclaim arena storage inside a loop.
+- `lane_alloc_size_positive.mind` (~35 tok, tiny) — lane.alloc.size_positive: an allocation size must be a positive integer literal.
+- `lane_binop_non_scalar.mind` (~32 tok, tiny) — lane.binop.non_scalar: a binary operator over two unit values.
+- `lane_bool_width.mind` (~35 tok, tiny) — lane.bool.width: bool arithmetic has i1 width in MLIR but word width in the seed.
+- `lane_call_arity.mind` (~32 tok, tiny) — lane.call.arity: an intrinsic called with the wrong argument count.
+- `lane_call_unknown.mind` (~33 tok, tiny) — lane.call.unknown: a callee that is neither a user function nor a lane intrinsic.
+- `lane_entry_f64_result.mind` (~23 tok, tiny) — lane.entry.f64_result: the entry function returns f64.
+- `lane_extern_unimplemented.mind` (~30 tok, tiny) — lane.extern.unimplemented: a C extern block.
+- `lane_source_binding_type.mind` (~29 tok, tiny) — lane.source.binding_type: a let bound to a unit value.
+- `lane_source_cast.mind` (~22 tok, tiny) — lane.source.cast: a narrowing cast.
+- `lane_source_const_attributes.mind` (~29 tok, tiny) — lane.source.const_attributes: an attributed const.
+- `lane_source_const_type.mind` (~31 tok, tiny) — lane.source.const_type: a const initialised from a unit call.
+- `lane_source_duplicate_parameter.mind` (~37 tok, tiny) — lane.source.duplicate_parameter: two parameters with one name.
+- `lane_source_float_neg_lowering.mind` (~32 tok, tiny) — lane.source.float_neg_lowering: runtime negation of an f64 value.
+- `lane_source_function_contract.mind` (~32 tok, tiny) — lane.source.function_contract: a generic function.
+- `lane_source_loop_attributes.mind` (~37 tok, tiny) — lane.source.loop_attributes: an attributed range loop.
+- `lane_source_loop_exit_scope.mind` (~23 tok, tiny) — lane.source.loop_exit_scope: break outside a loop.
+- `lane_source_neg_type.mind` (~27 tok, tiny) — lane.source.neg_type: negation of a unit value.
+- `lane_source_nested_function.mind` (~35 tok, tiny) — lane.source.nested_function: a function defined inside a function body.
+- `lane_source_print.mind` (~33 tok, tiny) — lane.source.print: print lowers to runtime calls no native-lane compiler implements.
+- `lane_source_string.mind` (~22 tok, tiny) — lane.source.string: a string literal.
+- `lane_source_top_level.mind` (~25 tok, tiny) — lane.source.top_level: a struct declaration.
+- `lane_source_unbound.mind` (~31 tok, tiny) — lane.source.unbound: assignment to a function name.
+- `lane_source_unsupported.mind` (~23 tok, tiny) — lane.source.unsupported: a tuple value.
+- `lane_type_branch_mismatch.mind` (~39 tok, tiny) — lane.type.branch_mismatch: an if expression whose branches differ in type.
+- `lane_type_mismatch.mind` (~29 tok, tiny) — lane.type.mismatch: an f64 binding initialised with an integer.
+- `lane_type_non_f64_float.mind` (~24 tok, tiny) — lane.type.non_f64_float: an f32 binding.
+- `lane_type_unsupported.mind` (~23 tok, tiny) — lane.type.unsupported: an i32 binding.
 ### `tests/fixtures/native_lane/`
 
 - `request_corpus.txt` (~14352 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
@@ -3087,6 +3118,7 @@
 - `native_historical_intrinsic_refusal.rs` (~1894 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1470 tok, large) — Copyright 2025 STARGA Inc.
+- `native_lane_refusal_keys.rs` (~3673 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_lane_request_fixtures.rs` (~3684 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8499 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
