@@ -94,7 +94,8 @@ const ROWS: &[Row] = &[
 ];
 
 /// Keys no source program reaches through `mindc build --backend native`: an
-/// earlier refusal or a lowering invariant always comes first. Each stays in
+/// earlier refusal or a lowering invariant comes first, or the bridge's
+/// lowering never produces the data the check reads. Each stays in
 /// the source as defence in depth; the unit tests in the profile reach the IR
 /// ones by editing lowered IR. A key moves to `ROWS` once a program reaches it.
 const UNREACHABLE: &[(&str, &str)] = &[
@@ -132,7 +133,7 @@ const UNREACHABLE: &[(&str, &str)] = &[
     ),
     (
         "lane.ir.semantic_type",
-        "a non-scalar semantic type needs an annotation the source walker refuses (lane.type.*)",
+        "the bridge lowers without a canonical plan, so no function carries semantic-type metadata",
     ),
     (
         "lane.ir.ssa",
