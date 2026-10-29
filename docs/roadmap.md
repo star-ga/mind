@@ -3691,3 +3691,19 @@ DoD the deliverables and definition of done.
 | N-24 | Keep the reference interpreter for debugging, pedagogical execution and differential correctness tests; it is not the mandatory production hot path. … Unsupported features fail closed with the exact missing capability, never hidden launcher stub or placeholder return. | Direction | A direction. The interpreter exists (`src/main.rs` eval paths) and the self-host backend refuses fail-closed (B0 fail-closed subset boundary, `docs/INDEPENDENCE_ROADMAP.md:93`). Nothing is defined for direct-run yet. | Add a fail-closed rule to the P0-A spec: each direct-run result records which engine produced it. |
 | N-25 | Ergonomic value: concise scripts with automatic type inference, first-class functions, modules, algebraic types and pattern matching, expressive generic abstractions, … structured async, tensor/shapes/AD, capability/effect policy and clear diagnostics. Pareto goal: seek leadership simultaneously in ergonomics, T1/T2/T3 latency, runtime throughput/tail latency, deterministic reproducibility, memory efficiency, binary size, safety and cross-target portability. | Direction | A direction. Concrete language-completion work is GP-04 (multi-capture closures, trait objects, slices, generic shape parameters, 1.0 stability policy), added in `2c5c2389`. | Track through the GP-04 gates; no separate action. |
 | N-26 | Success definition: a developer gets Python-like immediacy, strong static guarantees and near-zero compile friction, while shipping an optimized standalone native binary from the same source and without any production dependence on Rust, MLIR, LLVM or Python. | Direction | An umbrella outcome made of P0-A through P1-E; no phase is done. | Mark it met only when P0-A to P0-D are Done with receipts; update this row as each phase lands. |
+
+<!-- STARGA-NUMERICAL-OPTIMIZATION-AND-INEQUALITIES-20261029:BEGIN -->
+## Proposed numerical optimization and verified-bounds integration (review required, 2026-10-29)
+
+**Research proposal only; not implemented.** Preserve existing compiler-independence, correctness, deterministic byte-identity, acceptance, and release gates.
+
+- [ ] Finish end-to-end compiler IR -> runtime autodiff wiring; verify derivatives, unsupported operations, shapes, numerical reference and overflow behavior.
+- [ ] Investigate typed VJP/JVP, Hessian-vector products and gradient checking; identify which operations admit higher-order derivatives under declared precision profiles.
+- [ ] Expose a separate MIND-native `std::optim` interface (SGD, momentum, Adam/AdamW, L-BFGS, gradient descent; Newton-CG where justified), not hardcoded numerical solvers in `mindc`.
+- [ ] Evaluate optional BFGS, Nelder-Mead, SQP and interior-point solvers only for small differentiable or constrained workloads with matching linear algebra backends.
+- [ ] Add independently checked, explicitly conditional error/norm inequalities: triangle, Young, Markov, Chebyshev, Cauchy-Schwarz, AM-GM, Minkowski, Grönwall, Hölder, Poincaré, Sobolev and Jensen.
+- [ ] Specify real-number assumptions versus Q16.16/strict-float rounding and saturation; fail closed rather than claiming an unproved bound.
+- [ ] Keep `mic@3` compiler optimization on its existing SCCP/CSE/LICM/register allocation and deterministic rewrite roadmap; offline numerical tuning must never replace compiler correctness checks.
+
+**Acceptance:** reference comparisons, valid counterexamples, mutation tests, execution and gradient checks, deterministic replay within the declared numeric profile, measured compile/runtime/memory overhead. No theorem-proof or shipped-optimizer claim from roadmap prose.
+<!-- STARGA-NUMERICAL-OPTIMIZATION-AND-INEQUALITIES-20261029:END -->
