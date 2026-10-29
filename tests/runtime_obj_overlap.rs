@@ -13,7 +13,7 @@
 //!   and changes no output byte. A poisoned cache entry proves both halves: it
 //!   breaks the cached build and leaves the disabled build untouched.
 
-#![cfg(not(windows))]
+#![cfg(unix)]
 
 mod common;
 use common::mindc_bin;

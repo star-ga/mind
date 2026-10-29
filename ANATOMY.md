@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1914 | **Est. tokens:** ~3,713,433
-**Generated:** 2026-10-29 05:30 UTC
+**Files:** 1914 | **Est. tokens:** ~3,713,431
+**Generated:** 2026-10-29 05:39 UTC
 
 ## Token Budget Guide
 
@@ -151,7 +151,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 419 | ~852,676 |
+| `tests/` | 419 | ~852,674 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2322,7 +2322,7 @@
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
 ### `tests/`
 
-- `runtime_obj_overlap.rs` (~1920 tok, huge) — Copyright 2026 STARGA Inc.
+- `runtime_obj_overlap.rs` (~1918 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/runtime/`
 
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
