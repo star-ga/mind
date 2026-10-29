@@ -194,15 +194,9 @@ impl ModuleTable {
             .any(|m| m.exported.iter().any(|e| e == symbol))
     }
 
-    /// RFC 0005 Phase B — look up an imported fn's signature by name,
-    /// searching every module in the table. A name with more than one owner
-    /// is ambiguous and returns `None`; callers must not select a hash-map
-    /// iteration winner for a cross-module ABI. Returns `None` if the name
-    /// resolves only to a struct / const / enum or to an `export { ... }`-
-    /// block name without a captured signature.
     /// Extern declarations with one signature across the table.
-    /// Two owners, or two different records, omit the name. Callers must
-    /// not pick one. These are not ordinary MIND functions.
+    /// Conflicting declarations omit the name. These are not ordinary MIND functions.
+    /// Lowering uses the import-scoped active resolver instead of this global view.
     pub fn unique_exported_externs(&self) -> Vec<ExportedExtern> {
         let mut keys: Vec<&String> = self.modules.keys().collect();
         keys.sort();
@@ -224,6 +218,12 @@ impl ModuleTable {
             .collect()
     }
 
+    /// RFC 0005 Phase B — look up an imported fn's signature by name,
+    /// searching every module in the table. A name with more than one owner
+    /// is ambiguous and returns `None`; callers must not select a hash-map
+    /// iteration winner for a cross-module ABI. Returns `None` if the name
+    /// resolves only to a struct / const / enum or to an `export { ... }`-
+    /// block name without a captured signature.
     pub fn lookup_imported_fn(&self, name: &str) -> Option<&ExportedFn> {
         let mut keys: Vec<&String> = self.modules.keys().collect();
         keys.sort();
@@ -257,6 +257,24 @@ impl ModuleTable {
         for key in keys {
             if let Some(m) = self.modules.get(key) {
                 out.extend(m.exported_fns.iter());
+            }
+        }
+        out
+    }
+
+    /// Borrow C declarations with their defining owner for import-scoped ABI selection.
+    pub(crate) fn all_exported_extern_refs(&self) -> Vec<(&str, &ExportedExtern)> {
+        let mut keys: Vec<&String> = self.modules.keys().collect();
+        keys.sort();
+        let mut out = Vec::new();
+        for key in keys {
+            if let Some(module) = self.modules.get(key) {
+                out.extend(
+                    module
+                        .exported_externs
+                        .iter()
+                        .map(|ext| (key.as_str(), ext)),
+                );
             }
         }
         out

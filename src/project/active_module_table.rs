@@ -345,6 +345,54 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
     })
 }
 
+/// C ABIs follow the same captured import-owner selection as MIND functions.
+/// Unimported siblings must not erase or substitute a selected C declaration.
+pub(crate) fn visible_externs(owner: Option<&str>) -> Vec<super::module_table::ExportedExtern> {
+    ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
+        let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
+        ACTIVE.with(|active| {
+            let table = active.borrow();
+            let Some(table) = table.as_ref() else {
+                return Vec::new();
+            };
+            let mut by_name: BTreeMap<String, Vec<(&str, &super::module_table::ExportedExtern)>> =
+                BTreeMap::new();
+            for (module, function) in table.all_exported_extern_refs() {
+                if local_extern_hides(&function.name) {
+                    continue;
+                }
+                by_name
+                    .entry(function.name.clone())
+                    .or_default()
+                    .push((module, function));
+            }
+            by_name
+                .into_values()
+                .filter_map(|candidates| {
+                    if let Some(owner) = owner {
+                        if let Some((_, function)) =
+                            candidates.iter().find(|(module, _)| *module == owner)
+                        {
+                            return Some((*function).clone());
+                        }
+                    }
+                    let mut selected = candidates
+                        .iter()
+                        .filter(|(module, _)| bare_module_visible(module, owner, &captured));
+                    let first = selected.next()?;
+                    if selected.next().is_some() {
+                        (captured.is_none()
+                            && candidates.iter().all(|(_, function)| *function == first.1))
+                        .then(|| (*first.1).clone())
+                    } else {
+                        Some(first.1.clone())
+                    }
+                })
+                .collect()
+        })
+    })
+}
+
 /// Whether a bare exported symbol is uniquely visible to the current module.
 /// Imported owners are authoritative when present; otherwise the legacy
 /// whole-project metadata surface remains available only for one owner.

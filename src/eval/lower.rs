@@ -1621,11 +1621,9 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // extern block later in this module overwrites this decl when it is lowered.
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
     {
-        let imported_externs = crate::project::active_module_table::with(|table| {
-            table
-                .map(|table| table.unique_exported_externs())
-                .unwrap_or_default()
-        });
+        let imported_externs = crate::project::active_module_table::visible_externs(
+            crate::qualified_enums::current_module_path().as_deref(),
+        );
         let repr_c = ir.repr_c_structs.clone();
         let mut decls = Vec::new();
         for ext in imported_externs {
