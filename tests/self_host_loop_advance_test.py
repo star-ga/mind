@@ -9,6 +9,7 @@ computed `seed_chain` row, --verify-chain) live here.
 from __future__ import annotations
 
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -77,17 +78,65 @@ def case_advance_writes_a_computed_seed_chain_row() -> None:
 
 
 def case_advance_blocked_when_the_old_seed_has_no_chain() -> None:
-    """No receipt on any ref publishes the old seed: refused before the oracle and publication."""
-    with Sandbox() as sb:
-        log: list[bytes] = []
-        sb.patch(_receipt_history=lambda: [], run_elf=stub_loop((NEW_POINT,) * 3, log),
-                 stage0_emit=lambda c, u: NEW_POINT, so=lambda: StubOracle())
-        rc, out = captured(loop.do_advance, SRC, IMAGE, USER_LO)
-        check("unchained seed: refused with rc 2", rc, 2)
-        check("unchained seed: names the dangling seed",
-              f"{sha(OLD_SEED)} is published by no receipt" in out, True)
-        check("unchained seed: refused before the oracle is consulted", "oracle =" in out, False)
-        check("unchained seed: fixture untouched", sb.unchanged(), True)
+    """Unresolved provenance refuses before executing any compiler or oracle."""
+    for hops in (1, 2):
+        for label, history, diagnostic in (
+            ("unchained seed", lambda: [],
+             f"{sha(OLD_SEED)} is published by no receipt"),
+            ("unreadable history", _blocked, "the clone is shallow"),
+        ):
+            with Sandbox() as sb:
+                log: list[bytes] = []
+                oracle_calls: list[str] = []
+
+                def oracle():
+                    oracle_calls.append("resolved")
+                    return StubOracle()
+
+                sb.patch(_receipt_history=history,
+                         run_elf=stub_loop((NEW_POINT,) * 3, log),
+                         stage0_emit=lambda c, u: NEW_POINT, so=oracle)
+                rc, out = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=hops)
+                name = f"{label} ({hops} hop)"
+                check(f"{name}: refused with rc 2", rc, 2)
+                check(f"{name}: names provenance failure", diagnostic in out, True)
+                check(f"{name}: no seed or generated compiler executed", log, [])
+                check(f"{name}: no oracle resolved", oracle_calls, [])
+                check(f"{name}: fixture untouched", sb.unchanged(), True)
+
+
+def case_provenance_refusal_precedes_real_seed_execution() -> None:
+    """A real harmless seed writes a marker only after its lineage is admitted."""
+    for hops in (1, 2):
+        with Sandbox() as sb:
+            marker = sb.dir / "seed-executed"
+            sb.elf_path.write_text(
+                "#!/bin/sh\nprintf executed > " + shlex.quote(str(marker)) + "\nexit 3\n"
+            )
+            sb.elf_path.chmod(0o755)
+            sb.before_elf = sb.elf_path.read_bytes()
+            seed_receipt = receipt(sb.before_elf, **{FROM: ROOT})
+            # The exact same seed bytes serve every history case in this group.
+            for history_kind in ("admitted", "absent", "unreadable"):
+                marker.unlink(missing_ok=True)
+                if history_kind == "admitted":
+                    history = lambda: [("marker-seed", seed_receipt)]
+                elif history_kind == "absent":
+                    history = lambda: []
+                else:
+                    history = _blocked
+                sb.patch(_receipt_history=history)
+                # run_elf is deliberately real: exit3 cannot publish or reach an oracle.
+                rc, out = captured(loop.do_advance, SRC, IMAGE, USER_LO, hops=hops)
+                admitted = history_kind == "admitted"
+                name = f"real seed ({hops} hop, {history_kind})"
+                check(f"{name}: checked result", rc, 1 if admitted else 2)
+                check(f"{name}: execution marker iff admitted", marker.exists(), admitted)
+                if admitted:
+                    check(f"{name}: exact marker bytes", marker.read_bytes(), b"executed")
+                    check(f"{name}: reached actual process refusal",
+                          "old frozen seed refused" in out, True)
+                check(f"{name}: fixture untouched", sb.unchanged(), True)
 
 
 def _verify(sb: Sandbox, head: str, history) -> tuple[int, str]:
