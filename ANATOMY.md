@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1914 | **Est. tokens:** ~3,715,620
-**Generated:** 2026-10-29 05:34 UTC
+**Files:** 1915 | **Est. tokens:** ~3,715,756
+**Generated:** 2026-10-29 06:03 UTC
 
 ## Token Budget Guide
 
@@ -120,7 +120,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 41 | ~148,596 |
+| `src/eval/` | 42 | ~148,732 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1295,7 +1295,8 @@
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build_pipe.rs` (~2731 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~11183 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build_proc.rs` (~608 tok, large) — Copyright 2026 STARGA Inc.
+- `mlir_build.rs` (~10711 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build_tests.rs` (~2853 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.

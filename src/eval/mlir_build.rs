@@ -17,9 +17,7 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::{Child, Command, ExitStatus, Stdio};
-#[cfg(feature = "mlir-build")]
-use std::thread::JoinHandle;
+use std::process::{Command, Stdio};
 #[cfg(feature = "mlir-build")]
 use std::time::Duration;
 #[cfg(feature = "mlir-build")]
@@ -934,72 +932,11 @@ fn run_command(
     })
 }
 
-/// Spawn one build tool with piped stdout/stderr and the given stdin.
 #[cfg(feature = "mlir-build")]
-fn spawn_tool(
-    program: &str,
-    args: &[String],
-    stdin: Stdio,
-    label: &'static str,
-) -> Result<Child, BuildError> {
-    let mut cmd = Command::new(program);
-    cmd.args(args.iter().map(|s| s.as_str()));
-    cmd.stdin(stdin);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd.spawn().map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => BuildError::ToolMissing(label),
-        _ => BuildError::Io(err),
-    })
-}
-
-/// Read `pipe` to EOF on a background thread. A read error keeps the bytes
-/// received before it, as `read_to_end` does.
+#[path = "mlir_build_proc.rs"]
+mod proc_util;
 #[cfg(feature = "mlir-build")]
-fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Option<JoinHandle<Vec<u8>>> {
-    pipe.map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
-        })
-    })
-}
-
-#[cfg(feature = "mlir-build")]
-fn join_drain(handle: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    handle.and_then(|t| t.join().ok()).unwrap_or_default()
-}
-
-/// Poll `child` until it exits, killing it once `timeout` has elapsed since
-/// `start`.
-#[cfg(feature = "mlir-build")]
-fn wait_with_timeout(
-    child: &mut Child,
-    start: Instant,
-    timeout: Duration,
-    label: &'static str,
-) -> Result<ExitStatus, BuildError> {
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    kill_and_reap(child);
-                    return Err(BuildError::Timeout(label));
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(err) => return Err(BuildError::Io(err)),
-        }
-    }
-}
-
-#[cfg(feature = "mlir-build")]
-fn kill_and_reap(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
+use proc_util::{drain_pipe, join_drain, kill_and_reap, spawn_tool, wait_with_timeout};
 
 #[cfg(feature = "mlir-build")]
 fn write_text_file(path: &Path, contents: &str) -> Result<(), BuildError> {
