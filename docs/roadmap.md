@@ -3692,18 +3692,12 @@ DoD the deliverables and definition of done.
 | N-25 | Ergonomic value: concise scripts with automatic type inference, first-class functions, modules, algebraic types and pattern matching, expressive generic abstractions, … structured async, tensor/shapes/AD, capability/effect policy and clear diagnostics. Pareto goal: seek leadership simultaneously in ergonomics, T1/T2/T3 latency, runtime throughput/tail latency, deterministic reproducibility, memory efficiency, binary size, safety and cross-target portability. | Direction | A direction. Concrete language-completion work is GP-04 (multi-capture closures, trait objects, slices, generic shape parameters, 1.0 stability policy), added in `2c5c2389`. | Track through the GP-04 gates; no separate action. |
 | N-26 | Success definition: a developer gets Python-like immediacy, strong static guarantees and near-zero compile friction, while shipping an optimized standalone native binary from the same source and without any production dependence on Rust, MLIR, LLVM or Python. | Direction | An umbrella outcome made of P0-A through P1-E; no phase is done. | Mark it met only when P0-A to P0-D are Done with receipts; update this row as each phase lands. |
 
-<!-- STARGA-NUMERICAL-OPTIMIZATION-AND-INEQUALITIES-20261029:BEGIN -->
-## Proposed numerical optimization and verified-bounds integration (review required, 2026-10-29)
-
-**Research proposal only; not implemented.** Preserve existing compiler-independence, correctness, deterministic byte-identity, acceptance, and release gates.
-
-- [ ] Finish end-to-end compiler IR -> runtime autodiff wiring; verify derivatives, unsupported operations, shapes, numerical reference and overflow behavior.
-- [ ] Investigate typed VJP/JVP, Hessian-vector products and gradient checking; identify which operations admit higher-order derivatives under declared precision profiles.
-- [ ] Expose a separate MIND-native `std::optim` interface (SGD, momentum, Adam/AdamW, L-BFGS, gradient descent; Newton-CG where justified), not hardcoded numerical solvers in `mindc`.
-- [ ] Evaluate optional BFGS, Nelder-Mead, SQP and interior-point solvers only for small differentiable or constrained workloads with matching linear algebra backends.
-- [ ] Add independently checked, explicitly conditional error/norm inequalities: triangle, Young, Markov, Chebyshev, Cauchy-Schwarz, AM-GM, Minkowski, Grönwall, Hölder, Poincaré, Sobolev and Jensen.
-- [ ] Specify real-number assumptions versus Q16.16/strict-float rounding and saturation; fail closed rather than claiming an unproved bound.
-- [ ] Keep `mic@3` compiler optimization on its existing SCCP/CSE/LICM/register allocation and deterministic rewrite roadmap; offline numerical tuning must never replace compiler correctness checks.
-
-**Acceptance:** reference comparisons, valid counterexamples, mutation tests, execution and gradient checks, deterministic replay within the declared numeric profile, measured compile/runtime/memory overhead. No theorem-proof or shipped-optimizer claim from roadmap prose.
-<!-- STARGA-NUMERICAL-OPTIMIZATION-AND-INEQUALITIES-20261029:END -->
+<!-- NUMERIC-REVIEW-REVISION-20261029:BEGIN -->
+## Scoped compiler and numerical contracts
+**Status:** proposal; architecture RFC required before implementation.
+- [ ] **P0 — AD integration:** confirm emitted reverse-mode IR executes on current runtime; fixtures cover shapes, unsupported operators, finite differences, CPU reference, and fail-closed behavior.
+- [ ] **P1 — differentiation contract:** propose a mind-spec RFC for typed VJP/JVP and optional HVP including precision, purity, shape and effect restrictions; accept only after independently checked golden gradients.
+- [ ] **P2 — library boundary:** propose (not assume) a MIND-native `std::optim` package owned outside `mindc`, initially SGD/momentum and AdamW; add L-BFGS only after closure/line-search semantics and benchmarks exist.
+- [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
+**Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
+<!-- NUMERIC-REVIEW-REVISION-20261029:END -->
