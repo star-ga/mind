@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — every native-lane refusal key is pinned by exact key
+- New `tests/native_lane_refusal_keys.rs`: one fixture per reachable `lane.*`
+  refusal key in `tests/fixtures/native_lane_refusals/` (28 rows). Each fixture
+  is built with `mindc build --backend native` under the committed seed carrying
+  the lane marker and must refuse with exactly
+  `outside candidate native-lane-v1 (<key>)`, `No artifact written.` and no
+  artifact. Each row also carries a positive control, the one edit that removes
+  the refused construct, which must build an ELF, so a fixture cannot refuse
+  for an unrelated reason.
+- A key-set ratchet in the same file reads every `"lane.<...>"` literal in the
+  lane profile and the native bridge sources. It fails naming any key with no
+  fixture row and no `UNREACHABLE` entry, any row or entry whose key is gone
+  from the source, any fixture with no row, and any `"lane.` literal that is not
+  a plain dotted key. A change that introduces a key lands with its row.
+- 12 keys no source program reaches through the native build are listed in an
+  `UNREACHABLE` table with a one-line reason each (40 keys = 28 rows + 12):
+  `lane.source.duplicate_function` (the bridge's ambiguity guard refuses a
+  duplicate definition first) and eleven IR-only `lane.ir.*` checks that an
+  earlier source refusal or a lowering invariant always precedes.
+
 ### Fixed — the self-host seed chain is tool-produced and tool-verified
 - `self_host_loop_smoke.py --advance` refuses a no-op: when the new fixed point
   is the current seed it prints `BLOCKED: --advance would republish the current
