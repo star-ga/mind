@@ -31,7 +31,7 @@ mod return_checks;
 mod struct_bindings;
 use qualified_enums::variant_payload_of;
 use struct_bindings::{StructNamesGuard, struct_name_in_scope};
-mod resolve;
+pub(crate) mod resolve;
 mod type_display;
 #[cfg(feature = "cross-module-imports")]
 use cross_module_types::{cm_arg_compatible, cm_typeann_to_valuetype, describe_param_type};
@@ -4498,6 +4498,11 @@ pub fn check_module_types_in_file(
     env: &TypeEnv,
 ) -> Vec<Pretty> {
     crate::diagnostics::reset_line_index_cache();
+    // File-local: std.posix exports enter the visible set only when this
+    // module imports them, and a local extern name never does. Body
+    // recursion goes through `_impl`, so this guard covers the walk.
+    #[cfg(feature = "cross-module-imports")]
+    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]

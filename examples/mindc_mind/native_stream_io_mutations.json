@@ -1,0 +1,50 @@
+[
+  {
+    "id": "reserved-origin-guard-removed",
+    "file": "main.mind",
+    "old": "if nb_stream_names_ok(tokens, src_addr) == 0 { return 0; }",
+    "new": "if 0 == 1 { return 0; }",
+    "case": "reserved-local-function",
+    "expected": "normal false source acceptance"
+  },
+  {
+    "id": "scalar-domain-guard-removed",
+    "file": "main.mind",
+    "old": "if nb_stream_expr_signed(node, buf, lets, lcell, 0) == 0 { return 0; }",
+    "new": "if 0 == 1 { return 0; }",
+    "case": "direct-bool",
+    "expected": "normal false source acceptance"
+  },
+  {
+    "id": "float-guard-removed",
+    "file": "main.mind",
+    "old": "if dtype != nb_dtype_int() { return 0; }",
+    "new": "if 0 == 1 { return 0; }",
+    "case": "float-operand",
+    "expected": "may remain detected by independent scalar-domain guard; report honestly"
+  },
+  {
+    "id": "write-target-is-read",
+    "file": "main.mind",
+    "old": "if kind == 8 { target = target + 50; }",
+    "new": "if kind == 8 { target = target + 0; }",
+    "case": "write-three",
+    "expected": "normal runtime255 and empty stdout rather than3/hi newline"
+  },
+  {
+    "id": "offset-loaded-from-count",
+    "file": "main.mind",
+    "old": "let d: String = nb_load_argreg(c, 3, nb_slot_disp(__mind_load_i64(ids + 24)));",
+    "new": "let d: String = nb_load_argreg(c, 3, nb_slot_disp(__mind_load_i64(ids + 16)));",
+    "case": "write-three",
+    "expected": "normal runtime255/empty stdout via positioned pipe write"
+  },
+  {
+    "id": "positioned-write-import-is-read",
+    "file": "native_source_image.mind",
+    "old": "__mind_store_i64(row + 8, 1 + __mind_load_i64(original + 8));",
+    "new": "__mind_store_i64(row + 8, 1 + (__mind_load_i64(original + 8) % 2));",
+    "case": "write-three",
+    "expected": "normal runtime255/empty stdout; fixed symbol mapping must be detected"
+  }
+]

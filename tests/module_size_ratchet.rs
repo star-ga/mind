@@ -144,7 +144,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/ir/compact/v3/parse.rs", 1354),
     ("src/ir/evidence.rs", 1216),
     ("src/ir/fp_mode.rs", 1217),
-    ("src/ir/mod.rs", 1519),
+    ("src/ir/mod.rs", 1439),
     ("src/ir/verify.rs", 1849),
     ("src/mlir/lowering.rs", 12230),
     ("src/opt/collapse.rs", 1228),
@@ -160,7 +160,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("tests/mindc_deps_phase_de.rs", 851),
     ("tests/mindfuzz_cross_substrate.rs", 1486),
     ("tests/return_cond_type_reject.rs", 1007),
-    ("tests/std_surface_net_fs_process.rs", 803),
+    ("tests/std_surface_net_fs_process.rs", 805),
 ];
 
 fn manifest_root() -> PathBuf {

@@ -1,0 +1,64 @@
+// Copyright 2026 STARGA Inc.
+// Independent MLIR-runtime reference. Uses existing __mind_read/__mind_write.
+extern "C" {
+    safe fn __errno_location() -> *mut i32;
+    safe fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
+}
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(144);
+    let output: i64 = __mind_alloc(88);
+    let mut done: i64 = 0;
+    while done < 144 {
+        let got: i64 = __mind_read(0, p + done, 144 - done, 0 - 1);
+        if got <= 0 {
+            return 71;
+        }
+        done = done + got;
+    }
+    let errno_before: i64 = __errno_location() as i64;
+    __mind_store_i32(errno_before, __mind_load_i64(p + 40));
+    let mode: i64 = __mind_load_i64(p + 32);
+    let buffer: i64 = if mode == 1 {
+        0
+    } else {
+        if mode == 2 {
+            1
+        } else {
+            p + 80
+        }
+    };
+    let op: i64 = __mind_load_i64(p);
+    let mut result: i64 = 0;
+    if op == 0 {
+        result = __mind_read(__mind_load_i64(p + 8), buffer, __mind_load_i64(p + 16), __mind_load_i64(p + 24));
+    } else {
+        if op != 1 {
+            return 72;
+        }
+        result = __mind_write(__mind_load_i64(p + 8), buffer, __mind_load_i64(p + 16), __mind_load_i64(p + 24));
+    }
+    __mind_store_i64(output, result);
+    let errno_after: i64 = __errno_location() as i64;
+    let raw_errno: i64 = __mind_load_i32(errno_after);
+    let signed_errno: i64 = if raw_errno >= 2147483648 {
+        raw_errno - 4294967296
+    } else {
+        raw_errno
+    };
+    __mind_store_i64(output + 8, signed_errno);
+    __mind_store_i64(output + 16, lseek(10 as i32, 0, 1 as i32));
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i8(output + 24 + i, __mind_load_i8(p + 80 + i));
+        i = i + 1;
+    }
+    done = 0;
+    while done < 88 {
+        let n: i64 = __mind_write(1, output + done, 88 - done, 0 - 1);
+        if n <= 0 {
+            return 74;
+        }
+        done = done + n;
+    }
+    0
+}

@@ -471,3 +471,117 @@ def case_import_does_not_resolve_or_build_the_oracle() -> None:
     check("import: oracle is not resolved", "SO= None" in r.stdout, True)
     check("import: no build was attempted",
           "mindc build" in (r.stdout + r.stderr), False)
+
+
+# ── two-hop advance: argument admission (T0.3 bootstrap policy) ────────────
+
+def case_hops_argument_is_refused_before_any_work() -> None:
+    """`--hops` qualifies --advance and accepts exactly 1 or 2. Every other
+    shape is refused before the source is read, any process runs, or an oracle
+    is resolved — a malformed policy request must not have run a compiler.
+
+    `--hops` with --reseed is refused rather than ignored: a hop count names a
+    PURE-MIND derivation, and --reseed has none, so silently accepting it would
+    let a Rust-seeded re-mint wear a pure-MIND flag."""
+    shapes = (
+        ("hops without advance", ["--hops", "2"], {}),
+        ("hops with reseed flag", ["--reseed", "--hops", "2"], {}),
+        ("hops with reseed env", ["--hops", "2"], {loop.RESEED_ENV: "1"}),
+        ("three hops", ["--advance", "--hops", "3"], {}),
+        ("zero hops", ["--advance", "--hops", "0"], {}),
+        ("non-numeric", ["--advance", "--hops", "two"], {}),
+        ("missing value", ["--advance", "--hops"], {}),
+        ("value is a flag", ["--hops", "--advance"], {}),
+        ("duplicate", ["--advance", "--hops", "2", "--hops", "2"], {}),
+        ("equals form, bad value", ["--advance", "--hops=9"], {}),
+        ("equals form, empty", ["--advance", "--hops="], {}),
+    )
+    for label, argv, env in shapes:
+        with Sandbox() as sb:
+            tripped: list[str] = []
+            sb.patch(
+                build_seed=lambda: tripped.append("build_seed") or (SRC, IMAGE, USER_LO),
+                run_elf=lambda *a, **k: tripped.append("run_elf") or b"",
+                stage0_emit=lambda *a, **k: tripped.append("stage0_emit") or b"",
+                so=lambda: tripped.append("so") or StubOracle(),
+            )
+            rc, text = captured(loop.main, argv, env)
+            check(f"hops({label}): blocked", rc, 2)
+            check(f"hops({label}): nothing read, run or resolved", tripped, [])
+            check(f"hops({label}): fixture untouched", sb.unchanged(), True)
+            check(f"hops({label}): the refusal names --hops", "--hops" in text, True)
+
+
+def case_hops_forms_reach_the_two_hop_advance() -> None:
+    """Every accepted spelling reaches the two-hop mode and publishes stage2:
+    space and equals forms, and the environment form of --advance qualified by
+    the --hops flag. Asserted by the published bytes, not by a dispatch flag."""
+    forms = (
+        ("space form", ["--advance", "--hops", "2"], {}),
+        ("equals form", ["--advance", "--hops=2"], {}),
+        ("env advance + flag", ["--hops", "2"], {loop.ADVANCE_ENV: "1"}),
+    )
+    for label, argv, env in forms:
+        with Sandbox() as sb:
+            log: list[bytes] = []
+            sb.patch(
+                build_seed=lambda: (SRC, IMAGE, USER_LO),
+                run_elf=stub_loop((INTERMEDIATE, NEW_POINT, NEW_POINT), log),
+                stage0_emit=lambda c, u: NEW_POINT,
+                so=lambda: StubOracle(),
+            )
+            rc, _ = captured(loop.main, argv, env)
+            check(f"hops form({label}): publishes", rc, 0)
+            check(f"hops form({label}): the fixture holds stage2",
+                  sb.elf_path.read_bytes(), NEW_POINT)
+
+
+def case_one_hop_still_refuses_a_codegen_change_and_names_two_hops() -> None:
+    """The default (one-hop) --advance is NOT weakened: stage1 != stage2 is
+    refused exactly as before, with --hops 1 spelled out or not. When the
+    shape is a legitimate two-hop one (stage2 == stage3) the refusal must name
+    `--advance --hops 2` as the next step — never steer to --reseed."""
+    for label, argv in (("implicit", ["--advance"]), ("explicit", ["--advance", "--hops", "1"])):
+        with Sandbox() as sb:
+            log: list[bytes] = []
+            sb.patch(
+                build_seed=lambda: (SRC, IMAGE, USER_LO),
+                run_elf=stub_loop((INTERMEDIATE, NEW_POINT, NEW_POINT), log),
+                stage0_emit=lambda c, u: NEW_POINT,
+                so=lambda: StubOracle(),
+            )
+            rc, text = captured(loop.main, argv, {})
+            check(f"one hop({label}): stage1 != stage2 is refused", rc, 1)
+            check(f"one hop({label}): fixture untouched", sb.unchanged(), True)
+            check(f"one hop({label}): the refusal names the two-hop advance",
+                  "--advance --hops 2" in text, True)
+            check(f"one hop({label}): the refusal does not steer to --reseed",
+                  "--reseed" in text, False)
+
+
+def case_bootstrap_policy_is_written_where_the_gate_lifecycle_lives() -> None:
+    """The policy the code enforces is recorded in the roadmap's Gate lifecycle
+    section, names the command that implements it, and quotes the reseed
+    disclosure verbatim from the legacy module it cites. The operator contract
+    no longer prescribes --reseed for source drift.
+
+    Positive controls first: each file is read and its anchor heading exists,
+    so an absent phrase means the text is missing, not that nothing was read."""
+    roadmap = (REPO / "docs" / "INDEPENDENCE_ROADMAP.md").read_text()
+    start = roadmap.find("## Gate lifecycle")
+    check("policy: the Gate lifecycle section exists", start >= 0, True)
+    end = roadmap.find("\n## ", start + 1)
+    section = roadmap[start:end if end > start else len(roadmap)]
+    phrase = "the pure-MIND seed chain is broken for that hop"
+    legacy = (SMOKE_DIR / "_selfhost_loop_reseed.py").read_text()
+    check("policy: the cited phrase is verbatim in _selfhost_loop_reseed.py",
+          phrase in legacy, True)
+    for needle in ("Bootstrap seed-advance policy", "--advance --hops 2",
+                   "stage2 == stage3", phrase):
+        check(f"policy: Gate lifecycle states {needle!r}", needle in section, True)
+    contract = (SMOKE_DIR / "self_host_loop_smoke.md").read_text()
+    check("policy: the operator contract was read", "FAIL-CLOSED" in contract, True)
+    check("policy: the operator contract documents --hops 2",
+          "--advance --hops 2" in contract, True)
+    check("policy: the operator contract no longer prescribes --reseed for drift",
+          "re-freeze with --reseed in the same change" in contract, False)

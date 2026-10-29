@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -131 +131 @@
+-    code = ncve_set_al(code, al_count);
++    code = ncve_set_al(code, al_count + 1);

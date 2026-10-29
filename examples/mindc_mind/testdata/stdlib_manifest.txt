@@ -33,14 +33,14 @@
 # native build — a whole-corpus RESEED event, never a routine edit. The lint pins
 # this with a positive golden below.
 #
-# SEED_BLOB_SHA256 421d99c41cd6b0dcf77c39f67181b9846a2658437d72eb8b590d5c26089bffca
+# SEED_BLOB_SHA256 199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202
 #   sha256 of b"".join(read(std/<m>.mind) + b"\n" for each `seed` row in file
 #   order) = the exact stdin image prefix the bridge composes. Recompute with:
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 23
-# TOTAL_COUNT 42
+# BUNDLED_COUNT 25
+# TOTAL_COUNT 44
 #
 # 19 modules are `no`/`no`: on disk, reachable by NEITHER consumer. That is not an
 # oversight recorded here to be forgotten — it is the measured gap behind RI matrix
@@ -56,6 +56,7 @@ cli	seed	bundled
 detmath	no	no
 ecdsa_p256	no	no
 fs	seed	bundled
+fs_checked	no	bundled
 hkdf	no	no
 hpack	no	no
 http	no	bundled
@@ -70,6 +71,7 @@ map	seed	bundled
 mlir	no	no
 mlkem768	no	no
 net	seed	bundled
+posix	no	bundled
 process	seed	bundled
 reactor	seed	bundled
 regex	seed	bundled

@@ -18,6 +18,8 @@
 // stdin protocol (fd 0):  [8-byte user_lo LE][8-byte src_len LE][src bytes]
 //   src = 21 std/*.mind sources concatenated, then main.mind, then this file;
 //   user_lo = byte length of the std prefix (the reachability-prune seam).
+//   v2 (explicit memory layout, see nb_main_v2 below) prefixes the magic and the
+//   arena/stack/guard sizes: [magic][arena][stack][guard][user_lo][src_len][src].
 // The ELF is written to fd 1 (raw __mind_write, no libc). The note hash is the
 // self-computed nb_trace_hash — the loop needs determinism, not Rust-oracle
 // parity (the mic@3-vs-Rust match is a separate, non-blocking track).
@@ -51,18 +53,29 @@ pub fn nb_read_fully(fd: i64, buf: i64, want: i64, got: i64) -> i64 {
 // the whole-module native note emitter (selftest_native_elf_u) emits this form
 // but fail-closes on the `let mut`+`while`+early-return loop form (bisected
 // v2b FAIL / v3 EMIT_OK, 2026-08-14); the inner bytes_eq recurses only patlen
-// (<=8) deep. deferred: recursion depth == user-region length, so a very large
-// FAIL-CLOSING program could overflow the runtime stack (corpus programs are
-// small; the SUCCESS path never calls this) — upgrade path: teach the note
-// emitter the while form, or scan in bounded chunks.
+// (<=8) deep. A region longer than 4096 bytes is halved first (the halves
+// overlap by patlen - 1 bytes, so a match straddling the split is still found),
+// so the depth is log2(len / 4096) + 4096 frames, not len: a per-byte walk over
+// a multi-MB refused program overflowed the bounded compiler's stack (SIGSEGV
+// instead of the clean rc-3 refusal, census X1).
 pub fn nb_region_has(buf: i64, lo: i64, hi: i64, pat: i64, patlen: i64) -> i64 {
+    if hi - lo > 4096 {
+        let mid: i64 = lo + (hi - lo) / 2;
+        if nb_region_has(buf, lo, mid + patlen - 1, pat, patlen) == 1 {
+            return 1;
+        }
+        return nb_region_has(buf, mid, hi, pat, patlen);
+    }
+    nb_region_walk(buf, lo, hi, pat, patlen)
+}
+pub fn nb_region_walk(buf: i64, lo: i64, hi: i64, pat: i64, patlen: i64) -> i64 {
     if lo + patlen > hi {
         return 0;
     }
     if bytes_eq(buf, lo, lo + patlen, pat, 0, patlen) == 1 {
         return 1;
     }
-    nb_region_has(buf, lo + 1, hi, pat, patlen)
+    nb_region_walk(buf, lo + 1, hi, pat, patlen)
 }
 
 // RI-D1a pattern buffer for `Tensor<` (7 bytes).
@@ -416,18 +429,139 @@ pub fn nb_report_unsupported(src: i64, user_lo: i64, src_len: i64) -> i64 {
     return 3;
 }
 
-pub fn main() -> i64 {
-    let hdr: i64 = __mind_alloc(16);
-    let _h: i64 = nb_read_fully(0, hdr, 16, 0);
-    let user_lo: i64 = __mind_load_i64(hdr);
-    let src_len: i64 = __mind_load_i64(hdr + 8);
+// Native layout v2 (bounded / explicit memory profile). When the stdin image
+// starts with nb_layout_magic() the header is 48 bytes:
+//   [magic][arena_bytes][stack_bytes][guard_bytes][user_lo][src_len]
+// and the requested layout is validated (nb_layout_check) and published in the
+// layout cell before anything is compiled, so EVERY layout-derived byte of the
+// emitted image (PT_LOAD sizes, stack vaddr, entry rsp, allocation guards) comes
+// from the same three values. Without the magic the 16-byte v1 header is read
+// exactly as before and the default layout applies. A refused request writes a
+// diagnostic to fd 2 and exits 64 + the nb_layout_check reason (65..75); no
+// image bytes are written.
+pub fn nb_layout_refuse(reason: i64) -> i64 {
+    let m: i64 = __mind_alloc(64);
+    __mind_store_i64(m + 0, 7020649416171352677);
+    __mind_store_i64(m + 8, 8746390893561801076);
+    __mind_store_i64(m + 16, 7955925651774797167);
+    __mind_store_i64(m + 24, 8241904408702247286);
+    __mind_store_i64(m + 32, 7161132920560774757);
+    __mind_store_i64(m + 40, 2334116269791850347);
+    __mind_store_i64(m + 48, 8223700967308747116);
+    __mind_store_i64(m + 56, 2942788739363173);
+    let _w: i64 = __mind_write(2, m, 63, 0 - 1);
+    64 + reason
+}
+
+pub fn nb_main_v2(lay: i64, hdr: i64) -> i64 {
+    let got: i64 = nb_read_fully(0, hdr + 16, 32, 0);
+    if got != 32 {
+        return nb_layout_refuse(11);
+    }
+    if lay != nb_layout_cell() {
+        return nb_layout_refuse(11);
+    }
+    let arena: i64 = __mind_load_i64(hdr + 8);
+    let stack: i64 = __mind_load_i64(hdr + 16);
+    let guard: i64 = __mind_load_i64(hdr + 24);
+    let bad: i64 = nb_layout_check(arena, stack, guard);
+    if bad != 0 {
+        return nb_layout_refuse(bad);
+    }
+    __mind_store_i64(lay + 8, arena);
+    __mind_store_i64(lay + 16, stack);
+    __mind_store_i64(lay + 24, guard);
+    __mind_store_i64(lay + 32, 1);
+    __mind_store_i64(lay, nb_layout_magic());
+    nb_compile_image(__mind_load_i64(hdr + 32), __mind_load_i64(hdr + 40))
+}
+
+pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
     let src: i64 = __mind_alloc(src_len + 16);
     let _r: i64 = nb_read_fully(0, src, src_len, 0);
-    let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
+    let es: EmitState = selftest_native_elf_stage(src, src_len, user_lo);
     let elf_len: i64 = string_len(es.buf);
     if elf_len > 0 {
         let _w: i64 = __mind_write(1, string_addr(es.buf), elf_len, 0 - 1);
         return 0;
     }
+    if __mind_load_i64(nb_layout_cell() + 40) == 1 {
+        return nb_report_capacity();
+    }
+    if __mind_load_i64(nb_layout_cell() + 40) == 2 {
+        return nb_report_arena();
+    }
     return nb_report_unsupported(src, user_lo, src_len);
+}
+
+// Census X1 capacity: the stage refused the program because compiling it could
+// overflow the compiler's own stack (nb_stack_short / nb_depth_short: too many
+// tokens, or nested too deeply). Writes that diagnostic to fd 2 and returns 3.
+pub fn nb_report_capacity() -> i64 {
+    let m: i64 = __mind_alloc(128);
+    __mind_store_i64(m + 0, 7017271716450824805);
+    __mind_store_i64(m + 8, 7020598778489301859);
+    __mind_store_i64(m + 16, 8079521904311298420);
+    __mind_store_i64(m + 24, 7286944462384099186);
+    __mind_store_i64(m + 32, 8367814982689448824);
+    __mind_store_i64(m + 40, 8532478930838381928);
+    __mind_store_i64(m + 48, 7811898643973349477);
+    __mind_store_i64(m + 56, 7022364302185558629);
+    __mind_store_i64(m + 64, 7306919375752162147);
+    __mind_store_i64(m + 72, 7791349879831797876);
+    __mind_store_i64(m + 80, 2338053341489623649);
+    __mind_store_i64(m + 88, 8367798494562575726);
+    __mind_store_i64(m + 96, 7813856839633760111);
+    __mind_store_i64(m + 104, 2334398928750586233);
+    __mind_store_i64(m + 112, 7954882391399607597);
+    __mind_store_i64(m + 120, 2940546883337572);
+    let _w: i64 = __mind_write(2, m, 127, 0 - 1);
+    3
+}
+
+// Census X1 capacity: the stage refused the program because compiling it would
+// exhaust the compiler's own arena (nb_arena_low, refusal reason 2). Writes that
+// diagnostic to fd 2 and returns 3 (it used to be the arena trap: exit 70).
+pub fn nb_report_arena() -> i64 {
+    let m: i64 = __mind_alloc(104);
+    __mind_store_i64(m + 0, 7017271716450824805);
+    __mind_store_i64(m + 8, 7020598778489301859);
+    __mind_store_i64(m + 16, 8079521904311298420);
+    __mind_store_i64(m + 24, 7286944462384099186);
+    __mind_store_i64(m + 32, 8367814982689448824);
+    __mind_store_i64(m + 40, 8532478930838381928);
+    __mind_store_i64(m + 48, 7811898643973349477);
+    __mind_store_i64(m + 56, 7882826708920267365);
+    __mind_store_i64(m + 64, 7310011970147152495);
+    __mind_store_i64(m + 72, 7450208747884470638);
+    __mind_store_i64(m + 80, 2334398928750605413);
+    __mind_store_i64(m + 88, 7954882391399607597);
+    __mind_store_i64(m + 96, 2940546883337572);
+    let _w: i64 = __mind_write(2, m, 103, 0 - 1);
+    3
+}
+
+pub fn nb_zero_words(p: i64, n: i64) -> i64 {
+    if n <= 0 {
+        return 0;
+    }
+    __mind_store_i64(p, 0);
+    nb_zero_words(p + 8, n - 1)
+}
+
+pub fn main() -> i64 {
+    // The layout cell is the FIRST allocation, so in a native run it sits at
+    // nb_layout_cell() (the bump allocator hands out arena+16 first). It stays
+    // zero (no magic) unless a v2 header publishes a validated layout.
+    // Words 5..11 of the cell are the stage's scratch words (nb_xcell): zeroed,
+    // then tagged with nb_xcell_magic().
+    let lay: i64 = __mind_alloc(96);
+    let _z: i64 = nb_zero_words(lay + 40, 6);
+    __mind_store_i64(lay + 88, nb_xcell_magic());
+    let hdr: i64 = __mind_alloc(48);
+    let _h: i64 = nb_read_fully(0, hdr, 16, 0);
+    if __mind_load_i64(hdr) == nb_layout_magic() {
+        return nb_main_v2(lay, hdr);
+    }
+    nb_compile_image(__mind_load_i64(hdr), __mind_load_i64(hdr + 8))
 }

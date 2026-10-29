@@ -62,10 +62,10 @@ def seed_modules():
 # compiler or the seed blob silently changed underneath it. Re-blessing is a
 # deliberate edit of these two constants in the commit that changes them.
 EXPECTED_COMPILER_SHA256 = (
-    "377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b"
+    "5131e278a39949caa09cc96a9e55d6d8b048d9749cd1108b9df4e7f872ae6bf8"
 )
 EXPECTED_STD_SEED_SHA256 = (
-    "421d99c41cd6b0dcf77c39f67181b9846a2658437d72eb8b590d5c26089bffca"
+    "199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202"
 )
 
 # Every subprocess this gate starts is bounded, so a hang is a reported failure

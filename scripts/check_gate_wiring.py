@@ -51,10 +51,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # rule; importing a sibling module would create one on every local run.
 sys.dont_write_bytecode = True
 
+from check_gate_wiring_preflight import check_preflight_feature_parity  # noqa: E402
 from workflow_scan import (  # noqa: E402
     blocks,
-    cargo_test_execution_argv,
-    cargo_test_matrix,
     job_display_name,
     name_prefix,
     workflow_jobs,
@@ -116,7 +115,85 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-HARNESS_CEILING = 265  # 264 -> 265: .github/scripts/pr_review.py, the PR review and leak checker.
+# 263 -> 285: compiler-delivery integration census, 42cadc3c -> b4ab203d.
+# +12 independently wired gates in examples/mindc_mind: intrinsic_id_table_lint,
+# self_host_bounded_profile_smoke, and self_host_native_{alloc_bounded,cf,
+# div_trap,f64_intrinsics,f64_lit,main_args,misc_census,process,shadow_scope,sys}_smoke.
+# Their CI runners are checked by SMOKE_WIRING.tsv; no new gate is exempted.
+# +5 imported helpers: _cf_{corpus,giant,oracle}, _shadow_scope_lang, _w8_native.
+# These retain the independent model/capacity/oracle and shared-driver boundaries.
+# +1 allocator-byte regeneration utility: testdata/native_alloc_bounded/rt/gen_mind.py.
+# +5 std_process_wait acceptance files: _harness.py, accept.py, cases_spawn.py,
+# cases_status.py, run_cases.sh. They preserve the process-isolated native fault
+# checks and module-size split; the runner is manual, not a claim of CI execution.
+# -1 obsolete tools/cargo-deny-sanitize.sh. Total: 263 + 23 - 1 = 285.
+# Keep counting ALL tracked .py/.sh, including helpers/tools/manual drivers; do
+# not hide this growth by changing the pathspec or classifying files out of it.
+# 285 -> 287 adds native_dynamic_writer_check.py and
+# native_cabi_registry_smoke.py. These standalone diagnostics require explicit
+# compiler/native/oracle artifacts. Their production integration and CI runner
+# dependencies remain open and are recorded in SMOKE_WIRING.
+# 287 -> 288 adds self_host_source_note_smoke.py: native PT_NOTE bounds/identity
+# refusals and exact HOME-lowered string bytes/source digest, wired in ci.yml.
+# 288 -> 289 adds the standalone native_dynamic_layout_check.py transport.
+# Its explicit native/MLIR prerequisites and manual execution remain visible.
+# 289 -> 290 adds self_host_native_io_smoke.py, explicitly classified manual
+# pending source-bound bounded compiler construction in CI. No other allowance.
+# 290 -> 291 adds native_c_call_plan_check.py: a frozen scalar ABI metadata
+# gate with explicit source-bound native and MLIR compiler prerequisites.
+# 291 -> 292 adds native_c_call_emit_check.py, the frozen ABI execution and
+# source-mutation gate for a standalone candidate MIND call emitter.
+# 292 -> 294 adds native_dynamic_allocator_check.py and its diagnostic byte
+# generator testdata/native_dynamic_allocator/gen_mind.py. One manual gate;
+# the generator is development tooling, not a second runtime or admission path.
+# 294 -> 295 adds native_dynamic_image_check.py, the separately reviewed
+# checked-layout writer gate. Original writer/planner gates are retained.
+# 295 -> 297 adds native_libc_startup_check.py and its development byte
+# generator testdata/native_libc_startup/gen_mind.py. Explicit manual gate
+# prerequisites remain; no production admission or CI success is implied.
+# 297 -> 298 adds the frozen string, binding and decoder-bounds gate.
+# 298 -> 299 adds string_borrowed_check.py with explicit MIND-body parity,
+# source mutations and a separately documented C sanitizer reference.
+# 299 -> 300 adds the reviewed source-to-libc declaration binding gate.
+# 300 -> 302 adds the captured source-bundle helper and its explicit
+# orchestration/native/CPU gate. No additional product runtime or admission.
+# 302 -> 303 adds native_libc_io_check.py: standalone fixed libc I/O recipe,
+# native/MLIR byte parity, actual TLS errno/file effects and source mutations.
+# 303 -> 304 adds self_host_native_emission_context_smoke.py: a manual
+# source-lowering/context and source-image candidate gate with explicit current
+# compiler prerequisites. Retained failures and independent review obligations
+# remain visible; counting the harness does not claim CI execution or admission.
+# 304 -> 305 adds native_stream_io_check.py: exact-source stream image runtime
+# transport. The manually invoked gate retains original and versioned catalogues;
+# it does not qualify the production CLI or a consumer compiler pin.
+# The SHA lifetime fixture assembler adds one tracked shell transport. The
+# source adapter adds one runner and three enumeration helpers: original
+# framing/mutations, independent source notes, and additive hash refusals.
+# The variadic planner adds its capture wrapper and sealed run.sh transport.
+# All plan assertions remain MIND; these scripts add no source admission.
+# 312 -> 313 adds native_lane_value_shapes_smoke.py (from 264c097f): the 25-case
+# native-lane-v1 value-shape gate, each case built natively through `mindc` with
+# the reseeded bounded seed (it carries the nblane01 mark) and with MLIR, checked
+# against independently computed values. CI-wired in the reseed change.
+# 313 -> 315 adds native_c_variadic_emit_check.py and its captured run.sh:
+# capture/identity and build/run transport only; executable assertions are MIND.
+# 316 -> 318 counts exactly two extractions and nothing else: this file's
+# preflight-parity module, and the mindfuzz twin-emitter helper. Both are
+# tracked .py files and both are counted. The ceiling stays an exact
+# inventory with no spare allowance.
+# 318 -> 320 counts the two H2b guards declared for the integrator by the C2
+# free-contract stack: examples/mindc_mind/h2b_fmt_identity_check.py and
+# h2b_exclusion_controls_check.py (format-identity walk and exclusion controls).
+# 320 -> 321 takes scripts/open_error_regression.sh from main (#290): the
+# build/transport for tests/open_error_kat.mind; executable assertions are MIND.
+# 321 -> 322 takes examples/mindc_mind/native_lane_op_differential_smoke.py
+# (lane-op differential corpus gate with --self-test contracts).
+# 322 -> 323 takes scripts/sha256_memory_regression.sh from #289 (seed batch):
+# the frozen-byte transport for the native SHA-256 memory/fault KATs
+# (tests/sha256_*_kat.mind); executable assertions are MIND.
+# 323 -> 324 takes .github/scripts/pr_review.py from main (#305): the PR review
+# and public-leak checker.
+HARNESS_CEILING = 324  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
@@ -411,251 +488,6 @@ def check_manifest(root: Path, failures: list[str]) -> None:
             failures.append(
                 f"{workflow} job {jid!r} declares no steps - a required gate that runs "
                 "nothing is a green check-run asserting nothing"
-            )
-
-
-def shell_logical_lines(text: str) -> list[str]:
-    """Join backslash continuations so one shell command is one string.
-
-    preflight writes its keystone invocation across three physical lines.  A
-    lint that reads physical lines sees ``--features`` and ``--test`` on
-    different lines and cannot tell which command they belong to, so it falls
-    back to searching the whole file -- which comments and unrelated commands
-    can satisfy.
-    """
-    joined: list[str] = []
-    buf = ""
-    for raw in text.splitlines():
-        stripped = raw.rstrip()
-        if stripped.endswith("\\"):
-            buf += stripped[:-1].rstrip() + " "
-            continue
-        buf += stripped
-        joined.append(buf)
-        buf = ""
-    if buf:
-        joined.append(buf)
-    return joined
-
-
-def preflight_keystone_commands(text: str) -> list[str]:
-    """Every EXECUTABLE keystone cargo-test command in preflight.
-
-    Comment lines are dropped: a gate named only in prose is not a gate.  This
-    returns commands rather than literals so a caller compares what preflight
-    actually runs, not the first ``--features`` string that appears anywhere in
-    the file.
-    """
-    out: list[str] = []
-    for line in shell_logical_lines(text):
-        body = line.strip()
-        if body.startswith("#"):
-            continue
-        if "cargo test" in body and "phase_g_keystone_bootstrap" in body:
-            out.append(body)
-    return out
-
-
-def command_features(command: str) -> set[str]:
-    """The feature set one shell command declares, empty when it declares none.
-
-    Fails closed on a shape it does not understand: an unquoted or variable
-    ``--features`` yields the empty set, which then mismatches CI and reports,
-    rather than silently passing an unparsed command.
-    """
-    for pattern in (r'--features\s+"([^"]*)"', r"--features\s+'([^']*)'",
-                    r"--features\s+([A-Za-z0-9_,-]+)"):
-        found = re.search(pattern, command)
-        if found:
-            return set(found.group(1).replace(",", " ").split())
-    return set()
-
-
-def preflight_test_exclusions(text: str) -> list[str] | None:
-    """The declared shrink-only exclusion set, derived and never hardcoded.
-
-    ``None`` means preflight declares no exclusion array at all.  An empty list
-    means it declares one and it is empty, which is the only direction this
-    contract allows the set to move without a new ruling.
-    """
-    found = re.search(r"PREFLIGHT_TEST_EXCLUSIONS=\(([^)]*)\)", text)
-    if not found:
-        return None
-    return [word.strip().strip('"').strip("'")
-            for word in found.group(1).split() if word.strip()]
-
-
-def check_preflight_feature_parity(root: Path, failures: list[str]) -> None:
-    """Require preflight's cargo-test loop to mirror CI's build_test matrix."""
-    ci_path = root / WORKFLOW_DIR / "ci.yml"
-    preflight_path = root / "scripts/preflight.sh"
-    if not ci_path.is_file() or not preflight_path.is_file():
-        failures.append("WSP-06(a): ci.yml or scripts/preflight.sh is missing")
-        return
-    jobs = workflow_jobs(ci_path)
-    text = preflight_path.read_text(encoding="utf-8")
-    rows = cargo_test_matrix(jobs.get("build_test", ""))
-    if len(rows) < 10:
-        failures.append(
-            f"WSP-06(a): ci.yml build_test exposes only {len(rows)} cargo-test "
-            "invocations; expected at least 10 (matrix derivation is vacuous)"
-        )
-    ci_features = {row["features"] for row in rows}
-    # The keystone is a separate CI job and must have the exact feature set
-    # preflight runs. Compare parsed invocations, both directions, rather than
-    # searching prose (comments and unrelated test commands are not evidence).
-    keystone_rows = []
-    for body in jobs.values():
-        keystone_rows.extend(
-            row for row in cargo_test_matrix(body)
-            if "phase_g_keystone_bootstrap" in row.get("selector", "")
-        )
-    expected_keystone = {"mlir-build", "std-surface", "cross-module-imports"}
-    if len(keystone_rows) != 1:
-        failures.append(
-            f"WSP-06(a): expected exactly one parsed keystone invocation, found {len(keystone_rows)}"
-        )
-    else:
-        actual_keystone = set(keystone_rows[0]["features"].replace(",", " ").split())
-        if actual_keystone != expected_keystone:
-            failures.append(
-                "WSP-06(a): keystone CI feature set differs from required exact set: "
-                f"{sorted(actual_keystone)} vs {sorted(expected_keystone)}"
-            )
-        # Compare the ACTUAL preflight keystone commands against CI, in both
-        # directions. Scanning for the first --features literal that mentions
-        # mlir-build accepts a comment, a different gate, or a stale line.
-        for command in preflight_keystone_commands(text):
-            preflight_keystone = command_features(command)
-            if preflight_keystone != actual_keystone:
-                failures.append(
-                    "WSP-06(a): preflight keystone feature set does not equal CI keystone: "
-                    f"{sorted(preflight_keystone)} vs {sorted(actual_keystone)}"
-                )
-                break
-    required = {"", "std-surface", "cross-module-imports",
-                "std-surface,cross-module-imports", "autodiff",
-                "mlir-lowering", "cpu-buffers", "ffi-c"}
-    missing_ci = sorted(required - ci_features)
-    if missing_ci:
-        failures.append(
-            "WSP-06(a): ci.yml build_test is missing expected cargo-test "
-            f"feature rows: {missing_ci}"
-        )
-    text = preflight_path.read_text(encoding="utf-8")
-    if "scripts/workflow_scan.py run_cargo_test_matrix" not in text:
-        failures.append(
-            "WSP-06(a): preflight has no workflow_scan run_cargo_test_matrix call; "
-            "CI feature rows have no derived preflight leg"
-        )
-    if "matrix_rc=$?" not in text or "workflow cargo-test matrix execution FAILED" not in text:
-        failures.append(
-            "WSP-06(a): preflight does not preserve the typed matrix executor's failure status"
-        )
-    if any(token in text for token in ("base64 -d", "mapfile -t row_fields", "eval ")):
-        failures.append("WSP-06(a): preflight reparses typed matrix argv through a shell decoder")
-    for row in rows:
-        original = list(row.get("argv", []))
-        if not original:
-            failures.append("WSP-06(a): scanner accepted a cargo-test row with empty argv")
-            continue
-        unlocked = cargo_test_execution_argv(row, False)
-        locked = cargo_test_execution_argv(row, True)
-        for label, argv in (("unlocked", unlocked), ("locked", locked)):
-            separator = argv.index("--") if "--" in argv else len(argv)
-            cargo_args = argv[:separator]
-            if "--no-fail-fast" not in cargo_args:
-                failures.append(f"WSP-06(a): {label} replay lacks Cargo --no-fail-fast before --")
-            if ("--locked" in cargo_args) != (label == "locked"):
-                failures.append(f"WSP-06(a): {label} replay violates Cargo.lock branch parity")
-        separator = original.index("--") if "--" in original else len(original)
-        policy = ([] if "--no-fail-fast" in original[:separator] else ["--no-fail-fast"]) + ["--locked"]
-        if locked != original[:separator] + policy + original[separator:]:
-            failures.append("WSP-06(a): typed replay does not preserve the scanner's exact argv")
-    if not any(set(row.get("lock_modes", [])) == {"locked", "unlocked"} for row in rows):
-        failures.append("WSP-06(a): CI Cargo.lock locked/unlocked branch was not normalized")
-    # Assert what the keystone commands DO, not the exact byte string they were
-    # once written as. The previous form required a `BUILD_INCOMPLETE=1` env
-    # assignment that no longer exists; a contract test that pins a removed
-    # implementation detail forces bad code back in to placate itself.
-    keystone_cmds = preflight_keystone_commands(text)
-    if len(keystone_cmds) != 2:
-        failures.append(
-            "WSP-06(a): expected exactly two executable keystone commands in preflight "
-            f"(one --no-run build phase, one run phase), found {len(keystone_cmds)}"
-        )
-    if any("--no-default-features" not in cmd for cmd in keystone_cmds):
-        failures.append(
-            "WSP-06(a): keystone preflight invocation lacks --no-default-features"
-        )
-    scanner_text = (root / "scripts/workflow_scan.py").read_text(encoding="utf-8")
-    if 'command = ["cargo", "test", *argv]' not in scanner_text or "subprocess.run(" not in scanner_text:
-        failures.append(
-            "WSP-06(a): typed matrix executor does not execute cargo test (fake success is not evidence)"
-        )
-    if "passed < 1" not in scanner_text or "failed != 0" not in scanner_text:
-        failures.append(
-            "WSP-06(a): matrix executor accepts a cargo test row without positive result evidence"
-        )
-    if "cargo_test_execution_argv(row, locked)" not in scanner_text:
-        failures.append(
-            "WSP-06(a): matrix executor bypasses the typed argv replay path"
-        )
-    if "timeout=timeout" not in scanner_text or "except subprocess.TimeoutExpired" not in scanner_text:
-        failures.append(
-            "WSP-06(a): matrix executor does not preserve per-row CI timeout protection"
-        )
-    # The split build phase is a STRUCTURE (one --no-run command, one run
-    # command) plus a label the build-failure branch emits. It is not an
-    # environment variable, and requiring the variable let a build interruption
-    # be reported as a determinism regression.
-    build_phase = [cmd for cmd in keystone_cmds if "--no-run" in cmd]
-    run_phase = [cmd for cmd in keystone_cmds if "--no-run" not in cmd]
-    if len(build_phase) != 1 or len(run_phase) != 1:
-        failures.append(
-            "WSP-06(a): keystone lacks the required split build phase "
-            f"(--no-run commands={len(build_phase)}, run commands={len(run_phase)})"
-        )
-    if "BUILD_INCOMPLETE" not in text:
-        failures.append(
-            "WSP-06(a): keystone build failure emits no BUILD_INCOMPLETE label; an "
-            "interrupted build must not be reported as a determinism result"
-        )
-    if "byte-identity regression" in text:
-        failures.append(
-            "WSP-06(a): preflight still claims a byte-identity regression on a path "
-            "that may never have evaluated determinism; label the cause it proved"
-        )
-    if "ks_build_rc" not in text or "ks_rc" not in text:
-        failures.append(
-            "WSP-06(a): keystone build/run results are not independently fail-closed"
-        )
-    # Derive the exemption set from preflight instead of naming it here. The old
-    # form hardcoded 'mindfuzz_cross_substrate' and so demanded that CI keep a
-    # target the exemption existed to skip -- the lint outlived the thing it
-    # guarded and then failed on its own removal.
-    ci_text = ci_path.read_text(encoding="utf-8")
-    declared = preflight_test_exclusions(text)
-    if declared is None:
-        failures.append(
-            "WSP-06(a): preflight declares no PREFLIGHT_TEST_EXCLUSIONS array; the "
-            "shrink-only exemption set must be explicit even when it is empty"
-        )
-    else:
-        for excluded in declared:
-            if not re.search(
-                rf"cargo\s+test[^#]*--test\s+{re.escape(excluded)}(?:\s|$)", ci_text
-            ):
-                failures.append(
-                    f"WSP-06(a): exclusion '{excluded}' has no matching executable CI "
-                    "cargo-test target; delete this stale exemption"
-                )
-    # An exemption applied outside the declared array is an undeclared one.
-    for stray in re.findall(r"for\s+excluded\s+in\s+([A-Za-z0-9_][^;\n]*)", text):
-        if '"${PREFLIGHT_TEST_EXCLUSIONS[@]}"' not in stray:
-            failures.append(
-                "WSP-06(a): preflight filters failures through an exemption name that "
-                f"is not in the declared array: {stray.strip()!r}"
             )
 
 

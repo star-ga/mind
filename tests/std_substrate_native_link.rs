@@ -586,3 +586,96 @@ fn export_lists_do_not_keep_colliding_fns_global_in_an_executable() {
         assert_eq!(run.status.code(), Some(202), "{target}");
     }
 }
+
+/// The 7-line repro: a program that never imports std.posix keeps its own
+/// `extern "C" close` (i32, libc's -1 on a bad fd).
+#[test]
+fn extern_close_repro_matches_base() {
+    let main = "extern \"C\" { unsafe fn close(fd: i32) -> i32; }\nfn main() -> i64 { let fd: i64 = 0 - 1; let closed: i32 = close(fd as i32); if closed != 0 - 1 { return 1; } return 0; }\n";
+    let Some(code) = build_and_run("std_posix_extern_close_repro", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "libc close(-1) returns -1");
+}
+
+/// An extern whose name is also a std.posix wrapper must still be the
+/// program's declaration. umask is the verifier's A/B name.
+#[test]
+fn extern_umask_is_not_shadowed_by_std_posix() {
+    let main = "extern \"C\" { unsafe fn umask(mask: i32) -> i32; }\nfn main() -> i64 {\n    let old: i32 = umask(0);\n    let restored: i32 = umask(old);\n    if restored != 0 {\n        return 1;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_extern_umask", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(
+        code, 0,
+        "the second umask restores the mask saved by the first"
+    );
+}
+
+/// Importing std.posix and still declaring extern close must not E2004.
+/// The declared close(-1) is libc's -1.
+#[test]
+fn extern_close_wins_beside_std_posix_import() {
+    let main = "import std.posix;\nextern \"C\" { unsafe fn close(fd: i32) -> i32; }\nfn main() -> i64 { let fd: i64 = 0 - 1; let closed: i32 = close(fd as i32); if closed != 0 - 1 { return 1; } return 0; }\n";
+    let Some(code) = build_and_run("std_posix_extern_close_with_import", &[("main.mind", main)])
+    else {
+        return;
+    };
+    assert_eq!(code, 0, "local extern close wins over the imported wrapper");
+}
+
+/// Importing the wrapper calls std.posix, which returns -errno (-EBADF),
+/// not libc's -1.
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn import_std_posix_close_returns_raw_errno() {
+    let main = "import std.posix;\nfn main() -> i64 {\n    if close(0 - 1) != 0 - 9 {\n        return 1;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_import_close", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "imported close(-1) returns -EBADF");
+}
+
+/// A file that does import std.posix can call the wrapper.
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn import_std_posix_getuid_is_callable() {
+    let main = "import std.posix;\nfn main() -> i64 {\n    let a: i64 = getuid();\n    let b: i64 = getuid();\n    if a != b {\n        return 1;\n    }\n    if a < 0 {\n        return 2;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_import_getuid", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "imported getuid returns a stable non-negative uid");
+}
+
+/// std.iouring declares its own 2-arg open and must keep compiling.
+#[test]
+fn import_std_iouring_compiles() {
+    let main = "import std.iouring;\nfn main() -> i64 { return 0; }\n";
+    let Some(code) = build_and_run("std_posix_import_iouring", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn qualified_posix_call_keeps_its_owner_beside_local_extern() {
+    for (index, qualifier) in ["posix.close", "px.close", "std.posix.close", "posix::close"]
+        .iter()
+        .enumerate()
+    {
+        let main = format!(
+            "import std.posix as px;\nextern \"C\" {{ unsafe fn close(fd: i32) -> i32; }}\nfn main() -> i64 {{\n    if {qualifier}(0 - 1) != 0 - 9 {{ return 1; }}\n    if close((0 - 1) as i32) != 0 - 1 {{ return 2; }}\n    return 0;\n}}\n"
+        );
+        let Some(code) = build_and_run(
+            &format!("std_posix_qualified_extern_{index}"),
+            &[("main.mind", &main)],
+        ) else {
+            return;
+        };
+        assert_eq!(
+            code, 0,
+            "qualified {qualifier} uses std.posix; bare close uses libc"
+        );
+    }
+}

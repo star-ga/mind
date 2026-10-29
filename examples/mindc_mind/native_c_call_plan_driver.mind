@@ -1,0 +1,64 @@
+// Copyright 2026 STARGA Inc.
+// Bounded diagnostic transport, not a source-language/type/ABI authority.
+pub fn ncp_read(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let count: i64 = __mind_read(0, a + done, n - done, 0 - 1);
+        if count <= 0 { return 0; }
+        done = done + count;
+    }
+    1
+}
+pub fn ncp_write(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let count: i64 = __mind_write(1, a + done, n - done, 0 - 1);
+        if count <= 0 { return 0; }
+        done = done + count;
+    }
+    1
+}
+pub fn main() -> i64 {
+    let row: i64 = __mind_alloc(64);
+    let result: i64 = __mind_alloc(48);
+    let table: i64 = __mind_alloc(2048);
+    let types: i64 = __mind_alloc(12288);
+    let answer: i64 = __mind_alloc(16);
+    if ncp_read(row + 16, 32) == 0 { return 71; }
+    if ncp_read(result, 48) == 0 { return 71; }
+    let n: i64 = __mind_load_i64(row + 40);
+    if n >= 0 {
+        if n <= 256 {
+            if ncp_read(types, n * 48) == 0 { return 71; }
+            let mut i: i64 = 0;
+            while i < n {
+                __mind_store_i64(table + i * 8, types + i * 48);
+                i = i + 1;
+            }
+        }
+    }
+    if __mind_read(0, answer, 1, 0 - 1) != 0 { return 72; }
+    __mind_store_i64(row, 0);
+    __mind_store_i64(row + 8, 0);
+    __mind_store_i64(row + 48, table);
+    __mind_store_i64(row + 56, result);
+    let mut error: i64 = ncp_validate(row);
+    let mut plan: i64 = 0;
+    let mut size: i64 = 0;
+    if error == 0 {
+        plan = ncp_plan(row);
+        if plan == 0 { error = 7; }
+        else { size = 80 + n * 40; }
+    }
+    __mind_store_i64(answer, error);
+    __mind_store_i64(answer + 8, size);
+    if ncp_write(answer, 16) == 0 { return 73; }
+    if size > 0 { if ncp_write(plan, size) == 0 { return 73; } }
+    __mind_free(plan);
+    __mind_free(answer);
+    __mind_free(types);
+    __mind_free(table);
+    __mind_free(result);
+    __mind_free(row);
+    0
+}

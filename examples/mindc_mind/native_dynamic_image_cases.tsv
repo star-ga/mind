@@ -1,0 +1,83 @@
+id	name	category	runtime_exit	stdout_hex
+0	no_literals_source_note	run	1	
+1	one_literal	run	42	41
+2	page_literals	run	42	41
+3	page_plus_one_literals	run	42	41
+4	ir_note_and_literals	run	42	41
+5	zero_bss_and_writable_context_arena_state_stack	run	42	41
+6	got_relro_write_after_marker	protection	-11	41
+7	code_write_after_marker	protection	-11	41
+8	literal_write_after_marker	protection	-11	41
+9	dedicated_stack_execute_after_marker	protection	-11	41
+10	guard_read_after_marker	protection	-11	41
+11	overflow_read_before_allocation	protection	-11	41
+12	missing_version	loader	127	
+13	missing_symbol	loader	127	
+14	many_imports_versions_metadata_pages	structure	0	
+15	maximum_existing_writer_code	structure	0	
+16	maximum_literal_window	run	42	41
+17	nonzero_note_digest_preserved	run	1	
+18	maximum_interpreter_slot	structure	0	
+19	policy_plan_output_alias_and_repeat	run	1	
+20	note_short	refuse	23	
+21	note_long	refuse	23	
+22	note_wrong_namesz	refuse	23	
+23	note_wrong_descsz	refuse	23	
+24	note_type_zero	refuse	23	
+25	note_type_three	refuse	23	
+26	note_wrong_owner	refuse	23	
+27	note_nonzero_padding	refuse	23	
+28	policy_version_zero	refuse	23	
+29	arena_below_minimum	refuse	23	
+30	overflow_unaligned	refuse	23	
+31	stack_unaligned	refuse	23	
+32	guard_zero	refuse	23	
+33	budget_exhausted_by_reserve	refuse	23	
+34	literal_arena_overlap	refuse	23	
+35	literal_length_exceeds_capacity	refuse	23	
+36	literal_negative_length	refuse	23	
+37	entry_out_of_range	refuse	23	
+38	call_patch_nonzero	refuse	23	
+39	duplicate_import	refuse	23	
+40	missing_interpreter	refuse	23	
+41	negative_policy_reserve	refuse	23	
+42	maximum_imports_unique_versions	structure	0	
+43	zero_overflow_bss	run	42	41
+44	input_buffers_remain_unchanged	run	1	
+45	repeated_emission_identical	run	1	
+46	note_invalid_capacity	refuse	23	
+47	note_invalid_pointer	refuse	23	
+48	empty_literal_null_buffer	run	1	
+49	failure_clears_plan_output	run	1	
+100	alter_layout_word_0	refuse	23	
+101	alter_layout_word_1	refuse	23	
+102	alter_layout_word_2	refuse	23	
+103	alter_layout_word_3	refuse	23	
+104	alter_layout_word_4	refuse	23	
+105	alter_layout_word_5	refuse	23	
+106	alter_layout_word_6	refuse	23	
+107	alter_layout_word_7	refuse	23	
+108	alter_layout_word_8	refuse	23	
+109	alter_layout_word_9	refuse	23	
+110	alter_layout_word_10	refuse	23	
+111	alter_layout_word_11	refuse	23	
+112	alter_layout_word_12	refuse	23	
+113	alter_layout_word_13	refuse	23	
+114	alter_layout_word_14	refuse	23	
+115	alter_layout_word_15	refuse	23	
+116	alter_layout_word_16	refuse	23	
+117	alter_layout_word_17	refuse	23	
+118	alter_layout_word_18	refuse	23	
+119	alter_layout_word_19	refuse	23	
+120	alter_layout_word_20	refuse	23	
+121	alter_layout_word_21	refuse	23	
+122	alter_layout_word_22	refuse	23	
+123	alter_layout_word_23	refuse	23	
+124	alter_layout_word_24	refuse	23	
+125	alter_layout_word_25	refuse	23	
+126	alter_layout_word_26	refuse	23	
+127	alter_layout_word_27	refuse	23	
+128	alter_layout_word_28	refuse	23	
+129	alter_layout_word_29	refuse	23	
+130	alter_layout_word_30	refuse	23	
+131	alter_layout_word_31	refuse	23	

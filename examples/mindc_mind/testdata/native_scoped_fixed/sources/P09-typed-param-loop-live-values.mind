@@ -1,0 +1,19 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn scfc_apply(fd:i32)->i64 {
+ let mut current:i32=fd;
+ current=(0-1) as i32;
+ let keep:i64=991;
+ let f:f64=1.5;
+ let mut i:i64=0;
+ let mut total:i64=0;
+ while i<3 {
+  total=total+(close(current) as i64);
+  i=i+1;
+ }
+ let late:i64=27;
+ if keep!=991 { return 91; }
+ if f!=1.5 { return 92; }
+ if late!=27 { return 93; }
+ if total!=0-3 { return 94; } 0
+}
+fn main()->i64 { scfc_apply(7 as i32) }

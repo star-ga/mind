@@ -33,8 +33,9 @@ use super::{Attribute, Span};
 /// corrupt the file, so the visible symptom was always the same: a source that can never clear
 /// `fmt::drift`, and therefore can never pass `mindc check` at all.
 ///
-/// These tables are keyed by SPAN and carry spelling ONLY. Nothing in the compiler reads them,
-/// so the AST the type checker and lowering see is byte-for-byte what it was.
+/// These tables are keyed by SPAN. Most fields carry formatting alone; qualified
+/// POSIX calls also use `call_qualifiers` to retain module ownership when a
+/// local extern has the same bare name.
 ///
 /// THE RULE for the next spelling that needs preserving:
 ///

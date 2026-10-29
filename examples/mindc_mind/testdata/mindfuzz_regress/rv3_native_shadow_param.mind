@@ -1,0 +1,13 @@
+// Regression class (twin-emitter review round 3): native ELF: a loop-body let shadowing a PARAMETER must leave the parameter untouched.
+fn fz(p: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 2 {
+        k = k + 1;
+        let mut p: i64 = 7;
+        p = 3;
+    }
+    return p;
+}
+fn main() -> i64 {
+    return fz(2);
+}

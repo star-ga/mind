@@ -71,6 +71,13 @@ derived from the handles THAT LEG removes (see TOOLCHAIN_HANDLES /
 BINARY_HANDLES) rather than hand-copied, so the two scopes cannot drift apart;
 every gate in the corpus is required RED by at least leg 1.
 
+Each vacuity leg passes the trailing arguments the workflow actually uses,
+read from that same scan. Runner flags are not gate arguments. Disagreeing
+invocations are all run, and the gate is vacuous if any argv meets the
+contract. A dynamic `$s.py` loop is not a concrete path. Each gate runs in
+its own session, killed on return and on timeout, so stage2.elf cannot
+outlive the step.
+
 Leg 2 needs a tree with no `target/release/mindc`, which the runner cannot
 arrange in place. On CI that is free — the sweep is wired before the cargo build.
 Locally it runs against a scratch copy of the WORKING TREE built from
@@ -103,6 +110,8 @@ import argparse
 import ast
 import os
 import pathlib
+import shlex
+import signal
 import subprocess
 import sys
 
@@ -206,14 +215,24 @@ def run_one(gate: str, args: list[str], *, min_asserted: int = 1,
     else:
         cmd = [str(p), *args]
 
+    proc = subprocess.Popen(
+        cmd, cwd=str(base), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=env, start_new_session=True)
     try:
-        proc = subprocess.run(cmd, cwd=str(base), capture_output=True, text=True,
-                              timeout=timeout, env=env)
-        out = proc.stdout + proc.stderr
-        rc = proc.returncode
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or "") + (e.stderr or "") if isinstance(e.stdout, str) else ""
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        reap_keystone_group(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        out = (stdout or "") + (stderr or "")
         return Result(gate, 124, None, False, f"timed out after {timeout}s", out)
+    reap_keystone_group(proc)
+    stdout = stdout or ""
+    stderr = stderr or ""
+    out = stdout + stderr
+    rc = proc.returncode if proc.returncode is not None else 1
 
     if echo:
         sys.stdout.write(out)
@@ -224,7 +243,7 @@ def run_one(gate: str, args: list[str], *, min_asserted: int = 1,
     # `asserted=99` on stderr land AFTER it in the concatenation and win.
     forged = False
     if p.suffix == ".py":
-        n = _parse_asserted(proc.stdout)
+        n = _parse_asserted(stdout)
     else:
         # A non-Python gate is NOT executed through the shim, so nothing
         # publishes the contract line on its behalf and nothing was stopping it
@@ -236,7 +255,7 @@ def run_one(gate: str, args: list[str], *, min_asserted: int = 1,
         # verdict there), and a printed contract line on EITHER stream is
         # forgery. One rule for both kinds of gate, not a weaker second one.
         forged = any(FORGED_RE.match(line) for line in out.splitlines())
-        n = 0 if forged else sum(1 for line in proc.stdout.splitlines()
+        n = 0 if forged else sum(1 for line in stdout.splitlines()
                                  if VERDICT_RE.search(line))
 
     skipped = _has_skip(out)
@@ -552,8 +571,7 @@ def _unset_handle_leg(gates: list[str], jobs: int, timeout: int) -> int:
     try:
         with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
             results = list(ex.map(
-                lambda g: run_one(g, [], timeout=timeout, env=env, echo=False,
-                                  root=root), gates))
+                lambda g: _run_wired(g, timeout, env, root), gates))
     finally:
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -571,6 +589,101 @@ def _unset_handle_leg(gates: list[str], jobs: int, timeout: int) -> int:
     print("PASS  every gate failed closed with the handles unset and no `mindc` "
           "on PATH.")
     return 0
+
+
+def reap_keystone_group(proc: subprocess.Popen) -> None:
+    """Kill the gate session, including a grandchild the direct child left behind.
+
+    `os.killpg` is Unix-only. The Windows CI matrix row runs this runner under
+    native Python (ci.yml `build_test`), so a bare `os.killpg` is an
+    AttributeError there — not an OSError — and the reaper never fires. Use the
+    process-group kill when the platform offers it, else fall back to killing
+    just the direct child.
+    """
+    killpg = getattr(os, "killpg", None)
+    try:
+        if killpg is not None:
+            killpg(proc.pid, signal.SIGKILL)
+        elif proc.poll() is None:
+            proc.kill()
+    except OSError:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+    if proc.poll() is not None:
+        return
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+            proc.wait(timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+_RUNNER_VALUED = {"--min-asserted", "--timeout", "--jobs"}
+_RUNNER_BARE = {"--sweep-all", "--vacuity-sweep", "--list"}
+_CI_ARGVS: dict[str, list[list[str]]] | None = None
+
+
+def _gate_tail(tokens: list[str]) -> list[str]:
+    """Drop runner flags that a workflow placed after the gate path."""
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _RUNNER_VALUED and i + 1 < len(tokens):
+            i += 2
+            continue
+        if tok in _RUNNER_BARE or tok in {">", ">>", "<"}:
+            i += 2 if tok in {">", ">>", "<"} and i + 1 < len(tokens) else 1
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def _ci_argv_table() -> dict[str, list[list[str]]]:
+    """Concrete gate path -> distinct trailing arg lists, workflow order."""
+    global _CI_ARGVS
+    if _CI_ARGVS is not None:
+        return _CI_ARGVS
+    table: dict[str, list[list[str]]] = {}
+    workflow_dir = ROOT / ".github" / "workflows"
+    if workflow_dir.is_dir():
+        names = sorted(workflow_dir.glob("*.yml")) + sorted(workflow_dir.glob("*.yaml"))
+        for workflow in names:
+            invocations, _exempt = scan_workflow(workflow)
+            for inv in invocations:
+                if not inv.routed or "$" in inv.path or "{" in inv.path or "}" in inv.path:
+                    continue
+                tail = inv.segment[inv.offset + len(inv.path):]
+                args = _gate_tail(shlex.split(tail, posix=True))
+                bucket = table.setdefault(inv.path, [])
+                if args not in bucket:
+                    bucket.append(args)
+    _CI_ARGVS = table
+    return table
+
+
+def _ci_argvs(rel: str) -> list[list[str]]:
+    found = _ci_argv_table().get(rel)
+    return found if found else [[]]
+
+
+def _run_wired(gate: str, timeout: int, env: dict[str, str] | None,
+               root: pathlib.Path | None = None) -> Result:
+    """Run every distinct CI argv. Vacuous if any of them meets the contract."""
+    last: Result | None = None
+    for args in _ci_argvs(gate):
+        last = run_one(gate, args, timeout=timeout, env=env, echo=False, root=root)
+        if last.ok:
+            return last
+    assert last is not None
+    return last
 
 
 def sweep(expect_all_fail: bool, jobs: int, timeout: int) -> int:
@@ -605,9 +718,13 @@ def sweep(expect_all_fail: bool, jobs: int, timeout: int) -> int:
             return 1
     print(f"run_gate: {mode} over {len(gates)} gates from {MANIFEST.name}")
 
+    def _one(g: str) -> Result:
+        if expect_all_fail:
+            return _run_wired(g, timeout, env)
+        return run_one(g, [], timeout=timeout, env=env, echo=False)
+
     with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
-        results = list(ex.map(
-            lambda g: run_one(g, [], timeout=timeout, env=env, echo=False), gates))
+        results = list(ex.map(_one, gates))
 
     if expect_all_fail:
         leaked = [r for r in results if r.ok]

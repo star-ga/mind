@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -97 +97 @@
+-        if kind == 2 { return ncve_f32_xmm(code, place, disp); }
++        if kind == 2 { return nb_fp_movsd_load_xmmk(code, place, disp); }

@@ -1,0 +1,53 @@
+// alloc/realloc/free parity with the C runtime (runtime-support/mind_intrinsics.c):
+// __mind_alloc(n <= 0) == 0; __mind_realloc(p, n < 0) == 0 and leaves p live;
+// __mind_realloc(p, 0) == 0 (p released); __mind_free(0) == 0. Expected exit 40.
+fn say(a: i64, b: i64, c: i64) -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i8(buf, a);
+    __mind_store_i8(buf + 1, b);
+    __mind_store_i8(buf + 2, c);
+    __mind_write(1, buf, 3, 0 - 1)
+}
+fn main() -> i64 {
+    let z0: i64 = __mind_alloc(0);
+    let b1: i64 = if z0 != 0 {
+        1
+    } else {
+        0
+    };
+    let zn: i64 = __mind_alloc(0 - 8);
+    let b2: i64 = if zn != 0 {
+        2
+    } else {
+        0
+    };
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 5);
+    let r1: i64 = __mind_realloc(p, 0 - 1);
+    let b3: i64 = if r1 != 0 {
+        4
+    } else {
+        0
+    };
+    let v: i64 = __mind_load_i64(p);
+    let b4: i64 = if v != 5 {
+        8
+    } else {
+        0
+    };
+    let r2: i64 = __mind_realloc(p, 0);
+    let b5: i64 = if r2 != 0 {
+        16
+    } else {
+        0
+    };
+    let q: i64 = __mind_alloc(8);
+    let b6: i64 = if q == 0 {
+        32
+    } else {
+        0
+    };
+    let f: i64 = __mind_free(0);
+    let w: i64 = say(110, 112, 10);
+    b1 + b2 + b3 + b4 + b5 + b6 + f + w + 37
+}

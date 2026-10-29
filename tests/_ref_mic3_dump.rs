@@ -120,7 +120,49 @@ fn prune_unreachable_fns(ir: &mut IRModule, user_fn_names: &[String]) {
     });
 }
 
-fn ref_ir(user_src: &str) -> IRModule {
+/// Bare-name struct schemas of every `StructDef` in the combined module, in the
+/// shape the project builder installs into the global registry
+/// (`src/project/mod.rs`, `enums.structs`).
+///
+/// Why the oracle needs this: the 21 std modules are concatenated in
+/// `std.X`-alphabetical order, so a std fn can read a field of a struct that a
+/// LATER module declares (`std.cli::args_push` reads `s.addr` on `String`,
+/// declared in `std.string`). `lower_to_ir` registers a local `StructDef` only
+/// when its item is reached, so that read has no schema yet. Lowering used to
+/// paper over this with a `ConstI64(0)` placeholder; it now refuses
+/// (`UnsupportedLoweringOperation { "struct field read" }`), which made this
+/// generator panic before writing any note.
+///
+/// A real multi-module compile never hits the ordering hazard: the project
+/// builder seeds every module's structs into the global registry and
+/// `lower_to_ir` merges them into `ir.struct_defs` before the item walk. The
+/// oracle seeds the same registry with the same bare names and field lists.
+/// Only BARE names are seeded (no `qualified_structs`), so `ir.struct_defs`, the
+/// one serialized struct registry, holds exactly the keys and field-name lists
+/// the local `StructDef` arms insert. Fn bodies have their own id space, so the
+/// module-level instr stream and `next_id` are untouched. The trace hash
+/// therefore stays a function of the same pruned module.
+fn combined_struct_registry(combined: &libmind::ast::Module) -> libmind::ir::GlobalEnums {
+    let mut registry = libmind::ir::GlobalEnums::default();
+    for item in &combined.items {
+        if let Node::StructDef { name, fields, .. } = item {
+            registry.structs.insert(
+                name.clone(),
+                (
+                    fields.iter().map(|f| f.name.clone()).collect(),
+                    fields.iter().map(|f| f.ty.clone()).collect(),
+                ),
+            );
+        }
+    }
+    registry
+}
+
+/// Unpruned seeded-combined IR (std KEEP set ahead of the user source), or the
+/// lowering refusal. Split out so the regression test can assert on it.
+fn try_combined_ir(
+    user_src: &str,
+) -> Result<(IRModule, Vec<String>), libmind::eval::materialization::MaterializationRefusal> {
     let module = libmind::parser::parse(user_src).expect("parse user");
     let user_fn_names: Vec<String> = module
         .items
@@ -140,7 +182,14 @@ fn ref_ir(user_src: &str) -> IRModule {
     }
     combined.items.extend(module.items);
 
-    let mut ir = libmind::eval::lower::lower_to_ir(&combined).expect("lowering");
+    libmind::ir::set_global_enums(combined_struct_registry(&combined));
+    let lowered = libmind::eval::lower::lower_to_ir(&combined);
+    libmind::ir::clear_global_enums();
+    lowered.map(|ir| (ir, user_fn_names))
+}
+
+fn ref_ir(user_src: &str) -> IRModule {
+    let (mut ir, user_fn_names) = try_combined_ir(user_src).expect("lowering");
     prune_unreachable_fns(&mut ir, &user_fn_names);
     ir
 }
@@ -195,4 +244,44 @@ fn dump_ref() {
         ir.next_id,
         ir.instrs.len()
     );
+}
+
+// Regression gate for the oracle itself (runs in normal `cargo test`, writes
+// nothing). The concatenated std KEEP set puts `std.cli` (whose `args_push`
+// reads `s.addr` on `String`) ahead of `std.string` (which declares `String`).
+// Before the registry seed, lowering refused that read and `dump_ref` panicked
+// with `UnsupportedLoweringOperation { operation: "struct field read" }`, so the
+// pinned `_ref_*.note` cache could not be refreshed at all.
+#[test]
+fn dump_ref_lowers_seeded_std_cli_before_std_string() {
+    let (name, src) = FIXTURES[0];
+    assert_eq!(name, "add");
+    let (ir, user_fn_names) = match try_combined_ir(src) {
+        Ok(lowered) => lowered,
+        Err(refusal) => panic!("seeded std + `{name}` must lower, got {refusal:?}"),
+    };
+    // Positive control: std.cli really was lowered (the reader that used to be
+    // refused is present as a FnDef), so the green above is not a vacuous pass
+    // over a KEEP set that silently dropped std.cli.
+    assert!(
+        ir.instrs
+            .iter()
+            .any(|i| matches!(i, Instr::FnDef { name, .. } if name == "args_push")),
+        "std.cli::args_push must be present in the unpruned combined IR"
+    );
+    // The seed must not leak qualified keys into the serialized struct registry.
+    assert!(ir.struct_defs.contains_key("String"));
+    assert!(
+        ir.struct_defs.keys().all(|k| !k.contains('.')),
+        "only bare struct names may reach ir.struct_defs: {:?}",
+        ir.struct_defs.keys().collect::<Vec<_>>()
+    );
+    // The registry is transient: a later single-file compile must see it empty.
+    assert!(libmind::ir::with_global_enums(|g| g.structs.is_empty()));
+
+    let mut pruned = ir;
+    prune_unreachable_fns(&mut pruned, &user_fn_names);
+    let bytes = libmind::ir::compact::emit_mic3(&pruned);
+    assert!(bytes.len() > 4 && bytes.starts_with(b"MIC3"));
+    assert_eq!(note_of(&pruned).len(), 64);
 }

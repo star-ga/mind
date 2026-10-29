@@ -270,7 +270,6 @@ REFUSED = [
     ("float % float", M("let f:f64=5.0; let g:f64=f % 2.0; return 0;"), "0B"),
     ("narrowing cast of float", M("let f:f64=2.5; return f as i8;"), "0B"),
     ("float condition", M("let f:f64=1.5; if f { return 1; } return 2;"), "0B"),
-    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
     # (an unknown method `.foo()` is still out-of-subset; zero-arg `.len()` on an
     # array LANDED — see the SUPPORTED cases below)
@@ -533,6 +532,11 @@ SUPPORTED = [
     ("char escape quote '\\''", M("return '\\'';"), 39),
     ("char let + arith", M("let c='A'; return c + 2;"), 67),
     ("char in loop guard", M("let mut c='A'; let mut n=0; while n < c { n=n+10; } return n;"), 70),
+    # W8b (4207ff33): a non-dyadic literal now lowers to its correctly rounded
+    # binary64 bits (exact bignum dec2flt), so it moved from REFUSED to run-and-
+    # check, as in general_float_netverify. The bits themselves are gated against
+    # struct.pack by self_host_native_f64_lit_smoke; 0.1 truncates to 0.
+    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), 0),
 ]
 
 # (label, source, expected exit code) — a RUNTIME array-bounds VIOLATION on a

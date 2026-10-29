@@ -1,0 +1,140 @@
+// Copyright 2026 STARGA Inc.
+// Checked Linux x86-64 dynamic-image geometry, version1. No native admission.
+// See native_dynamic_layout.md for the exact request/output and ownership ABI.
+
+pub fn ndl_size(n: i64) -> i64 {
+    if n < 0 { return 0; }
+    if n > 2147483648 { return 0; }
+    1
+}
+
+pub fn ndl_add(a: i64, b: i64) -> i64 {
+    if a < 0 { return 0 - 1; }
+    if b < 0 { return 0 - 1; }
+    if b > 9223372036854775807 - a { return 0 - 1; }
+    a + b
+}
+
+pub fn ndl_round(n: i64, alignment: i64) -> i64 {
+    if n < 0 { return 0 - 1; }
+    if alignment < 1 { return 0 - 1; }
+    let rem: i64 = n % alignment;
+    if rem == 0 { return n; }
+    ndl_add(n, alignment - rem)
+}
+
+pub fn ndl_zero(output: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(output + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+pub fn ndl_plan(request: i64, output: i64) -> i64 {
+    // Capture before clearing: request/output may overlap, including equality.
+    let version: i64 = __mind_load_i64(request);
+    let code_len: i64 = __mind_load_i64(request + 8);
+    let meta_len: i64 = __mind_load_i64(request + 16);
+    let relro_len: i64 = __mind_load_i64(request + 24);
+    let literal_len: i64 = __mind_load_i64(request + 32);
+    let arena: i64 = __mind_load_i64(request + 40);
+    let overflow: i64 = __mind_load_i64(request + 48);
+    let stack: i64 = __mind_load_i64(request + 56);
+    let guard: i64 = __mind_load_i64(request + 64);
+    let reserve: i64 = __mind_load_i64(request + 72);
+    let _clear: i64 = ndl_zero(output);
+    if version != 1 { return 1; }
+    if ndl_size(code_len) * ndl_size(meta_len) * ndl_size(relro_len) == 0 { return 2; }
+    if ndl_size(literal_len) * ndl_size(arena) * ndl_size(overflow) == 0 { return 2; }
+    if ndl_size(stack) * ndl_size(guard) * ndl_size(reserve) == 0 { return 2; }
+    if code_len == 0 { return 2; }
+    if meta_len == 0 { return 2; }
+    if relro_len == 0 { return 2; }
+    if arena < 8192 { return 3; }
+    if stack < 4096 { return 3; }
+    if guard < 4096 { return 3; }
+    if arena % 4096 != 0 { return 3; }
+    if overflow % 1048576 != 0 { return 3; }
+    if stack % 4096 != 0 { return 3; }
+    if guard % 4096 != 0 { return 3; }
+    if reserve % 4096 != 0 { return 3; }
+
+    let code_map: i64 = ndl_round(code_len, 4096);
+    let meta_map: i64 = ndl_round(meta_len, 4096);
+    let relro_map: i64 = ndl_round(relro_len, 4096);
+    let literal_map: i64 = ndl_round(literal_len, 4096);
+    if code_map < 0 { return 6; }
+    if meta_map < 0 { return 6; }
+    if relro_map < 0 { return 6; }
+    if literal_map < 0 { return 6; }
+    let meta_off: i64 = ndl_add(4096, code_map);
+    let relro_off: i64 = ndl_add(meta_off, meta_map);
+    let relro_end: i64 = ndl_add(relro_off, relro_map);
+    let context: i64 = ndl_add(4194304, relro_end);
+    let low_end: i64 = ndl_add(context, 4096);
+    if low_end < 0 { return 6; }
+    if low_end > 8388608 { return 4; }
+    let literal_end: i64 = ndl_add(8388608, literal_map);
+    if literal_end < 0 { return 6; }
+    if literal_end > 16777216 { return 5; }
+    let arena_end: i64 = ndl_add(16777216, arena);
+    let overflow_base: i64 = ndl_round(ndl_add(arena_end, guard), 1048576);
+    let overflow_end: i64 = ndl_add(overflow_base, overflow);
+    let stack_base: i64 = ndl_add(overflow_end, guard);
+    let stack_top: i64 = ndl_add(stack_base, stack);
+    if stack_top < 0 { return 6; }
+    let first_guard: i64 = overflow_base - arena_end;
+    // low_end-base counts the header, code, metadata, RELRO and context pages.
+    let low_mapped: i64 = low_end - 4194304;
+    let initial: i64 = ndl_add(ndl_add(ndl_add(low_mapped, literal_map), arena), stack);
+    let potential: i64 = ndl_add(initial, overflow);
+    let reserved: i64 = ndl_add(ndl_add(ndl_add(potential, first_guard), guard), reserve);
+    if reserved < 0 { return 6; }
+
+    let phnum: i64 = if literal_len > 0 { 14 } else { 13 };
+    let interp_off: i64 = 64 + phnum * 56;
+    let note_off: i64 = ndl_round(ndl_add(interp_off, 256), 4);
+    let note_end: i64 = ndl_add(note_off, 52);
+    if note_end < 0 { return 6; }
+    if note_end > 4096 { return 6; }
+    let file_end: i64 = ndl_add(relro_end, literal_map);
+    if file_end < 0 { return 6; }
+    if reserved > 2147483648 { return 7; }
+
+    let literal_off: i64 = if literal_len > 0 { relro_end } else { 0 };
+    __mind_store_i64(output + 8, 4194304);
+    __mind_store_i64(output + 16, 4096);
+    __mind_store_i64(output + 24, 4198400);
+    __mind_store_i64(output + 32, code_map);
+    __mind_store_i64(output + 40, meta_off);
+    __mind_store_i64(output + 48, 4194304 + meta_off);
+    __mind_store_i64(output + 56, meta_map);
+    __mind_store_i64(output + 64, relro_off);
+    __mind_store_i64(output + 72, 4194304 + relro_off);
+    __mind_store_i64(output + 80, relro_map);
+    __mind_store_i64(output + 88, context);
+    __mind_store_i64(output + 96, literal_off);
+    __mind_store_i64(output + 104, 8388608);
+    __mind_store_i64(output + 112, literal_map);
+    __mind_store_i64(output + 120, 16777216);
+    __mind_store_i64(output + 128, arena);
+    __mind_store_i64(output + 136, arena_end - 4096);
+    __mind_store_i64(output + 144, overflow_base);
+    __mind_store_i64(output + 152, overflow_end);
+    __mind_store_i64(output + 160, stack_base);
+    __mind_store_i64(output + 168, stack_top);
+    __mind_store_i64(output + 176, first_guard);
+    __mind_store_i64(output + 184, guard);
+    __mind_store_i64(output + 192, initial);
+    __mind_store_i64(output + 200, potential);
+    __mind_store_i64(output + 208, reserved);
+    __mind_store_i64(output + 216, file_end);
+    __mind_store_i64(output + 224, phnum);
+    __mind_store_i64(output + 232, reserve);
+    __mind_store_i64(output + 240, interp_off);
+    __mind_store_i64(output + 248, note_off);
+    __mind_store_i64(output, 1);
+    0
+}

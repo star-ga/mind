@@ -1,0 +1,223 @@
+// Copyright 2026 STARGA Inc.
+// Generic diagnostic transport/image composition; no production call admission.
+pub fn nif_read(p:i64,n:i64)->i64 {
+    let mut done:i64=0;
+    while done<n {
+        let got:i64=__mind_read(0,p+done,n-done,0-1);
+        if got<=0 { return 0; }
+        done=done+got;
+    }
+    1
+}
+pub fn nif_output(p:i64,n:i64)->i64 {
+    let mut done:i64=0;
+    while done<n {
+        let got:i64=__mind_write(1,p+done,n-done,0-1);
+        if got<=0 { return 0; }
+        done=done+got;
+    }
+    1
+}
+pub fn nif_view(p:i64,n:i64)->String {
+    // Borrowed immutable span; backing allocation contains these n bytes.
+    String { addr:p, len:n, cap:n }
+}
+pub fn nif_metadata(h:i64,diag:i64)->i64 {
+    let mode:i64=__mind_load_i64(h+8);
+    let value:i64=__mind_load_i64(h+16);
+    let offset:i64=__mind_load_i64(h+24);
+    let profile:i64=if mode==3 { value } else { 1 };
+    let mut plan:i64=nio_build(profile,diag);
+    let mut size:i64=if plan==0 { 0 } else { __mind_load_i64(plan+8) };
+    let mut show:i64=if mode==0 { 1 } else { if mode==1 { 1 } else { 0 } };
+    if plan!=0 {
+        if mode==2 {
+            if offset<0 { return 71; }
+            if offset>=size { return 71; }
+            __mind_store_i8(plan+offset,__mind_load_i8(plan+offset)^1);
+        }
+        let mut length:i64=size;
+        if mode==4 { length=value; }
+        if mode==5 { length=size-1; }
+        if mode==6 {
+            let grown:i64=__mind_alloc(size+1);
+            let _copy:i64=nio_copy(grown,plan,size);
+            __mind_store_i8(grown+size,0);
+            let _free:i64=nio_free(plan);
+            plan=grown;
+            length=size+1;
+        }
+        if mode==7 {
+            let own:i64=__mind_alloc(size);
+            let _copy:i64=nio_copy(own,plan,size);
+            let _free:i64=nio_free(plan);
+            let overwrite:i64=__mind_alloc(size);
+            let _zero:i64=nio_zero(overwrite,size);
+            __mind_free(overwrite);
+            plan=own;
+            show=1;
+        }
+        if mode!=0 {
+            let result:i64=nio_check(plan,length,1,diag);
+            if result!=0 { show=0; }
+        }
+    }
+    if show==0 { size=0; }
+    __mind_store_i64(diag+32,size);
+    if nif_output(diag,40)==0 { return 74; }
+    if size>0 { if nif_output(plan,size)==0 { return 74; } }
+    let _free:i64=nio_free(plan);
+    0
+}
+pub fn nif_combine(start:String,runtime:String,thunks:String,body:String)->String {
+    let a:String=nd_bytes(string_new(),string_addr(start),string_len(start));
+    let b:String=nd_bytes(a,string_addr(runtime),string_len(runtime));
+    let c:String=nd_bytes(b,string_addr(thunks),string_len(thunks));
+    nd_bytes(c,string_addr(body),string_len(body))
+}
+pub fn nif_image(h:i64,diag:i64)->i64 {
+    let nb:i64=__mind_load_i64(h+32);
+    let nc:i64=__mind_load_i64(h+40);
+    let np:i64=__mind_load_i64(h+48);
+    if nb<1 { return 71; }
+    if nb>16384 { return 71; }
+    if nc<0 { return 71; }
+    if nc>32 { return 71; }
+    if np<0 { return 71; }
+    if np>32 { return 71; }
+    let bodybuf:i64=__mind_alloc(nb);
+    let cs:i64=__mind_alloc(nc*16+8);
+    let ps:i64=__mind_alloc(np*16+8);
+    if nif_read(bodybuf,nb)==0 { return 71; }
+    if nif_read(cs,nc*16)==0 { return 71; }
+    if nif_read(ps,np*16)==0 { return 71; }
+    let eof:i64=__mind_alloc(8);
+    if __mind_read(0,eof,1,0-1)!=0 { return 71; }
+    __mind_free(eof);
+    let bundle:i64=nio_build(1,diag);
+    if bundle==0 { return 73; }
+    if nio_check(bundle,__mind_load_i64(bundle+8),1,diag)!=0 { return 73; }
+    let thunks:String=nif_view(bundle+__mind_load_i64(bundle+64),__mind_load_i64(bundle+72));
+    let body:String=nif_view(bodybuf,nb);
+    let request:i64=__mind_alloc(80);
+    let policy:i64=__mind_alloc(48);
+    let layout:i64=__mind_alloc(256);
+    let symbols:i64=__mind_alloc(80);
+    let startmeta:i64=__mind_alloc(64);
+    let rtmeta:i64=__mind_alloc(64);
+    let _zero:i64=nio_zero(request,80);
+    nio_put(request,0,1);
+    nio_put(request,1,nsa_code_size()+nda_code_size()+string_len(thunks)+nb);
+    nio_put(request,2,4096);
+    nio_put(request,3,4096);
+    nio_put(request,4,0);
+    nio_put(request,5,65536);
+    nio_put(request,6,1048576);
+    nio_put(request,7,1048576);
+    nio_put(request,8,4096);
+    nio_put(request,9,67108864);
+    let runtime:String=nda_emit(request,rtmeta);
+    if string_len(runtime)==0 { return 73; }
+    let rt:i64=nsa_code_size();
+    let io:i64=rt+string_len(runtime);
+    let main:i64=io+string_len(thunks);
+    let _symzero:i64=nio_zero(symbols,80);
+    nio_put(symbols,0,1);
+    nio_put(symbols,1,0);
+    nio_put(symbols,2,rt);
+    nio_put(symbols,3,string_len(runtime));
+    nio_put(symbols,4,__mind_load_i64(rtmeta+8));
+    nio_put(symbols,5,main);
+    nio_put(symbols,6,nb);
+    nio_put(symbols,7,0);
+    nio_put(symbols,8,7);
+    nio_put(symbols,9,4);
+    let mut imports:Vec=vec_new();
+    let imp:i64=bundle+__mind_load_i64(bundle+96);
+    let version:String=nif_view(bundle+__mind_load_i64(bundle+128),__mind_load_i64(bundle+136));
+    let mut i:i64=0;
+    while i<4 {
+        let row:i64=imp+i*40;
+        let name:String=nif_view(bundle+__mind_load_i64(row),__mind_load_i64(row+8));
+        imports=vec_push(imports,nd_import(name,version));
+        i=i+1;
+    }
+    imports=vec_push(imports,nd_import("__libc_start_main","GLIBC_2.34"));
+    imports=vec_push(imports,nd_import("__errno_location","GLIBC_2.2.5"));
+    imports=vec_push(imports,nd_import("lseek","GLIBC_2.2.5"));
+    let mut patches:Vec=vec_new();
+    patches=vec_push(patches,nd_patch(nsa_libc_fixup(),4));
+    let fixes:i64=bundle+__mind_load_i64(bundle+112);
+    i=0;
+    while i<4 {
+        patches=vec_push(patches,nd_patch(io+__mind_load_i64(fixes+i*24),__mind_load_i64(fixes+i*24+8)));
+        i=i+1;
+    }
+    i=0;
+    while i<np {
+        let off:i64=__mind_load_i64(ps+i*16);
+        let index:i64=__mind_load_i64(ps+i*16+8);
+        if off<2 { return 71; }
+        if off>nb-4 { return 71; }
+        if index<5 { return 71; }
+        if index>6 { return 71; }
+        patches=vec_push(patches,nd_patch(main+off,index));
+        i=i+1;
+    }
+    nio_put(policy,0,1);
+    nio_put(policy,1,65536);
+    nio_put(policy,2,1048576);
+    nio_put(policy,3,1048576);
+    nio_put(policy,4,4096);
+    nio_put(policy,5,67108864);
+    let interp:String=nif_view(bundle+__mind_load_i64(bundle+160),__mind_load_i64(bundle+168));
+    let soname:String=nif_view(bundle+__mind_load_i64(bundle+144),__mind_load_i64(bundle+152));
+    let draft_start:String=nsa_blob_p1(string_new(),0,0,0,0,0);
+    let draft:String=nif_combine(draft_start,runtime,thunks,body);
+    if ndx_plan(draft,0,imports,patches,interp,soname,string_new(),policy,layout)!=0 { return 73; }
+    nio_put(request,2,__mind_load_i64(layout+56));
+    nio_put(request,3,__mind_load_i64(layout+80));
+    i=0;
+    while i<nc {
+        let off:i64=__mind_load_i64(cs+i*16);
+        let kind:i64=__mind_load_i64(cs+i*16+8);
+        if off<0 { return 71; }
+        if off>nb-8 { return 71; }
+        if kind<1 { return 71; }
+        if kind>3 { return 71; }
+        let value:i64=if kind==1 { __mind_load_i64(layout+88) } else {
+            nd_code_addr()+io+if kind==2 { __mind_load_i64(bundle+80) } else { __mind_load_i64(bundle+88) }
+        };
+        __mind_store_i64(bodybuf+off,value);
+        i=i+1;
+    }
+    let start:String=nsa_emit(request,symbols,startmeta);
+    let final_runtime:String=nda_emit(request,rtmeta);
+    if string_len(start)==0 { return 73; }
+    if string_len(final_runtime)!=string_len(runtime) { return 73; }
+    let code:String=nif_combine(start,final_runtime,thunks,body);
+    let note_buf:i64=__mind_alloc(52);
+    let _notezero:i64=nio_zero(note_buf,52);
+    __mind_store_i32(note_buf,5);
+    __mind_store_i32(note_buf+4,32);
+    __mind_store_i32(note_buf+8,2);
+    __mind_store_i32(note_buf+12,1145981261);
+    let image:String=ndx_write_elf(code,0,imports,patches,interp,soname,string_new(),policy,nif_view(note_buf,52),layout);
+    if string_len(image)==0 { return 73; }
+    if nif_output(string_addr(image),string_len(image))==0 { return 74; }
+    0
+}
+pub fn main()->i64 {
+    let h:i64=__mind_alloc(56);
+    let diag:i64=__mind_alloc(40);
+    if nif_read(h,56)==0 { return 71; }
+    let kind:i64=__mind_load_i64(h);
+    if kind==0 {
+        let eof:i64=__mind_alloc(8);
+        if __mind_read(0,eof,1,0-1)!=0 { return 71; }
+        __mind_free(eof);
+        return nif_metadata(h,diag);
+    }
+    if kind==1 { return nif_image(h,diag); }
+    71
+}

@@ -40,11 +40,20 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `(source under `std/`, intrinsic the diagnostic must name, flag site defended)`
+/// `(source under `std/`, a world-reading intrinsic the source is known to call,
+/// flag site defended)`.
+///
+/// The diagnostic is NOT required to name that particular intrinsic: the veto
+/// names the FIRST hard-nondeterministic call in the lowered IR, so an edit that
+/// reorders a module (std/process.mind's checked `wait` now reads its exec-error
+/// pipe before it forks) moves which call is named without weakening anything.
+/// What `veto_fires_without_allow_nondeterministic` requires instead is that the
+/// named call is the one the library's own classifier picks from its classified
+/// set for that same source, and that the source really calls it.
 const CASES: &[(&str, &str, &str)] = &[
     // tests/std_surface_http.rs (compiles std/net.mind + std/http.mind)
     ("net.mind", "getsockname", "tests/std_surface_http.rs"),
-    // tests/std_surface_iouring.rs (two sites)
+    // tests/std_surface_iouring.rs (one shared compile, `iouring_so`)
     ("iouring.mind", "syscall", "tests/std_surface_iouring.rs"),
     // tests/std_surface_net_fs_process.rs (world-reading fixtures)
     ("fs.mind", "read", "tests/std_surface_net_fs_process.rs"),
@@ -54,6 +63,15 @@ const CASES: &[(&str, &str, &str)] = &[
         "tests/std_surface_net_fs_process.rs",
     ),
 ];
+
+/// The first call the library's determinism classifier treats as HARD
+/// nondeterministic in `src` (the same function `mindc`'s veto consults). Only
+/// names in the classified set can be returned.
+fn classified_offender(src: &str) -> Option<String> {
+    let module = libmind::parser::parse(src).expect("std source must parse");
+    let ir = libmind::eval::lower::lower_to_ir(&module).expect("std source must lower");
+    libmind::ir::ir_first_hard_nondeterministic_call(&ir)
+}
 
 fn std_source(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -97,9 +115,22 @@ fn compile(src: &Path, tag: &str, allow: bool) -> (bool, String) {
 #[test]
 fn veto_fires_without_allow_nondeterministic() {
     let mut ran = 0usize;
-    for (name, offender, site) in CASES {
+    for (name, known, site) in CASES {
         let src = std_source(name);
         assert!(src.exists(), "missing std source {src:?}");
+        let text = std::fs::read_to_string(&src).expect("read std source");
+        // Positive control: the case really is a world-reading source.
+        assert!(
+            text.contains(&format!("{known}(")),
+            "std/{name}: no longer calls `{known}()`; update this case's known offender"
+        );
+        let offender = classified_offender(&text).unwrap_or_else(|| {
+            panic!("std/{name}: the classifier found no hard-nondeterministic call at all")
+        });
+        assert!(
+            text.contains(&format!("{offender}(")),
+            "std/{name}: classifier named `{offender}()`, which the source does not call"
+        );
         let (ok, stderr) = compile(&src, &format!("refusal_{name}"), false);
         assert!(
             !ok,

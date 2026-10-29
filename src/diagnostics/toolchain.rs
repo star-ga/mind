@@ -103,6 +103,111 @@ pub fn with_bufferize_hint(path: &str, mut stderr: String) -> String {
     stderr
 }
 
+/// [`llvm_major`] of `tool`, probed once per process and path: a project build
+/// compiles many modules, and the answer cannot change under a running build.
+fn cached_major(tool: &str) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashMap<String, Option<u32>>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(major) = seen.lock().ok().and_then(|m| m.get(tool).copied()) {
+        return major;
+    }
+    let major = llvm_major(tool);
+    if let Ok(mut m) = seen.lock() {
+        m.insert(tool.to_string(), major);
+    }
+    major
+}
+
+/// The E5004 explanation for a tensor-pipeline failure on the `mlir-opt` at
+/// `path`, of LLVM `major` (`None` when its `--version` states none), or
+/// `None` when that `mlir-opt` is new enough. `newer` is an installed
+/// `mlir-opt` that would do.
+pub fn old_mlir_opt_note(
+    path: &str,
+    major: Option<u32>,
+    newer: Option<(u32, PathBuf)>,
+) -> Option<String> {
+    if major.is_some_and(|m| m >= MIN_MLIR_MAJOR) {
+        return None;
+    }
+    let switch = match newer {
+        Some((m, bin)) => format!("LLVM {m} is installed in {}: {SWITCH}", bin.display()),
+        None => {
+            format!("install mlir-{MIN_MLIR_MAJOR}-tools and clang-{MIN_MLIR_MAJOR}, then {SWITCH}")
+        }
+    };
+    Some(format!(
+        "[{code}] the tensor pipeline (one-shot-bufferize) needs MLIR/LLVM {MIN_MLIR_MAJOR} \
+         or newer; the mlir-opt in use ({path}) is {}. {switch}",
+        found(major),
+        code = crate::diagnostics::capability::NATIVE_TOOLCHAIN_ABSENT
+    ))
+}
+
+fn found(major: Option<u32>) -> String {
+    match major {
+        Some(m) => format!("LLVM {m}"),
+        None => "a version its `--version` output does not state".to_string(),
+    }
+}
+
+/// The one-line warning for running the tensor pipeline on an `mlir-opt`
+/// older than [`MIN_MLIR_MAJOR`]. Such a build is NOT refused: MLIR is an
+/// optional backend and many tensor programs build correctly on LLVM 18.
+pub fn old_mlir_opt_warning(path: &str, major: Option<u32>) -> String {
+    format!(
+        "warning[build]: mlir-opt {path} is {}; the tensor pipeline (one-shot-bufferize) \
+         is supported on MLIR/LLVM {MIN_MLIR_MAJOR} or newer, building anyway",
+        found(major)
+    )
+}
+
+/// For a tensor-pipeline run on the `mlir-opt` at `path`: `None` when it is new
+/// enough, else the [`old_mlir_opt_note`] to append if `mlir-opt` then FAILS.
+/// The first call per path in a process also prints [`old_mlir_opt_warning`]
+/// (once: a project build runs the pipeline for every module).
+pub fn tensor_pipeline_note(path: &str) -> Option<String> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let major = cached_major(path);
+    old_mlir_opt_note(path, major, None)?;
+    let first = WARNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut w| w.insert(path.to_string()))
+        .unwrap_or(false);
+    if first {
+        eprintln!("{}", old_mlir_opt_warning(path, major));
+    }
+    let newer = installed("mlir-opt")
+        .into_iter()
+        .find(|(m, _)| *m >= MIN_MLIR_MAJOR);
+    old_mlir_opt_note(path, major, newer)
+}
+
+/// The toolchain a native build ran with — each tool's resolved path and LLVM
+/// major — as one line, e.g.
+/// `mlir-opt /usr/lib/llvm-20/bin/mlir-opt (LLVM 20); ...`.
+#[cfg(feature = "mlir-subprocess")]
+pub fn describe_toolchain(tools: &[(&str, &str)]) -> String {
+    tools
+        .iter()
+        .map(|(name, tool)| {
+            let path = which::which(tool)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| tool.to_string());
+            match cached_major(tool) {
+                Some(m) => format!("{name} {path} (LLVM {m})"),
+                None => format!("{name} {path} (LLVM version unknown)"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The refusal for a CPU executable one of whose modules fell back to the
 /// runtime-JIT object, naming the missing tool when that was the `cause`.
 pub fn fallback_link_refusal(cause: FallbackReason) -> String {
@@ -159,5 +264,31 @@ mod tests {
         );
         assert_eq!(bufferize_note(err, 20, None), None, "MLIR 20 needs no note");
         assert_eq!(bufferize_note("error: unknown op", 18, None), None);
+    }
+
+    #[test]
+    fn notes_and_warns_below_the_minimum_and_names_both_versions() {
+        let msg = old_mlir_opt_note("/usr/bin/mlir-opt", Some(18), None).expect("noted");
+        assert!(msg.starts_with("[E5004] "), "{msg}");
+        assert!(msg.contains("needs MLIR/LLVM 20 or newer"), "{msg}");
+        assert!(msg.contains("(/usr/bin/mlir-opt) is LLVM 18"), "{msg}");
+        assert!(msg.contains("mlir-20-tools"), "{msg}");
+        let newer = Some((20, PathBuf::from("/usr/lib/llvm-20/bin")));
+        let msg = old_mlir_opt_note("mlir-opt", Some(18), newer).expect("noted");
+        assert!(
+            msg.contains("LLVM 20 is installed in /usr/lib/llvm-20/bin"),
+            "{msg}"
+        );
+        assert!(
+            old_mlir_opt_note("x", None, None)
+                .expect("unknown noted")
+                .contains("does not state")
+        );
+        assert_eq!(old_mlir_opt_note("x", Some(20), None), None);
+        assert_eq!(old_mlir_opt_note("x", Some(21), None), None);
+        let warning = old_mlir_opt_warning("/usr/bin/mlir-opt", Some(18));
+        assert!(!warning.contains('\n'), "one line: {warning}");
+        assert!(warning.starts_with("warning[build]: "), "{warning}");
+        assert!(warning.contains("is LLVM 18") && warning.contains("building anyway"));
     }
 }

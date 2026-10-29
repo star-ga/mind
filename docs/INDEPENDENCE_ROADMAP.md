@@ -363,6 +363,53 @@ check still make sense if the compiler had only ONE emitter?**
   (free, any time after E1) with "delete LLVM" (gated on C6).** Both keep speed; only the
   second could lose it if sequenced before C6 lands.
 
+### Bootstrap seed-advance policy (two-hop pure-MIND advance; no silent reseed)
+> Added 2026-10-17. Binds the next advance of the frozen seeds
+> (`examples/mindc_mind/testdata/selfhost_loop{,_bounded}/`) and every one after it.
+
+The frozen `stage1.elf` is the checked-in stage0 of the surviving **stage-N reproduces
+stage-N+1** fixed point above. How it advances decides whether the pure-MIND seed chain stays
+continuous, so the rule is fixed here rather than chosen by whoever runs the advance.
+
+1. **The next seed advance is a TWO-HOP pure-MIND advance:**
+   `python3 examples/mindc_mind/self_host_loop_smoke.py --advance --hops 2`.
+   - Hop 1: the OLD frozen seed compiles the current source into `stage1`. `stage1` is the new
+     compiler built with the OLD codegen, so when the source changes codegen `stage1 != stage2`
+     is expected. `stage1` is an intermediate and is **never published**.
+   - Hop 2: `stage1` compiles the same source into `stage2`; `stage2` compiles it into `stage3`.
+   - **Publish `stage2` only once `stage2 == stage3`**, and only when a fresh Rust oracle on the
+     same source emits exactly `stage2`. Otherwise nothing is written.
+   - Every stage descends from the previous pure-MIND compiler, so the seed chain is unbroken
+     and the trusting-trust surface does not grow. The receipt records `advance_hops 2`,
+     `intermediate_stage1_sha256`, `published_stage stage2` and a `PURE-MIND two-hop`
+     `seed_chain` row.
+2. **Why two hops and never three.** `stage1` and `stage2` are two compilations of the same
+   source. If the old seed compiled it correctly they are the same compiler, so
+   `stage1(src) == stage2(src)`, i.e. `stage2 == stage3`. A codegen change explains
+   `stage1 != stage2`; nothing legitimate explains `stage2 != stage3`. That is a miscompile or
+   nondeterminism, and a third hop would launder it into the seed. `--hops` accepts `1` or `2`
+   only.
+3. **One hop stays the default and stays strict.** Plain `--advance` still requires
+   `stage1 == stage2 == stage3` and refuses a codegen change. When the refused shape has
+   `stage2 == stage3`, its message names `--advance --hops 2` as the next step.
+4. **Never a silent `--reseed`.** Minting the seed from the cargo-built `.so` (`--reseed`) is
+   allowed only as a **disclosed, reviewed exception**, for a source the old seed cannot compile
+   at all (hop 1 fails, so no pure-MIND advance can start). The change that commits it says so
+   in its message and is reviewed on that basis, and its receipt's `seed_chain` row records,
+   verbatim from `examples/mindc_mind/_selfhost_loop_reseed.py`:
+   "the pure-MIND seed chain is broken for that hop".
+   A reseed used to get past a codegen change that `--advance --hops 2` would accept violates
+   this policy.
+5. **Order for the two fixtures.** Advance the DEFAULT seed first, in two hops. Then re-bless the
+   bounded seed with `self_host_bounded_profile_smoke.py --bless`, which derives it from the
+   frozen default seed and requires the derived seed to reproduce itself. After step 1 that
+   default seed already carries the new codegen, so one pure-MIND derivation is enough. Blessed
+   from the OLD default seed, the bounded seed is the old-codegen intermediate and fails its own
+   fixed-point check.
+6. **At E1** the Rust oracle leg of `--advance` is set-A scaffolding and retires with the Rust
+   emitter. The two-hop rule stays. The E1 change must name the second independent witness that
+   replaces the oracle; an advance never publishes on a single witness.
+
 ---
 
 ## Claim gate (what each milestone lets us say — honestly)

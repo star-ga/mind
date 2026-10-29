@@ -1,0 +1,9 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn af_helper(x:i64)->i64 {x+7}
+fn af_test(x:i64)->i64 {
+ let mut k:i64=af_helper(3);
+ if x==0{k=k+(close((0-1) as i32) as i64);}else{k=k+2;}
+ k=af_helper(k);
+ if x==0{if k!=16{return 91;}}else{if k!=19{return 92;}}0
+}
+fn main()->i64 {if af_test(0)!=0{return 91;}if af_test(1)!=0{return 92;}0}

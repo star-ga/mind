@@ -1,0 +1,55 @@
+// Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+fn fzh() -> i64 {
+    if 0 == 0 {
+        let mut k0: i64 = 0;
+        while k0 < 2 {
+            k0 = (k0 + 1);
+            let mut k1: i64 = 0;
+            while k1 < 1 {
+                k1 = (k1 + 1);
+                let mut x10: i64 = 6;
+                let mut ba: i64 = x10;
+            }
+            let mut d: i64 = k1;
+        }
+        let mut u: i64 = (k0 + 1);
+        u = (u + 1);
+    }
+    let mut k2: i64 = 0;
+    while k2 < 1 {
+        k2 = (k2 + 1);
+        let mut k3: i64 = 0;
+        while k3 < 1 {
+            k3 = (k3 + 1);
+            let mut k4: i64 = 0;
+            while k4 < 1 {
+                k4 = (k4 + 1);
+                let mut k5: i64 = 0;
+                while k5 < 2 {
+                    k5 = (k5 + 1);
+                    let mut x2: i64 = 3;
+                }
+                if k4 > 5 {
+                    break;
+                }
+            }
+        }
+    }
+    return k2;
+}
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    a = (a + a);
+    if a >= 5 {
+        let mut k6: i64 = 0;
+        while k6 < 1 {
+            k6 = (k6 + 1);
+            a = a;
+            if a >= 3 {
+                a = k6;
+            }
+        }
+    }
+    let mut zcall: i64 = fzh();
+    return zcall + a;
+}

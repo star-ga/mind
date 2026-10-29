@@ -1,0 +1,7 @@
+// A8 fail-closed: a `;`-less const whose initializer is an EXPRESSION. The
+// native port only inlines a single int token; it must refuse, never inline
+// the bare first operand (1). MLIR evaluates it to 3.
+const K: i64 = 1 + 2
+fn main() -> i64 {
+    K
+}

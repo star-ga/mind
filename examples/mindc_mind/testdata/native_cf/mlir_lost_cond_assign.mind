@@ -1,0 +1,21 @@
+// Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
+// a `while` CONDITION is lost after the loop on MLIR (x stays 14, exit 14).
+// MIND keeps the store: the condition ran once and set x to 0, so the native
+// backend and the interpreter exit 0.
+// expect: exit=0
+// stdout:
+// note: 2
+// mlir: exit=14
+fn main() -> i64 {
+    let mut x: i64 = 14;
+    let mut c: i64 = 0;
+    while 10 < (if c <= 6 {
+        x = c;
+        x
+    } else {
+        1
+    }) && c < 4 {
+        c = c + 1;
+    }
+    x
+}

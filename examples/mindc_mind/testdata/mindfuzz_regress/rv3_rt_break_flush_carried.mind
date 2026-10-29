@@ -1,0 +1,16 @@
+// Regression class (twin-emitter review round 3, runtime leg): native ELF break must flush carried values written before it (later if-merge owns the post slot).
+fn main() -> i64 {
+    let mut a: i64 = 5;
+    let mut c: i64 = 0;
+    while c < 7 {
+        a = c * 3;
+        if c < 6 {
+            break;
+        }
+        if a == 2 {
+            a = 9;
+        }
+        c = c + 1;
+    }
+    return a;
+}

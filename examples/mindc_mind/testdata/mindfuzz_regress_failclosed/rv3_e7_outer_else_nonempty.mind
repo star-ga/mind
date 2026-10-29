@@ -1,0 +1,30 @@
+// Regression class (twin-emitter review round 3): read of an earlier loop's exit id inside a while nested in an else-branch (phantom alias-break ids).
+fn main() -> i64 {
+    let mut k5: i64 = 0;
+    while k5 < 3 {
+        k5 = (k5 + 1);
+        let mut k6: i64 = 0;
+        while k6 < 3 {
+            k6 = (k6 + 1);
+            let mut h: i64 = 2;
+        }
+    }
+    if k5 >= 5 {
+        if k5 != 0 {
+        } else {
+            let mut k7: i64 = 0;
+            while k7 < 1 {
+                k7 = (k7 + 1);
+                let mut k8: i64 = 0;
+                while k8 < 2 {
+                    k8 = (k8 + 1);
+                    let mut g: i64 = k5;
+                }
+            }
+        }
+    } else {
+        let mut e: i64 = 1;
+    }
+    let mut zcall: i64 = 0;
+    return zcall + k5;
+}

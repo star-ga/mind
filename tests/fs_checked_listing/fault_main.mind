@@ -1,0 +1,4 @@
+// Author: STARGA Inc. All predeclared synthetic cases, no real syscall authority.
+pub fn main() -> i64 {
+    fcf_all()
+}

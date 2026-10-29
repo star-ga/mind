@@ -179,24 +179,40 @@ fn std_symbol_collision_is_refused() {
 
 /// An out-of-profile construct in a REACHABLE imported body refuses, and the
 /// diagnostic distinguishes the Rust fence from the frozen parser.
+///
+/// L12 proves reachable imported `/` via `reachable_div_in_import`.
+/// After L9 admits array reads, an f32 comparison still exercises the
+/// whole-closure fence. Require its named refusal, never a parser failure.
 #[test]
 fn reachable_out_of_profile_import_is_refused_by_the_fence() {
-    let p = Project::new("reach_div");
+    let p = Project::new("reach_f32cmp");
     p.write(
         "src/helper.mind",
-        "pub fn halve(x: i64) -> i64 {\n    return x / 2;\n}\n",
+        "pub fn lt(a: f32, b: f32) -> i64 {\n    if a < b {\n        return 1;\n    }\n    return 0;\n}\n",
     );
     p.write(
         "src/main.mind",
-        "import helper;\n\nfn main() -> i64 {\n    return halve(14);\n}\n",
+        "import helper;\n\nfn main() -> i64 {\n    return lt(1.0, 2.0);\n}\n",
     );
     let (code, err, artifact) = p.build_native("src/main.mind");
-    assert_ne!(code, 0, "a reachable `/` must refuse: {err}");
+    assert_ne!(code, 0, "a reachable f32 compare must refuse: {err}");
     assert!(artifact.is_none());
     assert!(
-        err.contains("frozen native profile") || err.contains("binop.div"),
+        f32_fence_refusal(&err),
         "the FENCE must own this refusal, not the frozen parser: {err}"
     );
+}
+
+fn f32_fence_refusal(err: &str) -> bool {
+    err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
+        && err.contains("No artifact written.")
+}
+
+#[test]
+fn frozen_parser_f32_error_is_not_a_fence_refusal() {
+    assert!(!f32_fence_refusal("frozen parser rejected f32 syntax"));
+    assert!(!f32_fence_refusal("out-of-profile construct: f32"));
+    assert!(!f32_fence_refusal("frozen native profile rejected f32"));
 }
 
 /// TWO INVOCATION FORMS agree byte-for-byte: an explicit entry path, and no path

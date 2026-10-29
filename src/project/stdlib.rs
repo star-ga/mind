@@ -45,6 +45,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
+    ("std.fs_checked", include_str!("../../std/fs_checked.mind")),
     ("std.http", include_str!("../../std/http.mind")),
     ("std.io", include_str!("../../std/io.mind")),
     ("std.io_canon", include_str!("../../std/io_canon.mind")),
@@ -52,6 +53,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.json", include_str!("../../std/json.mind")),
     ("std.map", include_str!("../../std/map.mind")),
     ("std.net", include_str!("../../std/net.mind")),
+    ("std.posix", include_str!("../../std/posix.mind")),
     ("std.process", include_str!("../../std/process.mind")),
     ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
@@ -162,6 +164,7 @@ mod tests {
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
         assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.fs_checked"));
         assert!(names.contains(&"std.http"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
@@ -192,6 +195,8 @@ mod tests {
         assert!(table.resolves(&["std".into(), "json".into()], "jv_parse"));
         assert!(table.resolves(&["std".into(), "regex".into()], "rx_compile"));
         assert!(table.resolves(&["std".into(), "fs".into()], "read_to_string"));
+        assert!(table.resolves(&["std".into(), "fs_checked".into()], "fs_read_dir_checked"));
+        assert!(table.resolves(&["std".into(), "fs_checked".into()], "fs_dir_list_free"));
         assert!(table.resolves(&["std".into(), "http".into()], "http_get"));
         assert!(table.resolves(&["std".into(), "http".into()], "http_post"));
         assert!(table.resolves(&["std".into(), "net".into()], "tcp_listen"));

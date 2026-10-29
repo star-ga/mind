@@ -7,6 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the self-host seed chain is tool-produced and tool-verified
+- `self_host_loop_smoke.py --advance` refuses a no-op: when the new fixed point
+  is the current seed it prints `BLOCKED: --advance would republish the current
+  seed unchanged; nothing written.` and exits 2 before publication (the
+  `(unchanged bytes)` label is gone). The bounded profile's `--bless` refuses the
+  same way.
+- Every `--advance` receipt (one or two hops) now ends with a COMPUTED
+  `seed_chain` row, `<sha256>[:intermediate] -> ... -> <published sha256>`,
+  starting at the chain root `abb0622b…`. One function derives it by walking the
+  receipts on every ref and tag back to the root; the old literal two-hop
+  sentence is gone. An advance whose old seed has no resolvable chain is refused
+  before the oracle runs or anything is written.
+- New build-free `--verify-chain` mode, run in CI with full history from the
+  advancement harness controls (not as a second CI argument list of the
+  compiler-dependent loop smoke, which the vacuity sweep and the loop-gate
+  wiring guards would read as a compiler-free loop gate): it
+  re-derives the chain, requires every link to resolve, checks `stage1.elf`
+  against the committed MANIFEST row and the head receipt's `seed_chain` row
+  against the derived chain, prints one `PASS [CHAIN]` line per link, and
+  BLOCKs (exit 2, never a pass) on a shallow clone, without git, or with fewer
+  than two historical receipts. Receipts before the root are listed as
+  PRE-ROOT lines, never as chain links.
+- The receipt writer and the chain walk live in the loop's seed-provenance
+  support module, keeping the gate entrypoint under the 800-line ceiling.
+
+### Fixed — lane gate workflow failure collection
+- Repair YAML and shell syntax in the three newly collected smoke steps.
+  Keep each aggregate failure exit inside its step; preserve the original
+  30-minute cross-substrate and 55-minute keystone job limits.
+- Capture smoke output without a status-masking pipeline in the grown-subset,
+  native byte-identity canary, native float/SIMD, and front-end corpus loops.
+
+### Added — lane operator differential coverage
+- `native_lane_op_differential_smoke.py` checks a seeded scalar corpus,
+  including reachable division in an imported helper. Both LLVM 20 and LLVM 23
+  keystone legs run x86 three-path checks (native-lane ELF, MLIR, evaluator).
+  Both LLVM legs of `cross_substrate_identity` run the same corpus as a named
+  ARM neon MLIR/evaluator step. The native leg is x86-only by construction;
+  ARM neon validation is CI-only until an ARM node is available.
+- Division edges are pinned per path, expectation follows D1: native/MLIR
+  trap 79 on a zero divisor and on i64 `INT_MIN / -1` and `INT_MIN % -1`;
+  i8/i16/i32 `MIN / -1` gives `MIN` and `MIN % -1` gives `0` with no trap, as
+  docs/errors.md defines and the division-trap smoke already pins on both
+  backends; unsupported native narrow types require the named
+  `lane.type.unsupported` refusal.
+  The evaluator pins measured values or exact named errors and overflow
+  panics. Unrelated process failures never satisfy an evaluator pin.
+
+### Added — native-lane request corpus (native-wave2 / native-wave3 programs)
+- `tests/native_lane_request_fixtures.rs` runs 172 programs from the native-wave2 and
+  native-wave3 checkpoints and from the native admission requests
+  (`tests/fixtures/native_lane/request_corpus.txt`) on native-lane-v1. 44 build
+  natively and match the MLIR backend (exit code and stdout); 115 are refused with a
+  named lane kind and no artifact. A compiler whose seed predates the lane refuses 138
+  of them with exit 3 (the ignored RED leg, run with `MIND_LANE_PRESEED_MINDC`).
+- 13 programs build on the lane and exit differently from MLIR: allocation sizes of 0
+  or less (the C runtime returns 0, the native arena a pointer), 2000 allocations of
+  1 MB freed in a loop (the native build traps), a non-canonical `bool` argument used
+  with `!`, `== true` or arithmetic, and an `f64` result from `main`. They stay in an
+  ignored open-defect test until each is a named refusal or matches MLIR.
+
+### Added — native variadic C-call emitter component
+- Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
+
+### Fixed — std.sha256 uses bounded scratch and never returns an unwritten digest
+- The raw entry used to allocate a fresh 512-byte schedule per message block, plus a
+  padded copy of the message and the hash state, and did not check allocation failure.
+  Repeated hashing could exhaust memory. It now uses one 704-byte scratch, reused for
+  every block and freed before it returns; whole input blocks are read in place and only
+  the final one or two padded blocks are copied.
+- New `sha256_checked(input, len, out)`: returns 0 after writing exactly 32 bytes, `-1`
+  for an invalid length or address range, `-2` when the scratch allocation fails. On
+  failure the output is not written.
+- `sha256(input, len, out)` keeps its zero-returning success ABI, but on any failure it
+  now calls the runtime trap `__mind_assert_fail` instead of returning, so a caller that
+  ignores the return value can no longer read an uninitialized digest. The intrinsic is
+  registered in the std surface with its existing determinism class. Backends that cannot
+  execute it refuse the program.
+- `hash(bytes)` returns 0 after freeing its temporaries when an allocation fails.
+- Contract and reproduction: `docs/sha256-memory-contract.md`,
+  `scripts/sha256_memory_regression.sh` (KATs, 100,000 repeated hashes under a 32 MiB
+  address-space cap, allocation faults, source mutations, legacy trap). The older
+  `tests/sha256_lifetime` controls describe the replaced contract; they are kept as the
+  record of that review and refuse any other subject.
+- `std/sha256.mind` is a native-seed module, so this change moves the std seed blob
+  (part of the seed batch; see the std.iouring entry).
+
+### Fixed — std.iouring waits are bounded and report the kernel's reason
+- On Linux 6.6 `io_uring_multishot_recv_demo` hung: it armed a multishot RECV with
+  `sqe.len = 256`, which that kernel rejects with one terminal `-EINVAL` CQE, then waited
+  for three completions with no timeout. `io_ring_submit_recv_multishot` now refuses a
+  nonzero length with `-EINVAL` on every kernel, and the demo submits length 0.
+- `io_ring_enter` waits at most `io_ring_wait_bound_ns()` (5 s) through
+  `IORING_ENTER_EXT_ARG`; `io_ring_enter_timeout` takes an explicit bound.
+  `io_ring_wait_multishot` stops at the first terminal CQE (no `IORING_CQE_F_MORE`, or a
+  negative `res`), when it has the completions it needs, or when a bounded wait expires.
+- `io_ring_reap` / `io_ring_reap_full` sign-extend `cqe.res`. An error CQE used to read as
+  a 4-billion byte count.
+- `io_ring_try_new_flags` reports why a ring could not be created through its `err_out`
+  slot: `io_uring_setup`'s `-errno` (a setup flag or ring size the kernel refuses, io_uring
+  disabled), or `iouring_err_kernel_feature()` for a kernel without
+  `IORING_FEAT_SINGLE_MMAP` / `IORING_FEAT_EXT_ARG`. `io_uring_nop`, the multishot recv /
+  accept demos and the O_DIRECT round-trip return that reason instead of a bare -1.
+  `io_uring_register` results are `-errno` too. The surface's own codes (`iouring_err_*`)
+  are all at or below -4096, outside the errno range.
+- `std/iouring.mind` is a native-seed module, so this change moves the std seed blob.
+  Measured on its own over the pre-batch std, it moved `SEED_BLOB_SHA256` 199f304b… ->
+  8e29ed8b…; in the seed batch (with the std.sha256 and json/toml changes) the blob is
+  45218a70… (`stdlib_manifest_lint.py --print-seed-sha256`). Until the next seed event advances the
+  frozen self-host seeds (`self_host_loop_smoke.py --advance`, then the bounded seed and the
+  manifest pin), the native backend refuses to build against the unpinned blob and the
+  self-host loop verifies a new fixed point (0c9036e6…) instead of the frozen seed.
+
+### Fixed — the native bridge reports the compiler child's real outcome
+- When streaming the source image to the native compiler fails, the bridge no longer
+  exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then
+  SIGKILL and reap), and reports the actual outcome: exit status, or terminating signal
+  name and number with the core flag, plus up to 64 KiB of the child's stderr. The exit
+  stays nonzero (the child's own code, `128 + signal`, or 2) and no artifact is written.
+  Measured: the committed seed under `RLIMIT_AS = 2 GiB` now reports
+  `terminated by signal 11 (SIGSEGV)` (its execve fails with ENOMEM).
+- Both output pipes are drained while the image is written. A compiler that filled its
+  stderr before reading stdin used to deadlock the bridge.
+- A compiler killed by a signal on the normal path is reported by signal and exits
+  `128 + signal`, instead of "rejected the program (exit 1)".
+- These compiler-process failures now carry the stable code `E6011`
+  (`error[backend-native][E6011]: ...`, docs/errors.md). The code covers a stream
+  failure, a signal death, a child that could not be reaped, and a compiler ELF that
+  could not be spawned (the OS error is named). A compiler that read the whole image
+  and refused the program keeps its uncoded "rejected the program (exit N)" verdict.
+- The stderr report keeps the TAIL as well as the head: the first 16 KiB and the last
+  48 KiB, with the number of bytes left out between them. A compiler that logs a lot
+  and then dies no longer has its last lines cut off.
+
+### Fixed — checked process wait and spawn_capture descriptors
+- `std.process.wait` retries `EINTR` and returns an error record when `waitpid`
+  fails. Waiting on a non-child is no longer reported as exit 0 / signal 0.
+- Exit, signal, core-dump and stopped statuses stay distinct. `wait_flags`
+  passes the `waitpid` options through (`WNOHANG`, `WUNTRACED`).
+- `spawn` and `spawn_capture` publish a failed `exec` on `child_exec_errno`
+  via a close-on-exec pipe. Exit status 127 by itself is not that failure.
+- `spawn_capture` reads pipe ends as full ints and closes every end it opened
+  when `pipe` or `fork` fails, including descriptors at or above 65536.
+
 ### Fixed — whole-array binary operators on the native backend (#287)
 - Whole-array binary operators on the native backend built a binary that returned
   wrong values. The miscompile existed on main after #110 and before #287 and was

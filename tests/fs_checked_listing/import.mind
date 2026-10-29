@@ -1,0 +1,17 @@
+// Author: STARGA Inc. Exercise the embedded module through its public import.
+use std.fs_checked;
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(8);
+    if out == 0 { return 2; }
+    __mind_store_i64(out, 1729);
+    let code: i64 = fs_read_dir_checked(0, 0, 1, 1, out);
+    let mut failures: i64 = 0;
+    if code != 0 - 22 { failures = failures + 1; }
+    if __mind_load_i64(out) != 1729 { failures = failures + 1; }
+    if fs_dir_list_free(0) != 0 { failures = failures + 1; }
+    __mind_free(out);
+    print(failures);
+    if failures != 0 { return 1; }
+    0
+}

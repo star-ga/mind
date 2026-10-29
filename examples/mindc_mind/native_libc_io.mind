@@ -1,0 +1,343 @@
+// Copyright 2026 STARGA Inc.
+// Fixed libc read/write runtime recipe. No production intrinsic-site admission.
+// Checked entrypoints: nio_build, nio_check. Other pub symbols are internal
+// helpers with live, validated input/output preconditions. No caller may select
+// generated origin, names or source declarations. Raw and legacy I/O unchanged.
+
+pub fn nio_zero(p:i64,n:i64)->i64 {
+    let mut i:i64=0;
+    while i<n { __mind_store_i8(p+i,0); i=i+1; }
+    0
+}
+pub fn nio_copy(dst:i64,src:i64,n:i64)->i64 {
+    let mut i:i64=0;
+    while i<n { __mind_store_i8(dst+i,__mind_load_i8(src+i)); i=i+1; }
+    0
+}
+pub fn nio_same(a:i64,b:i64,n:i64)->i64 {
+    let mut i:i64=0;
+    let mut same:i64=1;
+    while i<n {
+        if __mind_load_i8(a+i)!=__mind_load_i8(b+i) { same=0; }
+        i=i+1;
+    }
+    same
+}
+pub fn nio_error(diag:i64,code:i64,offset:i64,underlying:i64)->i64 {
+    __mind_store_i64(diag,code);
+    __mind_store_i64(diag+8,offset);
+    __mind_store_i64(diag+16,underlying);
+    0
+}
+pub fn nio_source()->String {
+    let p:i64=__mind_alloc(228);
+    if p==0 { return string_new(); }
+    let _clear:i64=nio_zero(p,228);
+    __mind_store_i64(p+0,2459086834151749733);
+    __mind_store_i64(p+8,2336917546342556227);
+    __mind_store_i64(p+16,4207600275539715442);
+    __mind_store_i64(p+24,4208179966333039465);
+    __mind_store_i64(p+32,3186425518617881898);
+    __mind_store_i64(p+40,3924106922067062627);
+    __mind_store_i64(p+48,4266094572669315380);
+    __mind_store_i64(p+56,7018141420232795680);
+    __mind_store_i64(p+64,3617350625222076516);
+    __mind_store_i64(p+72,8461465705214468652);
+    __mind_store_i64(p+80,8462091266429362292);
+    __mind_store_i64(p+88,8010835245684913262);
+    __mind_store_i64(p+96,3920729222195406438);
+    __mind_store_i64(p+104,4266094572669315380);
+    __mind_store_i64(p+112,8388361636925040160);
+    __mind_store_i64(p+120,3617350625222076517);
+    __mind_store_i64(p+128,8026305391219794476);
+    __mind_store_i64(p+136,7146148784436966254);
+    __mind_store_i64(p+144,3762323432636577135);
+    __mind_store_i64(p+152,2322507441138183465);
+    __mind_store_i64(p+160,8388361638262107750);
+    __mind_store_i64(p+168,3617350625222076517);
+    __mind_store_i64(p+176,8026305391219794476);
+    __mind_store_i64(p+184,7146148784436966254);
+    __mind_store_i64(p+192,3762323432636577135);
+    __mind_store_i64(p+200,4212103097811889964);
+    __mind_store_i64(p+208,3920733314288465513);
+    __mind_store_i64(p+216,2099264308);
+    String { addr:p, len:220, cap:228 }
+}
+pub fn nio_name_bits(index:i64)->i64 {
+    if index==0 { return 1684104562; }
+    if index==1 { return 431130767984; }
+    if index==2 { return 435744764535; }
+    if index==3 { return 111550659721072; }
+    0
+}
+pub fn nio_name_length(index:i64)->i64 {
+    if index==0 { return 4; }
+    if index==3 { return 6; }
+    5
+}
+pub fn nio_type_key(t:i64)->i64 {
+    if t==0 { return 0; }
+    let n:i64=__mind_load_i64(t);
+    if n<1 { return 0; }
+    if n>2 { return 0; }
+    let mut out:i64=n<<32;
+    let mut i:i64=0;
+    while i<n { out=out | (__mind_load_i8(t+8+i)<<(i*8)); i=i+1; }
+    out
+}
+pub fn nio_row_ok(r:i64,index:i64)->i64 {
+    let row:i64=__mind_load_i64(__mind_load_i64(r+16)+index*8);
+    let source:i64=__mind_load_i64(r);
+    let length:i64=__mind_load_i64(r+8);
+    let lo:i64=__mind_load_i64(row);
+    let hi:i64=__mind_load_i64(row+8);
+    let name:i64=nio_name_bits(index);
+    let name_length:i64=nio_name_length(index);
+    if lo<0 { return 0; }
+    if hi<lo { return 0; }
+    if hi>length { return 0; }
+    if hi-lo!=name_length { return 0; }
+    let mut byte:i64=0;
+    let mut equal:i64=1;
+    while byte<name_length {
+        if __mind_load_i8(source+lo+byte)!=((name>>(byte*8))&255) { equal=0; }
+        byte=byte+1;
+    }
+    if equal==0 { return 0; }
+    if __mind_load_i64(row+16)!=0 { return 0; }
+    if __mind_load_i64(row+24)!=1 { return 0; }
+    if __mind_load_i64(row+32)!=0 { return 0; }
+    let positioned:i64=index%2;
+    if __mind_load_i64(row+40)!=3+positioned { return 0; }
+    if nio_type_key(__mind_load_i64(row+56))!=4294967303 { return 0; }
+    let ps:i64=__mind_load_i64(row+48);
+    if ps==0 { return 0; }
+    if nio_type_key(__mind_load_i64(ps))!=4294967301 { return 0; }
+    let buf:i64=if index<2 { 8589935137 } else { 8589935136 };
+    if nio_type_key(__mind_load_i64(ps+8))!=buf { return 0; }
+    if nio_type_key(__mind_load_i64(ps+16))!=4294967304 { return 0; }
+    if positioned==1 {
+        if nio_type_key(__mind_load_i64(ps+24))!=4294967303 { return 0; }
+    }
+    1
+}
+pub fn nio_registry_ok(r:i64)->i64 {
+    if r==0 { return 0; }
+    if __mind_load_i64(r+32)!=0 { return 0; }
+    if __mind_load_i64(r+24)!=4 { return 0; }
+    if __mind_load_i64(r+16)==0 { return 0; }
+    let mut i:i64=0;
+    let mut good:i64=1;
+    while i<4 { good=good*nio_row_ok(r,i); i=i+1; }
+    good
+}
+// Exactly two FF15 call sites per thunk, with zero displacements until linked.
+// The emitted code has no fixed address, allocation or manually written errno.
+pub fn nio_thunk(p:i64)->i64 {
+    __mind_store_i8(p+0,72);
+    __mind_store_i8(p+1,133);
+    __mind_store_i8(p+2,246);
+    __mind_store_i8(p+3,116);
+    __mind_store_i8(p+4,42);
+    __mind_store_i8(p+5,72);
+    __mind_store_i8(p+6,133);
+    __mind_store_i8(p+7,210);
+    __mind_store_i8(p+8,126);
+    __mind_store_i8(p+9,37);
+    __mind_store_i8(p+10,137);
+    __mind_store_i8(p+11,255);
+    __mind_store_i8(p+12,72);
+    __mind_store_i8(p+13,133);
+    __mind_store_i8(p+14,201);
+    __mind_store_i8(p+15,120);
+    __mind_store_i8(p+16,15);
+    __mind_store_i8(p+17,72);
+    __mind_store_i8(p+18,131);
+    __mind_store_i8(p+19,236);
+    __mind_store_i8(p+20,8);
+    __mind_store_i8(p+21,255);
+    __mind_store_i8(p+22,21);
+    __mind_store_i8(p+23,0);
+    __mind_store_i8(p+24,0);
+    __mind_store_i8(p+25,0);
+    __mind_store_i8(p+26,0);
+    __mind_store_i8(p+27,72);
+    __mind_store_i8(p+28,131);
+    __mind_store_i8(p+29,196);
+    __mind_store_i8(p+30,8);
+    __mind_store_i8(p+31,195);
+    __mind_store_i8(p+32,72);
+    __mind_store_i8(p+33,131);
+    __mind_store_i8(p+34,236);
+    __mind_store_i8(p+35,8);
+    __mind_store_i8(p+36,255);
+    __mind_store_i8(p+37,21);
+    __mind_store_i8(p+38,0);
+    __mind_store_i8(p+39,0);
+    __mind_store_i8(p+40,0);
+    __mind_store_i8(p+41,0);
+    __mind_store_i8(p+42,72);
+    __mind_store_i8(p+43,131);
+    __mind_store_i8(p+44,196);
+    __mind_store_i8(p+45,8);
+    __mind_store_i8(p+46,195);
+    __mind_store_i8(p+47,49);
+    __mind_store_i8(p+48,192);
+    __mind_store_i8(p+49,195);
+    0
+}
+pub fn nio_code()->String {
+    let p:i64=__mind_alloc(100);
+    if p==0 { return string_new(); }
+    let _read:i64=nio_thunk(p);
+    let _write:i64=nio_thunk(p+50);
+    String { addr:p, len:100, cap:100 }
+}
+pub fn nio_put(out:i64,word:i64,value:i64)->i64 {
+    __mind_store_i64(out+word*8,value);
+    0
+}
+pub fn nio_import(out:i64,at:i64,source_at:i64,r:i64,index:i64)->i64 {
+    let row:i64=__mind_load_i64(__mind_load_i64(r+16)+index*8);
+    let dst:i64=out+at+index*40;
+    __mind_store_i64(dst,source_at+__mind_load_i64(row));
+    __mind_store_i64(dst+8,__mind_load_i64(row+8)-__mind_load_i64(row));
+    __mind_store_i64(dst+16,index);
+    __mind_store_i64(dst+24,0);
+    __mind_store_i64(dst+32,0);
+    0
+}
+pub fn nio_fixup(out:i64,at:i64,index:i64,offset:i64,import_id:i64,op:i64)->i64 {
+    let p:i64=out+at+index*24;
+    __mind_store_i64(p,offset);
+    __mind_store_i64(p+8,import_id);
+    __mind_store_i64(p+16,op);
+    0
+}
+pub fn nio_ascii(out:i64,bits:i64,n:i64)->i64 {
+    let mut i:i64=0;
+    while i<n { __mind_store_i8(out+i,(bits>>(i*8))&255); i=i+1; }
+    0
+}
+pub fn nio_text_0(out:i64)->i64 {
+    let _b0:i64=nio_ascii(out+0,3328827817059765319,8);
+    let _b8:i64=nio_ascii(out+8,3485234,3);
+    0
+}
+pub fn nio_text_1(out:i64)->i64 {
+    let _b0:i64=nio_ascii(out+0,3346019691232651628,8);
+    let _b8:i64=nio_ascii(out+8,54,1);
+    0
+}
+pub fn nio_text_2(out:i64)->i64 {
+    let _b0:i64=nio_ascii(out+0,7795506888185572399,8);
+    let _b8:i64=nio_ascii(out+8,3276497845987585380,8);
+    let _b16:i64=nio_ascii(out+16,8299628570581809272,8);
+    let _b24:i64=nio_ascii(out+24,3288687,3);
+    0
+}
+pub fn nio_payload(out:i64,source:String,wire:String,code:String)->i64 {
+    let _source:i64=nio_copy(out+__mind_load_i64(out+32),string_addr(source),string_len(source));
+    let _wire:i64=nio_copy(out+__mind_load_i64(out+48),string_addr(wire),string_len(wire));
+    let _code:i64=nio_copy(out+__mind_load_i64(out+64),string_addr(code),string_len(code));
+    let _v:i64=nio_text_0(out+__mind_load_i64(out+128));
+    let _s:i64=nio_text_1(out+__mind_load_i64(out+144));
+    let _i:i64=nio_text_2(out+__mind_load_i64(out+160));
+    0
+}
+pub fn nio_bundle(r:i64,source:String,wire:String,code:String,diag:i64)->i64 {
+    let sn:i64=string_len(source);
+    let wn:i64=string_len(wire);
+    if sn<1 { return nio_error(diag,3,0,0); }
+    if sn>4096 { return nio_error(diag,3,0,0); }
+    if wn!=98 { return nio_error(diag,3,0,0); }
+    if string_len(code)!=100 { return nio_error(diag,5,0,0); }
+    let source_at:i64=192;
+    let wire_at:i64=source_at+sn;
+    let code_at:i64=wire_at+wn;
+    let imports_at:i64=code_at+100;
+    let fixups_at:i64=imports_at+160;
+    let version_at:i64=fixups_at+96;
+    let soname_at:i64=version_at+11;
+    let interp_at:i64=soname_at+9;
+    let total:i64=interp_at+27;
+    if total>16384 { return nio_error(diag,1,0,0); }
+    let out:i64=__mind_alloc(total);
+    if out==0 { return nio_error(diag,5,0,0); }
+    let _zero:i64=nio_zero(out,total);
+    let _h0:i64=nio_put(out,0,3544408009651210574);
+    let _h1:i64=nio_put(out,1,total);
+    let _h2:i64=nio_put(out,2,1);
+    let _h3:i64=nio_put(out,3,1);
+    let _h4:i64=nio_put(out,4,source_at);
+    let _h5:i64=nio_put(out,5,sn);
+    let _h6:i64=nio_put(out,6,wire_at);
+    let _h7:i64=nio_put(out,7,wn);
+    let _h8:i64=nio_put(out,8,code_at);
+    let _h9:i64=nio_put(out,9,100);
+    let _h10:i64=nio_put(out,10,0);
+    let _h11:i64=nio_put(out,11,50);
+    let _h12:i64=nio_put(out,12,imports_at);
+    let _h13:i64=nio_put(out,13,4);
+    let _h14:i64=nio_put(out,14,fixups_at);
+    let _h15:i64=nio_put(out,15,4);
+    let _h16:i64=nio_put(out,16,version_at);
+    let _h17:i64=nio_put(out,17,11);
+    let _h18:i64=nio_put(out,18,soname_at);
+    let _h19:i64=nio_put(out,19,9);
+    let _h20:i64=nio_put(out,20,interp_at);
+    let _h21:i64=nio_put(out,21,27);
+    let _h22:i64=nio_put(out,22,0);
+    let _h23:i64=nio_put(out,23,0);
+    let _payload:i64=nio_payload(out,source,wire,code);
+    let mut i:i64=0;
+    while i<4 { let _row:i64=nio_import(out,imports_at,source_at,r,i); i=i+1; }
+    let _f0:i64=nio_fixup(out,fixups_at,0,23,1,0);
+    let _f1:i64=nio_fixup(out,fixups_at,1,38,0,0);
+    let _f2:i64=nio_fixup(out,fixups_at,2,73,3,1);
+    let _f3:i64=nio_fixup(out,fixups_at,3,88,2,1);
+    out
+}
+pub fn nio_build(profile:i64,diag:i64)->i64 {
+    let _clear:i64=nio_zero(diag,32);
+    if profile!=1 { return nio_error(diag,2,0,0); }
+    let source:String=nio_source();
+    if string_len(source)==0 { return nio_error(diag,5,0,0); }
+    let r:i64=nb_cabi_build(string_addr(source),string_len(source));
+    if nio_registry_ok(r)==0 {
+        let offset:i64=if r==0 { 0 } else { __mind_load_i64(r+40) };
+        let error:i64=if r==0 { 0 } else { __mind_load_i64(r+32) };
+        let _free:i64=nb_cabi_free(r);
+        __mind_free(r);
+        __mind_free(string_addr(source));
+        return nio_error(diag,3,offset,error);
+    }
+    let wire:String=nb_cabi_encode(r);
+    let code:String=nio_code();
+    let out:i64=nio_bundle(r,source,wire,code,diag);
+    let _free:i64=nb_cabi_free(r);
+    __mind_free(r);
+    __mind_free(string_addr(source));
+    __mind_free(string_addr(wire));
+    __mind_free(string_addr(code));
+    out
+}
+pub fn nio_check(bundle:i64,length:i64,profile:i64,diag:i64)->i64 {
+    let _clear:i64=nio_zero(diag,32);
+    if length<192 { let _e:i64=nio_error(diag,1,0,0); return 1; }
+    if length>16384 { let _e:i64=nio_error(diag,1,0,0); return 1; }
+    if bundle<=0 { let _e:i64=nio_error(diag,1,0,0); return 1; }
+    if bundle>9223372036854775807-length { let _e:i64=nio_error(diag,1,0,0); return 1; }
+    let fresh:i64=nio_build(profile,diag);
+    if fresh==0 { return __mind_load_i64(diag); }
+    let n:i64=__mind_load_i64(fresh+8);
+    let mut same:i64=0;
+    if n==length { same=nio_same(bundle,fresh,n); }
+    __mind_free(fresh);
+    if same==0 { let _e:i64=nio_error(diag,4,0,0); return 4; }
+    0
+}
+pub fn nio_free(bundle:i64)->i64 {
+    __mind_free(bundle);
+    0
+}

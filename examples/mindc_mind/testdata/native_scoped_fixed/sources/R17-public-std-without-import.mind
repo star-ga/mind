@@ -1,0 +1,10 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn main()->i64 {
+ let handle:i64=__mind_alloc(8);
+ if handle==0 { return 89; }
+ __mind_store_i64(handle,0-1);
+ tcp_close(handle);
+ let result:i64=close((0-1) as i32) as i64;
+ __mind_free(handle);
+ if result!=0-1 { return 91; } 0
+}

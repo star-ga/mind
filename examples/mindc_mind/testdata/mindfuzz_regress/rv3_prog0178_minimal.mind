@@ -1,0 +1,23 @@
+// Regression class (twin-emitter review round 3): nested-if merge bindings read by a later sequence-level let (seed 4242).
+// mindfuzz_self_host generated program - deterministic seed.
+fn main() -> i64 {
+    let mut v6484: i64 = 4;
+    if 5 == ((5 * v6484) / (v6484 | 1)) {
+        if v6484 > v6484 {
+            if ((5 << 4) + (2 * v6484)) <= 2 {
+                v6484 = v6484;
+                let mut v6487: i64 = 5;
+                if ((1 / (v6487 | 1)) - v6487) != (v6484 + (v6484 >> 3)) {
+                    v6484 = (((0 - 1) + v6487) | ((v6487 * 2) - (6 * v6487)));
+                }
+            }
+        }
+        if ((3 % (5 | 1)) + (v6484 - 0)) > v6484 {
+            v6484 = v6484;
+            v6484 = (2 + (0 + (5 - 1)));
+            v6484 = (((1 + 5) % ((5 / (5 | 1)) | 1)) << 0);
+        }
+    }
+    let mut v6488: i64 = ((v6484 - v6484) - (8 + v6484));
+    return 7;
+}

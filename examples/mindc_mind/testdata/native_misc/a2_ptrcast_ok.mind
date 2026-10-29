@@ -1,0 +1,41 @@
+// A2: pointer casts between PROVEN 64-bit integers and pointers are
+// representation no-ops: i64 params / i64-annotated lets / int literals /
+// arithmetic in parens / `-> i64` calls / __mind_* intrinsics as sources,
+// nested pointer targets, and the round trip back through `as i64`.
+// Expected exit 59, stdout "ptr\n".
+fn ec_get(s: i64, o: i64) -> i64 {
+    __mind_load_i64(s + o)
+}
+
+fn addr_of_slot(base: i64, k: i64) -> i64 {
+    ((base + k * 8) as *mut u8) as i64
+}
+
+fn put_byte(p: i64, b: i64) -> i64 {
+    let q: i64 = (p as *const u8) as i64;
+    __mind_store_i8(q, b);
+    q - p
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(64);
+    __mind_store_i64(a + 8, 1000);
+    let q: i64 = (ec_get(a, 8) as *const u8) as i64;
+    let r: i64 = addr_of_slot(a, 2) - a;
+    let z: i64 = (0 as *mut u8) as i64;
+    let n: i64 = ((a as *const *const u8) as *mut i32) as i64 - a;
+    let m: i64 = (__mind_alloc(8) as *mut u8) as i64;
+    let mz: i64 = if m == 0 {
+        1
+    } else {
+        0
+    };
+    let msg: i64 = __mind_alloc(8);
+    let d0: i64 = put_byte(msg, 112);
+    let d1: i64 = put_byte(msg + 1, 116);
+    let d2: i64 = put_byte(msg + 2, 114);
+    let d3: i64 = put_byte(msg + 3, 10);
+    let w: i64 = __mind_write(1, (msg as *const u8) as i64, 4, 0 - 1);
+    // 1000/100 + 16 + 0 + 0 + 0 + (0+0+0+0) + 4 + 29 = 59
+    q / 100 + r + z + n + mz + d0 + d1 + d2 + d3 + w + 29
+}

@@ -1,0 +1,55 @@
+// Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
+// Input: [output_delta, mode, ten request words], all i64LE (96 bytes).
+// mode0 ordinary, mode1 success then policy refusal, mode2 repeat same request.
+fn ndl_read_exact(p: i64, n: i64) -> i64 {
+    let mut got: i64 = 0;
+    while got < n {
+        let count: i64 = __mind_read(0, p + got, n - got, 0 - 1);
+        if count <= 0 { return 0; }
+        got = got + count;
+    }
+    1
+}
+fn ndl_copy_request(head: i64, request: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 10 {
+        __mind_store_i64(request + i * 8, __mind_load_i64(head + 16 + i * 8));
+        i = i + 1;
+    }
+    0
+}
+fn main() -> i64 {
+    let head: i64 = __mind_alloc(96);
+    if ndl_read_exact(head, 96) == 0 { return 111; }
+    let delta: i64 = __mind_load_i64(head);
+    let mode: i64 = __mind_load_i64(head + 8);
+    if delta < 0 - 248 { return 112; }
+    if delta > 512 { return 112; }
+    if delta % 8 != 0 { return 112; }
+    if mode < 0 { return 112; }
+    if mode > 2 { return 112; }
+    let mem: i64 = __mind_alloc(1024);
+    let request: i64 = mem + 256;
+    let output: i64 = request + delta;
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(output + i * 8, 123456789);
+        i = i + 1;
+    }
+    let _copy: i64 = ndl_copy_request(head, request);
+    let mut status: i64 = ndl_plan(request, output);
+    if mode == 1 {
+        if status != 0 { return 113; }
+        let _again: i64 = ndl_copy_request(head, request);
+        __mind_store_i64(request, 0);
+        status = ndl_plan(request, output);
+    }
+    if mode == 2 {
+        if status != 0 { return 113; }
+        let _again: i64 = ndl_copy_request(head, request);
+        status = ndl_plan(request, output);
+    }
+    let written: i64 = __mind_write(1, output, 256, 0 - 1);
+    if written != 256 { return 114; }
+    status
+}
