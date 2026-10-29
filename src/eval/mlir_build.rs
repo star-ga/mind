@@ -17,11 +17,7 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::Command;
-#[cfg(feature = "mlir-build")]
-use std::process::Stdio;
-#[cfg(feature = "mlir-build")]
-use std::sync::{Arc, Mutex};
+use std::process::{Command, Stdio};
 #[cfg(feature = "mlir-build")]
 use std::time::Duration;
 #[cfg(feature = "mlir-build")]
@@ -83,6 +79,14 @@ pub enum BuildError {
     #[error("internal: {0}")]
     Internal(String),
 }
+
+#[cfg(feature = "mlir-build")]
+#[path = "mlir_build_pipe.rs"]
+mod pipe;
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_tests.rs"]
+mod tests;
 
 #[cfg(feature = "mlir-build")]
 pub fn resolve_tools() -> Result<BuildTools, BuildError> {
@@ -862,45 +866,17 @@ fn run_command(
     timeout: Duration,
     label: &'static str,
 ) -> Result<CommandOutput, BuildError> {
-    use std::io::Read;
-    use std::thread;
-
-    let mut cmd = Command::new(program);
-    cmd.args(args.iter().map(|s| s.as_str()));
-    if input.is_some() {
-        cmd.stdin(Stdio::piped());
+    let stdin = if input.is_some() {
+        Stdio::piped()
     } else {
-        cmd.stdin(Stdio::null());
-    }
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => BuildError::ToolMissing(label),
-        _ => BuildError::Io(err),
-    })?;
+        Stdio::null()
+    };
+    let mut child = spawn_tool(program, args, stdin, label)?;
 
     // Drain stdout and stderr on background threads to prevent pipe-buffer
     // deadlock when child output exceeds the OS pipe buffer (typically 64 KiB).
-    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-
-    let stdout_buf_clone = Arc::clone(&stdout_buf);
-    let stdout_thread = stdout_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stdout_buf_clone.lock().unwrap());
-        })
-    });
-
-    let stderr_buf_clone = Arc::clone(&stderr_buf);
-    let stderr_thread = stderr_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stderr_buf_clone.lock().unwrap());
-        })
-    });
+    let stdout_thread = drain_pipe(child.stdout.take());
+    let stderr_thread = drain_pipe(child.stderr.take());
 
     // Write stdin after launching the drain threads so the child can read its
     // input while we drain its output — mutual progress guaranteed.
@@ -911,46 +887,20 @@ fn run_command(
         }
     }
 
-    // Poll for child termination with timeout.
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(BuildError::Timeout(label));
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(err) => return Err(BuildError::Io(err)),
-        }
-    };
-
-    // Join drain threads before reading the buffers.
-    if let Some(t) = stdout_thread {
-        let _ = t.join();
-    }
-    if let Some(t) = stderr_thread {
-        let _ = t.join();
-    }
-
-    let stdout = Arc::try_unwrap(stdout_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
-    let stderr = Arc::try_unwrap(stderr_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
+    let status = wait_with_timeout(&mut child, Instant::now(), timeout, label)?;
 
     Ok(CommandOutput {
-        stdout,
-        stderr,
+        stdout: join_drain(stdout_thread),
+        stderr: join_drain(stderr_thread),
         status,
     })
 }
+
+#[cfg(feature = "mlir-build")]
+#[path = "mlir_build_proc.rs"]
+mod proc_util;
+#[cfg(feature = "mlir-build")]
+use proc_util::{drain_pipe, join_drain, kill_and_reap, spawn_tool, wait_with_timeout};
 
 #[cfg(feature = "mlir-build")]
 fn write_text_file(path: &Path, contents: &str) -> Result<(), BuildError> {

@@ -8,8 +8,7 @@
 
 use super::{
     BuildError, BuildOptions, BuildProducts, BuildTools, combine_pipelines,
-    compile_runtime_support_obj, run_clang_codegen, run_mlir_opt, run_mlir_translate,
-    write_text_file,
+    compile_runtime_support_obj, run_clang_codegen, run_mlir_translate, write_text_file,
 };
 
 /// Like [`super::build_all`], but links additional caller-provided object files into
@@ -44,17 +43,24 @@ pub fn build_all_with_objects(
             .map_err(BuildError::Internal)?;
         let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
         let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
-        let optimized_mlir = if let Some(pipeline) = combined_pipeline {
-            run_mlir_opt(&lowered, &pipeline, tools)?
+        // mlir-opt and mlir-translate run concurrently (see `pipe`): translate's
+        // startup overlaps opt's run, and it still receives exactly the text that
+        // becomes `optimized_mlir`. The `.mlir` file is written before translate's
+        // outcome is surfaced, so a translate failure leaves it behind as before.
+        let (optimized_mlir, llvm_ir) = if let Some(pipeline) = combined_pipeline {
+            let piped = super::pipe::run_mlir_opt_into_translate(&lowered, &pipeline, tools)?;
+            if let Some(path) = opts.emit_mlir_file {
+                write_text_file(path, &piped.optimized_mlir)?;
+            }
+            let llvm_ir = piped.llvm_ir?;
+            (piped.optimized_mlir, llvm_ir)
         } else {
-            lowered
+            if let Some(path) = opts.emit_mlir_file {
+                write_text_file(path, &lowered)?;
+            }
+            let llvm_ir = run_mlir_translate(&lowered, tools)?;
+            (lowered, llvm_ir)
         };
-
-        if let Some(path) = opts.emit_mlir_file {
-            write_text_file(path, &optimized_mlir)?;
-        }
-
-        let llvm_ir = run_mlir_translate(&optimized_mlir, tools)?;
 
         if let Some(path) = opts.emit_llvm_file {
             write_text_file(path, &llvm_ir)?;
