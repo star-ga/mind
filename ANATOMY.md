@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2688 | **Est. tokens:** ~4,783,344
-**Generated:** 2026-10-29 07:30 UTC
+**Files:** 2688 | **Est. tokens:** ~4,783,361
+**Generated:** 2026-10-29 08:05 UTC
 
 ## Token Budget Guide
 
@@ -175,7 +175,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 435 | ~910,337 |
+| `tests/` | 435 | ~910,354 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -3118,7 +3118,7 @@
 - `native_historical_intrinsic_refusal.rs` (~1894 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1470 tok, large) — Copyright 2025 STARGA Inc.
-- `native_lane_refusal_keys.rs` (~3673 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_lane_refusal_keys.rs` (~3690 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_lane_request_fixtures.rs` (~3684 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8499 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION

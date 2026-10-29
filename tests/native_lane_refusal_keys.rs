@@ -16,6 +16,9 @@
 //! so does a row or entry whose key is gone from the source. A change that adds
 //! a key therefore lands with its row.
 
+// The build rows write a POSIX shell shim (tests/harness_portability.rs).
+#![cfg(unix)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -293,12 +296,7 @@ fn every_lane_key_has_a_fixture_row_or_an_unreachable_entry() {
 
 /// Runs the committed seed behind a private shim carrying the lane marker, as
 /// `native_lane_bridge_controls.rs` does, so the candidate profile is selected.
-#[cfg(all(
-    unix,
-    feature = "std-surface",
-    target_os = "linux",
-    target_arch = "x86_64"
-))]
+#[cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
 mod build {
     use super::{ROWS, fixture_path, repo};
     use std::os::unix::fs::PermissionsExt;
