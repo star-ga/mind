@@ -87,6 +87,25 @@ impl Bindings {
             })
             .or_insert(Some(target));
     }
+
+    /// Lower-priority variant of [`Self::insert_imported_call`] used for
+    /// bundled `std` exports: a name already bound (the owner's own
+    /// declaration or a sibling's export) keeps its binding, so a std export
+    /// can never steal or ambiguify a source-resolved callee.
+    #[cfg(any(feature = "cross-module-imports", test))]
+    pub(crate) fn insert_std_imported_call(
+        &mut self,
+        owner: &str,
+        target_owner: &str,
+        symbol: &str,
+    ) {
+        let key = (owner.to_string(), symbol.to_string());
+        if self.imported_calls.contains_key(&key) {
+            return;
+        }
+        self.imported_calls
+            .insert(key, Some(owned_symbol(target_owner, symbol)));
+    }
 }
 
 /// Resolution of a bare call through the current owner's imports.

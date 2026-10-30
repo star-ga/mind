@@ -155,22 +155,37 @@ fn bind_import_refs(
 }
 
 /// Bind the bare calls `owner` may make into the exported functions of the
-/// project modules its own imports select, mirroring the type checker's
-/// lexical-then-imported order for unqualified callees. Bundled `std`
-/// modules keep their established resolution and are not bound here.
+/// modules its own imports select, mirroring the type checker's
+/// lexical-then-imported order for unqualified callees. Sibling project
+/// exports bind at full priority. Bundled `std` exports bind at lower
+/// priority (never stealing or ambiguifying a name a source module already
+/// owns), because a linked module's body must reach its own `std` imports
+/// through the same owner-scoped path as its sibling imports.
 #[cfg(feature = "cross-module-imports")]
 fn bind_bare_imported_calls(
     owner: &str,
     imports: &[Vec<String>],
     scope: &crate::project::single_file_scope::ProjectScope,
     linked_owners: &std::collections::BTreeSet<String>,
+    std_fn_names: &std::collections::BTreeMap<String, Vec<String>>,
     bindings: &mut EvalBindings,
 ) {
     for import in imports {
         let Some(target) = scope.resolve_import_path(owner, import) else {
             continue;
         };
-        if target == owner || target.starts_with("std.") || !linked_owners.contains(target) {
+        if target == owner {
+            continue;
+        }
+        if let Some(names) = std_fn_names.get(target) {
+            for name in names {
+                if scope.resolves_imported_symbol(owner, import, name) {
+                    bindings.insert_std_imported_call(owner, target, name);
+                }
+            }
+            continue;
+        }
+        if !linked_owners.contains(target) {
             continue;
         }
         let Some(source) = scope
@@ -188,6 +203,26 @@ fn bind_bare_imported_calls(
             }
         }
     }
+}
+
+/// FnDef names of every bundled `std` module, keyed by module path
+/// (`std.sha256` -> [`"sha256"`, ...]). Built once per `prepare_eval_support`
+/// so the binder above can resolve `std` targets that are absent from
+/// `scope.sources()`.
+#[cfg(feature = "cross-module-imports")]
+fn std_exported_fn_names() -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut out = std::collections::BTreeMap::new();
+    for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
+        let names = super::top_level::refs(&module.items)
+            .into_iter()
+            .filter_map(|item| match item {
+                Node::FnDef(function, _) => Some(function.name.clone()),
+                _ => None,
+            })
+            .collect();
+        out.insert(path, names);
+    }
+    out
 }
 
 /// Capture the same manifest-bounded import closure used by `check` and native
@@ -240,6 +275,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
             let mut module_dependencies = BTreeMap::<String, BTreeSet<String>>::new();
             let mut std_queue = VecDeque::<String>::new();
             let mut qualified_refs = std::collections::BTreeMap::new();
+            let std_fn_names = std_exported_fn_names();
 
             for captured in scope.linked_sources() {
                 let parsed = match crate::parser::parse_for_eval(captured.source()) {
@@ -286,6 +322,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                     &imports,
                     &scope,
                     &linked_owners,
+                    &std_fn_names,
                     &mut bindings,
                 );
                 let _qualified_guard =
@@ -419,6 +456,14 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                         ..EvalSupport::default()
                     };
                 }
+                bind_bare_imported_calls(
+                    &owner,
+                    &imports,
+                    &scope,
+                    &linked_owners,
+                    &std_fn_names,
+                    &mut bindings,
+                );
                 let mut module = parsed.module;
                 qualify_module_declarations(&mut module, &owner, true);
                 linked_modules.insert(owner, module);

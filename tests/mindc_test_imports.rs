@@ -751,5 +751,50 @@ fn empty_digest_matches() -> i64 {
     }
 }
 
+/// A linked module's body may call its own `std` import as a BARE name
+/// (`sha256(..)` after `import std.sha256`), the same way it calls a sibling
+/// export. The qualified form is covered by
+/// `imported_module_standard_library_dependency_executes`; this is the bare
+/// form, which must resolve owner-scoped and not depend on the entry module
+/// itself importing that std module.
+#[test]
+fn imported_module_bare_std_call_executes() {
+    let root = project(
+        "eval_import_bare_std",
+        r#"
+import arithmetic;
+#[test]
+fn bare_std_call_in_imported_body_runs() {
+    assert arithmetic.empty_digest_matches() == 1, "bare std call in imported body";
+}
+"#,
+    );
+    fs::write(
+        root.join("src/arithmetic.mind"),
+        r#"
+import std.sha256;
+export { empty_digest_matches }
+fn empty_digest_matches() -> i64 {
+    let input: i64 = __mind_alloc(1);
+    let output: i64 = __mind_alloc(32);
+    let status: i64 = sha256(input, 0, output);
+    if status != 0 { return -1; }
+    let expected: [i64; 32] = [227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85];
+    let mut i: i64 = 0;
+    while i < 32 {
+        if __mind_load_i8(output + i) != expected[i] { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+"#,
+    )
+    .expect("write dependency with bare std call");
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("1 passed; 0 failed"), "{text}");
+}
+
 #[path = "support/mindc_test_bare_imports.rs"]
 mod bare_imports;
