@@ -53,10 +53,6 @@ pub(super) enum Ty {
     /// `examples/mindc_mind/main.mind`). Constant initialisers still refuse it.
     Store,
     Never,
-    /// A fixed `[i64; N]`. An element read is an `i64`. The array value is
-    /// not a scalar operand: `binary` refuses it, and the earlier operand
-    /// guard names `a + b` as `binop.array_operand`.
-    I64Array(u32),
 }
 
 /// The type a value read observes: a store result reads as its defined 0.
@@ -80,11 +76,6 @@ pub(super) fn scalar(ann: &TypeAnn) -> Check<Ty> {
         TypeAnn::ScalarI64 => Ok(Ty::I64),
         TypeAnn::ScalarBool => Ok(Ty::Bool),
         TypeAnn::ScalarF64 => Ok(Ty::F64),
-        TypeAnn::Array { element, length }
-            if matches!(element.as_ref(), TypeAnn::ScalarI64) && *length > 0 =>
-        {
-            Ok(Ty::I64Array(*length))
-        }
         TypeAnn::ScalarF32 => reject("lane.type.non_f64_float"),
         TypeAnn::ScalarI32
         | TypeAnn::ScalarU32

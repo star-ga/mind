@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2695 | **Est. tokens:** ~4,797,709
-**Generated:** 2026-10-30 18:50 UTC
+**Files:** 2695 | **Est. tokens:** ~4,796,983
+**Generated:** 2026-10-30 18:54 UTC
 
 ## Token Budget Guide
 
@@ -155,7 +155,7 @@
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/ir/native_c_abi/` | 1 | ~3,735 |
-| `src/ir/native_lane_profile/` | 4 | ~16,658 |
+| `src/ir/native_lane_profile/` | 4 | ~15,932 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 8 | ~20,801 |
@@ -2179,10 +2179,10 @@
 - `native_closure.rs` (~5238 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/native_lane_profile/`
 
-- `admit.rs` (~8031 tok, huge) — Copyright 2026 STARGA Inc.
+- `admit.rs` (~7407 tok, huge) — Copyright 2026 STARGA Inc.
 - `mod.rs` (~207 tok, medium) — Copyright 2026 STARGA Inc.
 - `tests.rs` (~5811 tok, huge) — Copyright 2026 STARGA Inc.
-- `types.rs` (~2609 tok, huge) — Copyright 2026 STARGA Inc.
+- `types.rs` (~2507 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
