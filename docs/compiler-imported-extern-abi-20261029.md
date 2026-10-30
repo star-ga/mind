@@ -2,7 +2,7 @@
 
 Author: STARGA Inc.
 
-The scoped ABI successor passes its ten added regression functions and three retained Linux runtime controls. This is not a compiler release, seed transition, full-suite pass or qualified MIND-Lab pin. The accepted `a1444` compiler pin and the ten-program/35-case consumer qualification contract remain unchanged.
+The scoped ABI successor passes its ten added regression functions and three retained Linux runtime controls. This is not a compiler release, seed transition, full-suite pass or qualified consumer pin. The accepted `a1444` compiler pin and the ten-program/35-case consumer qualification contract remain unchanged.
 
 ## Source and behavior
 
@@ -28,7 +28,7 @@ Both baseline and fixed controls used the same retained dependency lock, SHA-256
 
 ## Toolchain and reproduction
 
-Observed host: Linux x86-64 in WSL on G1. Rust/Cargo were version 1.99.1; external LLVM/MLIR/Clang were 23.1.3. The Rust compiler's internal LLVM version differs from the external toolchain and is not substituted for it.
+Observed host: Linux x86-64. Rust/Cargo were version 1.99.1; external LLVM/MLIR/Clang were 23.1.3. The Rust compiler's internal LLVM version differs from the external toolchain and is not substituted for it.
 
 For each immutable source snapshot, use a distinct `CARGO_TARGET_DIR`. Supply the recorded validation lock, an offline verified registry cache, one Cargo build job, disabled incremental compilation, and test/dev debug information set to zero. Explicitly select `MLIR_OPT`, `MLIR_TRANSLATE`, and `CLANG` from the same LLVM 23.1.3 installation. The retained runtime test invokes `cc` and `python3`; the test-only `cc` path resolves to that Clang executable, and Python is an external test instrument.
 
@@ -75,16 +75,16 @@ The first integration attempt's baseline results are valid, but its fixed result
 
 ## Evidence inventory and review boundary
 
-The private operator handoff retains exact commands, source/tool/executable hashes, stdout, stderr, exits, runtime prerequisite output, source-before/after receipts, resource counters and guard logs. Raw archives are identified here without importing unrelated private material:
+The retained evidence set holds exact commands, source/tool/executable hashes, stdout, stderr, exits, runtime prerequisite output, source-before/after receipts, resource counters and guard logs. Archives are identified by digest, without importing unrelated material:
 
 | Evidence archive | SHA-256 |
 | --- | --- |
-| `compiler-abi-g1-r2-attempt1.tar` | `6b4aa14391e6166e95ec889269b79ce052bf52eeaa70272577da06e0da393c80` |
-| `compiler-abi-g1-r2-attempts2-3.tar` | `a4e7a95d1fea3a721635d6ec83eb1cabab7f23e735fcc2b8b26856c35e72eb87` |
-| `compiler-abi-g1-r2-integration4.tar` | `78117b4c491b526d747a9b6b3764fde6a143c191b0a758979fb48bc773460635` |
-| `compiler-abi-g1-r2-fixed5.tar` | `783a48650372b5024961d1b065769410a65f99ed87917b4b16df13dedec3ac2c` |
-| `compiler-abi-g1-r2-library6-7.tar` | `95cbd7ab2c7cd69eeaadcf3bc169b0791c30f7a302b6019ef70df71aa294650e` |
+| Attempt 1 | `6b4aa14391e6166e95ec889269b79ce052bf52eeaa70272577da06e0da393c80` |
+| Attempts 2–3 | `a4e7a95d1fea3a721635d6ec83eb1cabab7f23e735fcc2b8b26856c35e72eb87` |
+| Integration 4 | `78117b4c491b526d747a9b6b3764fde6a143c191b0a758979fb48bc773460635` |
+| Fixed 5 | `783a48650372b5024961d1b065769410a65f99ed87917b4b16df13dedec3ac2c` |
+| Library 6–7 | `95cbd7ab2c7cd69eeaadcf3bc169b0791c30f7a302b6019ef70df71aa294650e` |
 
 An independent source reviewer marked R2 `PASS_WITH_NOTES`; the earlier R1 failure remains recorded. That source review is distinct from the implementation owner's observed execution results and from the integrator's review. Review did not establish Windows executable behavior, AAPCS implementation correctness, full compiler-suite health or native consumer qualification. An inherited asymmetry between nested local extern hiding and imported-symbol lookup remains recorded as a broader resolution obligation; no wrong-result execution was established for it in this scope.
 
-No seed files, source-integrity pins, accepted compiler hashes or MIND-Lab proof/release statuses were changed by this patch.
+No seed files, source-integrity pins, accepted compiler hashes or consumer proof/release statuses were changed by this patch.
