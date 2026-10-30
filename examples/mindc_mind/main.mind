@@ -5727,13 +5727,27 @@ pub fn const_type_is_int(buf: i64, lo: i64, hi: i64) -> i64 {
 }
 
 pub fn const_type_is_string(buf: i64, lo: i64, hi: i64) -> i64 {
-    if hi - lo != 6 { return 0; }
-    if load_byte(buf, lo) != 83 { return 0; }
-    if load_byte(buf, lo + 1) != 116 { return 0; }
-    if load_byte(buf, lo + 2) != 114 { return 0; }
-    if load_byte(buf, lo + 3) != 105 { return 0; }
-    if load_byte(buf, lo + 4) != 110 { return 0; }
-    if load_byte(buf, lo + 5) != 103 { return 0; }
+    if hi - lo != 6 {
+        return 0;
+    }
+    if load_byte(buf, lo) != 83 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 116 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 114 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 4) != 110 {
+        return 0;
+    }
+    if load_byte(buf, lo + 5) != 103 {
+        return 0;
+    }
     1
 }
 
@@ -5741,17 +5755,37 @@ pub fn const_type_is_string(buf: i64, lo: i64, hi: i64) -> i64 {
 // and composite initializers. Return a token index, never an unchecked pointer.
 pub fn const_string_token(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
     let b: i64 = load_byte(buf, nlo);
-    if b < 65 { return 0 - 1; }
-    if b > 90 { return 0 - 1; }
+    if b < 65 {
+        return 0 - 1;
+    }
+    if b > 90 {
+        return 0 - 1;
+    }
     let np: i64 = const_find_from(toks, buf, 0, nlo, nhi);
-    if np < 0 { return 0 - 1; }
-    if const_find_from(toks, buf, np + 1, nlo, nhi) >= 0 { return 0 - 1; }
-    if tok_kind(toks, np + 1) != tk_colon() { return 0 - 1; }
-    if tok_kind(toks, np + 2) != tk_ident() { return 0 - 1; }
-    if const_type_is_string(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 { return 0 - 1; }
-    if tok_kind(toks, np + 3) != tk_eq() { return 0 - 1; }
-    if tok_kind(toks, np + 4) != tk_str() { return 0 - 1; }
-    if const_init_ends(toks, buf, np + 5) == 0 { return 0 - 1; }
+    if np < 0 {
+        return 0 - 1;
+    }
+    if const_find_from(toks, buf, np + 1, nlo, nhi) >= 0 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, np + 1) != tk_colon() {
+        return 0 - 1;
+    }
+    if tok_kind(toks, np + 2) != tk_ident() {
+        return 0 - 1;
+    }
+    if const_type_is_string(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, np + 3) != tk_eq() {
+        return 0 - 1;
+    }
+    if tok_kind(toks, np + 4) != tk_str() {
+        return 0 - 1;
+    }
+    if const_init_ends(toks, buf, np + 5) == 0 {
+        return 0 - 1;
+    }
     np + 4
 }
 
@@ -6789,13 +6823,31 @@ pub fn mt_bind_ok(toks: Vec, buf: i64, pat_pos: i64) -> i64 {
 // The constant binder guard shares this predicate so a constructor call is
 // never mistaken for a binding and malformed arrows cannot evade the guard.
 pub fn mt_pat_arrow_ok(toks: Vec, pat_pos: i64, kind: i64) -> i64 {
-    if kind < 0 { return 0; }
-    if kind > 3 { return 0; }
-    let skip: i64 = if kind == 3 { 7 } else { if kind == 2 { 4 } else { 1 } };
+    if kind < 0 {
+        return 0;
+    }
+    if kind > 3 {
+        return 0;
+    }
+    let skip: i64 = if kind == 3 {
+        7
+    } else {
+        if kind == 2 {
+            4
+        } else {
+            1
+        }
+    };
     let pos: i64 = pat_pos + skip;
-    if at_eof(toks, pos + 1) == 1 { return 0; }
-    if tok_kind(toks, pos) != tk_eq() { return 0; }
-    if tok_kind(toks, pos + 1) != tk_gt() { return 0; }
+    if at_eof(toks, pos + 1) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) != tk_eq() {
+        return 0;
+    }
+    if tok_kind(toks, pos + 1) != tk_gt() {
+        return 0;
+    }
     1
 }
 
@@ -33344,12 +33396,18 @@ pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
 // code offset,unit,row index,arity,arg0 displacement,result displacement,
 // final frame,pointer-result. Only final NCE emission makes staged calls usable.
 pub fn nb_fc_scope(ctx: i64) -> i64 {
-    if ctx == 0 { return 0; }
-    if __mind_load_i64(ctx) != 3 { return 0; }
+    if ctx == 0 {
+        return 0;
+    }
+    if __mind_load_i64(ctx) != 3 {
+        return 0;
+    }
     __mind_load_i64(ctx + 416)
 }
 pub fn nb_fc_free(scope: i64) -> i64 {
-    if scope == 0 { return 0; }
+    if scope == 0 {
+        return 0;
+    }
     let units: i64 = __mind_load_i64(scope + 40);
     let mut i: i64 = 0;
     while i < __mind_load_i64(scope + 32) {
@@ -33364,23 +33422,37 @@ pub fn nb_fc_free(scope: i64) -> i64 {
     0
 }
 pub fn nb_fc_unit_loop(scope: i64, lo: i64, hi: i64, i: i64, count: i64) -> i64 {
-    if i >= count { return 0 - 1; }
+    if i >= count {
+        return 0 - 1;
+    }
     let row: i64 = __mind_load_i64(scope + 40) + i * 32;
     let start: i64 = __mind_load_i64(row);
     let end: i64 = start + __mind_load_i64(row + 8);
-    if lo >= start { if hi <= end { return i; } }
+    if lo >= start {
+        if hi <= end {
+            return i;
+        }
+    }
     nb_fc_unit_loop(scope, lo, hi, i + 1, count)
 }
 pub fn nb_fc_unit(scope: i64, lo: i64, hi: i64) -> i64 {
-    if lo < 0 { return 0 - 1; }
-    if hi <= lo { return 0 - 1; }
+    if lo < 0 {
+        return 0 - 1;
+    }
+    if hi <= lo {
+        return 0 - 1;
+    }
     nb_fc_unit_loop(scope, lo, hi, 0, __mind_load_i64(scope + 32))
 }
 pub fn nb_fc_begin(ctx: i64, node: i64) -> i64 {
     let scope: i64 = nb_fc_scope(ctx);
-    if scope == 0 { return 1; }
+    if scope == 0 {
+        return 1;
+    }
     let unit: i64 = nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node));
-    if unit < 0 { return 0; }
+    if unit < 0 {
+        return 0;
+    }
     __mind_store_i64(scope + 72, unit);
     __mind_store_i64(scope + 80, __mind_load_i64(scope + 56));
     __mind_store_i64(scope + 96, 0);
@@ -33388,12 +33460,16 @@ pub fn nb_fc_begin(ctx: i64, node: i64) -> i64 {
 }
 pub fn nb_fc_rollback(ctx: i64) -> i64 {
     let scope: i64 = nb_fc_scope(ctx);
-    if scope != 0 { __mind_store_i64(scope + 56, __mind_load_i64(scope + 80)); }
+    if scope != 0 {
+        __mind_store_i64(scope + 56, __mind_load_i64(scope + 80))
+    }
     0
 }
 pub fn nb_fc_frame(ctx: i64, frame: i64) -> i64 {
     let scope: i64 = nb_fc_scope(ctx);
-    if scope == 0 { return 0; }
+    if scope == 0 {
+        return 0;
+    }
     let mut i: i64 = __mind_load_i64(scope + 80);
     while i < __mind_load_i64(scope + 56) {
         __mind_store_i64(__mind_load_i64(scope + 48) + i * 64 + 48, frame);
@@ -33402,23 +33478,37 @@ pub fn nb_fc_frame(ctx: i64, frame: i64) -> i64 {
     0
 }
 pub fn nb_fc_rebase_loop(scope: i64, base: i64, bytes: i64, i: i64, count: i64) -> i64 {
-    if i >= count { return 1; }
+    if i >= count {
+        return 1;
+    }
     let row: i64 = __mind_load_i64(scope + 48) + i * 64;
     let off: i64 = __mind_load_i64(row);
-    if off < 0 { return 0; }
-    if off > bytes - 64 { return 0; }
-    if base > 4194304 - off { return 0; }
-    if __mind_load_i64(row + 48) < 16 { return 0; }
+    if off < 0 {
+        return 0;
+    }
+    if off > bytes - 64 {
+        return 0;
+    }
+    if base > 4194304 - off {
+        return 0;
+    }
+    if __mind_load_i64(row + 48) < 16 {
+        return 0;
+    }
     __mind_store_i64(row, base + off);
     nb_fc_rebase_loop(scope, base, bytes, i + 1, count)
 }
 pub fn nb_fc_rebase(ctx: i64, base: i64, bytes: i64) -> i64 {
     let scope: i64 = nb_fc_scope(ctx);
-    if scope == 0 { return 1; }
+    if scope == 0 {
+        return 1;
+    }
     nb_fc_rebase_loop(scope, base, bytes, __mind_load_i64(scope + 80), __mind_load_i64(scope + 56))
 }
 pub fn nb_fc_lookup_loop(scope: i64, buf: i64, callee: i64, registry: i64, i: i64, count: i64) -> i64 {
-    if i >= count { return 0; }
+    if i >= count {
+        return 0;
+    }
     let row: i64 = __mind_load_i64(__mind_load_i64(registry + 16) + i * 8);
     if span_bytes_equal2(buf, ast_span_lo(callee), ast_span_hi(callee), __mind_load_i64(registry), __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
         __mind_store_i64(scope + 88, i);
@@ -33427,22 +33517,42 @@ pub fn nb_fc_lookup_loop(scope: i64, buf: i64, callee: i64, registry: i64, i: i6
     nb_fc_lookup_loop(scope, buf, callee, registry, i + 1, count)
 }
 pub fn nb_fc_lookup(scope: i64, buf: i64, callee: i64) -> i64 {
-    if scope == 0 { return 0; }
-    if ast_kind(callee) != ast_ident() { return 0; }
+    if scope == 0 {
+        return 0;
+    }
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
     let unit: i64 = __mind_load_i64(scope + 72);
-    if unit < 0 { return 0; }
-    if unit >= __mind_load_i64(scope + 32) { return 0; }
+    if unit < 0 {
+        return 0;
+    }
+    if unit >= __mind_load_i64(scope + 32) {
+        return 0;
+    }
     let registry: i64 = __mind_load_i64(__mind_load_i64(scope + 40) + unit * 32 + 16);
-    if registry == 0 { return 0; }
+    if registry == 0 {
+        return 0;
+    }
     nb_fc_lookup_loop(scope, buf, callee, registry, 0, __mind_load_i64(registry + 24))
 }
 pub fn nb_fc_i32_ann(buf: i64, ann: i64) -> i64 {
-    if ann == 0 { return 0; }
+    if ann == 0 {
+        return 0;
+    }
     let lo: i64 = ast_span_lo(ann);
-    if ast_span_hi(ann) - lo != 3 { return 0; }
-    if __mind_load_i8(buf + lo) != 105 { return 0; }
-    if __mind_load_i8(buf + lo + 1) != 51 { return 0; }
-    if __mind_load_i8(buf + lo + 2) != 50 { return 0; }
+    if ast_span_hi(ann) - lo != 3 {
+        return 0;
+    }
+    if __mind_load_i8(buf + lo) != 105 {
+        return 0;
+    }
+    if __mind_load_i8(buf + lo + 1) != 51 {
+        return 0;
+    }
+    if __mind_load_i8(buf + lo + 2) != 50 {
+        return 0;
+    }
     1
 }
 pub fn nb_fc_definition_count(scope: i64, callee: i64, buf: i64) -> i64 {
@@ -33451,119 +33561,181 @@ pub fn nb_fc_definition_count(scope: i64, callee: i64, buf: i64) -> i64 {
     while i < __mind_load_i64(scope + 120) {
         let node: i64 = __mind_load_i64(__mind_load_i64(scope + 64) + i * 8);
         let name: i64 = ast_child0(node);
-        if span_bytes_equal(buf, ast_span_lo(callee), ast_span_hi(callee), ast_span_lo(name), ast_span_hi(name)) == 1 { found = found + 1; }
+        if span_bytes_equal(buf, ast_span_lo(callee), ast_span_hi(callee), ast_span_lo(name), ast_span_hi(name)) == 1 {
+            found = found + 1;
+        }
         i = i + 1;
     }
     found
 }
 
 pub fn nb_fc_call_i32_loop(ordered: i64, n_fns: i64, i: i64, buf: i64, callee: i64) -> i64 {
-    if i >= n_fns { return 0; }
+    if i >= n_fns {
+        return 0;
+    }
     let fn_node: i64 = __mind_load_i64(ordered + i * 8);
     let name: i64 = ast_child0(fn_node);
     if span_bytes_equal(buf, ast_span_lo(callee), ast_span_hi(callee), ast_span_lo(name), ast_span_hi(name)) == 1 {
         let local: i64 = buf + ast_span_lo(fn_node);
         let t: Vec = lex(local, ast_span_hi(fn_node) - ast_span_lo(fn_node));
         let ret: i64 = frt_scan_retty_pos(t, 2);
-        if ret < 0 { return 0; }
-        if tok_hi(t, ret) - tok_lo(t, ret) != 3 { return 0; }
+        if ret < 0 {
+            return 0;
+        }
+        if tok_hi(t, ret) - tok_lo(t, ret) != 3 {
+            return 0;
+        }
         let ptr: i64 = local + tok_lo(t, ret);
-        if __mind_load_i8(ptr) != 105 { return 0; }
-        if __mind_load_i8(ptr + 1) != 51 { return 0; }
-        if __mind_load_i8(ptr + 2) != 50 { return 0; }
+        if __mind_load_i8(ptr) != 105 {
+            return 0;
+        }
+        if __mind_load_i8(ptr + 1) != 51 {
+            return 0;
+        }
+        if __mind_load_i8(ptr + 2) != 50 {
+            return 0;
+        }
         return 1;
     }
     nb_fc_call_i32_loop(ordered, n_fns, i + 1, buf, callee)
 }
 pub fn nb_fc_call_i32(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     let scope: i64 = nb_fc_scope(__mind_load_i64(lcell + 120));
-    if scope == 0 { return 0; }
+    if scope == 0 {
+        return 0;
+    }
     let callee: i64 = ast_child0(node);
-    if ast_kind(callee) != ast_ident() { return 0; }
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
     if nb_fc_definition_count(scope, callee, buf) == 0 {
         if nb_fc_shadowed(callee, buf, lets, lcell) == 0 {
             let foreign: i64 = nb_fc_lookup(scope, buf, callee);
             if foreign != 0 {
-                if nb_fc_result(foreign) == 1 { return 1; }
+                if nb_fc_result(foreign) == 1 {
+                    return 1;
+                }
                 return 0;
             }
         }
     }
-    if nb_fc_local_ok(scope, callee, buf, lets, lcell) != 1 { return 0; }
+    if nb_fc_local_ok(scope, callee, buf, lets, lcell) != 1 {
+        return 0;
+    }
     let at: i64 = __mind_load_i64(lcell + 88);
     nb_fc_call_i32_loop(nb_at_native_ordered(at), nb_at_native_n_fns(at), 0, buf, callee)
 }
 
 pub fn nb_fc_i32_actual_loop(buf: i64, lo: i64, hi: i64, lets: i64, i: i64, current: i64) -> i64 {
-    if i < 0 { return 0 - 1; }
+    if i < 0 {
+        return 0 - 1;
+    }
     let row: i64 = lets + i * 40;
     if span_bytes_equal(buf, lo, hi, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
         let ann: i64 = nb_stream_ident_row(0, lets, i, buf, lo, hi, current);
-        if ann <= 0 { return 0; }
+        if ann <= 0 {
+            return 0;
+        }
         return nb_fc_i32_ann(buf, ann);
     }
     nb_fc_i32_actual_loop(buf, lo, hi, lets, i - 1, current)
 }
 pub fn nb_fc_i32_actual(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     let k: i64 = ast_kind(node);
-    if k == ast_paren() { return nb_fc_i32_actual(ast_child0(node), buf, lets, lcell); }
-    if k == ast_call() { return nb_fc_call_i32(node, buf, lets, lcell); }
+    if k == ast_paren() {
+        return nb_fc_i32_actual(ast_child0(node), buf, lets, lcell);
+    }
+    if k == ast_call() {
+        return nb_fc_call_i32(node, buf, lets, lcell);
+    }
     if k == ast_cast() {
-        if ast_cast_is_ptr(buf, node) != 0 { return 0; }
-        if ast_cast_is_unsigned(buf, node) != 0 { return 0; }
-        if ast_aux(node) != 32 { return 0; }
+        if ast_cast_is_ptr(buf, node) != 0 {
+            return 0;
+        }
+        if ast_cast_is_unsigned(buf, node) != 0 {
+            return 0;
+        }
+        if ast_aux(node) != 32 {
+            return 0;
+        }
         return 1;
     }
-    if k != ast_ident() { return 0; }
+    if k != ast_ident() {
+        return 0;
+    }
     let at: i64 = __mind_load_i64(lcell + 88);
-    if at == 0 { return 0; }
+    if at == 0 {
+        return 0;
+    }
     let current: i64 = nb_at_native_current(at);
-    if current == 0 { return 0; }
+    if current == 0 {
+        return 0;
+    }
     let lo: i64 = ast_span_lo(node);
     let hi: i64 = ast_span_hi(node);
     let found: i64 = nb_fc_i32_actual_loop(buf, lo, hi, lets, __mind_load_i64(lcell) - 1, current);
-    if found >= 0 { return found; }
+    if found >= 0 {
+        return found;
+    }
     let ps: i64 = ast_child1(current);
     let index: i64 = resolve_param(ps, ast_aux(current) / 2, buf, lo, hi);
-    if index < 0 { return 0; }
+    if index < 0 {
+        return 0;
+    }
     nb_fc_i32_ann(buf, ast_child1(__mind_load_i64(ps + index * 8)))
 }
 // Reject a value binder before consulting either local or foreign names.
 pub fn nb_fc_shadowed_loop(buf: i64, lo: i64, hi: i64, lets: i64, i: i64, count: i64) -> i64 {
-    if i >= count { return 0; }
+    if i >= count {
+        return 0;
+    }
     let row: i64 = lets + i * 40;
-    if span_bytes_equal(buf, lo, hi, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 { return 1; }
+    if span_bytes_equal(buf, lo, hi, __mind_load_i64(row), __mind_load_i64(row + 8)) == 1 {
+        return 1;
+    }
     nb_fc_shadowed_loop(buf, lo, hi, lets, i + 1, count)
 }
 pub fn nb_fc_shadowed(callee: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     let lo: i64 = ast_span_lo(callee);
     let hi: i64 = ast_span_hi(callee);
-    if nb_fc_shadowed_loop(buf, lo, hi, lets, 0, __mind_load_i64(lcell)) == 1 { return 1; }
+    if nb_fc_shadowed_loop(buf, lo, hi, lets, 0, __mind_load_i64(lcell)) == 1 {
+        return 1;
+    }
     let at: i64 = __mind_load_i64(lcell + 88);
-    if at == 0 { return 1; }
+    if at == 0 {
+        return 1;
+    }
     let current: i64 = nb_at_native_current(at);
-    if current == 0 { return 1; }
-    if resolve_param(ast_child1(current), ast_aux(current) / 2, buf, lo, hi) >= 0 { return 1; }
+    if current == 0 {
+        return 1;
+    }
+    if resolve_param(ast_child1(current), ast_aux(current) / 2, buf, lo, hi) >= 0 {
+        return 1;
+    }
     0
 }
 // Resolve original ownership BEFORE accepting the retained flat AST target.
 // Unsupported/ambiguous import scopes refuse instead of inheriting last-wins.
 pub fn nb_fc_local_scan(scope: i64, buf: i64, lo: i64, hi: i64, owner: i64, mask: i64, i: i64, count: i64, counts: i64) -> i64 {
-    if i >= count { return 1; }
+    if i >= count {
+        return 1;
+    }
     let node: i64 = __mind_load_i64(__mind_load_i64(scope + 64) + i * 8);
     let name: i64 = ast_child0(node);
     if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
         let unit: i64 = nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node));
-        if unit < 0 { return 0; }
+        if unit < 0 {
+            return 0;
+        }
         if unit == owner {
             __mind_store_i64(counts + 0, __mind_load_i64(counts + 0) + 1);
-            __mind_store_i64(counts + 8, node);
+            __mind_store_i64(counts + 8, node)
         }
         if unit != owner {
             if fn_def_is_pub(node) == 1 {
                 if (mask & (1 << unit)) != 0 {
                     __mind_store_i64(counts + 16, __mind_load_i64(counts + 16) + 1);
-                    __mind_store_i64(counts + 24, node);
+                    __mind_store_i64(counts + 24, node)
                 }
             }
         }
@@ -33571,21 +33743,33 @@ pub fn nb_fc_local_scan(scope: i64, buf: i64, lo: i64, hi: i64, owner: i64, mask
     nb_fc_local_scan(scope, buf, lo, hi, owner, mask, i + 1, count, counts)
 }
 pub fn nb_fc_local_actual(ordered: i64, n: i64, i: i64, buf: i64, lo: i64, hi: i64, wanted: i64, actual: i64) -> i64 {
-    if i >= n { return actual; }
+    if i >= n {
+        return actual;
+    }
     let node: i64 = __mind_load_i64(ordered + i * 8);
     let name: i64 = ast_child0(node);
     if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
-        if node != wanted { return 0 - 1; }
+        if node != wanted {
+            return 0 - 1;
+        }
         return nb_fc_local_actual(ordered, n, i + 1, buf, lo, hi, wanted, actual + 1);
     }
     nb_fc_local_actual(ordered, n, i + 1, buf, lo, hi, wanted, actual)
 }
 pub fn nb_fc_local_ok(scope: i64, callee: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
-    if scope == 0 { return 1; }
-    if ast_kind(callee) != ast_ident() { return 0; }
-    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 { return 0; }
+    if scope == 0 {
+        return 1;
+    }
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
+    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 {
+        return 0;
+    }
     // Existing return metadata is global: ambiguous bodies cannot safely share it.
-    if nb_fc_definition_count(scope, callee, buf) != 1 { return 0; }
+    if nb_fc_definition_count(scope, callee, buf) != 1 {
+        return 0;
+    }
     let owner: i64 = __mind_load_i64(scope + 72);
     let mask: i64 = __mind_load_i64(__mind_load_i64(scope + 40) + owner * 32 + 24);
     let lo: i64 = ast_span_lo(callee);
@@ -33605,28 +33789,38 @@ pub fn nb_fc_local_ok(scope: i64, callee: i64, buf: i64, lets: i64, lcell: i64) 
     let public_count: i64 = __mind_load_i64(counts + 16);
     let public_target: i64 = __mind_load_i64(counts + 24);
     __mind_free(counts);
-    if local_count > 1 { return 0; }
+    if local_count > 1 {
+        return 0;
+    }
     let mut wanted: i64 = local;
     if local_count == 0 {
-        if public_count != 1 { return 0; }
+        if public_count != 1 {
+            return 0;
+        }
         wanted = public_target;
     }
     let at: i64 = __mind_load_i64(lcell + 88);
     let ordered: i64 = nb_at_native_ordered(at);
     let n: i64 = nb_at_native_n_fns(at);
     let actual: i64 = nb_fc_local_actual(ordered, n, 0, buf, lo, hi, wanted, 0);
-    if actual != 1 { return 0; }
+    if actual != 1 {
+        return 0;
+    }
     1
 }
 
 pub fn nb_fc_result(row: i64) -> i64 {
     let ty: i64 = __mind_load_i64(row + 56);
     if __mind_load_i64(ty) == 1 {
-        if __mind_load_i8(ty + 8) == 5 { return 1; }
+        if __mind_load_i8(ty + 8) == 5 {
+            return 1;
+        }
     }
     if __mind_load_i64(ty) == 2 {
         if __mind_load_i8(ty + 8) == 33 {
-            if __mind_load_i8(ty + 9) == 5 { return 2; }
+            if __mind_load_i8(ty + 9) == 5 {
+                return 2;
+            }
         }
     }
     0
@@ -33634,32 +33828,46 @@ pub fn nb_fc_result(row: i64) -> i64 {
 // Every original translation unit already passed its complete registry parser.
 // Cross-unit repetitions are not declarations of the same lexical unit.
 pub fn nb_fc_items_check_units(scope: i64, items: i64, count: i64, i: i64) -> i64 {
-    if i >= count { return 1; }
+    if i >= count {
+        return 1;
+    }
     let node: i64 = __mind_load_i64(items + i * 8);
-    if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) < 0 { return 0; }
+    if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) < 0 {
+        return 0;
+    }
     nb_fc_items_check_units(scope, items, count, i + 1)
 }
 pub fn nb_fc_items_find_main(scope: i64, src: i64, fns: i64, n: i64, i: i64, mains: i64, main_node: i64, out: i64) -> i64 {
     if i >= n {
-        if mains != 1 { return 0; }
+        if mains != 1 {
+            return 0;
+        }
         __mind_store_i64(out, main_node);
         return 1;
     }
     let node: i64 = __mind_load_i64(fns + i * 8);
     let name: i64 = ast_child0(node);
     if nb_name_is_main(src, ast_span_lo(name), ast_span_hi(name)) == 1 {
-        if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) != 21 { return 0; }
+        if nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node)) != 21 {
+            return 0;
+        }
         return nb_fc_items_find_main(scope, src, fns, n, i + 1, mains + 1, node, out);
     }
     nb_fc_items_find_main(scope, src, fns, n, i + 1, mains, main_node, out)
 }
 pub fn nb_fc_items_ok(ctx: i64, tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
     let scope: i64 = nb_fc_scope(ctx);
-    if scope == 0 { return 0; }
-    if __mind_load_i64(scope + 16) != tok_lo(tokens, tok_count(tokens) - 1) { return 0; }
+    if scope == 0 {
+        return 0;
+    }
+    if __mind_load_i64(scope + 16) != tok_lo(tokens, tok_count(tokens) - 1) {
+        return 0;
+    }
     __mind_store_i64(scope + 64, fns);
     __mind_store_i64(scope + 120, n);
-    if nb_fc_items_check_units(scope, items, count, 0) == 0 { return 0; }
+    if nb_fc_items_check_units(scope, items, count, 0) == 0 {
+        return 0;
+    }
     let main_cell: i64 = __mind_alloc(8);
     let ok: i64 = nb_fc_items_find_main(scope, src, fns, n, 0, 0, 0, main_cell);
     if ok == 0 {
@@ -33672,94 +33880,190 @@ pub fn nb_fc_items_ok(ctx: i64, tokens: Vec, src: i64, fns: i64, n: i64, items: 
 }
 
 pub fn nb_ctx_shape_ok(ctx: i64) -> i64 {
-    if ctx == 0 { return 1; }
+    if ctx == 0 {
+        return 1;
+    }
     let version: i64 = __mind_load_i64(ctx);
-    if version != 1 { if version != 2 { if version != 3 { return 0; } } }
-    if __mind_load_i64(ctx + 8) != 1 { return 0; }
-    if version == 1 { if __mind_load_i64(ctx + 72) != 0 { return 0; } }
+    if version != 1 {
+        if version != 2 {
+            if version != 3 {
+                return 0;
+            }
+        }
+    }
+    if __mind_load_i64(ctx + 8) != 1 {
+        return 0;
+    }
+    if version == 1 {
+        if __mind_load_i64(ctx + 72) != 0 {
+            return 0;
+        }
+    }
     if version >= 2 {
         // Checked source-image integration binds this target to the placed NIO
         // code. This necessary shape guard alone is not artifact authority.
         let base: i64 = __mind_load_i64(ctx + 72);
-        if base < 4198400 { return 0; }
-        if base > 5246876 { return 0; }
+        if base < 4198400 {
+            return 0;
+        }
+        if base > 5246876 {
+            return 0;
+        }
     }
     if version == 3 {
         let scope: i64 = nb_fc_scope(ctx);
-        if scope == 0 { return 0; }
-        if __mind_load_i64(scope) != 1 { return 0; }
-        if __mind_load_i64(scope + 32) != 22 { return 0; }
-        if __mind_load_i64(scope + 56) < 0 { return 0; }
-        if __mind_load_i64(scope + 56) > 256 { return 0; }
-        if __mind_load_i64(ctx + 424) < 0 { return 0; }
-        if __mind_load_i64(ctx + 424) > 1 { return 0; }
+        if scope == 0 {
+            return 0;
+        }
+        if __mind_load_i64(scope) != 1 {
+            return 0;
+        }
+        if __mind_load_i64(scope + 32) != 22 {
+            return 0;
+        }
+        if __mind_load_i64(scope + 56) < 0 {
+            return 0;
+        }
+        if __mind_load_i64(scope + 56) > 256 {
+            return 0;
+        }
+        if __mind_load_i64(ctx + 424) < 0 {
+            return 0;
+        }
+        if __mind_load_i64(ctx + 424) > 1 {
+            return 0;
+        }
     }
-    if __mind_load_i64(ctx + 80) != 1 { return 0; }
+    if __mind_load_i64(ctx + 80) != 1 {
+        return 0;
+    }
     let arena_bytes: i64 = __mind_load_i64(ctx + 120);
-    if arena_bytes < 8192 { return 0; }
-    if arena_bytes > 2147483648 { return 0; }
-    if arena_bytes % 4096 != 0 { return 0; }
-    if __mind_load_i64(ctx + 16) != 16777216 + arena_bytes - 4096 { return 0; }
-    if __mind_load_i64(ctx + 24) != 16777224 { return 0; }
-    if __mind_load_i64(ctx + 32) != 16777232 { return 0; }
-    if __mind_load_i64(ctx + 40) != 8388608 { return 0; }
-    if __mind_load_i64(ctx + 48) != 8388608 { return 0; }
-    if __mind_load_i64(ctx + 56) != 16777216 { return 0; }
+    if arena_bytes < 8192 {
+        return 0;
+    }
+    if arena_bytes > 2147483648 {
+        return 0;
+    }
+    if arena_bytes % 4096 != 0 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 16) != 16777216 + arena_bytes - 4096 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 24) != 16777224 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 32) != 16777232 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 40) != 8388608 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 48) != 8388608 {
+        return 0;
+    }
+    if __mind_load_i64(ctx + 56) != 16777216 {
+        return 0;
+    }
     1
 }
 pub fn nb_ctx_entry_kind(ctx: i64, entry: i64) -> i64 {
-    if ctx == 0 { return entry; }
-    if entry == 1 { return 2; }
+    if ctx == 0 {
+        return entry;
+    }
+    if entry == 1 {
+        return 2;
+    }
     entry
 }
 pub fn nb_ctx_entry_ok(ctx: i64, entry: i64) -> i64 {
-    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
-    if entry < 0 { return 0; }
-    if entry > 2 { return 0; }
+    if nb_ctx_shape_ok(ctx) == 0 {
+        return 0;
+    }
+    if entry < 0 {
+        return 0;
+    }
+    if entry > 2 {
+        return 0;
+    }
     if ctx == 0 {
-        if entry == 2 { return 0; }
+        if entry == 2 {
+            return 0;
+        }
         return 1;
     }
-    if entry == 1 { return 0; }
+    if entry == 1 {
+        return 0;
+    }
     1
 }
 pub fn nb_ctx_literal_base(ctx: i64) -> i64 {
-    if ctx == 0 { return nb_rodata_addr(); }
+    if ctx == 0 {
+        return nb_rodata_addr();
+    }
     __mind_load_i64(ctx + 40)
 }
 pub fn nb_ctx_literal_capacity(ctx: i64) -> i64 {
-    if ctx == 0 { return nb_arena_addr() - nb_rodata_addr(); }
+    if ctx == 0 {
+        return nb_arena_addr() - nb_rodata_addr();
+    }
     __mind_load_i64(ctx + 48)
 }
 pub fn nb_ctx_arg_addr(ctx: i64, field: i64) -> i64 {
-    if ctx != 0 { return __mind_load_i64(ctx + field); }
-    if field == 24 { return nb_arena_addr() + 8; }
+    if ctx != 0 {
+        return __mind_load_i64(ctx + field);
+    }
+    if field == 24 {
+        return nb_arena_addr() + 8;
+    }
     nb_arena_addr() + 16
 }
 // Schema1 retains the original no-I/O slice. Schema2 permits only checked
 // four-argument stream sites; raw syscalls, legacy3 and process kinds remain
 // separate. The source-image collector supplies imports from actual AST use.
 pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
-    if ctx == 0 { return 1; }
-    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
+    if ctx == 0 {
+        return 1;
+    }
+    if nb_ctx_shape_ok(ctx) == 0 {
+        return 0;
+    }
     if __mind_load_i64(ctx) == 3 {
-        if kind == 8 { return __mind_load_i64(ctx + 424); }
-        if kind == 9 { return __mind_load_i64(ctx + 424); }
+        if kind == 8 {
+            return __mind_load_i64(ctx + 424);
+        }
+        if kind == 9 {
+            return __mind_load_i64(ctx + 424);
+        }
     }
     if __mind_load_i64(ctx) == 2 {
-        if kind == 8 { return 1; }
-        if kind == 9 { return 1; }
+        if kind == 8 {
+            return 1;
+        }
+        if kind == 9 {
+            return 1;
+        }
     }
     if kind >= 1 {
-        if kind <= 7 { return 1; }
+        if kind <= 7 {
+            return 1;
+        }
     }
-    if kind == 10 { return 1; }
-    if kind == 11 { return 1; }
+    if kind == 10 {
+        return 1;
+    }
+    if kind == 11 {
+        return 1;
+    }
     if kind >= 13 {
-        if kind <= 19 { return 1; }
+        if kind <= 19 {
+            return 1;
+        }
     }
     if kind >= 51 {
-        if kind <= 53 { return 1; }
+        if kind <= 53 {
+            return 1;
+        }
     }
     0
 }
@@ -33767,12 +34071,21 @@ pub fn nb_ctx_intrinsic_ok(ctx: i64, kind: i64) -> i64 {
 // missed future AST shape cannot emit an uncollected thunk reference: its
 // actual call still meets the schema1 refusal. The caller frees only this copy.
 pub fn nb_ctx_without_stream(ctx: i64, uses: i64) -> i64 {
-    if ctx == 0 { return 0; }
-    if nb_ctx_stream_prepare(ctx, uses) == 0 { return ctx; }
+    if ctx == 0 {
+        return 0;
+    }
+    if nb_ctx_stream_prepare(ctx, uses) == 0 {
+        return ctx;
+    }
     let copy: i64 = __mind_alloc(416);
-    if copy == 0 { return 0; }
+    if copy == 0 {
+        return 0;
+    }
     let mut i: i64 = 0;
-    while i < 52 { __mind_store_i64(copy + i * 8, __mind_load_i64(ctx + i * 8)); i = i + 1; }
+    while i < 52 {
+        __mind_store_i64(copy + i * 8, __mind_load_i64(ctx + i * 8));
+        i = i + 1;
+    }
     __mind_store_i64(copy, 1);
     __mind_store_i64(copy + 72, 0);
     copy
@@ -33786,7 +34099,9 @@ pub fn nb_emit_stream_ctx(code: String, kind: i64, ids: i64, dst: i64, ctx: i64)
     let c: String = nb_load_argreg(b, 2, nb_slot_disp(__mind_load_i64(ids + 16)));
     let d: String = nb_load_argreg(c, 3, nb_slot_disp(__mind_load_i64(ids + 24)));
     let mut target: i64 = __mind_load_i64(ctx + 72);
-    if kind == 8 { target = target + 50; }
+    if kind == 8 {
+        target = target + 50;
+    }
     let e: String = nb_i64le(nb_le(d, 47945, 2), target);
     // movabs r11,target ; call r11 (not call [r11]).
     let f: String = nb_le(e, 13893441, 3);
@@ -36447,7 +36762,9 @@ pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
 }
 
 pub fn nb_emit_alloc_ctx(code: String, bytes_disp: i64, ctx: i64) -> String {
-    if ctx != 0 { return nb_emit_alloc_at(code, bytes_disp, __mind_load_i64(ctx + 16)); }
+    if ctx != 0 {
+        return nb_emit_alloc_at(code, bytes_disp, __mind_load_i64(ctx + 16));
+    }
     if nb_layout_explicit() == 1 {
         return nb_emit_alloc_explicit(code, bytes_disp);
     }
@@ -37838,11 +38155,17 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
 }
 
 pub fn nb_emit_intrinsic_ctx(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
-    if nb_ctx_intrinsic_ok(ctx, kind) == 0 { return string_new(); }
+    if nb_ctx_intrinsic_ok(ctx, kind) == 0 {
+        return string_new();
+    }
     if ctx != 0 {
         if __mind_load_i64(ctx) == 2 {
-            if kind == 8 { return nb_emit_stream_ctx(code, kind, ids, dst_id, ctx); }
-            if kind == 9 { return nb_emit_stream_ctx(code, kind, ids, dst_id, ctx); }
+            if kind == 8 {
+                return nb_emit_stream_ctx(code, kind, ids, dst_id, ctx);
+            }
+            if kind == 9 {
+                return nb_emit_stream_ctx(code, kind, ids, dst_id, ctx);
+            }
         }
     }
     if kind >= 1008 {
@@ -38743,32 +39066,68 @@ struct NbState {
 pub fn nb_fc_stage(st: NbState, scope: i64, row: i64, callee: i64, args: i64, n: i64, ids: i64, dts: i64, buf: i64, lets: i64, lcell: i64) -> NbState {
     let mut ok: i64 = 1;
     let row_index: i64 = __mind_load_i64(scope + 88);
-    if nb_fc_definition_count(scope, callee, buf) != 0 { ok = 0; }
-    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 { ok = 0; }
-    if __mind_load_i64(scope + 112) != 0 { ok = 0; }
-    if __mind_load_i64(row + 16) > 1 { ok = 0; }
-    if __mind_load_i64(row + 32) != 0 { ok = 0; }
-    if n != __mind_load_i64(row + 40) { ok = 0; }
-    if n > 1 { ok = 0; }
-    let result: i64 = nb_fc_result(row);
-    if result == 0 { ok = 0; }
-    if __mind_load_i64(scope + 56) >= 256 { ok = 0; }
-    if __mind_load_i64(scope + 96) == 0 {
-        if __mind_load_i64(lcell + 96) != 0 { ok = 0; }
+    if nb_fc_definition_count(scope, callee, buf) != 0 {
+        ok = 0;
     }
-    if ok == 0 { __mind_store_i64(lcell + 80, 1); return st; }
+    if nb_fc_shadowed(callee, buf, lets, lcell) != 0 {
+        ok = 0;
+    }
+    if __mind_load_i64(scope + 112) != 0 {
+        ok = 0;
+    }
+    if __mind_load_i64(row + 16) > 1 {
+        ok = 0;
+    }
+    if __mind_load_i64(row + 32) != 0 {
+        ok = 0;
+    }
+    if n != __mind_load_i64(row + 40) {
+        ok = 0;
+    }
+    if n > 1 {
+        ok = 0;
+    }
+    let result: i64 = nb_fc_result(row);
+    if result == 0 {
+        ok = 0;
+    }
+    if __mind_load_i64(scope + 56) >= 256 {
+        ok = 0;
+    }
+    if __mind_load_i64(scope + 96) == 0 {
+        if __mind_load_i64(lcell + 96) != 0 {
+            ok = 0;
+        }
+    }
+    if ok == 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return st;
+    }
     let mut arg: i64 = 0;
     if n == 1 {
         let ty: i64 = __mind_load_i64(__mind_load_i64(row + 48));
-        if __mind_load_i64(ty) != 1 { ok = 0; }
-        if __mind_load_i8(ty + 8) != 5 { ok = 0; }
-        if __mind_load_i64(dts) != nb_dtype_int() { ok = 0; }
+        if __mind_load_i64(ty) != 1 {
+            ok = 0;
+        }
+        if __mind_load_i8(ty + 8) != 5 {
+            ok = 0;
+        }
+        if __mind_load_i64(dts) != nb_dtype_int() {
+            ok = 0;
+        }
         let slot: i64 = __mind_load_i64(ids);
-        if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 { ok = 0; }
-        if nb_fc_i32_actual(__mind_load_i64(args), buf, lets, lcell) == 0 { ok = 0; }
+        if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 {
+            ok = 0;
+        }
+        if nb_fc_i32_actual(__mind_load_i64(args), buf, lets, lcell) == 0 {
+            ok = 0;
+        }
         arg = nb_slot_disp(slot);
     }
-    if ok == 0 { __mind_store_i64(lcell + 80, 1); return st; }
+    if ok == 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return st;
+    }
     let record: i64 = __mind_load_i64(scope + 48) + __mind_load_i64(scope + 56) * 64;
     __mind_store_i64(record, string_len(st.code));
     __mind_store_i64(record + 8, __mind_load_i64(scope + 72));
@@ -38781,7 +39140,10 @@ pub fn nb_fc_stage(st: NbState, scope: i64, row: i64, callee: i64, args: i64, n:
     __mind_store_i64(scope + 56, __mind_load_i64(scope + 56) + 1);
     let mut code: String = st.code;
     let mut i: i64 = 0;
-    while i < 64 { code = nb_push(code, 204); i = i + 1; }
+    while i < 64 {
+        code = nb_push(code, 204);
+        i = i + 1;
+    }
     let _origin: i64 = nb_origin_set(__mind_load_i64(lcell + 8), st.next_id, result - 1);
     NbState { code: code, next_id: st.next_id + 1, last_id: st.next_id, ncalls: st.ncalls }
 }
@@ -39557,12 +39919,22 @@ pub fn nb_ptrc_value_is_ptr(buf: i64, node: i64, params_addr: i64, n_params: i64
     if ast_kind(node) == ast_paren() {
         return nb_ptrc_value_is_ptr(buf, ast_child0(node), params_addr, n_params);
     }
-    if nb_ptrc_is_ptr(buf, node) == 1 { return 1; }
-    if ast_kind(node) != ast_ident() { return 0; }
+    if nb_ptrc_is_ptr(buf, node) == 1 {
+        return 1;
+    }
+    if ast_kind(node) != ast_ident() {
+        return 0;
+    }
     let ty: i64 = nb_ptrc_param_ty(buf, params_addr, n_params, ast_span_lo(node), ast_span_hi(node), 0);
-    if ty == 0 { return 0; }
-    if ast_span_hi(ty) <= ast_span_lo(ty) { return 0; }
-    if load_byte(buf, ast_span_lo(ty)) == 42 { return 1; }
+    if ty == 0 {
+        return 0;
+    }
+    if ast_span_hi(ty) <= ast_span_lo(ty) {
+        return 0;
+    }
+    if load_byte(buf, ast_span_lo(ty)) == 42 {
+        return 1;
+    }
     0
 }
 
@@ -40107,7 +40479,9 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_call_record_owner_args_ok(callee, args_addr, args_len, buf, lets, lcell, 0) == 0 {
             __mind_store_i64(lcell + 80, 1)
         }
-        if nb_origin_args_ok(callee, ids, args_len, buf, lcell) == 0 { __mind_store_i64(lcell + 80, 1); }
+        if nb_origin_args_ok(callee, ids, args_len, buf, lcell) == 0 {
+            __mind_store_i64(lcell + 80, 1)
+        }
         // Caller-side System-V sequence for args_len args (mirror src/native/mod.rs
         // Call arm, lines 929-955), in EXACT byte order:
         //   1. `sub rsp,8` pad when an odd count of 7th+ args would misalign rsp;
@@ -40293,7 +40667,11 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // cw==64 arm). Any other source refuses (fail-closed poison).
         if ast_cast_is_ptr(buf, node) == 1 {
             let pok: i64 = if cop_dt == nb_dtype_int() {
-                if nb_origin_get(__mind_load_i64(lcell + 8), cop) == 1 { 1 } else { nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell) }
+                if nb_origin_get(__mind_load_i64(lcell + 8), cop) == 1 {
+                    1
+                } else {
+                    nb_ptrc_src_w64(buf, ast_child0(node), params_addr, n_params, lets, lcell)
+                }
             } else {
                 0
             };
@@ -41785,24 +42163,42 @@ pub fn nb_u8_field_index_read(st: NbState, buf: i64, field_node: i64, idx: i64, 
 // Source spans have already been bounded by the lexer. Return the width of one
 // validated source character, or zero for an invalid/trailing escape.
 pub fn nb_string_step(buf: i64, pos: i64, hi: i64) -> i64 {
-    if pos < 0 { return 0; }
-    if pos >= hi { return 0; }
-    if load_byte(buf, pos) != 92 { return 1; }
-    if pos + 1 >= hi { return 0; }
-    if string_escape_value(load_byte(buf, pos + 1)) < 0 { return 0; }
+    if pos < 0 {
+        return 0;
+    }
+    if pos >= hi {
+        return 0;
+    }
+    if load_byte(buf, pos) != 92 {
+        return 1;
+    }
+    if pos + 1 >= hi {
+        return 0;
+    }
+    if string_escape_value(load_byte(buf, pos + 1)) < 0 {
+        return 0;
+    }
     2
 }
 pub fn nb_string_step_good(step: i64) -> i64 {
-    if step == 0 { return 0; }
+    if step == 0 {
+        return 0;
+    }
     1
 }
 pub fn nb_string_step_advance(step: i64) -> i64 {
-    if step == 2 { return 2; }
+    if step == 2 {
+        return 2;
+    }
     1
 }
 pub fn nb_string_decoded_length(buf: i64, lo: i64, hi: i64) -> i64 {
-    if lo < 0 { return 0 - 1; }
-    if hi < lo { return 0 - 1; }
+    if lo < 0 {
+        return 0 - 1;
+    }
+    if hi < lo {
+        return 0 - 1;
+    }
     let mut pos: i64 = lo;
     let mut n: i64 = 0;
     let mut ok: i64 = 1;
@@ -41812,12 +42208,16 @@ pub fn nb_string_decoded_length(buf: i64, lo: i64, hi: i64) -> i64 {
         pos = pos + nb_string_step_advance(step);
         n = n + 1;
     }
-    if ok == 0 { return 0 - 1; }
+    if ok == 0 {
+        return 0 - 1;
+    }
     n
 }
 pub fn nb_string_decoded_byte(buf: i64, pos: i64) -> i64 {
     let b: i64 = load_byte(buf, pos);
-    if b == 92 { return string_escape_value(load_byte(buf, pos + 1)); }
+    if b == 92 {
+        return string_escape_value(load_byte(buf, pos + 1));
+    }
     b
 }
 pub fn nb_rod_room(off: i64, n: i64) -> i64 {
@@ -41825,11 +42225,19 @@ pub fn nb_rod_room(off: i64, n: i64) -> i64 {
 }
 
 pub fn nb_rod_room_ctx(off: i64, n: i64, ctx: i64) -> i64 {
-    if off < 0 { return 0; }
-    if n < 0 { return 0; }
+    if off < 0 {
+        return 0;
+    }
+    if n < 0 {
+        return 0;
+    }
     let cap: i64 = nb_ctx_literal_capacity(ctx);
-    if off > cap { return 0; }
-    if n > cap - off { return 0; }
+    if off > cap {
+        return 0;
+    }
+    if n > cap - off {
+        return 0;
+    }
     1
 }
 // Only called after complete decoding validation and a decoded-byte capacity
@@ -44453,7 +44861,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let ca3: String = nb_store_rax(ca2, nb_slot_disp(wida));
             let _bwa: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wida, 0, pw);
             let _dtwa: i64 = nb_dtype_tag_slot(dtbl167, wida, rhs_dt167);
-                let _oa_copy: i64 = nb_origin_copy(__mind_load_i64(lcell + 8), wida, s1.last_id);
+            let _oa_copy: i64 = nb_origin_copy(__mind_load_i64(lcell + 8), wida, s1.last_id);
             return NbState { code: ca3, next_id: wida + 1, last_id: wida, ncalls: s1.ncalls };
         }
         // i64-REFERENCES capture-copy (assign form): `Y = X` where X is
@@ -46482,28 +46890,51 @@ pub fn nb_fns_use_argv(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
 // declaration or same-spelled local value can acquire generated libc imports.
 pub fn nb_is_stream_name(buf: i64, lo: i64, hi: i64) -> i64 {
     let kind: i64 = nb_intrinsic_id(buf, lo, hi);
-    if kind == 8 { return 1; }
-    if kind == 9 { return 1; }
+    if kind == 8 {
+        return 1;
+    }
+    if kind == 9 {
+        return 1;
+    }
     0
 }
 pub fn nb_stream_token_ok(tokens: Vec, buf: i64, i: i64) -> i64 {
-    if tok_kind(tokens, i) != tk_ident() { return 1; }
-    if nb_is_stream_name(buf, tok_lo(tokens, i), tok_hi(tokens, i)) == 0 { return 1; }
-    if i + 1 >= tok_count(tokens) { return 0; }
-    if tok_kind(tokens, i + 1) != tk_lparen() { return 0; }
+    if tok_kind(tokens, i) != tk_ident() {
+        return 1;
+    }
+    if nb_is_stream_name(buf, tok_lo(tokens, i), tok_hi(tokens, i)) == 0 {
+        return 1;
+    }
+    if i + 1 >= tok_count(tokens) {
+        return 0;
+    }
+    if tok_kind(tokens, i + 1) != tk_lparen() {
+        return 0;
+    }
     if i > 0 {
         let prev: i64 = tok_kind(tokens, i - 1);
-        if prev == tk_kw_fn() { return 0; }
-        if prev == tk_kw_let() { return 0; }
-        if prev == tk_dot() { return 0; }
-        if prev == tk_colon() { return 0; }
+        if prev == tk_kw_fn() {
+            return 0;
+        }
+        if prev == tk_kw_let() {
+            return 0;
+        }
+        if prev == tk_dot() {
+            return 0;
+        }
+        if prev == tk_colon() {
+            return 0;
+        }
     }
     1
 }
 pub fn nb_stream_names_ok(tokens: Vec, buf: i64) -> i64 {
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
-    while i < tok_count(tokens) { ok = ok * nb_stream_token_ok(tokens, buf, i); i = i + 1; }
+    while i < tok_count(tokens) {
+        ok = ok * nb_stream_token_ok(tokens, buf, i);
+        i = i + 1;
+    }
     ok
 }
 // Source ABI predicate, independent of the INT register-file tag. The public
@@ -46512,76 +46943,138 @@ pub fn nb_stream_names_ok(tokens: Vec, buf: i64) -> i64 {
 // The table supplies the actual live let-first binding. Exact declaration spans
 // distinguish a shadow from a later assignment; no name-only parameter fallback.
 pub fn nb_stream_signed_span(buf: i64, lo: i64, hi: i64) -> i64 {
-    if is_ident_i64(buf, lo, hi) == 1 { return 1; }
-    if hi - lo != 3 { return 0; }
-    if load_byte(buf, lo) != 105 { return 0; }
-    if load_byte(buf, lo + 1) != 51 { return 0; }
-    if load_byte(buf, lo + 2) != 50 { return 0; }
+    if is_ident_i64(buf, lo, hi) == 1 {
+        return 1;
+    }
+    if hi - lo != 3 {
+        return 0;
+    }
+    if load_byte(buf, lo) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 51 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 50 {
+        return 0;
+    }
     1
 }
 // Find a declaration by exact source identity.0 absent,-1 inferred/unknown,
 // positive=borrowed original type leaf. Assignments never fabricate a type.
 pub fn nb_stream_decl_list(a: i64, n: i64, stride: i64, offset: i64, lo: i64, hi: i64, depth: i64) -> i64 {
-    if depth > 256 { return 0 - 1; }
+    if depth > 256 {
+        return 0 - 1;
+    }
     let mut i: i64 = 0;
     let mut found: i64 = 0;
     while i < n {
         let next: i64 = nb_stream_decl_node(__mind_load_i64(a + (i * stride + offset) * 8), lo, hi, depth + 1);
-        if next != 0 { found = next; }
+        if next != 0 {
+            found = next;
+        }
         i = i + 1;
     }
     found
 }
 pub fn nb_stream_decl_node(node: i64, lo: i64, hi: i64, depth: i64) -> i64 {
-    if node == 0 { return 0; }
-    if depth > 256 { return 0 - 1; }
+    if node == 0 {
+        return 0;
+    }
+    if depth > 256 {
+        return 0 - 1;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_let() {
         let name: i64 = ast_child0(node);
         if ast_span_lo(name) == lo {
             if ast_span_hi(name) == hi {
-                if ast_child1(node) == 0 { return 0 - 1; }
+                if ast_child1(node) == 0 {
+                    return 0 - 1;
+                }
                 return ast_child1(node);
             }
         }
         return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1);
     }
-    if k == ast_block() { return nb_stream_decl_list(ast_child0(node), ast_aux(node), 1, 0, lo, hi, depth + 1); }
-    if k == ast_call() { return nb_stream_decl_list(ast_child1(node), ast_aux(node), 1, 0, lo, hi, depth + 1); }
-    if k == ast_array_lit() { return nb_stream_decl_list(ast_child1(node), ast_aux(node), 1, 0, lo, hi, depth + 1); }
-    if k == ast_struct_lit() { return nb_stream_decl_list(ast_child1(node), ast_aux(node), 3, 2, lo, hi, depth + 1); }
-    if k == ast_return() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
-    if k == ast_paren() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
-    if k == ast_neg() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
-    if k == ast_not() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
-    if k == ast_cast() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
-    if k == ast_assign() { return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1); }
-    if k == ast_deref_assign() { return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1); }
-    if k == ast_field() { return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1); }
+    if k == ast_block() {
+        return nb_stream_decl_list(ast_child0(node), ast_aux(node), 1, 0, lo, hi, depth + 1);
+    }
+    if k == ast_call() {
+        return nb_stream_decl_list(ast_child1(node), ast_aux(node), 1, 0, lo, hi, depth + 1);
+    }
+    if k == ast_array_lit() {
+        return nb_stream_decl_list(ast_child1(node), ast_aux(node), 1, 0, lo, hi, depth + 1);
+    }
+    if k == ast_struct_lit() {
+        return nb_stream_decl_list(ast_child1(node), ast_aux(node), 3, 2, lo, hi, depth + 1);
+    }
+    if k == ast_return() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
+    if k == ast_paren() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
+    if k == ast_neg() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
+    if k == ast_not() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
+    if k == ast_cast() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
+    if k == ast_assign() {
+        return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1);
+    }
+    if k == ast_deref_assign() {
+        return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1);
+    }
+    if k == ast_field() {
+        return nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
+    }
     if k == ast_enum_ctor() {
-        if ast_aux(node) == 1 { return nb_stream_decl_node(ast_child1(node), lo, hi, depth + 1); }
+        if ast_aux(node) == 1 {
+            return nb_stream_decl_node(ast_child1(node), lo, hi, depth + 1);
+        }
         return 0;
     }
-    if k == ast_if() { return nb_stream_decl_three(node, lo, hi, depth); }
-    if k == ast_while() { return nb_stream_decl_two(node, lo, hi, depth); }
-    if k == ast_binop() { return nb_stream_decl_two(node, lo, hi, depth); }
-    if k == ast_index() { return nb_stream_decl_two(node, lo, hi, depth); }
-    if k == ast_index_assign() { return nb_stream_decl_three(node, lo, hi, depth); }
+    if k == ast_if() {
+        return nb_stream_decl_three(node, lo, hi, depth);
+    }
+    if k == ast_while() {
+        return nb_stream_decl_two(node, lo, hi, depth);
+    }
+    if k == ast_binop() {
+        return nb_stream_decl_two(node, lo, hi, depth);
+    }
+    if k == ast_index() {
+        return nb_stream_decl_two(node, lo, hi, depth);
+    }
+    if k == ast_index_assign() {
+        return nb_stream_decl_three(node, lo, hi, depth);
+    }
     if k == ast_field_assign() {
         let a: i64 = nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
-        if a != 0 { return a; }
+        if a != 0 {
+            return a;
+        }
         return nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1);
     }
     0
 }
 pub fn nb_stream_decl_two(node: i64, lo: i64, hi: i64, depth: i64) -> i64 {
     let a: i64 = nb_stream_decl_node(ast_child0(node), lo, hi, depth + 1);
-    if a != 0 { return a; }
+    if a != 0 {
+        return a;
+    }
     nb_stream_decl_node(ast_child1(node), lo, hi, depth + 1)
 }
 pub fn nb_stream_decl_three(node: i64, lo: i64, hi: i64, depth: i64) -> i64 {
     let a: i64 = nb_stream_decl_two(node, lo, hi, depth);
-    if a != 0 { return a; }
+    if a != 0 {
+        return a;
+    }
     nb_stream_decl_node(ast_child2(node), lo, hi, depth + 1)
 }
 pub fn nb_stream_param_decl(fn_node: i64, lo: i64, hi: i64) -> i64 {
@@ -46597,15 +47090,23 @@ pub fn nb_stream_param_decl(fn_node: i64, lo: i64, hi: i64) -> i64 {
 }
 pub fn nb_stream_param_step(previous: i64, p: i64, lo: i64, hi: i64) -> i64 {
     let name: i64 = ast_child0(p);
-    if ast_span_lo(name) != lo { return previous; }
-    if ast_span_hi(name) != hi { return previous; }
+    if ast_span_lo(name) != lo {
+        return previous;
+    }
+    if ast_span_hi(name) != hi {
+        return previous;
+    }
     ast_child1(p)
 }
 pub fn nb_stream_ident_signed(node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     let at: i64 = __mind_load_i64(lcell + 88);
-    if at == 0 { return 0; }
+    if at == 0 {
+        return 0;
+    }
     let current: i64 = nb_at_native_current(at);
-    if current == 0 { return 0; }
+    if current == 0 {
+        return 0;
+    }
     let lo: i64 = ast_span_lo(node);
     let hi: i64 = ast_span_hi(node);
     let mut i: i64 = __mind_load_i64(lcell) - 1;
@@ -46614,74 +47115,145 @@ pub fn nb_stream_ident_signed(node: i64, buf: i64, lets: i64, lcell: i64) -> i64
         found = nb_stream_ident_row(found, lets, i, buf, lo, hi, current);
         i = i - 1;
     }
-    if found <= 0 { return 0; }
+    if found <= 0 {
+        return 0;
+    }
     nb_stream_signed_span(buf, ast_span_lo(found), ast_span_hi(found))
 }
 pub fn nb_stream_ident_row(found: i64, lets: i64, i: i64, buf: i64, lo: i64, hi: i64, current: i64) -> i64 {
-    if found != 0 { return found; }
+    if found != 0 {
+        return found;
+    }
     let row: i64 = lets + i * 40;
     let decl_lo: i64 = __mind_load_i64(row);
     let decl_hi: i64 = __mind_load_i64(row + 8);
-    if span_bytes_equal(buf, lo, hi, decl_lo, decl_hi) == 0 { return 0; }
+    if span_bytes_equal(buf, lo, hi, decl_lo, decl_hi) == 0 {
+        return 0;
+    }
     let d: i64 = nb_stream_decl_node(ast_child2(current), decl_lo, decl_hi, 0);
-    if d != 0 { return d; }
+    if d != 0 {
+        return d;
+    }
     nb_stream_param_decl(current, decl_lo, decl_hi)
 }
 pub fn nb_stream_expr_signed(node: i64, buf: i64, lets: i64, lcell: i64, depth: i64) -> i64 {
-    if node == 0 { return 0; }
-    if depth > 256 { return 0; }
+    if node == 0 {
+        return 0;
+    }
+    if depth > 256 {
+        return 0;
+    }
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
-        if tc_lit_is_bool(buf, ast_span_lo(node), ast_span_hi(node)) == 1 { return 0; }
+        if tc_lit_is_bool(buf, ast_span_lo(node), ast_span_hi(node)) == 1 {
+            return 0;
+        }
         return 1;
     }
-    if k == ast_ident() { return nb_stream_ident_signed(node, buf, lets, lcell); }
-    if k == ast_paren() { return nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1); }
-    if k == ast_neg() { return nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1); }
+    if k == ast_ident() {
+        return nb_stream_ident_signed(node, buf, lets, lcell);
+    }
+    if k == ast_paren() {
+        return nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1);
+    }
+    if k == ast_neg() {
+        return nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1);
+    }
     if k == ast_cast() {
-        if ast_cast_is_unsigned(buf, node) != 0 { return 0; }
-        if ast_aux(node) == 64 { return 1; }
-        if ast_aux(node) == 32 { return 1; }
+        if ast_cast_is_unsigned(buf, node) != 0 {
+            return 0;
+        }
+        if ast_aux(node) == 64 {
+            return 1;
+        }
+        if ast_aux(node) == 32 {
+            return 1;
+        }
         return 0;
     }
     if k == ast_binop() {
         let op: i64 = ast_aux(node);
-        if op >= op_lt() { if op <= op_ne() { return 0; } }
-        if nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1) == 0 { return 0; }
+        if op >= op_lt() {
+            if op <= op_ne() {
+                return 0;
+            }
+        }
+        if nb_stream_expr_signed(ast_child0(node), buf, lets, lcell, depth + 1) == 0 {
+            return 0;
+        }
         return nb_stream_expr_signed(ast_child1(node), buf, lets, lcell, depth + 1);
     }
     if k == ast_call() {
         let callee: i64 = ast_child0(node);
-        if ast_kind(callee) != ast_ident() { return 0; }
+        if ast_kind(callee) != ast_ident() {
+            return 0;
+        }
         let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
-        if intr >= 0 { if intr == 52 { return 0; } return 1; }
+        if intr >= 0 {
+            if intr == 52 {
+                return 0;
+            }
+            return 1;
+        }
         let frt: i64 = __mind_load_i64(lcell + 16);
-        if frt == 0 { return 0; }
+        if frt == 0 {
+            return 0;
+        }
         let fk: i64 = frt_find(frt, buf, ast_span_lo(callee), ast_span_hi(callee), 0);
-        if fk < 0 { return 0; }
+        if fk < 0 {
+            return 0;
+        }
         return nb_stream_signed_span(buf, frt_retty_lo(frt, fk), frt_retty_hi(frt, fk));
     }
     // Field/index/value-if and inferred aliases need explicit signed casts.
     0
 }
 pub fn nb_stream_arg_ok(node: i64, dtype: i64, slot: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
-    if dtype != nb_dtype_int() { return 0; }
-    if nb_stream_expr_signed(node, buf, lets, lcell, 0) == 0 { return 0; }
-    if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 { return 0; }
-    if ast_kind(node) == ast_paren() { return nb_stream_arg_ok(ast_child0(node), dtype, slot, buf, lets, lcell); }
-    if ast_kind(node) == ast_str_lit() { return 0; }
-    if ast_kind(node) == ast_addr_of() { return 0; }
+    if dtype != nb_dtype_int() {
+        return 0;
+    }
+    if nb_stream_expr_signed(node, buf, lets, lcell, 0) == 0 {
+        return 0;
+    }
+    if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 {
+        return 0;
+    }
+    if ast_kind(node) == ast_paren() {
+        return nb_stream_arg_ok(ast_child0(node), dtype, slot, buf, lets, lcell);
+    }
+    if ast_kind(node) == ast_str_lit() {
+        return 0;
+    }
+    if ast_kind(node) == ast_addr_of() {
+        return 0;
+    }
     let desc: i64 = nb_let_descriptor(node, 0, buf, __mind_load_i64(lcell + 24), __mind_load_i64(lcell + 16), lets, lcell);
-    if desc != 0 { return 0; }
+    if desc != 0 {
+        return 0;
+    }
     1
 }
 pub fn nb_stream_site_ok(callee: i64, args: i64, n: i64, dtypes: i64, ids: i64, buf: i64, lets: i64, lcell: i64, kind: i64) -> i64 {
     let ctx: i64 = __mind_load_i64(lcell + 120);
-    if ctx == 0 { return 1; }
-    if kind != 8 { if kind != 9 { return 1; } }
-    if __mind_load_i64(ctx) != 2 { if __mind_load_i64(ctx) != 3 { return 0; } }
-    if ast_kind(callee) != ast_ident() { return 0; }
-    if n != 4 { return 0; }
+    if ctx == 0 {
+        return 1;
+    }
+    if kind != 8 {
+        if kind != 9 {
+            return 1;
+        }
+    }
+    if __mind_load_i64(ctx) != 2 {
+        if __mind_load_i64(ctx) != 3 {
+            return 0;
+        }
+    }
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
+    if n != 4 {
+        return 0;
+    }
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
     while i < 4 {
@@ -48710,7 +49282,9 @@ pub fn hm_if(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, 
         let end0: i64 = string_len(c_t);
         let _pe0: i64 = hm_set(jmps, je_which, end0);
         let _t0: i64 = nb_dtype_tag_slot(dtbl, r, t_dt);
-        if then_live == 1 { let _o0: i64 = nb_origin_copy(dtbl, r, s_t.last_id); }
+        if then_live == 1 {
+            let _o0: i64 = nb_origin_copy(dtbl, r, s_t.last_id);
+        }
         return NbState { code: c_t, next_id: s_t.next_id, last_id: r, ncalls: s_t.ncalls };
     }
     let nj1: i64 = __mind_load_i64(jcell);
@@ -48871,15 +49445,25 @@ pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0:
 
 pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, ctx: i64) -> NbState {
     let fc_scope: i64 = nb_fc_scope(ctx);
-    if fc_scope != 0 { __mind_store_i64(fc_scope + 96, 1); }
-    if nb_ctx_entry_ok(ctx, is_entry) == 0 { return nb_poison_state(ncalls0); }
-    if nb_origin_return_shape_ok(buf, node, frt) == 0 { return nb_poison_state(ncalls0); }
+    if fc_scope != 0 {
+        __mind_store_i64(fc_scope + 96, 1)
+    }
+    if nb_ctx_entry_ok(ctx, is_entry) == 0 {
+        return nb_poison_state(ncalls0);
+    }
+    if nb_origin_return_shape_ok(buf, node, frt) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     if is_entry == 2 {
-        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() { return nb_poison_state(ncalls0); }
+        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() {
+            return nb_poison_state(ncalls0);
+        }
     }
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
-    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 { return nb_poison_state(ncalls0); }
+    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     // The routed path has the same entry ABI as SSA lowering.
     if nb_entry_params_ok(is_entry, buf, params_addr, n_params) == 0 {
         return nb_poison_state(ncalls0);
@@ -48942,7 +49526,9 @@ pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncal
     __mind_store_i64(lcell + 88, atab);
     __mind_store_i64(lcell + 80, 0);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(idcap));
-    if __mind_load_i64(lcell + 8) == 0 { return nb_poison_state(ncalls0); }
+    if __mind_load_i64(lcell + 8) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     __mind_store_i64(lcell + 16, frt);
     let _tfp: i64 = nb_tag_float_params(__mind_load_i64(lcell + 8), buf, params_addr, n_params, 0);
     let _erp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, lets, lcell, 0);
@@ -48974,7 +49560,9 @@ pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncal
         }
     }
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
-    if nb_last_emits_return(stmts_addr, stmts_len) == 0 { let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id); }
+    if nb_last_emits_return(stmts_addr, stmts_len) == 0 {
+        let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id);
+    }
     let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), hc);
     if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 {
         let _po: i64 = hm_poison(lcell);
@@ -49407,7 +49995,9 @@ pub fn nb_lower_fn_routed(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls
 }
 
 pub fn nb_lower_fn_routed_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, route: i64, fobs: i64, ctx: i64) -> NbState {
-    if nb_fc_begin(ctx, node) == 0 { return nb_poison_state(ncalls0); }
+    if nb_fc_begin(ctx, node) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     if hm_route_home(buf, node, route) == 1 {
         return nb_lower_fn_home_ctx(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, ctx);
     }
@@ -49425,14 +50015,22 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
 }
 
 pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, fobs: i64, ctx: i64) -> NbState {
-    if nb_ctx_entry_ok(ctx, is_entry) == 0 { return nb_poison_state(ncalls0); }
-    if nb_origin_return_shape_ok(buf, node, frt) == 0 { return nb_poison_state(ncalls0); }
+    if nb_ctx_entry_ok(ctx, is_entry) == 0 {
+        return nb_poison_state(ncalls0);
+    }
+    if nb_origin_return_shape_ok(buf, node, frt) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     if is_entry == 2 {
-        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() { return nb_poison_state(ncalls0); }
+        if frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == nb_dtype_float() {
+            return nb_poison_state(ncalls0);
+        }
     }
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
-    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 { return nb_poison_state(ncalls0); }
+    if nb_origin_param_shapes_ok(buf, params_addr, n_params, 0) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     let body: i64 = ast_child2(node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
@@ -49622,7 +50220,9 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     // slot defaults INT, and main.mind's float-free source never tags one FLOAT, so the
     // integer native-ELF oracle stays byte-identical.
     __mind_store_i64(lcell + 8, nb_dtype_table_new(nslots + 64));
-    if __mind_load_i64(lcell + 8) == 0 { return nb_poison_state(ncalls0); }
+    if __mind_load_i64(lcell + 8) == 0 {
+        return nb_poison_state(ncalls0);
+    }
     // RI-D2 S-C1: stash the whole-module return-type registry (frt) at lcell+16, so the
     // body-lowering path (which already threads lcell) can classify a CALL by its callee's
     // declared return dtype without a separate frt parameter: nb_node_dtype_tbl's ast_call
@@ -49721,7 +50321,9 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     let _mtf: i64 = nb_mark_tail_if_when(res_obs, stmts_addr, stmts_len);
     let st_body0s: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let st_body0: NbState = nb_block_tail_store_zero_if(res_obs, st_body0s, buf, stmts_addr, stmts_len);
-    if nb_last_emits_return(stmts_addr, stmts_len) == 0 { let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id); }
+    if nb_last_emits_return(stmts_addr, stmts_len) == 0 {
+        let _or: i64 = nb_origin_require_scalar(lcell, st_body0.last_id);
+    }
 
     // Validate the implicit trailing return after the body walk has populated
     // the let/parameter descriptor environment. Explicit returns are checked
@@ -49744,7 +50346,9 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
     let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), plan);
 
-    if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 { __mind_store_i64(lcell + 80, 1); }
+    if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 {
+        __mind_store_i64(lcell + 80, 1)
+    }
 
     // SYSTEMIC FAIL-CLOSED gate: if any node in this fn's body was REFUSED
     // (nb_expr/nb_stmt default arm, unbound ident, unsupported field shape —
@@ -52654,7 +53258,9 @@ pub fn hm_route_add(route: i64, item: i64) -> i64 {
 pub fn selftest_twin_refusals(src_addr: i64, src_len: i64, user_lo: i64, out: i64, cap: i64) -> i64 {
     let tokens: Vec = lex(src_addr, src_len);
     let route: i64 = __mind_alloc(hm_route_cap() * 8 + 16);
-    if route == 0 { return 0 - 1; }
+    if route == 0 {
+        return 0 - 1;
+    }
     __mind_store_i64(route, 0);
     let _fr: EmitState = nb_build_mic3_from_tokens_r(tokens, src_addr, src_len, user_lo, route);
     let n: i64 = __mind_load_i64(route);
@@ -52776,7 +53382,9 @@ pub fn nb_parts_string(src: i64) -> String {
 // Taking a String for destructive concatenation must first clear its three
 // words, or update them with the new owned String before calling this helper.
 pub fn nb_parts_free(parts: i64) -> i64 {
-    if parts == 0 { return 0; }
+    if parts == 0 {
+        return 0;
+    }
     __mind_free(__mind_load_i64(parts + 8));
     __mind_free(__mind_load_i64(parts + 32));
     __mind_free(__mind_load_i64(parts + 56));
@@ -52785,7 +53393,7 @@ pub fn nb_parts_free(parts: i64) -> i64 {
     __mind_free(__mind_load_i64(parts + 96));
     __mind_free(__mind_load_i64(parts + 104));
     if __mind_load_i64(parts + 160) == 1 {
-        __mind_free(__mind_load_i64(parts + 144));
+        __mind_free(__mind_load_i64(parts + 144))
     }
     let _fc: i64 = nb_fc_free(nb_fc_scope(__mind_load_i64(parts + 176)));
     __mind_free(nb_fc_scope(__mind_load_i64(parts + 176)));
@@ -52793,24 +53401,48 @@ pub fn nb_parts_free(parts: i64) -> i64 {
     0
 }
 pub fn nb_dynamic_param_tag_ok(tag: i64) -> i64 {
-    if tag < 1 { return 0; }
-    if tag <= 10 { return 1; }
-    if tag == 32 { return 1; }
-    if tag == 33 { return 1; }
+    if tag < 1 {
+        return 0;
+    }
+    if tag <= 10 {
+        return 1;
+    }
+    if tag == 32 {
+        return 1;
+    }
+    if tag == 33 {
+        return 1;
+    }
     0
 }
 pub fn nb_dynamic_signature_record_ok(record: i64, tokens: Vec, end: i64) -> i64 {
-    if end < 0 { return 0; }
-    if __mind_load_i64(record + 32) != 0 { return 0; }
-    if __mind_load_i64(record + 24) != 1 { return 0; }
-    if nb_cabi_kind(tokens, end) != tk_lbrace() { return 0; }
+    if end < 0 {
+        return 0;
+    }
+    if __mind_load_i64(record + 32) != 0 {
+        return 0;
+    }
+    if __mind_load_i64(record + 24) != 1 {
+        return 0;
+    }
+    if nb_cabi_kind(tokens, end) != tk_lbrace() {
+        return 0;
+    }
     let row: i64 = __mind_load_i64(__mind_load_i64(record + 16));
     let ret: i64 = __mind_load_i64(row + 56);
-    if __mind_load_i64(ret) != 1 { return 0; }
-    if __mind_load_i8(ret + 8) != 7 { return 0; }
-    if __mind_load_i64(row + 32) != 0 { return 0; }
+    if __mind_load_i64(ret) != 1 {
+        return 0;
+    }
+    if __mind_load_i8(ret + 8) != 7 {
+        return 0;
+    }
+    if __mind_load_i64(row + 32) != 0 {
+        return 0;
+    }
     let count: i64 = __mind_load_i64(row + 40);
-    if count > 2 { return 0; }
+    if count > 2 {
+        return 0;
+    }
     let params: i64 = __mind_load_i64(row + 48);
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
@@ -52823,15 +53455,24 @@ pub fn nb_dynamic_signature_record_ok(record: i64, tokens: Vec, end: i64) -> i64
 }
 pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
     let mut pos: i64 = 0;
-    while nb_cabi_before(tokens, pos, ast_span_lo(node)) == 1 { pos = pos + 1; }
-    if nb_cabi_kind(tokens, pos) != tk_kw_fn() { return 0; }
+    while nb_cabi_before(tokens, pos, ast_span_lo(node)) == 1 {
+        pos = pos + 1;
+    }
+    if nb_cabi_kind(tokens, pos) != tk_kw_fn() {
+        return 0;
+    }
     // Reuse the checked declaration type grammar, then require the function
     // body token. This first slice admits only an explicit i64 result, no
     // aliases, aggregate results, unit, floats, callbacks or variadics.
     let record: i64 = __mind_alloc(48);
-    if record == 0 { return 0; }
+    if record == 0 {
+        return 0;
+    }
     let rows: i64 = __mind_alloc(8);
-    if rows == 0 { __mind_free(record); return 0; }
+    if rows == 0 {
+        __mind_free(record);
+        return 0;
+    }
     __mind_store_i64(record, src);
     __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
     __mind_store_i64(record + 16, rows);
@@ -52853,11 +53494,18 @@ pub fn nb_dynamic_main_signature(tokens: Vec, src: i64, node: i64) -> i64 {
 // No cross-block ABI resolution is inferred here. Every reachable nonintrinsic
 // call still must resolve to a local body before parts can be returned.
 pub fn nb_dynamic_extern_item(tokens: Vec, src: i64, node: i64, fns: i64, n: i64) -> i64 {
-    if nb_item_is_extern(src, node) == 0 { return 1; }
+    if nb_item_is_extern(src, node) == 0 {
+        return 1;
+    }
     let record: i64 = __mind_alloc(48);
-    if record == 0 { return 0; }
+    if record == 0 {
+        return 0;
+    }
     let rows: i64 = __mind_alloc(4096 * 8);
-    if rows == 0 { __mind_free(record); return 0; }
+    if rows == 0 {
+        __mind_free(record);
+        return 0;
+    }
     __mind_store_i64(record, src);
     __mind_store_i64(record + 8, tok_lo(tokens, tok_count(tokens) - 1));
     __mind_store_i64(record + 16, rows);
@@ -52875,8 +53523,12 @@ pub fn nb_dynamic_extern_item(tokens: Vec, src: i64, node: i64, fns: i64, n: i64
     let error: i64 = __mind_load_i64(record + 32);
     let _free: i64 = nb_cabi_free(record);
     __mind_free(record);
-    if parsed != 1 { return 0; }
-    if error != 0 { return 0; }
+    if parsed != 1 {
+        return 0;
+    }
+    if error != 0 {
+        return 0;
+    }
     1
 }
 pub fn nb_dynamic_externs_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
@@ -52897,7 +53549,9 @@ pub fn nb_dynamic_externs_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64
         seen = seen + nb_cabi_word(src, tokens, i, 6, 121437607458917);
         i = i + 1;
     }
-    if seen != blocks { return 0; }
+    if seen != blocks {
+        return 0;
+    }
     ok
 }
 pub fn nb_dynamic_items_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64, count: i64) -> i64 {
@@ -52913,8 +53567,12 @@ pub fn nb_dynamic_items_ok(tokens: Vec, src: i64, fns: i64, n: i64, items: i64, 
         }
         i = i + 1;
     }
-    if mains != 1 { return 0; }
-    if nb_dynamic_externs_ok(tokens, src, fns, n, items, count) == 0 { return 0; }
+    if mains != 1 {
+        return 0;
+    }
+    if nb_dynamic_externs_ok(tokens, src, fns, n, items, count) == 0 {
+        return 0;
+    }
     nb_dynamic_main_signature(tokens, src, main_node)
 }
 
@@ -52928,14 +53586,26 @@ pub fn nb_parts_start_ok(parts: i64, i: i64, previous: i64) -> i64 {
     let names: i64 = __mind_load_i64(parts + 88);
     let src_len: i64 = __mind_load_i64(parts + 152);
     let at: i64 = __mind_load_i64(starts + i * 8);
-    if at < 0 { return 0; }
-    if at >= length { return 0; }
-    if at <= previous { return 0; }
+    if at < 0 {
+        return 0;
+    }
+    if at >= length {
+        return 0;
+    }
+    if at <= previous {
+        return 0;
+    }
     let lo: i64 = __mind_load_i64(names + i * 16);
     let hi: i64 = __mind_load_i64(names + i * 16 + 8);
-    if lo < 0 { return 0; }
-    if hi <= lo { return 0; }
-    if hi > src_len { return 0; }
+    if lo < 0 {
+        return 0;
+    }
+    if hi <= lo {
+        return 0;
+    }
+    if hi > src_len {
+        return 0;
+    }
     1
 }
 pub fn nb_parts_function_end(parts: i64, owner: i64) -> i64 {
@@ -52946,7 +53616,9 @@ pub fn nb_parts_function_end(parts: i64, owner: i64) -> i64 {
 }
 pub fn nb_parts_call_ok(valid: i64, parts: i64, i: i64) -> i64 {
     // Absorbing refusal prevents any later record-dependent read after failure.
-    if valid == 0 { return 0; }
+    if valid == 0 {
+        return 0;
+    }
     let code: i64 = __mind_load_i64(parts + 8);
     let starts: i64 = __mind_load_i64(parts + 80);
     let names: i64 = __mind_load_i64(parts + 88);
@@ -52956,38 +53628,74 @@ pub fn nb_parts_call_ok(valid: i64, parts: i64, i: i64) -> i64 {
     let src: i64 = __mind_load_i64(parts + 144);
     let src_len: i64 = __mind_load_i64(parts + 152);
     let owner: i64 = __mind_load_i64(owners + i * 8);
-    if owner < 0 { return 0; }
-    if owner >= n { return 0; }
+    if owner < 0 {
+        return 0;
+    }
+    if owner >= n {
+        return 0;
+    }
     let begin: i64 = __mind_load_i64(starts + owner * 8);
     let end: i64 = nb_parts_function_end(parts, owner);
     let off: i64 = __mind_load_i64(calls + i * 24);
-    if off < 1 { return 0; }
-    if off > end - begin - 4 { return 0; }
-    if __mind_load_i8(code + begin + off - 1) != 232 { return 0; }
+    if off < 1 {
+        return 0;
+    }
+    if off > end - begin - 4 {
+        return 0;
+    }
+    if __mind_load_i8(code + begin + off - 1) != 232 {
+        return 0;
+    }
     let lo: i64 = __mind_load_i64(calls + i * 24 + 8);
     let hi: i64 = __mind_load_i64(calls + i * 24 + 16);
-    if lo < 0 { return 0; }
-    if hi <= lo { return 0; }
-    if hi > src_len { return 0; }
+    if lo < 0 {
+        return 0;
+    }
+    if hi <= lo {
+        return 0;
+    }
+    if hi > src_len {
+        return 0;
+    }
     let callee: i64 = nb_resolve_callee(src, names, n, lo, hi, 0);
-    if callee < 0 { return 0; }
-    if callee >= n { return 0; }
+    if callee < 0 {
+        return 0;
+    }
+    if callee >= n {
+        return 0;
+    }
     let delta: i64 = __mind_load_i64(starts + callee * 8) - (begin + off + 4);
-    if delta < 0 - 2147483648 { return 0; }
-    if delta > 2147483647 { return 0; }
+    if delta < 0 - 2147483648 {
+        return 0;
+    }
+    if delta > 2147483647 {
+        return 0;
+    }
     1
 }
 pub fn nb_parts_local_calls_ok(parts: i64) -> i64 {
-    if parts == 0 { return 0; }
-    if __mind_load_i64(parts) != 1 { return 0; }
+    if parts == 0 {
+        return 0;
+    }
+    if __mind_load_i64(parts) != 1 {
+        return 0;
+    }
     let length: i64 = __mind_load_i64(parts + 16);
     let starts: i64 = __mind_load_i64(parts + 80);
     let n: i64 = __mind_load_i64(parts + 112);
     let nc: i64 = __mind_load_i64(parts + 120);
-    if length <= 0 { return 0; }
-    if length > 4194304 { return 0; }
-    if n <= 0 { return 0; }
-    if nc < 0 { return 0; }
+    if length <= 0 {
+        return 0;
+    }
+    if length > 4194304 {
+        return 0;
+    }
+    if n <= 0 {
+        return 0;
+    }
+    if nc < 0 {
+        return 0;
+    }
     let mut i: i64 = 0;
     let mut previous: i64 = 0 - 1;
     let mut ok: i64 = 1;
@@ -52996,7 +53704,9 @@ pub fn nb_parts_local_calls_ok(parts: i64) -> i64 {
         previous = __mind_load_i64(starts + i * 8);
         i = i + 1;
     }
-    if ok == 0 { return 0; }
+    if ok == 0 {
+        return 0;
+    }
     i = 0;
     while i < nc {
         ok = nb_parts_call_ok(ok, parts, i);
@@ -53005,7 +53715,9 @@ pub fn nb_parts_local_calls_ok(parts: i64) -> i64 {
     ok
 }
 pub fn nb_parts_patch_local(parts: i64) -> i64 {
-    if nb_parts_local_calls_ok(parts) == 0 { return 0; }
+    if nb_parts_local_calls_ok(parts) == 0 {
+        return 0;
+    }
     let _patch: i64 = nb_patch_all(__mind_load_i64(parts + 8), __mind_load_i64(parts + 96), __mind_load_i64(parts + 120), __mind_load_i64(parts + 104), __mind_load_i64(parts + 80), __mind_load_i64(parts + 88), __mind_load_i64(parts + 112), __mind_load_i64(parts + 144), 0);
     __mind_store_i64(parts + 168, 1);
     1
@@ -53023,10 +53735,14 @@ pub fn nb_dynamic_function_capacity_ok(tokens: Vec) -> i64 {
     let mut i: i64 = 0;
     let mut count: i64 = 0;
     while i < tok_count(tokens) {
-        if tok_kind(tokens, i) == tk_kw_fn() { count = count + 1; }
+        if tok_kind(tokens, i) == tk_kw_fn() {
+            count = count + 1;
+        }
         i = i + 1;
     }
-    if count > frt_cap() { return 0; }
+    if count > frt_cap() {
+        return 0;
+    }
     1
 }
 // Shared tail of nb_lower_parts_hb_route after lowering: validate the call
@@ -53054,7 +53770,9 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
     let note: String = nb_build_note(string_new(), hash_addr);
     let rod_len: i64 = __mind_load_i64(rod);
     let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
-    if parts == 0 { return 0; }
+    if parts == 0 {
+        return 0;
+    }
     let _code: i64 = nb_parts_put_string(parts + 8, image0);
     let _rod: i64 = nb_parts_put_string(parts + 32, rodata);
     let _note: i64 = nb_parts_put_string(parts + 56, note);
@@ -53068,7 +53786,7 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
     __mind_store_i64(parts + 128, entry_idx);
     __mind_store_i64(parts + 136, 0);
     if entry_idx >= 0 {
-        __mind_store_i64(parts + 136, ast_aux(__mind_load_i64(ordered)) / 2);
+        __mind_store_i64(parts + 136, ast_aux(__mind_load_i64(ordered)) / 2)
     }
     __mind_store_i64(parts + 144, src_addr);
     __mind_store_i64(parts + 152, src_len);
@@ -53078,7 +53796,9 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
     __mind_store_i64(parts + 184, uses_stream);
     if ctx != 0 {
         let captured: i64 = __mind_alloc(src_len + 16);
-        if captured == 0 { return 0; }
+        if captured == 0 {
+            return 0;
+        }
         let _copy: i64 = nfn_copy_src_bytes(captured, src_addr, src_len, 0);
         let mut z: i64 = 0;
         while z < 16 {
@@ -53086,7 +53806,7 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
             z = z + 1;
         }
         __mind_store_i64(parts + 144, captured);
-        __mind_store_i64(parts + 160, 1);
+        __mind_store_i64(parts + 160, 1)
     }
     parts
 }
@@ -53094,23 +53814,39 @@ pub fn nb_lower_parts_finish(lr: NbState, calls: i64, starts: i64, call_owner: i
 // and returns 0; kind 2 with no stream use returns 1, meaning the caller must
 // lower with a private copy whose stream slots are cleared; otherwise 0.
 pub fn nb_ctx_stream_prepare(ctx: i64, uses: i64) -> i64 {
-    if ctx == 0 { return 0; }
+    if ctx == 0 {
+        return 0;
+    }
     if __mind_load_i64(ctx) == 3 {
         __mind_store_i64(ctx + 424, uses);
         return 0;
     }
-    if __mind_load_i64(ctx) != 2 { return 0; }
-    if uses != 0 { return 0; }
+    if __mind_load_i64(ctx) != 2 {
+        return 0;
+    }
+    if uses != 0 {
+        return 0;
+    }
     1
 }
 pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64, ctx: i64, parts: i64) -> i64 {
-    if nb_ctx_shape_ok(ctx) == 0 { return 0; }
-    if tok_count(tokens) == 0 { return 0; }
+    if nb_ctx_shape_ok(ctx) == 0 {
+        return 0;
+    }
+    if tok_count(tokens) == 0 {
+        return 0;
+    }
     let src_len: i64 = tok_lo(tokens, tok_count(tokens) - 1);
     if ctx != 0 {
-        if src_len < 0 { return 0; }
-        if src_len > 67108864 { return 0; }
-        if nb_dynamic_function_capacity_ok(tokens) == 0 { return 0; }
+        if src_len < 0 {
+            return 0;
+        }
+        if src_len > 67108864 {
+            return 0;
+        }
+        if nb_dynamic_function_capacity_ok(tokens) == 0 {
+            return 0;
+        }
     }
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
@@ -53142,11 +53878,17 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
 
     if ctx != 0 {
         if nb_fc_scope(ctx) == 0 {
-            if nb_dynamic_items_ok(tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+            if nb_dynamic_items_ok(tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 {
+                return 0;
+            }
         } else {
-            if nb_fc_items_ok(ctx, tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 { return 0; }
+            if nb_fc_items_ok(ctx, tokens, src_addr, all_fns, nb_all, items_addr, items_len) == 0 {
+                return 0;
+            }
         }
-        if entry_idx < 0 { return 0; }
+        if entry_idx < 0 {
+            return 0;
+        }
     }
 
     // Lay out: entry (main) FIRST, then the rest in source order.
@@ -53182,7 +53924,9 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     // frt lexes overflowed it on the whole-compiler source (native stage1 segfault while
     // the unlimited-heap .so passed). Reusing `tokens` yields byte-identical registries.
     let srt: i64 = srt_build_from_tokens(tokens, src_addr);
-    if nb_origin_records_ok(srt, src_addr) == 0 { return 0; }
+    if nb_origin_records_ok(srt, src_addr) == 0 {
+        return 0;
+    }
     // RI-D2 S-C1: whole-module return-type registry (fn name -> declared-return-dtype),
     // built once and threaded through nb_lower_all like srt, so a call is spilled from the
     // right register file (xmm0 for a float-returning callee) and classified by its
@@ -53214,7 +53958,9 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
         if __mind_load_i64(ctx) >= 2 {
             uses_stream = nb_fns_use_stream(src_addr, ordered, n_fns, 0);
             if uses_stream != 0 {
-                if nb_stream_names_ok(tokens, src_addr) == 0 { return 0; }
+                if nb_stream_names_ok(tokens, src_addr) == 0 {
+                    return 0;
+                }
             }
         }
     }
@@ -53268,9 +54014,14 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
     let need_copy: i64 = nb_ctx_stream_prepare(ctx, uses_stream);
     if need_copy == 1 {
         let lower_ctx: i64 = __mind_alloc(416);
-        if lower_ctx == 0 { return 0; }
+        if lower_ctx == 0 {
+            return 0;
+        }
         let mut ci: i64 = 0;
-        while ci < 52 { __mind_store_i64(lower_ctx + ci * 8, __mind_load_i64(ctx + ci * 8)); ci = ci + 1; }
+        while ci < 52 {
+            __mind_store_i64(lower_ctx + ci * 8, __mind_load_i64(ctx + ci * 8));
+            ci = ci + 1;
+        }
         __mind_store_i64(lower_ctx, 1);
         __mind_store_i64(lower_ctx + 72, 0);
         let lr: NbState = nb_lower_all_ctx(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route, obs, lower_ctx);
@@ -53283,9 +54034,14 @@ pub fn nb_lower_parts_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_
 
 pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64) -> EmitState {
     let parts: i64 = __mind_alloc(192);
-    if parts == 0 { return es_new(); }
+    if parts == 0 {
+        return es_new();
+    }
     let status: i64 = nb_lower_parts_hb_route(tokens, src_addr, hash_addr, user_lo, route, 0, parts);
-    if status == 0 { __mind_free(parts); return es_new(); }
+    if status == 0 {
+        __mind_free(parts);
+        return es_new();
+    }
     let image0: String = nb_parts_string(parts + 8);
     let starts: i64 = __mind_load_i64(parts + 80);
     let fn_names: i64 = __mind_load_i64(parts + 88);
@@ -53834,27 +54590,55 @@ pub fn selftest_native_elf_fp_mem(a_bits: i64, b_bits: i64, op_sel: i64) -> Emit
 // intentionally have no table; it must never override a real scalar shadow.
 pub fn nb_origin_cast_operand_is_ptr(lcell: i64, slot: i64, buf: i64, node: i64, params: i64, n: i64) -> i64 {
     let tbl: i64 = __mind_load_i64(lcell + 8);
-    if tbl != 0 { return nb_origin_get(tbl, slot); }
+    if tbl != 0 {
+        return nb_origin_get(tbl, slot);
+    }
     nb_ptrc_value_is_ptr(buf, node, params, n)
 }
 
 pub fn nb_origin_get(tbl: i64, id: i64) -> i64 {
-    if tbl == 0 { return 0; }
-    if id < 0 { return 0; }
+    if tbl == 0 {
+        return 0;
+    }
+    if id < 0 {
+        return 0;
+    }
     let cap: i64 = __mind_load_i64(tbl - 16);
-    if id >= cap { __mind_store_i64(tbl - 8, 1); return 1; }
+    if id >= cap {
+        __mind_store_i64(tbl - 8, 1);
+        return 1;
+    }
     let origin: i64 = __mind_load_i64(tbl + (cap + id) * 8);
-    if origin < 0 { __mind_store_i64(tbl - 8, 1); return 1; }
-    if origin > 1 { __mind_store_i64(tbl - 8, 1); return 1; }
+    if origin < 0 {
+        __mind_store_i64(tbl - 8, 1);
+        return 1;
+    }
+    if origin > 1 {
+        __mind_store_i64(tbl - 8, 1);
+        return 1;
+    }
     origin
 }
 pub fn nb_origin_set(tbl: i64, id: i64, origin: i64) -> i64 {
-    if tbl == 0 { return 0; }
-    if id < 0 { return 0; }
+    if tbl == 0 {
+        return 0;
+    }
+    if id < 0 {
+        return 0;
+    }
     let cap: i64 = __mind_load_i64(tbl - 16);
-    if id >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
-    if origin < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
-    if origin > 1 { __mind_store_i64(tbl - 8, 1); return 0; }
+    if id >= cap {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
+    if origin < 0 {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
+    if origin > 1 {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
     __mind_store_i64(tbl + (cap + id) * 8, origin);
     0
 }
@@ -53863,33 +54647,46 @@ pub fn nb_origin_copy(tbl: i64, dst: i64, src: i64) -> i64 {
 }
 pub fn nb_origin_require_scalar(lcell: i64, slot: i64) -> i64 {
     if nb_origin_get(__mind_load_i64(lcell + 8), slot) != 0 {
-        __mind_store_i64(lcell + 80, 1);
+        __mind_store_i64(lcell + 80, 1)
     }
     0
 }
 pub fn nb_origin_type(buf: i64, leaf: i64) -> i64 {
-    if leaf == 0 { return 0; }
-    if ast_span_hi(leaf) <= ast_span_lo(leaf) { return 0; }
-    if load_byte(buf, ast_span_lo(leaf)) == 42 { return 1; }
+    if leaf == 0 {
+        return 0;
+    }
+    if ast_span_hi(leaf) <= ast_span_lo(leaf) {
+        return 0;
+    }
+    if load_byte(buf, ast_span_lo(leaf)) == 42 {
+        return 1;
+    }
     0
 }
 pub fn nb_origin_ann_ok(lcell: i64, buf: i64, leaf: i64, slot: i64) -> i64 {
-    if leaf == 0 { return 0; }
+    if leaf == 0 {
+        return 0;
+    }
     if nb_origin_type(buf, leaf) != nb_origin_get(__mind_load_i64(lcell + 8), slot) {
-        __mind_store_i64(lcell + 80, 1);
+        __mind_store_i64(lcell + 80, 1)
     }
     0
 }
 pub fn nb_origin_resolve(buf: i64, name: i64, params: i64, count: i64, lets: i64, lcell: i64) -> i64 {
     let slot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(name), ast_span_hi(name));
-    if slot >= 0 { return slot; }
+    if slot >= 0 {
+        return slot;
+    }
     resolve_param(params, count, buf, ast_span_lo(name), ast_span_hi(name))
 }
 pub fn nb_origin_assignment(lcell: i64, old: i64, value: i64) -> i64 {
-    if old < 0 { __mind_store_i64(lcell + 80, 1); return 0; }
+    if old < 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return 0;
+    }
     let tbl: i64 = __mind_load_i64(lcell + 8);
     if nb_origin_get(tbl, old) != nb_origin_get(tbl, value) {
-        __mind_store_i64(lcell + 80, 1);
+        __mind_store_i64(lcell + 80, 1)
     }
     0
 }
@@ -53899,48 +54696,72 @@ pub fn nb_origin_join(lcell: i64, dst: i64, left: i64, right: i64, left_live: i6
     let tbl: i64 = __mind_load_i64(lcell + 8);
     if left_live == 1 {
         let _c: i64 = nb_origin_copy(tbl, dst, left);
-        if right_live == 1 { let _a: i64 = nb_origin_assignment(lcell, left, right); }
+        if right_live == 1 {
+            let _a: i64 = nb_origin_assignment(lcell, left, right);
+        }
         return 0;
     }
-    if right_live == 1 { let _c: i64 = nb_origin_copy(tbl, dst, right); }
+    if right_live == 1 {
+        let _c: i64 = nb_origin_copy(tbl, dst, right);
+    }
     0
 }
 pub fn nb_origin_args_rows(fnode: i64, ids: i64, n: i64, buf: i64, lcell: i64, i: i64) -> i64 {
-    if i >= n { return 1; }
+    if i >= n {
+        return 1;
+    }
     let p: i64 = __mind_load_i64(ast_child1(fnode) + i * 8);
     let actual: i64 = nb_origin_get(__mind_load_i64(lcell + 8), __mind_load_i64(ids + i * 8));
-    if nb_origin_type(buf, ast_child1(p)) != actual { return 0; }
+    if nb_origin_type(buf, ast_child1(p)) != actual {
+        return 0;
+    }
     nb_origin_args_rows(fnode, ids, n, buf, lcell, i + 1)
 }
 pub fn nb_origin_args_ok(callee: i64, ids: i64, n: i64, buf: i64, lcell: i64) -> i64 {
     let at: i64 = __mind_load_i64(lcell + 88);
-    if at == 0 { return 1; }
+    if at == 0 {
+        return 1;
+    }
     let ordered: i64 = nb_at_native_ordered(at);
     let count: i64 = nb_at_native_n_fns(at);
     let k: i64 = nb_last_def_idx(buf, ordered, count, ast_span_lo(callee), ast_span_hi(callee), 0, 0 - 1);
-    if k < 0 { return 1; }
+    if k < 0 {
+        return 1;
+    }
     let f: i64 = __mind_load_i64(ordered + k * 8);
-    if ast_aux(f) / 2 != n { return 0; }
+    if ast_aux(f) / 2 != n {
+        return 0;
+    }
     nb_origin_args_rows(f, ids, n, buf, lcell, 0)
 }
 pub fn nb_origin_return_shape_ok(buf: i64, node: i64, frt: i64) -> i64 {
-    if frt == 0 { return 1; }
+    if frt == 0 {
+        return 1;
+    }
     let name: i64 = ast_child0(node);
     let k: i64 = frt_find(frt, buf, ast_span_lo(name), ast_span_hi(name), 0);
-    if k < 0 { return 1; }
+    if k < 0 {
+        return 1;
+    }
     let lo: i64 = frt_retty_lo(frt, k);
     let hi: i64 = frt_retty_hi(frt, k);
-    if nb_origin_span_has_ptr(buf, lo, hi) == 1 { return 0; }
+    if nb_origin_span_has_ptr(buf, lo, hi) == 1 {
+        return 0;
+    }
     1
 }
 pub fn nb_origin_record_field_ok(srt: i64, buf: i64, k: i64, j: i64) -> i64 {
     let lo: i64 = srt_field_type_lo(srt, k, j);
     let hi: i64 = srt_field_type_hi(srt, k, j);
-    if nb_origin_span_has_ptr(buf, lo, hi) == 1 { return 0; }
+    if nb_origin_span_has_ptr(buf, lo, hi) == 1 {
+        return 0;
+    }
     if srt_field_array_kind(srt, k, j) == 1 {
         let el: i64 = srt_field_array_elem_lo(srt, k, j);
         let eh: i64 = srt_field_array_elem_hi(srt, k, j);
-        if nb_origin_span_has_ptr(buf, el, eh) == 1 { return 0; }
+        if nb_origin_span_has_ptr(buf, el, eh) == 1 {
+            return 0;
+        }
     }
     1
 }
@@ -53961,32 +54782,54 @@ pub fn nb_origin_records_ok(srt: i64, buf: i64) -> i64 {
 // Internal merge initialization: origin 2 means no live edge has arrived.
 // All calls use table-owned, capacity-checked slots; sentinel is never a value.
 pub fn nb_origin_merge_init(tbl: i64, mt: i64, n: i64, i: i64) -> i64 {
-    if i >= n { return 0; }
-    if tbl == 0 { return 0; }
+    if i >= n {
+        return 0;
+    }
+    if tbl == 0 {
+        return 0;
+    }
     let cap: i64 = __mind_load_i64(tbl - 16);
     let id: i64 = __mind_load_i64(mt + (i * 5 + 4) * 8);
-    if id < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
-    if id >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
+    if id < 0 {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
+    if id >= cap {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
     __mind_store_i64(tbl + (cap + id) * 8, 2);
     nb_origin_merge_init(tbl, mt, n, i + 1)
 }
 pub fn nb_origin_merge_edge(lcell: i64, tbl: i64, dst: i64, src: i64) -> i64 {
-    if tbl == 0 { return 0; }
+    if tbl == 0 {
+        return 0;
+    }
     let cap: i64 = __mind_load_i64(tbl - 16);
-    if dst < 0 { __mind_store_i64(tbl - 8, 1); return 0; }
-    if dst >= cap { __mind_store_i64(tbl - 8, 1); return 0; }
+    if dst < 0 {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
+    if dst >= cap {
+        __mind_store_i64(tbl - 8, 1);
+        return 0;
+    }
     if __mind_load_i64(tbl + (cap + dst) * 8) != 2 {
         let _same: i64 = nb_origin_assignment(lcell, dst, src);
     }
     nb_origin_copy(tbl, dst, src)
 }
 pub fn nb_origin_scalar_args(lcell: i64, ids: i64, n: i64, i: i64) -> i64 {
-    if i >= n { return 0; }
+    if i >= n {
+        return 0;
+    }
     let _v: i64 = nb_origin_require_scalar(lcell, __mind_load_i64(ids + i * 8));
     nb_origin_scalar_args(lcell, ids, n, i + 1)
 }
 pub fn nb_origin_is_star(buf: i64, i: i64) -> i64 {
-    if load_byte(buf, i) == 42 { return 1; }
+    if load_byte(buf, i) == 42 {
+        return 1;
+    }
     0
 }
 pub fn nb_origin_span_has_ptr(buf: i64, lo: i64, hi: i64) -> i64 {
@@ -53999,11 +54842,15 @@ pub fn nb_origin_span_has_ptr(buf: i64, lo: i64, hi: i64) -> i64 {
     found
 }
 pub fn nb_origin_param_shapes_ok(buf: i64, params: i64, n: i64, i: i64) -> i64 {
-    if i >= n { return 1; }
+    if i >= n {
+        return 1;
+    }
     let p: i64 = __mind_load_i64(params + i * 8);
     let ty: i64 = ast_child1(p);
     if nb_origin_type(buf, ty) == 0 {
-        if nb_origin_span_has_ptr(buf, ast_span_lo(ty), ast_span_hi(ty)) == 1 { return 0; }
+        if nb_origin_span_has_ptr(buf, ast_span_lo(ty), ast_span_hi(ty)) == 1 {
+            return 0;
+        }
     }
     nb_origin_param_shapes_ok(buf, params, n, i + 1)
 }
@@ -54345,8 +55192,12 @@ pub fn nb_fp_parity_fix(op: i64) -> i64 {
 // the buffer. Every SSA-path table is sized past its counted ids, so the flag
 // never fires there and no emitted byte changes.
 pub fn nb_dtype_table_new(n: i64) -> i64 {
-    if n < 0 { return 0; }
-    if n > 576460752303423486 { return 0; }
+    if n < 0 {
+        return 0;
+    }
+    if n > 576460752303423486 {
+        return 0;
+    }
     let base: i64 = __mind_alloc(n * 16 + 16);
     __mind_store_i64(base, n);
     __mind_store_i64(base + 8, 0);

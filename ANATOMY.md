@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2695 | **Est. tokens:** ~4,796,613
-**Generated:** 2026-10-30 13:36 UTC
+**Files:** 2695 | **Est. tokens:** ~4,796,588
+**Generated:** 2026-10-30 13:44 UTC
 
 ## Token Budget Guide
 
@@ -174,7 +174,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 44 | ~215,634 |
+| `std/` | 44 | ~215,609 |
 | `tests/` | 437 | ~914,721 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -2366,7 +2366,7 @@
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4186 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
-- `fs_checked.mind` (~2560 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
+- `fs_checked.mind` (~2535 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
 - `fs.mind` (~5251 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
