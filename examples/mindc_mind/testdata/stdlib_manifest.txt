@@ -33,7 +33,7 @@
 # native build — a whole-corpus RESEED event, never a routine edit. The lint pins
 # this with a positive golden below.
 #
-# SEED_BLOB_SHA256 199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202
+# SEED_BLOB_SHA256 de078f0b72eef74a21985a3ef8c6bde3016428ac49aedd39085d4698858e5d15
 #   sha256 of b"".join(read(std/<m>.mind) + b"\n" for each `seed` row in file
 #   order) = the exact stdin image prefix the bridge composes. Recompute with:
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
