@@ -94,6 +94,18 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
             _ => None,
         })
         .collect();
+    // An exported foreign declaration is already a C symbol. It belongs on
+    // the module surface for importers and must not be rejected as a missing
+    // MIND function or given a `mind_fn_*_invoke` wrapper.
+    let foreign_names: std::collections::BTreeSet<&str> = module
+        .instrs
+        .iter()
+        .filter_map(|instr| match instr {
+            #[cfg(feature = "std-surface")]
+            Instr::ExternFnDecl { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
 
     let mut names: Vec<&String> = module.exports.iter().collect();
     names.sort();
@@ -101,20 +113,24 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
     // Validate the complete requested set before mutating the output. A bad
     // name after a valid one must not leave a partial MLIR module behind.
     for name in &names {
-        if !callable_names.contains(name.as_str()) {
-            return Err(format!(
-                "export `{name}` does not name a lowered function; C ABI wrappers require callable exports"
-            ));
+        if callable_names.contains(name.as_str()) || foreign_names.contains(name.as_str()) {
+            if !is_c_symbol_safe(name) {
+                return Err(format!(
+                    "export `{name}` is not a valid C symbol; reject before codegen \
+                     (mind-spec RFC-0007 §symbol-names)"
+                ));
+            }
+            continue;
         }
-        if !is_c_symbol_safe(name) {
-            return Err(format!(
-                "export `{name}` is not a valid C symbol; reject before codegen \
-                 (mind-spec RFC-0007 §symbol-names)"
-            ));
-        }
+        return Err(format!(
+            "export `{name}` does not name a lowered function; C ABI wrappers require callable exports"
+        ));
     }
 
     for name in names {
+        if !callable_names.contains(name.as_str()) {
+            continue;
+        }
         out.push_str(&format!(
             "  llvm.func @mind_fn_{name}_v1_invoke(%inputs: !llvm.ptr, %in_count: i64, \
              %outputs: !llvm.ptr, %out_count: i64) -> i32 {{\n"
@@ -216,6 +232,27 @@ mod tests {
         assert!(!is_c_symbol_safe("9fn"));
         assert!(is_c_symbol_safe("_ok"));
         assert!(is_c_symbol_safe("fn9"));
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn exported_extern_is_not_a_mind_wrapper() {
+        let mut m = module_with(&["echo_i16", "owner"], &["owner"]);
+        m.instrs.push(Instr::ExternFnDecl {
+            name: "echo_i16".to_string(),
+            param_types: vec!["i16".to_string()],
+            ret_type: Some("i16".to_string()),
+            is_varargs: false,
+            vararg_hints: Vec::new(),
+            callconv: crate::ast::CallConv::C,
+        });
+        let mut out = String::new();
+        emit_c_export_wrappers(&mut out, &m).expect("extern export is a C symbol");
+        assert!(out.contains("mind_fn_owner_v1_invoke"));
+        assert!(
+            !out.contains("echo_i16"),
+            "a foreign declaration must not grow a MIND invoke wrapper"
+        );
     }
 
     #[test]

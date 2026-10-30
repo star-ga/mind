@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2659 | **Est. tokens:** ~4,778,818
-**Generated:** 2026-10-29 04:17 UTC
+**Files:** 2695 | **Est. tokens:** ~4,796,983
+**Generated:** 2026-10-30 18:54 UTC
 
 ## Token Budget Guide
 
@@ -43,7 +43,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 41 | ~119,173 |
+| `docs/` | 43 | ~122,235 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 9 | ~22,174 |
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 289 | ~818,860 |
+| `examples/mindc_mind/` | 289 | ~818,884 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,810 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -141,7 +141,7 @@
 | `src/diagnostics/` | 4 | ~17,013 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 39 | ~143,503 |
+| `src/eval/` | 40 | ~144,113 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -158,24 +158,24 @@
 | `src/ir/native_lane_profile/` | 4 | ~15,932 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 8 | ~20,431 |
+| `src/mlir/` | 8 | ~20,801 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,781 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~72,718 |
+| `src/project/` | 22 | ~76,596 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,676 |
-| `src/type_checker/` | 18 | ~62,604 |
+| `src/type_checker/` | 19 | ~63,915 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 434 | ~906,664 |
+| `tests/` | 437 | ~914,721 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -220,6 +220,7 @@
 | `tests/fixtures/` | 7 | ~5,820 |
 | `tests/fixtures/f64_abi_negative/` | 3 | ~192 |
 | `tests/fixtures/native_lane/` | 1 | ~14,352 |
+| `tests/fixtures/native_lane_refusals/` | 28 | ~853 |
 | `tests/fixtures/nerve_numerics/` | 11 | ~968 |
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
@@ -485,6 +486,7 @@
 
 - `byte-store-migration.md` (~3357 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~1310 tok, large) — MIND CLI Reference
+- `compiler-imported-extern-abi-20261029.md` (~2333 tok, huge) — Imported extern ABI validation — 2026-10-29
 ### `docs/compiler/`
 
 - `NATIVE_C_ABI_CONTRACT.md` (~1832 tok, huge) — Source-derived native C ABI declaration contract
@@ -580,6 +582,7 @@
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `runtime-open-errors.md` (~831 tok, large) — Runtime file-open errors
 - `security.md` (~1585 tok, huge) — Security Guide
+- `seed-lineage-ordering-validation.md` (~729 tok, large) — Seed lineage before advancement execution
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `sha256-memory-contract.md` (~1795 tok, huge) — SHA-256 memory and failure contract
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
@@ -854,7 +857,7 @@
 - `self_host_lockstep_smoke.py` (~2241 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `_selfhost_loop_reseed.py` (~4296 tok, huge) — Seed-provenance support for the LOOP harness: the legacy Rust-seeded
 - `self_host_loop_smoke.md` (~2796 tok, huge) — Self-host LOOP gate contract
-- `self_host_loop_smoke.py` (~9622 tok, huge) — Self-host LOOP reproduction and advancement gate.
+- `self_host_loop_smoke.py` (~9646 tok, huge) — Self-host LOOP reproduction and advancement gate.
 - `self_host_matchscalar_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
 - `self_host_mic3_float_valueif_smoke.py` (~1803 tok, huge)
@@ -2057,6 +2060,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
+- `imported_extern_decls.rs` (~610 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~1244 tok, large) — Copyright 2026 STARGA Inc.
@@ -2205,7 +2209,7 @@
 - `main.rs` (~6847 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `c_export.rs` (~2653 tok, huge) — Copyright 2025 STARGA Inc.
+- `c_export.rs` (~3023 tok, huge) — Copyright 2025 STARGA Inc.
 - `const_globals.rs` (~4744 tok, huge) — Copyright 2025 STARGA Inc.
 - `div_trap.rs` (~1541 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~6147 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -2251,7 +2255,7 @@
 - `pipeline.rs` (~7372 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `active_module_table.rs` (~5350 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `active_module_table.rs` (~7205 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `artifact.rs` (~1045 tok, large) — Copyright 2025 STARGA Inc.
 - `build_input_snapshot.rs` (~4632 tok, huge) — Copyright 2025 STARGA Inc.
 - `build_lock.rs` (~1630 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2259,10 +2263,11 @@
 - `canonical_bridge.rs` (~5927 tok, huge) — Copyright 2026 STARGA Inc.
 - `compiled_sources.rs` (~530 tok, large) — Copyright 2025 STARGA Inc.
 - `embedded_entry.rs` (~670 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `exported_extern.rs` (~1204 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `host_triple.rs` (~992 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `module_table.rs` (~7745 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -2311,6 +2316,7 @@
 - `canonical_macro.rs` (~58 tok, small) — Copyright 2026 STARGA Inc.
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
+- `extern_declarations.rs` (~1311 tok, large) — Copyright 2026 STARGA Inc.
 - `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2677,6 +2683,7 @@
 - `extern_c_phase_b.rs` (~5981 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_c.rs` (~3442 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_c_safety_tag_informational.rs` (~1427 tok, large) — Copyright 2025 STARGA Inc.
+- `extern_declaration_conflicts.rs` (~1567 tok, huge) — Copyright 2026 STARGA Inc.
 - `extern_narrow_ret_run.rs` (~1528 tok, huge) — Copyright 2025 STARGA Inc.
 - `f3_bare_enum_collision_run.rs` (~1347 tok, large) — Copyright 2025 STARGA Inc.
 - `f64_abi_negative_control.rs` (~1819 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2707,6 +2714,36 @@
 - `g2_expected_outcomes.tsv` (~5592 tok, huge) — # Per-fixture G2 capability ratchet; canonical source SHA-256 binds each case.
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
+### `tests/fixtures/native_lane_refusals/`
+
+- `lane_alloc_free_in_loop.mind` (~50 tok, small) — lane.alloc.free_in_loop: native free does not reclaim arena storage inside a loop.
+- `lane_alloc_size_positive.mind` (~35 tok, tiny) — lane.alloc.size_positive: an allocation size must be a positive integer literal.
+- `lane_binop_non_scalar.mind` (~32 tok, tiny) — lane.binop.non_scalar: a binary operator over two unit values.
+- `lane_bool_width.mind` (~35 tok, tiny) — lane.bool.width: bool arithmetic has i1 width in MLIR but word width in the seed.
+- `lane_call_arity.mind` (~32 tok, tiny) — lane.call.arity: an intrinsic called with the wrong argument count.
+- `lane_call_unknown.mind` (~33 tok, tiny) — lane.call.unknown: a callee that is neither a user function nor a lane intrinsic.
+- `lane_entry_f64_result.mind` (~23 tok, tiny) — lane.entry.f64_result: the entry function returns f64.
+- `lane_extern_unimplemented.mind` (~30 tok, tiny) — lane.extern.unimplemented: a C extern block.
+- `lane_source_binding_type.mind` (~29 tok, tiny) — lane.source.binding_type: a let bound to a unit value.
+- `lane_source_cast.mind` (~22 tok, tiny) — lane.source.cast: a narrowing cast.
+- `lane_source_const_attributes.mind` (~29 tok, tiny) — lane.source.const_attributes: an attributed const.
+- `lane_source_const_type.mind` (~31 tok, tiny) — lane.source.const_type: a const initialised from a unit call.
+- `lane_source_duplicate_parameter.mind` (~37 tok, tiny) — lane.source.duplicate_parameter: two parameters with one name.
+- `lane_source_float_neg_lowering.mind` (~32 tok, tiny) — lane.source.float_neg_lowering: runtime negation of an f64 value.
+- `lane_source_function_contract.mind` (~32 tok, tiny) — lane.source.function_contract: a generic function.
+- `lane_source_loop_attributes.mind` (~37 tok, tiny) — lane.source.loop_attributes: an attributed range loop.
+- `lane_source_loop_exit_scope.mind` (~23 tok, tiny) — lane.source.loop_exit_scope: break outside a loop.
+- `lane_source_neg_type.mind` (~27 tok, tiny) — lane.source.neg_type: negation of a unit value.
+- `lane_source_nested_function.mind` (~35 tok, tiny) — lane.source.nested_function: a function defined inside a function body.
+- `lane_source_print.mind` (~33 tok, tiny) — lane.source.print: print lowers to runtime calls no native-lane compiler implements.
+- `lane_source_string.mind` (~22 tok, tiny) — lane.source.string: a string literal.
+- `lane_source_top_level.mind` (~25 tok, tiny) — lane.source.top_level: a struct declaration.
+- `lane_source_unbound.mind` (~31 tok, tiny) — lane.source.unbound: assignment to a function name.
+- `lane_source_unsupported.mind` (~23 tok, tiny) — lane.source.unsupported: a tuple value.
+- `lane_type_branch_mismatch.mind` (~39 tok, tiny) — lane.type.branch_mismatch: an if expression whose branches differ in type.
+- `lane_type_mismatch.mind` (~29 tok, tiny) — lane.type.mismatch: an f64 binding initialised with an integer.
+- `lane_type_non_f64_float.mind` (~24 tok, tiny) — lane.type.non_f64_float: an f32 binding.
+- `lane_type_unsupported.mind` (~23 tok, tiny) — lane.type.unsupported: an i32 binding.
 ### `tests/fixtures/native_lane/`
 
 - `request_corpus.txt` (~14352 tok, huge) — # Native-lane request corpus: the programs of the native-wave2 / native-wave3
@@ -2848,6 +2885,7 @@
 - `http2_frame_driver.py` (~4195 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `if_merge_shadow_318.rs` (~1444 tok, large) — Copyright 2025 STARGA Inc.
+- `imported_extern_narrow_ret_run.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3087,6 +3125,7 @@
 - `native_historical_intrinsic_refusal.rs` (~1894 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_lane_bridge_controls.rs` (~1470 tok, large) — Copyright 2025 STARGA Inc.
+- `native_lane_refusal_keys.rs` (~3706 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_lane_request_fixtures.rs` (~3684 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_module_bridge_controls.rs` (~8499 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
@@ -3333,10 +3372,10 @@
 - `while_counter_1.mind` (~27 tok, tiny) — fn f(n: i64) -> i64 {
 ### `tests/`
 
-- `self_host_loop_advance_contract_test.py` (~6964 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
-- `self_host_loop_advance_publication_test.py` (~7642 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
+- `self_host_loop_advance_contract_test.py` (~7048 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
+- `self_host_loop_advance_publication_test.py` (~7726 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
 - `_self_host_loop_advance_support.py` (~1910 tok, huge) — Shared fixtures for the self-host loop advancement controls.
-- `self_host_loop_advance_test.py` (~2888 tok, huge) — Runner for the self-host LOOP advancement harness controls.
+- `self_host_loop_advance_test.py` (~3484 tok, huge) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
 - `sha256_allocation_kat.mind` (~409 tok, medium) — Author: STARGA Inc.
 - `sha256_legacy_kat.mind` (~605 tok, large) — Author: STARGA Inc.

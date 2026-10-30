@@ -410,7 +410,16 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
     h_old = hashlib.sha256(old_seed).hexdigest()
     print(f"  old seed = frozen pure-MIND stage0 ELF: {len(old_seed)}B sha256={h_old}")
 
-    # The old seed runs FIRST, on the current source, from a PRIVATE SNAPSHOT of
+    # Validate the captured seed's lineage in trusted history before executing it or resolving
+    # an oracle. A later publication refusal cannot undo compiler execution.
+    # This same derived chain supplies the eventual receipt, never a typed row.
+    old_chain, problem = old_seed_chain(_harness(), h_old)
+    if problem is not None:
+        print(f"BLOCKED: --advance cannot derive the seed_chain row for the old seed "
+              f"{h_old}: {problem}. Nothing written.")
+        return 2
+
+    # The lineage-checked old seed runs on the current source from a PRIVATE SNAPSHOT of
     # the exact bytes just hashed — never from the live `_FROZEN` path. Hashing
     # one path and then executing it again is a time-of-check/time-of-use gap:
     # a concurrent advance (or anything else writing that path) would make the
@@ -481,14 +490,6 @@ def do_advance(combined: bytes, stdin_image: bytes, user_lo: int,
     if published == old_seed:
         print("BLOCKED: --advance would republish the current seed unchanged; nothing written.")
         return 2
-    # The receipt's seed_chain row is derived from the refs, never typed: an old
-    # seed whose chain does not resolve back to the root is never advanced FROM.
-    old_chain, problem = old_seed_chain(_harness(), h_old)
-    if problem is not None:
-        print(f"BLOCKED: --advance cannot derive the seed_chain row for the old seed "
-              f"{h_old}: {problem}. Nothing written.")
-        return 2
-
     # ORACLE — required, never deferred. A new fixed point that only the old
     # compiler agrees with is one compiler's opinion; the independently built
     # Rust oracle on the SAME current source is the second witness.

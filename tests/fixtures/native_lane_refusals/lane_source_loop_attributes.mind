@@ -1,0 +1,2 @@
+// lane.source.loop_attributes: an attributed range loop.
+fn main() -> i64 { let mut s = 0; #[collapse] for i in 0..4 { s = s + i; } return s; }

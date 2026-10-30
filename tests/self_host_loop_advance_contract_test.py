@@ -60,7 +60,13 @@ def case_advance_refused_when_the_old_seed_rejects_the_source() -> None:
         sb.elf_path.write_text("#!/bin/sh\necho 'refused' >&2\nexit 3\n")
         sb.elf_path.chmod(0o755)
         sb.before_elf = sb.elf_path.read_bytes()
-        sb.patch(so=lambda: StubOracle(), stage0_emit=lambda c, u: NEW_POINT)
+        # This control exercises execution refusal AFTER provenance admission.
+        seed_receipt = loop.manifest_text(
+            sb.before_elf, published_by="synthetic",
+            receipt={"advanced_from_seed_sha256": loop.SEED_CHAIN_ROOT},
+        )
+        sb.patch(_receipt_history=lambda: [("refusal-seed", seed_receipt)],
+                 so=lambda: StubOracle(), stage0_emit=lambda c, u: NEW_POINT)
         rc = loop.do_advance(SRC, IMAGE, USER_LO)
         check("advance: old-seed refusal fails", rc, 1)
         check("advance: old-seed refusal leaves the fixture untouched",

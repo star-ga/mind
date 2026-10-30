@@ -46,6 +46,9 @@ mod canonical_lowering;
 #[cfg(feature = "cross-module-imports")]
 #[path = "canonical_producers.rs"]
 mod canonical_producers;
+#[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
+#[path = "imported_extern_decls.rs"]
+mod imported_extern_decls;
 #[path = "lower_entry.rs"]
 mod lower_entry;
 use crate::ir::BinOp;
@@ -1614,6 +1617,11 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             .entry(name)
             .or_insert((param_types, ret_type));
     }
+    // Imported extern declarations live in `imported_extern_decls` so this
+    // already over-ceiling module does not grow. A local function of the same
+    // name keeps the MIND signature.
+    #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
+    imported_extern_decls::prepend_imported_extern_decls(&mut ir);
     #[cfg(all(feature = "std-surface", not(feature = "cross-module-imports")))]
     for (name, param_types, ret_type) in crate::type_checker::bundled_std_fn_signatures()
         .iter()

@@ -1,0 +1,3 @@
+// lane.extern.unimplemented: a C extern block.
+extern "C" { fn close(fd: i64) -> i64; }
+fn main() -> i64 { return 0; }
