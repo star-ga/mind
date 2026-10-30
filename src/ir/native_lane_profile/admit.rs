@@ -83,19 +83,19 @@ impl Source<'_> {
                 ..
             } => {
                 let init_ty = self.node(init, env)?;
-                let mut ty = if init_ty == Ty::Bool {
-                    Ty::Bool
+                let mut ty = if matches!(init_ty, Ty::Bool | Ty::I64Array(_)) {
+                    init_ty
                 } else {
                     value(init_ty)
                 };
                 if let Some(ann) = ann {
                     let annotated = scalar(ann)?;
                     equal(ty, annotated)?;
-                    if annotated == Ty::Bool {
-                        ty = Ty::Bool;
+                    if matches!(annotated, Ty::Bool | Ty::I64Array(_)) {
+                        ty = annotated;
                     }
                 }
-                if !matches!(ty, Ty::I64 | Ty::Bool | Ty::F64) {
+                if !matches!(ty, Ty::I64 | Ty::Bool | Ty::F64 | Ty::I64Array(_)) {
                     return reject("lane.source.binding_type");
                 }
                 env.insert(name.clone(), ty);
@@ -255,9 +255,34 @@ impl Source<'_> {
             | Node::TensorElemwise { .. }
             | Node::CallTensorRelu { .. }
             | Node::CallTensorRand { .. }
-            | Node::CallTensorConv2d { .. }
-            | Node::LetTuple { .. }
-            | Node::ArrayLit { .. }
+            | Node::CallTensorConv2d { .. } => reject("lane.source.unsupported"),
+            Node::ArrayLit { elements, .. } => {
+                // A fixed i64 array is a value. Reading one element is a
+                // scalar. A whole-array operator is refused earlier as
+                // `binop.array_operand`.
+                if elements.is_empty() {
+                    return reject("lane.source.unsupported");
+                }
+                for element in elements {
+                    if self.node(element, env)? != Ty::I64 {
+                        return reject("lane.source.unsupported");
+                    }
+                }
+                let Ok(length) = u32::try_from(elements.len()) else {
+                    return reject("lane.source.unsupported");
+                };
+                Ok(Ty::I64Array(length))
+            }
+            Node::IndexAccess {
+                receiver, index, ..
+            } => {
+                if !matches!(self.node(receiver, env)?, Ty::I64Array(_)) {
+                    return reject("lane.source.unsupported");
+                }
+                equal(value(self.node(index, env)?), Ty::I64)?;
+                Ok(Ty::I64)
+            }
+            Node::LetTuple { .. }
             | Node::MapLit { .. }
             | Node::SetLit { .. }
             | Node::ForEach { .. }
@@ -269,7 +294,6 @@ impl Source<'_> {
             | Node::EnumDef { .. }
             | Node::Assert { .. }
             | Node::StructLit { .. }
-            | Node::IndexAccess { .. }
             | Node::SliceRange { .. }
             | Node::IndexAssign { .. }
             | Node::FieldAssign { .. }
@@ -594,9 +618,26 @@ impl Ir<'_> {
                 }
                 Instr::FnDef { .. } => return reject("lane.ir.nested_function"),
                 Instr::ExternFnDecl { .. } => return reject("lane.extern.unimplemented"),
-                Instr::ConstArray { .. }
-                | Instr::ArrayLoad { .. }
-                | Instr::ArrayStore { .. }
+                // Same split as the frozen profile: the blob is an aggregate,
+                // and `ArrayLoad` yields the scalar element. `ArrayStore` stays
+                // out of profile.
+                Instr::ConstArray { dst, values, .. } => {
+                    let Ok(length) = u32::try_from(values.len()) else {
+                        return reject("lane.ir.unsupported");
+                    };
+                    if length == 0 {
+                        return reject("lane.ir.unsupported");
+                    }
+                    put(env, *dst, Ty::I64Array(length))?;
+                }
+                Instr::ArrayLoad { dst, base, index } => {
+                    if !matches!(get(env, base)?, Ty::I64Array(_)) {
+                        return reject("lane.ir.unsupported");
+                    }
+                    equal(get(env, index)?, Ty::I64)?;
+                    put(env, *dst, Ty::I64)?;
+                }
+                Instr::ArrayStore { .. }
                 | Instr::ConstTensor(..)
                 | Instr::ConstDenseTensor { .. }
                 | Instr::Sum { .. }
@@ -698,6 +739,15 @@ pub fn profile_lane_admits(source: &ast::Module, ir: &IRModule) -> Check<()> {
                         let expected = match ty {
                             SemanticType::Scalar(ScalarType::I64 | ScalarType::Bool) => Ty::I64,
                             SemanticType::Scalar(ScalarType::F64) => Ty::F64,
+                            SemanticType::FixedArray { element, extent }
+                                if matches!(
+                                    element.as_ref(),
+                                    SemanticType::Scalar(ScalarType::I64)
+                                ) && *extent > 0
+                                    && *extent <= u64::from(u32::MAX) =>
+                            {
+                                Ty::I64Array(*extent as u32)
+                            }
                             _ => return reject("lane.ir.semantic_type"),
                         };
                         equal(get(&env, id)?, expected)?;
