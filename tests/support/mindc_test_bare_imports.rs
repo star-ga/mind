@@ -116,3 +116,159 @@ fn ambiguous_bare_call_in_dependency_is_refused() {
     assert!(text.contains("0 passed; 1 failed"), "{text}");
     assert!(text.contains("call to `value` is ambiguous"), "{text}");
 }
+
+#[test]
+fn bare_imported_constant_executes() {
+    // `mindc check` and native builds resolve a bare reference to an exported
+    // constant of an imported sibling; the test evaluator must too (request 9).
+    let root = project(
+        "eval_import_bare_const",
+        r#"
+import arithmetic;
+
+#[test]
+fn bare_imported_const_executes() {
+    assert UNIT == 8, "bare imported constant";
+    assert times(UNIT, 5) == 40, "bare call with bare imported constant";
+}
+"#,
+    );
+    for threads in [1, 4] {
+        let output = run_with_threads(&root, threads);
+        let text = output_text(&output);
+        assert!(output.status.success(), "threads={threads}\n{text}");
+        assert!(text.contains("1 passed; 0 failed"), "{text}");
+    }
+}
+
+#[test]
+fn bare_constant_keeps_local_definition_first() {
+    let root = project(
+        "eval_import_bare_const_local_first",
+        r#"
+import arithmetic;
+const UNIT: i64 = 99;
+
+#[test]
+fn local_constant_shadows_import() {
+    assert UNIT == 99, "lexical const wins over the import";
+}
+"#,
+    );
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("1 passed; 0 failed"), "{text}");
+}
+
+#[test]
+fn bare_constant_exported_by_two_imports_is_refused() {
+    // A bare constant exported by two of a module's imports is refused ahead
+    // of evaluation: the name is not uniquely visible, so name resolution
+    // rejects it as unknown (E2002) before lowering can see it. The evaluator
+    // keeps its own ambiguity refusal as defence in depth (see the
+    // `module_bindings` unit test), but this is where a real project meets it.
+    let root = project(
+        "eval_import_bare_const_ambiguous",
+        r#"
+import mid;
+
+#[test]
+fn ambiguous_bare_const_in_dependency_is_refused() {
+    assert mid.pick() == 41, "two exporters";
+}
+"#,
+    );
+    fs::write(
+        root.join("src/mid.mind"),
+        "export { pick }\nimport left;\nimport right;\nfn pick() -> i64 { return LIMIT; }\n",
+    )
+    .expect("write dependency module");
+    fs::write(
+        root.join("src/left.mind"),
+        "export { LIMIT }\nconst LIMIT: i64 = 41;\n",
+    )
+    .expect("write left module");
+    fs::write(
+        root.join("src/right.mind"),
+        "export { LIMIT }\nconst LIMIT: i64 = 77;\n",
+    )
+    .expect("write right module");
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("unknown identifier `LIMIT`"), "{text}");
+    assert!(text.contains("E2002"), "{text}");
+}
+
+#[test]
+fn unexported_bare_constant_is_refused() {
+    let root = project(
+        "eval_import_bare_const_private",
+        r#"
+import arithmetic;
+
+#[test]
+fn private_bare_const_is_refused() {
+    assert SECRET == 99, "unexported const must not be reachable";
+}
+"#,
+    );
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("0 passed; 1 failed"), "{text}");
+}
+
+#[cfg(all(
+    unix,
+    feature = "mlir-build",
+    feature = "std-surface",
+    feature = "cross-module-imports"
+))]
+#[test]
+fn bare_imported_constant_lowers_to_its_value() {
+    // Lowering must inline the imported constant's VALUE (never const 0 — the
+    // lower.rs fail-closed panic and the silent-miscompile mutant both die
+    // here): the MLIR for the importing module carries the real value, and the
+    // inline `#[test]` asserts it so a 0-resolving mutant fails the test run.
+    let root = project(
+        "eval_import_bare_const_lower",
+        r#"
+import arithmetic;
+
+fn use_unit() -> i64 {
+    return UNIT;
+}
+
+#[test]
+fn bare_imported_const_lowers() {
+    assert use_unit() == 8, "imported constant lowers to its value";
+}
+"#,
+    );
+    let test_output = Command::new(common::mindc_bin())
+        .args(["test", "tests/import_eval.mind"])
+        .current_dir(&root)
+        .output()
+        .expect("run mindc test");
+    let test_text = output_text(&test_output);
+    assert!(test_output.status.success(), "{test_text}");
+    assert!(test_text.contains("1 passed; 0 failed"), "{test_text}");
+
+    let emit_output = Command::new(common::mindc_bin())
+        .args(["tests/import_eval.mind", "--emit-mlir"])
+        .current_dir(&root)
+        .output()
+        .expect("run mindc --emit-mlir");
+    let emit_text = output_text(&emit_output);
+    assert!(emit_output.status.success(), "{emit_text}");
+    assert!(
+        emit_text.contains("arith.constant 8") || emit_text.contains("const.i64 8"),
+        "imported constant must inline its value, never 0:\n{emit_text}"
+    );
+    assert!(
+        !emit_text.contains("refusing to emit const 0"),
+        "imported constant must not hit the lowering fail-closed panic:\n{emit_text}"
+    );
+}

@@ -190,6 +190,42 @@ fn bind_bare_imported_calls(
     }
 }
 
+/// Bind the bare constants `owner` may reference from the exported constants
+/// of the project modules its own imports select, mirroring the type checker's
+/// lexical-then-imported order for unqualified names. Bundled `std` modules
+/// keep their established resolution and are not bound here.
+#[cfg(feature = "cross-module-imports")]
+fn bind_bare_imported_values(
+    owner: &str,
+    imports: &[Vec<String>],
+    scope: &crate::project::single_file_scope::ProjectScope,
+    linked_owners: &std::collections::BTreeSet<String>,
+    bindings: &mut EvalBindings,
+) {
+    for import in imports {
+        let Some(target) = scope.resolve_import_path(owner, import) else {
+            continue;
+        };
+        if target == owner || target.starts_with("std.") || !linked_owners.contains(target) {
+            continue;
+        }
+        let Some(source) = scope
+            .sources()
+            .iter()
+            .find(|source| source.module_path() == target)
+        else {
+            continue;
+        };
+        for item in super::top_level::refs(&source.module().items) {
+            if let Node::Const { name, .. } = item {
+                if scope.resolves_imported_symbol(owner, import, name) {
+                    bindings.insert_imported_value(owner, target, name);
+                }
+            }
+        }
+    }
+}
+
 /// Capture the same manifest-bounded import closure used by `check` and native
 /// builds. Declarations retain an internal lexical owner, while import
 /// references are bound by `(owner file, source span)` to the exact captured
@@ -282,6 +318,13 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                     };
                 }
                 bind_bare_imported_calls(
+                    captured.module_path(),
+                    &imports,
+                    &scope,
+                    &linked_owners,
+                    &mut bindings,
+                );
+                bind_bare_imported_values(
                     captured.module_path(),
                     &imports,
                     &scope,
