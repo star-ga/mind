@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1929 | **Est. tokens:** ~3,762,841
-**Generated:** 2026-10-31 20:05 UTC
+**Files:** 1930 | **Est. tokens:** ~3,763,161
+**Generated:** 2026-10-31 20:10 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 45 | ~153,706 |
+| `src/eval/` | 46 | ~154,026 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1297,6 +1297,7 @@
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
+- `fix_types.py` (~320 tok, medium) — # Fix lseek_fake_fd: pos is u64, offset is i64
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `interp_mem.rs` (~4441 tok, huge) — Copyright 2025 STARGA Inc.

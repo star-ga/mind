@@ -3861,9 +3861,10 @@ fn lseek_fake_fd(fd: i64, offset: i64, whence: i64) -> Result<i64, String> {
         let file_len = std::fs::metadata(&slot.0)
             .map(|m| m.len() as i64)
             .unwrap_or(0);
+        let cur = *pos as i64;
         let new_pos = match whence {
             0 => offset,
-            1 => *pos + offset,
+            1 => cur + offset,
             2 => file_len + offset,
             _ => return Err(format!("lseek: bad whence {whence}")),
         };
