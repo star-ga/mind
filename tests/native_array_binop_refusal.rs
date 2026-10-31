@@ -190,7 +190,7 @@ fn run_elf(path: &Path) -> i32 {
         perm.set_mode(0o755);
         std::fs::set_permissions(path, perm).expect("mark executable");
         let ran = Command::new(path).output().expect("run artifact");
-        return ran.status.code().unwrap_or(-1);
+        ran.status.code().unwrap_or(-1)
     }
     #[cfg(not(unix))]
     {

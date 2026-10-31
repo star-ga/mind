@@ -1,3 +1,8 @@
+## Ecosystem research — offline hypothesis service (proposal, 2026-10-29)
+
+- [ ] **Review required / default OFF.** Consume offline compiler research hypotheses without modifying MIND compiler correctness or acceptance gates.
+- [ ] See [detailed architecture and acceptance plan](RESEARCH_ECOSYSTEM_OFFLINE_HYPOTHESES_20261029.md). Not implemented, benchmarked, or deployed.
+
 # Roadmap
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
@@ -137,10 +142,90 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Planned
 
+- **PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)** –
+  deterministic recursive-to-iterative lowering and proof-checked periodic
+  recurrence collapse. Opt-in until semantic, byte-reproducibility and verifier
+  gates pass; see the proposal below.
+
 - **Formal Verification** – Proof-carrying IR passes for safety-critical deployments.
   The first concrete instance is **RFC 0028 (Deterministic Field Calculus)**, below.
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
 - **Package Registry** – Public `mindpkg` registry with curated models.
+
+### PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)
+
+**Status:** design only; no native MIND recursion/parity optimizer is claimed to ship.
+**Priority:** P1 research/implementation candidate under the C6 native optimizing
+backend, after correctness and canonical-type metadata readiness. This extends
+[RFC 0024](rfcs/0024-loop-collapse.md), not a replacement for its existing
+`#[collapse]` prove-or-fail contract. Recent compiler work covers accumulator
+tail-recursion elimination and optimization remarks for tail-call and loop deletion.
+
+**Canonical demonstration:** a pure unsigned recurrence
+`f(0) = true; f(n) = !f(n-1)` has a two-state orbit and the closed form
+`f(n) = (n & 1) == 0`. There are **two distinct transformations**:
+eliminating self-recursive calls using an accumulator/loop, then proving that
+the resulting recurrence is periodic and replacing the entire loop with an
+O(1) bitwise expression. A loop-elimination remark by itself does not attest
+the final closed form or the equivalence proof.
+
+**Planned implementation slices (none marked complete):**
+
+1. **PGRO-1 — Typed direct-recursion analysis.** Detect pure scalar
+   self-recursion, canonical base cases and structurally decreasing arguments,
+   with proven termination over the exact admitted integer domain. Check call
+   edges, returns, effects, traps, overflow, ABI and observable stack semantics;
+   reject unknown, mutually recursive, effectful or potentially nonterminating
+   cases rather than assuming equivalence.
+2. **PGRO-2 — Accumulator-recursion elimination.** Lower eligible
+   post-recursive combinations (e.g. exact integer addition/multiplication,
+   Boolean XOR/NOT) into a loop with a canonical accumulator. Require the
+   actual algebraic identity and associativity **under MIND's defined type
+   semantics**, and prove the base-case/exit mapping. No generic floating-point
+   reassociation, unsafe changes to trap order, or unproven stack behavior.
+3. **PGRO-3 — Bounded periodic-state collapse.** Prove a finite-state
+   transition, its preperiod/period `k` and the exact iteration count; synthesize
+   a constant-time modular/lookup closed form where admissible. Start with
+   Boolean period-2 (`f(n)=!f(n-1)`), then bounded `k` with a strict
+   proof/compile-time budget. Existing Q16.16 fixed-point `E2211` rejects
+   cycles of period >=2: keep that diagnostic unchanged for the current
+   `#[collapse]` fixed-point contract; opt-in periodic handling is a **new
+   proof class**, never silently treating a cycle as a fixed point.
+4. **PGRO-4 — Typed-IR proof witnesses.** Define a versioned, canonical
+   `recurrence-collapse` receipt containing original and transformed IR
+   commitments, the recurrence parameters, a termination/effect argument and
+   the finite-state or accumulator invariant. Extend `mindc verify` to check
+   the witness independently against both IR forms (not merely recompute the
+   transformed constant). Do not claim proof validation unless the original
+   IR and verifier-checkable witness are actually available; preserve the
+   existing MAP-epilogue / `trace_hash` boundary and distinguish unsigned
+   tamper-evidence from authenticated signing.
+5. **PGRO-5 — Canonical optimizer integration.** Put any `mic@3 -> mic@3`
+   rewrite upstream of native emitter divergence, with fixed pass ordering,
+   stable value numbering, versioned optimization profiles and canonical
+   serialization. Respect populated canonical-type metadata: no bypass of
+   existing typed-IR optimization guards. Keep the experimental feature OFF
+   by default; a user-visible flag/annotation is proposed, **not shipped**.
+6. **PGRO-6 — Independent validation and promotion.** Differential tests
+   against the interpreter/unoptimized reference, exhaustive bounded-width
+   state spaces, symbolic/inductive proofs for full-width inputs, negative
+   cases (side effects, nontermination, exception/trap ordering, signed
+   underflow, strict FP), verifier tamper tests, repeated-build hashes and
+   x86_64/ARM64 real-hardware output parity. Measure generated instructions,
+   runtime latency and compiler overhead versus pinned compiler baselines.
+   Promote only after the complete qualified corpus and self-host/cross-target
+   gates pass; unknown gate = HOLD, not PASS.
+
+**Determinism constitution:** optimizing changes the compiled `mic@3` body,
+binary and `trace_hash`, so **new optimized hashes are expected**. It must not
+change any supported program's observable behavior, nor produce different
+artifacts for identical source + toolchain + target + optimization profile.
+The feature-OFF path must remain byte-identical to its prior baseline. Before
+default enablement, explicitly re-baseline optimized-profile canaries and
+reverify all frozen self-host and cross-substrate checks; do **not** silently
+rewrite old canaries or present matching hashes from an unreachable pass as
+proof. Strict FP, side effects, unproven termination and verifier uncertainty
+are hard blockers. No release/performance claim until independently measured.
 
 ### RFC 0028 — Deterministic Field Calculus (Draft, **not scheduled**)
 
@@ -2899,9 +2984,9 @@ Proposed; a showcase, not on the critical path. Depends on the RNG decision in P
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed; no implementation or performance claims.  
-**Research:** K. Marathe et al., *Breaking the Token Ceiling: Distilling Smaller, Stronger Byte Models* (2026), https://arxiv.org/abs/2609.12303
+**Research:** recent research on distilling smaller byte models from token models.
 
-This paper studies decoder-only byte versus token models and token-teacher-to-byte-student supervision via approximate Marginalize-It and exact End-of-Token (EOT). Raw bytes are not synonymous with byte-level BPE. Paper-specific scaling estimates do not constitute STARGA results.
+That work studies decoder-only byte versus token models and token-teacher-to-byte-student supervision. Raw bytes are not synonymous with byte-level BPE. Outside scaling estimates do not constitute STARGA results.
 
 ### Project scope
 
@@ -2914,7 +2999,7 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 - Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
 - Dependency order: inference reference -> mind-nerve benchmark -> optional model dispatch -> agent/mind-mem pilots; an experiment orchestrator runs the trials, and the compiler and commercial runtime implement only proven optimizations.
 
-**Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
+**Attribution:** STARGA, Inc. No software-development co-authors are designated.
 
 
 ---
@@ -2923,9 +3008,9 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed, not shipped.  
-**Research reference:** EAGLE-4, *One Flexible Drafter for All Batch Sizes and Hardware*, https://github.com/eagle-hq/EAGLE-4
+**Research reference:** recent drafter work on one drafter across batch sizes and hardware.
 
-**License boundary:** EAGLE-4 is source-available, not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; research citation is not a license.
+**License boundary:** That source-available drafter is not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; a research note is not a license.
 
 ### Scope
 
@@ -2936,7 +3021,7 @@ Only introduce independently designed candidate selection / bounded cache primit
 - Measure baseline ordinary and current speculative decoding, matched model, hardware, workload and sampling policy; concurrency 1, 8, 32, 64 when supported.
 - Track accepted tokens per verification, target-call cost, drafter overhead, throughput, TTFT, p50/p95 latency, peak memory and cost per token.
 - Verify output-distribution preservation for rejection/acceptance under temperature/top-k/top-p, including boundary cases and RNG reproducibility limitations.
-- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical EAGLE-4 gains.
+- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical gains from that prior work.
 - Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
 
 **Software roadmap attribution:** STARGA, Inc. No co-author trailers.
@@ -2948,16 +3033,16 @@ Only introduce independently designed candidate selection / bounded cache primit
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed, not shipped.  
-**Reference:** https://sun-asterisk.us/takumi/ (conceptual market comparison only; no restricted-code reuse).
+**Reference:** conceptual market comparison only; no restricted-code reuse. No vendor is named here.
 
 Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
 
 **Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. The agent layer owns the mission UI; separate components own policy, verification, orchestration, impact analysis and decision memory (mind-mem). No co-author trailers.
 
-## OCaml-competitive language and ecosystem hardening (2026-10-24)
+## Language and ecosystem hardening (2026-10-24)
 
 > **Author: starga. Status: proposed; not shipped.** This is a cross-repository,
-> implementation-gated plan, not an assertion that MIND currently surpasses OCaml.
+> implementation-gated plan, not an assertion that MIND currently surpasses established languages.
 > Inherits the existing fail-closed, canonical-mic@3, keystone, cross-substrate
 > and no-unverified-performance-claims requirements. Preserve open-core compiler
 > and language interfaces; commercial accelerator optimizations remain in
@@ -2966,10 +3051,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 
 ### Research basis and actual consumer blockers
 
-- OCaml: [modules and interfaces](https://ocaml.org/docs/modules),
-  [first-class modules](https://ocaml.org/docs/first-class-modules),
-  [effect handlers](https://ocaml.org/manual/5.5/effects.html),
-  [Dune](https://github.com/ocaml/dune), [Merlin](https://github.com/ocaml/merlin).
+- Recent research on ML-family module systems, effect handlers, and build and editor tooling.
 - MIND compiler: `docs/INDEPENDENCE_ROADMAP.md`, RFC 0010,
   current modules/import/linker/ABI restrictions and capability gates.
 - A pure-MIND workflow consumer's compiler requirements: `FieldAccess` value-position lowering
@@ -3023,7 +3105,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    all dependency bytes; mutation of any import invalidates evidence; unsigned
    artifacts must never be misrepresented as signed.
 
-### P1 — Match or exceed OCaml expressiveness without sacrificing verification
+### P1 — Match or exceed established-language expressiveness without sacrificing verification
 
 6. **MOC-06: Principled type inference.** Define bidirectional typing,
    constrained let-polymorphism, generalization/value restriction for mutable
@@ -3082,7 +3164,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     scheduling, bounds-check elimination with proofs, vectorization, PGO/LTO
     and target-specific lowering. Keep MLIR/LLVM optional until measured
     parity; never remove a faster, correct fallback prematurely.
-    **Gates:** comparable OCaml `ocamlopt` benchmarks on pinned hardware,
+    **Gates:** comparable optimizing-compiler benchmarks on pinned hardware,
     runtime and cold/warm build, p50/p95 latency, binary size, RAM,
     energy, determinism and numerical correctness; publish wins and losses.
 14. **MOC-14: Demand-driven incremental build engine.** Persistent parse/
@@ -3091,7 +3173,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     cache trust receipts. **Gates:** editing a private function rebuilds
     only affected targets; public ABI change invalidates dependents; clean
     and cached builds yield the same canonical outputs.
-15. **MOC-15: IDE quality comparable to Merlin.** LSP driven by the actual
+15. **MOC-15: IDE quality comparable to established editor tooling.** LSP driven by the actual
     parser/typechecker: go-to-definition, references, rename, semantic
     highlighting, hover types/effects/shapes, inlay hints, completion,
     diagnostics, code actions and workspace-wide symbol search. Align
@@ -3118,7 +3200,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     no source-complete project advertised as fully native without an
     executing and independently reproducible binary.
 
-### P2 research differentiators beyond OCaml's typical language surface
+### P2 research differentiators beyond a typical established language surface
 
 19. **MOC-19: Proof-carrying tensor/effect optimization.** Attach machine-
     checkable shape, alias, bounds and effect preconditions to each
@@ -3154,12 +3236,12 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 - **Milestone D:** MOC-08/10/11: governed effects, deterministic tasks, and
   HTTPS/interactive runtime verified end-to-end.
 - **Milestone E:** MOC-13/15/16/17/19–22: rigorous speed/IDE and differentiated
-  proofs, with side-by-side OCaml comparisons and published reproducible runs.
+  proofs, with side-by-side comparisons against an established language and published reproducible runs.
 
-**Definition of 'better than OCaml':** make **specific**, reproducible
+**Definition of 'better than established languages':** make **specific**, reproducible
 workload claims (deterministic numerical computation, safety, integration,
 reproducible builds, and compiler speed) while matching indispensable
-OCaml abstraction/developer-experience capabilities. Do not assert
+abstraction and developer-experience capabilities of those languages. Do not assert
 universal language superiority, full Rust-independence, comprehensive
 cross-device float determinism, or performance wins before the corresponding
 end-to-end acceptance tests exist.
@@ -3455,6 +3537,83 @@ quantisation and scatter.
 and NEON hashes in CI; the catalogue reaches 100 operators with fixtures; a reference
 transformer block runs under `--require-strict-fp`.
 
+### GP-10 — First-divergence trace across compiler stages and execution paths
+
+*Status:* proposed, not built.
+
+Build three things, in MIND and tested with `mindc test`. (a) `mindc build --trace-stages
+<file>` in the pure-MIND driver writes one record per compiler stage: the token stream, the
+parsed module, resolved names, the typed module, mic@3 before optimisation, mic@3 after each
+pass of the pinned optimiser schedule once passes exist, and the native emit of each
+function. A record holds the stage id, the item count and a hash of the stage's canonical
+serialisation. (b) A trace-point run of a fixture program records, at every function
+return, the function id, its call index and a hash of the returned value's canonical bytes.
+The interpreter, the native ELF and the MLIR path write the same record format, on x86-64
+and on arm64. (c) `mindc trace-diff <a> <b>` prints the first record that differs and,
+inside a compile stage, the first differing item.
+
+*Why:* the self-host smokes and the self-host fuzzer report the first differing byte of the
+final MLIR, mic@3 or ELF (one of them guesses the subsystem from the surrounding function
+name), and the D-gate, C-gate and GP-06 comparisons judge final results. None of them names
+the stage or the function where two runs part. An order-dependent pass shows up only as a
+cross-substrate red with no local symptom (`docs/INDEPENDENCE_ROADMAP.md`). A few dozen
+hashes per fixture localise it, and two machines exchange hashes instead of artifacts.
+
+**Measurement:** compile time with tracing on, on the T1 and T2 baskets, reported next to
+tracing off. Tracing off does no extra work: the flag is read once by the driver and no
+stage is serialised.
+
+**Gates:** perturbing one optimiser rewrite makes `trace-diff` name that pass and nothing
+earlier; perturbing the native lowering of one operation names the first function that uses
+it, at the native-emit stage; a self-hosted stage traced against the frozen prior stage, and
+the cross-substrate fixtures traced on x86-64 against arm64, give an empty diff; positive
+control: under each perturbation the final artifact hash differs too; a run in which either
+side crashed or wrote no records reports `unverified`, never an empty diff; with tracing
+off, every artifact is byte-identical to a build without this feature (keystone and the
+mic@3 flip smoke unchanged).
+
+*Firewall:* the trace is a diagnostic file. It is never part of the evidence chain or of any
+`trace_hash` preimage. The Python smokes keep their current role and are not extended; each
+retires only once `trace-diff` covers its check.
+
+*Depends on:* the compile-stage records can start on the front end; the native-emit stage
+and the three-path trace points wait on Gate 1 (#284). Architecture audit before
+implementation.
+
+### GP-11 — Identity columns in the cross-language comparison suites
+
+*Status:* proposed, not built.
+
+Build the N-18 portfolio and the S-7 C/C++ comparison on one adapter protocol, and report
+columns peers do not. (a) Each language configuration runs as a separate process that reads
+one request per line (task id and input) and writes one result per line (a hash of the
+output bytes, wall time, peak resident memory); a process serves many requests without
+restarting. The request and result schema lives in one file, and CI checks every adapter
+against that file, not against another adapter. (b) Three identity columns per task and
+configuration: the same request run twice in one process and once in a fresh process; the
+same request on x86-64 and on arm64; the same request at one thread and at N threads. Each
+column reports the first differing output index, or `identical`. (c) The harness, the schema
+check, the identity columns and the table writer are MIND code tested with `mindc test`.
+Each peer adapter is only the shim its language needs to read a request and run the task; it
+holds no comparison logic.
+
+*Why:* 19.6.3 asks every report to show repeated-run hashes, while the comparison rows
+planned in N-18 and S-7 compare speed, memory and size only. Identity is where MIND differs
+from its peers, and a reader can check it from the table.
+
+**Measurement:** the three identity columns beside the existing timing, memory and size
+columns, per task and configuration.
+
+**Gates:** the harness reports MIND identical on all three columns for every strict fixture,
+and reports a deliberately nondeterministic stub (a reduction whose order follows thread
+scheduling) as not identical in the thread column; positive control: the same stub still
+produces valid timing rows; an adapter whose output fails the schema is refused, not scored;
+a task a configuration cannot run is listed as unsupported, never scored as a pass or a
+failure; floating-point tasks get identity rows only under a declared strict profile.
+
+*Depends on:* the N-18 pinned-version manifest. No public number until the table reproduces
+from a clean checkout on another party's machine.
+
 ### Firewall — do not cross it
 
 - No GPU identity claim wider than the gated scope in GP-07.
@@ -3606,7 +3765,7 @@ DoD the deliverables and definition of done.
 | N-15 | Release gates: stable canonical IR and evidence chain; x86_64 and arm64 real-hardware strict correctness; complete semantic differential suite; full qualified source surface (not just a scalar bootstrap subset); reproducible optimizer outputs; and T1/T2/T3 speed gates. Unknown/unsupported = HOLD/FAIL, not PASS. | Partial | T1 and T2 benches exist (`benches/compiler.rs:57-59`, `compiler_pipeline`, `e2e_compile_shared`; tiers at `docs/benchmarking.md:19-23`). Missing: the full qualified source surface, a complete differential suite, arm64 native legs and T3 harnesses (`docs/benchmarking.md:23`, out of tree). The release-gate rows above (D, S, C, E) carry the detail. | Turn the release-gate rows above into a CI checklist script that reports HOLD for any gate without a receipt. |
 | N-16 | Compile-time wins: keep strict T1 frontend microseconds protected; full T2 file→binary including object emission/link; T3 cold/steady direct-run/REPL latency; changed-module rebuild and no-op cache hit. … Preserve existing +10% one-sided guard against frozen comparable baseline. | Partial | The +10% one-sided guard exists (`.github/workflows/bench-gate.yml:97`, `:147`); T1 and T2 benches exist (`benches/compiler.rs`). Missing: T3 direct-run and REPL, incremental and no-op cache measurements (planned in GP-05). | Implement GP-05 (a): a checked-in script that regenerates the T2 source-to-native table on pinned hardware. |
 | N-17 | Runtime wins: run CPU scalar, memory/collections, concurrency, network I/O, numerical/tensor, GPU/accelerator where admitted and end-to-end application benchmarks; … publish losses and not-yet-supported programs. | Partial | Only numerical-kernel comparisons are on `main`: `bench/RESULTS-beat-clang-igemm-2026-08-21.md` (`52c37016`) and `benchmarks/{autograd,cupy,jax}_comparison/`. No concurrency, network I/O, collections or end-to-end application benchmarks against other languages. | Define a runtime task list per category with an equivalence class for each, and add one non-kernel benchmark (for example collections) with C and Rust baselines. |
-| N-18 | Broad comparison portfolio: choose >=30 mature/reference language configurations … Include at least C, C++, Rust, Go, Python, Java, C#, JavaScript, TypeScript, Swift, Kotlin, Zig, Julia, OCaml and Mojo where legal and reproducible. | Not started | No cross-language benchmark harness on any branch; GP-05 compares against clang and rustc only. | Write a pinned-version manifest of the 30+ language configurations and a harness skeleton under `benchmarks/` with one shared task (identical algorithm, I/O and verifier). |
+| N-18 | Broad comparison portfolio: choose >=30 mature/reference language configurations … Include at least C, C++, Rust, Go, Python, Java, C#, JavaScript, TypeScript, Swift, Kotlin, Zig, Julia, an established functional language and a recent systems language where legal and reproducible. | Not started | No cross-language benchmark harness on any branch; GP-05 compares against clang and rustc only. | Write a pinned-version manifest of the 30+ language configurations and a harness skeleton under `benchmarks/` with one shared task (identical algorithm, I/O and verifier). |
 | N-19 | Measured syntax quality: freeze common problem statements and count normalized token/character burden, editing effort, diagnostics quality, learning friction and accidental complexity while passing equivalent tests. Have blind reviewers evaluate readability. | Not started | No syntax study on `main`. GP-01 plans translated HumanEval, MBPP and McEval-Hard corpora for generator pass@1, which is a different measurement. | Freeze a problem set (it can reuse GP-01 tasks) and a script that counts normalized tokens per language for solutions that pass tests. |
 | N-20 | `docs/architecture.md` and `docs/whitepaper.md` still describe MLIR/LLVM and Rust as foundational, and need status/version-specific clarification. | Not started | No change to either file since `b1e34470` docs: align self-host + backend-architecture status to verified v0.10.0 state (2026-06-25), which predates the 2026-10-24 audit in the issue. | Open a docs PR that adds a dated status banner to both files, pointing to `docs/INDEPENDENCE_ROADMAP.md`, without deleting the historical architecture. |
 | N-21 | P0-D — Complete self-host + direct-native toolchain: fulfill full language profile and executable self-host plus C6 native optimizing backend; remove Rust and LLVM/MLIR from fully qualified build/execution dependency graph only after acceptance. | In progress | Draft #284 (Recover native compiler integration for the 0.10.3 candidate, branch `work/compiler-delivery-20261015`) carries native-lane, C-ABI, bounded-profile seed and `docs/INDEPENDENCE_ROADMAP.md` changes. Partial on `main`: `9d6cae18` (self-host loop) and `39513b87` (C6 seam). Checkpoint rows are tracked in #281. | Merge `main` into #284, rerun the keystone and cross-substrate gates on x86_64 and arm64, then mark it ready for review. |
@@ -3615,3 +3774,13 @@ DoD the deliverables and definition of done.
 | N-24 | Keep the reference interpreter for debugging, pedagogical execution and differential correctness tests; it is not the mandatory production hot path. … Unsupported features fail closed with the exact missing capability, never hidden launcher stub or placeholder return. | Direction | A direction. The interpreter exists (`src/main.rs` eval paths) and the self-host backend refuses fail-closed (B0 fail-closed subset boundary, `docs/INDEPENDENCE_ROADMAP.md:93`). Nothing is defined for direct-run yet. | Add a fail-closed rule to the P0-A spec: each direct-run result records which engine produced it. |
 | N-25 | Ergonomic value: concise scripts with automatic type inference, first-class functions, modules, algebraic types and pattern matching, expressive generic abstractions, … structured async, tensor/shapes/AD, capability/effect policy and clear diagnostics. Pareto goal: seek leadership simultaneously in ergonomics, T1/T2/T3 latency, runtime throughput/tail latency, deterministic reproducibility, memory efficiency, binary size, safety and cross-target portability. | Direction | A direction. Concrete language-completion work is GP-04 (multi-capture closures, trait objects, slices, generic shape parameters, 1.0 stability policy), added in `2c5c2389`. | Track through the GP-04 gates; no separate action. |
 | N-26 | Success definition: a developer gets Python-like immediacy, strong static guarantees and near-zero compile friction, while shipping an optimized standalone native binary from the same source and without any production dependence on Rust, MLIR, LLVM or Python. | Direction | An umbrella outcome made of P0-A through P1-E; no phase is done. | Mark it met only when P0-A to P0-D are Done with receipts; update this row as each phase lands. |
+
+<!-- NUMERIC-REVIEW-REVISION-20261029:BEGIN -->
+## Scoped compiler and numerical contracts
+**Status:** proposal; architecture RFC required before implementation.
+- [ ] **P0 — AD integration:** confirm emitted reverse-mode IR executes on current runtime; fixtures cover shapes, unsupported operators, finite differences, CPU reference, and fail-closed behavior.
+- [ ] **P1 — differentiation contract:** propose a mind-spec RFC for typed VJP/JVP and optional HVP including precision, purity, shape and effect restrictions; accept only after independently checked golden gradients.
+- [ ] **P2 — library boundary:** propose (not assume) a MIND-native `std::optim` package owned outside `mindc`, initially SGD/momentum and AdamW; add L-BFGS only after closure/line-search semantics and benchmarks exist.
+- [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
+**Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
+<!-- NUMERIC-REVIEW-REVISION-20261029:END -->

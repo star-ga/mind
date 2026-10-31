@@ -17,11 +17,7 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::Command;
-#[cfg(feature = "mlir-build")]
-use std::process::Stdio;
-#[cfg(feature = "mlir-build")]
-use std::sync::{Arc, Mutex};
+use std::process::{Command, Stdio};
 #[cfg(feature = "mlir-build")]
 use std::time::Duration;
 #[cfg(feature = "mlir-build")]
@@ -85,6 +81,14 @@ pub enum BuildError {
 }
 
 #[cfg(feature = "mlir-build")]
+#[path = "mlir_build_pipe.rs"]
+mod pipe;
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_tests.rs"]
+mod tests;
+
+#[cfg(feature = "mlir-build")]
 pub fn resolve_tools() -> Result<BuildTools, BuildError> {
     fn resolve(env: &str, default: &str, label: &'static str) -> Result<String, BuildError> {
         match std::env::var(env) {
@@ -128,59 +132,11 @@ pub fn build_all(
     build_all_with_objects(mlir_src, tools, opts, &[])
 }
 
-/// Like [`build_all`], but links additional caller-provided object files into
-/// the `emit_shared` output (after the runtime-support stub). Used for native
-/// cross-module linking: a consumer cdylib that imports a self-contained `std`
-/// substrate module passes that module's compiled `.o` here so its symbols
-/// resolve natively. With an empty `extra_objects` slice this is identical to
-/// [`build_all`].
 #[cfg(feature = "mlir-build")]
-pub fn build_all_with_objects(
-    mlir_src: &str,
-    tools: &BuildTools,
-    opts: &BuildOptions<'_>,
-    extra_objects: &[std::path::PathBuf],
-) -> Result<BuildProducts, BuildError> {
-    let preset_name = opts.preset;
-    let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
-        .map_err(BuildError::Internal)?;
-    let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
-    let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
-    let optimized_mlir = if let Some(pipeline) = combined_pipeline {
-        crate::mlir::staged_opt::run_pipeline(&lowered, &pipeline, tools)?
-    } else {
-        lowered
-    };
-
-    if let Some(path) = opts.emit_mlir_file {
-        write_text_file(path, &optimized_mlir)?;
-    }
-
-    let llvm_ir = run_mlir_translate(&optimized_mlir, tools)?;
-
-    if let Some(path) = opts.emit_llvm_file {
-        write_text_file(path, &llvm_ir)?;
-    }
-
-    if let Some(path) = opts.emit_obj_file {
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false, &[])?;
-    }
-
-    if let Some(path) = opts.emit_shared {
-        // Phase 6.5 Stage 1b: compile the runtime-support stub to a temp .o
-        // and link it into the shared library so vec_new / vec_push /
-        // __mind_load_i64 etc. are resolved without an external dependency.
-        let runtime_obj = compile_runtime_support_obj(tools, opts.target_triple)?;
-        let mut extra = vec![runtime_obj.path().to_path_buf()];
-        extra.extend(extra_objects.iter().cloned());
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
-    }
-
-    Ok(BuildProducts {
-        optimized_mlir,
-        llvm_ir,
-    })
-}
+#[path = "mlir_build_overlap.rs"]
+mod overlap;
+#[cfg(feature = "mlir-build")]
+pub use overlap::build_all_with_objects;
 
 #[cfg(feature = "mlir-build")]
 fn combine_pipelines(preset: &str, extra: Option<&str>) -> Option<String> {
@@ -507,6 +463,20 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
     "MACOSX_DEPLOYMENT_TARGET",
 ];
 
+/// Set to `0` to bypass the runtime-support `.o` disk cache entirely (no
+/// read, no write). A measurement knob for COLD-path timing only: the cache
+/// is output-neutral, so the emitted bytes are identical either way.
+#[cfg(feature = "mlir-build")]
+const RUNTIME_OBJ_CACHE_ENV: &str = "MINDC_RUNTIME_OBJ_CACHE";
+
+/// Whether the runtime-obj cache is on for a given `MINDC_RUNTIME_OBJ_CACHE`
+/// value. Only the exact value `0` disables it; unset or anything else keeps
+/// the historical (cached) behaviour.
+#[cfg(feature = "mlir-build")]
+fn runtime_obj_cache_enabled(value: Option<&str>) -> bool {
+    value.map(str::trim) != Some("0")
+}
+
 /// Compute the on-disk cache path for the runtime-support `.o`, or `None`
 /// if no cache directory is available.
 ///
@@ -519,6 +489,11 @@ const CLANG_CACHE_ENV_VARS: &[&str] = &[
 /// (path + size + mtime + version), not merely its `--version` banner.
 #[cfg(feature = "mlir-build")]
 fn runtime_obj_cache_path(tools: &BuildTools, args: &[String]) -> Option<std::path::PathBuf> {
+    // Checked before the clang identity probe, so a disabled cache costs no
+    // `--version` spawn, no read and no write.
+    if !runtime_obj_cache_enabled(std::env::var(RUNTIME_OBJ_CACHE_ENV).ok().as_deref()) {
+        return None;
+    }
     let cache_dir = dirs::cache_dir()?.join("mind").join("runtime-obj");
 
     let clang_identity = clang_identity_string(&tools.clang);
@@ -870,45 +845,17 @@ pub(crate) fn run_command(
     timeout: Duration,
     label: &'static str,
 ) -> Result<CommandOutput, BuildError> {
-    use std::io::Read;
-    use std::thread;
-
-    let mut cmd = Command::new(program);
-    cmd.args(args.iter().map(|s| s.as_str()));
-    if input.is_some() {
-        cmd.stdin(Stdio::piped());
+    let stdin = if input.is_some() {
+        Stdio::piped()
     } else {
-        cmd.stdin(Stdio::null());
-    }
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|err| match err.kind() {
-        std::io::ErrorKind::NotFound => BuildError::ToolMissing(label),
-        _ => BuildError::Io(err),
-    })?;
+        Stdio::null()
+    };
+    let mut child = spawn_tool(program, args, stdin, label)?;
 
     // Drain stdout and stderr on background threads to prevent pipe-buffer
     // deadlock when child output exceeds the OS pipe buffer (typically 64 KiB).
-    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-
-    let stdout_buf_clone = Arc::clone(&stdout_buf);
-    let stdout_thread = stdout_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stdout_buf_clone.lock().unwrap());
-        })
-    });
-
-    let stderr_buf_clone = Arc::clone(&stderr_buf);
-    let stderr_thread = stderr_pipe.map(|mut pipe| {
-        thread::spawn(move || {
-            let _ = pipe.read_to_end(&mut stderr_buf_clone.lock().unwrap());
-        })
-    });
+    let stdout_thread = drain_pipe(child.stdout.take());
+    let stderr_thread = drain_pipe(child.stderr.take());
 
     // Write stdin after launching the drain threads so the child can read its
     // input while we drain its output — mutual progress guaranteed.
@@ -919,46 +866,20 @@ pub(crate) fn run_command(
         }
     }
 
-    // Poll for child termination with timeout.
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(BuildError::Timeout(label));
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(err) => return Err(BuildError::Io(err)),
-        }
-    };
-
-    // Join drain threads before reading the buffers.
-    if let Some(t) = stdout_thread {
-        let _ = t.join();
-    }
-    if let Some(t) = stderr_thread {
-        let _ = t.join();
-    }
-
-    let stdout = Arc::try_unwrap(stdout_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
-    let stderr = Arc::try_unwrap(stderr_buf)
-        .unwrap_or_default()
-        .into_inner()
-        .unwrap_or_default();
+    let status = wait_with_timeout(&mut child, Instant::now(), timeout, label)?;
 
     Ok(CommandOutput {
-        stdout,
-        stderr,
+        stdout: join_drain(stdout_thread),
+        stderr: join_drain(stderr_thread),
         status,
     })
 }
+
+#[cfg(feature = "mlir-build")]
+#[path = "mlir_build_proc.rs"]
+mod proc_util;
+#[cfg(feature = "mlir-build")]
+use proc_util::{drain_pipe, join_drain, kill_and_reap, spawn_tool, wait_with_timeout};
 
 #[cfg(feature = "mlir-build")]
 fn write_text_file(path: &Path, contents: &str) -> Result<(), BuildError> {
@@ -979,3 +900,7 @@ pub(crate) fn decode_to_string(bytes: &[u8]) -> String {
         String::from_utf8_lossy(bytes).trim().to_string()
     }
 }
+
+#[cfg(all(test, feature = "mlir-build"))]
+#[path = "mlir_build_overlap_tests.rs"]
+mod overlap_tests;
