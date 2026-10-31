@@ -358,6 +358,56 @@ def case_author_identity_guard_rejects_trailing_dot_and_accepts_exact() -> None:
               f"rc={r_hook_good.returncode} err={r_hook_good.stderr.strip()[:200]!r}")
 
 
+def case_identity_guard_skips_merge_commits() -> None:
+    """The identity guard must skip merge commits (2+ parents) because CI
+    creates synthetic merge commits with the CI runner's identity, not the
+    repository identity."""
+    import subprocess
+
+    regex_str = rulebook("EXPECTED_AUTHOR_IDENTITY_REGEX")
+    pat = re.compile(regex_str)
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        (repo / "scripts").mkdir(parents=True, exist_ok=True)
+        for src in (PATTERNS, ROOT / "scripts" / "check_commit_messages.sh"):
+            shutil.copy2(src, repo / "scripts" / src.name)
+        git("init", "-q", cwd=repo)
+        git("config", "user.name", "STARGA Inc", cwd=repo)
+        git("config", "user.email", "noreply@star.ga", cwd=repo)
+        (repo / "a.txt").write_text("base\n")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", "chore: base", cwd=repo)
+        base_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        # branch off
+        git("checkout", "-q", "-b", "feature", cwd=repo)
+        (repo / "a.txt").write_text("feature\n")
+        git("add", "a.txt", cwd=repo)
+        git("commit", "-q", "-m", "fix: feature work", cwd=repo)
+        feature_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        # back to main, make another commit
+        git("checkout", "-q", "master", cwd=repo)
+        (repo / "b.txt").write_text("other\n")
+        git("add", "b.txt", cwd=repo)
+        git("commit", "-q", "-m", "chore: other", cwd=repo)
+        # merge with a wrong-identity author (simulating CI merge commit)
+        r_merge = subprocess.run(
+            ["git", "-c", "user.name=CI Runner", "-c", "user.email=ci@example.com",
+             "merge", "--no-ff", "-m", "Merge feature into master", feature_sha],
+            cwd=repo, capture_output=True, text=True)
+        check("merge commit created with wrong identity",
+              r_merge.returncode == 0, f"rc={r_merge.returncode}")
+        merge_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        # verify it has 2 parents
+        parents = git("rev-list", "--no-walk", "--parents", merge_sha, cwd=repo).stdout.strip().split()
+        check("merge commit has 2 parents", len(parents) == 3, f"got {len(parents)-1} parents")
+        # identity guard must PASS (merge commit skipped)
+        r = subprocess.run(["bash", "scripts/check_commit_messages.sh", f"{base_sha}..HEAD"],
+                           cwd=repo, capture_output=True, text=True)
+        check("check_commit_messages.sh skips merge commits (wrong-identity merge -> PASS)",
+              r.returncode == 0,
+              f"rc={r.returncode} out={r.stdout.strip()[:200]!r}")
+
+
 def main() -> int:
     for case in (
         case_generated_doc_is_in_scope,
@@ -369,6 +419,7 @@ def main() -> int:
         case_committed_anatomy_names_no_model,
         case_committed_anatomy_matches_the_tracked_tree,
         case_author_identity_guard_rejects_trailing_dot_and_accepts_exact,
+        case_identity_guard_skips_merge_commits,
     ):
         case()
     # No `asserted=` line here on purpose: scripts/run_gate.py owns that

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1923 | **Est. tokens:** ~3,750,125
-**Generated:** 2026-10-31 09:45 UTC
+**Files:** 1923 | **Est. tokens:** ~3,750,892
+**Generated:** 2026-10-31 10:18 UTC
 
 ## Token Budget Guide
 
@@ -97,7 +97,7 @@
 | `.github/workflows/` | 9 | ~16,367 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,327 |
-| `scripts/` | 33 | ~120,006 |
+| `scripts/` | 33 | ~120,773 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1085,7 +1085,7 @@
 - `arch_gate.sh` (~400 tok, medium) — arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
-- `check_commit_messages.sh` (~1752 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
+- `check_commit_messages.sh` (~1833 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring.py` (~9403 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
@@ -1124,7 +1124,7 @@
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
 - `test_gate_wiring.py` (~7126 tok, huge) — Regression test for scripts/check_gate_wiring.py.
-- `test_no_ai_attribution.py` (~4677 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
+- `test_no_ai_attribution.py` (~5363 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4847 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions

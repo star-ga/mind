@@ -116,6 +116,12 @@ while read -r sha; do
   fi
   id_err=""
   check_id=1
+  # Merge commits (2+ parents) are created by CI to test PR integration and
+  # are not authored by the repository identity; skip them for identity only.
+  parent_count=$(git rev-list --no-walk --count "${sha}" 2>/dev/null || echo 1)
+  if [ "$(git cat-file -p "$sha" | grep -c '^parent ')" -gt 1 ]; then
+    check_id=0
+  fi
   if [ "$FORCE_IDENTITY" -eq 0 ] && [ "$has_anchor" -eq 1 ] &&
      git merge-base --is-ancestor "$sha" "$IDENTITY_ANCHOR" 2>/dev/null; then
     check_id=0
