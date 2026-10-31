@@ -1,8 +1,3 @@
-## Ecosystem research — offline hypothesis service (proposal, 2026-10-29)
-
-- [ ] **Review required / default OFF.** Consume offline compiler research hypotheses without modifying MIND compiler correctness or acceptance gates.
-- [ ] See [detailed architecture and acceptance plan](RESEARCH_ECOSYSTEM_OFFLINE_HYPOTHESES_20261029.md). Not implemented, benchmarked, or deployed.
-
 # Roadmap
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
@@ -101,8 +96,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   already-emitted, tamper-evident evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
   emits for the **CPU**. GPU and accelerator execution across the broader
-  chip-target set ships today in the commercial
-  the commercial runtime, available to consumers under a commercial license. What is on
+  chip-target set ships today in the commercial runtime, available to consumers under a commercial license. What is on
   the roadmap is **bit-identical determinism** across those substrates.
 - **Deterministic distributed runtime** – the commercial runtime ships NCCL/Gloo
   collectives, RingAllReduce, and pipeline parallelism today; making them
@@ -155,10 +149,12 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 **Status:** design only; no native MIND recursion/parity optimizer is claimed to ship.
 **Priority:** P1 research/implementation candidate under the C6 native optimizing
-backend, after correctness and canonical-type metadata readiness. This extends
-[RFC 0024](rfcs/0024-loop-collapse.md), not a replacement for its existing
-`#[collapse]` prove-or-fail contract. Recent compiler work covers accumulator
-tail-recursion elimination and optimization remarks for tail-call and loop deletion.
+backend, ordered after the pure-MIND driver becomes the CLI and after canonical-type
+metadata is populated; it is not on the compiler-completion critical path. This
+extends [RFC 0024](rfcs/0024-loop-collapse.md), not a replacement for its existing
+`#[collapse]` prove-or-fail contract. Established optimizing compilers already
+eliminate accumulator tail recursion and report it through optimization remarks;
+`mindc` does neither today.
 
 **Canonical demonstration:** a pure unsigned recurrence
 `f(0) = true; f(n) = !f(n-1)` has a two-state orbit and the closed form
@@ -198,13 +194,21 @@ the final closed form or the equivalence proof.
    transformed constant). Do not claim proof validation unless the original
    IR and verifier-checkable witness are actually available; preserve the
    existing MAP-epilogue / `trace_hash` boundary and distinguish unsigned
-   tamper-evidence from authenticated signing.
+   tamper-evidence from authenticated signing. The witness extends RFC 0024's
+   shipped `evidence_chain.collapse.*` receipt, which `mindc verify` already
+   re-derives. A new artifact MAP key needs an architecture ruling first, stays
+   outside the `trace_hash` preimage, and is written by both compiler engines in
+   the same change.
 5. **PGRO-5 — Canonical optimizer integration.** Put any `mic@3 -> mic@3`
    rewrite upstream of native emitter divergence, with fixed pass ordering,
-   stable value numbering, versioned optimization profiles and canonical
+   stable value numbering, a versioned pass schedule and canonical
    serialization. Respect populated canonical-type metadata: no bypass of
-   existing typed-IR optimization guards. Keep the experimental feature OFF
-   by default; a user-visible flag/annotation is proposed, **not shipped**.
+   existing typed-IR optimization guards. Keep the experimental feature OFF by
+   default. Periodic collapse (PGRO-3) is opted into per loop by a source
+   annotation that extends RFC 0024's `#[collapse]` (proposed, **not shipped**).
+   The accumulator rewrite (PGRO-2) is one more pass in the pinned C6 schedule
+   behind the existing default-OFF optimizer seam and is enabled only with that
+   schedule; it adds no compiler flag or mode of its own.
 6. **PGRO-6 — Independent validation and promotion.** Differential tests
    against the interpreter/unoptimized reference, exhaustive bounded-width
    state spaces, symbolic/inductive proofs for full-width inputs, negative
@@ -218,7 +222,7 @@ the final closed form or the equivalence proof.
 **Determinism constitution:** optimizing changes the compiled `mic@3` body,
 binary and `trace_hash`, so **new optimized hashes are expected**. It must not
 change any supported program's observable behavior, nor produce different
-artifacts for identical source + toolchain + target + optimization profile.
+artifacts for identical source + toolchain + target + pass schedule.
 The feature-OFF path must remain byte-identical to its prior baseline. Before
 default enablement, explicitly re-baseline optimized-profile canaries and
 reverify all frozen self-host and cross-substrate checks; do **not** silently
@@ -381,7 +385,7 @@ All new features are gated behind new keyword/token checks that fail immediately
 
 ### Spec Status
 - `if`, `while`, `struct`, `match`, `for` are already defined in the EBNF grammar (`grammar-syntax.ebnf`)
-- `enum`, `const` require grammar additions (see `mind-spec` future-extensions)
+- `enum`, `const` require grammar additions (see the language specification's future extensions)
 
 ---
 
@@ -850,8 +854,7 @@ Phase 13.6 closes the gap with **language-level primitives** that emit a
 deterministic TP+PP plan from a single `.mind` source — sharding stays,
 the reduction race goes away.
 
-The driving use case is the BitNet b1.58 ternary-weight LLM described in
-[`bitnet-mind-governance/docs/parallel_pipeline.md`](https://github.com/star-ga/bitnet-mind-governance/blob/main/docs/parallel_pipeline.md):
+The driving use case is a ternary-weight LLM served by the governance pipeline:
 3-way TP+PP across consumer GPUs with bit-identical replay across runs
 *and* across hardware vendors (verified by per-stage merkle roots).
 
@@ -901,7 +904,7 @@ Six to eight weeks of focused work, scoped for paper-validation:
    - Lexicographic-order all-reduce + all-gather primitives
 2. **`mind.distributed.pipeline` with `[pipeline_stage(N)]`** (~2 weeks)
    - Send/recv between stages; evidence-chain continuity verification
-3. **Port `bitnet.mind` to use the new primitives** (~1 week)
+3. **Port the ternary-model workload to use the new primitives** (~1 week)
    - Re-shard along attention heads (TP), split layer groups (PP),
      combine for 3-way memory split
 4. **Cross-shard determinism harness** (~1 week)
@@ -914,7 +917,7 @@ Six to eight weeks of focused work, scoped for paper-validation:
 > **H4**: Cross-shard determinism is achievable on TP+PP at the cost of
 > < 5% throughput overhead vs. non-deterministic FP16 baseline.
 
-Two measurable claims (governance overhead < 1% on local BitNet from
+Two measurable claims (governance overhead < 1% on the local ternary model from
 H1, and cross-shard determinism overhead < 5% from H4) — together this
 is the shape of an MLSys / OSDI methods paper.
 
@@ -1775,7 +1778,7 @@ MCP impl are independent and parallelizable once those land.
 **Tier 5 — MCP protocol (~3–4 weeks, can start after Tier 1):**
 - `std.mcp.client` — JSON-RPC framing, capability negotiation, tool listing, tool invocation
 - `std.mcp.server` — same surface from the server side, for MIND programs that *expose* MCP tools (mind-mem / mind-nerve become candidates)
-- Acceptance: a MIND CLI calls a stdio MCP server (claudeai-flavored), invokes a tool, and parses results — round-trip in pure MIND
+- Acceptance: a MIND CLI calls a stdio MCP server, invokes a tool, and parses results — round-trip in pure MIND
 
 **Tier 6 — Demo target: `mindcraft-agent`:**
 - A Rust-class agent CLI: streaming inference client (HTTPS + SSE), MCP client, tool execution (`std.process` sandbox + `std.fs` scoped to a workdir), terminal UI, `--replay` flag using `ReplayScheduler` for deterministic playback
@@ -1914,7 +1917,7 @@ unit of compiler work:
 1. **17.4 — `const` array executable lowering.** Highest value by a wide margin. It is the
    only item whose absence forces *generated source*: without it an N-row integer table
    becomes N-branch `if` chains, which is roughly 1100 lines of noise for a 90-row table
-   and a measurable `arch-mind redundancy_q16` cost. The IR paths already work, so the
+   and a measurable architecture-scanner `redundancy_q16` cost. The IR paths already work, so the
    remaining work is confined to executable lowering.
 2. **17.1 — cross-module `f64` signatures.** Unblocks module structure for every numerical
    program; today they must all be single-file.
@@ -1997,7 +2000,7 @@ never builds to a binary, which is why the gap is uncovered.
 
 This is the highest-value item here. It is what forced the consumer to encode a 90-row
 integer ledger as eleven ~90-branch `if` chains: ~1100 lines of generated source in place
-of eleven `const [i64; 90]` declarations, and a measurable `arch-mind redundancy_q16` cost
+of eleven `const [i64; 90]` declarations, and a measurable architecture-scanner `redundancy_q16` cost
 (9916 → 9571).
 
 **Deliverable:** lower `ConstArray` / `ArrayLoad` through to the executable backend.
@@ -2233,7 +2236,7 @@ and every one of them answers it correctly and in isolation:
 | `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
 | Governance layer | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
 | `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
-| `arch-mind` | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
+| Architecture scanner | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
 
 Six chains, six roots, **zero cross-links**. No artifact today can prove the
 conjunction:
@@ -2296,7 +2299,7 @@ permission.
    useful and much harder to keep deterministic.
 3. **Cross-repo hash-format drift.** The six mechanisms do not currently agree
    on a hash function or an encoding (`mini_sha256` here, HMAC-SHA256 in
-   arch-mind, ECDSA-backed witnesses in the governance layer). The spec must pin one
+   the architecture scanner, ECDSA-backed witnesses in the governance layer). The spec must pin one
    composite format without forcing six migrations.
 4. **Does anyone buy it.** Same honesty test applied to Phase 18: name the
    buyer who needs the *conjunction* rather than one chain, or this is a demo
@@ -2979,64 +2982,108 @@ Proposed; a showcase, not on the critical path. Depends on the RNG decision in P
 
 ---
 
-## Byte-Level Distillation Research Track (2026-10-23)
+## Byte-level distillation primitives (proposed, 2026-10-23)
 
-**Owner:** STARGA, Inc.  
-**Status:** Proposed; no implementation or performance claims.  
-**Research:** recent research on distilling smaller byte models from token models.
+**Status:** proposed; nothing built; no performance claim. Research input: recent
+research on token-to-byte model distillation; outside scaling estimates are not
+STARGA results. Raw bytes are not byte-level BPE.
 
-That work studies decoder-only byte versus token models and token-teacher-to-byte-student supervision. Raw bytes are not synonymous with byte-level BPE. Outside scaling estimates do not constitute STARGA results.
+The compiler's part is four primitives, built only when a prototype measures one of
+them as a bottleneck: a numerically stable full-vocabulary log-sum-exp, byte-prefix
+probability aggregation, end-of-token masking, and raw UTF-8 byte-buffer
+operations. The language stays tokenizer-agnostic.
 
-### Project scope
+### Order of work
 
-Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, EOT masking and raw UTF-8 buffer operations only where prototypes show bottlenecks. Keep the language tokenizer-agnostic and require deterministic CPU reference verification.
+| Step | Work | Gate |
+|---|---|---|
+| D.1 | Prototype in the inference pipeline, then the routing benchmark (`mind-nerve`), then optional model dispatch, then agent and `mind-mem` pilots | A profile receipt (command, toolchain hashes, share of runtime) names the primitive; nothing is built without one |
+| D.2 | The named primitive as a new `std` module on the strict tier, CPU reference first; the log-sum-exp builds on the strict `std/detmath` `exp`/`log` (Phase 17.6) | Byte-prefix probabilities match an exhaustive small-vocabulary oracle (full teacher vocabulary, end-of-token mass, multibyte UTF-8, shared prefixes, token endings); mutation control: a top-k-truncated variant fails the exactness check; identical hashes on x86-64 and AArch64 |
+| D.3 | Token versus byte baselines | Matched data, compute and model capability with honest serving-cost accounting; bytes-per-byte, quality, p50/p95 latency per output character, peak memory and repeat-run hashes, losses published |
 
-### Validation, dependencies and release gates
+### Firewall — do not cross it
 
-- Verify full teacher-vocabulary byte-prefix probabilities against exhaustive small-vocabulary oracles, including EOT mass, UTF-8 multibyte strings, shared prefixes and token endings. Top-k truncation must not be called exact.
-- Compare token and byte baselines with matched data, compute, model capability and honest serving-cost accounting. Report bytes-per-byte, quality, p50/p95 latency per output character, peak memory and reproducibility.
-- Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
-- Dependency order: inference reference -> mind-nerve benchmark -> optional model dispatch -> agent/mind-mem pilots; an experiment orchestrator runs the trials, and the compiler and commercial runtime implement only proven optimizations.
+- Top-k truncation is never called exact.
+- No public API, admission gate or determinism contract changes; each primitive is
+  a new `std` module used only by programs that import it, and is reverted if D.3
+  shows no benefit.
+- The compiler and the commercial runtime implement only optimizations D.3 proved.
 
-**Attribution:** STARGA, Inc. No software-development co-authors are designated.
+### Open questions — answer before this gets a milestone
 
+- Which consumer measures the bottleneck first?
 
----
-
-## Adaptive Speculative Decoding Research (2026-10-23)
-
-**Owner:** STARGA, Inc.  
-**Status:** Proposed, not shipped.  
-**Research reference:** recent drafter work on one drafter across batch sizes and hardware.
-
-**License boundary:** That source-available drafter is not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; a research note is not a license.
-
-### Scope
-
-Only introduce independently designed candidate selection / bounded cache primitives after profiling, keep compiler general.
-
-### Acceptance gates
-
-- Measure baseline ordinary and current speculative decoding, matched model, hardware, workload and sampling policy; concurrency 1, 8, 32, 64 when supported.
-- Track accepted tokens per verification, target-call cost, drafter overhead, throughput, TTFT, p50/p95 latency, peak memory and cost per token.
-- Verify output-distribution preservation for rejection/acceptance under temperature/top-k/top-p, including boundary cases and RNG reproducibility limitations.
-- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical gains from that prior work.
-- Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
-
-**Software roadmap attribution:** STARGA, Inc. No co-author trailers.
+Proposed; not on the critical path. Depends on a measured bottleneck (D.1) and, for
+the log-sum-exp, on Phase 17.6.
 
 
 ---
 
-## Verified Engineering Delivery Research (2026-10-23)
+## Speculative decoding primitives (proposed, 2026-10-23)
 
-**Owner:** STARGA, Inc.  
-**Status:** Proposed, not shipped.  
-**Reference:** conceptual market comparison only; no restricted-code reuse. No vendor is named here.
+**Status:** proposed; not shipped; no performance claim. Research input: recent
+research on speculative decoding. Ideas are implemented independently after licence
+and patent review; no outside source, test, model, weight or asset is copied.
 
-Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
+The compiler's part is general primitives a speculative decoder in the inference
+pipeline needs, built only after profiling shows the need: deterministic candidate
+selection and a bounded verification cache. The compiler stays general; the decoder
+belongs to the inference pipeline.
 
-**Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. The agent layer owns the mission UI; separate components own policy, verification, orchestration, impact analysis and decision memory (mind-mem). No co-author trailers.
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| S.1 | Baseline in the inference pipeline: ordinary decoding and current speculative decoding on a matched model, hardware, workload and sampling policy, at concurrency 1, 8, 32 and 64 where supported | Accepted tokens per verification, target-call cost, drafter overhead, throughput, time to first token, p50/p95 latency, peak memory and cost per token recorded |
+| S.2 | The primitive the S.1 profile names, as a new `std` module, after the RNG decision in Phase 24 | Output-distribution preservation under temperature, top-k and top-p, boundary cases included; the same seed gives the same token stream on x86-64 and AArch64; mutation control: an acceptance rule with the rejection step removed fails the distribution test |
+
+### Firewall — do not cross it
+
+- Governance, admission, evidence generation and the ordinary-decoding fallback are
+  unchanged; the primitives are new `std` modules used only by programs that import
+  them; no numerical gain from outside work is promised.
+- Byte-model distillation is a separate experiment; tokenizer alignment and proposal
+  distributions are verified before the two are combined.
+
+### Open questions — answer before this gets a milestone
+
+- Which inference-pipeline workload is profiled first in S.1?
+
+Proposed; not on the critical path. Depends on the RNG decision in Phase 24.
+
+
+---
+
+## Requirement-to-artifact linkage in the evidence chain (proposed, 2026-10-23)
+
+**Status:** proposed; nothing built. An architecture review is required before
+implementation.
+
+Verified engineering delivery needs one chain from a requirement to the source that
+implements it, the tests that check it and the artifact that ships it. The compiler's
+part is that link. It extends MOC-05 (whole-program evidence) and tracked row D-7
+(separate digests with domain separation). The delivery product belongs to the agent
+layer and `mind-mem`, and its acceptance list is tracked there: approved scoped
+actions only, independent test and release-verdict evidence, offline replay, baseline
+measures for impact accuracy, escaped defects, cost and review time, and P0
+governance/evidence, P1 impact/repair/routing, P2 enterprise rollout.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| V.1 | A requirement file declared in `Mind.toml`, hashed as a declared input in the evidence chain's input links (RFC 0016 section 4, tracked row D-5), outside the `trace_hash` preimage | An artifact built with no requirement file is byte-identical to today; positive control: `mindc verify` lists each requirement id with the test ids that reference it |
+| V.2 | `mindc verify` checks the linkage | Mutation controls: editing a test after the build, deleting a referenced test, or editing the requirement file each makes `verify` fail and name the broken link |
+
+### Firewall — do not cross it
+
+- The linkage is evidence, not a score: no requirement count or coverage number may
+  relax an invariant or a gate.
+
+### Open questions — answer before this gets a milestone
+
+- Where requirement ids live (a manifest section or a separate file), and which
+  consumer pilots it first.
 
 ## Language and ecosystem hardening (2026-10-24)
 
@@ -3058,7 +3105,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 - A parser consumer's reported compiler gaps (G-01/04/07/08/09/11/14/16/19/22/24/25/
   26/27/28/29/30); these are consumer-reported gaps, not necessarily still
   reproduced on HEAD. Recheck on current compiler before declaring one open.
-- `mind-grammar`, `mind-spec`, `mind-mem`, `mind-nerve`, internal tooling,
+- The editor grammar package, the language specification, `mind-mem`, `mind-nerve`, internal tooling,
   governance and agent consumers, and the commercial runtime: integration and
   conformance consumers; protect licensing boundaries.
 
@@ -3078,9 +3125,14 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    parameterized modules/functors with applicative/generative identity rules,
    bounded specialization and deterministic output naming. First-class modules
    are a separately gated follow-on with explicit dynamic dispatch cost.
+   A top-level item is module-private unless marked `pub`; an `export { }`
+   block is a narrower allowlist whose names must be `pub`; `check`, `test` and
+   `build` resolve visibility through one predicate.
    **Gates:** duplicate private helper names link; independent packages cannot
    access sealed internals; 10+ separate modules compile and link with stable
-   interface hashes; private/public leakage rejected.
+   interface hashes; private/public leakage rejected; `mindc doc` output equals
+   the compiled public surface (bijection test); an import-free program's mic@3
+   bytes are unchanged by the visibility rule.
 3. **MOC-03: Reliable dependency/package graph.** Resolve `Mind.toml` path,
    registry and pinned git dependencies with semver-aware solver, immutable
    lockfile, hashes, offline mode, workspace members, cyclic-import diagnostics,
@@ -3139,9 +3191,16 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 10. **MOC-10: Deterministic multicore structured concurrency.** Define
     task scopes, cancellation propagation, channels, bounded queues,
     race-free ownership transfer, fair scheduling policy and replayable
-    completion ordering. Allow throughput mode and deterministic mode to
-    be explicitly different profiles. **Gates:** TSAN/race tests, stable
-    deterministic replay receipt and crash/cancellation fault injection.
+    completion ordering. Result bytes never depend on the scheduler:
+    data-parallel work keeps the value-determinism contract of RFC 0011
+    (identical output for any worker count and steal order), only the
+    completion trace differs between the replay and work-stealing schedulers,
+    and a non-replay trace never enters a byte-identical evidence record. No
+    throughput mode changes results. **Gates:** TSAN/race tests, stable
+    deterministic replay receipt and crash/cancellation fault injection;
+    output bytes identical at 1 and N workers; mutation control: a fold whose
+    combine order follows completion order turns the 1-versus-N identity test
+    red.
 11. **MOC-11: Async networking and hardened standard library.** Build
     event reactor, sockets incl. IPv6/timeouts/DNS, TLS 1.3 certificate
     validation, Unicode NFC/IDNA, compression, HTTP/2, mmap/fsync,
@@ -3166,17 +3225,23 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     **Gates:** comparable optimizing-compiler benchmarks on pinned hardware,
     runtime and cold/warm build, p50/p95 latency, binary size, RAM,
     energy, determinism and numerical correctness; publish wins and losses.
-14. **MOC-14: Demand-driven incremental build engine.** Persistent parse/
-    typed-IR/object cache with content hashes, interface-based invalidation,
-    deterministic parallel scheduling, crash-safe cache metadata and remote
-    cache trust receipts. **Gates:** editing a private function rebuilds
-    only affected targets; public ABI change invalidates dependents; clean
-    and cached builds yield the same canonical outputs.
+14. **MOC-14: Content-addressed incremental build.** No demand-driven query
+    layer: incrementality comes from explicit imports, per-function canonical
+    mic@3 and three caches with content hashes and interface-based
+    invalidation: a whole-artifact cache keyed on the evidence anchor, a
+    module-level check cache keyed on the module source hash and its
+    import-closure interface hashes, and a per-function native code cache
+    with in-place relink; deterministic parallel scheduling, crash-safe cache
+    metadata and remote cache trust receipts. **Gates:** editing a private
+    function rebuilds only affected targets; public ABI change invalidates
+    dependents; clean and cached builds yield the same canonical outputs;
+    `-jN` and `-j1` builds are byte-identical; mutation control: a cache
+    entry with one flipped byte is refused and rebuilt, never linked.
 15. **MOC-15: IDE quality comparable to established editor tooling.** LSP driven by the actual
     parser/typechecker: go-to-definition, references, rename, semantic
     highlighting, hover types/effects/shapes, inlay hints, completion,
     diagnostics, code actions and workspace-wide symbol search. Align
-    `mind-grammar` and the code-graph index on one symbol identity.
+    the editor grammar package and the code-graph index on one symbol identity.
     **Gates:** multilingual/editor fixture suite, rename across packages,
     no stale offsets, p95 interactive latency budgets.
 16. **MOC-16: Interactive REPL and debugger.** Native/interpretive parity,
@@ -3192,7 +3257,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     corpus survives all codegen flag combinations.
 18. **MOC-18: Cross-repository compatibility dashboard.** Machine-readable
     consumer matrix across the public consumers (`mind-mem`, `mind-nerve`,
-    `mind-grammar`, `mind-spec`) and the internal and commercial ones:
+    the editor grammar package and the language specification) and the internal and commercial ones:
     `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`,
     `CROSS-ISA`, `SIGNED` must be different fields. Require pinned
     compiler SHA, source SHA, backend and test log artifact. **Gates:**
@@ -3205,12 +3270,19 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     checkable shape, alias, bounds and effect preconditions to each
     optimization; reject rewrites missing a valid proof or independent
     equivalence test. Distinguish bit-exact semantics from explicitly
-    approximate fast-math profiles.
+    approximate fast-math profiles. **Gates:** each optimization in the pinned
+    schedule names its proof obligation; mutation control: a rewrite with its
+    precondition deleted is refused by the checker; an artifact built under a
+    fast-math profile never verifies under `--require-strict-fp`.
 20. **MOC-20: Governed execution integration.** Typed capability manifests
     and audit receipts interoperate with the governance layer, workflow consumers,
     `mind-mem`, and the agent runtime; no external process or service can be
     governed solely by in-process types, so runtime mediation,
-    authorization, and hostile-boundary tests are required.
+    authorization, and hostile-boundary tests are required. **Gates:** a
+    capability denied in the manifest never reaches the underlying system call
+    (traced); positive control: the same call with the capability granted
+    succeeds and is recorded in the audit receipt; mutation control: a manifest
+    edited after the build fails `mindc verify`.
 21. **MOC-21: Reproducible heterogeneous kernels.** Explicit backend
     equivalence classes, fixed reduction trees, deterministic RNG input
     models, reproducible GPU execution where supported, and truthful
@@ -3223,8 +3295,28 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     pinned benchmark reproducibility and cross-substrate conformance.
     Every generated optimization must remain inspectable and removable.
 
+    **Offline hypothesis intake (proposed 2026-10-29, default OFF).** An offline
+    research service may propose candidate passes, schedules or kernels for
+    bounded compiler tasks; `mindc` stays the only authority for semantics,
+    correctness and releases. A candidate enters review only as an ordinary
+    change that carries its own reference oracle, frozen tests, artifact hashes
+    and cross-substrate result; it never changes a compiler pin, an
+    evidence-chain field or an existing canary. Retraining the proposer is in
+    scope only after a held-out, matched-budget comparison shows an
+    independently verified gain. Exploration code stays outside this
+    repository. **Gates:** on a frozen task corpus, report candidates proposed,
+    candidates passing every gate and candidates adopted, beside the current
+    proposer on the same tasks and budget; positive control: a known-good
+    rewrite from the corpus passes intake; mutation control: the same rewrite
+    with one planted semantic change is refused before review; a candidate
+    missing its oracle, tests or hashes is refused, never queued. Detail:
+    [offline hypothesis intake](RESEARCH_ECOSYSTEM_OFFLINE_HYPOTHESES_20261029.md).
+
 ### Execution order and milestone acceptance
 
+- Every gate that names a consumer (MOC-01, MOC-03, MOC-11) also has a public
+  reduced fixture under `tests/` that reproduces the consumer's failing shape;
+  the public fixture is the gate of record.
 - **Milestone A:** MOC-01/02/04: workflow-consumer native executable, imported
   aggregate ABI, same-named module-private functions, native linked stdlib.
 - **Milestone B:** MOC-03/05/14/18: dependency graph and build provenance;
@@ -3260,6 +3352,13 @@ simplification; deterministic rewrite evaluation; C ABI and stdlib support;
 streaming output; compile-time and memory profiles with safe resource refusal.
 Native, MLIR and evaluator parity and reproducible codegen are required, with
 benchmarks against matched baselines.
+
+**Depends on.** Phase 11.6 (`std/bignum.mind`, exact integers) and an exact
+rational type built on it come first. The canonical symbolic DAG and the rewrite
+evaluator are a library outside `std/`, not a compiler feature; they are scheduled
+only after the compiler-completion milestones (native independence and the current
+release gates) close. Compiler work under this entry is limited to what that
+library measurably needs: C ABI, streaming output and resource refusal.
 
 **Acceptance and sequencing.**
 
@@ -3336,15 +3435,26 @@ Open items:
    after the native-compiler integration branch that also edits
    `std/string.mind`. (b) is checker-only; prove it rejects nothing that builds
    today by running `mindc check std/ examples/` before and after.
-4. **MG-04: `mindc test` evaluator parity.** The test evaluator refuses
-   `__mind_realloc` (`unsupported operation`), every `std.fs` call, and byte
-   access on a string literal (`string_addr`, `string_get_byte`, `"abc"[1]`:
-   `unknown field .addr`), all of which run natively. Tests that need them must
-   be native-only today. Implement them in the evaluator against the same
-   memory model as native (literal bytes materialized in evaluator memory;
-   `std.fs` behind an explicit effect capability the test opts into). *Risk:*
-   evaluator-only, so the keystone does not exercise it; gate each construct
-   with an evaluator-versus-native differential test. No artifact bytes move.
+4. **MG-04: `mindc test` and `mindc run` execute runtime-support calls.** The test
+   evaluator refuses `__mind_realloc` (`unsupported operation`), every `std.fs`
+   call, and byte access on a string literal (`string_addr`, `string_get_byte`,
+   `"abc"[1]`: `unknown field .addr`), all of which run natively; and `mindc run`
+   refuses a project whose modules do not all compile natively (`E5003`, no
+   runtime-JIT fallback object is linked). Together these mean a MIND program
+   cannot read a file under the reference compiler, which blocks every pure-MIND
+   tool. Fix it in the compiler, not with a second implementation: add
+   `mindc test --backend native|mlir`, which compiles `#[test]` functions through
+   the same pipeline and runtime support that native builds link, and let `test`
+   and `run` compile natively whenever every module can. The evaluator stays a
+   reference for differential checks and gains no second copy of `std.fs`.
+   *Gate:* a two-file project that imports `std.fs` and `std.string` reads its own
+   `Mind.toml` under `mindc test --backend native` and `mindc run` on x86-64, and
+   under `mindc test --backend mlir` on AArch64 until the native AArch64 encoder
+   lands, with byte-identical output on both; mutation control: removing the
+   runtime-support object from the test link makes the test fail and name the
+   missing symbol, never pass. *Risk:* no artifact bytes move; the new test backend
+   is gated by an evaluator-versus-native differential over the existing
+   `mindc test` suite.
 5. **MG-05: `check` passes what `run` refuses (E6009).** `mindc check` accepts,
    and `mindc run` then refuses with `E6009 unsupported lowering operation
    'struct field read'`: string `+` concatenation, `.length` on a String, and
@@ -3394,7 +3504,15 @@ same harness, prompts, and a receipt for every reported pass@1.
 measurable state of AI-writability.
 
 **Gates:** an independent checkout reproduces 100% `check` and `test` pass on the corpus;
-every published pass@1 links to a receipt that another party can re-run.
+every published pass@1 links to a receipt that another party can re-run. Before any
+tuning, each translated benchmark is split by a fixed hash of the task id into a dev
+half and a held-out half, and the split file is committed. Language or tooling
+decisions that use benchmark failures, GP-02's prelude decision included, read the dev
+half only. Every published pass@1 is reported for the full set, dev and held-out, with
+the exact prompts, raw outputs and commands. No benchmark text or paraphrase enters
+any training data. At least one benchmark that was never used for tuning is reported
+untouched. Mutation control: a corpus file with one planted type error turns the
+corpus gate red.
 
 ### GP-02 — `mindc check` as a blocking gate for generators
 
@@ -3409,11 +3527,16 @@ without an import.
 *Why:* a strict checker used as a blocking gate is the measured lever for generator
 reliability; exposing it through an editor protocol alone is not.
 
-**Gates:** every statement-boundary prefix of every GP-01 file yields zero partial-mode
-diagnostics unless the full file also fails at that location; the JSON shape is pinned by
-a schema-version field and a golden test; for the ten most common error classes on GP-01,
-applying the fix-it yields a clean check in at least 90% of firings; the prelude decision
-is recorded with the before and after share of missing-import failures.
+**Gates:** every statement-boundary prefix of every GP-01 file yields zero
+partial-mode diagnostics unless the full file also fails at that location; mutation
+control: at least 80% of errors planted mid-file are reported at or before their
+location rather than at end of file; partial mode reuses the same checker (it seals
+open blocks at the token level and reimplements no semantics); the JSON shape is
+pinned by a schema-version field and a golden test, and every diagnostic code has
+exactly one catalogue row (a code without a row turns the test red); for the ten most
+common error classes on GP-01, applying the fix-it yields a clean check in at least
+90% of firings; the prelude decision is made on the GP-01 dev half and recorded with
+the before and after share of missing-import failures on both halves.
 
 ### GP-03 — Machine-readable grammar and type export
 
@@ -3453,23 +3576,33 @@ publish a source-stability policy with a stated deprecation window, and tag 1.0 
 
 **Gates:** each construct compiles and runs on the native path and in the `mindc test`
 evaluator (MG-04 parity), with a permanent fixture; a program of at least 10,000 lines
-builds with no stubs; the stability policy is published before the 1.0 tag.
+builds with no stubs; the stability policy is published before the 1.0 tag. Each
+construct is parsed, checked and lowered by both the reference compiler and the
+self-host front end (`examples/mindc_mind/main.mind`) in the same change, and the
+self-host gates stay green; self-host changes ride one seed advance per integration
+wave; a construct accepted by one front end and refused by the other turns the gate
+red.
 
 ### GP-05 — Published compile-time program
 
 Build three things. (a) A published end-to-end table of `mindc` source-to-native time,
 for the LLVM path and the native backend, against `clang` and `rustc` on identical
 programs, measured at the T2 tier of `docs/benchmarking.md`. (b) Incremental compilation
-through the MOC-14 engine. (c) A long-lived compiler daemon that serves builds, the MOC-15
+through the MOC-14 caches (module-level check cache, per-function native code cache with in-place relink); no demand-driven query layer. (c) A long-lived compiler daemon that serves builds, the MOC-15
 language server and the GP-02 gate, reported as a cold and steady pair under the T3 rule.
 
 *Why:* the only published compile-time numbers measure the frontend, so end-to-end and
 incremental cost is unmeasured against peers.
 
-**Gates:** the table regenerates from a checked-in script on pinned hardware, with exact
-commands and raw output; a single-function edit in a 10,000-line project rebuilds in at
-most 50 ms p95 warm, and a small project in at most 30 ms p50 as a stretch target; any
-runtime row follows the measurement protocol in Phase 19.6.2.
+**Gates:** the table regenerates from a checked-in MIND program on pinned hardware,
+with exact commands and raw output (it needs bounded child processes with a timeout
+and a monotonic clock in `std`, which land in the first post-reseed std wave); a
+single-function edit in a 10,000-line project rebuilds in at most 50 ms p95 warm,
+and a small project in at most 30 ms p50 as a stretch target; edit-to-diagnostic for
+an edited module of up to 5,000 lines is at most 20 ms p95 with the rest of a
+100,000-line project warm; a cold build and a warm build of the same source give
+the same artifact hash; any runtime row follows the measurement protocol in Phase
+19.6.2.
 
 ### GP-06 — Mechanized determinism contract and translation validation
 
@@ -3477,7 +3610,10 @@ Build two things. (a) A machine-checked model of the integer and Q16.16 semantic
 canonicalisation to mic@3 bytes, checked by a proof tool that sits outside the compiler's
 build and trusted base. (b) Per-build translation validation: where the MLIR path is
 available, the native backend's output is compared with it for every emitted function in
-the fixture corpus, and a disagreement fails the build.
+the fixture corpus, and a disagreement fails the build. This comparison is a migration
+check: once the MLIR path is removed, translation validation runs against a reference
+evaluator derived from the model in (a), and the enumerated cross-substrate conformance
+grid of the one remaining engine is the lasting product gate.
 
 *Why:* the determinism claim currently rests on tests over sampled inputs; a machine-checked
 model and per-build validation cover the emitted code itself.
@@ -3485,41 +3621,51 @@ model and per-build validation cover the emitted code itself.
 **Gates:** the canonicalisation result is checked with no axioms beyond those stated in
 the model; translation validation covers at least 95% of emitted functions in the fixture
 corpus; the public miscompilation counter reports zero open items in each release.
+Mutation control: a planted miscompile in one native lowering rule (a swapped operand
+order) is caught by translation validation and named by function.
 
 *Firewall:* no proof tool becomes a dependency of `mindc`. This keeps the decision recorded
 under Phase 13.5.
 
 ### GP-07 — Public pages state the shipped state
 
-Update `docs/determinism.md`, the README and this roadmap so GPU identity is stated at the
-scope that is gated. Integer (Class A) kernels are byte-identical across GPU, CPU and ARM
-in the commercial runtime's CI, as shown by the cross-substrate canary that passed on
-2026-10-27 on an NVIDIA sm_89 GPU. Floating-point GPU kernels remain roadmap. Refer to the
-commercial runtime by name, without links to private repositories.
+Update `docs/determinism.md`, the README and this roadmap so every GPU statement takes
+one form: named integer (Class A) GPU operations, each with its real-hardware hash
+gated in the commercial runtime's CI. Raise the coverage by adding a hash per named
+operation, not by widening the sentence. The open-source compiler emits for the CPU;
+floating-point GPU kernels remain roadmap. Name the operations, not a hardware
+vendor, and refer to the commercial runtime by role, never by repository name or
+link.
 
-*Why:* the determinism page says GPU identity is roadmap, which understates what the
-commercial runtime's CI already gates.
+*Why:* the determinism page says GPU identity is roadmap, while the commercial
+runtime's CI already gates named integer operations on real hardware; the public text
+should state exactly that list.
 
-**Gates:** the README, `docs/determinism.md` and this roadmap state the same GPU scope,
-enforced by a CI text check that fails when the sentences differ; every shipped GPU claim
-names the gate that enforces it. This item is a documentation change and lands as its own
-change, not with this roadmap entry.
+**Gates:** the README, `docs/determinism.md` and this roadmap state the same GPU
+scope, enforced by a docs check written as a MIND program (after MG-04) that fails
+when the sentences differ; mutation control: widening one sentence to all GPU kernels
+turns the check red; every named operation cites the gate that enforces it. This item
+is a documentation change and lands as its own change, not with this roadmap entry.
 
 ### GP-08 — Open interop funnel
 
-Build an open-source Python binding for the CPU path and a `wasm32-wasip1` target. This
-extends the Phase 10 Python-bindings deliverable (`mindlang`) with the gates below and
-does not duplicate it. The repository has only a benchmark-only pyo3 module
-(`src/python.rs`), no installable Python package and no wasm32 target. The C ABI is the only open
-foreign interface, and the wasm32 target is a planned tier-2 entry in the independence
-audit plan.
+Build a `wasm32-wasip1` target and, once the operator decides its licence, a Python
+binding for the CPU path. The wasm32 target lands in the performance stage, after the
+native AArch64 encoder, as one more column of the instruction-selection table. The
+Python binding is generated from the C ABI and adds no hand-written Python to this
+repository; its packaging lives outside the compiler tree. This extends the Phase 10
+Python-bindings deliverable (`mindlang`) and does not duplicate it. Today the
+repository has only a benchmark-only pyo3 module (`src/python.rs`), no installable
+Python package and no wasm32 target; the C ABI is the only open foreign interface.
 
 *Why:* adoption starts with a single install step, and the funnel needs one open binding
 before any commercial one.
 
-**Gates:** the binding installs from a package index on Linux x86-64 and AArch64 and runs
-a documented example in CI; `wasm32-wasip1` output for each Core fixture gives the same
-result hash as the x86 and ARM runs; both targets are gated in the cross-substrate suite.
+**Gates:** `wasm32-wasip1` output for each Core fixture gives the same result hash as
+the x86 and ARM runs, and the `.wasm` file has the same sha256 when built on x86-64
+and on AArch64; mutation control: a fixture whose wasm result differs turns the
+cross-substrate suite red; after the licence decision, the binding installs from a
+package index on Linux x86-64 and AArch64 and runs a documented example in CI.
 
 ### GP-09 — Conformance grows beyond the Core v1 operator set
 
@@ -3527,7 +3673,9 @@ Build a published operator catalogue. Core v1 has 17 operators (`docs/ops.md`), 
 `tensor.matmul`, `tensor.transpose` and `tensor.conv2d` are already among them. Every
 operator added carries a bit-identity fixture on AVX2 and NEON. The first slice is the
 Phase 11 intrinsics not yet in the catalogue (`zeros`, `ones`, `softmax`, `randn`),
-followed by attention, layer normalisation, convolution variants beyond `conv2d`,
+with `randn` after the RNG decision in Phase 24 and `softmax` on the strict
+`std/detmath` exponential, followed by attention, layer normalisation, convolution
+variants beyond `conv2d`,
 quantisation and scatter.
 
 *Why:* 17 operators cannot express the forward pass of a real model.
@@ -3575,9 +3723,10 @@ mic@3 flip smoke unchanged).
 `trace_hash` preimage. The Python smokes keep their current role and are not extended; each
 retires only once `trace-diff` covers its check.
 
-*Depends on:* the compile-stage records can start on the front end; the native-emit stage
-and the three-path trace points wait on Gate 1 (#284). Architecture audit before
-implementation.
+*Depends on:* MG-04 (a MIND program reading and writing files under both `mindc test`
+and `mindc run`), which the record writer and `trace-diff` need; the compile-stage
+records can then start on the front end; the native-emit stage and the three-path
+trace points wait on Gate 1 (#284). Architecture audit before implementation.
 
 ### GP-11 — Identity columns in the cross-language comparison suites
 
@@ -3610,8 +3759,13 @@ produces valid timing rows; an adapter whose output fails the schema is refused,
 a task a configuration cannot run is listed as unsupported, never scored as a pass or a
 failure; floating-point tasks get identity rows only under a declared strict profile.
 
-*Depends on:* the N-18 pinned-version manifest. No public number until the table reproduces
-from a clean checkout on another party's machine.
+*Depends on:* the N-18 pinned-version manifest; MG-04 (file I/O under `mindc test` and
+`mindc run`); bounded child processes with line-oriented pipes and a timeout, a
+monotonic clock and a peak-resident-memory readout in `std` (std process and time
+changes ride the first post-reseed std wave). Peer adapters are the only non-MIND
+code; they live in a pinned peer-adapter bundle outside this repository and are
+fetched by hash, so this repository adds no `.py`, `.sh` or `.ts` files. No public
+number until the table reproduces from a clean checkout on another party's machine.
 
 ### Firewall — do not cross it
 
@@ -3663,8 +3817,102 @@ existing kernels.
 
 Only promote to a standalone optional MIND geometry library after
 measurements and review; runtime specialization needs its own profiling
-and approval. Rendering experiments remain with
-[mind-ray](https://github.com/star-ga/mind-ray/blob/main/ROADMAP.md).
+and approval. Rendering experiments remain with the separate rendering project.
+
+## Research watch — programs compiled into fixed-weight integer circuits, a determinism showcase (proposed, 2026-10-31)
+
+**Goal.** A small `examples/` program that takes a program for a tiny, frozen 8-bit register
+machine and compiles it, with no training, into the fixed integer weights of a bounded recurrent
+tensor circuit. One circuit step is one machine step; instruction and operand fetch use an exact
+selection (argmax with a fixed tie-break) over one-hot encodings. Running the circuit must give the
+same machine state at every step as a conventional reference interpreter for the same machine, and
+the same per-step hashes on x86 and ARM.
+
+**Why it fits MIND.** Recent research shows that a neural network's parameters can be constructed
+rather than trained, so that the network executes a simple CPU's state transitions exactly. Two
+properties make that a MIND workload rather than a curiosity:
+
+- **One wrong tensor result becomes a visible, located failure.** With wrapping integer
+  arithmetic a matmul's result does not depend on summation order, so what a long run catches is a
+  wrong lowering: a lane, a stride, a narrowing, a shift or a selection tie-break, and, where the
+  spec saturates or rounds in Q16.16, any change in where saturation or rounding happens. One such
+  difference flips a bit of machine state; from that step on the two traces share nothing, and the
+  check names the first divergent step. A long run drives the same few operators through far more
+  operand combinations than a single-kernel fixture does.
+- **Every parameter is checkable.** The weights are a pure function of the program. The artifact
+  binds machine-spec hash, program hash, compiler hash and weights hash in its evidence record, and a
+  verifier re-derives the weights from the program and compares bytes: the Phase 23 provenance trail
+  in its strongest form, a model whose every parameter has a known origin.
+
+It is a showcase and a test instrument. Nothing here claims that a compiled circuit is faster than
+native code; it is expected to be slower, and the measurement says by how much.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 1 | Freeze the machine: 8-bit registers and memory, at most 16 opcodes, a defined result for every opcode on every input (wrap on overflow, a stated result for division by zero), with known-answer vectors | The reference interpreter (plain MIND integer code, no tensors) passes the vectors on avx2 and neon; vectors pinned by hash |
+| 2 | Program-to-weights compiler in MIND: state encoding, one-hot fetch, one transition block per opcode; weights integer or Q16.16; shapes fixed at compile time | Weight bytes identical on avx2 and neon for every fixture program |
+| 3 | Circuit runner: one bounded recurrent step per machine step, using only integer matmul, wrapping or saturating add as the spec states, and the exact selection | Exhaustive single-step check: every opcode applied to every combination of the values it reads (at most two 8-bit registers and one addressed memory byte, so at most 2^24 cases per opcode), with every other state field taken from a fixed seeded background and checked unchanged; the circuit's next state equals the reference interpreter's in every case |
+| 4 | Long-run check: seeded random programs up to 10^6 steps, one state hash per step | Circuit and interpreter hashes equal at every step, and avx2 equals neon; the first divergence is reported with its step and state field |
+| 5 | Evidence record binding the four hashes; re-derivation check | `mindc verify` detects a one-byte change in any of the four; re-deriving the weights from the bound program reproduces their bytes |
+| 6 | Measurement: time per machine step, peak RSS and weight size, against the reference interpreter and against the same algorithm written directly in MIND and compiled natively | Reported as numbers, not asserted. A GPU run is a separate milestone and is not claimed until its hashes equal the CPU hashes |
+
+### Acceptance gate
+
+- **Positive control:** two fixture programs (8-bit multiply by repeated addition, a bounded sort of
+  8 bytes) match the reference interpreter at every step on avx2 and neon.
+- **Mutation controls:** changing one weight by one unit makes step 3 or step 4 report the first
+  divergent step; reversing the selection tie-break turns the check red on a fixture that contains a
+  tie; a reference interpreter with one opcode altered is caught by step 3, so the comparison cannot
+  pass vacuously.
+- A run in which either side crashed or wrote no trace is reported as unverified, never as a pass.
+
+### Falsification
+
+Kept out of CI, as a demonstration only, if the long-run check catches no planted single-operator
+lowering mutation (a lane, stride, narrowing, shift or tie-break change in one operator) that the
+existing per-operator cross-substrate fixtures miss at equal run time. Dropped entirely if some
+opcode of the frozen machine cannot be expressed with exact integer or Q16.16 weights.
+
+### Firewall — do not cross it
+
+- Integer and Q16.16 only on the execution path: no floats in the weights, the selection or the
+  trace; overflow behaviour is written per opcode in the spec.
+- No trained weights, and no code, tests or weights taken from any published implementation; the
+  build is independent, from the frozen spec.
+- I/O stays in the host program; the circuit has no system-call path.
+- Example and library path only; nothing enters the default build and no language feature is added
+  for it. A reusable piece such as the exact selection enters `std` only with its own operator
+  fixture.
+
+### Compiler dependencies — ordered after
+
+1. Tensor lowering on the native backend that a user program can reach for integer matmul, row
+   reduction and selection (`docs/INDEPENDENCE_ROADMAP.md` C4: today these are hand-emitted selftest
+   kernels, and MLIR is the only general tensor path). Until it lands, steps 2-4 run on the MLIR path
+   and the example is not described as Rust-independent.
+2. The integer division, remainder and shift contract settled across interpreter, MLIR and native
+   (D-2), so the reference interpreter gives one answer on every path.
+3. The exact selection operator in the GP-09 operator catalogue, with its AVX2 and NEON fixture.
+4. `mindc test` running a chosen backend, so the differential runs on both MLIR and native.
+5. A MIND program reading a file, and allocating a vector, under the reference compiler (today
+   `mindc test` traps on file, string and vector-allocation intrinsics, and `mindc run` refuses a
+   mixed native and JIT link). Until then fixture programs are compiled in as constant arrays.
+
+Narrow-integer types (C2) are not a dependency: machine values are held in `i64` and masked to 8
+bits after every operation, as the spec states. An `i8`/`u8` variant is added only after C2's
+general narrow-integer path lands.
+
+### Open questions — answer before this gets a milestone
+
+- What is the smallest opcode set that still runs a non-trivial program: 8 or 16?
+- Straight-line programs only, or a program counter with branches (exact selection on the counter)?
+- Should the long-run check join the cross-substrate CI suite, or run as a scheduled job because of
+  its run time?
+
+Proposed; a showcase and a test instrument, not on the critical path. Nothing built. Ordered after
+the compiler dependencies above; an architecture audit verdict is required before implementation.
 
 ## Tracked roadmap items (moved from issues #293 and #294, status 2026-10-28)
 
@@ -3682,11 +3930,15 @@ and approval. Rendering experiments remain with
 > `main` as its evidence; an In progress row names the open draft pull request
 > that carries the work.
 
+Line citations into `docs/roadmap.md` refer to `9de3d64d`; cite section
+headings when a row is next updated. Rows S-1, S-4, S-7, S-gate and Gate 1
+were re-checked at `c32716aa` on 2026-10-31.
+
 States: **Done** (on `main`), **Partial** (some of it on `main`), **In progress**
 (carried by an open draft pull request), **Not started** (nothing on `main`),
 **Direction** (a constraint or goal, not a deliverable).
 
-Totals: #293 has 45 items (Partial 18, In progress 3, Not started 21, Direction 3); #294 has 26 items (Done 2, Partial 7, In progress 1, Not started 12, Direction 4).
+Totals: #293 has 45 items (Partial 19, In progress 3, Not started 20, Direction 3); #294 has 26 items (Done 2, Partial 7, In progress 1, Not started 12, Direction 4).
 
 ### P0 acceptance items (from #293)
 
@@ -3705,14 +3957,14 @@ DoD the deliverables and definition of done.
 | D-6 | A changed optimization, instruction selection, cache hit, or compilation route must preserve strict observable behavior. Cache keys include IR, toolchain, target/profile, ABI, flags, dependency interfaces and all behavior-changing feature gates. Reject cache poisoning and noncanonical serialization. | Partial | `55244462` fix: fold compiler + toolchain identity into the artifact cache key; `e6625924` fix(build): sort the walked source set and key the cache on every module. Key tests at `src/build/cache.rs:550-687` cover source, target, optimize, version and fingerprint. Not in the key: feature gates, ABI, dependency interfaces. No poisoning or noncanonical-serialization rejection test. No per-route behaviour-preservation gate (GP-06 is a plan). | Add a cache-poisoning test (corrupt a cached object, expect a fail-closed rebuild) and a test that flipping each behaviour-changing feature gate changes the key. |
 | D-7 | Maintain independent canonical-IR digest, target/toolchain-specific build identity, result digest, effect-trace digest and signing state with domain separation and versioned preimages. Test tampering, stale toolchain pins and mismatched declared/actual conformance. | Partial | `mindc verify` recomputes `trace_hash`, re-derives determinism/fp_mode and pins the signer (`src/bin/mindc.rs:315-373`). Versioned domain tags at `src/eval/mlir_build.rs:548` and `src/project/build_input_snapshot.rs:148` (`mind-build-inputs-v1`). `3ad0a714` ci: gate that JSON is never an evidence-hash preimage. No separate result digest or effect-trace digest. | Add `result_digest` and `effect_trace_digest` fields with their own domain tags to the evidence chain, plus tamper and stale-toolchain-pin negative tests in `mindc verify`. |
 | D-gate | Gate: on x86-64 and arm64 real hardware, repeat execution with different allowed thread counts and process restarts; compare interpreter ↔ native ↔ MLIR for identical declared strict profiles (exit status, stdout/stderr, filesystem/effects, result bytes), include negative/refusal fixtures. | Partial | The `cross_substrate_identity` job runs on x86 and a real arm64 runner (`.github/workflows/ci.yml:418-446`); a thread-count-independence canary exists (`tests/cross_substrate_identity.rs:108`). Missing: a three-way interpreter/native/MLIR comparison of exit, stdout/stderr and effects; process-restart repeats; refusal fixtures under one declared profile. | Add a CI job that runs each strict fixture through the interpreter, a native ELF and an MLIR `.so` on both runners and diffs exit, stdout, stderr and effects. |
-| S-1 | Keep T1 frontend microsecond benchmarks explicitly frontend-only. Add continuous T2 fresh process to native executable/shared library/object complete measurement … Record each stage and total wall time using both direct-native and fallback paths where supported. | Partial | T1 is labelled frontend-only (`benches/compiler.rs:50-57`, `docs/benchmarking.md:21`). A T2 `e2e_compile_shared` bench covers `--emit-shared` over MLIR + clang (`benches/compiler.rs:181-210`, `docs/benchmarking.md:22`); it is skipped when tools are missing and is not in `tools/bench_gate.py`. No executable/object targets, no direct-native route, no per-stage timing. | Extend `e2e_compile_shared` to emit executable and object on both `--backend native` and MLIR with per-stage timestamps, and run it in `bench-gate.yml`. |
+| S-1 | Keep T1 frontend microsecond benchmarks explicitly frontend-only. Add continuous T2 fresh process to native executable/shared library/object complete measurement … Record each stage and total wall time using both direct-native and fallback paths where supported. | Partial | T1 is labelled frontend-only (`benches/compiler.rs:50-57`, `docs/benchmarking.md:21`). A T2 `e2e_compile_shared` bench covers `--emit-shared` over MLIR + clang (`benches/compiler.rs:181-210`, `docs/benchmarking.md:22`); it is skipped when tools are missing. `e762cb8a` perf: gate end-to-end compile time by a same-run paired A/B against the base (#311) adds `e2e_native` (`mindc build --backend native`, executable) and gates both rows in the `e2e-gate` job. Still no object target and no per-stage timing. | Add an object-emit row and per-stage timestamps (S-6) to the existing end-to-end rows. |
 | S-2 | Maintain workload baskets: minimal scalar; data-structure/ownership; 10/100/1000-function projects; 10+/100+ modules/import graph; tensor kernels; heavy generics/monomorphization; and production-representative consumers sanitized for public benches. | Not started | Only small/medium/large sources exist (`benches/compiler.rs:63-65` for T1, `:194-197` for T2). No basket set on `main`. | Check in generated 10/100/1000-function and 10/100-module projects under `benches/workloads/` and wire them into the T2 sweep. |
 | S-3 | Benchmark cold clean build, no-op rebuild, single private-function change, public interface/ABI change, and parallel project rebuild. Require a verified dependency graph, stable interface hashes, fine-grained invalidation and no timestamp-only invalidation. | Partial | A no-op rebuild cache-hit correctness test exists (`tests/mindc_cache_phase_f.rs:199`); `e6625924` keys the cache on every module. No benchmarks for the five scenarios and no stable interface hashes. Incremental compilation is a plan (GP-05). | Add a criterion group timing the five rebuild scenarios on a 100-module project and assert that clean and cache-hit artifacts have equal mic@3 digests. |
-| S-4 | Extend the existing +10% one-sided regression guard to T2 per representative size on isolated/quiet hardware, without weakening existing T1 gates. … False noisy CI runs are unmeasured/HOLD, not PASS. | Not started | The guard covers only the T1 `compiler_pipeline` ids (`tools/bench_gate.py:56-58`, `.github/workflows/bench-gate.yml`). No T2 entry and no peak-RAM capture on `main`. | Freeze a T2 baseline file and add `e2e_compile_shared/{small,medium,large}` to `tools/bench_gate.py` with a HOLD verdict for noisy runs. |
+| S-4 | Extend the existing +10% one-sided regression guard to T2 per representative size on isolated/quiet hardware, without weakening existing T1 gates. … False noisy CI runs are unmeasured/HOLD, not PASS. | Partial | `e762cb8a` perf: gate end-to-end compile time by a same-run paired A/B against the base (#311): the `e2e-gate` job (`.github/workflows/bench-gate.yml`) decides T2 warm/cold and T2-native by a one-sided paired rule (FAIL when the candidate is proven at least 3% slower, INCONCLUSIVE when the interval is wider than 12%). It is not in `.github/required-ci-jobs.tsv`, it runs on hosted runners rather than isolated hardware, and there is no peak-RAM capture. | Add a peak-RSS column to the paired runner and an `e2e-gate` row to `.github/required-ci-jobs.tsv`; move the decision rule into a MIND gate program once MG-04 lets MIND read files; the Python gate is not extended further. |
 | S-5 | Measure T3 persistent compiler/service cold startup and warm steady independently, as well as first-build behavior after compiler upgrade. Maintain a non-regressing cache-disabled path. | Not started | `docs/benchmarking.md:23` says T3 service harnesses are out of tree. No compiler daemon; the T3 daemon is a plan (GP-05). | Write an in-tree T3 harness that times the first and the Nth `mindc check` request against a long-lived process, reported as a (cold, steady) pair. |
 | S-6 | Add compiler-cost accounting per feature: parse/typecheck, canonical emit, analysis/proofs, optimization, instruction selection, serialization, link and disk/cache I/O. | Not started | No per-stage timing or cost flag in `src/bin/mindc.rs` and no stage-timing commit on `main`. | Add `mindc build --time-stages=json` that emits per-stage wall time and peak RSS, and record it in the T2 bench. |
-| S-7 | Produce repeatable apples-to-apples C/C++ comparisons using pinned GCC/Clang and matching T2 build modes (`-O0`, `-O2` or equivalent), incremental/link time, p50/p95, peak RAM and executable size. Test runtime correctness and throughput separately; publish losses and unsupported cases. | Partial | Runtime comparisons against clang exist (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, `bench/fft/harness.c`, `scripts/mind-vs-rust/run.sh`). No compile-time (T2) comparison against GCC/Clang; GP-05 (a) is a plan. | Add `scripts/t2_vs_cc.sh` that builds identical programs with pinned gcc/clang `-O0`/`-O2` and `mindc` and records wall time, peak RSS and binary size. |
-| S-gate | Gate: per-CI artifact records a complete timing breakdown and its paired correctness outcome. … speed regressions >10% against the frozen baseline fail … A faster but incorrect compiler is RED. | Partial | Only the T1 +10% one-sided guard against a frozen floor exists (`tools/bench_gate.py`, `.github/workflows/bench-gate.yml`). No per-CI T2/T3 stage breakdown paired with correctness outcomes. | Have `bench-gate.yml` upload a JSON artifact pairing each workload's stage timings with its correctness test result. |
+| S-7 | Produce repeatable apples-to-apples C/C++ comparisons using pinned GCC/Clang and matching T2 build modes (`-O0`, `-O2` or equivalent), incremental/link time, p50/p95, peak RAM and executable size. Test runtime correctness and throughput separately; publish losses and unsupported cases. | Partial | Runtime comparisons against clang exist (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, `bench/fft/harness.c`, `scripts/mind-vs-rust/run.sh`). `e762cb8a` adds same-session T2 reference rows for clang (`-O3`, shared object) and rustc (`opt-level=3`, cdylib) (`e2e_reference`, `docs/benchmarking.md`). No gcc row, no `-O0`/`-O2` modes, no peak-RAM or size column. | Extend the existing `e2e_reference` rows with gcc, `-O0`/`-O2` build modes, peak RSS and binary size; no new shell script. |
+| S-gate | Gate: per-CI artifact records a complete timing breakdown and its paired correctness outcome. … speed regressions >10% against the frozen baseline fail … A faster but incorrect compiler is RED. | Partial | The T1 +10% one-sided guard against a frozen floor and, since `e762cb8a`, the same-run paired T2 gate exist (`tools/bench_gate.py`, `.github/workflows/bench-gate.yml`); neither is release-required. No per-CI T2/T3 stage breakdown paired with correctness outcomes. | Have `bench-gate.yml` upload a JSON artifact pairing each workload's stage timings with its correctness test result. |
 | C-1 | Finish #284's admitted native path and preserve its frozen 10 downstream programs / 35 runtime cases qualification contract before declaring a native cutover; respect its still-open extern C, std calls, generated operator differential, source-context and error-semantics gates. | In progress | Draft PR #284 (open). Its body records 4 of 10 frozen programs refusing with `lane.extern.unimplemented`, 48 unmet source-context expectations and a pending exit-79 decision. Related unmerged branches: `fix/imported-extern-abi-20261022` (`e7789360`), `test/native-lane-op-differential-20261021` (`a47eb5ce`). | Merge `main` into #284 to clear its conflicts, then land the extern-C admission so all 10 frozen programs build. |
 | C-2 | Eliminate value-position field access panics and silent placeholder constants; complete struct/enum/string/array/tensor aggregate calls and returns, ownership, alignment, visibility and cross-module ABI. Add real C interoperability fixtures: C calling MIND and MIND calling C across x86-64/arm64, static/shared builds, varargs …, unwind boundaries, callbacks, symbol versioning, headers and layout checks. | Partial | On `main`: `tests/cross_module_field_access_run.rs`, `tests/extern_c_phase_a.rs`, `tests/extern_c_phase_b.rs`, `tests/extern_c_phase_c.rs`, `tests/ffi_header.rs`, `tests/cross_module_cdylib_compose.rs`, `tests/narrow_call_abi.rs`. MG-05 (E6009) is open. No arm64 C-calls-MIND fixtures, varargs, unwind, callbacks or symbol versioning; the variadic planner is only on branch `feat/native-variadic-plan-20261015` (`ab90d595`). | Add a `tests/ffi_conformance/` suite with C-calls-MIND and MIND-calls-C fixtures (struct by value, callback, shared and static) running on both CI runners. |
 | C-3 | Introduce deterministic resource lifetime semantics with RAII-equivalent finalization for memory, file descriptors, sockets, mapped memory and foreign handles, plus explicit ownership/borrowing/regions, reliable transfer and destruction order. | Not started | No finalization or destruction-order commit on `main`; MOC-09 is the plan. Open drafts #289, #291 and #292 are explicit-free work, not RAII. | Write an RFC for scope-exit finalization of file handles and allocations, with a compile-fail corpus for use-after-move and double-free. |
@@ -3729,14 +3981,14 @@ DoD the deliverables and definition of done.
 | E-7 | Build a machine-readable consumer contract matrix with independent `CHECKS`, `BUILDS`, `RUNS`, `NATIVE`, `STRICT_CROSS_ISA`, `STRICT_GPU`, `EVIDENCE_VERIFIED`, `SIGNED`, `T1/T2/T3_MEASURED` fields, version pins, reproducible command and link to test artifacts. | Not started | No matrix on `main`. Plans: MOC-18, and a capability truth table on unmerged branch `roadmap/capability-truth-table` (`694f8547`). `ecd8be99` ci: automated pull-request review and public-leak check (#305) supports the no-leak constraint. | Commit a `docs/consumer-matrix.json` schema with those independent fields and a CI check that fails when a RUNS or NATIVE cell lacks an artifact link. |
 | E-gate | Gate: minimum one independently executed representative test for each consumer class and an explicitly recorded BLOCKED status where a compiler surface is not ready. | Not started | No consumer-class fixtures on `main` (see E-1 to E-6). | Seed the matrix with all six classes marked BLOCKED, then flip each as its fixture lands. |
 | Gate 0 | Gate 0 / immediately: freeze semantic tables and benchmark baselines, gather current T1/T2/T3 + error/correctness inventory, unify edge-case oracle, triage open regressions. | Partial | The T1 baseline is frozen in `tools/bench_gate.py`; the edge-case divergence inventory is at `docs/ENGINE_CONSUMER_LIST.md:628-646`. No frozen semantic table, no T2/T3 baseline and no unified oracle. | Commit frozen T2 baselines and one shared integer-edge oracle used by every engine. |
-| Gate 1 | Gate 1 / native admission: finish #284 and frozen downstream native-vs-reference qualifications; establish two-ISA deterministic strict checks and full T2 guard. | In progress | Waits on draft #284; checkpoint ownership is tracked in #281. The T2 guard does not exist yet (S-4). | Clear the #284 conflicts and finish its remaining checklist items (extern C, exit-79 decision, source-context triage). |
+| Gate 1 | Gate 1 / native admission: finish #284 and frozen downstream native-vs-reference qualifications; establish two-ISA deterministic strict checks and full T2 guard. | In progress | Waits on draft #284; checkpoint ownership is tracked in #281. A same-run paired T2 guard exists (`e762cb8a`) but is not release-required (S-4). | Clear the #284 conflicts and finish its remaining checklist items (extern C, exit-79 decision, source-context triage). |
 | Gate 2 | Gate 2 / integration: aggregate ABI and C/C++ FFI; resource lifetime, module graph, stable cache, fail-closed dependencies; consumer-class fixtures. | Not started | Plans only: MG-01 (fail-closed imports), MG-05 and MOC-01 (aggregate ABI). `37cf0f4f` fix(test): resolve bare calls into imported sibling modules in mindc test (#297) fixed `mindc test` import resolution only. | Implement MG-01: use the `check` import resolver in `build`/`run` and prove byte-identical artifacts over `std/` and `examples/`. |
 | Gate 3 | Gate 3 / zero-cost abstractions: measured generics, iterators and ownership; proof-preserving optimization; C/C++ parity suites and developer tooling. | Not started | Plans only: GP-04, MOC-12, GP-06. Gates 0-2 are unmet. | None until Gate 2; track through the GP-04 and MOC-12 acceptance gates. |
 | Gate 4 | Gate 4 / expanded strict substrates: broader float, SIMD reductions, GPU/accelerator and distributed deterministic execution per admitted operation/device, with hardware evidence or honest relaxed tier. | Not started | Some strict-tier pieces exist (f32 BLAS strict, `docs/determinism.md:104`; `std/detmath.mind`); the gate waits on Gates 0-3. GP-09 is a plan. | None until Gate 3; GP-09 first-slice fixtures are the entry point. |
 | Gate 5 | Gate 5 / embedded/freestanding: only after target ABI, memory model, allocator and actual hardware conformance are established. | Not started | No freestanding profile on `main`; its prerequisites are unmet. | None until Gates 0-4 pass. |
-| Vetoes | Release vetoes: any silent wrong answer, unqualified default strict path, unfrozen or missing speed comparator, hidden required CI skip, native binary without actual execution, missing provenance fields, or unverified signing claim. | Direction | A standing policy, not a deliverable. Partial enforcement on `main`: `scripts/check_claims.py`, `tests/fail_closed_capability_skip.rs`, `verify --require-strict-fp` / `--require-deterministic` (`src/bin/mindc.rs:324`), the T1 bench gate. | Encode the veto list as a release checklist script that fails when any required CI job is skipped. |
+| Vetoes | Release vetoes: any silent wrong answer, unqualified default strict path, unfrozen or missing speed comparator, hidden required CI skip, native binary without actual execution, missing provenance fields, or unverified signing claim. | Direction | A standing policy, not a deliverable. Partial enforcement on `main`: `scripts/check_claims.py`, `tests/fail_closed_capability_skip.rs`, `verify --require-strict-fp` / `--require-deterministic` (`src/bin/mindc.rs:324`), the T1 bench gate. | Encode the veto list as a release checklist written in MIND that fails when any required CI job is skipped. |
 | Invariants | Non-negotiable invariants 1-5: correctness and deterministic strict execution always outrank speed; compilation speed is a release budget across the entire pipeline; do not duplicate active native-compiler work; keep claims scoped and falsifiable; respect publication boundaries. | Direction | Constraints, not deliverables. Invariant 5 is supported by `40fb0e72` (#301), `a5737868` (#304) and `ecd8be99` (#305, public-leak check). | None: apply as review criteria. |
-| DoD-1 | `docs/roadmap.md` gains a concise Deterministic Native Compiler & C/C++ Parity section linking the existing MOC, RI, benchmarking and determinism work to these P0 acceptance gates; no duplicate roadmap numbered systems. | Not started | No such section. Partial overlaps that do not link the P0 gates: "Measured toolchain gaps" (`ad375fc4`, #299) and "Compiler and language gap program" (`2c5c2389`). This tracking table is not that section. | Add the concise section, mapping the D, S, C and E rows to MOC, GP, MG and RI items without new numbering. |
+| DoD-1 | `docs/roadmap.md` gains a concise Deterministic Native Compiler & C/C++ Parity section linking the existing MOC, RI, benchmarking and determinism work to these P0 acceptance gates; no duplicate roadmap numbered systems. | Not started | No such section. Partial overlaps that do not link the P0 gates: "Measured toolchain gaps" (`ad375fc4`, #299) and "Compiler and language gap program" (`2c5c2389`). This tracking table is not that section. | Add the concise section, mapping the D, S, C, E and N rows to MOC, GP, MG, PGRO, Phase and RI items; new proposals reuse an existing scheme and no further numbering scheme is introduced. |
 | DoD-2 | One pinned machine-readable supported construct × target × profile semantic matrix; golden edge vectors, negative tests and independent cross-ISA reproducer. | Partial | `mindc conformance --profile cpu` with `tests/conformance/cpu_baseline/`, and the `cross_substrate_identity` gate on x86 and arm64 (`.github/workflows/ci.yml:418-446`). No construct × target × profile matrix file; a `docs/conformance-matrix.md` publication is planned only on branch `roadmap/ecosystem-20261024` (`16183451`). | Generate a committed `docs/conformance-matrix.md` from `mindc conformance`, with a CI drift check. |
 | DoD-3 | One paired correctness + T1/T2/T3 release report, including unchanged-module and invalidation benchmarks, memory/size and baseline trace. | Not started | No T2/T3 release report on `main`; the T2 bench has no report and T3 is out of tree (`docs/benchmarking.md:23`). | Produce `bench/RESULTS-t1-t2-<date>.md` from the T2 sweep with commands, hashes, p50/p95, RSS and size. |
 | DoD-4 | One public aggregate consumer capability board without private project identity. | Not started | No board on `main`. Plans: MOC-18 and the capability truth table on branch `roadmap/capability-truth-table` (`694f8547`, unmerged). | Merge or re-propose the capability truth table plus claim lint (`694f8547`) as the board's base. |
@@ -3747,8 +3999,8 @@ DoD the deliverables and definition of done.
 
 | ID | Item (issue wording) | State | Evidence | Next step |
 |----|----------------------|-------|----------|-----------|
-| N-1 | `mind hello.mind`: immediate script execution, no explicit build step. | Not started | `src/main.rs:178-182`: `enum Commands { Eval(EvalArgs), Repl, Pkg(PkgCmd) }`, no file-positional entry; the last change to `src/main.rs` is `2af2b64c` feat: bound compiler materialization work. No direct-run commit on any branch. Draft #284 does not touch `src/main.rs`. | Write the P0-A CLI spec (`docs/cli.md` plus an RFC) for `mind <file>.mind` first, then add a clap file-positional entry to `src/main.rs` through the compiler owner's branch. |
-| N-2 | `mind -e '<source>'`: evaluate source. | Not started | `src/main.rs` has only the `eval` subcommand (`EvalArgs`) and no `-e` short flag. | Specify `-e` in the P0-A CLI matrix (stdout/stderr, exit codes, args), then implement it as an alias over the eval path. |
+| N-1 | `mind hello.mind`: immediate script execution, no explicit build step. | Not started | `src/main.rs:178-182`: `enum Commands { Eval(EvalArgs), Repl, Pkg(PkgCmd) }`, no file-positional entry; the last change to `src/main.rs` is `2af2b64c` feat: bound compiler materialization work. No direct-run commit on any branch. Draft #284 does not touch `src/main.rs`. | Write the P0-A CLI spec (`docs/cli.md` plus an RFC) first; implement direct run as `mindc exec <file>.mind`, accepting a `#!` first line, over the same compile pipeline, with `mind <file>.mind` as a thin alias, rather than growing the Rust `mind` binary. |
+| N-2 | `mind -e '<source>'`: evaluate source. | Not started | `src/main.rs` has only the `eval` subcommand (`EvalArgs`) and no `-e` short flag. | Specify `-e` in the P0-A CLI matrix (stdout/stderr, exit codes, args), then implement it on the same `mindc exec` path. |
 | N-3 | `mind repl`: persistent typed interactive session. REPL is a persistent environment with deterministic effect ordering, transaction-like failure isolation and no stale inconsistent type/shape state. | Partial | `Repl` (`src/main.rs:180`) and `fn run_repl()` (`src/main.rs:703`) exist. The environment is `HashMap<String, i64>` (`src/main.rs:704`): i64 values only, no typed or shape state, no transaction isolation, no effect ordering. MOC-16 (REPL and debugger) is open. | Write the REPL semantics section of the P0-A spec and add REPL-vs-AOT conformance fixtures for the admitted pure subset. |
 | N-4 | `mindc build --release`: ahead-of-time native executable or shared library. | Done | `src/bin/mindc.rs:75-82`: the `Build` subcommand with `--release` ("Build in release mode (equivalent to --optimize=release)"). Artifact production is tested: `tests/multimodule_determinism_run.rs:177-232` builds `--release --emit=binary` twice and asserts byte-identical executables; `tests/phase_g_keystone_bootstrap.rs:241-275` runs `mindc build --release` to a shared library and asserts only that the file exists. | None. |
 | N-5 | `mindc run`: project build and execution. | Done | `src/bin/mindc.rs:126-130`: the `Run` subcommand ("Build and run a MIND project.") with `--release`, implemented by `run_project` (`src/project/mod.rs:2858`). `docs/roadmap.md:1793-1807` records projects built and run through `mindc run` with checked exit codes. No in-tree test yet runs a project through `mindc run` and checks its output. | Add a positive in-tree `mindc run` test (small project, checked stdout and exit) so this row is proven by the test suite. |
@@ -3761,8 +4013,8 @@ DoD the deliverables and definition of done.
 | N-12 | Milestone 1, Language & source-independent host — parser, type/effect checker, canonicalizer, optimizer and compiler driver written and executable in MIND without Rust required at build or runtime; verified true executing self-host loop (not just byte-equal dead-code ELF). | Partial | The scalar self-host loop is closed: `9d6cae18` docs(independence): Phase A5 CLOSED … self-host loop runs, Rust+LLVM out of the loop; the RI-E1 Rust-free seed chain is at `docs/INDEPENDENCE_ROADMAP.md:89`. Missing: Phase B full surface (B1 pure-MIND type checker) and a standalone harness-free `mindc` (C8, `docs/INDEPENDENCE_ROADMAP.md:271`). Draft #284 carries further self-host work. | Land #284 after merging `main` into it, then take the next Phase B item (B1 pure-MIND type checker) from `docs/INDEPENDENCE_ROADMAP.md`. |
 | N-13 | Milestone 2, Toolchain independence — full admitted language lowers through a MIND-native compiler, assembler, linker/runtime interfaces for qualified targets with no LLVM/MLIR/clang process, shared library or code-generation dependency. | Partial | A pure-MIND native ELF backend covers the scalar, struct, array, enum and f64 subset (`docs/INDEPENDENCE_ROADMAP.md:93-94`, `:190`). Phase C is open (`docs/INDEPENDENCE_ROADMAP.md:187`): MLIR + LLVM remain the only backend for tensors and GPU; the C8 linker is open (`:271`); Phase D (`:300`) is not started. Draft #284 carries native-lane and C-ABI work. | Land #284, then add a tensor lowering rung to the native backend (Phase C). |
 | N-14 | Milestone 3, Performance leadership — per-target optimizing compiler with deterministic register allocation, instruction selection, SSA/mic@3 proof-aware optimization, vectorization, exact arithmetic, cache/incremental compilation and selected advanced techniques. | Partial | `39513b87` feat(opt): opt-in native mic@3 -> mic@3 optimizer seam (roadmap C6, default OFF) (SCCP-lite plus CSE/GVN; register allocation, LICM and strength reduction remain, `docs/INDEPENDENCE_ROADMAP.md:233`). `52c37016` bench: MIND det.igemm beats clang -O3 33.88x on int8 GEMM, byte-identical: a recognised kernel against naive C, not a general optimizer. | Implement deterministic register allocation in the C6 mic@3 optimizer; enable it by default only after the keystone stays byte-identical and the bench gate passes. |
-| N-15 | Release gates: stable canonical IR and evidence chain; x86_64 and arm64 real-hardware strict correctness; complete semantic differential suite; full qualified source surface (not just a scalar bootstrap subset); reproducible optimizer outputs; and T1/T2/T3 speed gates. Unknown/unsupported = HOLD/FAIL, not PASS. | Partial | T1 and T2 benches exist (`benches/compiler.rs:57-59`, `compiler_pipeline`, `e2e_compile_shared`; tiers at `docs/benchmarking.md:19-23`). Missing: the full qualified source surface, a complete differential suite, arm64 native legs and T3 harnesses (`docs/benchmarking.md:23`, out of tree). The release-gate rows above (D, S, C, E) carry the detail. | Turn the release-gate rows above into a CI checklist script that reports HOLD for any gate without a receipt. |
-| N-16 | Compile-time wins: keep strict T1 frontend microseconds protected; full T2 file→binary including object emission/link; T3 cold/steady direct-run/REPL latency; changed-module rebuild and no-op cache hit. … Preserve existing +10% one-sided guard against frozen comparable baseline. | Partial | The +10% one-sided guard exists (`.github/workflows/bench-gate.yml:97`, `:147`); T1 and T2 benches exist (`benches/compiler.rs`). Missing: T3 direct-run and REPL, incremental and no-op cache measurements (planned in GP-05). | Implement GP-05 (a): a checked-in script that regenerates the T2 source-to-native table on pinned hardware. |
+| N-15 | Release gates: stable canonical IR and evidence chain; x86_64 and arm64 real-hardware strict correctness; complete semantic differential suite; full qualified source surface (not just a scalar bootstrap subset); reproducible optimizer outputs; and T1/T2/T3 speed gates. Unknown/unsupported = HOLD/FAIL, not PASS. | Partial | T1 and T2 benches exist (`benches/compiler.rs:57-59`, `compiler_pipeline`, `e2e_compile_shared`; tiers at `docs/benchmarking.md:19-23`). Missing: the full qualified source surface, a complete differential suite, arm64 native legs and T3 harnesses (`docs/benchmarking.md:23`, out of tree). The release-gate rows above (D, S, C, E) carry the detail. | Turn the release-gate rows above into a CI checklist written in MIND that reports HOLD for any gate without a receipt. |
+| N-16 | Compile-time wins: keep strict T1 frontend microseconds protected; full T2 file→binary including object emission/link; T3 cold/steady direct-run/REPL latency; changed-module rebuild and no-op cache hit. … Preserve existing +10% one-sided guard against frozen comparable baseline. | Partial | The +10% one-sided guard exists (`.github/workflows/bench-gate.yml:97`, `:147`); T1 and T2 benches exist (`benches/compiler.rs`). Missing: T3 direct-run and REPL, incremental and no-op cache measurements (planned in GP-05). | Implement GP-05 (a) as a MIND program that regenerates the T2 table from the existing end-to-end rows on pinned hardware. |
 | N-17 | Runtime wins: run CPU scalar, memory/collections, concurrency, network I/O, numerical/tensor, GPU/accelerator where admitted and end-to-end application benchmarks; … publish losses and not-yet-supported programs. | Partial | Only numerical-kernel comparisons are on `main`: `bench/RESULTS-beat-clang-igemm-2026-08-21.md` (`52c37016`) and `benchmarks/{autograd,cupy,jax}_comparison/`. No concurrency, network I/O, collections or end-to-end application benchmarks against other languages. | Define a runtime task list per category with an equivalence class for each, and add one non-kernel benchmark (for example collections) with C and Rust baselines. |
 | N-18 | Broad comparison portfolio: choose >=30 mature/reference language configurations … Include at least C, C++, Rust, Go, Python, Java, C#, JavaScript, TypeScript, Swift, Kotlin, Zig, Julia, an established functional language and a recent systems language where legal and reproducible. | Not started | No cross-language benchmark harness on any branch; GP-05 compares against clang and rustc only. | Write a pinned-version manifest of the 30+ language configurations and a harness skeleton under `benchmarks/` with one shared task (identical algorithm, I/O and verifier). |
 | N-19 | Measured syntax quality: freeze common problem statements and count normalized token/character burden, editing effort, diagnostics quality, learning friction and accidental complexity while passing equivalent tests. Have blind reviewers evaluate readability. | Not started | No syntax study on `main`. GP-01 plans translated HumanEval, MBPP and McEval-Hard corpora for generator pass@1, which is a different measurement. | Freeze a problem set (it can reuse GP-01 tasks) and a script that counts normalized tokens per language for solutions that pass tests. |
@@ -3774,12 +4026,27 @@ DoD the deliverables and definition of done.
 | N-25 | Ergonomic value: concise scripts with automatic type inference, first-class functions, modules, algebraic types and pattern matching, expressive generic abstractions, … structured async, tensor/shapes/AD, capability/effect policy and clear diagnostics. Pareto goal: seek leadership simultaneously in ergonomics, T1/T2/T3 latency, runtime throughput/tail latency, deterministic reproducibility, memory efficiency, binary size, safety and cross-target portability. | Direction | A direction. Concrete language-completion work is GP-04 (multi-capture closures, trait objects, slices, generic shape parameters, 1.0 stability policy), added in `2c5c2389`. | Track through the GP-04 gates; no separate action. |
 | N-26 | Success definition: a developer gets Python-like immediacy, strong static guarantees and near-zero compile friction, while shipping an optimized standalone native binary from the same source and without any production dependence on Rust, MLIR, LLVM or Python. | Direction | An umbrella outcome made of P0-A through P1-E; no phase is done. | Mark it met only when P0-A to P0-D are Done with receipts; update this row as each phase lands. |
 
-<!-- NUMERIC-REVIEW-REVISION-20261029:BEGIN -->
-## Scoped compiler and numerical contracts
-**Status:** proposal; architecture RFC required before implementation.
-- [ ] **P0 — AD integration:** confirm emitted reverse-mode IR executes on current runtime; fixtures cover shapes, unsupported operators, finite differences, CPU reference, and fail-closed behavior.
-- [ ] **P1 — differentiation contract:** propose a mind-spec RFC for typed VJP/JVP and optional HVP including precision, purity, shape and effect restrictions; accept only after independently checked golden gradients.
-- [ ] **P2 — library boundary:** propose (not assume) a MIND-native `std::optim` package owned outside `mindc`, initially SGD/momentum and AdamW; add L-BFGS only after closure/line-search semantics and benchmarks exist.
-- [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
-**Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
-<!-- NUMERIC-REVIEW-REVISION-20261029:END -->
+## Differentiation and numerical contracts (proposed, 2026-10-29)
+
+**Status:** proposed; nothing built. An architecture RFC under `docs/rfcs/` is
+required before implementation. Existing mic@3 optimization and release gates are
+unchanged.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| AD.1 | Reverse-mode AD integration: the IR the autodiff engine emits executes on the current runtime | Fixtures cover shapes, unsupported operators (refused, never a silent zero gradient), finite-difference agreement and a CPU reference; gradients identical on x86-64 and AArch64; mutation control: a planted wrong derivative rule fails the finite-difference check |
+| AD.2 | Differentiation contract RFC: typed VJP and JVP, optional HVP, with precision, purity, shape and effect restrictions | Accepted only with independently checked golden gradients; an impure or effectful function is refused at check time |
+| AD.3 | An optimiser library (`optim`) published as a separate MIND package, not under `std/`: SGD with momentum and AdamW first | Training trajectories byte-identical on x86-64 and AArch64 on the strict tier; cost per step measured |
+| AD.4 | L-BFGS | Only after closures beyond Phase 1 (GP-04) and a line-search contract exist, with benchmarks |
+
+### Firewall — do not cross it
+
+- The compiler exposes safe primitives and declared numeric profiles; it never
+  rewrites real-number theorems automatically. Norm and error-bound rules live in a
+  separately validated library or checker.
+
+### Open questions — answer before this gets a milestone
+
+- Do AD.3 and Phase 21 (forward-only training) share one optimiser interface?
