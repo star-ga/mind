@@ -2898,9 +2898,9 @@ Proposed; a showcase, not on the critical path. Depends on the RNG decision in P
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed; no implementation or performance claims.  
-**Research:** K. Marathe et al., *Breaking the Token Ceiling: Distilling Smaller, Stronger Byte Models* (2026), https://arxiv.org/abs/2609.12303
+**Research:** recent research on distilling smaller byte models from token models.
 
-This paper studies decoder-only byte versus token models and token-teacher-to-byte-student supervision via approximate Marginalize-It and exact End-of-Token (EOT). Raw bytes are not synonymous with byte-level BPE. Paper-specific scaling estimates do not constitute STARGA results.
+That work studies decoder-only byte versus token models and token-teacher-to-byte-student supervision. Raw bytes are not synonymous with byte-level BPE. Outside scaling estimates do not constitute STARGA results.
 
 ### Project scope
 
@@ -2913,7 +2913,7 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 - Preserve existing public APIs, admission/governance gates and determinism contracts by default; use feature flags. Revert or defer when benefits are not established.
 - Dependency order: inference reference -> mind-nerve benchmark -> optional model dispatch -> agent/mind-mem pilots; an experiment orchestrator runs the trials, and the compiler and commercial runtime implement only proven optimizations.
 
-**Attribution:** STARGA, Inc. Research source is cited above. No software-development co-authors are designated.
+**Attribution:** STARGA, Inc. No software-development co-authors are designated.
 
 
 ---
@@ -2922,9 +2922,9 @@ Conditionally implement stable full-vocabulary log-sum-exp, prefix aggregation, 
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed, not shipped.  
-**Research reference:** EAGLE-4, *One Flexible Drafter for All Batch Sizes and Hardware*, https://github.com/eagle-hq/EAGLE-4
+**Research reference:** recent drafter work on one drafter across batch sizes and hardware.
 
-**License boundary:** EAGLE-4 is source-available, not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; research citation is not a license.
+**License boundary:** That source-available drafter is not a default permissive open-source implementation. Do not copy its source, tests, models, trained weights, unique implementation or assets without legal authorization. Independently implement generally described ideas after license and patent review; a research note is not a license.
 
 ### Scope
 
@@ -2935,7 +2935,7 @@ Only introduce independently designed candidate selection / bounded cache primit
 - Measure baseline ordinary and current speculative decoding, matched model, hardware, workload and sampling policy; concurrency 1, 8, 32, 64 when supported.
 - Track accepted tokens per verification, target-call cost, drafter overhead, throughput, TTFT, p50/p95 latency, peak memory and cost per token.
 - Verify output-distribution preservation for rejection/acceptance under temperature/top-k/top-p, including boundary cases and RNG reproducibility limitations.
-- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical EAGLE-4 gains.
+- Preserve governance, admission, evidence generation and normal-decoding fallback; feature-flag everything and do not promise numerical gains from that prior work.
 - Treat byte-model distillation as a separate experiment; tokenizer alignment and proposal distributions must be verified before combining.
 
 **Software roadmap attribution:** STARGA, Inc. No co-author trailers.
@@ -2947,7 +2947,7 @@ Only introduce independently designed candidate selection / bounded cache primit
 
 **Owner:** STARGA, Inc.  
 **Status:** Proposed, not shipped.  
-**Reference:** https://sun-asterisk.us/takumi/ (conceptual market comparison only; no restricted-code reuse).
+**Reference:** conceptual market comparison only; no restricted-code reuse. No vendor is named here.
 
 Support canonical scope and build evidence primitives only when compiler gaps are demonstrated.
 
