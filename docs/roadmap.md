@@ -3783,3 +3783,13 @@ DoD the deliverables and definition of done.
 - [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
 **Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
 <!-- NUMERIC-REVIEW-REVISION-20261029:END -->
+
+
+<!-- NESFORMER-CIRCUIT-RESEARCH-20261031 -->
+## Nesformer-inspired deterministic neural circuit research (2026-10-31; proposed)
+
+**Source:** https://github.com/dbreunig/nesformer . Review upstream source, architecture, tests and license before reuse. The interesting mechanism is algorithmic construction of model parameters for CPU-like state transitions, not a trained general-purpose world model. Keep independent implementation and attribution/license review; do not copy code or weights without approval.
+
+**Project scope:** Build a pure-MIND circuit compiler research prototype: small 8-bit VM, deterministic lowering to bounded recurrent neural circuits/weights, native emitter and trace verifier; benchmark against a separate conventional interpreter. Verify compiler capability first; no claim of current full pure-MIND support.
+
+**Acceptance:** freeze an explicit tiny VM instruction/state specification; use independent reference interpreter and negative mutants; check exact traces and state transitions on exhaustive bounded domains where feasible, then randomized long sequences. Track quantization/overflow, determinism, artifact hashes, wall-clock, RAM/VRAM, model size and comparison to native execution. For ARC-AGI-3, respect offline competition rules and evaluate on held-out games without hidden-test leakage. **No implementation, speedup or score claim until demonstrated.**
