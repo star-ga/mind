@@ -141,10 +141,90 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Planned
 
+- **PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)** –
+  deterministic recursive-to-iterative lowering and proof-checked periodic
+  recurrence collapse. Opt-in until semantic, byte-reproducibility and verifier
+  gates pass; see the proposal below.
+
 - **Formal Verification** – Proof-carrying IR passes for safety-critical deployments.
   The first concrete instance is **RFC 0028 (Deterministic Field Calculus)**, below.
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
 - **Package Registry** – Public `mindpkg` registry with curated models.
+
+### PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)
+
+**Status:** design only; no native MIND recursion/parity optimizer is claimed to ship.
+**Priority:** P1 research/implementation candidate under the C6 native optimizing
+backend, after correctness and canonical-type metadata readiness. This extends
+[RFC 0024](rfcs/0024-loop-collapse.md), not a replacement for its existing
+`#[collapse]` prove-or-fail contract. Recent compiler work covers accumulator
+tail-recursion elimination and optimization remarks for tail-call and loop deletion.
+
+**Canonical demonstration:** a pure unsigned recurrence
+`f(0) = true; f(n) = !f(n-1)` has a two-state orbit and the closed form
+`f(n) = (n & 1) == 0`. There are **two distinct transformations**:
+eliminating self-recursive calls using an accumulator/loop, then proving that
+the resulting recurrence is periodic and replacing the entire loop with an
+O(1) bitwise expression. A loop-elimination remark by itself does not attest
+the final closed form or the equivalence proof.
+
+**Planned implementation slices (none marked complete):**
+
+1. **PGRO-1 — Typed direct-recursion analysis.** Detect pure scalar
+   self-recursion, canonical base cases and structurally decreasing arguments,
+   with proven termination over the exact admitted integer domain. Check call
+   edges, returns, effects, traps, overflow, ABI and observable stack semantics;
+   reject unknown, mutually recursive, effectful or potentially nonterminating
+   cases rather than assuming equivalence.
+2. **PGRO-2 — Accumulator-recursion elimination.** Lower eligible
+   post-recursive combinations (e.g. exact integer addition/multiplication,
+   Boolean XOR/NOT) into a loop with a canonical accumulator. Require the
+   actual algebraic identity and associativity **under MIND's defined type
+   semantics**, and prove the base-case/exit mapping. No generic floating-point
+   reassociation, unsafe changes to trap order, or unproven stack behavior.
+3. **PGRO-3 — Bounded periodic-state collapse.** Prove a finite-state
+   transition, its preperiod/period `k` and the exact iteration count; synthesize
+   a constant-time modular/lookup closed form where admissible. Start with
+   Boolean period-2 (`f(n)=!f(n-1)`), then bounded `k` with a strict
+   proof/compile-time budget. Existing Q16.16 fixed-point `E2211` rejects
+   cycles of period >=2: keep that diagnostic unchanged for the current
+   `#[collapse]` fixed-point contract; opt-in periodic handling is a **new
+   proof class**, never silently treating a cycle as a fixed point.
+4. **PGRO-4 — Typed-IR proof witnesses.** Define a versioned, canonical
+   `recurrence-collapse` receipt containing original and transformed IR
+   commitments, the recurrence parameters, a termination/effect argument and
+   the finite-state or accumulator invariant. Extend `mindc verify` to check
+   the witness independently against both IR forms (not merely recompute the
+   transformed constant). Do not claim proof validation unless the original
+   IR and verifier-checkable witness are actually available; preserve the
+   existing MAP-epilogue / `trace_hash` boundary and distinguish unsigned
+   tamper-evidence from authenticated signing.
+5. **PGRO-5 — Canonical optimizer integration.** Put any `mic@3 -> mic@3`
+   rewrite upstream of native emitter divergence, with fixed pass ordering,
+   stable value numbering, versioned optimization profiles and canonical
+   serialization. Respect populated canonical-type metadata: no bypass of
+   existing typed-IR optimization guards. Keep the experimental feature OFF
+   by default; a user-visible flag/annotation is proposed, **not shipped**.
+6. **PGRO-6 — Independent validation and promotion.** Differential tests
+   against the interpreter/unoptimized reference, exhaustive bounded-width
+   state spaces, symbolic/inductive proofs for full-width inputs, negative
+   cases (side effects, nontermination, exception/trap ordering, signed
+   underflow, strict FP), verifier tamper tests, repeated-build hashes and
+   x86_64/ARM64 real-hardware output parity. Measure generated instructions,
+   runtime latency and compiler overhead versus pinned compiler baselines.
+   Promote only after the complete qualified corpus and self-host/cross-target
+   gates pass; unknown gate = HOLD, not PASS.
+
+**Determinism constitution:** optimizing changes the compiled `mic@3` body,
+binary and `trace_hash`, so **new optimized hashes are expected**. It must not
+change any supported program's observable behavior, nor produce different
+artifacts for identical source + toolchain + target + optimization profile.
+The feature-OFF path must remain byte-identical to its prior baseline. Before
+default enablement, explicitly re-baseline optimized-profile canaries and
+reverify all frozen self-host and cross-substrate checks; do **not** silently
+rewrite old canaries or present matching hashes from an unreachable pass as
+proof. Strict FP, side effects, unproven termination and verifier uncertainty
+are hard blockers. No release/performance claim until independently measured.
 
 ### RFC 0028 — Deterministic Field Calculus (Draft, **not scheduled**)
 
