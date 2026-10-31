@@ -3087,7 +3087,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     cache trust receipts. **Gates:** editing a private function rebuilds
     only affected targets; public ABI change invalidates dependents; clean
     and cached builds yield the same canonical outputs.
-15. **MOC-15: IDE quality comparable to Merlin.** LSP driven by the actual
+15. **MOC-15: IDE quality comparable to established editor tooling.** LSP driven by the actual
     parser/typechecker: go-to-definition, references, rename, semantic
     highlighting, hover types/effects/shapes, inlay hints, completion,
     diagnostics, code actions and workspace-wide symbol search. Align
