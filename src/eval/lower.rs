@@ -48,6 +48,8 @@ mod canonical_lowering;
 mod canonical_producers;
 #[path = "lower_entry.rs"]
 mod lower_entry;
+#[path = "lower_import_consts.rs"]
+mod lower_import_consts;
 use crate::ir::BinOp;
 use crate::ir::IRModule;
 use crate::ir::IndexSpec;
@@ -5427,6 +5429,16 @@ pub(super) fn lower_expr_inner(
                          have been caught as E2008 during type-checking."
                     );
                 }
+            }
+            // Imported constant of the current module's imports (or a
+            // whole-project sibling const): inline its value so the fail-closed
+            // panic below stays unreachable for every name the type checker
+            // accepted — never `const 0` (lower_import_consts is the home for
+            // this lookup; lower.rs is over its size ceiling).
+            if let Some(id) = lower_import_consts::lower_imported_const(name, |cval| {
+                lower_expr(cval, ir, env, struct_env, receiver_types, context)
+            }) {
+                return id;
             }
             // Undefined identifier reaching lowering is a silent-miscompile
             // hazard: emitting `const.i64 0` would fabricate a wrong-answer
