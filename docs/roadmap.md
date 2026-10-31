@@ -2953,10 +2953,10 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 
 **Acceptance:** Approved scoped actions only; independent test and release-verdict evidence; requirement-to-source-to-test-to-artifact linkage; offline replay where applicable; baseline measures for impact accuracy, escaped defects, cost and review time. P0 governance/evidence, P1 impact/repair/routing, P2 enterprise rollout. The agent layer owns the mission UI; separate components own policy, verification, orchestration, impact analysis and decision memory (mind-mem). No co-author trailers.
 
-## OCaml-competitive language and ecosystem hardening (2026-10-24)
+## Language and ecosystem hardening (2026-10-24)
 
 > **Author: starga. Status: proposed; not shipped.** This is a cross-repository,
-> implementation-gated plan, not an assertion that MIND currently surpasses OCaml.
+> implementation-gated plan, not an assertion that MIND currently surpasses established languages.
 > Inherits the existing fail-closed, canonical-mic@3, keystone, cross-substrate
 > and no-unverified-performance-claims requirements. Preserve open-core compiler
 > and language interfaces; commercial accelerator optimizations remain in
@@ -2965,10 +2965,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 
 ### Research basis and actual consumer blockers
 
-- OCaml: [modules and interfaces](https://ocaml.org/docs/modules),
-  [first-class modules](https://ocaml.org/docs/first-class-modules),
-  [effect handlers](https://ocaml.org/manual/5.5/effects.html),
-  [Dune](https://github.com/ocaml/dune), [Merlin](https://github.com/ocaml/merlin).
+- Recent research on ML-family module systems, effect handlers, and build and editor tooling.
 - MIND compiler: `docs/INDEPENDENCE_ROADMAP.md`, RFC 0010,
   current modules/import/linker/ABI restrictions and capability gates.
 - A pure-MIND workflow consumer's compiler requirements: `FieldAccess` value-position lowering
@@ -3022,7 +3019,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
    all dependency bytes; mutation of any import invalidates evidence; unsigned
    artifacts must never be misrepresented as signed.
 
-### P1 — Match or exceed OCaml expressiveness without sacrificing verification
+### P1 — Match or exceed established-language expressiveness without sacrificing verification
 
 6. **MOC-06: Principled type inference.** Define bidirectional typing,
    constrained let-polymorphism, generalization/value restriction for mutable
@@ -3081,7 +3078,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     scheduling, bounds-check elimination with proofs, vectorization, PGO/LTO
     and target-specific lowering. Keep MLIR/LLVM optional until measured
     parity; never remove a faster, correct fallback prematurely.
-    **Gates:** comparable OCaml `ocamlopt` benchmarks on pinned hardware,
+    **Gates:** comparable optimizing-compiler benchmarks on pinned hardware,
     runtime and cold/warm build, p50/p95 latency, binary size, RAM,
     energy, determinism and numerical correctness; publish wins and losses.
 14. **MOC-14: Demand-driven incremental build engine.** Persistent parse/
@@ -3117,7 +3114,7 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
     no source-complete project advertised as fully native without an
     executing and independently reproducible binary.
 
-### P2 research differentiators beyond OCaml's typical language surface
+### P2 research differentiators beyond a typical established language surface
 
 19. **MOC-19: Proof-carrying tensor/effect optimization.** Attach machine-
     checkable shape, alias, bounds and effect preconditions to each
@@ -3153,12 +3150,12 @@ Support canonical scope and build evidence primitives only when compiler gaps ar
 - **Milestone D:** MOC-08/10/11: governed effects, deterministic tasks, and
   HTTPS/interactive runtime verified end-to-end.
 - **Milestone E:** MOC-13/15/16/17/19–22: rigorous speed/IDE and differentiated
-  proofs, with side-by-side OCaml comparisons and published reproducible runs.
+  proofs, with side-by-side comparisons against an established language and published reproducible runs.
 
-**Definition of 'better than OCaml':** make **specific**, reproducible
+**Definition of 'better than established languages':** make **specific**, reproducible
 workload claims (deterministic numerical computation, safety, integration,
 reproducible builds, and compiler speed) while matching indispensable
-OCaml abstraction/developer-experience capabilities. Do not assert
+abstraction and developer-experience capabilities of those languages. Do not assert
 universal language superiority, full Rust-independence, comprehensive
 cross-device float determinism, or performance wins before the corresponding
 end-to-end acceptance tests exist.
@@ -3682,7 +3679,7 @@ DoD the deliverables and definition of done.
 | N-15 | Release gates: stable canonical IR and evidence chain; x86_64 and arm64 real-hardware strict correctness; complete semantic differential suite; full qualified source surface (not just a scalar bootstrap subset); reproducible optimizer outputs; and T1/T2/T3 speed gates. Unknown/unsupported = HOLD/FAIL, not PASS. | Partial | T1 and T2 benches exist (`benches/compiler.rs:57-59`, `compiler_pipeline`, `e2e_compile_shared`; tiers at `docs/benchmarking.md:19-23`). Missing: the full qualified source surface, a complete differential suite, arm64 native legs and T3 harnesses (`docs/benchmarking.md:23`, out of tree). The release-gate rows above (D, S, C, E) carry the detail. | Turn the release-gate rows above into a CI checklist script that reports HOLD for any gate without a receipt. |
 | N-16 | Compile-time wins: keep strict T1 frontend microseconds protected; full T2 file→binary including object emission/link; T3 cold/steady direct-run/REPL latency; changed-module rebuild and no-op cache hit. … Preserve existing +10% one-sided guard against frozen comparable baseline. | Partial | The +10% one-sided guard exists (`.github/workflows/bench-gate.yml:97`, `:147`); T1 and T2 benches exist (`benches/compiler.rs`). Missing: T3 direct-run and REPL, incremental and no-op cache measurements (planned in GP-05). | Implement GP-05 (a): a checked-in script that regenerates the T2 source-to-native table on pinned hardware. |
 | N-17 | Runtime wins: run CPU scalar, memory/collections, concurrency, network I/O, numerical/tensor, GPU/accelerator where admitted and end-to-end application benchmarks; … publish losses and not-yet-supported programs. | Partial | Only numerical-kernel comparisons are on `main`: `bench/RESULTS-beat-clang-igemm-2026-08-21.md` (`52c37016`) and `benchmarks/{autograd,cupy,jax}_comparison/`. No concurrency, network I/O, collections or end-to-end application benchmarks against other languages. | Define a runtime task list per category with an equivalence class for each, and add one non-kernel benchmark (for example collections) with C and Rust baselines. |
-| N-18 | Broad comparison portfolio: choose >=30 mature/reference language configurations … Include at least C, C++, Rust, Go, Python, Java, C#, JavaScript, TypeScript, Swift, Kotlin, Zig, Julia, OCaml and Mojo where legal and reproducible. | Not started | No cross-language benchmark harness on any branch; GP-05 compares against clang and rustc only. | Write a pinned-version manifest of the 30+ language configurations and a harness skeleton under `benchmarks/` with one shared task (identical algorithm, I/O and verifier). |
+| N-18 | Broad comparison portfolio: choose >=30 mature/reference language configurations … Include at least C, C++, Rust, Go, Python, Java, C#, JavaScript, TypeScript, Swift, Kotlin, Zig, Julia, an established functional language and a recent systems language where legal and reproducible. | Not started | No cross-language benchmark harness on any branch; GP-05 compares against clang and rustc only. | Write a pinned-version manifest of the 30+ language configurations and a harness skeleton under `benchmarks/` with one shared task (identical algorithm, I/O and verifier). |
 | N-19 | Measured syntax quality: freeze common problem statements and count normalized token/character burden, editing effort, diagnostics quality, learning friction and accidental complexity while passing equivalent tests. Have blind reviewers evaluate readability. | Not started | No syntax study on `main`. GP-01 plans translated HumanEval, MBPP and McEval-Hard corpora for generator pass@1, which is a different measurement. | Freeze a problem set (it can reuse GP-01 tasks) and a script that counts normalized tokens per language for solutions that pass tests. |
 | N-20 | `docs/architecture.md` and `docs/whitepaper.md` still describe MLIR/LLVM and Rust as foundational, and need status/version-specific clarification. | Not started | No change to either file since `b1e34470` docs: align self-host + backend-architecture status to verified v0.10.0 state (2026-06-25), which predates the 2026-10-24 audit in the issue. | Open a docs PR that adds a dated status banner to both files, pointing to `docs/INDEPENDENCE_ROADMAP.md`, without deleting the historical architecture. |
 | N-21 | P0-D — Complete self-host + direct-native toolchain: fulfill full language profile and executable self-host plus C6 native optimizing backend; remove Rust and LLVM/MLIR from fully qualified build/execution dependency graph only after acceptance. | In progress | Draft #284 (Recover native compiler integration for the 0.10.3 candidate, branch `work/compiler-delivery-20261015`) carries native-lane, C-ABI, bounded-profile seed and `docs/INDEPENDENCE_ROADMAP.md` changes. Partial on `main`: `9d6cae18` (self-host loop) and `39513b87` (C6 seam). Checkpoint rows are tracked in #281. | Merge `main` into #284, rerun the keystone and cross-substrate gates on x86_64 and arm64, then mark it ready for review. |
