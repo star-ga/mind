@@ -23,6 +23,26 @@ _sdlc_bin() {
   done
   return 1
 }
+_root_for_patterns="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+if [ -f "$_root_for_patterns/scripts/ai_attribution_patterns.sh" ]; then
+  # shellcheck source=scripts/ai_attribution_patterns.sh
+  . "$_root_for_patterns/scripts/ai_attribution_patterns.sh"
+fi
+EXPECTED_AUTHOR_IDENTITY_REGEX="${EXPECTED_AUTHOR_IDENTITY_REGEX:-^STARGA Inc <noreply@star\.ga>$}"
+if [ "${STARGA_ALLOW_AUTHOR:-0}" != "1" ]; then
+  _author_raw="$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)"
+  _author_ident="${_author_raw%%>*}>"
+  if [ -z "$_author_raw" ] || ! printf '%s\n' "$_author_ident" | grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX"; then
+    echo "author-guard: BLOCKED — author identity is '$_author_ident', expected exact 'STARGA Inc <noreply@star.ga>'." >&2
+    exit 1
+  fi
+  _committer_raw="$(git var GIT_COMMITTER_IDENT 2>/dev/null || true)"
+  _committer_ident="${_committer_raw%%>*}>"
+  if [ -z "$_committer_raw" ] || ! printf '%s\n' "$_committer_ident" | grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX"; then
+    echo "author-guard: BLOCKED — committer identity is '$_committer_ident', expected exact 'STARGA Inc <noreply@star.ga>'." >&2
+    exit 1
+  fi
+fi
 if _guard="$(_sdlc_bin)"; then
   bash "$_guard" precommit "$(git rev-parse --show-toplevel)" || exit 1
 else

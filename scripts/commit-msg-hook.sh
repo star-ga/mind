@@ -36,9 +36,25 @@ fi
 # shellcheck source=scripts/ai_attribution_patterns.sh
 . "$PATTERNS_FILE"
 if [ -z "${PATTERN:-}" ] || [ -z "${PATTERN_CREDIT:-}" ] ||
-   [ -z "${PATTERN_COAUTHOR:-}" ] || [ -z "${PATTERN_GENERATED:-}" ]; then
+   [ -z "${PATTERN_COAUTHOR:-}" ] || [ -z "${PATTERN_GENERATED:-}" ] ||
+   [ -z "${EXPECTED_AUTHOR_IDENTITY_REGEX:-}" ]; then
   echo "commit-msg: pattern set is empty - blocking rather than checking nothing." >&2
   exit 1
+fi
+
+if [ "${STARGA_ALLOW_AUTHOR:-0}" != "1" ]; then
+  author_raw="$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)"
+  author_ident="${author_raw%%>*}>"
+  if [ -z "$author_raw" ] || ! printf '%s\n' "$author_ident" | grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX"; then
+    echo "commit-msg: author identity '$author_ident' does not match $EXPECTED_AUTHOR_IDENTITY_REGEX - commit blocked." >&2
+    exit 1
+  fi
+  committer_raw="$(git var GIT_COMMITTER_IDENT 2>/dev/null || true)"
+  committer_ident="${committer_raw%%>*}>"
+  if [ -z "$committer_raw" ] || ! printf '%s\n' "$committer_ident" | grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX"; then
+    echo "commit-msg: committer identity '$committer_ident' does not match $EXPECTED_AUTHOR_IDENTITY_REGEX - commit blocked." >&2
+    exit 1
+  fi
 fi
 
 # Comment lines are what git itself strips before storing the message, so they

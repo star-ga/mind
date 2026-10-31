@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1921 | **Est. tokens:** ~3,746,831
-**Generated:** 2026-10-31 06:45 UTC
+**Files:** 1922 | **Est. tokens:** ~3,752,030
+**Generated:** 2026-10-31 08:14 UTC
 
 ## Token Budget Guide
 
@@ -91,13 +91,13 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
-| `.github/` | 4 | ~910 |
+| `.github/` | 4 | ~919 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~962 |
 | `.github/workflows/` | 9 | ~16,367 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,327 |
-| `scripts/` | 33 | ~118,193 |
+| `scripts/` | 33 | ~122,220 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 419 | ~853,063 |
+| `tests/` | 420 | ~854,226 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1052,7 +1052,7 @@
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
-- `required-ci-jobs.tsv` (~752 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+- `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
 - `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
@@ -1078,20 +1078,20 @@
 - `mind_intrinsics.c` (~22327 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
-- `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
-- `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
+- `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
+- `anatomy-hook.sh` (~2100 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
 - `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
-- `arch_gate.sh` (~400 tok, medium) — arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
+- `arch_gate.sh` (~2229 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
-- `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9403 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_commit_messages.sh` (~1752 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
+- `check_gate_wiring.py` (~9420 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
-- `commit-msg-hook.sh` (~866 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
+- `commit-msg-hook.sh` (~1073 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10016 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10038 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1122,8 +1122,8 @@
 ### `scripts/`
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
-- `test_gate_wiring.py` (~7126 tok, huge) — Regression test for scripts/check_gate_wiring.py.
-- `test_no_ai_attribution.py` (~3509 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
+- `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
+- `test_no_ai_attribution.py` (~4677 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4847 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
@@ -2293,6 +2293,7 @@
 - `nested_project_import_scope_run.rs` (~1957 tok, huge) — Copyright 2026 STARGA Inc.
 - `non_final_catch_all_match_run.rs` (~861 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `open_error_kat.mind` (~344 tok, medium) — Author: STARGA Inc.
+- `open_error_kat.rs` (~1163 tok, large) — Copyright 2026 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `package_traversal.rs` (~905 tok, large) — Copyright 2025 STARGA Inc.

@@ -2178,6 +2178,36 @@ jobs:
           cargo run --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
             check std/ examples/
 
+  arch_mind:
+    name: arch-mind governance gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Checkout pinned arch-mind (fea599ec)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: star-ga/arch-mind
+          ref: fea599ec4d3695cb39754d0fd5dcc1f1fb101dab
+          path: .arch-mind-toolchain
+          token: ${{ secrets.ARCH_MIND_TOKEN || github.token }}
+
+      - name: Run arch-mind governance gate
+        # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind fea599ec and publishes asserted=<N> directly
+        env:
+          ARCH_MIND: ${{ github.workspace }}/.arch-mind-toolchain/bin/arch-mind
+          ARCH_BASE_REF: origin/main
+        run: bash scripts/arch_gate.sh
+
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features
   # Will re-enable when stable Rust supports edition 2024 let-chains
   # msrv:
