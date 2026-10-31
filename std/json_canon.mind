@@ -318,7 +318,7 @@ fn sort_indices(h: i64, idx: i64, n: i64) -> i64 {
         if min != i {
             let tmp: i64 = __mind_load_i64(idx + i * 8);
             __mind_store_i64(idx + i * 8, __mind_load_i64(idx + min * 8));
-            __mind_store_i64(idx + min * 8, tmp);
+            __mind_store_i64(idx + min * 8, tmp)
         }
         i = i + 1;
     }
