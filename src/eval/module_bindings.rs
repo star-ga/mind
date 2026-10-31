@@ -15,6 +15,8 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(any(feature = "cross-module-imports", test))]
+use std::collections::HashSet;
 
 use crate::ast::Span;
 
@@ -56,6 +58,12 @@ pub(crate) struct Bindings {
     /// constants of the sibling modules it imports, keyed by `(owner, name)`.
     /// `None` records an ambiguity: two imported siblings export the same name.
     imported_values: HashMap<(String, String), Option<String>>,
+    /// Keys of `imported_calls` whose current binding came from a bundled
+    /// `std` export. A later source-module export replaces such a binding
+    /// instead of ambiguifying with it: a `std` export is lower priority than
+    /// any project module, in either import order.
+    #[cfg(any(feature = "cross-module-imports", test))]
+    std_imported_calls: HashSet<(String, String)>,
 }
 
 impl Bindings {
@@ -78,12 +86,19 @@ impl Bindings {
 
     /// Record that `owner` imports `target_owner`, which exports `symbol`, so
     /// a bare `symbol(..)` call in `owner` reaches it. A second, different
-    /// exporter of the same name makes the bare call ambiguous.
+    /// exporter of the same name makes the bare call ambiguous. A binding
+    /// currently held by a bundled `std` export is replaced rather than
+    /// ambiguified: `std` is lower priority than any project module.
     #[cfg(any(feature = "cross-module-imports", test))]
     pub(crate) fn insert_imported_call(&mut self, owner: &str, target_owner: &str, symbol: &str) {
         let target = owned_symbol(target_owner, symbol);
+        let key = (owner.to_string(), symbol.to_string());
+        if self.std_imported_calls.remove(&key) {
+            self.imported_calls.insert(key, Some(target));
+            return;
+        }
         self.imported_calls
-            .entry((owner.to_string(), symbol.to_string()))
+            .entry(key)
             .and_modify(|slot| {
                 if slot.as_deref() != Some(target.as_str()) {
                     *slot = None;
@@ -106,6 +121,27 @@ impl Bindings {
                 }
             })
             .or_insert(Some(target));
+    }
+
+    /// Lower-priority variant of [`Self::insert_imported_call`] used for
+    /// bundled `std` exports: a name already bound (the owner's own
+    /// declaration or a sibling's export) keeps its binding, so a std export
+    /// can never steal or ambiguify a source-resolved callee. The binding is
+    /// recorded as `std`-held so a LATER sibling export replaces it.
+    #[cfg(any(feature = "cross-module-imports", test))]
+    pub(crate) fn insert_std_imported_call(
+        &mut self,
+        owner: &str,
+        target_owner: &str,
+        symbol: &str,
+    ) {
+        let key = (owner.to_string(), symbol.to_string());
+        if self.imported_calls.contains_key(&key) {
+            return;
+        }
+        self.imported_calls
+            .insert(key.clone(), Some(owned_symbol(target_owner, symbol)));
+        self.std_imported_calls.insert(key);
     }
 }
 
@@ -367,5 +403,39 @@ mod tests {
         assert!(matches!(imported_call("value"), ImportedCall::Ambiguous));
         let _none = OwnerGuard::enter(None);
         assert!(matches!(imported_call("value"), ImportedCall::None));
+    }
+
+    #[test]
+    fn std_imported_call_is_replaced_by_a_later_sibling_export() {
+        let mut bindings = Bindings::default();
+        bindings.insert_std_imported_call("crate.a", "std.sha256", "sha256");
+        bindings.insert_imported_call("crate.a", "crate.left", "sha256");
+        let _bindings = BindingsGuard::install(bindings, Some("crate.a".into()));
+        assert!(matches!(
+            imported_call("sha256"),
+            ImportedCall::Unique(target) if target == owned_symbol("crate.left", "sha256")
+        ));
+    }
+
+    #[test]
+    fn std_imported_call_never_steals_an_earlier_sibling_export() {
+        let mut bindings = Bindings::default();
+        bindings.insert_imported_call("crate.a", "crate.left", "sha256");
+        bindings.insert_std_imported_call("crate.a", "std.sha256", "sha256");
+        let _bindings = BindingsGuard::install(bindings, Some("crate.a".into()));
+        assert!(matches!(
+            imported_call("sha256"),
+            ImportedCall::Unique(target) if target == owned_symbol("crate.left", "sha256")
+        ));
+    }
+
+    #[test]
+    fn two_sibling_exports_over_a_std_binding_are_still_ambiguous() {
+        let mut bindings = Bindings::default();
+        bindings.insert_std_imported_call("crate.a", "std.sha256", "sha256");
+        bindings.insert_imported_call("crate.a", "crate.left", "sha256");
+        bindings.insert_imported_call("crate.a", "crate.right", "sha256");
+        let _bindings = BindingsGuard::install(bindings, Some("crate.a".into()));
+        assert!(matches!(imported_call("sha256"), ImportedCall::Ambiguous));
     }
 }
