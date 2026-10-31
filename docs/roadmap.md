@@ -3783,3 +3783,13 @@ DoD the deliverables and definition of done.
 - [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
 **Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
 <!-- NUMERIC-REVIEW-REVISION-20261029:END -->
+
+
+<!-- TIMESFM-TEMPORAL-RESEARCH-20261031 -->
+## TimesFM temporal forecasting research intake (2026-10-31; proposed)
+
+**Scope:** Explore a native MIND time-series forecasting reference example and deterministic numerical kernels. Keep model-weight import and inference separate from compiler correctness; require independently checked expected outputs, parity across targets, and explicit runtime/license constraints. Do not imply TimesFM weights are native MIND or production ready.
+
+**External dependency:** Google Research TimesFM, https://github.com/google-research/timesfm . Pin exact version, weights, license, checksum and runtime requirements before any use. TimesFM 3.x weight rights and Kaggle prize-competition eligibility must be reviewed explicitly; TimesFM 2.5 is a candidate, not presumed automatically compliant. Offline evaluation must make no network calls and respect competition constraints.
+
+**Protocol:** frozen held-out temporal tasks; leak-free feature extraction; compare persistence, constant-velocity, lightweight action-conditioned dynamics and TimesFM at equal observation/action budgets. Report per-game success, forecasting error, calibration, decision lift, wall-clock, memory and failure cases. Forecasting a time series is not proof of causal action-conditioned world modeling. **Gate:** independently reproducible green CI and positive measured value before production integration. No score or performance claim yet.
