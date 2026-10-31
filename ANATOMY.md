@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2700 | **Est. tokens:** ~4,829,743
-**Generated:** 2026-10-31 19:02 UTC
+**Files:** 2701 | **Est. tokens:** ~4,831,643
+**Generated:** 2026-10-31 19:11 UTC
 
 ## Token Budget Guide
 
@@ -176,7 +176,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 437 | ~914,604 |
+| `tests/` | 438 | ~916,504 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2883,6 +2883,7 @@
 ### `tests/`
 
 - `g2_differential_mlir.rs` (~10566 tok, huge) — Copyright 2025 STARGA Inc.
+- `g2_diff_tensor_param_grammar.rs` (~1900 tok, huge) — Copyright 2026 STARGA Inc.
 - `gate_assert_count_contract_test.py` (~7131 tok, huge) — Gate test: the assertion count must be EVIDENCE, never a printed integer.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
