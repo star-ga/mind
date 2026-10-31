@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1927 | **Est. tokens:** ~3,760,052
-**Generated:** 2026-10-31 14:42 UTC
+**Files:** 1928 | **Est. tokens:** ~3,761,471
+**Generated:** 2026-10-31 15:28 UTC
 
 ## Token Budget Guide
 
@@ -155,7 +155,7 @@
 | `tests/` | 421 | ~857,579 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 3 | ~12,308 |
+| `tests/common/` | 4 | ~13,727 |
 | `tests/conformance/cpu_baseline/` | 12 | ~390 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,706 |
@@ -1687,7 +1687,8 @@
 ### `tests/common/`
 
 - `gate.rs` (~4999 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2625 tok, huge) — Copyright 2025 STARGA Inc.
+- `json_canon_kat.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3060 tok, huge) — Copyright 2025 STARGA Inc.
 - `xsi_gate.rs` (~4684 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
