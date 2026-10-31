@@ -4,6 +4,18 @@
 
 //! A project must be able to read its own manifest under `mindc test` and
 //! `mindc run`. `mindc check` already accepts the program.
+//!
+//! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
+//!                   --test file_read_under_test`
+//!
+//! The repro program speaks the `std.fs` surface, so the whole file is gated on
+//! `std-surface` (the low-level-only build rejects it by design). The `run` leg
+//! additionally needs the native backend; a binary built without `mlir-build`
+//! (or a host without the MLIR toolchain) refuses with a coded capability gap,
+//! which [`common::gate`] skips legally — and which `MIND_BENCH_REQUIRE=1`
+//! turns into a hard failure.
+
+#![cfg(feature = "std-surface")]
 
 mod common;
 
@@ -81,18 +93,25 @@ fn project() -> PathBuf {
     root
 }
 
-fn run(root: &Path, args: &[&str]) -> (i32, String) {
-    let out = Command::new(common::mindc_bin())
+fn run_out(root: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(common::mindc_bin())
         .args(args)
         .current_dir(root)
         .output()
-        .expect("spawn mindc");
-    let text = format!(
+        .expect("spawn mindc")
+}
+
+fn text_of(out: &std::process::Output) -> String {
+    format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
-    );
-    (out.status.code().unwrap_or(-1), text)
+    )
+}
+
+fn run(root: &Path, args: &[&str]) -> (i32, String) {
+    let out = run_out(root, args);
+    (out.status.code().unwrap_or(-1), text_of(&out))
 }
 
 #[test]
@@ -119,6 +138,19 @@ fn test_reads_the_project_manifest() {
 #[test]
 fn run_reads_the_project_manifest() {
     let root = project();
-    let (code, text) = run(&root, &["run", "main.mind"]);
-    assert_eq!(code, 0, "mindc run must read the project manifest:\n{text}");
+    // `mindc run` is project-mode: it reads Mind.toml for the entry (there is
+    // no positional source argument). The program returns 1 when the manifest
+    // read is empty and 0 when it read bytes, so exit 0 IS the read proof.
+    let out = run_out(&root, &["run"]);
+    if !common::gate::compiled("file_read_under_test::run", &out) {
+        // Legal capability skip (no native backend in this binary / no MLIR
+        // toolchain); MIND_BENCH_REQUIRE=1 turns this into a hard failure.
+        return;
+    }
+    let text = text_of(&out);
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "mindc run must read the project manifest:\n{text}"
+    );
 }

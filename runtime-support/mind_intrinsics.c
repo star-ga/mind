@@ -886,6 +886,59 @@ MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
     return rec;
 }
 
+
+// read_to_string — read an entire file into a heap String record [addr, len, cap].
+//
+// Mirrors std/fs.mind's read_to_string: opens the NUL-terminated path at
+// path_addr, reads the whole file into a freshly-allocated buffer, and returns
+// a 24-byte record whose first field is the buffer address, second is the
+// byte count, third is cap (= len + 1).  On any error a zeroed record is
+// returned (len=0), matching the MIND-level contract.
+//
+// MIND_EXPORT_WEAK so a linked std/fs MIND object overrides it when
+// cross-module-imports is active; without that feature this is the sole
+// definition and keeps `read_to_string` resolvable at link time.
+MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
+    int64_t rec = __mind_alloc(24);
+    __mind_store_i64(rec,      0);
+    __mind_store_i64(rec + 8,  0);
+    __mind_store_i64(rec + 16, 0);
+
+    if (path_addr == 0) return rec;
+    const char *path = (const char *)(uintptr_t)path_addr;
+    int fd = MIND_OPEN_RDONLY(path);
+    if (fd < 0) return rec;
+
+    // Read the file in chunks into a growable buffer.
+    int64_t cap = 256;
+    int64_t buf = __mind_alloc(cap + 7);
+    int64_t len = 0;
+    for (;;) {
+        if (len + 256 > cap) {
+            int64_t new_cap = cap * 2;
+            int64_t new_buf = __mind_alloc(new_cap + 7);
+            if (len > 0) {
+                memcpy((void *)(uintptr_t)new_buf, (void *)(uintptr_t)buf, (size_t)len);
+            }
+            buf = new_buf;
+            cap = new_cap;
+        }
+        int64_t got = (int64_t)MIND_READ(fd, (void *)(uintptr_t)(buf + len), 256);
+        if (got <= 0) break;
+        len += got;
+    }
+#ifdef _WIN32
+    _close(fd);
+#else
+    close(fd);
+#endif
+    __mind_store_i8(buf + len, 0);
+    __mind_store_i64(rec,      buf);
+    __mind_store_i64(rec + 8,  len);
+    __mind_store_i64(rec + 16, cap + 1);
+    return rec;
+}
+
 static int64_t mind_string_eq_impl(int64_t a, int64_t b) {
     int64_t alen = __mind_load_i64(a + 8);
     int64_t blen = __mind_load_i64(b + 8);
