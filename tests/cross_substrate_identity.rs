@@ -3277,7 +3277,7 @@ fn json_canon_kat_reproducibility_gate() {
     let f: Symbol<JsonCanonFn> =
         unsafe { lib.get(b"json_canon_kat").expect("json_canon_kat symbol") };
 
-    let result = common::json_canon_kat::check_properties(f, id);
+    let result = common::json_canon_kat::check_properties(*f, id);
 
     // Cross-substrate hash: the polynomial hash of the canonical dump bytes
     // must be identical on avx2 and neon (RFC 0015 §3.1).
