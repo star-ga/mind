@@ -180,7 +180,7 @@ REQUIRED_STEPS: dict[tuple[str, str], tuple[str, ...]] = {
         # its step is the one whose deletion costs the most and shows the least.
         "scripts/check_commit_messages.sh",
         "scripts/check_release_gating.py",
-    ),
+    ), ("ci.yml", "arch_mind"): ("scripts/arch_gate.sh",),
 }
 
 # core.hooksPath points at exactly ONE directory, and git reports nothing when a

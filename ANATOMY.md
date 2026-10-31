@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1922 | **Est. tokens:** ~3,747,149
-**Generated:** 2026-10-31 08:07 UTC
+**Files:** 1922 | **Est. tokens:** ~3,749,072
+**Generated:** 2026-10-31 09:51 UTC
 
 ## Token Budget Guide
 
@@ -91,13 +91,13 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
-| `.github/` | 4 | ~910 |
+| `.github/` | 4 | ~919 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~962 |
 | `.github/workflows/` | 9 | ~16,367 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,327 |
-| `scripts/` | 33 | ~118,193 |
+| `scripts/` | 33 | ~120,107 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1053,7 +1053,7 @@
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
-- `required-ci-jobs.tsv` (~752 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+- `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
 - `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
@@ -1082,11 +1082,11 @@
 - `ai_attribution_patterns.sh` (~1536 tok, huge) — shellcheck shell=bash
 - `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
 - `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
-- `arch_gate.sh` (~400 tok, medium) — arch_gate.sh - architectural-governance gate (arch-mind). Re-scans the tree
+- `arch_gate.sh` (~2222 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1428 tok, large) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9403 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9416 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -1123,7 +1123,7 @@
 ### `scripts/`
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
-- `test_gate_wiring.py` (~7126 tok, huge) — Regression test for scripts/check_gate_wiring.py.
+- `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
 - `test_no_ai_attribution.py` (~3509 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
