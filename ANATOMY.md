@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2699 | **Est. tokens:** ~4,828,226
-**Generated:** 2026-10-31 18:55 UTC
+**Files:** 2700 | **Est. tokens:** ~4,829,743
+**Generated:** 2026-10-31 19:02 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 42 | ~121,540 |
+| `docs/` | 43 | ~122,269 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 9 | ~22,174 |
@@ -65,7 +65,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 289 | ~818,873 |
+| `examples/mindc_mind/` | 289 | ~818,897 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,810 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -176,7 +176,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~215,634 |
-| `tests/` | 437 | ~913,840 |
+| `tests/` | 437 | ~914,604 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -589,6 +589,7 @@
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `runtime-open-errors.md` (~831 tok, large) — Runtime file-open errors
 - `security.md` (~1585 tok, huge) — Security Guide
+- `seed-lineage-ordering-validation.md` (~729 tok, large) — Seed lineage before advancement execution
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `sha256-memory-contract.md` (~1795 tok, huge) — SHA-256 memory and failure contract
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
@@ -863,7 +864,7 @@
 - `self_host_lockstep_smoke.py` (~2241 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `_selfhost_loop_reseed.py` (~4296 tok, huge) — Seed-provenance support for the LOOP harness: the legacy Rust-seeded
 - `self_host_loop_smoke.md` (~2809 tok, huge) — Self-host LOOP gate contract
-- `self_host_loop_smoke.py` (~9622 tok, huge) — Self-host LOOP reproduction and advancement gate.
+- `self_host_loop_smoke.py` (~9646 tok, huge) — Self-host LOOP reproduction and advancement gate.
 - `self_host_matchscalar_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
 - `self_host_mic3_float_valueif_smoke.py` (~1803 tok, huge)
@@ -3385,10 +3386,10 @@
 - `while_counter_1.mind` (~27 tok, tiny) — fn f(n: i64) -> i64 {
 ### `tests/`
 
-- `self_host_loop_advance_contract_test.py` (~6964 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
-- `self_host_loop_advance_publication_test.py` (~7642 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
+- `self_host_loop_advance_contract_test.py` (~7048 tok, huge) — Focused admission, mode, oracle, and receipt controls for --advance."""
+- `self_host_loop_advance_publication_test.py` (~7726 tok, huge) — Focused staging, publication, failure, and dispatch controls for --advance."""
 - `_self_host_loop_advance_support.py` (~1910 tok, huge) — Shared fixtures for the self-host loop advancement controls.
-- `self_host_loop_advance_test.py` (~2888 tok, huge) — Runner for the self-host LOOP advancement harness controls.
+- `self_host_loop_advance_test.py` (~3484 tok, huge) — Runner for the self-host LOOP advancement harness controls.
 - `set_surface_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
 - `sha256_allocation_kat.mind` (~409 tok, medium) — Author: STARGA Inc.
 - `sha256_legacy_kat.mind` (~605 tok, large) — Author: STARGA Inc.
