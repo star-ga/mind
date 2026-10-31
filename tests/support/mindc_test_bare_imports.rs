@@ -262,6 +262,7 @@ fn local_beats_ambiguous_imports_lower() {
 fn bare_constant_two_imports_no_local_is_refused() {
     // An ambiguity with NO local definition must still be refused: never
     // resolved to either exporter, never falling through to the bare key.
+    // The type checker refuses this name first (E2002), before the evaluator.
     let root = project(
         "eval_import_bare_const_two_imports_no_local",
         r#"

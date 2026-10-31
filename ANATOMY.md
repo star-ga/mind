@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1921 | **Est. tokens:** ~3,744,620
-**Generated:** 2026-10-31 04:04 UTC
+**Files:** 1921 | **Est. tokens:** ~3,744,639
+**Generated:** 2026-10-31 05:08 UTC
 
 ## Token Budget Guide
 
@@ -220,7 +220,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
-| `tests/support/` | 10 | ~22,548 |
+| `tests/support/` | 10 | ~22,567 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
 | `tools/` | 4 | ~20,957 |
@@ -2637,7 +2637,7 @@
 - `g2_capability_ratchet.rs` (~783 tok, large) — Copyright 2026 STARGA Inc.
 - `g2_compile_result.rs` (~364 tok, medium) — Copyright 2026 STARGA Inc.
 - `g2_policy_rejections.rs` (~755 tok, large) — Copyright 2026 STARGA Inc.
-- `mindc_test_bare_imports.rs` (~3141 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_test_bare_imports.rs` (~3160 tok, huge) — Copyright 2026 STARGA Inc.
 - `pqc_hybrid_cli_support.rs` (~1429 tok, large) — Copyright 2026 STARGA Inc.
 - `v04_mirror_body_vectors.rs` (~4124 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `v04_mirror_descriptor_vectors.rs` (~2649 tok, huge) — Copyright 2025-2026 STARGA Inc.
