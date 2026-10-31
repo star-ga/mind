@@ -11,11 +11,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const READER: &str = r#"
-import std.fs;
+const READER: &str = r#"import std.fs;
 
 fn manifest_path() -> i64 {
-    let b: i64 = __mind_alloc(9);
+    let b: i64 = __mind_alloc(10);
     __mind_store_i8(b + 0, 77);
     __mind_store_i8(b + 1, 105);
     __mind_store_i8(b + 2, 110);
@@ -24,7 +23,8 @@ fn manifest_path() -> i64 {
     __mind_store_i8(b + 5, 116);
     __mind_store_i8(b + 6, 111);
     __mind_store_i8(b + 7, 109);
-    __mind_store_i8(b + 8, 0);
+    __mind_store_i8(b + 8, 108);
+    __mind_store_i8(b + 9, 0);
     return b;
 }
 
@@ -42,11 +42,10 @@ fn main() -> i64 {
 }
 "#;
 
-const TEST_SRC: &str = r#"
-import std.fs;
+const TEST_SRC: &str = r#"import std.fs;
 
 fn manifest_path() -> i64 {
-    let b: i64 = __mind_alloc(9);
+    let b: i64 = __mind_alloc(10);
     __mind_store_i8(b + 0, 77);
     __mind_store_i8(b + 1, 105);
     __mind_store_i8(b + 2, 110);
@@ -55,7 +54,8 @@ fn manifest_path() -> i64 {
     __mind_store_i8(b + 5, 116);
     __mind_store_i8(b + 6, 111);
     __mind_store_i8(b + 7, 109);
-    __mind_store_i8(b + 8, 0);
+    __mind_store_i8(b + 8, 108);
+    __mind_store_i8(b + 9, 0);
     return b;
 }
 
