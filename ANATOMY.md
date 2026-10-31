@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2699 | **Est. tokens:** ~4,828,195
-**Generated:** 2026-10-31 14:58 UTC
+**Files:** 2699 | **Est. tokens:** ~4,828,226
+**Generated:** 2026-10-31 18:55 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,341 |
-| `docs/` | 42 | ~121,522 |
+| `docs/` | 42 | ~121,540 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 9 | ~22,174 |
@@ -65,7 +65,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 289 | ~818,860 |
+| `examples/mindc_mind/` | 289 | ~818,873 |
 | `examples/mindc_mind/testdata/` | 5 | ~6,810 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -523,7 +523,7 @@
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
-- `INDEPENDENCE_ROADMAP.md` (~19712 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~19730 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1134 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -862,7 +862,7 @@
 - `self_host_letpath_failclose_smoke.py` (~2243 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
 - `self_host_lockstep_smoke.py` (~2241 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `_selfhost_loop_reseed.py` (~4296 tok, huge) — Seed-provenance support for the LOOP harness: the legacy Rust-seeded
-- `self_host_loop_smoke.md` (~2796 tok, huge) — Self-host LOOP gate contract
+- `self_host_loop_smoke.md` (~2809 tok, huge) — Self-host LOOP gate contract
 - `self_host_loop_smoke.py` (~9622 tok, huge) — Self-host LOOP reproduction and advancement gate.
 - `self_host_matchscalar_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)

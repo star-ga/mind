@@ -144,7 +144,7 @@ FAIL-CLOSED (never skips when asked to run):
   * head seed_chain row != the derived chain           -> FAIL exit 1
   * combined with --advance, --reseed or --hops        -> BLOCKED exit 2
   --reseed only (LEGACY):
-  * MINDC_SO unset/missing                            -> BLOCKED exit 2  (needs the seed .so)
+  * MINDC_SO unset/missing or a non-fresh oracle      -> FAIL exit 1  (the resolver refuses first; the later BLOCKED exit 2 branch is unreachable)
   * .so emits an empty / non-ELF image                -> FAIL exit 1
 
 Run:

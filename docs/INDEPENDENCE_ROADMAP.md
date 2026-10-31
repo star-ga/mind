@@ -381,8 +381,9 @@ continuous, so the rule is fixed here rather than chosen by whoever runs the adv
      same source emits exactly `stage2`. Otherwise nothing is written.
    - Every stage descends from the previous pure-MIND compiler, so the seed chain is unbroken
      and the trusting-trust surface does not grow. The receipt records `advance_hops 2`,
-     `intermediate_stage1_sha256`, `published_stage stage2` and a `PURE-MIND two-hop`
-     `seed_chain` row.
+     `intermediate_stage1_sha256`, `published_stage stage2` and a computed
+     `seed_chain` row from the root `abb0622b` to the published seed, verified by
+     `--verify-chain`.
 2. **Why two hops and never three.** `stage1` and `stage2` are two compilations of the same
    source. If the old seed compiled it correctly they are the same compiler, so
    `stage1(src) == stage2(src)`, i.e. `stage2 == stage3`. A codegen change explains
