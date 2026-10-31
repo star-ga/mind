@@ -275,6 +275,89 @@ def case_committed_anatomy_matches_the_tracked_tree() -> None:
                   "tracked file missing from the generated index")
 
 
+def case_author_identity_guard_rejects_trailing_dot_and_accepts_exact() -> None:
+    """The author identity guard must require the exact string
+    `STARGA Inc <noreply@star.ga>` and reject `STARGA Inc.` (trailing period)
+    or personal addresses in both commit-range checks and local hooks."""
+    import os
+
+    regex_str = rulebook("EXPECTED_AUTHOR_IDENTITY_REGEX")
+    check("EXPECTED_AUTHOR_IDENTITY_REGEX pins exact STARGA Inc <noreply@star.ga>",
+          regex_str == r"^STARGA Inc <noreply@star\.ga>$",
+          f"got {regex_str!r}")
+    pat = re.compile(regex_str)
+    check("author regex accepts exact 'STARGA Inc <noreply@star.ga>'",
+          bool(pat.match("STARGA Inc <noreply@star.ga>")))
+    check("author regex rejects trailing-period 'STARGA Inc. <noreply@star.ga>'",
+          not pat.match("STARGA Inc. <noreply@star.ga>"))
+    check("author regex rejects personal email",
+          not pat.match("STARGA Inc <user@example.com>"))
+
+    ccm = ROOT / "scripts" / "check_commit_messages.sh"
+    cmh = ROOT / "scripts" / "commit-msg-hook.sh"
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        (repo / "scripts").mkdir(parents=True, exist_ok=True)
+        for src in (PATTERNS, ccm, cmh):
+            shutil.copy2(src, repo / "scripts" / src.name)
+        git("init", "-q", cwd=repo)
+        git("config", "user.name", "STARGA Inc", cwd=repo)
+        git("config", "user.email", "noreply@star.ga", cwd=repo)
+        (repo / "a.txt").write_text("base\n")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", "chore: base commit", cwd=repo)
+        base_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+
+        # 1. Exact identity -> PASS
+        (repo / "a.txt").write_text("exact\n")
+        git("add", "a.txt", cwd=repo)
+        git("commit", "-q", "-m", "fix: exact author commit", cwd=repo)
+        r_ok = subprocess.run(["bash", "scripts/check_commit_messages.sh", f"{base_sha}..HEAD"],
+                              cwd=repo, capture_output=True, text=True)
+        check("check_commit_messages.sh accepts exact 'STARGA Inc <noreply@star.ga>'",
+              r_ok.returncode == 0,
+              f"rc={r_ok.returncode} out={r_ok.stdout.strip()[:200]!r}")
+        good_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+
+        # 2. Trailing period 'STARGA Inc.' -> RED
+        (repo / "a.txt").write_text("trailing-dot\n")
+        git("add", "a.txt", cwd=repo)
+        git("-c", "user.name=STARGA Inc.", "-c", "user.email=noreply@star.ga",
+            "commit", "-q", "-m", "fix: trailing dot author", cwd=repo)
+        r_dot = subprocess.run(["bash", "scripts/check_commit_messages.sh", f"{good_sha}..HEAD"],
+                               cwd=repo, capture_output=True, text=True)
+        check("check_commit_messages.sh rejects 'STARGA Inc. <noreply@star.ga>' -> RED",
+              r_dot.returncode != 0 and "identity:" in r_dot.stdout,
+              f"rc={r_dot.returncode} out={r_dot.stdout.strip()[:200]!r}")
+
+        # 3. Local commit-msg hook rejects trailing period and accepts exact
+        msg_file = repo / "COMMIT_EDITMSG"
+        msg_file.write_text("fix: check local commit-msg hook\n")
+        env_bad = os.environ.copy()
+        env_bad["GIT_AUTHOR_NAME"] = "STARGA Inc."
+        env_bad["GIT_AUTHOR_EMAIL"] = "noreply@star.ga"
+        env_bad["GIT_COMMITTER_NAME"] = "STARGA Inc."
+        env_bad["GIT_COMMITTER_EMAIL"] = "noreply@star.ga"
+        env_bad.pop("STARGA_ALLOW_AUTHOR", None)
+        r_hook_bad = subprocess.run(["bash", "scripts/commit-msg-hook.sh", str(msg_file)],
+                                    cwd=repo, env=env_bad, capture_output=True, text=True)
+        check("commit-msg-hook.sh rejects 'STARGA Inc. <noreply@star.ga>' -> RED",
+              r_hook_bad.returncode != 0,
+              f"rc={r_hook_bad.returncode} err={r_hook_bad.stderr.strip()[:200]!r}")
+
+        env_good = os.environ.copy()
+        env_good["GIT_AUTHOR_NAME"] = "STARGA Inc"
+        env_good["GIT_AUTHOR_EMAIL"] = "noreply@star.ga"
+        env_good["GIT_COMMITTER_NAME"] = "STARGA Inc"
+        env_good["GIT_COMMITTER_EMAIL"] = "noreply@star.ga"
+        env_good.pop("STARGA_ALLOW_AUTHOR", None)
+        r_hook_good = subprocess.run(["bash", "scripts/commit-msg-hook.sh", str(msg_file)],
+                                     cwd=repo, env=env_good, capture_output=True, text=True)
+        check("commit-msg-hook.sh accepts exact 'STARGA Inc <noreply@star.ga>' -> PASS",
+              r_hook_good.returncode == 0,
+              f"rc={r_hook_good.returncode} err={r_hook_good.stderr.strip()[:200]!r}")
+
+
 def main() -> int:
     for case in (
         case_generated_doc_is_in_scope,
@@ -285,6 +368,7 @@ def main() -> int:
         case_missing_artifact_fails_closed,
         case_committed_anatomy_names_no_model,
         case_committed_anatomy_matches_the_tracked_tree,
+        case_author_identity_guard_rejects_trailing_dot_and_accepts_exact,
     ):
         case()
     # No `asserted=` line here on purpose: scripts/run_gate.py owns that
