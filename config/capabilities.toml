@@ -158,7 +158,7 @@ note              = '"11 unit tests under tools/pytorch_bridge/tests/" — exact
 # std/ be deleted while the gate printed `[PASS] floor 13+ <= 42`. The floor is
 # a TREE ratchet — it is not the historical "13 stdlib modules" release claim
 # on the surface, which is why the two numbers differ (see the note below).
-declared  = 42
+declared  = 43
 mode      = "floor"
 floor_tolerance = 4
 kind      = "glob_count"
@@ -168,9 +168,9 @@ surface   = "STATUS.md"
 # deferred: no `surface_regex`. STATUS.md's "13 stdlib modules
 # (vec/string/map/io/blas/toml/json/regex/net/fs/process/mlir/llvm)" is a
 # HISTORICAL v0.7.0 release marker naming the modules that shipped in that
-# release, not a live count of std/ (42 today) — raising it to the derived
+# release, not a live count of std/ (43 today) — raising it to the derived
 # figure would falsify the release history. Upgrade path: split the sentence
 # into the historical milestone and a live "std/ ships N+ modules" claim, then
 # give the live one a surface_regex. check_claims.py prints a NOTE for this
 # entry on every run so the gap stays visible.
-note      = "floor over std/**/*.mind (42 today); the surface claim '13 stdlib modules' is the v0.7.0 release marker, not this count."
+note      = "floor over std/**/*.mind (43 today); the surface claim '13 stdlib modules' is the v0.7.0 release marker, not this count."

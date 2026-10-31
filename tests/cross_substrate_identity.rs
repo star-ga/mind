@@ -3266,3 +3266,119 @@ fn galperin_pi_reproducibility_gate() {
 
     pin_or_bless(id, &canonical_hash(result), result);
 }
+
+// --- json-canon-kat workload (canonical JSON dump) -------------------------
+// The CRX-04 canonical dump: object keys sorted by UTF-16 code-unit order,
+// no whitespace, integers only, ensure_ascii. Three properties pinned:
+//   1. shuffled insertion order gives identical bytes
+//   2. depth cap refused (deeply-nested document does not dump)
+//   3. non-integer numbers refused
+// The i64 result is a polynomial hash of the canonical dump bytes, so the
+// cross-substrate reference hash proves the dump is byte-identical on
+// avx2 == neon.
+
+type JsonCanonFn = unsafe extern "C" fn(i64, i64) -> i64;
+
+/// Compile the json-canon-kat driver to a temp `.so` once. The driver imports
+/// std.json + std.json_canon and exposes `json_canon_kat(input_addr, input_len)`.
+fn build_json_canon_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                crate::common::gate::skipped(
+                    "cross_substrate_identity",
+                    &format!(
+                        "{tool} not on PATH; install the MLIR toolchain \
+                         (mlir-opt / mlir-translate / clang) on this runner"
+                    ),
+                );
+                return None;
+            }
+        }
+        let src = "import std.json;\n\
+             import std.json_canon;\n\
+             pub fn json_canon_kat(input_addr: i64, input_len: i64) -> i64 {\n\
+             \x20   let h: i64 = json.jv_parse(input_addr, input_len);\n\
+             \x20   if h == 0 {\n\
+             \x20       return 0;\n\
+             \x20   }\n\
+             \x20   let r: i64 = json_canon.jv_dump_canonical(h);\n\
+             \x20   if r == 0 {\n\
+             \x20       return 0;\n\
+             \x20   }\n\
+             \x20   let addr: i64 = __mind_load_i64(r + 0);\n\
+             \x20   let len: i64 = __mind_load_i64(r + 8);\n\
+             \x20   let mut i: i64 = 0;\n\
+             \x20   let mut acc: i64 = 1;\n\
+             \x20   while i < len {\n\
+             \x20       acc = acc * 31 + __mind_load_i8(addr + i);\n\
+             \x20       i = i + 1;\n\
+             \x20   }\n\
+             \x20   acc\n\
+             }\n";
+        let src_path = scratch_src("mind_xsi_json_canon_kat.mind", src);
+        Some(emit_shared(
+            "json-canon-kat",
+            &src_path,
+            "mind_xsi_json_canon_kat.so",
+            &[],
+        ))
+    })
+    .as_ref()
+}
+
+#[test]
+fn json_canon_kat_reproducibility_gate() {
+    let id = "json-canon-kat";
+
+    let Some(so) = build_json_canon_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen json_canon_kat.so") };
+    let f: Symbol<JsonCanonFn> =
+        unsafe { lib.get(b"json_canon_kat").expect("json_canon_kat symbol") };
+
+    // Property 1: shuffled insertion order gives identical bytes.
+    // Both documents are the same logical object with different key order.
+    let input_a = br#"{"z":"\ud83d\ude00","y":2,"m":"\ue000","a":1}"#;
+    let input_b = br#"{"a":1,"m":"\ue000","y":2,"z":"\ud83d\ude00"}"#;
+    let ha = unsafe { f(input_a.as_ptr() as i64, input_a.len() as i64) };
+    let hb = unsafe { f(input_b.as_ptr() as i64, input_b.len() as i64) };
+    assert_ne!(
+        ha, 0,
+        "{id}: shuffled input A must produce a canonical dump (got 0 = refused)"
+    );
+    assert_ne!(
+        hb, 0,
+        "{id}: shuffled input B must produce a canonical dump (got 0 = refused)"
+    );
+    assert_eq!(
+        ha, hb,
+        "{id}: shuffled insertion order must produce identical canonical bytes \
+         (hash_a={ha}, hash_b={hb})"
+    );
+
+    // Property 2: depth cap refused — a document nested deeper than the
+    // parser/dump cap must not produce a dump.
+    let deep = format!("{}{}", "[".repeat(600), "]".repeat(600));
+    let hd = unsafe { f(deep.as_ptr() as i64, deep.len() as i64) };
+    assert_eq!(
+        hd, 0,
+        "{id}: depth cap must refuse a deeply-nested document (got {hd}, want 0)"
+    );
+
+    // Property 3: non-integer numbers refused — 1.5 is not an integer, so
+    // the canonical dump refuses it.
+    let non_int = br#"{"n":1.5}"#;
+    let hn = unsafe { f(non_int.as_ptr() as i64, non_int.len() as i64) };
+    assert_eq!(
+        hn, 0,
+        "{id}: non-integer number must be refused (got {hn}, want 0)"
+    );
+
+    // Cross-substrate hash: the polynomial hash of the canonical dump bytes
+    // must be identical on avx2 and neon (RFC 0015 §3.1).
+    let result = ha;
+    pin_or_bless(id, &canonical_hash(result), result);
+}

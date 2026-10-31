@@ -1,0 +1,31 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# CRX-04 canonical JSON dump: object keys sorted by UTF-16 code-unit order,
+# no whitespace, integers only, ensure_ascii. The kernel parses a JSON
+# document, dumps it canonically, and folds the output bytes through a
+# polynomial hash (acc = acc*31 + byte). Three properties pinned:
+#   1. shuffled insertion order gives identical bytes
+#   2. depth cap refused
+#   3. non-integer numbers refused
+# The polynomial hash is deterministic integer arithmetic (multiply + add),
+# so the result is byte-identical on x86 avx2 and ARM neon BY CONSTRUCTION
+# (RFC 0015 §3.1) — proving the canonical dump itself is substrate-independent.
+
+version = "1"
+name = "json-canon-kat"
+description = "Canonical JSON dump (UTF-16 code-unit key order, ensure_ascii, integers-only refusal): parse a shuffled-key document, dump canonically, polynomial-hash the output bytes. Shuffled order must produce identical bytes; depth cap and non-integer numbers must be refused."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Fixed inputs (manifest [input]): the shuffled-key pair exercises key-order
+# independence; the depth-cap and non-integer checks are refusal properties.
+[input]
+generator = "fixed"
+dtype = "i64"
+
+[kernel]
+symbol = "json_canon_kat"
+op_order = "parse JSON input; jv_dump_canonical; fold bytes through acc = acc*31 + byte (two's-complement wrap)"
+returns = "i64"            # polynomial hash of the canonical dump bytes
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256

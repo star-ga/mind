@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1922 | **Est. tokens:** ~3,747,149
-**Generated:** 2026-10-31 08:07 UTC
+**Files:** 1926 | **Est. tokens:** ~3,754,915
+**Generated:** 2026-10-31 11:56 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 174 | ~451,653 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,159 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,165 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,774 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~70,946 |
+| `src/project/` | 21 | ~70,967 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -151,8 +151,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 42 | ~202,387 |
-| `tests/` | 419 | ~853,063 |
+| `std/` | 43 | ~206,163 |
+| `tests/` | 420 | ~856,416 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -176,6 +176,7 @@
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~594 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
 | `tests/cross_substrate_identity/grammar-mask/` | 2 | ~916 |
+| `tests/cross_substrate_identity/json-canon-kat/` | 2 | ~610 |
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
 | `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~1,115 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
@@ -918,7 +919,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~831 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~837 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1494,8 +1495,8 @@
 - `single_file_scope.rs` (~7065 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5153 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~4504 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3672 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4509 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1593,6 +1594,7 @@
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1719 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18767 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
+- `json_canon.mind` (~3776 tok, huge) — std/json_canon.mind -- CRX-04 canonical JSON dump (WP-MC-47b, ruling D-5).
 - `json.mind` (~15391 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
@@ -1793,6 +1795,10 @@
 
 - `manifest.toml` (~575 tok, large) — version = "1"
 - `reference_hashes.toml` (~341 tok, medium) — avx2 = "4d46a747338253886a91b02f4b832dc8675dd315b9500490493b0b977295627b"
+### `tests/cross_substrate_identity/json-canon-kat/`
+
+- `manifest.toml` (~401 tok, medium) — version = "1"
+- `reference_hashes.toml` (~209 tok, medium) — avx2 = "56757a5d72b626954435be6b7026bf11d26986c17413098d73502c3373a42114"
 ### `tests/cross_substrate_identity/lorenz-q16/`
 
 - `manifest.toml` (~681 tok, large) — version = "1"
@@ -2592,6 +2598,7 @@
 - `std_surface_io_canon.rs` (~4912 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_iouring.rs` (~3678 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_json_canon.rs` (~3353 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7071 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.

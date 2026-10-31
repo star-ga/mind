@@ -1,0 +1,17 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# CRX-04 canonical JSON dump: polynomial hash of the canonical dump bytes for
+# the shuffled-key document {"z":"\ud83d\ude00","y":2,"m":"\ue000","a":1}.
+# The canonical dump sorts keys by UTF-16 code-unit order, so both insertion
+# orders produce identical bytes — and the hash is therefore substrate-
+# independent (avx2 == neon) by construction (RFC 0015 §3.1).
+#
+#   avx2 — blessed on x86_64.
+#   neon — blessed on aarch64.
+#
+# To re-bless after an intentional lowering change: run with
+# MIND_BENCH_BLESS=1 and commit the printed hash (RFC 0020 §13).
+
+avx2 = "56757a5d72b626954435be6b7026bf11d26986c17413098d73502c3373a42114"
+neon = "56757a5d72b626954435be6b7026bf11d26986c17413098d73502c3373a42114"

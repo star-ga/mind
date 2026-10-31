@@ -1,0 +1,491 @@
+// std/json_canon.mind -- CRX-04 canonical JSON dump (WP-MC-47b, ruling D-5).
+//
+// The NAMED rule (byte-equal to the documented reference dump):
+//   - object keys sorted by UTF-16 CODE-UNIT order (not UTF-8 byte order)
+//   - no whitespace (compact) or indent=2 Python pretty (jv_dump_pretty_py)
+//   - integers only: a non-integral number makes the dump REFUSE (return 0)
+//   - ensure_ascii: every code point > U+007F escapes to \uXXXX lowercase hex
+//     with UTF-16 surrogate pairs above U+FFFF; control chars incl. U+007F
+//     escape to \u00XX except \n \r \t \b \f \" \\ ; / unescaped
+//   - -0 renders 0
+//
+// Returns a String heap record [addr | len | cap], or 0 to refuse.
+import std.json;
+
+// ---------------------------------------------------------------------------
+// String builder (private; std.json's jvsb_* is not exported).
+// Layout: [data_addr | len | cap] -- the same triple the public String record
+// uses, so the builder handle IS the return value.
+// ---------------------------------------------------------------------------
+
+fn sb_new() -> i64 {
+    let h: i64 = __mind_alloc(24);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 16, 0);
+    h
+}
+
+fn sb_push(h: i64, b: i64) -> i64 {
+    let old_len: i64 = __mind_load_i64(h + 8);
+    let old_cap: i64 = __mind_load_i64(h + 16);
+    let old_dat: i64 = __mind_load_i64(h + 0);
+    let new_cap: i64 = if old_cap == 0 {
+        16
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_dat: i64 = if new_cap == old_cap {
+        old_dat
+    } else {
+        let d: i64 = __mind_alloc(new_cap);
+        let mut i: i64 = 0;
+        while i < old_len {
+            __mind_store_i8(d + i, __mind_load_i8(old_dat + i));
+            i = i + 1;
+        }
+        d
+    };
+    __mind_store_i8(new_dat + old_len, b);
+    __mind_store_i64(h + 0, new_dat);
+    __mind_store_i64(h + 8, old_len + 1);
+    __mind_store_i64(h + 16, new_cap);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Hex helpers -- lowercase, used by ensure_ascii \uXXXX escapes.
+// ---------------------------------------------------------------------------
+
+fn hex_digit(v: i64) -> i64 {
+    if v < 10 {
+        48 + v
+    } else {
+        87 + v
+    }
+}
+
+fn push_hex2(sb: i64, v: i64) -> i64 {
+    let _ = sb_push(sb, hex_digit((v / 16) % 16));
+    sb_push(sb, hex_digit(v % 16))
+}
+
+fn push_hex4(sb: i64, v: i64) -> i64 {
+    let _ = sb_push(sb, hex_digit((v / 4096) % 16));
+    let _ = sb_push(sb, hex_digit((v / 256) % 16));
+    let _ = sb_push(sb, hex_digit((v / 16) % 16));
+    sb_push(sb, hex_digit(v % 16))
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 decoding.  Bit masks work on the signed i8 that __mind_load_i8
+// returns because the mask clears sign-extended high bits.
+// ---------------------------------------------------------------------------
+
+// Number of bytes in the UTF-8 sequence whose lead byte is b0.
+fn utf8_cp_len(b0: i64) -> i64 {
+    if (b0 & 128) == 0 {
+        return 1;
+    }
+    if (b0 & 224) == 192 {
+        return 2;
+    }
+    if (b0 & 240) == 224 {
+        return 3;
+    }
+    4
+}
+
+// Decode the code point starting at (addr + pos).
+fn utf8_cp_at(addr: i64, pos: i64) -> i64 {
+    let b0: i64 = __mind_load_i8(addr + pos);
+    if (b0 & 128) == 0 {
+        return b0;
+    }
+    if (b0 & 224) == 192 {
+        let b1: i64 = __mind_load_i8(addr + pos + 1);
+        return ((b0 & 31) << 6) | (b1 & 63);
+    }
+    if (b0 & 240) == 224 {
+        let b1: i64 = __mind_load_i8(addr + pos + 1);
+        let b2: i64 = __mind_load_i8(addr + pos + 2);
+        return ((b0 & 15) << 12) | ((b1 & 63) << 6) | (b2 & 63);
+    }
+    let b1: i64 = __mind_load_i8(addr + pos + 1);
+    let b2: i64 = __mind_load_i8(addr + pos + 2);
+    let b3: i64 = __mind_load_i8(addr + pos + 3);
+    ((b0 & 7) << 18) | ((b1 & 63) << 12) | ((b2 & 63) << 6) | (b3 & 63)
+}
+
+// ---------------------------------------------------------------------------
+// UTF-16 code-unit order comparison.
+//
+// A BMP code point (cp < 0x10000) maps to ONE UTF-16 unit equal to cp.
+// A non-BMP code point maps to a surrogate PAIR: lead in 0xD800..0xDBFF,
+// trail in 0xDC00..0xDFFF.  A BMP code point never produces a lead surrogate
+// (it maps to cp < 0xD800 or cp >= 0xDC00), so first-unit equality implies
+// both sides are BMP (done) or both non-BMP (compare trails).
+// ---------------------------------------------------------------------------
+
+fn utf16_first(cp: i64) -> i64 {
+    if cp < 65536 {
+        return cp;
+    }
+    55296 + ((cp - 65536) / 1024)
+}
+
+fn utf16_trail(cp: i64) -> i64 {
+    56320 + ((cp - 65536) % 1024)
+}
+
+// Returns 1 if key a sorts before key b in UTF-16 code-unit order, else 0.
+fn utf16_less(a_addr: i64, a_len: i64, b_addr: i64, b_len: i64) -> i64 {
+    let mut ai: i64 = 0;
+    let mut bi: i64 = 0;
+    while 1 {
+        if ai >= a_len {
+            if bi >= b_len {
+                return 0;
+            }
+            return 1;
+        }
+        if bi >= b_len {
+            return 0;
+        }
+        let ab0: i64 = __mind_load_i8(a_addr + ai);
+        let bb0: i64 = __mind_load_i8(b_addr + bi);
+        let a_cp: i64 = utf8_cp_at(a_addr, ai);
+        let b_cp: i64 = utf8_cp_at(b_addr, bi);
+        let a1: i64 = utf16_first(a_cp);
+        let b1: i64 = utf16_first(b_cp);
+        if a1 < b1 {
+            return 1;
+        }
+        if a1 > b1 {
+            return 0;
+        }
+        if a_cp >= 65536 {
+            let a2: i64 = utf16_trail(a_cp);
+            let b2: i64 = utf16_trail(b_cp);
+            if a2 < b2 {
+                return 1;
+            }
+            if a2 > b2 {
+                return 0;
+            }
+        }
+        ai = ai + utf8_cp_len(ab0);
+        bi = bi + utf8_cp_len(bb0);
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// ensure_ascii string escaping.
+// ---------------------------------------------------------------------------
+
+fn escape_one(sb: i64, cp: i64) -> i64 {
+    if cp == 34 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 34);
+    }
+    if cp == 92 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 92);
+    }
+    if cp == 10 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 110);
+    }
+    if cp == 13 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 114);
+    }
+    if cp == 9 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 116);
+    }
+    if cp == 8 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 98);
+    }
+    if cp == 12 {
+        let _ = sb_push(sb, 92);
+        return sb_push(sb, 102);
+    }
+    if cp < 32 {
+        let _ = sb_push(sb, 92);
+        let _ = sb_push(sb, 117);
+        let _ = sb_push(sb, 48);
+        let _ = sb_push(sb, 48);
+        return push_hex2(sb, cp);
+    }
+    if cp == 127 {
+        let _ = sb_push(sb, 92);
+        let _ = sb_push(sb, 117);
+        let _ = sb_push(sb, 48);
+        let _ = sb_push(sb, 48);
+        let _ = sb_push(sb, 55);
+        return sb_push(sb, 102);
+    }
+    if cp < 128 {
+        return sb_push(sb, cp);
+    }
+    if cp < 65536 {
+        let _ = sb_push(sb, 92);
+        let _ = sb_push(sb, 117);
+        return push_hex4(sb, cp);
+    }
+    let lead: i64 = utf16_first(cp);
+    let trail: i64 = utf16_trail(cp);
+    let _ = sb_push(sb, 92);
+    let _ = sb_push(sb, 117);
+    let _ = push_hex4(sb, lead);
+    let _ = sb_push(sb, 92);
+    let _ = sb_push(sb, 117);
+    push_hex4(sb, trail)
+}
+
+fn escape_string(sb: i64, addr: i64, len: i64) -> i64 {
+    let mut pos: i64 = 0;
+    while pos < len {
+        let b0: i64 = __mind_load_i8(addr + pos);
+        let cp: i64 = utf8_cp_at(addr, pos);
+        let _ = escape_one(sb, cp);
+        pos = pos + utf8_cp_len(b0);
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Integer rendering (n_int is always >= 0; sign lives in n_neg).
+// ---------------------------------------------------------------------------
+
+fn dump_pos_digits(sb: i64, v: i64) -> i64 {
+    if v == 0 {
+        return 0;
+    }
+    let _ = dump_pos_digits(sb, v / 10);
+    sb_push(sb, 48 + (v - (v / 10) * 10))
+}
+
+fn dump_uint(sb: i64, v: i64) -> i64 {
+    if v == 0 {
+        return sb_push(sb, 48);
+    }
+    dump_pos_digits(sb, v)
+}
+
+fn dump_indent(sb: i64, depth: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < depth {
+        let _ = sb_push(sb, 32);
+        let _ = sb_push(sb, 32);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Key sorting: selection sort on an index array, ordered by UTF-16 code-unit
+// comparison of the key strings.  O(n^2) but branch-deterministic and
+// allocation-free beyond the index array.
+// ---------------------------------------------------------------------------
+
+fn sort_indices(h: i64, idx: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        let mut min: i64 = i;
+        let mut j: i64 = i + 1;
+        while j < n {
+            let ia: i64 = __mind_load_i64(idx + j * 8);
+            let ib: i64 = __mind_load_i64(idx + min * 8);
+            let ka: i64 = json.jv_tbl_key(h, ia);
+            let kb: i64 = json.jv_tbl_key(h, ib);
+            let a_addr: i64 = __mind_load_i64(ka + 0);
+            let a_len: i64 = __mind_load_i64(ka + 8);
+            let b_addr: i64 = __mind_load_i64(kb + 0);
+            let b_len: i64 = __mind_load_i64(kb + 8);
+            if utf16_less(a_addr, a_len, b_addr, b_len) == 1 {
+                min = j;
+            }
+            j = j + 1;
+        }
+        if min != i {
+            let tmp: i64 = __mind_load_i64(idx + i * 8);
+            __mind_store_i64(idx + i * 8, __mind_load_i64(idx + min * 8));
+            __mind_store_i64(idx + min * 8, tmp);
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Recursive value dump.  Returns 0 on success, -1 to refuse (non-integer
+// number or depth cap exceeded).
+// ---------------------------------------------------------------------------
+
+fn dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
+    if depth > 512 {
+        return 0 - 1;
+    }
+    let k: i64 = json.jv_kind(h);
+    if k == json.jv_kind_null() {
+        let _ = sb_push(sb, 110);
+        let _ = sb_push(sb, 117);
+        let _ = sb_push(sb, 108);
+        let _ = sb_push(sb, 108);
+        return 0;
+    }
+    if k == json.jv_kind_bool() {
+        if json.jv_bval(h) == 1 {
+            let _ = sb_push(sb, 116);
+            let _ = sb_push(sb, 114);
+            let _ = sb_push(sb, 117);
+            let _ = sb_push(sb, 101);
+        } else {
+            let _ = sb_push(sb, 102);
+            let _ = sb_push(sb, 97);
+            let _ = sb_push(sb, 108);
+            let _ = sb_push(sb, 115);
+            let _ = sb_push(sb, 101);
+        }
+        return 0;
+    }
+    if k == json.jv_kind_number() {
+        if json.jv_n_is_int(h) != 1 {
+            return 0 - 1;
+        }
+        if json.jv_n_frac(h) != 0 {
+            return 0 - 1;
+        }
+        if json.jv_n_neg(h) == 1 {
+            if json.jv_n_int(h) != 0 {
+                let _ = sb_push(sb, 45);
+            }
+        }
+        return dump_uint(sb, json.jv_n_int(h));
+    }
+    if k == json.jv_kind_string() {
+        let _ = sb_push(sb, 34);
+        let _ = escape_string(sb, json.jv_s_addr(h), json.jv_s_len(h));
+        let _ = sb_push(sb, 34);
+        return 0;
+    }
+    if k == json.jv_kind_array() {
+        let _ = sb_push(sb, 91);
+        let alen: i64 = json.jv_arr_len(h);
+        let mut ai: i64 = 0;
+        while ai < alen {
+            if ai > 0 {
+                let _ = sb_push(sb, 44);
+                if pretty == 1 {
+                    let _ = sb_push(sb, 10);
+                    let _ = dump_indent(sb, depth + 1);
+                }
+            } else {
+                if pretty == 1 {
+                    if alen > 0 {
+                        let _ = sb_push(sb, 10);
+                        let _ = dump_indent(sb, depth + 1);
+                    }
+                }
+            }
+            let r: i64 = dump_value(sb, json.jv_arr_get(h, ai), pretty, depth + 1);
+            if r != 0 {
+                return 0 - 1;
+            }
+            ai = ai + 1;
+        }
+        if pretty == 1 {
+            if alen > 0 {
+                let _ = sb_push(sb, 10);
+                let _ = dump_indent(sb, depth);
+            }
+        }
+        let _ = sb_push(sb, 93);
+        return 0;
+    }
+    // object
+    let _ = sb_push(sb, 123);
+    let tlen: i64 = json.jv_tbl_len(h);
+    if tlen > 0 {
+        let idx: i64 = __mind_alloc(tlen * 8);
+        let mut ii: i64 = 0;
+        while ii < tlen {
+            __mind_store_i64(idx + ii * 8, ii);
+            ii = ii + 1;
+        }
+        let _ = sort_indices(h, idx, tlen);
+        let mut ti: i64 = 0;
+        while ti < tlen {
+            if ti > 0 {
+                let _ = sb_push(sb, 44);
+                if pretty == 1 {
+                    let _ = sb_push(sb, 10);
+                    let _ = dump_indent(sb, depth + 1);
+                }
+            } else {
+                if pretty == 1 {
+                    let _ = sb_push(sb, 10);
+                    let _ = dump_indent(sb, depth + 1);
+                }
+            }
+            let ki: i64 = __mind_load_i64(idx + ti * 8);
+            let kh: i64 = json.jv_tbl_key(h, ki);
+            let vh: i64 = json.jv_tbl_val(h, ki);
+            let _ = sb_push(sb, 34);
+            let _ = escape_string(sb, __mind_load_i64(kh + 0), __mind_load_i64(kh + 8));
+            let _ = sb_push(sb, 34);
+            let _ = sb_push(sb, 58);
+            if pretty == 1 {
+                let _ = sb_push(sb, 32);
+            }
+            let r: i64 = dump_value(sb, vh, pretty, depth + 1);
+            if r != 0 {
+                let _ = __mind_free(idx);
+                return 0 - 1;
+            }
+            ti = ti + 1;
+        }
+        let _ = __mind_free(idx);
+        if pretty == 1 {
+            let _ = sb_push(sb, 10);
+            let _ = dump_indent(sb, depth);
+        }
+    }
+    let _ = sb_push(sb, 125);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+// jv_dump_canonical -- canonical compact JSON dump of a JsonValue handle.
+// Sorted UTF-16 code-unit keys, no whitespace, integers only, ensure_ascii.
+// Returns a String heap record [addr | len | cap], or 0 to refuse.
+pub fn jv_dump_canonical(h: i64) -> i64 {
+    let sb: i64 = sb_new();
+    let r: i64 = dump_value(sb, h, 0, 0);
+    if r != 0 {
+        return 0;
+    }
+    sb
+}
+
+// jv_dump_pretty_py -- Python-compatible pretty dump (indent=2, same key
+// order and escape rule as jv_dump_canonical).
+pub fn jv_dump_pretty_py(h: i64) -> i64 {
+    let sb: i64 = sb_new();
+    let r: i64 = dump_value(sb, h, 1, 0);
+    if r != 0 {
+        return 0;
+    }
+    sb
+}
