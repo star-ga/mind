@@ -80,3 +80,9 @@ PATTERN_COAUTHOR='^[[:space:]]*co[- ]authored[- ]by[[:space:]]*:'
 # position on the line (which the noun-phrase rule above cannot see, because
 # "with"/"by" plus a vendor name is not a credit-word pairing).
 PATTERN_GENERATED="generated[[:space:]]+(with|by)[[:space:]].*(https?://|\\[[^]]*\\]\\(|\\b(${AI_NAMES})\\b)"
+
+# Exact author identity required on all new commits in this repository.
+# Rejects trailing-period variants ("STARGA Inc.") and personal addresses.
+EXPECTED_AUTHOR_IDENTITY='STARGA Inc <noreply@star.ga>'
+EXPECTED_AUTHOR_IDENTITY_REGEX='^STARGA Inc <noreply@star\.ga>$'
+EXPECTED_COMMITTER_IDENTITY_REGEX='^(STARGA Inc <noreply@star\.ga>|GitHub <noreply@github\.com>)$'
