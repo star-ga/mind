@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
+  `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
+  blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
+  same-runner interleaved paired A/B wall-clock builds of `mindc <src> --emit-shared`
+  against `origin/main` across `examples/collatz.mind`, `examples/cos_dottie.mind`, and
+  `examples/dottie_collapse.mind` (`N >= 11` pairs after warmup), and fails closed via a
+  one-sided exact binomial sign test (`alpha = 0.01`, `MAX_RATIO = 1.15`, `DEADBAND_NS = 5_000_000`)
+  if the candidate is consistently slower or if any stage time or artifact is missing.
+
+### Fixed
+- **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
+  `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
+  compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
+  `src/eval/module_bindings.rs`, `src/test/imports.rs`). During constant lookup
+  (`const_table_lookup` / `const_lookup_keys`), the current module's owner-qualified
+  constant (`owner::K`) is checked before bare imported bindings, so a local `const K`
+  shadows even an ambiguous pair of same-name imports while an unshadowed ambiguous
+  bare constant reference is refused with a diagnostic naming both candidate modules.
+- **Bare `std` calls in imported module bodies under `mindc test` (`#318`, `7b40d0c7`)**:
+  When `mindc test` merges an imported sibling module whose source declares
+  `import std.<submod>;`, exported functions from `std/<submod>.mind` are now registered
+  as non-clobbering fallback bindings (`insert_std_imported_call` in
+  `src/eval/module_bindings.rs` and `merge_imported_modules` in `src/test/imports.rs`)
+  so bare `std` calls inside imported module bodies execute instead of failing as
+  unknown functions, without overriding local definitions or sibling project exports.
+- **Bare imported calls execute under `mindc test` (`#297`, `37cf0f4f`)**: `mindc test`
+  (`--features cross-module-imports`) now merges parsed `FnDef` and `ConstDef` items from
+  imported sibling modules into the test module before IR lowering and scopes bare-import
+  call bindings (`src/eval/module_bindings.rs`) per lowering pass via `ModuleBindingsGuard`.
+  Ambiguous bare calls across two imported modules are refused at the call site unless
+  shadowed by a local `fn` or disambiguated as `m.f(...)`.
+- **Native `assert` reports source span and message before abort (`#298`, `ab26bd50`)**:
+  On a false `assert` in a native CPU build (`src/mlir/lowering.rs`,
+  `runtime-support/mind_intrinsics.c`), the lowered failure block now calls
+  `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
+  writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
+  instead of trapping silently.
+- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`)**:
+  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
+  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
+  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
+  verify negative returns on null, missing, and non-directory paths in debug and release builds.
+
 ### Changed — `mlir-opt` and `mlir-translate` run concurrently
 - The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
   `mlir-opt`'s output into it, so the translator's process startup overlaps the
