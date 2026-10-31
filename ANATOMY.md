@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2701 | **Est. tokens:** ~4,831,643
-**Generated:** 2026-10-31 20:55 UTC
+**Files:** 2701 | **Est. tokens:** ~4,831,743
+**Generated:** 2026-10-31 21:00 UTC
 
 ## Token Budget Guide
 
@@ -250,7 +250,7 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/std_process_wait/` | 5 | ~7,294 |
-| `tests/support/` | 10 | ~23,124 |
+| `tests/support/` | 10 | ~23,224 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
 | `tools/` | 4 | ~20,957 |
@@ -3530,7 +3530,7 @@
 - `substrate_nonentry_import_link.rs` (~1449 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/support/`
 
-- `g2_capability_ratchet.rs` (~783 tok, large) — Copyright 2026 STARGA Inc.
+- `g2_capability_ratchet.rs` (~883 tok, large) — Copyright 2026 STARGA Inc.
 - `g2_compile_result.rs` (~364 tok, medium) — Copyright 2026 STARGA Inc.
 - `g2_policy_rejections.rs` (~755 tok, large) — Copyright 2026 STARGA Inc.
 - `mindc_test_bare_imports.rs` (~3717 tok, huge) — Copyright 2026 STARGA Inc.
