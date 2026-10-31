@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1920 | **Est. tokens:** ~3,740,045
-**Generated:** 2026-10-29 08:17 UTC
+**Files:** 1920 | **Est. tokens:** ~3,740,043
+**Generated:** 2026-10-31 05:39 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 419 | ~852,674 |
+| `tests/` | 419 | ~852,672 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2272,7 +2272,7 @@
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
-- `native_array_binop_refusal.rs` (~1916 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_array_binop_refusal.rs` (~1914 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
