@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1922 | **Est. tokens:** ~3,752,030
-**Generated:** 2026-10-31 08:14 UTC
+**Files:** 1922 | **Est. tokens:** ~3,752,019
+**Generated:** 2026-10-31 08:52 UTC
 
 ## Token Budget Guide
 
@@ -97,7 +97,7 @@
 | `.github/workflows/` | 9 | ~16,367 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,327 |
-| `scripts/` | 33 | ~122,220 |
+| `scripts/` | 33 | ~122,209 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1081,11 +1081,11 @@
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
 - `anatomy-hook.sh` (~2100 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
 - `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
-- `arch_gate.sh` (~2229 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
+- `arch_gate.sh` (~2222 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1752 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9420 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9416 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the

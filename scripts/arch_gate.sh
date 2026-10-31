@@ -122,11 +122,11 @@ BASE_LOG="$WORK/base-scan.log"
 
 HEAD_SCAN="$WORK/head_scan.json"
 BASE_SCAN="$WORK/base_scan.json"
-"$AM_BIN" scan --fixture "$FIX" --repo . --out "$HEAD_SCAN" >/dev/null 2>&1 || {
+"$AM_BIN" scan --fixture "$FIX" --out "$HEAD_SCAN" >/dev/null 2>&1 || {
   echo "::error::failed to compute Q16 metric snapshot for working tree"
   exit 1
 }
-"$AM_BIN" scan --fixture "$BASE_FIX" --repo "$BASE_DIR" --out "$BASE_SCAN" >/dev/null 2>&1 || {
+"$AM_BIN" scan --fixture "$BASE_FIX" --out "$BASE_SCAN" >/dev/null 2>&1 || {
   echo "::error::failed to compute Q16 metric snapshot for baseline '$BASE_REF'"
   exit 1
 }
