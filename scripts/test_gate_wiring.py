@@ -452,6 +452,12 @@ def main() -> int:
                                "scripts/check_no_ai_attribution.sh"), encoding="utf-8")
     case("file attribution gate step deleted -> RED", del_file_gate_step, expect_nonzero=True)
 
+    def del_arch_gate_step(d: Path) -> None:
+        p = d / ".github/workflows/ci.yml"
+        p.write_text(drop_step(p.read_text(encoding="utf-8"),
+                               "scripts/arch_gate.sh"), encoding="utf-8")
+    case("arch-mind gate step deleted -> RED", del_arch_gate_step, expect_nonzero=True)
+
     # The finding itself: the workflow carrying those gates must be in the
     # release-required manifest, or a release can be cut from a commit where it
     # never ran.
