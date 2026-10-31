@@ -39,8 +39,8 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 23
-# TOTAL_COUNT 42
+# BUNDLED_COUNT 24
+# TOTAL_COUNT 43
 #
 # 19 modules are `no`/`no`: on disk, reachable by NEITHER consumer. That is not an
 # oversight recorded here to be forgotten — it is the measured gap behind RI matrix
@@ -64,6 +64,7 @@ io	seed	bundled
 io_canon	seed	bundled
 iouring	seed	bundled
 json	seed	bundled
+json_canon	no	bundled
 keccak	no	no
 llvm	no	no
 map	seed	bundled
