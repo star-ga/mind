@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1921 | **Est. tokens:** ~3,746,831
-**Generated:** 2026-10-31 07:06 UTC
+**Files:** 1922 | **Est. tokens:** ~3,747,149
+**Generated:** 2026-10-31 07:45 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 39 | ~113,434 |
+| `docs/` | 40 | ~113,752 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -503,6 +503,7 @@
 - `performance.md` (~880 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
+- `RESEARCH_ECOSYSTEM_OFFLINE_HYPOTHESES_20261029.md` (~318 tok, medium) — Compiler research consumer of an offline hypothesis service
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
