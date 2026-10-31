@@ -358,54 +358,147 @@ def case_author_identity_guard_rejects_trailing_dot_and_accepts_exact() -> None:
               f"rc={r_hook_good.returncode} err={r_hook_good.stderr.strip()[:200]!r}")
 
 
-def case_identity_guard_skips_merge_commits() -> None:
-    """The identity guard must skip merge commits (2+ parents) because CI
-    creates synthetic merge commits with the CI runner's identity, not the
-    repository identity."""
-    import subprocess
+def _identity_guard_repo(td: Path):
+    """Scratch repo holding the commit-message guard and its rulebook, with a
+    base commit, a feature-branch commit and an extra base-branch commit (so a
+    --no-ff merge lands a 2-parent commit inside the judged range).
+    Returns (repo, base_sha, feature_sha)."""
+    repo = td
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    for src in (PATTERNS, ROOT / "scripts" / "check_commit_messages.sh"):
+        shutil.copy2(src, repo / "scripts" / src.name)
+    git("init", "-q", cwd=repo)
+    git("config", "user.name", "STARGA Inc", cwd=repo)
+    git("config", "user.email", "noreply@star.ga", cwd=repo)
+    (repo / "a.txt").write_text("base\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "chore: base", cwd=repo)
+    base_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    git("checkout", "-q", "-b", "feature", cwd=repo)
+    (repo / "a.txt").write_text("feature\n")
+    git("add", "a.txt", cwd=repo)
+    git("commit", "-q", "-m", "fix: feature work", cwd=repo)
+    feature_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    git("checkout", "-q", "-", cwd=repo)
+    (repo / "b.txt").write_text("other\n")
+    git("add", "b.txt", cwd=repo)
+    git("commit", "-q", "-m", "chore: other", cwd=repo)
+    return repo, base_sha, feature_sha
 
-    regex_str = rulebook("EXPECTED_AUTHOR_IDENTITY_REGEX")
-    pat = re.compile(regex_str)
+
+def _merge_with_identity(repo: Path, feature_sha: str, msg: str, *,
+                         author, committer):
+    """Create a --no-ff merge commit with explicit author/committer identities."""
+    import os
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"], env["GIT_AUTHOR_EMAIL"] = author
+    env["GIT_COMMITTER_NAME"], env["GIT_COMMITTER_EMAIL"] = committer
+    return subprocess.run(["git", "merge", "--no-ff", "-m", msg, feature_sha],
+                          cwd=repo, env=env, capture_output=True, text=True)
+
+
+def _run_ccm(repo: Path, rng: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", "scripts/check_commit_messages.sh", rng],
+                          cwd=repo, capture_output=True, text=True)
+
+
+def case_identity_guard_rejects_foreign_author_merge_in_range() -> None:
+    """(a) A real merge commit with a foreign author INSIDE the judged range
+    must fail the identity guard. A blanket skip of merge commits (2+ parents)
+    destroyed exactly this property: a foreign-identity merge in the range then
+    passed unchecked."""
     with tempfile.TemporaryDirectory() as td:
-        repo = Path(td)
-        (repo / "scripts").mkdir(parents=True, exist_ok=True)
-        for src in (PATTERNS, ROOT / "scripts" / "check_commit_messages.sh"):
-            shutil.copy2(src, repo / "scripts" / src.name)
-        git("init", "-q", cwd=repo)
-        git("config", "user.name", "STARGA Inc", cwd=repo)
-        git("config", "user.email", "noreply@star.ga", cwd=repo)
-        (repo / "a.txt").write_text("base\n")
-        git("add", "-A", cwd=repo)
-        git("commit", "-q", "-m", "chore: base", cwd=repo)
-        base_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
-        # branch off
-        git("checkout", "-q", "-b", "feature", cwd=repo)
-        (repo / "a.txt").write_text("feature\n")
-        git("add", "a.txt", cwd=repo)
-        git("commit", "-q", "-m", "fix: feature work", cwd=repo)
-        feature_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
-        # back to main, make another commit
-        git("checkout", "-q", "master", cwd=repo)
-        (repo / "b.txt").write_text("other\n")
-        git("add", "b.txt", cwd=repo)
-        git("commit", "-q", "-m", "chore: other", cwd=repo)
-        # merge with a wrong-identity author (simulating CI merge commit)
-        r_merge = subprocess.run(
-            ["git", "-c", "user.name=CI Runner", "-c", "user.email=ci@example.com",
-             "merge", "--no-ff", "-m", "Merge feature into master", feature_sha],
-            cwd=repo, capture_output=True, text=True)
-        check("merge commit created with wrong identity",
+        repo, base_sha, feature_sha = _identity_guard_repo(Path(td))
+        r_merge = _merge_with_identity(
+            repo, feature_sha, "Merge feature into base",
+            author=("CI Runner", "ci@example.com"),
+            committer=("CI Runner", "ci@example.com"))
+        check("foreign-author merge commit created",
               r_merge.returncode == 0, f"rc={r_merge.returncode}")
         merge_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
-        # verify it has 2 parents
-        parents = git("rev-list", "--no-walk", "--parents", merge_sha, cwd=repo).stdout.strip().split()
-        check("merge commit has 2 parents", len(parents) == 3, f"got {len(parents)-1} parents")
-        # identity guard must PASS (merge commit skipped)
-        r = subprocess.run(["bash", "scripts/check_commit_messages.sh", f"{base_sha}..HEAD"],
-                           cwd=repo, capture_output=True, text=True)
-        check("check_commit_messages.sh skips merge commits (wrong-identity merge -> PASS)",
+        n_parents = len(git("rev-list", "--no-walk", "--parents", merge_sha,
+                            cwd=repo).stdout.split()) - 1
+        check("foreign-author merge commit has 2 parents", n_parents == 2,
+              f"got {n_parents} parents")
+        r = _run_ccm(repo, f"{base_sha}..HEAD")
+        check("check_commit_messages.sh rejects a foreign-author merge commit in range -> RED",
+              r.returncode != 0 and "identity:" in r.stdout,
+              f"rc={r.returncode} out={r.stdout.strip()[:200]!r}")
+
+
+def case_identity_guard_accepts_house_identity_merge_in_range() -> None:
+    """(b) A merge commit inside the range passes when its author is the exact
+    house identity. The committer may also be the hosting-platform identity
+    where the rulebook already allows it (EXPECTED_COMMITTER_IDENTITY_REGEX)."""
+    with tempfile.TemporaryDirectory() as td:
+        repo, base_sha, feature_sha = _identity_guard_repo(Path(td))
+        r_merge = _merge_with_identity(
+            repo, feature_sha, "Merge feature into base",
+            author=("STARGA Inc", "noreply@star.ga"),
+            committer=("STARGA Inc", "noreply@star.ga"))
+        check("house-identity merge commit created",
+              r_merge.returncode == 0, f"rc={r_merge.returncode}")
+        r = _run_ccm(repo, f"{base_sha}..HEAD")
+        check("check_commit_messages.sh accepts a house-identity merge commit in range -> PASS",
               r.returncode == 0,
               f"rc={r.returncode} out={r.stdout.strip()[:200]!r}")
+        git("checkout", "-q", "-b", "feature2", cwd=repo)
+        (repo / "a.txt").write_text("feature2\n")
+        git("add", "a.txt", cwd=repo)
+        git("commit", "-q", "-m", "fix: feature2 work", cwd=repo)
+        feature2_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        git("checkout", "-q", "-", cwd=repo)
+        r_merge2 = _merge_with_identity(
+            repo, feature2_sha, "Merge feature2 into base",
+            author=("STARGA Inc", "noreply@star.ga"),
+            committer=("GitHub", "noreply@github.com"))
+        check("house-author/platform-committer merge commit created",
+              r_merge2.returncode == 0, f"rc={r_merge2.returncode}")
+        r2 = _run_ccm(repo, f"{base_sha}..HEAD")
+        check("check_commit_messages.sh accepts house author with platform committer -> PASS",
+              r2.returncode == 0,
+              f"rc={r2.returncode} out={r2.stdout.strip()[:200]!r}")
+
+
+def case_identity_guard_keeps_synthetic_ci_merge_out_of_scope() -> None:
+    """(c) The synthetic integration merge commit CI creates for a
+    pull_request (platform identity) is out of scope because the judged range
+    is base..head of the PR branch, which does not contain it. That is a
+    property of WHERE the range ends, not a blanket merge skip: case (a) shows
+    a foreign-author merge inside the range is still rejected, and the contrast
+    below shows the synthetic merge would be rejected too if the range reached
+    it."""
+    with tempfile.TemporaryDirectory() as td:
+        repo, base_sha, feature_sha = _identity_guard_repo(Path(td))
+        r_merge = _merge_with_identity(
+            repo, feature_sha, "Merge pull request",
+            author=("GitHub", "noreply@github.com"),
+            committer=("GitHub", "noreply@github.com"))
+        check("synthetic integration merge commit created",
+              r_merge.returncode == 0, f"rc={r_merge.returncode}")
+        merge_sha = git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+        n_parents = len(git("rev-list", "--no-walk", "--parents", merge_sha,
+                            cwd=repo).stdout.split()) - 1
+        check("synthetic integration merge commit has 2 parents", n_parents == 2,
+              f"got {n_parents} parents")
+        in_range = git("rev-list", f"{base_sha}..{feature_sha}",
+                       cwd=repo).stdout.split()
+        check("synthetic merge commit is not in the base..head range",
+              merge_sha not in in_range,
+              f"merge {merge_sha[:10]} found among {len(in_range)} commits")
+        r = _run_ccm(repo, f"{base_sha}..{feature_sha}")
+        check("base..head judges only the PR's own commits -> PASS",
+              r.returncode == 0,
+              f"rc={r.returncode} out={r.stdout.strip()[:200]!r}")
+        r_old = _run_ccm(repo, f"{base_sha}..{merge_sha}")
+        check("a range that INCLUDES the synthetic merge rejects its identity -> RED",
+              r_old.returncode != 0 and "identity:" in r_old.stdout,
+              f"rc={r_old.returncode} out={r_old.stdout.strip()[:200]!r}")
+        wf = (ROOT / ".github" / "workflows" / "docs-claims.yml").read_text()
+        check("docs-claims builds the pull_request range from the event base/head shas",
+              "github.event.pull_request.base.sha" in wf
+              and "github.event.pull_request.head.sha" in wf,
+              "workflow no longer references the pull_request base/head shas")
 
 
 def main() -> int:
@@ -419,7 +512,9 @@ def main() -> int:
         case_committed_anatomy_names_no_model,
         case_committed_anatomy_matches_the_tracked_tree,
         case_author_identity_guard_rejects_trailing_dot_and_accepts_exact,
-        case_identity_guard_skips_merge_commits,
+        case_identity_guard_rejects_foreign_author_merge_in_range,
+        case_identity_guard_accepts_house_identity_merge_in_range,
+        case_identity_guard_keeps_synthetic_ci_merge_out_of_scope,
     ):
         case()
     # No `asserted=` line here on purpose: scripts/run_gate.py owns that
