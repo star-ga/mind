@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 1921 | **Est. tokens:** ~3,745,292
-**Generated:** 2026-10-30 23:45 UTC
+**Generated:** 2026-10-31 00:06 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 419 | ~853,622 |
+| `tests/` | 419 | ~853,065 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -220,7 +220,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
-| `tests/support/` | 10 | ~21,531 |
+| `tests/support/` | 10 | ~22,088 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
 | `tools/` | 4 | ~20,957 |
@@ -2202,7 +2202,7 @@
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6017 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_test_imports.rs` (~6890 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `mindc_test_imports.rs` (~6333 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_nested_modules.rs` (~1901 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3574 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2637,7 +2637,7 @@
 - `g2_capability_ratchet.rs` (~783 tok, large) — Copyright 2026 STARGA Inc.
 - `g2_compile_result.rs` (~364 tok, medium) — Copyright 2026 STARGA Inc.
 - `g2_policy_rejections.rs` (~755 tok, large) — Copyright 2026 STARGA Inc.
-- `mindc_test_bare_imports.rs` (~2124 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_test_bare_imports.rs` (~2681 tok, huge) — Copyright 2026 STARGA Inc.
 - `pqc_hybrid_cli_support.rs` (~1429 tok, large) — Copyright 2026 STARGA Inc.
 - `v04_mirror_body_vectors.rs` (~4124 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `v04_mirror_descriptor_vectors.rs` (~2649 tok, huge) — Copyright 2025-2026 STARGA Inc.

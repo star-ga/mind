@@ -272,3 +272,58 @@ fn bare_imported_const_lowers() {
         "imported constant must not hit the lowering fail-closed panic:\n{emit_text}"
     );
 }
+
+/// Import order between a bundled `std` export and a sibling export of the
+/// same name must not decide the winner: the sibling's export binds whether
+/// the `std` import is written first or second, and a local definition still
+/// wins over both imports. A `std` binding inserted first must be replaced by
+/// the sibling's later export, not ambiguified by it.
+#[test]
+fn std_import_order_does_not_shadow_sibling_export() {
+    let sibling = "export { sha256 }\n\
+        fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 { return 42; }\n";
+    let imports_std_first = "import std.sha256;\nimport a;\nexport { run }\n";
+    let imports_sibling_first = "import a;\nimport std.sha256;\nexport { run }\n";
+    let local_sha = "fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 { return 7; }\n";
+    let run_fn = "fn run() -> i64 { return sha256(0, 0, 0); }\n";
+    let cases = [
+        (
+            "eval_order_std_first",
+            format!("{imports_std_first}{run_fn}"),
+            42i64,
+        ),
+        (
+            "eval_order_sibling_first",
+            format!("{imports_sibling_first}{run_fn}"),
+            42,
+        ),
+        (
+            "eval_order_local_wins_std_first",
+            format!("{imports_std_first}{local_sha}{run_fn}"),
+            7,
+        ),
+        (
+            "eval_order_local_wins_sibling_first",
+            format!("{imports_sibling_first}{local_sha}{run_fn}"),
+            7,
+        ),
+    ];
+    for (name, probe, want) in cases {
+        let root = project(
+            name,
+            &format!(
+                "import arithmetic;\n\
+                 #[test]\n\
+                 fn order_resolves() {{\n\
+                 \x20   assert arithmetic.run() == {want}, \"import order must not pick the callee\";\n\
+                 }}\n"
+            ),
+        );
+        fs::write(root.join("src/arithmetic.mind"), &probe).expect("write probe module");
+        fs::write(root.join("src/a.mind"), sibling).expect("write sibling module");
+        let output = run(&root);
+        let text = output_text(&output);
+        assert!(output.status.success(), "{name}: {text}");
+        assert!(text.contains("1 passed; 0 failed"), "{name}: {text}");
+    }
+}
