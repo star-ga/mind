@@ -3783,3 +3783,11 @@ DoD the deliverables and definition of done.
 - [ ] **Bounds interface:** compiler may expose safe primitives and declared numeric profiles, not automatic real-number theorem rewriting; norm/error rules require separate validated library/checker.
 **Exit:** RFC approved, runnable cross-layer gradients, regression/mutation tests, measured costs. Existing `mic@3` optimization and release gates unchanged.
 <!-- NUMERIC-REVIEW-REVISION-20261029:END -->
+
+
+<!-- CFSG-PROOF-GRAPH-20261031 -->
+## CFSG-inspired proof-dependency research (2026-10-31; proposed)
+
+**Purpose:** Research a deterministic pure-MIND graph certificate parser/verifier with typed source IDs and fail-closed checks. Do not implement general theorem proving in the compiler; begin with independently checked fixtures and preserve compiler release gates.
+
+**Shared prototype:** `star-ga/mind-math/research/concept_graph/` (research branch) defines a structural schema, negative fixtures and validator. It does not verify mathematical truth. Treat the CFSG video as a lead, not as an independently audited theorem or verified account of AI capabilities. Before adoption: inspect primary sources, version and hash dependencies, require explicit assumptions and independent certificates, mutation-test the verifier, ensure deterministic replay and compare against baseline search. No production changes or theorem claims until tests are green and reviews complete.
