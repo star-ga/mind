@@ -3820,10 +3820,14 @@ fn const_table_lookup(name: &str, span: Span) -> Result<Option<Value>, EvalError
                 })
         });
     }
-    for key in module_bindings::const_lookup_keys(name)? {
-        if let Some(value) = CONST_TABLE.with(|t| t.borrow().get(&key).cloned()) {
+    let (keys, ambiguity) = module_bindings::const_lookup_keys(name);
+    for key in &keys {
+        if let Some(value) = CONST_TABLE.with(|t| t.borrow().get(key).cloned()) {
             return Ok(Some(value));
         }
+    }
+    if let Some(err) = ambiguity {
+        return Err(err);
     }
     Ok(None)
 }

@@ -157,24 +157,34 @@ pub(super) fn imported_value(name: &str) -> ImportedCall {
 /// Candidate `CONST_TABLE` keys for a bare constant, in the order the type
 /// checker resolves it: the owner's own qualified key first, then the unique
 /// export of one of the owner's imports, then the bare key (the single-
-/// translation-unit table). A name exported by two imports is an ambiguity and
-/// is refused, never resolved to either exporter.
-pub(super) fn const_lookup_keys(name: &str) -> Result<Vec<String>, EvalError> {
+/// translation-unit table). A local definition shadows imported definitions,
+/// even when two imports export the same name (owner-first, mirroring
+/// `owner_scoped_fn`). When two imports export the name and the owner does
+/// NOT define it, the returned key list carries only the owner key and the
+/// second element is the refusal the caller must surface if no key resolves —
+/// never resolved to either exporter, never falling through to the bare key.
+pub(super) fn const_lookup_keys(name: &str) -> (Vec<String>, Option<EvalError>) {
     let mut keys = Vec::with_capacity(3);
     if let Some(owner) = current_owner() {
         keys.push(owned_symbol(&owner, name));
     }
     match imported_value(name) {
-        ImportedCall::None => {}
-        ImportedCall::Unique(target) => keys.push(target),
-        ImportedCall::Ambiguous => {
-            return Err(EvalError::UnsupportedMsg(format!(
-                "imported constant `{name}` is ambiguous: more than one imported module exports it"
-            )));
+        ImportedCall::None => {
+            keys.push(name.to_string());
+            (keys, None)
         }
+        ImportedCall::Unique(target) => {
+            keys.push(target);
+            keys.push(name.to_string());
+            (keys, None)
+        }
+        ImportedCall::Ambiguous => (
+            keys,
+            Some(EvalError::UnsupportedMsg(format!(
+                "imported constant `{name}` is ambiguous: more than one imported module exports it"
+            ))),
+        ),
     }
-    keys.push(name.to_string());
-    Ok(keys)
 }
 
 /// Resolve a bare `callee` in the current owner's scope, in the order the type
@@ -272,14 +282,19 @@ mod tests {
             bound_symbol(span, BindingKind::Call),
             Some(owned_symbol("crate.left", "value"))
         );
-        let _ = std::panic::catch_unwind(|| {
+        let binding_ok = std::cell::Cell::new(false);
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _owner = OwnerGuard::enter(Some("crate.b"));
-            assert_eq!(
-                bound_symbol(span, BindingKind::Call),
-                Some(owned_symbol("crate.right", "value"))
+            binding_ok.set(
+                bound_symbol(span, BindingKind::Call) == Some(owned_symbol("crate.right", "value")),
             );
             panic!("exercise unwind restoration");
-        });
+        }));
+        assert!(unwind.is_err(), "intentional unwind must propagate");
+        assert!(
+            binding_ok.get(),
+            "binding must resolve to crate.right under crate.b"
+        );
         assert_eq!(current_owner().as_deref(), Some("crate.a"));
     }
 
@@ -296,15 +311,43 @@ mod tests {
             ImportedCall::Unique(target) if target == owned_symbol("crate.left", "LIMIT")
         ));
         assert!(matches!(imported_value("other"), ImportedCall::None));
-        let keys = const_lookup_keys("LIMIT").expect("unambiguous owner");
+        let (keys, ambiguity) = const_lookup_keys("LIMIT");
+        assert!(
+            ambiguity.is_none(),
+            "unique import must not carry a refusal"
+        );
         assert_eq!(keys[0], owned_symbol("crate.a", "LIMIT"));
         assert_eq!(keys[1], owned_symbol("crate.left", "LIMIT"));
         assert_eq!(keys[2], "LIMIT");
-        let _ = std::panic::catch_unwind(|| {
+        let amb_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _owner = OwnerGuard::enter(Some("crate.b"));
             assert!(matches!(imported_value("LIMIT"), ImportedCall::Ambiguous));
-            assert!(const_lookup_keys("LIMIT").is_err());
-        });
+            let (keys, ambiguity) = const_lookup_keys("LIMIT");
+            assert!(
+                ambiguity.is_some(),
+                "ambiguous imports must carry a deferred refusal"
+            );
+            // Owner key is still queued first so the caller can resolve a
+            // local definition before the refusal.
+            assert_eq!(keys, vec![owned_symbol("crate.b", "LIMIT")]);
+        }));
+        assert!(
+            amb_result.is_ok(),
+            "ambiguity assertions must run to completion"
+        );
+    }
+
+    #[test]
+    fn const_lookup_keys_put_owner_first_and_defer_ambiguity() {
+        let mut bindings = Bindings::default();
+        bindings.insert_imported_value("crate.m", "crate.left", "K");
+        bindings.insert_imported_value("crate.m", "crate.right", "K");
+        let _bindings = BindingsGuard::install(bindings, Some("crate.m".into()));
+        // Ambiguous imports: the owner key is queued first so a local
+        // definition wins; the refusal is deferred to the caller.
+        let (keys, ambiguity) = const_lookup_keys("K");
+        assert_eq!(keys, vec![owned_symbol("crate.m", "K")]);
+        assert!(ambiguity.is_some(), "no local definition: must refuse");
     }
 
     #[test]

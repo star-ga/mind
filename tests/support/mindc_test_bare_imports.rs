@@ -162,6 +162,139 @@ fn local_constant_shadows_import() {
 }
 
 #[test]
+fn local_constant_shadows_two_same_name_imports() {
+    // R317-1: a module's own constant must win over imported constants of the
+    // same name even when two of its imports export that name (owner-first on
+    // the const path, mirroring owner_scoped_fn for functions).
+    let root = project(
+        "eval_import_bare_const_local_beats_ambiguous",
+        r#"
+import left;
+import right;
+const K: i64 = 99;
+
+#[test]
+fn local_beats_ambiguous_imports() {
+    assert K == 99, "local beats ambiguous imports";
+}
+"#,
+    );
+    fs::write(
+        root.join("src/left.mind"),
+        "export { K }\nconst K: i64 = 41;\n",
+    )
+    .expect("write left module");
+    fs::write(
+        root.join("src/right.mind"),
+        "export { K }\nconst K: i64 = 77;\n",
+    )
+    .expect("write right module");
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("1 passed; 0 failed"), "{text}");
+}
+
+#[cfg(all(
+    unix,
+    feature = "mlir-build",
+    feature = "std-surface",
+    feature = "cross-module-imports"
+))]
+#[test]
+fn local_constant_shadows_two_same_name_imports_under_emit_mlir() {
+    // The same fixture under --emit-mlir: the local value 99 must be what is
+    // emitted, not an ambiguous-import refusal and not const 0.
+    let root = project(
+        "eval_import_bare_const_local_beats_ambiguous_mlir",
+        r#"
+import left;
+import right;
+const K: i64 = 99;
+
+fn use_k() -> i64 {
+    return K;
+}
+
+#[test]
+fn local_beats_ambiguous_imports_lower() {
+    assert use_k() == 99, "local const lowers to its value";
+}
+"#,
+    );
+    fs::write(
+        root.join("src/left.mind"),
+        "export { K }\nconst K: i64 = 41;\n",
+    )
+    .expect("write left module");
+    fs::write(
+        root.join("src/right.mind"),
+        "export { K }\nconst K: i64 = 77;\n",
+    )
+    .expect("write right module");
+    let test_output = Command::new(common::mindc_bin())
+        .args(["test", "tests/import_eval.mind"])
+        .current_dir(&root)
+        .output()
+        .expect("run mindc test");
+    let test_text = output_text(&test_output);
+    assert!(test_output.status.success(), "{test_text}");
+    assert!(test_text.contains("1 passed; 0 failed"), "{test_text}");
+
+    let emit_output = Command::new(common::mindc_bin())
+        .args(["tests/import_eval.mind", "--emit-mlir"])
+        .current_dir(&root)
+        .output()
+        .expect("run mindc --emit-mlir");
+    let emit_text = output_text(&emit_output);
+    assert!(emit_output.status.success(), "{emit_text}");
+    assert!(
+        emit_text.contains("arith.constant 99") || emit_text.contains("const.i64 99"),
+        "local constant must inline its value 99, never 0 or an import:\n{emit_text}"
+    );
+    assert!(
+        !emit_text.contains("arith.constant 41") && !emit_text.contains("arith.constant 77"),
+        "local constant must shadow both imports (41, 77):\n{emit_text}"
+    );
+}
+
+#[test]
+fn bare_constant_two_imports_no_local_is_refused() {
+    // An ambiguity with NO local definition must still be refused: never
+    // resolved to either exporter, never falling through to the bare key.
+    let root = project(
+        "eval_import_bare_const_two_imports_no_local",
+        r#"
+import left;
+import right;
+
+#[test]
+fn ambiguous_without_local_is_refused() {
+    assert K == 41, "no local: must not pick an exporter";
+}
+"#,
+    );
+    fs::write(
+        root.join("src/left.mind"),
+        "export { K }\nconst K: i64 = 41;\n",
+    )
+    .expect("write left module");
+    fs::write(
+        root.join("src/right.mind"),
+        "export { K }\nconst K: i64 = 77;\n",
+    )
+    .expect("write right module");
+    let output = run(&root);
+    let text = output_text(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("0 passed; 1 failed"), "{text}");
+    assert!(
+        text.contains("ambiguous") || text.contains("unknown identifier") || text.contains("E2002"),
+        "ambiguity with no local must be refused, not silently resolved:\n{text}"
+    );
+}
+
+#[test]
 fn bare_constant_exported_by_two_imports_is_refused() {
     // A bare constant exported by two of a module's imports is refused ahead
     // of evaluation: the name is not uniquely visible, so name resolution
