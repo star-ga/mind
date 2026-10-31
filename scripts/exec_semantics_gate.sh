@@ -159,8 +159,7 @@ CRITICAL_pkg=(
   "module_size_ratchet 5"           # the 800-line ceiling and its budget table
 )
 
-QUARANTINE_exec=(
-)
+QUARANTINE_exec=()
 QUARANTINE_lowering=()
 QUARANTINE_pkg=()
 
