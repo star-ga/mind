@@ -80,11 +80,18 @@ pub(crate) fn is_memory_intrinsic(name: &str) -> bool {
     matches!(
         name,
         "__mind_alloc"
+            | "__mind_calloc"
+            | "__mind_realloc"
             | "__mind_free"
             | "__mind_load_i8"
             | "__mind_store_i8"
+            | "__mind_load_i16"
+            | "__mind_store_i16"
+            | "__mind_load_i32"
+            | "__mind_store_i32"
             | "__mind_load_i64"
             | "__mind_store_i64"
+            | "__mind_vec_zeroed"
     )
 }
 
@@ -95,11 +102,22 @@ pub(crate) fn is_memory_intrinsic(name: &str) -> bool {
 pub(crate) fn eval_intrinsic(name: &str, args: &[i64]) -> Result<i64, String> {
     match (name, args) {
         ("__mind_alloc", [n]) => alloc(*n),
+        ("__mind_calloc", [n]) => alloc(*n),
+        ("__mind_realloc", [addr, new_size]) => realloc(*addr, *new_size),
         ("__mind_free", [addr]) => free(*addr),
         ("__mind_load_i8", [addr]) => load_bytes::<1>(*addr).map(|b| b[0] as i64),
         ("__mind_store_i8", [addr, val]) => store_bytes(*addr, &[(*val & 0xFF) as u8]),
+        ("__mind_load_i16", [addr]) => load_bytes::<2>(*addr)
+            .map(i16::from_le_bytes)
+            .map(i64::from),
+        ("__mind_store_i16", [addr, val]) => store_bytes(*addr, &(*val as i16).to_le_bytes()),
+        ("__mind_load_i32", [addr]) => load_bytes::<4>(*addr)
+            .map(i32::from_le_bytes)
+            .map(i64::from),
+        ("__mind_store_i32", [addr, val]) => store_bytes(*addr, &(*val as i32).to_le_bytes()),
         ("__mind_load_i64", [addr]) => load_bytes::<8>(*addr).map(i64::from_le_bytes),
         ("__mind_store_i64", [addr, val]) => store_bytes(*addr, &val.to_le_bytes()),
+        ("__mind_vec_zeroed", [n]) => vec_zeroed(*n),
         _ => Err(format!(
             "{name}: wrong argument count for memory intrinsic ({} given)",
             args.len()
@@ -201,6 +219,55 @@ fn free(addr: i64) -> Result<i64, String> {
     })
 }
 
+/// `__mind_realloc` — grow or shrink an allocation. `addr == 0` is
+/// equivalent to `alloc(new_size)`. On success, copies min(old_size,
+/// new_size) bytes to the new address and returns it. The old allocation
+/// remains valid (bump-arena semantics: `free` is a no-op), matching the
+/// self-host compiler's arena.
+fn realloc(addr: i64, new_size: i64) -> Result<i64, String> {
+    if addr == 0 {
+        return alloc(new_size);
+    }
+    if new_size <= 0 {
+        return Ok(0);
+    }
+    let old_size = ALLOCS.with(|a| {
+        a.borrow()
+            .get(&addr)
+            .copied()
+            .ok_or_else(|| format!("__mind_realloc: invalid address {addr}"))
+    })?;
+    let new_addr = alloc(new_size)?;
+    let copy_len = old_size.min(new_size as usize);
+    if copy_len > 0 {
+        let data = load_bytes_dynamic(addr, copy_len)?;
+        store_bytes(new_addr, &data)?;
+    }
+    Ok(new_addr)
+}
+
+/// Bounds-checked read of `size` bytes at `addr` (dynamic-size variant).
+fn load_bytes_dynamic(addr: i64, size: usize) -> Result<Vec<u8>, String> {
+    MEM.with(|m| {
+        let mem = m.borrow();
+        let off = check_range(addr, size, mem.len())?;
+        Ok(mem[off..off + size].to_vec())
+    })
+}
+
+/// `__mind_vec_zeroed` — allocate `n` zeroed i64 elements and return the
+/// base address. Matches `runtime-support/mind_intrinsics.c`: a non-positive
+/// `n` allocates nothing and returns 0.
+fn vec_zeroed(n: i64) -> Result<i64, String> {
+    if n <= 0 {
+        return Ok(0);
+    }
+    let bytes = n
+        .checked_mul(8)
+        .ok_or_else(|| "__mind_vec_zeroed: size overflow".to_string())?;
+    alloc(bytes)
+}
+
 /// Bounds-checked read of `N` bytes at `addr`. Fail-closed on any
 /// out-of-range access.
 fn load_bytes<const N: usize>(addr: i64) -> Result<[u8; N], String> {
@@ -215,7 +282,7 @@ fn load_bytes<const N: usize>(addr: i64) -> Result<[u8; N], String> {
 
 /// Bounds-checked write of `bytes` at `addr`. Returns 0 (the native store
 /// intrinsics' return value). Fail-closed on any out-of-range access.
-fn store_bytes(addr: i64, bytes: &[u8]) -> Result<i64, String> {
+pub(crate) fn store_bytes(addr: i64, bytes: &[u8]) -> Result<i64, String> {
     MEM.with(|m| {
         let mut mem = m.borrow_mut();
         let off = check_range(addr, bytes.len(), mem.len())?;
