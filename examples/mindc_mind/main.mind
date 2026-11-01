@@ -42961,7 +42961,7 @@ pub fn nb_skip_to_semi(toks: Vec, pos: i64) -> i64 {
 
 // 1 iff the extern RETURN type at token `tpos` is a narrow-width scalar whose mic@3
 // return spelling is its OWN name (i8/i16/i32/u8/u16/u32/bool), NOT the collapsed
-// "i64". Mirrors extern_c_ret_token (src/eval/lower.rs): a narrow
+// "i64". Mirrors extern_ret_type_to_mlir_for (src/eval/lower.rs 10744): a narrow
 // SCALAR return declares its real width so the caller reads only the bits the callee
 // wrote (e.g. libc open/close/read `-> i32`). Params still collapse to i64 via
 // nb_type_cat; ONLY the return position preserves the narrow spelling. Return 0 for
@@ -43043,7 +43043,7 @@ pub fn nb_extern_scan(strbuf: i64, offs: i64, ccell: i64, subbase: i64, toks: Ve
         let rp: i64 = nb_extern_params(strbuf, offs, ccell, subbase, toks, tconst, pos + 3);
         let nafter: i64 = if tok_kind(toks, rp + 1) == tk_arrow() {
             // A narrow SCALAR return interns its REAL-width source spelling (e.g. "i32"),
-            // not the collapsed "i64" — mirroring extern_c_ret_token. Interning
+            // not the collapsed "i64" — mirroring extern_ret_type_to_mlir_for. Interning
             // the source span keeps the byte-exact type string the oracle's strtab carries.
             if nb_ret_is_narrow(subbase, toks, rp + 2) == 1 {
                 let _rn: i64 = intern_span(strbuf, offs, ccell, subbase, tok_lo(toks, rp + 2), tok_hi(toks, rp + 2));
