@@ -22,7 +22,7 @@ pub(crate) mod canonical_facts;
 mod cross_module_types;
 mod duplicate_structs;
 #[cfg(feature = "std-surface")]
-mod extern_declarations;
+pub(crate) mod extern_declarations;
 #[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
 pub mod nerve_lint;

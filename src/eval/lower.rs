@@ -1617,8 +1617,6 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             .entry(name)
             .or_insert((param_types, ret_type));
     }
-    #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
-    imported_extern_decls::prepend_imported_extern_decls(&mut ir);
     #[cfg(all(feature = "std-surface", not(feature = "cross-module-imports")))]
     for (name, param_types, ret_type) in crate::type_checker::bundled_std_fn_signatures()
         .iter()
@@ -1980,6 +1978,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
 
     #[cfg(feature = "ffi-c-user")]
     callable_exports::retain_c_abi_exports(&module.items, &mut ir);
+    imported_extern_decls::prepend_imported_extern_decls(&mut ir);
 
     ir
 }
@@ -9365,10 +9364,10 @@ pub(super) fn lower_expr_inner(
         // lowerer knows to emit `llvm.func @name(...)` declarations and to
         // use `llvm.call` (not `func.call`) for calls to those names.
         //
-        // Phase A lowers all integer/pointer parameter types to `i64` and
-        // f64 to `f64`; raw pointer types lower to `i64` (opaque address
-        // under the Option-C ABI convention already in use across the
-        // std-surface runtime bridge).
+        // Narrow integer parameters keep their source name (`i8`/`u32`/`bool`).
+        // Pointers lower to `!llvm.ptr`. The call site truncates to that width
+        // and the declaration carries signext or zeroext. f64 stays `f64`.
+        // An i64 parameter stays one i64 slot.
         //
         // Gated to `std-surface` — default builds never construct this.
         #[cfg(feature = "std-surface")]
@@ -12294,7 +12293,7 @@ pub(crate) fn extern_type_to_mlir_multi(
                 "f32" => return vec!["f32".to_string()],
                 "f64" => return vec!["f64".to_string()],
                 "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => {
-                    return vec!["i64".to_string()];
+                    return vec![name.clone()];
                 }
                 "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
                 _ => {}
@@ -12306,10 +12305,10 @@ pub(crate) fn extern_type_to_mlir_multi(
                 vec!["i64".to_string()]
             }
         }
-        // Built-in scalar integer/bool types all lower to i64.
-        TypeAnn::ScalarI32 | TypeAnn::ScalarI64 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
-            vec!["i64".to_string()]
-        }
+        TypeAnn::ScalarI64 => vec!["i64".to_string()],
+        TypeAnn::ScalarI32 => vec!["i32".to_string()],
+        TypeAnn::ScalarU32 => vec!["u32".to_string()],
+        TypeAnn::ScalarBool => vec!["bool".to_string()],
         // Fallback: any aggregate that slipped past the type-checker becomes i64.
         _ => vec!["i64".to_string()],
     }
@@ -12582,9 +12581,9 @@ pub(crate) fn extern_type_to_mlir_multi_for(
 /// struct classifier never emits `i8`/`i16`/`i32`, so a narrow-int return token
 /// on this path is unambiguously a scalar at the consuming call site.
 ///
-/// deferred: PARAM narrowing and the Win64 call-site extension are intentionally
-/// out of scope for this fix (audit #1 is the SCALAR SysV return map) — upgrade
-/// path: mirror this narrow-return/extend pair on the Win64 call path once a
+/// Params keep the scalar name (`i8`/`u32`/`bool`) so the call site can attach
+/// sign extension or zero extension. Win64 stays on its own classifier.
+/// Upgrade path: mirror the narrow extend pair on the Win64 call path once a
 /// Win64 narrow-return artifact is exercised end-to-end.
 #[cfg(feature = "std-surface")]
 pub(crate) fn extern_ret_type_to_mlir_for(

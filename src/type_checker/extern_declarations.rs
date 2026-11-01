@@ -108,4 +108,100 @@ pub(super) fn check(items: &[Node], src: &str, file: Option<&str>, errs: &mut Ve
     for item in items {
         visit(item, (&aliases, false), &mut seen, src, file, errs);
     }
+    #[cfg(feature = "cross-module-imports")]
+    refuse_non_primitive_imports(src, file, errs, &seen);
+}
+
+/// An imported extern may not name a struct or other non-primitive type.
+/// The importer does not own that layout, so classifying it would be a guess.
+#[cfg(feature = "cross-module-imports")]
+pub(crate) fn imported_type_is_primitive(ty: &TypeAnn) -> bool {
+    check_extern_type_with_repr_c(ty, &BTreeSet::new()).is_ok()
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn refuse_non_primitive_imports(
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Diagnostic>,
+    local_names: &BTreeMap<&str, Signature>,
+) {
+    let owner = crate::qualified_enums::current_module_path();
+    for ext in crate::project::active_module_table::visible_externs(owner.as_deref()) {
+        if local_names.contains_key(ext.name.as_str()) {
+            continue;
+        }
+        let mut bad = Vec::new();
+        for ty in ext.param_types.iter().chain(ext.ret_type.as_ref()) {
+            if !imported_type_is_primitive(ty) {
+                bad.push(match ty {
+                    TypeAnn::Named(name) => name.clone(),
+                    other => format!("{other:?}"),
+                });
+            }
+        }
+        if bad.is_empty() {
+            continue;
+        }
+        errs.push(diag_from_span(
+            src,
+            file,
+            format!(
+                "imported extern `{}` names a non-primitive type ({}); the imported C signature is refused",
+                ext.name,
+                bad.join(", ")
+            ),
+            crate::ast::Span::new(0, 0),
+            "safety::imported_extern_non_primitive",
+        ));
+    }
+}
+
+#[cfg(all(test, feature = "cross-module-imports"))]
+mod imported_primitive_tests {
+    use super::check;
+    use crate::project::active_module_table::{Guard, ResolvedImportsGuard};
+    use crate::project::module_table::build_module_table;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn imported_extern_refuses_a_non_primitive_type() {
+        let provider = crate::parser::parse(
+            "#[repr(C)] struct Pair { x: i64, y: i64 } extern \"C\" { fn take(p: Pair) -> i64; fn plain(n: i64) -> i64; }",
+        )
+        .unwrap();
+        let importer_src = "import ffi;\npub fn go() -> i64 { return take(plain(1)); }\n";
+        let importer = crate::parser::parse(importer_src).unwrap();
+        let _table = Guard::install(build_module_table(&[
+            ("crate.ffi".into(), &provider),
+            ("crate.user".into(), &importer),
+        ]));
+        let _owner = crate::qualified_enums::ModuleGuard::install("crate.user");
+        let _imports = ResolvedImportsGuard::install(BTreeMap::from([(
+            ("crate.user".to_string(), vec!["ffi".to_string()]),
+            "crate.ffi".to_string(),
+        )]));
+        let mut diags = Vec::new();
+        check(&importer.items, importer_src, Some("user.mind"), &mut diags);
+        let hits: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == "safety::imported_extern_non_primitive")
+            .collect();
+        assert_eq!(hits.len(), 1, "{diags:?}");
+        assert!(hits[0].message.contains("take"), "{diags:?}");
+        assert!(hits[0].message.contains("Pair"), "{diags:?}");
+        let ir = crate::eval::lower::lower_to_ir(&importer).expect("lower");
+        assert!(
+            ir.instrs.iter().any(|instr| {
+                matches!(instr, crate::ir::Instr::ExternFnDecl { name, .. } if name == "plain")
+            }),
+            "a called primitive import must still be classified"
+        );
+        assert!(
+            ir.instrs.iter().all(|instr| {
+                !matches!(instr, crate::ir::Instr::ExternFnDecl { name, .. } if name == "take")
+            }),
+            "a refused imported extern must not be classified"
+        );
+    }
 }

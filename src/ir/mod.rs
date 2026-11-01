@@ -874,25 +874,14 @@ pub enum Instr {
         /// (used by the escape checker).
         alloc_ids: Vec<ValueId>,
     },
-    /// RFC 0010 Phase A — declare an `extern "C"` function symbol.
-    ///
-    /// Carries the function signature for MLIR lowering: the name, arity
-    /// (number of concrete parameters), whether the last argument is a
-    /// varargs sentinel, and a simple type-tag vector for the parameters
-    /// and return type. Phase A supports only i64 (covers all integers and
-    /// pointer-as-i64) and f64 scalars in the MLIR emission path; the
-    /// caller is responsible for inserting any necessary bitcasts.
-    ///
-    /// This instruction carries no SSA `dst`; it is a pure declaration.
-    /// Gated to `std-surface` — default builds never construct this variant.
+    /// Declare an `extern "C"` symbol. No SSA destination. Gated.
     #[cfg(feature = "std-surface")]
     ExternFnDecl {
         /// The C symbol name (used verbatim in `llvm.func @name`).
         name: String,
-        /// MLIR type strings for each concrete parameter.
-        /// Phase A uses `"i64"` for all integer/pointer types and `"f64"` for f64.
-        /// Phase B uses `"!llvm.ptr"` for raw pointer types and per-SysV struct types.
-        /// Phase C uses Win64-classified types when `callconv` is `Win64`.
+        /// MLIR type tokens for each concrete parameter.
+        /// Narrow scalars keep the source name (`i8`/`u8`/`bool`) so signedness
+        /// survives to the declaration attribute. Pointers use `!llvm.ptr`.
         param_types: Vec<String>,
         /// MLIR type string for the return type, or `None` for void.
         ret_type: Option<String>,
@@ -1384,6 +1373,10 @@ pub struct IRModule {
     /// iteration deterministic.
     #[cfg(feature = "std-surface")]
     pub struct_field_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    /// Imported extern names. C export must not treat these as this module's
+    /// own foreign symbols. Not serialised.
+    #[cfg(feature = "std-surface")]
+    pub imported_extern_names: std::collections::BTreeSet<String>,
 }
 
 impl IRModule {
@@ -1417,6 +1410,8 @@ impl IRModule {
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             struct_field_types: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            imported_extern_names: std::collections::BTreeSet::new(),
         }
     }
 

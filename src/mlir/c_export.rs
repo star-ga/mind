@@ -102,7 +102,13 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
         .iter()
         .filter_map(|instr| match instr {
             #[cfg(feature = "std-surface")]
-            Instr::ExternFnDecl { name, .. } => Some(name.as_str()),
+            Instr::ExternFnDecl { name, .. } => {
+                if module.imported_extern_names.contains(name) {
+                    None
+                } else {
+                    Some(name.as_str())
+                }
+            }
             _ => None,
         })
         .collect();
@@ -253,6 +259,32 @@ mod tests {
             !out.contains("echo_i16"),
             "a foreign declaration must not grow a MIND invoke wrapper"
         );
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn imported_extern_is_not_this_modules_foreign_export() {
+        let mut m = module_with(&["open"], &[]);
+        m.imported_extern_names.insert("open".to_string());
+        m.instrs.push(Instr::ExternFnDecl {
+            name: "open".to_string(),
+            param_types: vec![
+                "!llvm.ptr".to_string(),
+                "i32".to_string(),
+                "i32".to_string(),
+            ],
+            ret_type: Some("i32".to_string()),
+            is_varargs: false,
+            vararg_hints: Vec::new(),
+            callconv: crate::ast::CallConv::C,
+        });
+        let mut out = String::new();
+        let err = emit_c_export_wrappers(&mut out, &m).unwrap_err();
+        assert!(
+            err.contains("does not name a lowered function"),
+            "an imported extern must not satisfy export {{ open }}: {err}"
+        );
+        assert!(out.is_empty(), "refused export must emit no wrapper");
     }
 
     #[test]

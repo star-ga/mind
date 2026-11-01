@@ -305,12 +305,29 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
             let Some(table) = table.as_ref() else {
                 return BTreeSet::new();
             };
+            let allow = |module: &str| {
+                captured
+                    .as_ref()
+                    .is_none_or(|targets| targets.contains(module))
+            };
+            let mut function_names = BTreeSet::<String>::new();
+            for (module, function) in table.all_exported_fn_refs() {
+                if allow(module) {
+                    function_names.insert(function.name.clone());
+                }
+            }
             let mut counts = BTreeMap::<String, u8>::new();
             for (module, name) in table.all_exported_symbol_refs() {
-                if captured
-                    .as_ref()
-                    .is_some_and(|targets| !targets.contains(module))
-                {
+                if !allow(module) {
+                    continue;
+                }
+                // An imported extern must not compete with a user `pub fn`
+                // of the same name. Count the function. Skip the extern.
+                let extern_only = table.get(module).is_some_and(|exports| {
+                    exports.exported_externs.iter().any(|ext| ext.name == name)
+                        && exports.exported_fns.iter().all(|fun| fun.name != name)
+                });
+                if extern_only && function_names.contains(name) {
                     continue;
                 }
                 let count = counts.entry(name.to_owned()).or_default();
@@ -545,8 +562,86 @@ mod extern_abi_tests {
                 ("crate.user".to_string(), vec!["ffi".to_string()]),
                 "crate.ffi".to_string(),
             )]));
-            let consumer = crate::parser::parse("import ffi;").unwrap();
+            let consumer =
+                crate::parser::parse("import ffi; pub fn use_same() -> i64 { return same(1); }")
+                    .unwrap();
             assert_eq!(extern_decl(&consumer), local, "imported {annotation}");
         }
+    }
+
+    #[test]
+    fn uncalled_import_adds_no_extern_decl() {
+        let provider = crate::parser::parse("extern \"C\" { fn same(x: i64) -> i32; }").unwrap();
+        let _table = Guard::install(build_module_table(&[("crate.ffi".into(), &provider)]));
+        let _owner = crate::qualified_enums::ModuleGuard::install("crate.user");
+        let _imports = ResolvedImportsGuard::install(BTreeMap::from([(
+            ("crate.user".to_string(), vec!["ffi".to_string()]),
+            "crate.ffi".to_string(),
+        )]));
+        let consumer = crate::parser::parse("import ffi;").unwrap();
+        let ir = crate::eval::lower::lower_to_ir(&consumer).expect("lower import");
+        let decls = ir.instrs.iter().filter(
+            |instr| matches!(instr, crate::ir::Instr::ExternFnDecl { name, .. } if name == "same"),
+        );
+        assert_eq!(
+            decls.count(),
+            0,
+            "an uncalled import must not declare the extern"
+        );
+    }
+
+    #[test]
+    fn owner_extern_is_not_declared_twice() {
+        let provider = crate::parser::parse(
+            "extern \"C\" { fn same(x: i64) -> i32; } pub fn use_same() -> i64 { return same(1); }",
+        )
+        .unwrap();
+        let _table = Guard::install(build_module_table(&[("crate.ffi".into(), &provider)]));
+        let _owner = crate::qualified_enums::ModuleGuard::install("crate.ffi");
+        let _imports = ResolvedImportsGuard::install(BTreeMap::new());
+        let found = extern_decl(&provider);
+        assert_eq!(found.0, vec!["i64".to_string()]);
+    }
+
+    #[test]
+    fn user_fn_close_stays_visible_beside_std_fs_extern() {
+        let fs = crate::parser::parse(
+            "extern \"C\" { fn close(fd: i32) -> i32; fn open(p: *const u8, flags: i32, mode: i32) -> i32; }",
+        )
+        .unwrap();
+        let user =
+            crate::parser::parse("import std.fs; pub fn close(fd: i64) -> i64 { return fd; }")
+                .unwrap();
+        let _table = Guard::install(build_module_table(&[
+            ("std.fs".into(), &fs),
+            ("crate.user".into(), &user),
+        ]));
+        let _imports = ResolvedImportsGuard::install(BTreeMap::from([
+            (
+                ("crate.user".to_string(), vec!["fs".to_string()]),
+                "std.fs".to_string(),
+            ),
+            (
+                ("crate.consumer".to_string(), vec!["user".to_string()]),
+                "crate.user".to_string(),
+            ),
+            (
+                ("crate.consumer".to_string(), vec!["fs".to_string()]),
+                "std.fs".to_string(),
+            ),
+        ]));
+        let symbols = visible_symbols(Some("crate.consumer"));
+        assert!(
+            symbols.contains("close"),
+            "pub fn close must not become ambiguous beside an imported extern"
+        );
+        assert!(
+            symbols.contains("open"),
+            "a unique extern must stay visible"
+        );
+        let resolved = lookup_visible_fn(Some("crate.consumer"), "close").expect("user fn");
+        assert_eq!(resolved.ret_type, Some(crate::ast::TypeAnn::ScalarI64));
+        let local = lookup_visible_fn(Some("crate.user"), "close").expect("owner fn");
+        assert_eq!(local.ret_type, Some(crate::ast::TypeAnn::ScalarI64));
     }
 }
