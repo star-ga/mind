@@ -113,15 +113,20 @@ pub fn t_error_check_fires() -> i64 {
 
 #[test]
 fn imported_extern_narrow_return_sign_zero_extension() {
-    imported_abi(false);
+    imported_abi(false, false);
 }
 
 #[test]
 fn explicitly_exported_extern_narrow_arguments_and_returns() {
-    imported_abi(true);
+    imported_abi(true, false);
 }
 
-fn imported_abi(explicit: bool) {
+#[test]
+fn unimported_extern_does_not_change_selected_abi() {
+    imported_abi(true, true);
+}
+
+fn imported_abi(explicit: bool, conflicting_sibling: bool) {
     let mindc = mindc_bin();
     if !mindc.exists() {
         crate::common::gate::skipped(
@@ -149,6 +154,13 @@ entry = "main.mind"
     let so = dir.join("mind_extern_narrow_ret.so");
     std::fs::write(&cstub, C_STUB).expect("write c stub");
     let (declarations, body) = MIND_SRC.split_once("pub fn t_i8_neg1").unwrap();
+    if conflicting_sibling {
+        std::fs::write(
+            dir.join("src/unrelated.mind"),
+            "export { ret_i32_neg1 }\nextern \"C\" { fn ret_i32_neg1() -> i64 }\n",
+        )
+        .unwrap();
+    }
     let exports = if explicit {
         "export { ret_i8_neg1, ret_i16_neg1, ret_i32_neg1, ret_u8_200, ret_u16_60000, ret_u32_max, ret_bool_true, ret_i32_neg1_dirty, echo_i8, echo_i16, echo_i32, echo_u32 }\n"
     } else {
