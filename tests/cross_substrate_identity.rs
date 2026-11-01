@@ -431,48 +431,13 @@ fn scratch() -> PathBuf {
 
 /// Write an embedded workload source into this target's scratch dir.
 fn scratch_src(name: &str, text: &str) -> PathBuf {
-    let p = scratch().join(name);
-    std::fs::write(&p, text).unwrap_or_else(|e| panic!("write {}: {e}", p.display()));
-    p
+    common::scratch_src_in(&scratch(), name, text)
 }
 
-/// Compile `src` to `scratch()/out_name` with `mindc --emit-shared`, quoting
-/// mindc's OWN stdout and stderr in the panic when it fails.
-///
-/// Eight builders each hand-rolled the same `Command…status()` +
-/// `assert!(status.success(), "…failed for the <x> workload")` pair. `status()`
-/// INHERITS the child's stderr, which bypasses libtest's capture and lands
-/// unattributed in the raw run output — never in the panic message, and never
-/// beside the test that failed. A run of this binary that reported nineteen
-/// failures, every one of them the bare sentence `mindc --emit-shared failed
-/// for the dot-q16 workload`, therefore carried no cause at all. `.output()`
-/// captures both streams and the assertion quotes them, so the next occurrence
-/// names itself.
+/// Compile `src` to `scratch()/out_name` with `mindc --emit-shared` (shared
+/// helper quotes mindc's own stdout/stderr on failure).
 fn emit_shared(workload: &str, src: &Path, out_name: &str, env: &[(&str, &str)]) -> PathBuf {
-    let out = scratch().join(out_name);
-    let mut cmd = Command::new(mindc_bin());
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let r = cmd
-        .args([
-            src.to_str().unwrap(),
-            "--emit-shared",
-            out.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap_or_else(|e| panic!("spawn mindc --emit-shared for the {workload} workload: {e}"));
-    assert!(
-        r.status.success(),
-        "mindc --emit-shared failed for the {workload} workload\n  \
-         src:    {}\n  out:    {}\n  status: {}\n  stdout: {}\n  stderr: {}",
-        src.display(),
-        out.display(),
-        r.status,
-        String::from_utf8_lossy(&r.stdout),
-        String::from_utf8_lossy(&r.stderr),
-    );
-    out
+    common::emit_shared_in(&scratch(), workload, src, out_name, env)
 }
 
 /// Compile SRC to a temp `.so` once for the whole test binary. Returns `None`
@@ -3264,5 +3229,57 @@ fn galperin_pi_reproducibility_gate() {
          the demo's headline identity broke"
     );
 
+    pin_or_bless(id, &canonical_hash(result), result);
+}
+
+// --- json-canon-kat workload (canonical JSON dump) -------------------------
+// The CRX-04 canonical dump: object keys sorted by UTF-16 code-unit order,
+// no whitespace, integers only, ensure_ascii. Three properties pinned:
+//   1. shuffled insertion order gives identical bytes
+//   2. depth cap refused (deeply-nested document does not dump)
+//   3. non-integer numbers refused
+// The i64 result is a polynomial hash of the canonical dump bytes, so the
+// cross-substrate reference hash proves the dump is byte-identical on
+// avx2 == neon.
+
+type JsonCanonFn = common::json_canon_kat::JsonCanonFn;
+
+/// Compile the json-canon-kat driver to a temp `.so` once. The driver imports
+/// std.json + std.json_canon and exposes `json_canon_kat(input_addr, input_len)`.
+fn build_json_canon_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        if !common::json_canon_kat::require_toolchain("cross_substrate_identity") {
+            return None;
+        }
+        let src_path = scratch_src(
+            "mind_xsi_json_canon_kat.mind",
+            common::json_canon_kat::DRIVER_SRC,
+        );
+        Some(emit_shared(
+            "json-canon-kat",
+            &src_path,
+            "mind_xsi_json_canon_kat.so",
+            &[],
+        ))
+    })
+    .as_ref()
+}
+
+#[test]
+fn json_canon_kat_reproducibility_gate() {
+    let id = "json-canon-kat";
+
+    let Some(so) = build_json_canon_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen json_canon_kat.so") };
+    let f: Symbol<JsonCanonFn> =
+        unsafe { lib.get(b"json_canon_kat").expect("json_canon_kat symbol") };
+
+    let result = common::json_canon_kat::check_properties(*f, id);
+
+    // Cross-substrate hash: the polynomial hash of the canonical dump bytes
+    // must be identical on avx2 and neon (RFC 0015 §3.1).
     pin_or_bless(id, &canonical_hash(result), result);
 }

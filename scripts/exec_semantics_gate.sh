@@ -124,6 +124,7 @@ CRITICAL_exec=(
   "harness_scratch_isolation 3"     # scratch isolation for every wedge gate's artifacts
   "module_size_ratchet 5"           # the 800-line ceiling and its budget table
   "mindc_cache_build_inputs 3"      # explicit entry, manifest exports, native sources
+  "open_error_kat 1"                # #290 negative file-open errors in debug + release
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.

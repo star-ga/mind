@@ -142,13 +142,21 @@ jobs:
           BEFORE: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
           BASE_REF: ${{ github.base_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
           zero=0000000000000000000000000000000000000000
           case "$EVENT" in
             pull_request)
+              # Judge exactly the PR's own commits: base..head of the PR
+              # branch. On this event HEAD is the synthetic integration merge
+              # commit (CI runner identity); ending the range at the PR head
+              # sha keeps that commit out of scope because of WHERE the range
+              # ends -- merge commits inside the range are still checked like
+              # any other commit, with no blanket merge skip.
               git fetch --no-tags --quiet origin "$BASE_REF" 2>/dev/null || true
-              RANGE="origin/${BASE_REF}..HEAD"
+              RANGE="${PR_BASE_SHA}..${PR_HEAD_SHA}"
               ;;
             push)
               # A brand-new branch (or a force-push whose before-sha no longer
