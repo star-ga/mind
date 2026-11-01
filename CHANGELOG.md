@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
   blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
@@ -18,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Project source walk**: The project-root tests/ directory is now left out of
+  the walked source set (nested tests/ directories stay in). Source sets and
+  cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
+- The C read_to_string record uses cap = size + 1, retries EINTR and returns the
+  empty record on a read error, matching std/fs.mind.
 - **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
   `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
   compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
