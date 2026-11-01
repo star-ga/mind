@@ -2182,17 +2182,10 @@ jobs:
     name: arch-mind governance gate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - name: Verify arch-mind access secrets are configured
-        env:
-          ARCH_MIND_REPO: ${{ secrets.ARCH_MIND_REPO }}
-          ARCH_MIND_TOKEN: ${{ secrets.ARCH_MIND_TOKEN }}
-        run: |
-          if [ -z "$ARCH_MIND_REPO" ] || [ -z "$ARCH_MIND_TOKEN" ]; then
-            echo "::error::arch-mind access secrets (ARCH_MIND_REPO, ARCH_MIND_TOKEN) are not configured; the governance gate cannot run (fail closed)"
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2203,13 +2196,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Checkout pinned arch-mind (fea599ec)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ secrets.ARCH_MIND_REPO }}
-          ref: fea599ec4d3695cb39754d0fd5dcc1f1fb101dab
-          path: .arch-mind-toolchain
-          token: ${{ secrets.ARCH_MIND_TOKEN }}
+      - name: Pull the pinned scanner
+        env:
+          IMAGE: ghcr.io/star-ga/arch-mind@sha256:IMAGE_DIGEST
+          SCANNER_ROOT: .arch-mind-toolchain
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          root="$SCANNER_ROOT"
+          rm -rf "$root"
+          mkdir -p "$root"
+          cid="$(docker create "$IMAGE")"
+          docker cp "$cid:/opt/arch-mind/." "$root/"
+          docker rm "$cid"
+          uid="$(id -u)"
+          gid="$(id -g)"
+          cat > "$root/bin/arch-mind" << EOF
+          #!/bin/bash
+          set -euo pipefail
+          exec docker run --rm --user ${uid}:${gid} -e PYTHONDONTWRITEBYTECODE=1 -e HOME=/tmp -v "\$PWD:\$PWD" -v /tmp:/tmp -w "\$PWD" "$IMAGE" "\$@"
+          EOF
+          chmod 0755 "$root/bin/arch-mind"
+          test -s "$root/tools/arch_mind_cli.py"
+          test -s "$root/tools/mind_reflect.py"
+          test -s "$root/tools/rules_engine.py"
+          test -x "$root/sidecar/target/release/arch-mind-sidecar"
 
       - name: Run arch-mind governance gate
         # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind fea599ec and publishes asserted=<N> directly
