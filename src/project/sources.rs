@@ -157,7 +157,11 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
                         continue;
                     }
                 };
-                if metadata.is_dir() && (entry_name == "target" || entry_name.starts_with('.')) {
+                if metadata.is_dir()
+                    && (entry_name == "target"
+                        || entry_name == "tests"
+                        || entry_name.starts_with('.'))
+                {
                     continue;
                 }
                 let target = path.canonicalize().map_err(|e| {
@@ -194,7 +198,13 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if name == "target" || name.starts_with('.') {
+                // `tests/` is the `mindc test` tree, not a program translation
+                // unit. The walk starts at the entry's parent, so an entry
+                // inside `tests/` still collects that directory's files; a
+                // program entry must not descend into it. A test module has
+                // no module-level output, and admitting it makes native
+                // compile fall back and the run refuse the whole project.
+                if name == "target" || name == "tests" || name.starts_with('.') {
                     continue;
                 }
                 collect_recursive(&path, root, sources, visited_dirs, visited_files)?;

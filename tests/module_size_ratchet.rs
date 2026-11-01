@@ -131,7 +131,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/eval/lower.rs", 12683),
     ("src/eval/mlir_build.rs", 927),
     ("src/eval/mlir_export.rs", 1447),
-    ("src/eval/mod.rs", 3920),
+    ("src/eval/mod.rs", 3918),
     ("src/eval/stdlib/tensor.rs", 1097),
     ("src/fmt/printer.rs", 2202),
     ("src/ir/compact/parse.rs", 967),

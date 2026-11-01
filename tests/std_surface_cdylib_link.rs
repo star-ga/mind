@@ -163,6 +163,9 @@ fn cdylib_has_no_undefined_mind_symbols() {
         // not a MIND-semantic symbol. Added when that intrinsic landed; the gate
         // caught it immediately, which is the list working as intended.
         "open",
+        // `close` is pulled in by `read_to_string` (runtime-support/mind_intrinsics.c),
+        // the same POSIX file-I/O class as `open`/`read`/`write` above.
+        "close",
         // THREADING — the deterministic multi-threaded BLAS kernels
         // (`__mind_blas_mt_dispatch`) spawn owner-computes thread bands, and
         // `sysconf` reads the CPU count to size them. Grouped and admitted as one
