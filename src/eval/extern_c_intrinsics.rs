@@ -405,9 +405,7 @@ mod tests {
         }
     }
 
-    fn scratch_file(name: &str, bytes: &[u8]) -> i64 {
-        let dir = std::env::temp_dir().join("mind-fake-fd");
-        let _ = std::fs::create_dir_all(&dir);
+    fn scratch_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> i64 {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         put_bytes(path.to_str().unwrap().as_bytes())
@@ -416,14 +414,15 @@ mod tests {
     #[test]
     fn reset_reclaims_descriptor_three() {
         interp_mem::reset();
-        let path = scratch_file("reset-a.txt", b"hello");
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_file(dir.path(), "reset-a.txt", b"hello");
         let first = call("open", &[path, 0, 0]).unwrap();
         assert_eq!(first, 3);
         let second = call("open", &[path, 0, 0]).unwrap();
         assert_eq!(second, 4);
         // Leave both open. The next test-shaped reset must hand out 3 again.
         interp_mem::reset();
-        let path = scratch_file("reset-b.txt", b"hello");
+        let path = scratch_file(dir.path(), "reset-b.txt", b"hello");
         assert_eq!(call("open", &[path, 0, 0]).unwrap(), 3);
     }
 
@@ -484,7 +483,8 @@ mod tests {
         let mut payload = vec![0u8; 65536];
         payload[0] = b'A';
         payload[1] = b'B';
-        let path = scratch_file("large.bin", &payload);
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_file(dir.path(), "large.bin", &payload);
         let fd = call("open", &[path, 0, 0]).unwrap();
         let buf = interp_mem::eval_intrinsic("__mind_alloc", &[4]).unwrap();
         assert_eq!(call("read", &[fd, buf, 1]).unwrap(), 1);
@@ -505,7 +505,8 @@ mod tests {
     #[test]
     fn lseek_overflow_returns_minus_one_and_keeps_the_cursor() {
         interp_mem::reset();
-        let path = scratch_file("seek.txt", b"hello");
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_file(dir.path(), "seek.txt", b"hello");
         let fd = call("open", &[path, 0, 0]).unwrap();
         assert_eq!(call("lseek", &[fd, 1, 0]).unwrap(), 1);
         expect_neg1(call("lseek", &[fd, i64::MAX, 1]));
@@ -514,9 +515,47 @@ mod tests {
     }
 
     #[test]
+    fn seek_end_overflow_leaves_the_cursor_unchanged() {
+        interp_mem::reset();
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_file(dir.path(), "seek-end.txt", b"hello");
+        let fd = call("open", &[path, 0, 0]).unwrap();
+        assert_eq!(call("lseek", &[fd, 1, 0]).unwrap(), 1);
+        // SEEK_END (whence 2). A non-empty file plus i64::MAX overflows.
+        expect_neg1(call("lseek", &[fd, i64::MAX, 2]));
+        assert_eq!(call("lseek", &[fd, 0, 1]).unwrap(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_reads_a_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        interp_mem::reset();
+        let dir = tempfile::tempdir().unwrap();
+        let mut raw = dir.path().as_os_str().as_bytes().to_vec();
+        raw.push(b'/');
+        raw.extend_from_slice(&[b'q', 0xFF, b'z']);
+        let file_path = std::path::PathBuf::from(OsString::from_vec(raw.clone()));
+        std::fs::write(&file_path, b"Z").unwrap();
+        let addr = put_bytes(&raw);
+        let fd = call("open", &[addr, 0, 0]).unwrap();
+        assert!(fd >= 3, "open returned {fd}");
+        let buf = interp_mem::eval_intrinsic("__mind_alloc", &[1]).unwrap();
+        assert_eq!(call("read", &[fd, buf, 1]).unwrap(), 1);
+        assert_eq!(
+            interp_mem::eval_intrinsic("__mind_load_i8", &[buf]).unwrap(),
+            i64::from(b'Z')
+        );
+        assert_eq!(call("close", &[fd]).unwrap(), 0);
+    }
+
+    #[test]
     fn read_to_string_cap_is_file_size_plus_one() {
         interp_mem::reset();
-        let path = scratch_file("four.txt", b"abcd");
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_file(dir.path(), "four.txt", b"abcd");
         let rec = call("read_to_string", &[path]).unwrap();
         assert_eq!(field(rec, 8), 4);
         assert_eq!(field(rec, 16), 5);
