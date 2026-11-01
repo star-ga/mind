@@ -31,9 +31,9 @@
 //! fail-closed error, never a silent garbage read.
 //!
 //! Load/store semantics mirror the C intrinsics exactly so interpreted
-//! results match compiled results: `load_i8` zero-extends to i64, stores
-//! return 0, i64 values are 8 bytes little-endian (both supported
-//! substrates are little-endian).
+//! results match compiled results: `load_i8`, `load_i16`, and `load_i32`
+//! zero-extend to i64, stores return 0, i64 values are 8 bytes
+//! little-endian (both supported substrates are little-endian).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -69,6 +69,10 @@ pub fn reset() {
     MEM.with(|m| m.borrow_mut().clear());
     ALLOCS.with(|a| a.borrow_mut().clear());
     STR_RECORDS.with(|s| s.borrow_mut().clear());
+    // The file-descriptor table lives beside the arena. A worker thread is
+    // reused across tests, so a descriptor left open must not change the
+    // next test's descriptor numbers.
+    super::extern_c_intrinsics::reset_fake_fds();
 }
 
 /// Is `name` one of the memory intrinsics this model interprets?
@@ -107,13 +111,9 @@ pub(crate) fn eval_intrinsic(name: &str, args: &[i64]) -> Result<i64, String> {
         ("__mind_free", [addr]) => free(*addr),
         ("__mind_load_i8", [addr]) => load_bytes::<1>(*addr).map(|b| b[0] as i64),
         ("__mind_store_i8", [addr, val]) => store_bytes(*addr, &[(*val & 0xFF) as u8]),
-        ("__mind_load_i16", [addr]) => load_bytes::<2>(*addr)
-            .map(i16::from_le_bytes)
-            .map(i64::from),
+        ("__mind_load_i16", [addr]) => load_bytes::<2>(*addr).map(|b| u16::from_le_bytes(b) as i64),
         ("__mind_store_i16", [addr, val]) => store_bytes(*addr, &(*val as i16).to_le_bytes()),
-        ("__mind_load_i32", [addr]) => load_bytes::<4>(*addr)
-            .map(i32::from_le_bytes)
-            .map(i64::from),
+        ("__mind_load_i32", [addr]) => load_bytes::<4>(*addr).map(|b| u32::from_le_bytes(b) as i64),
         ("__mind_store_i32", [addr, val]) => store_bytes(*addr, &(*val as i32).to_le_bytes()),
         ("__mind_load_i64", [addr]) => load_bytes::<8>(*addr).map(i64::from_le_bytes),
         ("__mind_store_i64", [addr, val]) => store_bytes(*addr, &val.to_le_bytes()),
@@ -291,6 +291,36 @@ pub(crate) fn store_bytes(addr: i64, bytes: &[u8]) -> Result<i64, String> {
     })
 }
 
+/// Bytes still inside the requested allocation that starts at or before
+/// `addr`. One-past-the-end is `0`. An address outside every allocation is
+/// an error, the same fail-closed rule as a load or a store.
+pub(crate) fn writable_suffix(addr: i64) -> Result<usize, String> {
+    if addr < MEM_BASE {
+        return Err(format!(
+            "memory access out of bounds: address {addr} below arena base {MEM_BASE}"
+        ));
+    }
+    let allocation = ALLOCS.with(|a| {
+        a.borrow()
+            .range(..=addr)
+            .next_back()
+            .map(|(&start, &extent)| (start, extent))
+    });
+    let Some((start, extent)) = allocation else {
+        return Err(format!(
+            "memory access out of bounds: address {addr} outside every requested allocation"
+        ));
+    };
+    let within = usize::try_from(addr - start)
+        .map_err(|_| format!("memory access out of bounds: invalid address {addr}"))?;
+    if within > extent {
+        return Err(format!(
+            "memory access out of bounds: address {addr} outside requested allocation at {start}"
+        ));
+    }
+    Ok(extent - within)
+}
+
 /// Map an intrinsic address to an arena offset, rejecting any access that is
 /// not fully inside the allocated region.
 fn check_range(addr: i64, size: usize, mem_len: usize) -> Result<usize, String> {
@@ -429,5 +459,88 @@ mod tests {
         // The bytes survive free (bump arena semantics).
         eval_intrinsic("__mind_store_i8", &[p, 97]).unwrap();
         assert_eq!(eval_intrinsic("__mind_load_i8", &[p]).unwrap(), 97);
+    }
+
+    #[test]
+    fn i32_load_zero_extends_and_does_not_clobber_neighbor() {
+        reset();
+        let buf = alloc(16).unwrap();
+        // Same contract as the i32 surface probe: two adjacent u32 stores,
+        // then a high-bit value that must come back as 4294967295, not -1.
+        eval_intrinsic("__mind_store_i32", &[buf, 2_864_434_397]).unwrap();
+        eval_intrinsic("__mind_store_i32", &[buf + 4, 287_454_020]).unwrap();
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[buf]).unwrap(),
+            2_864_434_397
+        );
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[buf + 4]).unwrap(),
+            287_454_020
+        );
+        eval_intrinsic("__mind_store_i32", &[buf + 8, 4_294_967_295]).unwrap();
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[buf + 8]).unwrap(),
+            4_294_967_295
+        );
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[buf]).unwrap(),
+            2_864_434_397
+        );
+        let mut mask = 0i64;
+        if eval_intrinsic("__mind_load_i32", &[buf]).unwrap() == 2_864_434_397
+            && eval_intrinsic("__mind_load_i32", &[buf + 4]).unwrap() == 287_454_020
+        {
+            mask += 1;
+        }
+        if eval_intrinsic("__mind_load_i32", &[buf + 8]).unwrap() == 4_294_967_295 {
+            mask += 2;
+        }
+        assert_eq!(mask, 3);
+    }
+
+    #[test]
+    fn i16_load_zero_extends_and_store_keeps_width() {
+        reset();
+        let p = alloc(4).unwrap();
+        eval_intrinsic("__mind_store_i16", &[p, 65535]).unwrap();
+        eval_intrinsic("__mind_store_i16", &[p + 2, 1]).unwrap();
+        assert_eq!(eval_intrinsic("__mind_load_i16", &[p]).unwrap(), 65535);
+        assert_eq!(eval_intrinsic("__mind_load_i16", &[p + 2]).unwrap(), 1);
+    }
+
+    #[test]
+    fn realloc_copies_bytes_and_zero_addr_allocates() {
+        reset();
+        let p = alloc(4).unwrap();
+        eval_intrinsic("__mind_store_i32", &[p, 2_864_434_397]).unwrap();
+        let q = eval_intrinsic("__mind_realloc", &[p, 8]).unwrap();
+        assert_ne!(q, 0);
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[q]).unwrap(),
+            2_864_434_397
+        );
+        assert_eq!(eval_intrinsic("__mind_load_i32", &[q + 4]).unwrap(), 0);
+        let fresh = eval_intrinsic("__mind_realloc", &[0, 4]).unwrap();
+        assert_ne!(fresh, 0);
+        assert_eq!(eval_intrinsic("__mind_load_i32", &[fresh]).unwrap(), 0);
+    }
+
+    #[test]
+    fn calloc_returns_zeroed_bytes() {
+        reset();
+        let p = eval_intrinsic("__mind_calloc", &[8]).unwrap();
+        assert_ne!(p, 0);
+        assert_eq!(eval_intrinsic("__mind_load_i64", &[p]).unwrap(), 0);
+    }
+
+    #[test]
+    fn vec_zeroed_is_zero_and_nonpositive_returns_zero() {
+        reset();
+        assert_eq!(eval_intrinsic("__mind_vec_zeroed", &[0]).unwrap(), 0);
+        assert_eq!(eval_intrinsic("__mind_vec_zeroed", &[-1]).unwrap(), 0);
+        let p = eval_intrinsic("__mind_vec_zeroed", &[2]).unwrap();
+        assert_ne!(p, 0);
+        assert_eq!(eval_intrinsic("__mind_load_i64", &[p]).unwrap(), 0);
+        assert_eq!(eval_intrinsic("__mind_load_i64", &[p + 8]).unwrap(), 0);
     }
 }
