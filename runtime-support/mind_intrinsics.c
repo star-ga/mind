@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -137,6 +138,8 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 // break byte-identity at the I/O boundary. POSIX has no such mode, so the two
 // branches agree only with it set.
 #  define MIND_OPEN_RDONLY(p)      _open((p), _O_RDONLY | _O_BINARY)
+#  define MIND_LSEEK(fd, off, wh)  ((int64_t)_lseeki64((fd), (long long)(off), (wh)))
+#  define MIND_CLOSE(fd)           _close((fd))
 #else
 #  include <unistd.h>
 #  include <fcntl.h>
@@ -145,6 +148,8 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 #  define MIND_PREAD(fd, b, c, o)  pread((fd), (b), (c), (off_t)(o))
 #  define MIND_PWRITE(fd, b, c, o) pwrite((fd), (b), (c), (off_t)(o))
 #  define MIND_OPEN_RDONLY(p)      open((p), O_RDONLY)
+#  define MIND_LSEEK(fd, off, wh)  ((int64_t)lseek((fd), (off_t)(off), (wh)))
+#  define MIND_CLOSE(fd)           close((fd))
 #endif
 
 // ---------------------------------------------------------------------------
@@ -883,6 +888,63 @@ MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
     __mind_store_i64(rec,      new_base);
     __mind_store_i64(rec + 8,  len + 1);
     __mind_store_i64(rec + 16, new_cap);
+    return rec;
+}
+
+
+// read_to_string — whole file as a heap record [addr, len, cap].
+//
+// Same rule as std/fs.mind: size the file, allocate file_sz + 1 bytes, read
+// that many bytes, store a trailing NUL, and publish cap = file_sz + 1.
+// A null path, a failed open, a failed size, or a real read error returns
+// the still-zero record and does not publish a partial buffer. EINTR is
+// retried. MIND_EXPORT_WEAK so a linked std/fs object overrides this
+// fallback; without that object this is the definition that links.
+MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
+    int64_t rec = __mind_alloc(24);
+    __mind_store_i64(rec,      0);
+    __mind_store_i64(rec + 8,  0);
+    __mind_store_i64(rec + 16, 0);
+
+    if (path_addr == 0) return rec;
+    const char *path = (const char *)(uintptr_t)path_addr;
+    int fd = MIND_OPEN_RDONLY(path);
+    if (fd < 0) return rec;
+
+    int64_t file_sz = MIND_LSEEK(fd, 0, SEEK_END);
+    if (file_sz < 0 || file_sz == INT64_MAX) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
+    if (MIND_LSEEK(fd, 0, SEEK_SET) < 0) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
+
+    int64_t buf = __mind_alloc(file_sz + 1);
+    if (buf == 0) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
+
+    int64_t n = 0;
+    while (n < file_sz) {
+        size_t chunk = (size_t)1 << 20;
+        if ((int64_t)chunk > file_sz - n) chunk = (size_t)(file_sz - n);
+        int64_t got = (int64_t)MIND_READ(fd, (void *)(uintptr_t)(buf + n), chunk);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            MIND_CLOSE(fd);
+            return rec;
+        }
+        if (got == 0) break;
+        n += got;
+    }
+    MIND_CLOSE(fd);
+    __mind_store_i8(buf + n, 0);
+    __mind_store_i64(rec,      buf);
+    __mind_store_i64(rec + 8,  n);
+    __mind_store_i64(rec + 16, file_sz + 1);
     return rec;
 }
 
