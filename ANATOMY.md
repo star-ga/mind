@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1932 | **Est. tokens:** ~3,772,060
-**Generated:** 2026-11-01 06:59 UTC
+**Files:** 1934 | **Est. tokens:** ~3,773,037
+**Generated:** 2026-11-01 07:04 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 41 | ~116,062 |
+| `docs/` | 41 | ~116,084 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 45 | ~153,082 |
+| `src/eval/` | 46 | ~153,692 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,774 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~74,446 |
+| `src/project/` | 22 | ~74,791 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -464,7 +464,7 @@
 
 - `byte-store-migration.md` (~3357 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~747 tok, large) — MIND CLI Reference
-- `compiler-imported-extern-abi-20261029.md` (~2310 tok, huge) — Imported extern ABI validation — 2026-10-29
+- `compiler-imported-extern-abi-20261029.md` (~2332 tok, huge) — Imported extern ABI validation — 2026-10-29
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
@@ -1300,6 +1300,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
+- `imported_extern_decls.rs` (~610 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1486,10 +1487,11 @@
 - `canonical_bridge.rs` (~5927 tok, huge) — Copyright 2026 STARGA Inc.
 - `compiled_sources.rs` (~530 tok, large) — Copyright 2025 STARGA Inc.
 - `embedded_entry.rs` (~670 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `exported_extern.rs` (~1204 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `host_triple.rs` (~992 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `module_table.rs` (~9423 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.

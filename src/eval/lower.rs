@@ -46,6 +46,9 @@ mod canonical_lowering;
 #[cfg(feature = "cross-module-imports")]
 #[path = "canonical_producers.rs"]
 mod canonical_producers;
+#[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
+#[path = "imported_extern_decls.rs"]
+mod imported_extern_decls;
 #[path = "lower_entry.rs"]
 mod lower_entry;
 #[path = "lower_import_consts.rs"]
@@ -1601,60 +1604,21 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // definition shadows an import), so this only fills in genuinely-external
     // callees. The single-file std-surface path contributes bundled metadata;
     // `--no-default-features` has neither source. No guessed names are involved.
-    // The MLIR `func.call` typing, the callee return-kind and the narrow-int
-    // param-kind seeding are all derived from
-    // `fn_signatures` in `lower_ir_to_mlir_with_entry`, so no emitter change is
-    // needed. An imported callee that the type-checker resolved is present here
-    // (same thread-local project table). A callee with a captured signature is
-    // typed from it; one whose export block captured no signature stays all-i64
-    // but then hits a LOUD mlir-opt reject on a real f64 arg/return — a hard
-    // error, never a silent miscompile. A genuinely undefined callee is already a
-    // hard type-checker error before lowering.
+    // `func.call` typing, the callee return-kind and the narrow-int param-kind
+    // seeding come from `fn_signatures` in `lower_ir_to_mlir_with_entry`.
+    // An imported callee that the type-checker resolved is present here.
+    // A callee with a captured signature is typed from it; one whose export
+    // block captured no signature stays all-i64 and then hits a loud mlir-opt
+    // reject on a real f64 arg or return. A genuinely undefined callee is
+    // already a hard type-checker error before lowering.
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
     for (name, param_types, ret_type) in crate::type_checker::cm_all_imported_fn_signatures() {
         ir.fn_signatures
             .entry(name)
             .or_insert((param_types, ret_type));
     }
-    // Imported `extern "C"` declarations are not MIND functions. Emitting them
-    // as `fn_signatures` would `func.call` them and widen a narrow C return
-    // to i64. `ExternFnDecl` is what selects `llvm.call` and the C return map.
-    // A local function of the same name keeps the MIND signature. A local
-    // extern block later in this module overwrites this decl when it is lowered.
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
-    {
-        let imported_externs = crate::project::active_module_table::visible_externs(
-            crate::qualified_enums::current_module_path().as_deref(),
-        );
-        let repr_c = ir.repr_c_structs.clone();
-        let mut decls = Vec::new();
-        for ext in imported_externs {
-            if ir.fn_signatures.contains_key(&ext.name) {
-                continue;
-            }
-            let effective_callconv = resolve_callconv(ext.callconv);
-            let param_types: Vec<String> = ext
-                .param_types
-                .iter()
-                .flat_map(|ty| extern_type_to_mlir_multi_for(ty, &repr_c, effective_callconv))
-                .collect();
-            let ret_type = ext
-                .ret_type
-                .as_ref()
-                .map(|ty| extern_ret_type_to_mlir_for(ty, &repr_c, effective_callconv));
-            decls.push(crate::ir::Instr::ExternFnDecl {
-                name: ext.name,
-                param_types,
-                ret_type,
-                is_varargs: ext.is_varargs,
-                vararg_hints: Vec::new(),
-                callconv: effective_callconv,
-            });
-        }
-        for decl in decls.into_iter().rev() {
-            ir.instrs.insert(0, decl);
-        }
-    }
+    imported_extern_decls::prepend_imported_extern_decls(&mut ir);
     #[cfg(all(feature = "std-surface", not(feature = "cross-module-imports")))]
     for (name, param_types, ret_type) in crate::type_checker::bundled_std_fn_signatures()
         .iter()
