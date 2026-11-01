@@ -83,6 +83,12 @@ pub(crate) fn resolve_project_entry(project_root: &Path, entry: &str) -> Result<
     Ok(path)
 }
 
+/// True only for the project-root `tests` directory, the `mindc test` tree.
+/// A nested directory named `tests` is program source.
+fn is_project_root_tests(path: &Path, root: &Path) -> bool {
+    path == root.join("tests")
+}
+
 /// Collect all .mind source files from a project.
 pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>> {
     let (root, entry_path) = project_path(project_root, entry, "manifest entry")?;
@@ -159,7 +165,7 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
                 };
                 if metadata.is_dir()
                     && (entry_name == "target"
-                        || entry_name == "tests"
+                        || is_project_root_tests(&path, root)
                         || entry_name.starts_with('.'))
                 {
                     continue;
@@ -198,13 +204,12 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                // `tests/` is the `mindc test` tree, not a program translation
-                // unit. The walk starts at the entry's parent, so an entry
-                // inside `tests/` still collects that directory's files; a
-                // program entry must not descend into it. A test module has
-                // no module-level output, and admitting it makes native
-                // compile fall back and the run refuse the whole project.
-                if name == "target" || name == "tests" || name.starts_with('.') {
+                // `<project_root>/tests` is the `mindc test` tree, not a program
+                // translation unit. A nested directory that is also named
+                // `tests` is ordinary program source and stays in the walk.
+                // The walk starts at the entry's parent, so an entry inside
+                // the project-root tests tree still collects that directory.
+                if name == "target" || is_project_root_tests(&path, root) || name.starts_with('.') {
                     continue;
                 }
                 collect_recursive(&path, root, sources, visited_dirs, visited_files)?;
@@ -498,5 +503,55 @@ mod tests {
             }
         }
         assert_eq!(diagnostics[0], diagnostics[1]);
+    }
+
+    #[test]
+    fn skips_real_project_root_tests_and_keeps_nested_tests() {
+        let project = tempdir().expect("temp project");
+        let root = project.path();
+        fs::create_dir_all(root.join("src/tests")).expect("nested tests");
+        fs::create_dir_all(root.join("tests")).expect("root tests");
+        fs::write(root.join("main.mind"), "").expect("entry");
+        fs::write(root.join("src/tests/kept.mind"), "").expect("nested source");
+        fs::write(root.join("tests/hidden.mind"), "").expect("harness file");
+
+        let walked = collect_sources(root, "main.mind").expect("walk");
+        assert!(
+            walked.iter().any(|path| path.ends_with("kept.mind")),
+            "nested tests directory was dropped: {walked:?}"
+        );
+        assert!(
+            walked.iter().any(|path| path.ends_with("main.mind")),
+            "entry missing: {walked:?}"
+        );
+        assert!(
+            walked.iter().all(|path| !path.ends_with("hidden.mind")),
+            "project-root tests directory was compiled: {walked:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_project_root_tests_symlink_and_keeps_nested_tests() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempdir().expect("temp project");
+        let outside = tempdir().expect("outside");
+        let root = project.path();
+        fs::write(outside.path().join("hidden.mind"), "").expect("hidden source");
+        fs::create_dir_all(root.join("src/tests")).expect("nested tests");
+        fs::write(root.join("main.mind"), "").expect("entry");
+        fs::write(root.join("src/tests/kept.mind"), "").expect("nested source");
+        symlink(outside.path(), root.join("tests")).expect("root tests link");
+
+        let walked = collect_sources(root, "main.mind").expect("walk");
+        assert!(
+            walked.iter().any(|path| path.ends_with("kept.mind")),
+            "nested tests directory was dropped: {walked:?}"
+        );
+        assert!(
+            walked.iter().all(|path| !path.ends_with("hidden.mind")),
+            "project-root tests link was followed: {walked:?}"
+        );
     }
 }

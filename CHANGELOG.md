@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Project source walk skips only the project-root tests directory**: a nested
+  directory named `tests` stays in the program source set (`src/project/sources.rs`).
+  The `mindc test` tree at the project root is still excluded.
 - **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
   `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
   compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
