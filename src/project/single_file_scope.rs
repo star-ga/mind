@@ -90,6 +90,12 @@ impl ProjectScope {
     pub fn has_linked_siblings(&self) -> bool {
         self.linked.len() > 1
     }
+    /// Project enum registry. The test runner reinstalls it on the worker
+    /// before it re-parses the entry, so `Enum.Variant` becomes the same
+    /// `Enum::Variant` ident the checker already accepts.
+    pub(crate) fn enums(&self) -> &crate::ir::GlobalEnums {
+        &self.enums
+    }
     /// Resolve a source-level import through the same canonical module table
     /// used by project checking and native compilation.
     pub(crate) fn resolve_import_path(&self, owner: &str, path: &[String]) -> Option<&str> {
