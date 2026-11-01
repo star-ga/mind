@@ -1978,6 +1978,8 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
 
     #[cfg(feature = "ffi-c-user")]
     callable_exports::retain_c_abi_exports(&module.items, &mut ir);
+    // The helper module is compiled only when both features are on.
+    #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
     imported_extern_decls::prepend_imported_extern_decls(&mut ir);
 
     ir

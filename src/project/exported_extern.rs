@@ -67,8 +67,8 @@ pub(super) fn unique_consistent<'a>(
         }
     }
     grouped
-        .into_iter()
-        .filter_map(|(_, group)| {
+        .into_values()
+        .filter_map(|group| {
             let first = *group.first()?;
             group.iter().all(|ext| *ext == first).then(|| first.clone())
         })
