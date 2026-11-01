@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1929 | **Est. tokens:** ~3,764,846
-**Generated:** 2026-11-01 06:49 UTC
+**Files:** 1929 | **Est. tokens:** ~3,765,527
+**Generated:** 2026-11-01 06:54 UTC
 
 ## Token Budget Guide
 
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,774 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~72,420 |
+| `src/project/` | 21 | ~73,101 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -1477,7 +1477,7 @@
 - `pipeline.rs` (~7372 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `active_module_table.rs` (~3677 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `active_module_table.rs` (~4192 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `artifact.rs` (~1045 tok, large) — Copyright 2025 STARGA Inc.
 - `build_input_snapshot.rs` (~4632 tok, huge) — Copyright 2025 STARGA Inc.
 - `build_lock.rs` (~1630 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1488,7 +1488,7 @@
 - `host_triple.rs` (~992 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `module_table.rs` (~9198 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~9364 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
