@@ -38,6 +38,7 @@ pub mod conv2d_grad;
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
 mod enum_cmp;
+pub(crate) mod extern_c_intrinsics;
 pub mod interp_mem;
 pub mod ir_interp;
 pub mod lower;
@@ -1316,13 +1317,10 @@ pub(crate) fn eval_value_expr_mode(
                 }
                 return declared_width::narrow_return(&func.ret_type, callee, result);
             }
-            // Deterministic linear-memory intrinsics (`__mind_alloc` /
-            // `__mind_load_*` / `__mind_store_*` / `__mind_free`): interpreted
-            // over the thread-local arena (`interp_mem`) so `mindc test` can
-            // run real memory-using MIND (std.sha256 / std.json byte buffers)
-            // without the native runtime. All are `(i64...) -> i64` by ABI.
-            // (`fn_table_install` skips `__mind_*` names, so a user fn can
-            // never shadow these — E2023 defence-in-depth.)
+            // Linear-memory intrinsics (`__mind_alloc`, load, store, free) run
+            // on the thread-local arena so `mindc test` executes memory-using
+            // MIND without the native runtime. All are `(i64...) -> i64`.
+            // `fn_table_install` skips `__mind_*` names (E2023 defence-in-depth).
             if interp_mem::is_memory_intrinsic(callee) {
                 let mut int_args = Vec::with_capacity(args.len());
                 for arg in args {
@@ -1339,7 +1337,10 @@ pub(crate) fn eval_value_expr_mode(
                     .map(Value::Int)
                     .map_err(EvalError::UnsupportedMsg);
             }
-            stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
+            extern_c_intrinsics::dispatch(callee, args, env, tensor_env, mode.clone())
+                .unwrap_or_else(|| {
+                    stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
+                })
         }
         Node::CallTensorSum {
             x, axes, keepdims, ..
