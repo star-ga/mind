@@ -35,6 +35,10 @@ use std::process::Command;
 
 const C_STUB: &str = r#"
 #include <stdint.h>
+int8_t echo_i8(int8_t x) { return x; }
+int16_t echo_i16(int16_t x) { return x; }
+int32_t echo_i32(int32_t x) { return x; }
+uint32_t echo_u32(uint32_t x) { return x; }
 int8_t   ret_i8_neg1(void)   { return -1; }
 int16_t  ret_i16_neg1(void)  { return -1; }
 int32_t  ret_i32_neg1(void)  { return -1; }
@@ -55,6 +59,10 @@ int32_t ret_i32_neg1_dirty(void) {
 
 const MIND_SRC: &str = r#"
 extern "C" {
+    fn echo_i8(x: i8) -> i8
+    fn echo_i16(x: i16) -> i16
+    fn echo_i32(x: i32) -> i32
+    fn echo_u32(x: u32) -> u32
     fn ret_i8_neg1() -> i8
     fn ret_i16_neg1() -> i16
     fn ret_i32_neg1() -> i32
@@ -68,6 +76,10 @@ extern "C" {
 pub fn t_i8_neg1() -> i64 {
     return ret_i8_neg1()
 }
+pub fn t_arg_i8() -> i64 { return echo_i8(0 - 7); }
+pub fn t_arg_i16() -> i64 { return echo_i16(0 - 300); }
+pub fn t_arg_i32() -> i64 { return echo_i32(0 - 70000); }
+pub fn t_arg_u32() -> i64 { return echo_u32(4294967295); }
 pub fn t_i16_neg1() -> i64 {
     return ret_i16_neg1()
 }
@@ -101,6 +113,15 @@ pub fn t_error_check_fires() -> i64 {
 
 #[test]
 fn imported_extern_narrow_return_sign_zero_extension() {
+    imported_abi(false);
+}
+
+#[test]
+fn explicitly_exported_extern_narrow_arguments_and_returns() {
+    imported_abi(true);
+}
+
+fn imported_abi(explicit: bool) {
     let mindc = mindc_bin();
     if !mindc.exists() {
         crate::common::gate::skipped(
@@ -128,7 +149,12 @@ entry = "main.mind"
     let so = dir.join("mind_extern_narrow_ret.so");
     std::fs::write(&cstub, C_STUB).expect("write c stub");
     let (declarations, body) = MIND_SRC.split_once("pub fn t_i8_neg1").unwrap();
-    std::fs::write(dir.join("src/ffi.mind"), declarations).unwrap();
+    let exports = if explicit {
+        "export { ret_i8_neg1, ret_i16_neg1, ret_i32_neg1, ret_u8_200, ret_u16_60000, ret_u32_max, ret_bool_true, ret_i32_neg1_dirty, echo_i8, echo_i16, echo_i32, echo_u32 }\n"
+    } else {
+        ""
+    };
+    std::fs::write(dir.join("src/ffi.mind"), format!("{exports}{declarations}")).unwrap();
     std::fs::write(&src, format!("import ffi;\npub fn t_i8_neg1{body}")).expect("write mind src");
     std::fs::write(dir.join("main.mind"), "fn main() -> i64 { return 0; }").unwrap();
 
@@ -169,7 +195,7 @@ entry = "main.mind"
          lib = ctypes.CDLL(r'{so}')\n\
          checks = [('t_i8_neg1', -1), ('t_i16_neg1', -1), ('t_i32_neg1', -1), \
          ('t_u8_200', 200), ('t_u16_60000', 60000), ('t_u32_max', 4294967295), \
-         ('t_bool_true', 1), ('t_i32_dirty', -1), ('t_error_check_fires', 1)]\n\
+         ('t_bool_true', 1), ('t_i32_dirty', -1), ('t_error_check_fires', 1), ('t_arg_i8', -7), ('t_arg_i16', -300), ('t_arg_i32', -70000), ('t_arg_u32', 4294967295)]\n\
          call = lambda f: (setattr(f, 'restype', ctypes.c_int64), f())[1]\n\
          results = [(name, want, call(getattr(lib, name))) for name, want in checks]\n\
          bad = [r for r in results if r[1] != r[2]]\n\
