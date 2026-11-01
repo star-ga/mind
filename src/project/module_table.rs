@@ -50,10 +50,11 @@ use crate::ast::{Module, Node, TypeAnn};
 /// types so the import site can validate arity and per-arg types
 /// against the declaration in the source module.
 ///
-/// Only `Node::FnDef` populates this; struct / const / enum exports
-/// are name-only. When the imported module has an explicit `export { ... }`
-/// block (RFC 0002 surface), signatures are captured only for names that the
-/// block exports and that resolve to module-local functions.
+/// `Node::FnDef` and `extern "C"` function declarations populate this;
+/// struct / const / enum exports are name-only. When the imported module has
+/// an explicit `export { ... }` block (RFC 0002 surface), signatures are
+/// captured only for names that the block exports and that resolve to
+/// module-local functions or extern declarations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportedFn {
     pub name: String,
@@ -94,9 +95,24 @@ pub struct ModuleExports {
     /// auto-export path (the `export { ... }` block path stays
     /// empty by construction).
     pub exported_fns: Vec<ExportedFn>,
+    /// `extern "C"` declarations. Kept off `exported_fns` so a cross-module
+    /// call is not typed as an ordinary MIND `func.call`. The lowerer emits
+    /// `ExternFnDecl` from this list and uses the C return map.
+    pub exported_externs: Vec<ExportedExtern>,
     /// Type-only enum metadata. Kept separate from `exported` so enum types
     /// never become callable/runtime values merely because they are public.
     pub exported_enums: Vec<ExportedEnum>,
+}
+
+/// An exported `extern "C"` declaration, including the calling convention
+/// the ordinary function signature does not carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedExtern {
+    pub name: String,
+    pub callconv: crate::ast::CallConv,
+    pub is_varargs: bool,
+    pub param_types: Vec<TypeAnn>,
+    pub ret_type: Option<TypeAnn>,
 }
 
 /// Maps dotted module path -> its exported surface.
@@ -184,6 +200,30 @@ impl ModuleTable {
     /// iteration winner for a cross-module ABI. Returns `None` if the name
     /// resolves only to a struct / const / enum or to an `export { ... }`-
     /// block name without a captured signature.
+    /// Extern declarations with one signature across the table.
+    /// Two owners, or two different records, omit the name. Callers must
+    /// not pick one. These are not ordinary MIND functions.
+    pub fn unique_exported_externs(&self) -> Vec<ExportedExtern> {
+        let mut keys: Vec<&String> = self.modules.keys().collect();
+        keys.sort();
+        let mut grouped: std::collections::BTreeMap<&str, Vec<&ExportedExtern>> =
+            std::collections::BTreeMap::new();
+        for key in keys {
+            if let Some(module) = self.modules.get(key) {
+                for ext in &module.exported_externs {
+                    grouped.entry(ext.name.as_str()).or_default().push(ext);
+                }
+            }
+        }
+        grouped
+            .into_iter()
+            .filter_map(|(_, group)| {
+                let first = *group.first()?;
+                group.iter().all(|ext| *ext == first).then(|| first.clone())
+            })
+            .collect()
+    }
+
     pub fn lookup_imported_fn(&self, name: &str) -> Option<&ExportedFn> {
         let mut keys: Vec<&String> = self.modules.keys().collect();
         keys.sort();
@@ -370,7 +410,33 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
     // consumer cannot mistake `Items` for an unknown scalar annotation.
     let aliases = crate::eval::type_aliases::LocalTypeAliases::new(&ast.items);
 
+    fn remember_extern_fn(
+        exported_externs: &mut Vec<ExportedExtern>,
+        aliases: &crate::eval::type_aliases::LocalTypeAliases,
+        callconv: crate::ast::CallConv,
+        function: &crate::ast::ExternFn,
+    ) {
+        if exported_externs
+            .iter()
+            .any(|found| found.name == function.name)
+        {
+            return;
+        }
+        exported_externs.push(ExportedExtern {
+            name: function.name.clone(),
+            callconv,
+            is_varargs: function.is_varargs,
+            param_types: function
+                .params
+                .iter()
+                .map(|param| aliases.resolve(&param.ty))
+                .collect(),
+            ret_type: function.ret_type.as_ref().map(|ty| aliases.resolve(ty)),
+        });
+    }
+
     let mut exported: Vec<String> = Vec::new();
+    let mut exported_externs: Vec<ExportedExtern> = Vec::new();
     let mut exported_fns: Vec<ExportedFn> = Vec::new();
     let mut has_explicit_export = false;
     for item in &items {
@@ -389,16 +455,31 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
         // but no signature, so a sibling's `f(...)` call stayed unresolved.
         let exported_set: std::collections::BTreeSet<&String> = exported.iter().collect();
         for item in &items {
-            if let Node::FnDef(fd, _) = item {
-                let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
-                if exported_set.contains(name) {
-                    exported_fns.push(ExportedFn {
-                        name: name.clone(),
-                        type_params: fd.type_params.clone(),
-                        param_types: params.iter().map(|p| aliases.resolve(&p.ty)).collect(),
-                        ret_type: ret_type.as_ref().map(|ty| aliases.resolve(ty)),
-                    });
+            match item {
+                Node::FnDef(fd, _) => {
+                    let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
+                    if exported_set.contains(name) {
+                        exported_fns.push(ExportedFn {
+                            name: name.clone(),
+                            type_params: fd.type_params.clone(),
+                            param_types: params.iter().map(|p| aliases.resolve(&p.ty)).collect(),
+                            ret_type: ret_type.as_ref().map(|ty| aliases.resolve(ty)),
+                        });
+                    }
                 }
+                Node::ExternBlock { callconv, fns, .. } => {
+                    for function in fns {
+                        if exported_set.contains(&function.name) {
+                            remember_extern_fn(
+                                &mut exported_externs,
+                                &aliases,
+                                *callconv,
+                                function,
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     } else {
@@ -435,6 +516,14 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                 // use of a sibling type/alias goes through type resolution, not
                 // this value-ident surface.
                 Node::Const { name, .. } => exported.push(name.clone()),
+                Node::ExternBlock { callconv, fns, .. } => {
+                    for function in fns {
+                        if !exported.iter().any(|name| name == &function.name) {
+                            exported.push(function.name.clone());
+                        }
+                        remember_extern_fn(&mut exported_externs, &aliases, *callconv, function);
+                    }
+                }
                 _ => {}
             }
         }
@@ -446,6 +535,10 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
     // unique within a single module (the parser rejects duplicates),
     // so this is also a stable order.
     exported_fns.sort_by(|a, b| a.name.cmp(&b.name));
+    // A MIND function and an extern of the same name are not one ABI.
+    // Drop the extern record rather than letting the first declaration win.
+    exported_externs.retain(|ext| exported_fns.iter().all(|fun| fun.name != ext.name));
+    exported_externs.sort_by(|a, b| a.name.cmp(&b.name));
     let mut exported_enums = collect_module_enums(ast);
     if has_explicit_export {
         exported_enums.retain(|decl| exported.iter().any(|name| name == &decl.name));
@@ -454,6 +547,7 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
         module_path: module_path.to_string(),
         exported,
         exported_fns,
+        exported_externs,
         exported_enums,
     }
 }
@@ -640,6 +734,46 @@ mod tests {
     }
 
     #[test]
+    fn extern_decl_return_abi_is_part_of_the_export_surface() {
+        let src = "extern \"C\" {\n    fn reduce_sum(x: i64) -> i32\n}\n";
+        let ast = parse(src).expect("parse");
+        let ex = collect_module_exports("crate.numerics", &ast);
+        assert_eq!(ex.exported, vec!["reduce_sum"]);
+        assert!(ex.exported_fns.is_empty());
+        assert_eq!(ex.exported_externs.len(), 1);
+        assert_eq!(ex.exported_externs[0].name, "reduce_sum");
+        assert_eq!(ex.exported_externs[0].param_types, vec![TypeAnn::ScalarI64]);
+        assert_eq!(ex.exported_externs[0].ret_type, Some(TypeAnn::ScalarI32));
+        assert!(!ex.exported_externs[0].is_varargs);
+    }
+
+    #[test]
+    fn explicit_export_keeps_listed_extern_return() {
+        let src = "export { reduce_sum }\nextern \"C\" {\n    fn reduce_sum(x: i64) -> i32\n    fn hidden(x: i64) -> i32\n}\n";
+        let ast = parse(src).expect("parse");
+        let ex = collect_module_exports("crate.numerics", &ast);
+        assert_eq!(ex.exported, vec!["reduce_sum"]);
+        assert!(ex.exported_fns.is_empty());
+        assert_eq!(ex.exported_externs.len(), 1);
+        assert_eq!(ex.exported_externs[0].ret_type, Some(TypeAnn::ScalarI32));
+    }
+
+    #[test]
+    fn imported_extern_lookup_keeps_declared_return() {
+        let src = "extern \"C\" {\n    fn reduce_sum(x: i64) -> i32\n}\n";
+        let ast = parse(src).expect("parse");
+        let table = build_module_table(&[("crate.numerics".to_string(), &ast)]);
+        assert!(table.lookup_imported_fn("reduce_sum").is_none());
+        let found = table
+            .unique_exported_externs()
+            .into_iter()
+            .find(|ext| ext.name == "reduce_sum")
+            .expect("extern record");
+        assert_eq!(found.ret_type, Some(TypeAnn::ScalarI32));
+        assert_eq!(found.param_types, vec![TypeAnn::ScalarI64]);
+    }
+
+    #[test]
     fn explicit_exports_do_not_publish_unlisted_enum_types() {
         let ast = parse(
             "export { make }\nenum Color { Red(i64), Blue }\nfn make() -> Color { Color.Red(1) }\n",
@@ -699,12 +833,14 @@ mod tests {
             module_path: "crate.a".into(),
             exported: vec!["old".into()],
             exported_fns: vec![],
+            exported_externs: vec![],
             exported_enums: vec![],
         });
         t.insert(ModuleExports {
             module_path: "crate.a".into(),
             exported: vec!["new".into()],
             exported_fns: vec![],
+            exported_externs: vec![],
             exported_enums: vec![],
         });
         assert!(t.resolves(&["crate".into(), "a".into()], "new"));
