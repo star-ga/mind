@@ -9393,8 +9393,8 @@ pub(super) fn lower_expr_inner(
                     // IR-audit #1: a narrow SCALAR return declares its REAL
                     // width (i8/i16/i32) instead of collapsing to i64, so the call
                     // reads only the bits the callee wrote and sign/zero-extends
-                    // them to the i64 MIND value (see extern_ret_type_to_mlir_for).
-                    extern_ret_type_to_mlir_for(t, &repr_c_snapshot, effective_callconv)
+                    // them to the i64 MIND value (see extern_ret_abi_token_for).
+                    extern_ret_abi_token_for(t, &repr_c_snapshot, effective_callconv)
                 });
                 ir.instrs.push(Instr::ExternFnDecl {
                     name: efn.name.clone(),
@@ -12587,7 +12587,7 @@ pub(crate) fn extern_type_to_mlir_multi_for(
 /// Upgrade path: mirror the narrow extend pair on the Win64 call path once a
 /// Win64 narrow-return artifact is exercised end-to-end.
 #[cfg(feature = "std-surface")]
-pub(crate) fn extern_ret_type_to_mlir_for(
+pub(crate) fn extern_ret_abi_token_for(
     ty: &crate::ast::TypeAnn,
     repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
     callconv: crate::ast::CallConv,

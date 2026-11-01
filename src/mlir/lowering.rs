@@ -11548,7 +11548,7 @@ mod extern_narrow_args;
 
 /// IR-audit #1 — normalize an extern return-type token to a valid signless
 /// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
-/// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
+/// names (chosen in `src/eval/lower.rs::extern_ret_abi_token_for` so their
 /// signedness survives to `extern_ret_narrow_ext`); map them to the signless
 /// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
 /// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
