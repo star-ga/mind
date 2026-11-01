@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1935 | **Est. tokens:** ~3,778,992
-**Generated:** 2026-11-01 14:53 UTC
+**Files:** 1942 | **Est. tokens:** ~3,795,571
+**Generated:** 2026-11-01 18:10 UTC
 
 ## Token Budget Guide
 
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~53,763 |
+| `src/` | 12 | ~55,351 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -121,38 +121,38 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 47 | ~160,359 |
+| `src/eval/` | 48 | ~161,516 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 11 | ~101,025 |
+| `src/ir/` | 11 | ~100,936 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
-| `src/ir/compact/v3/` | 15 | ~76,625 |
+| `src/ir/compact/v3/` | 15 | ~76,672 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 4 | ~11,670 |
+| `src/mlir/` | 5 | ~13,149 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 21 | ~71,766 |
+| `src/project/` | 22 | ~76,638 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~15,775 |
-| `src/type_checker/` | 18 | ~62,604 |
+| `src/type_checker/` | 19 | ~64,866 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 424 | ~862,757 |
+| `tests/` | 426 | ~868,020 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1248,6 +1248,9 @@
 - `fingerprint.rs` (~629 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~964 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
+### `src/`
+
+- `c_export_reach.rs` (~1579 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/check/`
 
 - `early_failure.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
@@ -1302,6 +1305,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
+- `imported_extern_decls.rs` (~1157 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1395,7 +1399,7 @@
 - `format.rs` (~911 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mldsa.rs` (~2688 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~20273 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~13043 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~13090 tok, huge) — Copyright 2025 STARGA Inc.
 - `slhdsa.rs` (~3201 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/v04/`
 
@@ -1412,14 +1416,14 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17631 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~1118 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -1438,7 +1442,8 @@
 - `main.rs` (~6847 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
+- `c_export.rs` (~3309 tok, huge) — Copyright 2025 STARGA Inc.
+- `extern_narrow_args.rs` (~821 tok, large) — Copyright 2026 STARGA Inc.
 - `gemm_tuning.rs` (~6147 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.
 - `nobuiltin.rs` (~2532 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1481,7 +1486,7 @@
 - `pipeline.rs` (~7372 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `active_module_table.rs` (~3677 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `active_module_table.rs` (~6526 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `artifact.rs` (~1045 tok, large) — Copyright 2025 STARGA Inc.
 - `build_input_snapshot.rs` (~4632 tok, huge) — Copyright 2025 STARGA Inc.
 - `build_lock.rs` (~1630 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1489,10 +1494,11 @@
 - `canonical_bridge.rs` (~5927 tok, huge) — Copyright 2026 STARGA Inc.
 - `compiled_sources.rs` (~530 tok, large) — Copyright 2025 STARGA Inc.
 - `embedded_entry.rs` (~670 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `exported_extern.rs` (~1204 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `host_triple.rs` (~992 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `module_table.rs` (~7745 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -1541,6 +1547,7 @@
 - `canonical_macro.rs` (~58 tok, small) — Copyright 2026 STARGA Inc.
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
+- `extern_declarations.rs` (~2262 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1910,6 +1917,7 @@
 - `extern_c_phase_b.rs` (~5981 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_c.rs` (~3442 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_c_safety_tag_informational.rs` (~1427 tok, large) — Copyright 2025 STARGA Inc.
+- `extern_declaration_conflicts.rs` (~1567 tok, huge) — Copyright 2026 STARGA Inc.
 - `extern_narrow_ret_run.rs` (~1528 tok, huge) — Copyright 2025 STARGA Inc.
 - `f3_bare_enum_collision_run.rs` (~1347 tok, large) — Copyright 2025 STARGA Inc.
 - `f64_abi_negative_control.rs` (~1819 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2063,6 +2071,7 @@
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `if_merge_shadow_318.rs` (~1444 tok, large) — Copyright 2025 STARGA Inc.
 - `imported_enum_eval.rs` (~747 tok, large) — Copyright 2026 STARGA Inc.
+- `imported_extern_narrow_ret_run.rs` (~3696 tok, huge) — Copyright 2026 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.

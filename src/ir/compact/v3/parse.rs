@@ -1266,6 +1266,9 @@ pub fn parse_mic3_prefix(data: &[u8]) -> Result<ParsedMic3Prefix, Mic3Error> {
         // mic@3, so the parse path leaves it empty (no wire-format change).
         #[cfg(feature = "std-surface")]
         struct_field_types: std::collections::BTreeMap::new(),
+        // Imported-extern names are lowering-only. mic@3 does not carry them.
+        #[cfg(feature = "std-surface")]
+        imported_extern_names: std::collections::BTreeSet::new(),
     };
 
     // std-surface registries

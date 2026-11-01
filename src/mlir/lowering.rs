@@ -3535,35 +3535,11 @@ impl LoweringContext {
                             }
                         })
                         .collect();
-                    // RFC 0010 — the std-surface runtime ABI carries every value
-                    // as i64, but an `extern "C"` signature can declare
-                    // `!llvm.ptr` parameters/return (e.g. `memset`, `inet_pton`,
-                    // `read`/`write`). MLIR is strongly typed: an i64 SSA value
-                    // cannot be passed where `!llvm.ptr` is declared. Bridge
-                    // each pointer-typed slot with `llvm.inttoptr` before the
-                    // call and recover the i64 address with `llvm.ptrtoint`
-                    // after, so the surrounding i64 dataflow stays intact and
-                    // mlir-opt sees consistent types. Non-pointer slots are
-                    // already i64 (narrow C ints are declared i64 in the ABI),
-                    // so they pass through untouched — no extra ops on the
-                    // common path.
-                    let mut arg_refs: Vec<String> = Vec::with_capacity(args.len());
-                    for (i, a) in args.iter().enumerate() {
-                        if param_type_str
-                            .get(i)
-                            .map(|t| t == "!llvm.ptr")
-                            .unwrap_or(false)
-                        {
-                            let pname = format!("%ptrarg_{}_{}", dst.0, i);
-                            self.emit_line(&format!(
-                                "    {pname} = llvm.inttoptr %{} : i64 to !llvm.ptr",
-                                a.0
-                            ));
-                            arg_refs.push(pname);
-                        } else {
-                            arg_refs.push(format!("%{}", a.0));
-                        }
-                    }
+                    // Pointer slots become `!llvm.ptr`. Narrow slots are truncated
+                    // to the declared C width; the `llvm.func` line carries
+                    // `llvm.signext` or `llvm.zeroext`.
+                    let (arg_refs, param_type_str) =
+                        extern_narrow_args::adapt_call_args(self, *dst, args, &param_type_str);
                     let ret_tok = ret_type.as_deref().unwrap_or("i64");
                     let call_ret_ty = extern_ret_mlir_ty(ret_tok);
                     // IR-audit #1: a narrow SCALAR return (SysV/C only) is
@@ -11453,7 +11429,11 @@ pub fn lower_ir_to_mlir_with_entry(
         let params_str = if param_types.is_empty() {
             String::new()
         } else {
-            param_types.join(", ")
+            param_types
+                .iter()
+                .map(|tok| extern_narrow_args::decl_param(tok))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         let varargs_suffix = if *is_varargs {
             if param_types.is_empty() {
@@ -11562,9 +11542,13 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
     }
 }
 
+#[cfg(feature = "std-surface")]
+#[path = "extern_narrow_args.rs"]
+mod extern_narrow_args;
+
 /// IR-audit #1 — normalize an extern return-type token to a valid signless
 /// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
-/// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
+/// names (chosen in `src/eval/lower.rs::extern_c_ret_token` so their
 /// signedness survives to `extern_ret_narrow_ext`); map them to the signless
 /// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
 /// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
