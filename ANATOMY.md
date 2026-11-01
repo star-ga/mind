@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1933 | **Est. tokens:** ~3,777,320
-**Generated:** 2026-11-01 13:27 UTC
+**Files:** 1935 | **Est. tokens:** ~3,778,992
+**Generated:** 2026-11-01 14:53 UTC
 
 ## Token Budget Guide
 
@@ -108,12 +108,12 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~53,145 |
+| `src/` | 11 | ~53,763 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~48,441 |
+| `src/build/` | 14 | ~48,813 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 423 | ~862,075 |
+| `tests/` | 424 | ~862,757 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1222,6 +1222,7 @@
 ### `src/build/`
 
 - `artifact.rs` (~1149 tok, large) — Copyright 2025 STARGA Inc.
+- `atomic_publish.rs` (~413 tok, medium) — Copyright 2026 STARGA Inc.
 ### `src/build/cache/`
 
 - `cache_integrity.rs` (~1160 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -1229,10 +1230,10 @@
 - `compiler_identity.rs` (~317 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/build/`
 
-- `cache.rs` (~6905 tok, huge) — Copyright 2025 STARGA Inc.
+- `cache.rs` (~6859 tok, huge) — Copyright 2025 STARGA Inc.
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9616 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_bridge.rs` (~5296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_image.rs` (~2018 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1504,7 +1505,7 @@
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~6737 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~7355 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
@@ -2322,6 +2323,7 @@
 - `private_fn_link_collision_run.rs` (~986 tok, large) — Copyright 2026 STARGA Inc.
 - `project_function_resolution.rs` (~1475 tok, large) — Copyright 2026 STARGA Inc.
 - `public_cpu_native_link.rs` (~1528 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enum_explicit_sources.rs` (~682 tok, large) — Copyright 2026 STARGA Inc.
 - `qualified_enum_run.rs` (~3922 tok, huge) — Copyright 2025 STARGA Inc.
 - `reap_threshold.rs` (~2108 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.

@@ -429,10 +429,7 @@ pub fn clean_all_caches(project_root: &Path) -> Result<()> {
 /// On POSIX, `rename(2)` is atomic at the filesystem level, so a concurrent
 /// reader either sees the old file or the new file — never a half-written one.
 fn atomic_write(dest: &Path, data: &[u8]) -> Result<()> {
-    let tmp = dest.with_extension("tmp");
-    fs::write(&tmp, data).with_context(|| format!("write tmp {}", tmp.display()))?;
-    fs::rename(&tmp, dest)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))
+    super::atomic_publish::write_atomic(dest, data)
 }
 
 // ---------------------------------------------------------------------------
