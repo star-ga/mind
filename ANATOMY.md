@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1935 | **Est. tokens:** ~3,779,878
-**Generated:** 2026-11-01 12:55 UTC
+**Files:** 1937 | **Est. tokens:** ~3,791,874
+**Generated:** 2026-11-01 13:07 UTC
 
 ## Token Budget Guide
 
@@ -96,7 +96,7 @@
 | `.github/scripts/` | 1 | ~962 |
 | `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~22,327 |
+| `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~123,935 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 46 | ~154,242 |
+| `src/eval/` | 47 | ~161,233 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 8 | ~29,774 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 22 | ~75,839 |
+| `src/project/` | 22 | ~76,565 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 423 | ~862,842 |
+| `tests/` | 424 | ~866,591 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1077,7 +1077,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~22327 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22857 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
@@ -1296,14 +1296,15 @@
 - `closures.rs` (~6164 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
-- `imported_extern_decls.rs` (~1160 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
+- `imported_extern_decls.rs` (~1157 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1500,7 +1501,7 @@
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `single_file_scope.rs` (~7065 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `sources.rs` (~5153 tok, huge) — Copyright 2025 STARGA Inc.
+- `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3672 tok, huge) — Copyright 2025 STARGA Inc.
 - `substrate_link.rs` (~4509 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
@@ -1927,6 +1928,7 @@
 - `fail_closed_cli_run.rs` (~1568 tok, huge) — Regression tests for the two fail-closed CLI guards that shipped WITHOUT one.
 - `fail_open_skip_site_ratchet.rs` (~8472 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
+- `file_read_under_test.rs` (~3605 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `fixed_array_binding_lengths.rs` (~462 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_narrow_assignment_types.rs` (~376 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_return_lengths.rs` (~3080 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2594,7 +2596,7 @@
 - `std_surface_bool_return.rs` (~1279 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_break_continue.rs` (~1335 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~1236 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_cdylib_link.rs` (~2900 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~3044 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~874 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1007 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~799 tok, large) — Copyright 2025 STARGA Inc.

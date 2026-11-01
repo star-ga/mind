@@ -22,7 +22,7 @@
 //! Only an imported extern that this module calls is prepended. The owner's
 //! own extern block is already in the instruction stream.
 
-use super::{extern_ret_abi_token_for, extern_type_to_mlir_multi_for, resolve_callconv};
+use super::{extern_c_ret_token, extern_type_to_mlir_multi_for, resolve_callconv};
 use crate::ir::{IRModule, Instr};
 use std::collections::BTreeSet;
 
@@ -63,7 +63,7 @@ fn prepend_called_imports(ir: &mut IRModule) {
         let ret_type = ext
             .ret_type
             .as_ref()
-            .map(|ty| extern_ret_abi_token_for(ty, &empty, effective_callconv));
+            .map(|ty| extern_c_ret_token(ty, &empty, effective_callconv));
         ir.imported_extern_names.insert(ext.name.clone());
         decls.push(Instr::ExternFnDecl {
             name: ext.name,

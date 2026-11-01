@@ -568,6 +568,15 @@ jobs:
           cargo build --no-default-features \
             --features "mlir-build std-surface cross-module-imports" --bin mindc
 
+      - name: File read under test and run (ARM)
+        # The manifest read must execute on the Linux ARM runner. This job
+        # sets MIND_BENCH_REQUIRE=1, so a missing native backend is a failure.
+        if: matrix.runner == 'ubuntu-24.04-arm' && matrix.llvm == '23'
+        run: |
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test file_read_under_test
+
       - name: Tensor parameter ABI gates (x86/ARM)
         # Both descriptor execution and fail-loud tensor-boundary controls are
         # mandatory on each runner in this matrix.  The job-level
