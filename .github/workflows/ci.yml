@@ -2187,6 +2187,66 @@ jobs:
           cargo run --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
             check std/ examples/
 
+  arch_mind:
+    # Fork pull requests never reach the private scanner image.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: arch-mind governance gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # run_gate-exempt: tools/arch_mind_cli.py - a `test -s` presence check on the unpacked scanner, not an invocation; the governance gate runs in the next step
+      # run_gate-exempt: tools/mind_reflect.py - a `test -s` presence check on the unpacked scanner, not an invocation; the governance gate runs in the next step
+      # run_gate-exempt: tools/rules_engine.py - a `test -s` presence check on the unpacked scanner, not an invocation; the governance gate runs in the next step
+      - name: Pull the pinned scanner
+        env:
+          IMAGE: ghcr.io/star-ga/arch-mind@sha256:c63d54d8f2aa9914402f8c8b37381438ebfb2189f383052de722b44377e7772d
+          SCANNER_ROOT: ${{ runner.temp }}/arch-mind-scanner
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          root="$SCANNER_ROOT"
+          case "$root" in "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*)
+            echo "::error::scanner root must sit outside the checkout"; exit 1;;
+          esac
+          rm -rf "$root"
+          mkdir -p "$root"
+          cid="$(docker create "$IMAGE")"
+          docker cp "$cid:/opt/arch-mind/." "$root/"
+          docker rm "$cid"
+          uid="$(id -u)"
+          gid="$(id -g)"
+          cat > "$root/bin/arch-mind" << EOF
+          #!/bin/bash
+          set -euo pipefail
+          exec docker run --rm --user ${uid}:${gid} -e PYTHONDONTWRITEBYTECODE=1 -e HOME=/tmp -v "\$PWD:\$PWD" -v /tmp:/tmp -w "\$PWD" "$IMAGE" "\$@"
+          EOF
+          chmod 0755 "$root/bin/arch-mind"
+          test -s "$root/tools/arch_mind_cli.py"
+          test -s "$root/tools/mind_reflect.py"
+          test -s "$root/tools/rules_engine.py"
+          test -x "$root/sidecar/target/release/arch-mind-sidecar"
+
+      - name: Run arch-mind governance gate
+        # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind fea599ec and publishes asserted=<N> directly
+        env:
+          ARCH_MIND: ${{ runner.temp }}/arch-mind-scanner/bin/arch-mind
+          ARCH_BASE_REF: origin/main
+        run: bash scripts/arch_gate.sh
+
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features
   # Will re-enable when stable Rust supports edition 2024 let-chains
   # msrv:
