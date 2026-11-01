@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1939 | **Est. tokens:** ~3,792,311
-**Generated:** 2026-11-01 13:55 UTC
+**Files:** 1940 | **Est. tokens:** ~3,793,899
+**Generated:** 2026-11-01 14:54 UTC
 
 ## Token Budget Guide
 
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~53,145 |
+| `src/` | 12 | ~54,733 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -1247,6 +1247,9 @@
 - `fingerprint.rs` (~629 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~964 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
+### `src/`
+
+- `c_export_reach.rs` (~1579 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/check/`
 
 - `early_failure.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
@@ -1419,7 +1422,7 @@
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~1118 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
