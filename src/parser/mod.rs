@@ -3975,6 +3975,14 @@ impl<'a> P<'a> {
                                 continue;
                             }
                         }
+                        if let Node::Lit(Literal::Ident(recv_name), _) = &node {
+                            if let Some(key) = self.enum_scope.unit_variant_key(recv_name, &method)
+                            {
+                                let span = Span::new(node.span_start(), self.pos);
+                                node = Node::Lit(Literal::Ident(key), span);
+                                continue;
+                            }
+                        }
                         let span = Span::new(node.span_start(), self.pos);
                         node = Node::FieldAccess {
                             receiver: Box::new(node),

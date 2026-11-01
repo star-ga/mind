@@ -26,6 +26,12 @@ pub(super) struct EvalSupport {
     pub(super) bindings: EvalBindings,
     pub(super) entry_owner: Option<String>,
     pub(super) setup_error: Option<String>,
+    /// Whole-project enum registry captured with the import closure.
+    /// `mindc test` re-parses the entry on a worker thread, where the
+    /// discovery thread's registry guard is already gone. Without this
+    /// snapshot the re-parse cannot see an imported unit variant.
+    #[cfg(feature = "cross-module-imports")]
+    pub(super) enums: Option<crate::ir::GlobalEnums>,
 }
 
 pub(super) fn qualify_module_declarations(module: &mut Module, owner: &str, globals: bool) {
@@ -562,6 +568,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                 bindings,
                 entry_owner,
                 setup_error: None,
+                enums: Some(scope.enums().clone()),
             }
         }
     }

@@ -457,6 +457,19 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
         return Err(error.clone());
     }
 
+    // The discovery thread drops its project guard before workers run.
+    // Reinstall the captured registry on THIS thread before the re-parse,
+    // or an imported `Enum.Variant` stays a field access and eval reports
+    // the enum name as a missing imported constant.
+    #[cfg(feature = "cross-module-imports")]
+    let _enum_guard = support
+        .and_then(|support| support.enums.clone())
+        .map(crate::qualified_enums::GlobalGuard::install);
+    #[cfg(feature = "cross-module-imports")]
+    let _module_guard = support
+        .and_then(|support| support.entry_owner.clone())
+        .map(crate::qualified_enums::ModuleGuard::install);
+
     // Re-parse to get a fresh, unaliased AST.
     let mut module = parser::parse(&entry.source_text).map_err(|errs| {
         errs.iter()

@@ -2697,6 +2697,24 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
         (Value::Tensor(t), Value::Float(s)) => apply_tensor_scalar(op, t, s, true, mode),
         (Value::Float(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s, false, mode),
         (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b, mode),
+        (
+            Value::Enum {
+                variant: left_variant,
+                payload: left_payload,
+            },
+            Value::Enum {
+                variant: right_variant,
+                payload: right_payload,
+            },
+        ) => match op {
+            BinOp::Eq => Ok(Value::Int(
+                (left_variant == right_variant && left_payload == right_payload) as i64,
+            )),
+            BinOp::Ne => Ok(Value::Int(
+                (left_variant != right_variant || left_payload != right_payload) as i64,
+            )),
+            _ => Err(EvalError::Unsupported),
+        },
         _ => Err(EvalError::Unsupported),
     }
 }
