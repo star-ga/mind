@@ -48,4 +48,5 @@ mindcraft_check	Mindcraft check (RFC 0007 Phase 6)
 conformance	Core v1 conformance suite
 ri_d1_mlir_free	RI-D1 MLIR-free native path (MLIR compiled out)
 sdlc_integrity	SDLC gate integrity (merge + enforcement pairing)
+arch_mind	arch-mind governance gate
 docs-claims.yml:docs-claims	Docs claims gate
