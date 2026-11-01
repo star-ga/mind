@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1930 | **Est. tokens:** ~3,775,190
-**Generated:** 2026-11-01 09:44 UTC
+**Files:** 1930 | **Est. tokens:** ~3,775,295
+**Generated:** 2026-11-01 10:45 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 422 | ~861,223 |
+| `tests/` | 422 | ~861,328 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1920,7 +1920,7 @@
 - `fail_closed_cli_run.rs` (~1568 tok, huge) — Regression tests for the two fail-closed CLI guards that shipped WITHOUT one.
 - `fail_open_skip_site_ratchet.rs` (~8472 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
-- `file_read_under_test.rs` (~3500 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `file_read_under_test.rs` (~3605 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `fixed_array_binding_lengths.rs` (~462 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_narrow_assignment_types.rs` (~376 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_return_lengths.rs` (~3080 tok, huge) — Copyright 2026 STARGA Inc.

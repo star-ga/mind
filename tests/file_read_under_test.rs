@@ -79,8 +79,19 @@ fn reads_own_manifest() {
 }
 "#;
 
+/// One directory per call. The harness runs tests in parallel inside one
+/// process, and `fs::write` truncates a file before the new bytes land. A
+/// shared project lets one test empty `Mind.toml` or a source while another
+/// test's `mindc` is reading it.
+fn isolated_dir(label: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    common::scratch_dir("file-read-under-test").join(format!("{label}-{n}"))
+}
+
 fn project() -> PathBuf {
-    let root = common::scratch_dir("file-read-under-test").join("proj");
+    let root = isolated_dir("proj");
     fs::create_dir_all(root.join("tests")).expect("create tests dir");
     fs::create_dir_all(root.join(".git")).expect("create project boundary");
     fs::write(
@@ -215,7 +226,7 @@ fn emit_manifest_bytes() -> i64 {
 "#;
 
 fn byte_project() -> PathBuf {
-    let root = common::scratch_dir("file-read-under-test").join("bytes");
+    let root = isolated_dir("bytes");
     fs::create_dir_all(root.join("tests")).expect("create tests dir");
     fs::create_dir_all(root.join(".git")).expect("create project boundary");
     fs::write(
@@ -364,7 +375,7 @@ fn main() -> i64 {
 "#;
 
 fn payload_project(name: &str, header: &str) -> PathBuf {
-    let root = common::scratch_dir("file-read-under-test").join(name);
+    let root = isolated_dir(name);
     fs::create_dir_all(root.join(".git")).expect("project boundary");
     fs::write(
         root.join("Mind.toml"),
