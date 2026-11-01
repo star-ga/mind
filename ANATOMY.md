@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1930 | **Est. tokens:** ~3,775,066
-**Generated:** 2026-11-01 08:43 UTC
+**Files:** 1930 | **Est. tokens:** ~3,775,190
+**Generated:** 2026-11-01 09:44 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 46 | ~160,051 |
+| `src/eval/` | 46 | ~160,076 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 422 | ~861,124 |
+| `tests/` | 422 | ~861,223 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1293,7 +1293,7 @@
 - `closures.rs` (~6164 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5209 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -2587,7 +2587,7 @@
 - `std_surface_bool_return.rs` (~1279 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_break_continue.rs` (~1335 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~1236 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_cdylib_link.rs` (~2945 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~3044 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~874 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1007 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~799 tok, large) — Copyright 2025 STARGA Inc.

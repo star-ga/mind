@@ -526,7 +526,8 @@ mod tests {
         assert_eq!(call("lseek", &[fd, 0, 1]).unwrap(), 1);
     }
 
-    #[cfg(unix)]
+    // Linux only: the macOS file system refuses a file name that is not valid UTF-8.
+    #[cfg(target_os = "linux")]
     #[test]
     fn open_reads_a_non_utf8_path() {
         use std::ffi::OsString;
