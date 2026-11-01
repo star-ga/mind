@@ -546,6 +546,7 @@ impl LoweringContext {
     /// ("'func.return' op must be the last operation in the parent block"). That took down any
     /// program with a `return` directly in a `while` body (lowering appends the loop's
     /// trailing unit value after it) and any statement written after a `return` or `break`.
+    #[cfg(feature = "std-surface")]
     fn emit_instr_list(&mut self, instrs: &[Instr]) -> Result<bool, MlirLowerError> {
         for (idx, instr) in instrs.iter().enumerate() {
             self.emit_instr(idx, instr)?;
@@ -613,6 +614,7 @@ impl LoweringContext {
     /// release). Non-`__mind_` callees (user `extern "C"` fns) are out of scope
     /// here: their FP-contract is derived at the IR level from the declared
     /// return type (fp_mode.rs layer 1). Integer/pointer results are unaffected.
+    #[cfg(feature = "std-surface")]
     fn register_call_result(
         &mut self,
         name: &str,
@@ -2473,6 +2475,7 @@ impl LoweringContext {
                         // PROPAGATES u64-ness (issue #99) so a chained sign-
                         // sensitive op (`(a << 3) / c`) still picks unsigned; a
                         // plain-i64 program keeps `ScalarI64` (byte-identical).
+                        #[cfg(feature = "std-surface")]
                         let is_cmp = matches!(
                             op,
                             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
@@ -11665,6 +11668,7 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
 
 /// Parse tensor-annotation dim strings (`["3", "N"]`) into `ShapeDim`s: a numeric
 /// literal is `Known`, anything else (a named dim) is a symbolic `Sym`.
+#[cfg(feature = "std-surface")]
 fn tensor_ann_shape(dims: &[String]) -> Vec<ShapeDim> {
     dims.iter()
         .map(|d| {
