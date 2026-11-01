@@ -27,6 +27,7 @@ use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan}
 use crate::types::ConvPadding;
 
 mod assert;
+mod dotted_field;
 mod eval_imports;
 mod lexeme;
 mod paths;
@@ -3958,29 +3959,7 @@ impl<'a> P<'a> {
                         };
                         continue;
                     } else {
-                        // Imported `mod.CONST` is namespace access.
-                        if let Node::Lit(Literal::Ident(recv_name), _) = &node {
-                            if self.imports.iter().any(|s| s == recv_name) {
-                                let span = Span::new(node.span_start(), self.pos);
-                                if self.eval_import_refs.is_some() {
-                                    self.record_eval_import_ref(
-                                        span,
-                                        vec![recv_name.clone()],
-                                        &method,
-                                        EvalImportRefKind::Value,
-                                    );
-                                }
-                                self.record_qualifier(span, recv_name);
-                                node = Node::Lit(Literal::Ident(method), span);
-                                continue;
-                            }
-                        }
-                        let span = Span::new(node.span_start(), self.pos);
-                        node = Node::FieldAccess {
-                            receiver: Box::new(node),
-                            field: method,
-                            span,
-                        };
+                        node = self.dotted_field(node, method);
                         continue;
                     }
                 } else if dot_pos + 1 < self.b.len() && self.b[dot_pos + 1].is_ascii_digit() {

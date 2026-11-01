@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1930 | **Est. tokens:** ~3775295
-**Generated:** 2026-11-01 12:45 UTC
+**Files:** 1933 | **Est. tokens:** ~3777320
+**Generated:** 2026-11-01 13:40 UTC
 
 ## Token Budget Guide
 
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6002 |
-| `src/` | 11 | ~52927 |
+| `src/` | 11 | ~53145 |
 | `src/ast/` | 2 | ~12305 |
 | `src/autodiff/` | 3 | ~6624 |
 | `src/bin/` | 1 | ~9878 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15672 |
 | `src/distributed/` | 6 | ~7725 |
 | `src/doc/` | 3 | ~11002 |
-| `src/eval/` | 46 | ~160076 |
+| `src/eval/` | 47 | ~160359 |
 | `src/eval/stdlib/` | 2 | ~8586 |
 | `src/eval/struct_resolver/` | 1 | ~2555 |
 | `src/exec/` | 3 | ~5522 |
@@ -139,20 +139,20 @@
 | `src/ops/` | 3 | ~4764 |
 | `src/opt/` | 9 | ~53642 |
 | `src/package/` | 2 | ~1877 |
-| `src/parser/` | 8 | ~29774 |
+| `src/parser/` | 9 | ~30206 |
 | `src/phf/` | 1 | ~4955 |
-| `src/project/` | 21 | ~71693 |
+| `src/project/` | 21 | ~71766 |
 | `src/runtime/` | 3 | ~1485 |
 | `src/shapes/` | 2 | ~6052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~15503 |
+| `src/test/` | 4 | ~15775 |
 | `src/type_checker/` | 18 | ~62604 |
 | `src/type_checker/resolve/` | 1 | ~1569 |
 | `src/type_checker/slice_abi/` | 3 | ~11245 |
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 43 | ~206065 |
-| `tests/` | 422 | ~861328 |
+| `tests/` | 423 | ~862075 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13727 |
@@ -1291,6 +1291,7 @@
 - `closures.rs` (~6164 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
+- `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
@@ -1461,6 +1462,7 @@
 ### `src/parser/`
 
 - `assert.rs` (~844 tok, large) — Copyright 2026 STARGA Inc.
+- `dotted_field.rs` (~432 tok, medium) — Copyright 2026 STARGA Inc.
 - `eval_imports.rs` (~2137 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
@@ -1491,7 +1493,7 @@
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `single_file_scope.rs` (~7065 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `single_file_scope.rs` (~7138 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3672 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1500,7 +1502,7 @@
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~6519 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~6737 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
@@ -1522,8 +1524,8 @@
 - `target.rs` (~5031 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
-- `imports.rs` (~5859 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~6616 tok, huge) — Copyright 2025 STARGA Inc.
+- `imports.rs` (~5967 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `mod.rs` (~6780 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -2053,6 +2055,7 @@
 - `http2_frame_driver.py` (~4195 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `if_merge_shadow_318.rs` (~1444 tok, large) — Copyright 2025 STARGA Inc.
+- `imported_enum_eval.rs` (~747 tok, large) — Copyright 2026 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.

@@ -474,6 +474,27 @@ impl ParseScope {
         }
     }
 
+    /// `Enum::Variant` when `variant` is a unit variant of `enum_name`.
+    /// The key is the bare registry key. A colliding enum name is left
+    /// unresolved here; the qualified resolver owns that case.
+    pub(crate) fn unit_variant_key(&self, enum_name: &str, variant: &str) -> Option<String> {
+        #[cfg(feature = "cross-module-imports")]
+        {
+            // Only a project enum name. A field access on any other ident
+            // stays a field access.
+            if !self.names.iter().any(|known| known == enum_name) {
+                return None;
+            }
+            let key = format!("{enum_name}::{variant}");
+            return self.registry.variant_tags.contains_key(&key).then_some(key);
+        }
+        #[cfg(not(feature = "cross-module-imports"))]
+        {
+            let _ = (enum_name, variant);
+            None
+        }
+    }
+
     pub(crate) fn resolve_variant(&self, name: &str, imports: &[String]) -> Option<String> {
         #[cfg(feature = "cross-module-imports")]
         return self

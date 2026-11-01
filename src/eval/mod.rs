@@ -37,6 +37,7 @@ pub mod conv2d_grad;
 /// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
+mod enum_cmp;
 pub(crate) mod extern_c_intrinsics;
 pub mod interp_mem;
 pub mod ir_interp;
@@ -2698,6 +2699,7 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
         (Value::Tensor(t), Value::Float(s)) => apply_tensor_scalar(op, t, s, true, mode),
         (Value::Float(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s, false, mode),
         (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b, mode),
+        (l @ Value::Enum { .. }, r @ Value::Enum { .. }) => enum_cmp::cmp(op, l, r),
         _ => Err(EvalError::Unsupported),
     }
 }
