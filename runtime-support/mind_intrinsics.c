@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -137,6 +138,8 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 // break byte-identity at the I/O boundary. POSIX has no such mode, so the two
 // branches agree only with it set.
 #  define MIND_OPEN_RDONLY(p)      _open((p), _O_RDONLY | _O_BINARY)
+#  define MIND_LSEEK(fd, off, wh)  ((int64_t)_lseeki64((fd), (long long)(off), (wh)))
+#  define MIND_CLOSE(fd)           _close((fd))
 #else
 #  include <unistd.h>
 #  include <fcntl.h>
@@ -145,6 +148,8 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 #  define MIND_PREAD(fd, b, c, o)  pread((fd), (b), (c), (off_t)(o))
 #  define MIND_PWRITE(fd, b, c, o) pwrite((fd), (b), (c), (off_t)(o))
 #  define MIND_OPEN_RDONLY(p)      open((p), O_RDONLY)
+#  define MIND_LSEEK(fd, off, wh)  ((int64_t)lseek((fd), (off_t)(off), (wh)))
+#  define MIND_CLOSE(fd)           close((fd))
 #endif
 
 // ---------------------------------------------------------------------------
@@ -887,17 +892,14 @@ MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
 }
 
 
-// read_to_string — read an entire file into a heap String record [addr, len, cap].
+// read_to_string — whole file as a heap record [addr, len, cap].
 //
-// Mirrors std/fs.mind's read_to_string: opens the NUL-terminated path at
-// path_addr, reads the whole file into a freshly-allocated buffer, and returns
-// a 24-byte record whose first field is the buffer address, second is the
-// byte count, third is cap (= len + 1).  On any error a zeroed record is
-// returned (len=0), matching the MIND-level contract.
-//
-// MIND_EXPORT_WEAK so a linked std/fs MIND object overrides it when
-// cross-module-imports is active; without that feature this is the sole
-// definition and keeps `read_to_string` resolvable at link time.
+// Same rule as std/fs.mind: size the file, allocate file_sz + 1 bytes, read
+// that many bytes, store a trailing NUL, and publish cap = file_sz + 1.
+// A null path, a failed open, a failed size, or a real read error returns
+// the still-zero record and does not publish a partial buffer. EINTR is
+// retried. MIND_EXPORT_WEAK so a linked std/fs object overrides this
+// fallback; without that object this is the definition that links.
 MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
     int64_t rec = __mind_alloc(24);
     __mind_store_i64(rec,      0);
@@ -909,33 +911,40 @@ MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
     int fd = MIND_OPEN_RDONLY(path);
     if (fd < 0) return rec;
 
-    // Read the file in chunks into a growable buffer.
-    int64_t cap = 256;
-    int64_t buf = __mind_alloc(cap + 7);
-    int64_t len = 0;
-    for (;;) {
-        if (len + 256 > cap) {
-            int64_t new_cap = cap * 2;
-            int64_t new_buf = __mind_alloc(new_cap + 7);
-            if (len > 0) {
-                memcpy((void *)(uintptr_t)new_buf, (void *)(uintptr_t)buf, (size_t)len);
-            }
-            buf = new_buf;
-            cap = new_cap;
-        }
-        int64_t got = (int64_t)MIND_READ(fd, (void *)(uintptr_t)(buf + len), 256);
-        if (got <= 0) break;
-        len += got;
+    int64_t file_sz = MIND_LSEEK(fd, 0, SEEK_END);
+    if (file_sz < 0 || file_sz == INT64_MAX) {
+        MIND_CLOSE(fd);
+        return rec;
     }
-#ifdef _WIN32
-    _close(fd);
-#else
-    close(fd);
-#endif
-    __mind_store_i8(buf + len, 0);
+    if (MIND_LSEEK(fd, 0, SEEK_SET) < 0) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
+
+    int64_t buf = __mind_alloc(file_sz + 1);
+    if (buf == 0) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
+
+    int64_t n = 0;
+    while (n < file_sz) {
+        size_t chunk = (size_t)1 << 20;
+        if ((int64_t)chunk > file_sz - n) chunk = (size_t)(file_sz - n);
+        int64_t got = (int64_t)MIND_READ(fd, (void *)(uintptr_t)(buf + n), chunk);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            MIND_CLOSE(fd);
+            return rec;
+        }
+        if (got == 0) break;
+        n += got;
+    }
+    MIND_CLOSE(fd);
+    __mind_store_i8(buf + n, 0);
     __mind_store_i64(rec,      buf);
-    __mind_store_i64(rec + 8,  len);
-    __mind_store_i64(rec + 16, cap + 1);
+    __mind_store_i64(rec + 8,  n);
+    __mind_store_i64(rec + 16, file_sz + 1);
     return rec;
 }
 
