@@ -1067,6 +1067,32 @@ fn build_project_locked_inner(
         .chain(substrate_archive)
         .collect();
 
+    // `--emit object` stops before the executable link: one relocatable object
+    // with the compiled modules and the runtime support they call, for a host
+    // program to link. The executable link below used to run here too, so the
+    // `.o` was a linked PIE executable under an object-file name.
+    if opts.emit == EmitKind::Object {
+        if !fallback_sources.is_empty() {
+            return Err(anyhow!(
+                "--emit object needs every module compiled natively; these could not be: {} \
+                 (a runtime-JIT fallback cannot be packed into an object file)",
+                fallback_sources.join(", ")
+            ));
+        }
+        partial_link_object(&compiled, &output_path, &build_target)?;
+        if opts.verbose {
+            println!("  Output: {}", output_path.display());
+        }
+        return Ok(BuildResult {
+            output_path,
+            target: target_name,
+            success: true,
+            entry_native_compiled,
+            fallback_sources,
+            fallback_reason,
+        });
+    }
+
     // Link into final binary.
     //
     // A link-time HOST-capability refusal may not out-rank what the COMPILE step
@@ -2783,6 +2809,50 @@ fi
 }
 
 /// Attempt native linking with clang/gcc
+/// Pack the compiled objects, the std substrate archive members they use and the
+/// runtime-support shim into one relocatable object (`cc -r -nostdlib`), using
+/// the same compiler driver and shim as [`native_link`]. No startup files, no
+/// libc: the host program's own link supplies those.
+fn partial_link_object(
+    objects: &[PathBuf],
+    output: &Path,
+    build_target: &crate::target::Target,
+) -> Result<()> {
+    let cc = match build_target.cc_command() {
+        Some(cross) => cross.to_string(),
+        None => std::env::var("CC").unwrap_or_else(|_| "cc".to_string()),
+    };
+    #[cfg(feature = "mlir-build")]
+    let runtime_shim_obj = {
+        use crate::eval::mlir_build;
+        let tools = mlir_build::resolve_tools()
+            .map_err(|e| anyhow!("runtime-support shim: MLIR build tools unavailable: {e}"))?;
+        let shim_target_triple = if build_target.is_host() {
+            None
+        } else {
+            Some(build_target.llvm_triple())
+        };
+        mlir_build::compile_runtime_support_obj(&tools, shim_target_triple)
+            .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?
+    };
+    let mut cmd = Command::new(&cc);
+    cmd.args(["-r", "-nostdlib", "-o"])
+        .arg(output)
+        .args(objects);
+    #[cfg(feature = "mlir-build")]
+    cmd.arg(runtime_shim_obj.path());
+    let out = cmd
+        .output()
+        .with_context(|| format!("spawn `{cc}` for the relocatable object link"))?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "relocatable object link failed ({cc} -r): {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 fn native_link(
     objects: &[PathBuf],
     output: &Path,

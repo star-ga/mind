@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1942 | **Est. tokens:** ~3,795,571
-**Generated:** 2026-11-02 04:50 UTC
+**Files:** 1943 | **Est. tokens:** ~3,796,307
+**Generated:** 2026-11-02 07:11 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 426 | ~868,020 |
+| `tests/` | 427 | ~868,756 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1906,6 +1906,7 @@
 - `duplicate_struct_declarations.rs` (~576 tok, large) — Copyright 2026 STARGA Inc.
 - `ecdsa_p256_driver.py` (~2752 tok, huge) — # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
 - `emit_ir_for_loop.rs` (~374 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `emit_object_relocatable.rs` (~736 tok, large) — Copyright 2026 STARGA Inc.
 - `enum_match_collision_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_match_run.rs` (~2310 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
