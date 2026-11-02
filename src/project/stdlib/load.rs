@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use super::STDLIB_MIND_SOURCES;
-use crate::ast::{Module, Node};
+use crate::ast::{Module, Node, Span};
 
 /// The standard-library modules whose names resolve with no import: the
 /// modules the bundle carried before it became exhaustive over `std/*.mind`.
@@ -141,7 +141,8 @@ fn load_override(root: &Path) -> Option<Vec<(&'static str, &'static str)>> {
 }
 
 /// The `std.<m>` import paths `module` declares at module scope (top level
-/// and transparent `module NAME { ... }` blocks), dotted.
+/// and transparent `module NAME { ... }` blocks), dotted. A `std` import
+/// anywhere else is refused (see [`misplaced_std_imports`]).
 pub fn std_import_roots(module: &Module) -> Vec<String> {
     fn walk(items: &[Node], out: &mut Vec<String>) {
         for item in items {
@@ -157,6 +158,44 @@ pub fn std_import_roots(module: &Module) -> Vec<String> {
     let mut out = Vec::new();
     walk(&module.items, &mut out);
     out
+}
+
+/// Every `std` import of `module` that is not a module item: one inside a
+/// function, closure or method body, or inside a statement. The grammar
+/// (spec/v1.0/grammar-syntax.ebnf) admits an import only as a `ModuleItem`,
+/// so [`std_import_roots`] and every other reader of a program's std imports
+/// see module scope only. Such an import bound nothing, and every call into
+/// it was refused far from the cause; `mindc check` and `mindc test` refuse
+/// it at the import instead.
+pub fn misplaced_std_imports(module: &Module) -> Vec<(&[String], Span)> {
+    fn module_scope<'a>(items: &'a [Node], out: &mut Vec<(&'a [String], Span)>) {
+        for item in items {
+            match item {
+                Node::Import { .. } => {}
+                Node::Block { stmts, .. } => module_scope(stmts, out),
+                body => crate::type_checker::nerve_walk::walk(body, &mut |node| match node {
+                    Node::Import { path, span, .. } if path.first().is_some_and(|s| s == "std") => {
+                        out.push((path, *span));
+                    }
+                    _ => {}
+                }),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    module_scope(&module.items, &mut out);
+    out
+}
+
+/// The refusal of a `std` import that is not a module item (see
+/// [`misplaced_std_imports`]).
+pub fn misplaced_std_import(path: &[String]) -> String {
+    format!(
+        "`import {}` is not a module item: an import belongs at the top level of the file \
+         or in a `module` block, never inside a function or statement body, where it binds \
+         nothing (spec/v1.0/grammar-syntax.ebnf, `ModuleItem`)",
+        path.join(".")
+    )
 }
 
 /// Parse [`IMPLICIT_STD_MODULES`] plus `roots` and every bundled module they
@@ -306,6 +345,24 @@ mod tests {
             !extras.contains("std.sha256"),
             "sha256 is implicit: {extras:?}"
         );
+    }
+
+    #[test]
+    fn only_a_std_import_outside_module_scope_is_misplaced() {
+        let ast = program(
+            "import std.keccak;\nmodule inner {\n    import std.x25519;\n}\n\
+             fn f() -> i64 {\n    import std.hkdf;\n    if 1 == 1 {\n        import std.x509;\n    }\n    \
+             import helper;\n    return 0;\n}\n\
+             struct Foo {\n    v: i64,\n}\n\
+             impl Show for Foo {\n    fn show(self) -> i64 {\n        import std.mlkem768;\n        \
+             return 0;\n    }\n}\n",
+        );
+        let misplaced: Vec<String> = misplaced_std_imports(&ast)
+            .iter()
+            .map(|(path, _)| path.join("."))
+            .collect();
+        assert_eq!(misplaced, ["std.hkdf", "std.x509", "std.mlkem768"]);
+        assert_eq!(std_import_roots(&ast), ["std.keccak", "std.x25519"]);
     }
 
     #[test]

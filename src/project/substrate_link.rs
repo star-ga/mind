@@ -126,23 +126,18 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
 ///
 /// Keyed on the RESOLVED import path (`path.join(".")`), never on a bare
 /// leading segment: only an import naming a member of [`SUBSTRATE_MODULES`]
-/// admits that module's object. An unparseable source contributes nothing.
+/// admits that module's object. The imports are the module-scope ones the
+/// type checker and the module table load (`std_import_roots`, `module`
+/// blocks included), so a call the check admits also links. An unparseable
+/// source contributes nothing.
 pub fn scan_substrate_imports(src: &str) -> Vec<&'static str> {
-    let mut found = Vec::new();
     let Ok(ast) = crate::parser::parse(src) else {
-        return found;
+        return Vec::new();
     };
-    for item in &ast.items {
-        if let crate::ast::Node::Import { path, .. } = item {
-            let key = path.join(".");
-            for &name in SUBSTRATE_MODULES {
-                if key == name {
-                    found.push(name);
-                }
-            }
-        }
-    }
-    found
+    crate::project::stdlib::std_import_roots(&ast)
+        .iter()
+        .filter_map(|key| SUBSTRATE_MODULES.iter().copied().find(|name| name == key))
+        .collect()
 }
 
 /// Transitive closure of the substrate imports reachable from `seed_texts`.

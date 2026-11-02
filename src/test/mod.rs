@@ -608,8 +608,9 @@ fn grade_returned_value(
 /// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
 /// contributes nothing here, nor does a `std.<name>` the project supplies
 /// (`project_std`); any other `std` import that names no shipped module is
-/// refused at the import, as `mindc check` refuses it; a bundled module that
-/// fails to parse is a fail-loud error.
+/// refused at the import, as `mindc check` refuses it, and so is a `std`
+/// import inside a body (not a module item); a bundled module that fails to
+/// parse is a fail-loud error.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(
     module: &crate::ast::Module,
@@ -631,6 +632,16 @@ fn resolve_std_import_fns(
         }
         Ok(None)
     };
+
+    // A `std` import inside a body binds nothing; `mindc check` refuses it at
+    // the import, and so does this runner, before any test body runs.
+    if let Some((path, _)) = crate::project::stdlib::misplaced_std_imports(module).first() {
+        let supplied = project_std.is_some_and(|own| own.contains(&path.join(".")));
+        let refusal = crate::project::stdlib::unknown_std_import(path)
+            .filter(|_| !supplied)
+            .unwrap_or_else(|| crate::project::stdlib::misplaced_std_import(path));
+        return Err(format!("error[type-check][E2002]: {refusal}"));
+    }
 
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();

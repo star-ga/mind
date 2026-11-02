@@ -38,8 +38,9 @@ use crate::ast::Module;
 
 mod load;
 pub use load::{
-    IMPLICIT_STD_MODULES, bundled_module_ast, imported_std_extras, is_loaded, parsed_std_modules,
-    parsed_stdlib_modules_for, std_import_roots, std_source, std_sources,
+    IMPLICIT_STD_MODULES, bundled_module_ast, imported_std_extras, is_loaded, misplaced_std_import,
+    misplaced_std_imports, parsed_std_modules, parsed_stdlib_modules_for, std_import_roots,
+    std_source, std_sources,
 };
 
 /// Compile-time bundle of every std/*.mind file, laid out as

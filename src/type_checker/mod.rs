@@ -4506,6 +4506,8 @@ pub fn check_module_types_in_file(
     crate::diagnostics::reset_line_index_cache();
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
+    #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+    std_imports::check_placement(module, src, file, &mut errors);
     #[cfg(feature = "std-surface")]
     extern_declarations::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]

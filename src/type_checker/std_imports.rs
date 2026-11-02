@@ -8,7 +8,8 @@
 //! Such an import used to be accepted while resolving nothing, so each call
 //! into it failed on its own (`unsupported call`, E2003) far from the cause.
 //! E2002 is the unresolved-name/owner code: the import names a module that
-//! does not exist.
+//! does not exist. A `std` import inside a function or statement body binds
+//! nothing (an import is a module item), so it is refused at the import too.
 
 use super::{AstSpan, Pretty, diag_from_span};
 
@@ -27,6 +28,28 @@ pub(super) fn check(
             src,
             file,
             refusal,
+            span,
+            UNKNOWN_STD_MODULE_CODE,
+        ));
+    }
+}
+
+/// Push the refusal for every `std` import of `module` that is not a module
+/// item: the unknown-module refusal when the path names no module, the
+/// placement refusal otherwise. Either way the error is at the import.
+pub(super) fn check_placement(
+    module: &crate::ast::Module,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    for (path, span) in crate::project::stdlib::misplaced_std_imports(module) {
+        let message =
+            refusal(path).unwrap_or_else(|| crate::project::stdlib::misplaced_std_import(path));
+        errs.push(diag_from_span(
+            src,
+            file,
+            message,
             span,
             UNKNOWN_STD_MODULE_CODE,
         ));
