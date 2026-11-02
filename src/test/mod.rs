@@ -602,29 +602,33 @@ fn grade_returned_value(
 /// table.
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
-/// worklist, `BTreeSet` visited guard against cycles). An import that is not
-/// a bundled `std.*` module contributes nothing (existing behavior for it is
-/// unchanged); a bundled module that fails to parse is a fail-loud error.
+/// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
+/// contributes nothing here; a `std` import that names no shipped module is
+/// refused at the import, as `mindc check` refuses it; a bundled module that
+/// fails to parse is a fail-loud error.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
     use crate::project::stdlib::STDLIB_MIND_SOURCES;
     use std::collections::VecDeque;
 
-    fn import_key(item: &Node) -> Option<String> {
+    fn import_key(item: &Node) -> Result<Option<String>, String> {
         if let Node::Import { path, .. } = item {
+            if let Some(refusal) = crate::project::stdlib::unknown_std_import(path) {
+                return Err(format!("error[type-check][E2002]: {refusal}"));
+            }
             if path.len() == 2 && path[0] == "std" {
-                return Some(path.join("."));
+                return Ok(Some(path.join(".")));
             }
         }
-        None
+        Ok(None)
     }
 
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: VecDeque<String> = top_level::refs(&module.items)
-        .into_iter()
-        .filter_map(import_key)
-        .collect();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    for item in top_level::refs(&module.items) {
+        queue.extend(import_key(item)?);
+    }
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
             continue;
@@ -644,11 +648,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         for item in top_level::refs(&imported.items) {
             match item {
                 Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
-                Node::Import { .. } => {
-                    if let Some(k) = import_key(item) {
-                        queue.push_back(k);
-                    }
-                }
+                Node::Import { .. } => queue.extend(import_key(item)?),
                 _ => {}
             }
         }

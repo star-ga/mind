@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1944 | **Est. tokens:** ~3,801,545
-**Generated:** 2026-11-02 11:58 UTC
+**Files:** 1945 | **Est. tokens:** ~3,803,321
+**Generated:** 2026-11-02 12:07 UTC
 
 ## Token Budget Guide
 
@@ -30,7 +30,7 @@
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~87,443 |
+| `benches/` | 28 | ~87,439 |
 | `benches/common/` | 2 | ~2,995 |
 | `benches/e2e/` | 1 | ~3,047 |
 | `bench/fft/` | 8 | ~8,060 |
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~113,752 |
+| `docs/` | 40 | ~113,895 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 174 | ~451,653 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,165 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,198 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -141,18 +141,18 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 22 | ~77,006 |
+| `src/project/` | 22 | ~77,981 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~15,775 |
-| `src/type_checker/` | 19 | ~64,866 |
+| `src/test/` | 4 | ~15,810 |
+| `src/type_checker/` | 20 | ~65,284 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 428 | ~873,626 |
+| `tests/` | 428 | ~873,802 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -310,7 +310,7 @@
 - `bench_hpack.rs` (~3927 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_keccak.rs` (~2576 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_mlkem768.rs` (~3700 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_mlkem768.rs` (~3696 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_rsa_pss.rs` (~3317 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_sha256.rs` (~2594 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_tls13_record.rs` (~6121 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -544,7 +544,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~6786 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~6929 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `runtime-open-errors.md` (~831 tok, large) — Runtime file-open errors
 - `security.md` (~1585 tok, huge) — Security Guide
@@ -919,7 +919,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~837 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~870 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1505,8 +1505,8 @@
 - `single_file_scope.rs` (~7138 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3672 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~4509 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~4642 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4514 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1536,7 +1536,7 @@
 ### `src/test/`
 
 - `imports.rs` (~5967 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~6780 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6815 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -1569,6 +1569,7 @@
 ### `src/type_checker/`
 
 - `slice_abi.rs` (~7584 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_imports.rs` (~418 tok, medium) — Copyright 2026 STARGA Inc.
 - `stdlib_signatures.rs` (~620 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `struct_bindings.rs` (~1070 tok, large) — Copyright 2026 STARGA Inc.
 - `type_display.rs` (~628 tok, large) — Copyright 2026 STARGA Inc.
@@ -2097,7 +2098,7 @@
 - `issue_246_bitnot_operator.rs` (~571 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_246_tensor_named_dtype.rs` (~525 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_method_chain_newline.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
-- `issue_263_use_path_import.rs` (~808 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_263_use_path_import.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_usize_suffix_literal.rs` (~770 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
 ### `tests/lexical/`

@@ -43,6 +43,8 @@ use type_display::{
 };
 #[cfg(feature = "std-surface")]
 mod slice_abi;
+#[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+mod std_imports;
 #[cfg(feature = "std-surface")]
 mod stdlib_signatures;
 #[cfg(feature = "std-surface")]
@@ -4905,6 +4907,8 @@ fn check_module_types_in_file_impl(
             // Default build: byte-identical no-op (the arm compiles to
             // a discarded pattern binding, zero runtime cost).
             Node::Import { path, span, .. } => {
+                #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+                std_imports::check(path, *span, src, file, &mut errs);
                 #[cfg(feature = "cross-module-imports")]
                 cm_inject_imported_symbols(&mut tenv, path);
                 // FAIL LOUD at the import/std-path resolution layer: a

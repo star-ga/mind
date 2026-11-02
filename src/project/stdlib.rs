@@ -15,13 +15,17 @@
 //! project — which defeats the point of having a shared standard
 //! library.
 //!
-//! This module bundles the four pure-MIND std/*.mind files
-//! (`vec.mind`, `string.mind`, `map.mind`, `io.mind`) into the mindc
-//! binary at compile time via `include_str!`. The project loader
-//! consumes `parsed_stdlib_modules()` and prepends them to the
-//! `(module_path, AST)` pairs it feeds into `build_module_table` so
-//! the cross-module resolver sees `std.vec` / `std.string` /
-//! `std.map` / `std.io` before walking the project's own src tree.
+//! This module bundles every `std/*.mind` file into the mindc binary at
+//! compile time via `include_str!`. The project loader consumes
+//! `parsed_stdlib_modules()` and prepends them to the `(module_path, AST)`
+//! pairs it feeds into `build_module_table` so the cross-module resolver
+//! sees every `std.<m>` before walking the project's own src tree.
+//!
+//! The table is exhaustive over `std/*.mind`: a shipped module without a
+//! row was accepted at its import and refused at every call, so
+//! `tests/std_bundled_module_table.rs` enumerates the directory and fails
+//! on a missing row. An import of a `std` path that names no shipped module
+//! is refused at the import ([`unknown_std_import`]).
 //!
 //! Gated entirely behind `feature = "cross-module-imports"`. Default
 //! build never compiles this file; the std/*.mind strings are only
@@ -31,40 +35,100 @@
 
 use crate::ast::Module;
 
-/// Compile-time bundle of the four RFC 0005 Phase 2 std/*.mind files,
-/// laid out as `(module_path, source_text)` pairs. Module paths use
-/// the dotted notation `Node::Import` already speaks (`use std.vec`
-/// → `["std", "vec"]` → joined `"std.vec"`).
+/// Compile-time bundle of every std/*.mind file, laid out as
+/// `(module_path, source_text)` pairs. Module paths use the dotted
+/// notation `Node::Import` already speaks (`use std.vec` → `["std", "vec"]`
+/// → joined `"std.vec"`).
 ///
 /// The list is ordered alphabetically by module path so the module
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
+// One row per line, unwrapped: the manifest lint
+// (examples/mindc_mind/stdlib_manifest_lint.py) reads each row as
+// `("std.<m>", include_str!` on one line.
+#[rustfmt::skip]
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
+    ("std.aes_gcm", include_str!("../../std/aes_gcm.mind")),
     ("std.arena", include_str!("../../std/arena.mind")),
     ("std.async", include_str!("../../std/async.mind")),
     ("std.blas", include_str!("../../std/blas.mind")),
+    ("std.chacha20_poly1305", include_str!("../../std/chacha20_poly1305.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.detmath", include_str!("../../std/detmath.mind")),
+    ("std.ecdsa_p256", include_str!("../../std/ecdsa_p256.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
+    ("std.hkdf", include_str!("../../std/hkdf.mind")),
+    ("std.hpack", include_str!("../../std/hpack.mind")),
     ("std.http", include_str!("../../std/http.mind")),
+    ("std.http2_frame", include_str!("../../std/http2_frame.mind")),
     ("std.io", include_str!("../../std/io.mind")),
     ("std.io_canon", include_str!("../../std/io_canon.mind")),
     ("std.iouring", include_str!("../../std/iouring.mind")),
     ("std.json", include_str!("../../std/json.mind")),
     ("std.json_canon", include_str!("../../std/json_canon.mind")),
+    ("std.keccak", include_str!("../../std/keccak.mind")),
+    ("std.llvm", include_str!("../../std/llvm.mind")),
     ("std.map", include_str!("../../std/map.mind")),
+    ("std.mlir", include_str!("../../std/mlir.mind")),
+    ("std.mlkem768", include_str!("../../std/mlkem768.mind")),
     ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
     ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
     ("std.ring", include_str!("../../std/ring.mind")),
+    ("std.rsa_pss", include_str!("../../std/rsa_pss.mind")),
     ("std.sha256", include_str!("../../std/sha256.mind")),
     ("std.sha512", include_str!("../../std/sha512.mind")),
     ("std.string", include_str!("../../std/string.mind")),
     ("std.time", include_str!("../../std/time.mind")),
+    ("std.tls13_finished", include_str!("../../std/tls13_finished.mind")),
+    ("std.tls13_handshake", include_str!("../../std/tls13_handshake.mind")),
+    ("std.tls13_keyschedule", include_str!("../../std/tls13_keyschedule.mind")),
+    ("std.tls13_record", include_str!("../../std/tls13_record.mind")),
     ("std.toml", include_str!("../../std/toml.mind")),
     ("std.tui", include_str!("../../std/tui.mind")),
     ("std.vec", include_str!("../../std/vec.mind")),
+    ("std.x25519", include_str!("../../std/x25519.mind")),
+    ("std.x25519mlkem768", include_str!("../../std/x25519mlkem768.mind")),
+    ("std.x509", include_str!("../../std/x509.mind")),
 ];
+
+/// The standard-library modules the Core v1 specification names whose
+/// entities are compiler builtins, available without an import
+/// (spec/v1.0/stdlib.md, "Module organization"). Importing one is valid and
+/// needs no bundled source; `std.io` is also bundled.
+pub const BUILTIN_STD_MODULES: &[&str] =
+    &["std.core", "std.diff", "std.io", "std.math", "std.tensor"];
+
+/// True when `module` (dotted, e.g. `std.keccak`) is a standard-library
+/// module this compiler ships: a bundled `std/*.mind` source or a builtin
+/// module of the specification.
+pub fn is_shipped_std_module(module: &str) -> bool {
+    STDLIB_MIND_SOURCES.iter().any(|(name, _)| *name == module)
+        || BUILTIN_STD_MODULES.contains(&module)
+}
+
+/// The refusal for an import path that starts with `std` but names no
+/// shipped standard-library module; `None` for any other import.
+///
+/// Such an import used to be accepted and resolve nothing, so the program
+/// failed later at each call (`unsupported call`, or `unsupported
+/// operation` under `mindc test`). Every consumer that admits an import
+/// asks this one function.
+pub fn unknown_std_import(path: &[String]) -> Option<String> {
+    if path.first().map(String::as_str) != Some("std") {
+        return None;
+    }
+    let module = path.join(".");
+    if is_shipped_std_module(&module) {
+        return None;
+    }
+    Some(format!(
+        "unknown standard-library module `{module}`: no std/*.mind module and no builtin \
+         std module ({}) has that path, so this import cannot resolve",
+        BUILTIN_STD_MODULES.join(", ")
+    ))
+}
 
 /// Parse every bundled std/*.mind source and return the
 /// `(module_path, AST)` pairs the project loader feeds into
@@ -81,8 +145,8 @@ pub fn parsed_stdlib_modules() -> Vec<(String, Module)> {
     // Phase D — env-var override.
     //
     // If `MIND_STDLIB_PATH` is set, treat it as a directory containing
-    // `vec.mind`, `string.mind`, `map.mind`, `io.mind` and parse those
-    // instead of the bundled blobs. This lets a downstream user fork
+    // one `<m>.mind` per bundled `std.<m>` and parse those instead of the
+    // bundled blobs. This lets a downstream user fork
     // the stdlib without rebuilding mindc — e.g. a stricter
     // string-validation variant for a regulated deployment.
     //
@@ -104,11 +168,11 @@ pub fn parsed_stdlib_modules() -> Vec<(String, Module)> {
 }
 
 /// Reads `MIND_STDLIB_PATH` from the environment. If set and pointing
-/// at a directory that contains all four `.mind` source files, returns
+/// at a directory that contains every bundled module's `.mind` file, returns
 /// the parsed modules; otherwise returns `None` so the caller can fall
 /// back to the bundled blobs.
 ///
-/// "All four files present and all four parse" is the bar — partial
+/// "Every file present and every file parses" is the bar — partial
 /// overrides (e.g. supply your own `vec.mind`, fall back to bundled
 /// for the rest) would be useful but introduce surprising
 /// last-write-wins precedence between bundled and override; better to
@@ -303,5 +367,17 @@ mod tests {
             STDLIB_MIND_SOURCES.len(),
             "missing override dir must fall back to bundled stdlib"
         );
+    }
+
+    #[test]
+    fn unknown_std_import_refuses_only_std_paths_that_do_not_ship() {
+        let path = |p: &str| p.split('.').map(str::to_string).collect::<Vec<_>>();
+        assert!(unknown_std_import(&path("std.no_such_module")).is_some());
+        assert!(unknown_std_import(&path("std.keccak.keccak_sha3_512")).is_some());
+        assert!(unknown_std_import(&path("std")).is_some());
+        assert_eq!(unknown_std_import(&path("std.keccak")), None);
+        assert_eq!(unknown_std_import(&path("std.math")), None);
+        assert_eq!(unknown_std_import(&path("crate.helper")), None);
+        assert_eq!(unknown_std_import(&path("helper")), None);
     }
 }

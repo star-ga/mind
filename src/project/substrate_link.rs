@@ -83,6 +83,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.iouring",
     "std.json",
     "std.json_canon",
+    "std.keccak",
     "std.net",
     "std.process",
     "std.reactor",
