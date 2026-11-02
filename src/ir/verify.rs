@@ -1003,6 +1003,8 @@ fn check_nested_fndef_tables(instrs: &[Instr]) -> Result<(), IrVerifyError> {
 
 pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     crate::ir::verify_canonical_metadata(module).map_err(IrVerifyError::CanonicalMetadata)?;
+    #[cfg(feature = "std-surface")]
+    validate_intrinsic_arity(&module.instrs)?;
     let mut defined = ids::ValueIdSet::with_bound(module.next_id);
     let mut saw_output = false;
     let mut max_seen = 0usize;
@@ -1145,6 +1147,52 @@ fn validate_while_backedges(
     for (_name, post_id) in live_vars {
         if !reachable.contains(post_id) {
             return Err(*post_id);
+        }
+    }
+    Ok(())
+}
+
+/// A call to a registered `__mind_*` intrinsic carries exactly the intrinsic's
+/// declared arity, at any nesting depth. The C runtime reads that many
+/// arguments, so a short call hands it an undefined trailing argument.
+#[cfg(feature = "std-surface")]
+fn validate_intrinsic_arity(instrs: &[Instr]) -> Result<(), IrVerifyError> {
+    for (instr_index, instr) in instrs.iter().enumerate() {
+        match instr {
+            Instr::Call { name, args, .. } => {
+                match crate::intrinsics::declared_intrinsic_arity(name) {
+                    Some(arity) if name.starts_with("__mind_") && args.len() != arity => {
+                        return Err(IrVerifyError::InvalidOperand {
+                            instr_index,
+                            message: format!(
+                                "intrinsic `{name}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
+                                args.len()
+                            ),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Instr::FnDef { body, .. } | Instr::Region { body, .. } => {
+                validate_intrinsic_arity(body)?
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                validate_intrinsic_arity(cond_instrs)?;
+                validate_intrinsic_arity(body)?;
+            }
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                validate_intrinsic_arity(cond_instrs)?;
+                validate_intrinsic_arity(then_instrs)?;
+                validate_intrinsic_arity(else_instrs)?;
+            }
+            _ => {}
         }
     }
     Ok(())

@@ -630,6 +630,17 @@ pub(crate) fn read_fd_is_world(fd: i64) -> bool {
     INHERITED_STREAM_FDS.contains(&fd)
 }
 
+/// The declared i64 arity of a registered intrinsic in any profile, or `None`
+/// if `name` is not in the table. A call site must match it whatever backend
+/// lowers the call: the C runtime takes exactly this many arguments.
+#[cfg(feature = "std-surface")]
+pub(crate) fn declared_intrinsic_arity(name: &str) -> Option<usize> {
+    STD_SURFACE_INTRINSICS
+        .iter()
+        .find(|spec| spec.physical_name == name)
+        .map(|spec| spec.arity)
+}
+
 /// The declared i64 arity of a Rust/MLIR-selectable std-surface intrinsic, or
 /// `None` if `name` is native-only or not in the cross-backend table.
 #[cfg(feature = "std-surface")]
