@@ -4,6 +4,9 @@
 
 //! Shared driver source and property checks for the json-canon-kat
 //! cross-substrate workload (canonical JSON dump, CRX-04).
+// Shared by the targets that run this workload; every other `mod common;`
+// target compiles it unused, like `xsi_gate`.
+#![allow(dead_code)]
 
 /// The json-canon-kat driver: imports std.json + std.json_canon and exposes
 /// `json_canon_kat(input_addr, input_len) -> i64`, the polynomial hash

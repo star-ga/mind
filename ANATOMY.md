@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1947 | **Est. tokens:** ~3,807,698
-**Generated:** 2026-11-02 12:50 UTC
+**Files:** 1947 | **Est. tokens:** ~3,807,742
+**Generated:** 2026-11-02 13:08 UTC
 
 ## Token Budget Guide
 
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 12 | ~55,351 |
+| `src/` | 12 | ~55,349 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -156,7 +156,7 @@
 | `tests/` | 428 | ~872,178 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 4 | ~13,727 |
+| `tests/common/` | 4 | ~13,773 |
 | `tests/conformance/cpu_baseline/` | 12 | ~390 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,706 |
@@ -1521,7 +1521,7 @@
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~7355 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~7353 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
@@ -1708,8 +1708,8 @@
 ### `tests/common/`
 
 - `gate.rs` (~4999 tok, huge) — Copyright 2025 STARGA Inc.
-- `json_canon_kat.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~3060 tok, huge) — Copyright 2025 STARGA Inc.
+- `json_canon_kat.rs` (~1020 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3070 tok, huge) — Copyright 2025 STARGA Inc.
 - `xsi_gate.rs` (~4684 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
