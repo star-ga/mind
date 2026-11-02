@@ -43,8 +43,9 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
 }
 
 /// Scalar class of an array-literal element. A call reports its canonical
-/// declared result class, an imported callee's included; a name no binding
-/// shadows reports the class of the module constant it names.
+/// declared result class, an imported callee's included; an element or field
+/// read reports its declared type's class; a name no binding shadows reports
+/// the class of the module constant it names.
 fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass> {
     if let Some(class) = confident_scalar_class(element, &env.classes) {
         return Some(class);
@@ -57,6 +58,9 @@ fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass>
         Node::Lit(Literal::Ident(name), _) if !env.bindings.contains_key(name) => {
             super::aliases::const_class(name)
         }
+        Node::IndexAccess { .. } | Node::FieldAccess { .. } => expr_type(element, env)
+            .as_ref()
+            .and_then(scalar_class_of_ann),
         Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => element_class(inner, env),
         Node::Binary {
             op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
