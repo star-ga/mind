@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,800,030
-**Generated:** 2026-11-02 11:30 UTC
+**Files:** 1946 | **Est. tokens:** ~3,800,855
+**Generated:** 2026-11-02 12:10 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
-| `docs/gates/` | 1 | ~3,910 |
+| `docs/gates/` | 1 | ~4,009 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/rfcs/` | 35 | ~173,185 |
 | `docs/specs/` | 2 | ~976 |
@@ -97,7 +97,7 @@
 | `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~123,935 |
+| `scripts/` | 33 | ~124,021 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -128,7 +128,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 12 | ~101,660 |
+| `src/ir/` | 12 | ~101,780 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,672 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 429 | ~871,359 |
+| `tests/` | 429 | ~871,879 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -478,7 +478,7 @@
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
-- `exec-semantics-tiers.md` (~3910 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
+- `exec-semantics-tiers.md` (~4009 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
 ### `docs/`
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -1093,7 +1093,7 @@
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~1073 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10038 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10124 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1419,7 +1419,7 @@
 - `mod.rs` (~17644 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify_calls.rs` (~711 tok, large) — Copyright 2026 STARGA Inc.
+- `verify_calls.rs` (~831 tok, large) — Copyright 2026 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -2080,7 +2080,7 @@
 - `int_determinism.rs` (~1234 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~3085 tok, huge) — Copyright 2025 STARGA Inc.
 - `intrinsic_call_arity_build.rs` (~1084 tok, large) — Copyright 2026 STARGA Inc.
-- `intrinsic_call_arity.rs` (~1268 tok, large) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity.rs` (~1788 tok, huge) — Copyright 2026 STARGA Inc.
 - `int_suffix_literal.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~675 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_check_run.rs` (~650 tok, large) — Copyright 2025 STARGA Inc.

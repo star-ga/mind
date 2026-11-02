@@ -52,7 +52,14 @@ fn a_short_intrinsic_call_fails_verification() {
 
 #[test]
 fn an_extra_argument_fails_verification() {
-    assert!(verify_module(&module_calling_write(5)).is_err());
+    let err = verify_module(&module_calling_write(5))
+        .expect_err("a 5-argument __mind_write must not verify");
+    assert!(
+        err.to_string()
+            .contains("intrinsic `__mind_write` expects 4 i64 argument(s)")
+            && err.to_string().contains("got 5"),
+        "the error names the intrinsic, its arity and the count: {err}"
+    );
 }
 
 #[test]
@@ -60,18 +67,30 @@ fn the_declared_arity_verifies() {
     verify_module(&module_calling_write(4)).expect("a 4-argument __mind_write verifies");
 }
 
-/// Three constants and a 3-argument `__mind_write`, ids from `base`.
-fn short_write(base: usize) -> Vec<Instr> {
-    let mut v: Vec<Instr> = (base..base + 3)
+/// `n` constants and an `n`-argument `__mind_write`, ids from `base`.
+fn write_call(base: usize, n: usize) -> Vec<Instr> {
+    let mut v: Vec<Instr> = (base..base + n)
         .map(|i| Instr::ConstI64(ValueId(i), 1))
         .collect();
     v.push(Instr::Call {
-        dst: ValueId(base + 3),
+        dst: ValueId(base + n),
         name: "__mind_write".to_string(),
-        args: (base..base + 3).map(ValueId).collect(),
+        args: (base..base + n).map(ValueId).collect(),
         resolved_callee: None,
     });
     v
+}
+
+fn short_write(base: usize) -> Vec<Instr> {
+    write_call(base, 3)
+}
+
+/// `instrs` followed by the definition of `id`, so a region operand the
+/// verifier checks (an if condition or branch result, a while condition, a
+/// region result) is produced where it must be.
+fn then_define(mut instrs: Vec<Instr>, id: usize) -> Vec<Instr> {
+    instrs.push(Instr::ConstI64(ValueId(id), 1));
+    instrs
 }
 
 fn main_with(body: Vec<Instr>) -> IRModule {
@@ -94,10 +113,10 @@ fn main_with(body: Vec<Instr>) -> IRModule {
 fn if_with(cond: Vec<Instr>, then: Vec<Instr>, otherwise: Vec<Instr>) -> Instr {
     Instr::If {
         cond_id: ValueId(50),
-        cond_instrs: cond,
-        then_instrs: then,
+        cond_instrs: then_define(cond, 50),
+        then_instrs: then_define(then, 51),
         then_result: ValueId(51),
-        else_instrs: otherwise,
+        else_instrs: then_define(otherwise, 52),
         else_result: ValueId(52),
         dst: ValueId(53),
         branch_bindings: vec![],
@@ -108,7 +127,7 @@ fn if_with(cond: Vec<Instr>, then: Vec<Instr>, otherwise: Vec<Instr>) -> Instr {
 fn while_with(cond: Vec<Instr>, body: Vec<Instr>) -> Instr {
     Instr::While {
         cond_id: ValueId(60),
-        cond_instrs: cond,
+        cond_instrs: then_define(cond, 60),
         body,
         live_vars: vec![],
         init_ids: vec![],
@@ -118,7 +137,7 @@ fn while_with(cond: Vec<Instr>, body: Vec<Instr>) -> Instr {
 
 fn region_with(body: Vec<Instr>) -> Instr {
     Instr::Region {
-        body,
+        body: then_define(body, 70),
         result: ValueId(70),
         enter_id: ValueId(71),
         exit_id: ValueId(72),
@@ -174,4 +193,44 @@ fn a_short_call_inside_a_region_and_deeper_is_refused() {
             vec![],
         )])]),
     );
+}
+
+#[test]
+fn the_declared_arity_verifies_at_every_depth() {
+    // The positive control for the nested refusals above: the same shapes with a
+    // four-argument call verify, so each refusal comes from the arity rule.
+    let ok = |n: usize| write_call(1, n);
+    for (where_, m) in [
+        (
+            "in an if condition",
+            main_with(vec![if_with(ok(4), vec![], vec![])]),
+        ),
+        (
+            "in an if then branch",
+            main_with(vec![if_with(vec![], ok(4), vec![])]),
+        ),
+        (
+            "in an if else branch",
+            main_with(vec![if_with(vec![], vec![], ok(4))]),
+        ),
+        (
+            "in a while condition",
+            main_with(vec![while_with(ok(4), vec![])]),
+        ),
+        (
+            "in a while body",
+            main_with(vec![while_with(vec![], ok(4))]),
+        ),
+        ("in a region", main_with(vec![region_with(ok(4))])),
+        (
+            "in a while inside an if inside a region",
+            main_with(vec![region_with(vec![if_with(
+                vec![],
+                vec![while_with(vec![], ok(4))],
+                vec![],
+            )])]),
+        ),
+    ] {
+        verify_module(&m).unwrap_or_else(|e| panic!("a 4-argument call {where_} verifies: {e}"));
+    }
 }

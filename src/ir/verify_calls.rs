@@ -9,8 +9,14 @@
 //! arguments, so a short call hands it an undefined trailing argument.
 //!
 //! The rule runs here, not in the type checker: `mindc check` does not
-//! type-check function bodies, so a check there would miss these calls, while
-//! every path that reaches a backend verifies the module first.
+//! type-check function bodies, so a check there would miss these calls. Every
+//! `mindc` path that lowers through MLIR (`build`, `run`, and the `--emit-ir`,
+//! `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj` flags) verifies
+//! the module first. Two paths do not reach this verifier and are fenced
+//! elsewhere: `--backend native` refuses every intrinsic call at closure
+//! admission, and `mind eval` emits from unverified lowered IR (its own deferred
+//! marker in `src/main.rs`) but no intrinsic call reaches its output today: a
+//! top-level call is a type error and function definitions are not emitted.
 
 // deferred: would have `mindc check` type-check function bodies (this rule and every other
 // body error), not done here because that changes what `check` reports on every existing
