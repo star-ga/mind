@@ -35,39 +35,23 @@ fn declared_intrinsic_arity(name: &str) -> Option<usize> {
 #[cfg(feature = "std-surface")]
 fn validate_intrinsic_arity(instrs: &[Instr]) -> Result<(), IrVerifyError> {
     for (instr_index, instr) in instrs.iter().enumerate() {
-        match instr {
-            Instr::Call { name, args, .. } => match declared_intrinsic_arity(name) {
-                Some(arity) if name.starts_with("__mind_") && args.len() != arity => {
-                    return Err(IrVerifyError::InvalidOperand {
-                        instr_index,
-                        message: format!(
-                            "intrinsic `{name}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
-                            args.len()
-                        ),
-                    });
-                }
-                _ => {}
-            },
-            Instr::FnDef { body, .. } | Instr::Region { body, .. } => {
-                validate_intrinsic_arity(body)?
-            }
-            Instr::While {
-                cond_instrs, body, ..
-            } => {
-                validate_intrinsic_arity(cond_instrs)?;
-                validate_intrinsic_arity(body)?;
-            }
-            Instr::If {
-                cond_instrs,
-                then_instrs,
-                else_instrs,
-                ..
-            } => {
-                validate_intrinsic_arity(cond_instrs)?;
-                validate_intrinsic_arity(then_instrs)?;
-                validate_intrinsic_arity(else_instrs)?;
-            }
-            _ => {}
+        if let Instr::Call { name, args, .. } = instr
+            && name.starts_with("__mind_")
+            && let Some(arity) = declared_intrinsic_arity(name)
+            && args.len() != arity
+        {
+            return Err(IrVerifyError::InvalidOperand {
+                instr_index,
+                message: format!(
+                    "intrinsic `{name}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
+                    args.len()
+                ),
+            });
+        }
+        // `instr_bodies` is the one list of body-carrying variants (function
+        // bodies, while, if, region), so a new variant cannot be missed here.
+        for body in super::instr_bodies(instr) {
+            validate_intrinsic_arity(body)?;
         }
     }
     Ok(())

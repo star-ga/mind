@@ -29,6 +29,7 @@
 //! own byte-identity gate in a later slice.
 
 use super::runtime_link::RuntimeLink;
+use super::{BuildOptions, EmitKind};
 use crate::target::{LinkFlavor, Target};
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
@@ -42,15 +43,14 @@ pub struct LinkCtx<'a> {
     pub cc: &'a str,
     /// Object files to link, in declared order.
     pub objects: &'a [PathBuf],
-    /// Final executable path (the caller appends any OS extension).
+    /// Output path: the executable, or the relocatable object for `--emit object`.
     pub output: &'a Path,
     /// Installed runtime for accelerator backends. Native CPU objects use the
     /// public runtime-support shim and carry no private runtime dependency.
     pub runtime: Option<&'a RuntimeLink>,
-    /// Release profile — adds `-O3 -flto`.
-    pub release: bool,
-    /// Print the assembled link command.
-    pub verbose: bool,
+    /// Build options: `release` adds `-O3 -flto`, `verbose` prints the link
+    /// command, and `emit` selects an executable or a relocatable object.
+    pub opts: &'a BuildOptions,
     /// Pre-compiled runtime-support shim object (compiled by the caller through
     /// the MLIR toolchain, fixed basename + `-ffile-prefix-map`, no debug info),
     /// linked FIRST so the `MIND_EXPORT` intrinsics resolve statically. `None`
@@ -72,8 +72,16 @@ impl LinkDriver {
         Self { target }
     }
 
-    /// Link the final executable, dispatching on the target's object/link format.
+    /// Link the output: a relocatable object for `--emit object`, otherwise the
+    /// final executable, dispatching on the target's object/link format.
     pub fn link(&self, ctx: &LinkCtx) -> Result<()> {
+        // `--emit object` stops before the executable link: one relocatable
+        // object with the compiled modules, the substrate archive members they
+        // use and the runtime-support shim, for a host program to link. The
+        // executable link used to run here too, so the `.o` was a linked PIE.
+        if ctx.opts.emit == EmitKind::Object {
+            return link_relocatable(ctx);
+        }
         match self.target.link_flavor() {
             LinkFlavor::Elf => self.link_elf(ctx),
             LinkFlavor::Coff => self.link_coff(ctx),
@@ -138,7 +146,7 @@ impl LinkDriver {
         }
 
         // Optimization flags.
-        if ctx.release {
+        if ctx.opts.release {
             cmd.arg("-O3");
             cmd.arg("-flto");
         }
@@ -195,7 +203,7 @@ impl LinkDriver {
         cmd.arg("-lbcrypt");
 
         // Optimization flags (same as ELF).
-        if ctx.release {
+        if ctx.opts.release {
             cmd.arg("-O3");
             cmd.arg("-flto");
         }
@@ -225,7 +233,7 @@ impl LinkDriver {
 
     /// Run the assembled link command, surfacing a clear error on failure.
     fn run(&self, mut cmd: Command, ctx: &LinkCtx) -> Result<()> {
-        if ctx.verbose {
+        if ctx.opts.verbose {
             println!("  Link command: {cmd:?}");
         }
         let status = cmd
@@ -239,4 +247,31 @@ impl LinkDriver {
         }
         Ok(())
     }
+}
+
+/// Pack `ctx.objects` and the runtime-support shim into one relocatable object
+/// (`cc -r -nostdlib`). No startup files and no libc: the host program's own
+/// link supplies those.
+fn link_relocatable(ctx: &LinkCtx) -> Result<()> {
+    let mut cmd = Command::new(ctx.cc);
+    cmd.args(["-r", "-nostdlib", "-o"])
+        .arg(ctx.output)
+        .args(ctx.objects);
+    if let Some(shim) = ctx.runtime_shim {
+        cmd.arg(shim);
+    }
+    if ctx.opts.verbose {
+        println!("  Relocatable link: {cmd:?}");
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| anyhow!("spawn `{}` for the relocatable object link: {e}", ctx.cc))?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "relocatable object link failed ({} -r): {}",
+            ctx.cc,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
 }

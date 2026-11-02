@@ -2840,8 +2840,7 @@ fn native_link(
         objects,
         output,
         runtime,
-        release: opts.release,
-        verbose: opts.verbose,
+        opts,
         runtime_shim,
     };
 

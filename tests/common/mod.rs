@@ -221,6 +221,7 @@ pub fn reported_artifact(out: &Output) -> PathBuf {
 }
 
 /// Write an embedded workload source into `dir`.
+#[allow(dead_code)]
 pub fn scratch_src_in(dir: &Path, name: &str, text: &str) -> PathBuf {
     let p = dir.join(name);
     std::fs::write(&p, text).unwrap_or_else(|e| panic!("write {}: {e}", p.display()));
