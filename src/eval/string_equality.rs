@@ -22,7 +22,12 @@
 //! * two operands of which neither has a known type, so both may be strings.
 //!
 //! An operand whose type is known and is not a string makes the comparison an
-//! integer comparison on every backend.
+//! integer comparison on every backend. A declaration proves a value holds
+//! no string only while the module stores none there: a parameter given a
+//! string argument, a result type a string is returned through, and a field
+//! or payload given a string are read as unknown (see [`flows`]). A function
+//! with no declared result type that still returns a value has an unknown
+//! result.
 //!
 //! A reassigned name keeps its fact only when every assignment keeps it (see
 //! `Decls::reassigned_fact`); facts are never joined across branches of
@@ -34,6 +39,7 @@ use crate::ast::{BinOp, Literal, Module, Node, Span};
 
 mod classify;
 mod facts;
+mod flows;
 #[cfg(test)]
 mod tests;
 mod walk;
@@ -85,8 +91,9 @@ pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
         }
         RefusedKind::Untyped => {
             "give an operand a declared type (an annotated binding such as \
-             `let n: i64 = ...`, a parameter, a field or a function return), or \
-             compare strings explicitly with `string_eq(a, b)` from std.string"
+             `let n: i64 = ...`, a parameter, a field or a function return `-> T`) \
+             and store no string where another type is declared, or compare \
+             strings explicitly with `string_eq(a, b)` from std.string"
         }
     }
 }

@@ -14,7 +14,9 @@
 
 use crate::ast::{Literal, Node, Pattern, TypeAnn};
 
-use super::facts::{Class, Decls, Env, Fact, Ret, fact_class, is_numeric_literal, join};
+use super::facts::{
+    Class, Decls, Env, Fact, Ret, contradicts, fact_class, is_numeric_literal, join,
+};
 
 /// Nesting beyond this depth is not analysed: the value is `Unknown`. The
 /// bound keeps the recursive walk off deep `else if` chains, whose analysis
@@ -64,7 +66,8 @@ impl Decls {
 
     /// The fact of a `let` binding. An annotation is trusted unless the value
     /// contradicts it: no string is a numeric literal, and a string value
-    /// under a non-string annotation is still a string handle.
+    /// (or a collection of strings) under a non-string annotation is still a
+    /// string handle.
     pub(super) fn binding_fact(
         &self,
         ann: Option<&TypeAnn>,
@@ -78,7 +81,7 @@ impl Decls {
         match self.typed_fact(ty) {
             Fact::Str if is_numeric_literal(value) => Fact::Unknown,
             Fact::Str => Fact::Str,
-            _ if fact_class(&self.fact_at(value, env, depth)) == Class::Str => Fact::Unknown,
+            fact if contradicts(&fact, &self.fact_at(value, env, depth)) => Fact::MaybeStr,
             fact => fact,
         }
     }
@@ -215,7 +218,7 @@ impl Decls {
 
     /// The fact of the value a statement list produces: its last statement,
     /// after the list's own bindings.
-    fn block_fact(&self, stmts: &[Node], env: &Env, depth: usize) -> Fact {
+    pub(super) fn block_fact(&self, stmts: &[Node], env: &Env, depth: usize) -> Fact {
         let Some((last, init)) = stmts.split_last() else {
             return Fact::NotStr;
         };
@@ -262,22 +265,22 @@ impl Decls {
                     pending.extend(args.iter().zip(facts));
                 }
                 Pattern::EnumVariant { path, args } => {
-                    let payload = self.variant_payload(path).map(|(types, _)| types);
+                    let payload = self.variant_payload(path);
                     for (i, arg) in args.iter().enumerate() {
-                        let ty = payload.as_ref().and_then(|types| types.get(i));
-                        pending.push((arg, ty.map_or(Fact::Unknown, |t| self.typed_fact(t))));
+                        let fact = payload
+                            .as_ref()
+                            .map_or(Fact::Unknown, |p| self.payload_fact(p, i));
+                        pending.push((arg, fact));
                     }
                 }
                 Pattern::EnumStruct { path, fields } => {
                     let payload = self.variant_payload(path);
                     for (field, arg) in fields {
-                        let ty = payload.as_ref().and_then(|(types, names)| {
-                            names
-                                .iter()
-                                .position(|n| n == field)
-                                .and_then(|i| types.get(i))
+                        let fact = payload.as_ref().map_or(Fact::Unknown, |p| {
+                            let index = p.names.iter().position(|n| n == field);
+                            index.map_or(Fact::Unknown, |i| self.payload_fact(p, i))
                         });
-                        pending.push((arg, ty.map_or(Fact::Unknown, |t| self.typed_fact(t))));
+                        pending.push((arg, fact));
                     }
                 }
                 Pattern::Literal(_) | Pattern::Wildcard => {}
@@ -314,7 +317,7 @@ impl Decls {
 
     /// The callee a method call lowers to, as lowering resolves it, given the
     /// receiver's fact.
-    fn method_callee(
+    pub(super) fn method_callee(
         &self,
         receiver: &Node,
         receiver_fact: &Fact,
@@ -363,8 +366,8 @@ impl Decls {
             }
             // A zero-argument accessor named like a field reads the field.
             Fact::Record(owner) if no_args => {
-                if let Some(ty) = self.field_ty(owner, method) {
-                    return self.typed_fact(&ty);
+                if let Some(fact) = self.declared_field_fact(owner, method) {
+                    return fact;
                 }
             }
             _ => {}
@@ -384,8 +387,8 @@ impl Decls {
         }
         match self.fact_at(receiver, env, depth) {
             Fact::Record(owner) => self
-                .field_ty(&owner, field)
-                .map_or(Fact::Unknown, |ty| self.typed_fact(&ty)),
+                .declared_field_fact(&owner, field)
+                .unwrap_or(Fact::Unknown),
             Fact::Str if STRING_RECORD_FIELDS.contains(&field) => Fact::NotStr,
             Fact::Elems(_) | Fact::Map(_) if field == "length" || field == "len" => Fact::NotStr,
             Fact::Tuple(facts) => field

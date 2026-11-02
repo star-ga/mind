@@ -498,7 +498,10 @@ fn reject_collection_mutations(roots: Vec<&Node>, ctx: &CollectionScope<'_>) {
 // ---------------------------------------------------------------------------
 
 /// Append every #237 CASE 2 / CASE 3 refusal in `module` to `errors`.
-pub(super) fn check(module: &Module, src: &str, file: Option<&str>, errors: &mut Vec<Pretty>) {
+///
+/// Called by the type check and by the native backend bridge, which lowers
+/// its merged image without the type check.
+pub(crate) fn check(module: &Module, src: &str, file: Option<&str>, errors: &mut Vec<Pretty>) {
     let mut found = collect_collection_mutations(module);
     found.extend(collect_match_refusals(module));
     // Deterministic order whatever the walk order: source position, then code

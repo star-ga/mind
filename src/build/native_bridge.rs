@@ -402,15 +402,7 @@ fn admit_merged_program(
             let diagnostics = crate::parser::parse_with_diagnostics_in_file(text, Some(path))
                 .err()
                 .unwrap_or_default();
-            let emitter = crate::diagnostics::DiagnosticEmitter::new(
-                crate::diagnostics::DiagnosticFormat::Human,
-                crate::diagnostics::ColorChoice::Never,
-            );
-            let rendered = diagnostics
-                .iter()
-                .map(|diagnostic| emitter.render_human(diagnostic, Some(text)))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let rendered = render_diagnostics(&diagnostics, text);
             if rendered.is_empty() {
                 return Err(format!(
                     "`{path}`: the merged module set does not parse as one translation unit"
@@ -419,6 +411,16 @@ fn admit_merged_program(
             return Err(rendered);
         }
     };
+    // The check-time lowering refusals (E2038 string equality, E2300, E2301)
+    // run BEFORE lowering, as `mindc build` runs them through the type check.
+    // This path lowers the merged image directly; without the gate a refused
+    // construct reached lowering's fail-closed backstop, which aborts the
+    // process with a panic (exit 101) instead of refusing the build.
+    let mut refusals = Vec::new();
+    crate::type_checker::lowering_refusals::check(&ast, text, Some(path), &mut refusals);
+    if !refusals.is_empty() {
+        return Err(render_diagnostics(&refusals, text));
+    }
     // A lowering refusal propagates as an explicit refusal. It is never
     // unwrapped and never becomes an empty successful module.
     //
@@ -438,4 +440,18 @@ fn admit_merged_program(
         .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
     let _ = path;
     Ok((ast, ir))
+}
+
+#[cfg(feature = "std-surface")]
+/// Render diagnostics against the merged image text, one per line block.
+fn render_diagnostics(diagnostics: &[crate::diagnostics::Diagnostic], text: &str) -> String {
+    let emitter = crate::diagnostics::DiagnosticEmitter::new(
+        crate::diagnostics::DiagnosticFormat::Human,
+        crate::diagnostics::ColorChoice::Never,
+    );
+    diagnostics
+        .iter()
+        .map(|diagnostic| emitter.render_human(diagnostic, Some(text)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
