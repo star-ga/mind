@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1952 | **Est. tokens:** ~3,816,660
-**Generated:** 2026-11-02 19:18 UTC
+**Files:** 1953 | **Est. tokens:** ~3,820,608
+**Generated:** 2026-11-02 20:21 UTC
 
 ## Token Budget Guide
 
@@ -141,20 +141,20 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 22 | ~76,589 |
+| `src/project/` | 22 | ~76,606 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
-| `src/project/stdlib/` | 1 | ~3,396 |
+| `src/project/stdlib/` | 1 | ~4,048 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~15,919 |
-| `src/type_checker/` | 20 | ~65,011 |
-| `src/type_checker/resolve/` | 2 | ~2,486 |
+| `src/test/` | 4 | ~16,083 |
+| `src/type_checker/` | 20 | ~65,225 |
+| `src/type_checker/resolve/` | 2 | ~2,803 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 430 | ~880,782 |
+| `tests/` | 431 | ~883,366 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -1515,11 +1515,11 @@
 - `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/stdlib/`
 
-- `load.rs` (~3396 tok, huge) — Copyright 2026 STARGA Inc.
+- `load.rs` (~4048 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~4184 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~4701 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~4196 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4706 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1549,7 +1549,7 @@
 ### `src/test/`
 
 - `imports.rs` (~6011 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~6880 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7044 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -1575,7 +1575,7 @@
 - `resolve.rs` (~14691 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/resolve/`
 
-- `std_names.rs` (~1110 tok, large) — Copyright 2026 STARGA Inc.
+- `std_names.rs` (~1427 tok, large) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
@@ -1587,7 +1587,7 @@
 ### `src/type_checker/`
 
 - `slice_abi.rs` (~7584 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_imports.rs` (~418 tok, medium) — Copyright 2026 STARGA Inc.
+- `std_imports.rs` (~632 tok, large) — Copyright 2026 STARGA Inc.
 - `stdlib_signatures.rs` (~782 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `struct_bindings.rs` (~1070 tok, large) — Copyright 2026 STARGA Inc.
 - `type_display.rs` (~628 tok, large) — Copyright 2026 STARGA Inc.
@@ -2612,7 +2612,8 @@
 - `source_confinement.rs` (~2038 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
-- `std_bundled_module_table.rs` (~8146 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_bundled_module_table.rs` (~8134 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_import_position.rs` (~2596 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_import_standalone_run.rs` (~1102 tok, large) — Copyright 2025 STARGA Inc.
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.

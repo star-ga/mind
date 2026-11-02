@@ -124,3 +124,33 @@ fn module_names(module: &str) -> Option<&'static StdNames> {
         .get_or_init(|| bundled_module_ast(module).map(StdNames::of))
         .as_ref()
 }
+
+#[cfg(all(test, any(feature = "cross-module-imports", feature = "std-surface")))]
+mod tests {
+    use crate::diagnostics::Diagnostic;
+
+    fn check(src: &str) -> Vec<Diagnostic> {
+        let module = crate::parser::parse(src).expect("test program parses");
+        crate::type_checker::check_module_types(&module, src, &Default::default())
+    }
+
+    /// A single-file check has no module table, so a non-implicit std
+    /// module's functions resolve only through [`super::imported`]: with the
+    /// import the call checks clean, without it the name stays unresolved.
+    #[test]
+    fn a_non_implicit_std_function_resolves_through_its_import() {
+        let call = "fn f() -> i64 {\n    let out: i64 = __mind_alloc(64);\n    \
+                    return keccak_sha3_512(out, 0, out);\n}\n";
+        let imported = check(&format!("import std.keccak;\n\n{call}"));
+        assert!(
+            imported.is_empty(),
+            "the call must check clean: {imported:?}"
+        );
+        let bare = check(call);
+        assert!(
+            bare.iter()
+                .any(|d| d.message.contains("keccak_sha3_512") && d.code.starts_with("E200")),
+            "std.keccak is not implicit, so without the import its call must be refused: {bare:?}"
+        );
+    }
+}

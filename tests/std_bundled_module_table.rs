@@ -274,7 +274,6 @@ fn the_builtin_std_modules_named_by_the_spec_still_import() {
     }
 }
 
-#[cfg(feature = "cross-module-imports")]
 fn scalar_call(name: &str, params: &[libmind::ast::Param]) -> Option<String> {
     use libmind::ast::TypeAnn;
     let args: Option<Vec<&str>> = params
@@ -291,7 +290,6 @@ fn scalar_call(name: &str, params: &[libmind::ast::Param]) -> Option<String> {
 
 /// The first public function of `items` callable with scalar literals, as a
 /// call expression; `externs` also admits `extern "C"` declarations.
-#[cfg(feature = "cross-module-imports")]
 fn first_call(items: &[libmind::ast::Node], externs: bool) -> Option<String> {
     use libmind::ast::Node;
     for item in items {
@@ -313,7 +311,6 @@ fn first_call(items: &[libmind::ast::Node], externs: bool) -> Option<String> {
 /// Every shipped module imports, and one of its public functions is callable
 /// at `mindc check`. Before the fix the 19 modules without a table row were
 /// accepted at the import and refused at the call (E2003).
-#[cfg(feature = "cross-module-imports")]
 #[test]
 fn every_shipped_std_module_imports_and_a_public_function_checks() {
     let mut failures = Vec::new();
@@ -355,7 +352,6 @@ fn every_shipped_std_module_imports_and_a_public_function_checks() {
 /// 1600-bit message of 200 bytes 0xa3), each digest as sixteen big-endian
 /// 32-bit words. `kat_misses` counts the words that differ; `main` returns it,
 /// so the interpreter and the native build report the same number.
-#[cfg(feature = "cross-module-imports")]
 fn keccak_kat_program(mutate: bool) -> String {
     // A one-word change in the expected table is the negative control: both
     // engines must then report exactly one miss.
@@ -438,7 +434,8 @@ fn main() -> i64 {{
     )
 }
 
-#[cfg(feature = "cross-module-imports")]
+/// Runs in every std-surface build, the default one included: there no module
+/// table carries `std.keccak`, so its names resolve through the import alone.
 #[test]
 fn keccak_sha3_512_known_answers_check_and_pass_under_mindc_test() {
     let file = write_program("keccak_kat_test", &keccak_kat_program(false));
