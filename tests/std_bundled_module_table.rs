@@ -231,6 +231,32 @@ fn an_import_of_a_std_module_that_does_not_ship_fails_at_the_import() {
     );
 }
 
+/// The native backend admits sources without the type checker on the
+/// single-file path, and its frozen compiler treats an import as a no-op, so it
+/// refuses the unknown module at the import itself.
+#[test]
+fn the_native_backend_refuses_an_unknown_std_import_at_the_import() {
+    let file = write_program(
+        "unknown_native",
+        &format!("import std.no_such_module;{MAIN_ONLY}"),
+    );
+    let out = Command::new(common::mindc_bin())
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["build", "--backend", "native"])
+        .arg(&file)
+        .arg("--out")
+        .arg(file.with_extension("elf"))
+        .output()
+        .expect("spawn mindc build --backend native");
+    let all = text(&out);
+    assert!(
+        !out.status.success()
+            && all.contains("scope.unknown_std_module")
+            && all.contains("std.no_such_module"),
+        "the native backend must refuse the unknown std module at the import:\n{all}"
+    );
+}
+
 #[test]
 fn the_builtin_std_modules_named_by_the_spec_still_import() {
     // spec/v1.0/stdlib.md "Module organization": core, math, tensor, diff and
@@ -324,6 +350,7 @@ fn every_shipped_std_module_imports_and_a_public_function_checks() {
 /// 1600-bit message of 200 bytes 0xa3), each digest as sixteen big-endian
 /// 32-bit words. `kat_misses` counts the words that differ; `main` returns it,
 /// so the interpreter and the native build report the same number.
+#[cfg(feature = "cross-module-imports")]
 fn keccak_kat_program(mutate: bool) -> String {
     // A one-word change in the expected table is the negative control: both
     // engines must then report exactly one miss.

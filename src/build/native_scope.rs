@@ -183,13 +183,21 @@ pub fn resolve_native_sources(
     };
 
     match discovery {
-        Discovery::SingleTranslationUnit => Ok((
-            NativeSourceSet::SingleFile {
-                path: entry.to_path_buf(),
-                source: entry_source.to_vec(),
-            },
-            None,
-        )),
+        Discovery::SingleTranslationUnit => {
+            // No project scope means no type check below, so the entry's own
+            // `std` imports are admitted here. The project branch reaches the
+            // same refusal through the type checker in `validate_captured`.
+            if let Ok((_module, raw_imports)) = crate::parser::parse_with_imports(text) {
+                refuse_unknown_std_import(entry, &raw_imports)?;
+            }
+            Ok((
+                NativeSourceSet::SingleFile {
+                    path: entry.to_path_buf(),
+                    source: entry_source.to_vec(),
+                },
+                None,
+            ))
+        }
         Discovery::MissingProject(imports) => refuse(
             "scope.missing_project",
             format!(
@@ -378,6 +386,8 @@ pub fn resolve_native_sources(
             );
         }
     };
+    #[cfg(feature = "std-surface")]
+    refuse_unknown_std_import(entry, &raw_imports)?;
     let local = local_import_segments(&raw_imports);
     if !local.is_empty() {
         return refuse(
@@ -441,6 +451,23 @@ pub(crate) fn owner_sensitive_imported_bodies(sources: &[NativeSource]) -> Vec<S
             owner_bearing(&module.items).map(|kind| format!("{} ({kind})", src.module_path))
         })
         .collect()
+}
+
+/// Refuse a `std` import that names no shipped standard-library module, at the
+/// import, as `mindc check` refuses it (E2002). The frozen compiler treats every
+/// import as a no-op, so without this an unknown module was accepted silently.
+#[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+fn refuse_unknown_std_import(entry: &Path, raw_imports: &[String]) -> Result<(), ScopeRefusal> {
+    for dotted in raw_imports {
+        let path: Vec<String> = dotted.split('.').map(str::to_string).collect();
+        if let Some(why) = crate::project::stdlib::unknown_std_import(&path) {
+            return refuse(
+                "scope.unknown_std_module",
+                format!("`{}`: {why}", entry.display()),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The parser's recorded import paths, as LOCAL dependency segments.
