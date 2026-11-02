@@ -353,6 +353,13 @@ pub(crate) fn dispatch(
     tensor_env: &std::collections::HashMap<String, super::TensorEnvEntry>,
     mode: super::ExecMode,
 ) -> Option<Result<super::Value, super::EvalError>> {
+    // Compiler-owned byte-wise `==` on strings: its operands are string values
+    // in any interpreter form, not i64 scalars.
+    if callee == "__mind_string_eq" {
+        return Some(super::string_record::eval_string_eq(
+            args, env, tensor_env, mode,
+        ));
+    }
     if !is_extern_c_intrinsic(callee) {
         return None;
     }

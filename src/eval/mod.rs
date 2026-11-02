@@ -61,6 +61,7 @@ pub(crate) mod narrow_scan;
 pub(crate) mod slice_abi;
 #[cfg(feature = "std-surface")]
 pub(crate) mod string_equality;
+mod string_record;
 pub mod traits;
 #[cfg(feature = "std-surface")]
 pub(crate) mod type_aliases;
@@ -457,6 +458,8 @@ pub fn eval_module_value_with_env_mode(
         }
     }
 
+    let normalized = string_record::normalize_module(m)?;
+    let m = normalized.as_ref().unwrap_or(m);
     let mut venv: HashMap<String, Value> = env
         .iter()
         .map(|(name, value)| (name.clone(), Value::Int(*value)))
@@ -1259,23 +1262,10 @@ pub(crate) fn eval_value_expr_mode(
                 );
                 let mut bound_params: Vec<(&String, Value, &TypeAnn)> =
                     Vec::with_capacity(func.params.len());
-                for (((p, is_string), pty), a) in func
-                    .params
-                    .iter()
-                    .zip(func.string_params.iter())
-                    .zip(func.param_types.iter())
-                    .zip(args.iter())
-                {
-                    let mut v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
-                    // Materialize declared native strings into interp_mem;
-                    // existing handles and Rust-side non-string values pass.
-                    if *is_string {
-                        if let Value::Str(s) = &v {
-                            let rec = interp_mem::materialize_str(s)
-                                .map_err(EvalError::UnsupportedMsg)?;
-                            v = Value::Int(rec);
-                        }
-                    }
+                for ((p, pty), a) in func.params.iter().zip(func.param_types.iter()).zip(args) {
+                    let v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+                    // A declared string receives its native record form.
+                    let v = string_record::bind_param(pty, v)?;
                     // PARAM mechanism: materialise the argument at the
                     // declared width before it reaches the body.
                     let v = declared_width::narrow(pty, v, declared_width::What::Parameter, p)?;
@@ -2725,9 +2715,9 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
 ///   already `Err(Unsupported)`.
 ///
 /// Deterministic: a `BTreeSet` membership test, no ordering iteration.
-// deferred: a content-aware string comparison (read both [addr|len|cap]
-// records, compare byte ranges) could replace this loud error if a string
-// comparison surface ever lands in the language — upgrade HERE, in one place.
+// Typed string `==`/`!=` never reaches this guard: `string_equality` rewrites it
+// to the byte-wise `__mind_string_eq` first (see `string_record`). It remains the
+// backstop for two records compared where neither operand is typed as a string.
 fn guard_str_record_value_op(op: BinOp, left: i64, right: i64) -> Result<(), EvalError> {
     let is_value_comparison = matches!(
         op,
@@ -3709,8 +3699,6 @@ use std::cell::RefCell;
 struct UserFn {
     owner: Option<String>,
     params: Vec<String>,
-    /// Whether each parameter uses the native string record ABI.
-    string_params: Vec<bool>,
     /// Each parameter's DECLARED type, for the PARAM mechanism.
     param_types: Vec<TypeAnn>,
     /// The declared return type, for the RETURN mechanism (applied at every
@@ -3741,10 +3729,6 @@ fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
                 UserFn {
                     owner: symbol_owner(name).map(str::to_string),
                     params: params.iter().map(|p| p.name.clone()).collect(),
-                    string_params: params
-                        .iter()
-                        .map(|p| matches!(&p.ty, TypeAnn::Named(n) if n == "string"))
-                        .collect(),
                     param_types: params.iter().map(|p| p.ty.clone()).collect(),
                     ret_type: fd.ret_type.clone(),
                     body: body.clone(),

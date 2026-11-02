@@ -76,6 +76,18 @@ fn slice_eq(s: string) -> i64 {
 }
 
 fn lib_eq(a: string, b: string) -> i64 { return string_eq(a, b) }
+
+fn first_is_abc(xs: array<string>) -> i64 {
+    if xs[0] == "abc" { return 1 }
+    return 0
+}
+
+fn has_b(xs: array<string>) -> i64 {
+    for x in xs {
+        if x == "b" { return 1 }
+    }
+    return 0
+}
 "#;
 
 /// `(case, expression, expected)`: each case is a zero-argument `pub fn`.
@@ -104,6 +116,9 @@ const CASES: &[(&str, &str, i64)] = &[
     ("std_string_eq_param", "lib_eq(\"abc\", \"abc\")", 1),
     ("std_string_eq_literals", "string_eq(\"abc\", \"abc\")", 1),
     ("std_string_len_literal", "string_len(\"abcd\")", 4),
+    ("array_element_equal", "first_is_abc([\"abc\", \"x\"])", 1),
+    ("array_loop_equal", "has_b([\"a\", \"b\"])", 1),
+    ("array_loop_unequal", "has_b([\"a\", \"c\"])", 0),
 ];
 
 fn source() -> String {

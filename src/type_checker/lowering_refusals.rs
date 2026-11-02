@@ -52,6 +52,10 @@ pub(crate) const E_COLLECTION_MUTATION_IN_EXPR: &str = "E2300";
 /// variant: neither a discriminant test nor a catch-all (#237 CASE 3).
 pub(crate) const E_NON_FINAL_VARIANT_BINDING: &str = "E2301";
 
+/// `==`/`!=` between a string and an operand whose type is not a string: the
+/// comparison would read handles, not bytes (see `eval::string_equality`).
+pub(crate) const E_STRING_EQUALITY_OPERAND: &str = "E2038";
+
 /// The collection mutating-method names whose std implementation returns a
 /// FRESH handle on realloc (`vec_push`, `map_insert`, …).
 ///
@@ -149,6 +153,17 @@ pub(crate) fn non_final_variant_binding(pattern: &Pattern, span: AstSpan) {
                the final arm; falling back to a sequential evaluation here would ignore the \
                scrutinee and return the last arm — a silent miscompile",
         span,
+    });
+}
+
+/// Called from `eval::string_equality::normalize`, which the CASE 2 run below
+/// executes, so check and build refuse the same comparisons.
+pub(crate) fn string_equality_operand(refused: &crate::eval::string_equality::Refused) {
+    report(Refusal {
+        code: E_STRING_EQUALITY_OPERAND,
+        message: crate::eval::string_equality::refusal_message(refused.op),
+        help: crate::eval::string_equality::REFUSAL_HELP,
+        span: refused.span,
     });
 }
 
