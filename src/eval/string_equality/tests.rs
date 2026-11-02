@@ -381,3 +381,116 @@ fn typed_numeric_comparisons_are_untouched() {
     let rewritten = analysis.rewritten.expect("the tuple string position");
     assert_eq!(string_eq_calls(&rewritten), 1);
 }
+
+fn refused_kinds(analysis: &Analysis) -> Vec<RefusedKind> {
+    analysis.refused.iter().map(|r| r.kind).collect()
+}
+
+/// `mindc check` accepts `return <value>` (and a tail expression) in a
+/// function with no `->`. Its result was read as unit, so two such results
+/// compared as integers: a handle compare that is false for equal text.
+#[test]
+fn results_of_functions_without_a_result_type_are_not_unit() {
+    let module = crate::parser::parse(
+        r#"struct Box { v: i64 }
+        fn mk() { return "abc" }
+        fn tail() { "abc" }
+        fn box_name(b: Box) { return "abc" }
+        fn nothing(x: i64) { let y = x }
+        fn control(b: Box) -> i64 {
+            if mk() == mk() { return 1 }
+            let a = mk()
+            let c = mk()
+            if a == c { return 2 }
+            if b.name() == b.name() { return 3 }
+            if tail() == tail() { return 4 }
+            if nothing(1) == nothing(2) { return 5 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.rewritten.is_none());
+    assert_eq!(refused_kinds(&analysis), vec![RefusedKind::Untyped; 4]);
+}
+
+/// A string given to an `i64` parameter, returned through an `i64` result
+/// (by `return` or as the tail), stored in an `i64` field (by a literal or an
+/// assignment), an `i64` variant payload or an `[i64; N]` binding is still a
+/// string handle; so is a value read back out of such a slot and returned
+/// again. Each comparison of two of them was an integer comparison.
+#[test]
+fn strings_stored_where_another_type_is_declared_are_not_trusted() {
+    let module = crate::parser::parse(
+        r#"struct Box { v: i64 }
+        struct Cell { v: i64 }
+        enum Tok { Num(i64), End }
+        fn eqh(a: i64, b: i64) -> i64 {
+            if a == b { return 1 }
+            return 0
+        }
+        fn mk() -> i64 { return "abc" }
+        fn tail() -> i64 { "abc" }
+        fn num(t: Tok) -> i64 {
+            match t {
+                Tok::Num(n) => n,
+                Tok::End => 0,
+            }
+        }
+        fn probes(c: Cell, d: Cell) -> i64 {
+            let r = eqh("abc", "abc")
+            if mk() == mk() { return 1 }
+            if tail() == tail() { return 2 }
+            let a = Box { v: "abc" }
+            let b = Box { v: "abc" }
+            if a.v == b.v { return 3 }
+            if num(Tok::Num("abc")) == num(Tok::Num("abc")) { return 4 }
+            let xs: [i64; 2] = ["abc", "abc"]
+            if xs[0] == xs[1] { return 5 }
+            c.v = "abc"
+            if c.v == d.v { return 6 }
+            return r
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.rewritten.is_none());
+    assert_eq!(refused_kinds(&analysis), vec![RefusedKind::Untyped; 7]);
+}
+
+/// Positive control: the same slots given integers keep their declared
+/// type, so every comparison stays an integer comparison with no refusal.
+#[test]
+fn integer_slots_given_integers_stay_integer_comparisons() {
+    let module = crate::parser::parse(
+        r#"struct Box { v: i64 }
+        enum Tok { Num(i64), End }
+        fn eqh(a: i64, b: i64) -> i64 {
+            if a == b { return 1 }
+            return 0
+        }
+        fn mk() -> i64 { return 7 }
+        fn tail() -> i64 { 7 }
+        fn num(t: Tok) -> i64 {
+            match t {
+                Tok::Num(n) => n,
+                Tok::End => 0,
+            }
+        }
+        fn control(c: Box) -> i64 {
+            let r = eqh(1, 2)
+            if mk() == tail() { return 1 }
+            let a = Box { v: 1 }
+            if a.v == c.v { return 2 }
+            if num(Tok::Num(1)) == num(Tok::End) { return 3 }
+            let xs: [i64; 2] = [1, 2]
+            if xs[0] == xs[1] { return 4 }
+            c.v = 3
+            return r
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.refused.is_empty());
+    assert!(analysis.rewritten.is_none());
+}

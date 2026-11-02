@@ -430,6 +430,25 @@ fn typed_string_operands_check_clean() {
     assert!(check.status.success(), "control refused:\n{}", text(&check));
 }
 
+/// Run `mindc build --backend=native` on `src`, writing `elf`.
+fn native_build(src: &std::path::Path, elf: &std::path::Path) -> std::process::Output {
+    let _ = std::fs::remove_file(elf);
+    let repo = env!("CARGO_MANIFEST_DIR");
+    Command::new(mindc_bin())
+        .arg("build")
+        .arg("--backend=native")
+        .arg(format!("--out={}", elf.display()))
+        .arg(src)
+        .current_dir(repo)
+        .env("MINDC_STD_DIR", format!("{repo}/std"))
+        .env(
+            "MINDC_NATIVE_ELF",
+            format!("{repo}/examples/mindc_mind/testdata/selfhost_loop/stage1.elf"),
+        )
+        .output()
+        .expect("spawn mindc build --backend=native")
+}
+
 /// The native backend (the frozen pure-MIND x86-64 compiler) either builds a
 /// string comparison and computes the byte-wise answer, or refuses it at
 /// build time with no artifact. It must never emit a handle compare.
@@ -438,27 +457,13 @@ fn native_backend_computes_or_refuses_string_equality() {
     let dir = scratch_dir("string_ops_backend_parity_native");
     let src = dir.join("native_eq.mind");
     let elf = dir.join("native_eq");
-    let _ = std::fs::remove_file(&elf);
     std::fs::write(
         &src,
         "fn same(a: string, b: string) -> i64 {\n    if a == b { return 1 }\n    return 0\n}\n\
          fn main() -> i64 {\n    if same(\"abc\", \"abc\") == 1 { return 1 }\n    return 2\n}\n",
     )
     .expect("write native source");
-    let repo = env!("CARGO_MANIFEST_DIR");
-    let out = Command::new(mindc_bin())
-        .arg("build")
-        .arg("--backend=native")
-        .arg(format!("--out={}", elf.display()))
-        .arg(&src)
-        .current_dir(repo)
-        .env("MINDC_STD_DIR", format!("{repo}/std"))
-        .env(
-            "MINDC_NATIVE_ELF",
-            format!("{repo}/examples/mindc_mind/testdata/selfhost_loop/stage1.elf"),
-        )
-        .output()
-        .expect("spawn mindc build --backend=native");
+    let out = native_build(&src, &elf);
     let log = text(&out);
     if out.status.success() {
         use std::os::unix::fs::PermissionsExt;
@@ -475,4 +480,162 @@ fn native_backend_computes_or_refuses_string_equality() {
         assert!(!log.contains("panicked"), "{log}");
         assert!(!elf.exists(), "a refused native build left an artifact");
     }
+}
+
+/// The check-time refusals (`E2038` here, and the older `E2300`) refuse a
+/// native build like every other native refusal: a diagnostic, exit 3 and no
+/// artifact. The native bridge lowered its merged image without the gate, so
+/// the same sources reached lowering's backstop and panicked (exit 101).
+#[test]
+fn native_backend_refuses_check_time_refusals_without_panicking() {
+    let dir = scratch_dir("string_ops_backend_parity_native_refusal");
+    let cases = [
+        (
+            "generic_eq",
+            "E2038",
+            "fn same_any<T>(a: T, b: T) -> i64 {\n    if a == b { return 1 }\n    return 0\n}\n\
+             pub fn probe() -> i64 { return same_any(7, 7) }\n\
+             fn main() -> i64 { return probe() }\n",
+        ),
+        (
+            "i64_handles",
+            "E2038",
+            "fn main() -> i64 {\n    let a: i64 = \"abc\"\n    let b: i64 = \"abc\"\n    \
+             if a == b { return 1 }\n    return 0\n}\n",
+        ),
+        (
+            "mutator_argument",
+            "E2300",
+            "fn id(x: i64) -> i64 { return x }\n\
+             fn main() -> i64 {\n    let mut a: array<i64> = array<i64>.new()\n    \
+             return id(a.push(1))\n}\n",
+        ),
+    ];
+    for (name, code, source) in cases {
+        let src = dir.join(format!("{name}.mind"));
+        let elf = dir.join(name);
+        std::fs::write(&src, source).expect("write native refusal source");
+        let out = native_build(&src, &elf);
+        let log = text(&out);
+        assert_eq!(
+            out.status.code(),
+            Some(3),
+            "{name}: a clean refusal:\n{log}"
+        );
+        assert!(log.contains("error[backend-native]"), "{name}:\n{log}");
+        assert!(log.contains(code), "{name}: refused with {code}:\n{log}");
+        assert!(!log.contains("panicked"), "{name}:\n{log}");
+        assert!(
+            !elf.exists(),
+            "{name}: a refused native build left an artifact"
+        );
+    }
+}
+
+/// Strings in slots whose declaration does not say string: a function with
+/// no result type that returns one (by `return` or as its tail), a string
+/// given to an `i64` parameter, returned through an `i64` result, stored in an
+/// `i64` field or an `i64` variant payload. `mindc check` accepted each and
+/// `==` compiled to a handle compare (the MLIR build returned 0 for equal
+/// text) while `mindc test` failed with a different error. Every such
+/// comparison is refused with `E2038` by check, build and test alike.
+const STORED: &str = r#"struct Box { v: i64 }
+
+enum Tok { Num(i64), End }
+
+fn mk() { return "abc" }
+
+fn tail() { "abc" }
+
+fn eqh(a: i64, b: i64) -> i64 {
+    if a == b { return 1 }
+    return 0
+}
+
+fn mk_i64() -> i64 { return "abc" }
+
+fn num(t: Tok) -> i64 {
+    match t {
+        Tok::Num(n) => n,
+        Tok::End => 0,
+    }
+}
+
+pub fn unit_ret() -> i64 {
+    if mk() == mk() { return 1 }
+    return 0
+}
+
+pub fn unit_tail() -> i64 {
+    let a = tail()
+    let b = tail()
+    if a == b { return 1 }
+    return 0
+}
+
+pub fn i64_param() -> i64 { return eqh("abc", "abc") }
+
+pub fn i64_ret() -> i64 {
+    if mk_i64() == mk_i64() { return 1 }
+    return 0
+}
+
+pub fn i64_field() -> i64 {
+    let a = Box { v: "abc" }
+    let b = Box { v: "abc" }
+    if a.v == b.v { return 1 }
+    return 0
+}
+
+pub fn i64_payload() -> i64 {
+    if num(Tok::Num("abc")) == num(Tok::Num("abc")) { return 1 }
+    return 0
+}
+"#;
+
+#[test]
+fn strings_in_slots_declared_otherwise_are_refused_by_check_build_and_test() {
+    let dir = scratch_dir("string_ops_backend_parity_stored");
+    let src = dir.join("stored.mind");
+    std::fs::write(&src, STORED).expect("write stored-string source");
+
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    let check_text = text(&check);
+    assert!(!check.status.success(), "check accepted:\n{check_text}");
+    assert_eq!(
+        check_text.matches("E2038").count(),
+        6,
+        "one E2038 per comparison of two stored strings:\n{check_text}"
+    );
+    assert!(check_text.contains("string_eq"), "{check_text}");
+    assert!(!check_text.contains("panicked"), "{check_text}");
+
+    let so = dir.join("stored.so");
+    let build = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    let build_text = text(&build);
+    assert!(!build.status.success(), "build accepted:\n{build_text}");
+    assert!(build_text.contains("E2038"), "{build_text}");
+    assert!(!build_text.contains("panicked"), "{build_text}");
+    assert!(!so.exists(), "a refused build left an artifact");
+
+    let test_src = dir.join("stored_test.mind");
+    std::fs::write(
+        &test_src,
+        format!("{STORED}\n#[test]\nfn stored() {{ assert i64_param() == 1, \"value\" }}\n"),
+    )
+    .expect("write stored-string test source");
+    let test = Command::new(mindc_bin())
+        .args(["test", test_src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc test");
+    let test_text = text(&test);
+    assert!(!test.status.success(), "mindc test passed:\n{test_text}");
+    assert!(test_text.contains("[E2038]"), "{test_text}");
+    assert!(test_text.contains("string_eq"), "{test_text}");
 }
