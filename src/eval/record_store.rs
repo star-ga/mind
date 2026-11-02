@@ -93,10 +93,10 @@ pub(super) fn assign_field_element(
             )));
         }
     };
+    let len = items.len();
     let Some(slot) = usize::try_from(idx).ok().and_then(|i| items.get_mut(i)) else {
         return Err(EvalError::BoundsTrap(format!(
-            "array index {idx} out of bounds (len {})",
-            items.len()
+            "array index {idx} out of bounds (len {len})"
         )));
     };
     *slot = value.clone();

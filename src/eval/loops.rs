@@ -29,6 +29,7 @@ type TensorEnv = HashMap<String, TensorEnvEntry>;
 
 /// Upper bound on the iterations of one `while` at compile-time evaluation, so
 /// a non-terminating loop fails loudly instead of hanging the compiler.
+#[cfg(feature = "std-surface")]
 const MAX_WHILE_ITERS: u64 = 1_000_000;
 
 /// What one iteration of a loop body asks the loop to do next.
@@ -169,8 +170,10 @@ pub(super) fn run_for_each(
     tensor_env: &TensorEnv,
     mode: ExecMode,
 ) -> Result<Value, EvalError> {
+    // A loop variable named like its collection shadows it inside the body;
+    // the compiled loop still walks its hidden handle, i.e. the snapshot.
     let live = match collection {
-        Node::Lit(Literal::Ident(name), _) => Some(name.as_str()),
+        Node::Lit(Literal::Ident(name), _) if name != var => Some(name.as_str()),
         _ => None,
     };
     if let Some(name) = live {
