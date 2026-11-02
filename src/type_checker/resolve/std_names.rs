@@ -153,4 +153,19 @@ mod tests {
             "std.keccak is not implicit, so without the import its call must be refused: {bare:?}"
         );
     }
+
+    /// A function in a `module` block is checked as a one-item module; it
+    /// still sees the block's import and the file's.
+    #[test]
+    fn a_function_in_a_module_block_resolves_through_the_file_imports() {
+        let body = "    pub fn f() -> i64 {\n        let out: i64 = __mind_alloc(64);\n        \
+                    return keccak_sha3_512(out, 0, out);\n    }\n}\n";
+        for src in [
+            format!("module inner {{\n    import std.keccak;\n\n{body}"),
+            format!("import std.keccak;\n\nmodule inner {{\n{body}"),
+        ] {
+            let diags = check(&src);
+            assert!(diags.is_empty(), "must check clean:\n{src}\n{diags:?}");
+        }
+    }
 }
