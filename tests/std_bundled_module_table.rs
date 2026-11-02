@@ -537,15 +537,10 @@ fn build_project(dir: &Path, main: &str) -> Output {
 /// starts linking turns this test red until its row is removed.
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 const KNOWN_UNLINKED: &[(&str, &str, &str)] = &[
-    // `__mind_argc` / `__mind_argv` are not registered for the Rust/MLIR
-    // path, so std.cli is not a substrate member and its symbols stay
-    // undefined.
+    // Not members: std.cli calls the unregistered `__mind_argc`; the shim defines
+    // std.io's `print_bytes`. std.time is a member that cannot compile yet.
     ("std.cli", "args_new()", "undefined reference to `args_new'"),
-    // The runtime-support shim defines `print_bytes`, so std.io is not a
-    // member; its other functions stay undefined.
     ("std.io", "sgr_bold()", "undefined reference to `sgr_bold'"),
-    // A member whose object cannot compile until `__mind_now_ns` is
-    // registered (tests/std_substrate_native_link.rs, KNOWN_UNCOMPILABLE).
     ("std.time", "", "__mind_now_ns"),
 ];
 
@@ -615,14 +610,18 @@ fn the_native_backend_refuses_a_std_module_outside_its_seed_at_the_import() {
             .output()
             .expect("spawn mindc build --backend native")
     };
-    // Control: a seed module imports and builds.
-    let control = write_program("seed_native", &format!("import std.sha256;{MAIN_ONLY}"));
-    let out = native(&control);
-    assert!(
-        out.status.success(),
-        "an import of a seed module must build natively:\n{}",
-        text(&out)
-    );
+    // Control: a seed module imports and builds. Only where the committed
+    // compiler image (Linux x86-64) can run; the refusal below comes first.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let control = write_program("seed_native", &format!("import std.sha256;{MAIN_ONLY}"));
+        let out = native(&control);
+        assert!(
+            out.status.success(),
+            "an import of a seed module must build natively:\n{}",
+            text(&out)
+        );
+    }
     let file = write_program(
         "unseeded_native",
         "import std.keccak;\n\nfn main() -> i64 {\n    return keccak_sha3_512(0, 0, 0);\n}\n",
