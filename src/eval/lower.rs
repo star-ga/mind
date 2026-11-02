@@ -1612,15 +1612,15 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // reject on a real f64 arg or return. A genuinely undefined callee is
     // already a hard type-checker error before lowering.
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
-    for (name, param_types, ret_type) in crate::type_checker::cm_all_imported_fn_signatures() {
+    for (name, param_types, ret_type) in crate::type_checker::cm_all_imported_fn_signatures(module)
+    {
         ir.fn_signatures
             .entry(name)
             .or_insert((param_types, ret_type));
     }
     #[cfg(all(feature = "std-surface", not(feature = "cross-module-imports")))]
-    for (name, param_types, ret_type) in crate::type_checker::bundled_std_fn_signatures()
-        .iter()
-        .cloned()
+    for (name, param_types, ret_type) in
+        crate::type_checker::bundled_std_fn_signatures(module).cloned()
     {
         ir.fn_signatures
             .entry(name)

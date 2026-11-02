@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,806,184
-**Generated:** 2026-11-02 15:59 UTC
+**Files:** 1949 | **Est. tokens:** ~3,812,099
+**Generated:** 2026-11-02 16:02 UTC
 
 ## Token Budget Guide
 
@@ -142,12 +142,14 @@
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 22 | ~76,589 |
+| `src/project/single_file_scope/` | 1 | ~1,409 |
+| `src/project/stdlib/` | 1 | ~3,396 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~15,919 |
 | `src/type_checker/` | 20 | ~65,011 |
-| `src/type_checker/resolve/` | 1 | ~1,376 |
+| `src/type_checker/resolve/` | 2 | ~2,486 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
@@ -1503,8 +1505,18 @@
 - `private_linkage.rs` (~7473 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `single_file_scope.rs` (~6017 tok, huge) — Copyright 2025-2026 STARGA Inc.
+### `src/project/single_file_scope/`
+
+- `tests.rs` (~1409 tok, large) — Copyright 2026 STARGA Inc.
+### `src/project/`
+
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/project/stdlib/`
+
+- `load.rs` (~3396 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/project/`
+
 - `stdlib.rs` (~4184 tok, huge) — Copyright 2025 STARGA Inc.
 - `substrate_link.rs` (~4701 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
@@ -1560,6 +1572,11 @@
 ### `src/type_checker/`
 
 - `resolve.rs` (~14691 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/type_checker/resolve/`
+
+- `std_names.rs` (~1110 tok, large) — Copyright 2026 STARGA Inc.
+### `src/type_checker/`
+
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 

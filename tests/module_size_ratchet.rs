@@ -154,7 +154,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/parser/mod.rs", 5982),
     ("src/project/mod.rs", 3459),
     ("src/type_checker/mod.rs", 6577),
-    ("src/type_checker/resolve.rs", 1319),
+    ("src/type_checker/resolve.rs", 1277),
     ("tests/cross_substrate_identity.rs", 3288),
     ("tests/g2_differential_mlir.rs", 1020),
     ("tests/mindc_deps_phase_de.rs", 851),

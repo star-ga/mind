@@ -4364,11 +4364,13 @@ pub fn cm_imported_fn_param_types(name: &str) -> Option<Vec<crate::ast::TypeAnn>
 /// define locally) so a cross-module `func.call` emits the callee's DECLARED
 /// scalar ABI — the fix for an f64-returning imported fn defaulting to the
 /// legacy `(i64) -> i64` call shape. A single translation unit has no active
-/// project table, so it receives the bundled std-surface signatures from the
-/// same parsed-declaration metadata route. The `--no-default-features` build
-/// has neither path.
+/// project table, so it receives the signatures of the bundled std modules
+/// `program` loads from the same parsed-declaration metadata route. The
+/// `--no-default-features` build has neither path.
 #[cfg(feature = "cross-module-imports")]
-pub fn cm_all_imported_fn_signatures() -> Vec<(
+pub fn cm_all_imported_fn_signatures(
+    program: &crate::ast::Module,
+) -> Vec<(
     String,
     Vec<crate::ast::TypeAnn>,
     Option<crate::ast::TypeAnn>,
@@ -4385,7 +4387,7 @@ pub fn cm_all_imported_fn_signatures() -> Vec<(
         );
     }
     if !active_present {
-        signatures.extend(bundled_std_fn_signatures().iter().cloned());
+        signatures.extend(bundled_std_fn_signatures(program).cloned());
     }
     signatures
 }

@@ -17,9 +17,10 @@
 //!
 //! This module bundles every `std/*.mind` file into the mindc binary at
 //! compile time via `include_str!`. The project loader consumes
-//! `parsed_stdlib_modules()` and prepends them to the `(module_path, AST)`
-//! pairs it feeds into `build_module_table` so the cross-module resolver
-//! sees every `std.<m>` before walking the project's own src tree.
+//! [`parsed_stdlib_modules_for`] and prepends the std modules a compile
+//! loads (the `load` submodule) to the `(module_path, AST)` pairs it feeds into
+//! `build_module_table`, so the cross-module resolver sees each imported
+//! `std.<m>` before walking the project's own src tree.
 //!
 //! The table is exhaustive over `std/*.mind`: a shipped module without a
 //! row was accepted at its import and refused at every call, so
@@ -34,6 +35,12 @@
 //! per-statement cfg, zero runtime dispatch on the default hot path.
 
 use crate::ast::Module;
+
+mod load;
+pub use load::{
+    IMPLICIT_STD_MODULES, bundled_module_ast, imported_std_extras, is_loaded, parsed_std_modules,
+    parsed_stdlib_modules_for, std_import_roots, std_source, std_sources,
+};
 
 /// Compile-time bundle of every std/*.mind file, laid out as
 /// `(module_path, source_text)` pairs. Module paths use the dotted
@@ -130,10 +137,11 @@ pub fn unknown_std_import(path: &[String]) -> Option<String> {
     ))
 }
 
-/// Parse every bundled std/*.mind source and return the
-/// `(module_path, AST)` pairs the project loader feeds into
-/// `build_module_table`. Each source is parsed exactly once per
-/// call.
+/// Parse every bundled std/*.mind source (as [`std_sources`] sees it, so a
+/// `MIND_STDLIB_PATH` override applies) into `(module_path, AST)` pairs in
+/// table order. A compile loads only what it uses
+/// ([`parsed_stdlib_modules_for`]); this whole-table form is for checks that
+/// enumerate the bundle.
 ///
 /// Parse failures are silently dropped: an unparseable std/*.mind
 /// file is a bug in the mindc release that should be caught by the
@@ -142,59 +150,10 @@ pub fn unknown_std_import(path: &[String]) -> Option<String> {
 /// path" is the safer behaviour — the user gets an "unknown
 /// identifier" at the call site rather than a build crash.
 pub fn parsed_stdlib_modules() -> Vec<(String, Module)> {
-    // Phase D — env-var override.
-    //
-    // If `MIND_STDLIB_PATH` is set, treat it as a directory containing
-    // one `<m>.mind` per bundled `std.<m>` and parse those instead of the
-    // bundled blobs. This lets a downstream user fork
-    // the stdlib without rebuilding mindc — e.g. a stricter
-    // string-validation variant for a regulated deployment.
-    //
-    // Falls back silently to the bundled blobs on any error (missing
-    // dir, missing file, unreadable, parse failure). The principle
-    // matches `parsed_stdlib_modules`'s own behaviour: a broken
-    // override is the user's problem to surface, not ours to crash on.
-    if let Some(modules) = parsed_stdlib_modules_from_env() {
-        return modules;
-    }
-
-    let mut out = Vec::with_capacity(STDLIB_MIND_SOURCES.len());
-    for (path, src) in STDLIB_MIND_SOURCES {
-        if let Ok(ast) = crate::parser::parse(src) {
-            out.push(((*path).to_string(), ast));
-        }
-    }
-    out
-}
-
-/// Reads `MIND_STDLIB_PATH` from the environment. If set and pointing
-/// at a directory that contains every bundled module's `.mind` file, returns
-/// the parsed modules; otherwise returns `None` so the caller can fall
-/// back to the bundled blobs.
-///
-/// "Every file present and every file parses" is the bar — partial
-/// overrides (e.g. supply your own `vec.mind`, fall back to bundled
-/// for the rest) would be useful but introduce surprising
-/// last-write-wins precedence between bundled and override; better to
-/// require a full set for now and revisit if there's user demand.
-fn parsed_stdlib_modules_from_env() -> Option<Vec<(String, Module)>> {
-    let root = std::env::var_os("MIND_STDLIB_PATH")?;
-    let root = std::path::PathBuf::from(root);
-    if !root.is_dir() {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(STDLIB_MIND_SOURCES.len());
-    for (module_path, _) in STDLIB_MIND_SOURCES {
-        // "std.vec" -> "vec.mind"; works for the 4 current modules and
-        // matches the on-disk layout under mind/std/.
-        let file_name = module_path.trim_start_matches("std.").to_string() + ".mind";
-        let candidate = root.join(&file_name);
-        let src = std::fs::read_to_string(&candidate).ok()?;
-        let ast = crate::parser::parse(&src).ok()?;
-        out.push(((*module_path).to_string(), ast));
-    }
-    Some(out)
+    std_sources()
+        .iter()
+        .filter_map(|(path, src)| Some(((*path).to_string(), crate::parser::parse(src).ok()?)))
+        .collect()
 }
 
 #[cfg(test)]

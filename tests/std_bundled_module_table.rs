@@ -274,49 +274,54 @@ fn the_builtin_std_modules_named_by_the_spec_still_import() {
     }
 }
 
+#[cfg(feature = "cross-module-imports")]
+fn scalar_call(name: &str, params: &[libmind::ast::Param]) -> Option<String> {
+    use libmind::ast::TypeAnn;
+    let args: Option<Vec<&str>> = params
+        .iter()
+        .map(|p| match p.ty {
+            TypeAnn::ScalarI32 | TypeAnn::ScalarI64 | TypeAnn::ScalarU32 => Some("0"),
+            TypeAnn::ScalarF32 | TypeAnn::ScalarF64 => Some("0.0"),
+            TypeAnn::ScalarBool => Some("false"),
+            _ => None,
+        })
+        .collect();
+    args.map(|a| format!("{name}({})", a.join(", ")))
+}
+
+/// The first public function of `items` callable with scalar literals, as a
+/// call expression; `externs` also admits `extern "C"` declarations.
+#[cfg(feature = "cross-module-imports")]
+fn first_call(items: &[libmind::ast::Node], externs: bool) -> Option<String> {
+    use libmind::ast::Node;
+    for item in items {
+        let found = match item {
+            Node::FnDef(fd, _) if fd.is_pub => scalar_call(&fd.name, &fd.params),
+            Node::ExternBlock { fns, .. } if externs => {
+                fns.iter().find_map(|f| scalar_call(&f.name, &f.params))
+            }
+            Node::Block { stmts, .. } => first_call(stmts, externs),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
 /// Every shipped module imports, and one of its public functions is callable
 /// at `mindc check`. Before the fix the 19 modules without a table row were
 /// accepted at the import and refused at the call (E2003).
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn every_shipped_std_module_imports_and_a_public_function_checks() {
-    use libmind::ast::{Node, Param, TypeAnn};
-
-    fn scalar_arg(p: &Param) -> Option<&'static str> {
-        match p.ty {
-            TypeAnn::ScalarI32 | TypeAnn::ScalarI64 | TypeAnn::ScalarU32 => Some("0"),
-            TypeAnn::ScalarF32 | TypeAnn::ScalarF64 => Some("0.0"),
-            TypeAnn::ScalarBool => Some("false"),
-            _ => None,
-        }
-    }
-    fn scalar_call(name: &str, params: &[Param]) -> Option<String> {
-        let args: Option<Vec<&str>> = params.iter().map(scalar_arg).collect();
-        args.map(|a| format!("{name}({})", a.join(", ")))
-    }
-    fn first_call(items: &[Node]) -> Option<String> {
-        for item in items {
-            let found = match item {
-                Node::FnDef(fd, _) if fd.is_pub => scalar_call(&fd.name, &fd.params),
-                Node::ExternBlock { fns, .. } => {
-                    fns.iter().find_map(|f| scalar_call(&f.name, &f.params))
-                }
-                Node::Block { stmts, .. } => first_call(stmts),
-                _ => None,
-            };
-            if found.is_some() {
-                return found;
-            }
-        }
-        None
-    }
-
     let mut failures = Vec::new();
     let shipped = shipped_std_modules();
     for (module, file) in &shipped {
         let source = std::fs::read_to_string(file).expect("read shipped std module");
         let ast = libmind::parser::parse(&source).expect("shipped std module parses");
-        let Some(call) = first_call(&ast.items) else {
+        let Some(call) = first_call(&ast.items, true) else {
             failures.push(format!(
                 "{module}: no public function with scalar parameters"
             ));
@@ -501,6 +506,295 @@ fn keccak_known_answers_agree_between_the_interpreter_and_the_native_build() {
             want == 0,
             "{case}: the interpreter and the native build disagree:\n{}",
             text(&interp)
+        );
+    }
+}
+
+// ── The build path links every shipped module ──────────────────────────────
+
+/// A cpu-executable project in `dir` whose only source is `main.mind`.
+#[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
+fn build_project(dir: &Path, main: &str) -> Output {
+    std::fs::create_dir_all(dir).expect("create build project dir");
+    std::fs::write(
+        dir.join("Mind.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\
+         output = \"p\"\ntarget = \"cpu\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\
+         sources = [\"main.mind\"]\n",
+    )
+    .expect("write Mind.toml");
+    std::fs::write(dir.join("main.mind"), main).expect("write main.mind");
+    Command::new(common::mindc_bin())
+        .arg("build")
+        .current_dir(dir)
+        .output()
+        .expect("run mindc build")
+}
+
+/// Bundled modules a call into which `mindc build` cannot link yet: the
+/// module, the call, and the text the failure names. Each was bundled, and
+/// failed the same way, before the table became exhaustive; a module that
+/// starts linking turns this test red until its row is removed.
+#[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
+const KNOWN_UNLINKED: &[(&str, &str, &str)] = &[
+    // `__mind_argc` / `__mind_argv` are not registered for the Rust/MLIR
+    // path, so std.cli is not a substrate member and its symbols stay
+    // undefined.
+    ("std.cli", "args_new()", "undefined reference to `args_new'"),
+    // The runtime-support shim defines `print_bytes`, so std.io is not a
+    // member; its other functions stay undefined.
+    ("std.io", "sgr_bold()", "undefined reference to `sgr_bold'"),
+    // A member whose object cannot compile until `__mind_now_ns` is
+    // registered (tests/std_substrate_native_link.rs, KNOWN_UNCOMPILABLE).
+    ("std.time", "", "__mind_now_ns"),
+];
+
+/// Every shipped module that `mindc check` admits also links: a program that
+/// imports it and calls one of its public functions builds. Before the fix 18
+/// newly bundled modules checked clean and then failed in the linker with an
+/// untyped `undefined reference` (`x25519`, `aes128_encrypt_block`, ...).
+/// A module that declares only `extern "C"` bindings (`std.llvm`, `std.mlir`)
+/// is built with the import alone: its functions are C symbols that the
+/// program links like any other extern.
+#[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
+#[test]
+fn every_shipped_std_module_imports_and_a_public_function_builds() {
+    let root = common::scratch_dir("std_bundled_module_table_build");
+    let probe = build_project(&root.join("probe"), MAIN_ONLY.trim_start());
+    if !common::gate::compiled("std_bundled_module_table_build", &probe) {
+        return;
+    }
+    let (mut built, mut failures) = (0usize, Vec::new());
+    for (module, file) in shipped_std_modules() {
+        let source = std::fs::read_to_string(&file).expect("read shipped std module");
+        let ast = libmind::parser::parse(&source).expect("shipped std module parses");
+        let known = KNOWN_UNLINKED.iter().find(|(m, _, _)| *m == module);
+        let call = match known {
+            Some((_, call, _)) => (*call).to_string(),
+            None => first_call(&ast.items, false).unwrap_or_default(),
+        };
+        let stmt = if call.is_empty() {
+            String::new()
+        } else {
+            format!("    {call};\n")
+        };
+        let main = format!("import {module};\n\nfn main() -> i64 {{\n{stmt}    return 0;\n}}\n");
+        let out = build_project(&root.join(module.replace('.', "_")), &main);
+        let all = text(&out);
+        match known {
+            Some((_, _, cause)) if out.status.success() || !all.contains(cause) => failures.push(
+                format!("{module} is in KNOWN_UNLINKED but no longer fails with `{cause}`:\n{all}"),
+            ),
+            Some(_) => {}
+            None if out.status.success() => built += 1,
+            None => failures.push(format!("{module}: `{call}`\n{all}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} shipped std module(s) check but do not build:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert!(built >= 38, "only {built} shipped modules were built");
+}
+
+/// The native backend sees only the std modules its frozen compiler was
+/// minted from. An import of any other shipped module is refused at the
+/// import, not accepted and then refused at each call as an unresolved
+/// closure edge.
+#[test]
+fn the_native_backend_refuses_a_std_module_outside_its_seed_at_the_import() {
+    let native = |file: &Path| {
+        Command::new(common::mindc_bin())
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(["build", "--backend", "native"])
+            .arg(file)
+            .arg("--out")
+            .arg(file.with_extension("elf"))
+            .output()
+            .expect("spawn mindc build --backend native")
+    };
+    // Control: a seed module imports and builds.
+    let control = write_program("seed_native", &format!("import std.sha256;{MAIN_ONLY}"));
+    let out = native(&control);
+    assert!(
+        out.status.success(),
+        "an import of a seed module must build natively:\n{}",
+        text(&out)
+    );
+    let file = write_program(
+        "unseeded_native",
+        "import std.keccak;\n\nfn main() -> i64 {\n    return keccak_sha3_512(0, 0, 0);\n}\n",
+    );
+    let out = native(&file);
+    let all = text(&out);
+    assert!(
+        !out.status.success()
+            && all.contains("scope.std_module_not_in_native_seed")
+            && all.contains("std.keccak")
+            && !all.contains("closure.unresolved_edge"),
+        "an import of a shipped module outside the native seed must be refused at the import:\n{all}"
+    );
+}
+
+// ── Which modules a compile loads ──────────────────────────────────────────
+
+/// A non-implicit module's names come in through its import only; an implicit
+/// module's names still resolve with no import, as before the table grew.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn a_non_implicit_std_function_resolves_through_its_import_only() {
+    let call = "\n\nfn probe() -> i64 {\n    return keccak_sha3_512(0, 0, 0);\n}";
+    let with = write_program(
+        "keccak_import",
+        &format!("import std.keccak;{call}{MAIN_ONLY}"),
+    );
+    let out = mindc("check", &with);
+    assert!(out.status.success(), "with its import:\n{}", text(&out));
+    let without = write_program("keccak_no_import", &format!("{call}{MAIN_ONLY}"));
+    let out = mindc("check", &without);
+    let all = text(&out);
+    assert!(
+        !out.status.success() && all.contains("keccak_sha3_512"),
+        "without its import a non-implicit std function must not resolve:\n{all}"
+    );
+    let implicit = write_program(
+        "sha256_no_import",
+        &format!("fn probe(a: i64) -> i64 {{\n    return sha256(a, 0, a);\n}}{MAIN_ONLY}"),
+    );
+    let out = mindc("check", &implicit);
+    assert!(
+        out.status.success(),
+        "an implicit std function resolves with no import:\n{}",
+        text(&out)
+    );
+}
+
+/// spec/v1.0/stdlib.md, "use std.<name> resolution", rule 2: a project MAY
+/// supply its own module at `std.<name>`. Its import is not an unknown std
+/// module, though no bundled module has that path: `mindc check`, `mindc
+/// test` and `mindc build` all admit it.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn a_std_module_the_project_supplies_is_not_an_unknown_import() {
+    let main = "import std.own_extra;\n\n#[test]\nfn t() {\n    assert 1 == 1;\n}\n\n\
+                fn main() -> i64 {\n    return 0;\n}\n";
+    let project = |case: &str, supplied: bool| {
+        let dir = common::scratch_dir("std_bundled_module_table").join(case);
+        std::fs::create_dir_all(dir.join("std")).expect("create the project's std dir");
+        let sources = if supplied {
+            "\"main.mind\", \"std/own_extra.mind\""
+        } else {
+            "\"main.mind\""
+        };
+        std::fs::write(
+            dir.join("Mind.toml"),
+            format!(
+                "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\
+                 output = \"p\"\ntarget = \"cpu\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\
+                 sources = [{sources}]\n"
+            ),
+        )
+        .expect("write Mind.toml");
+        if supplied {
+            std::fs::write(
+                dir.join("std").join("own_extra.mind"),
+                "pub fn own_extra_value() -> i64 {\n    return 3;\n}\n",
+            )
+            .expect("write the project's std.own_extra");
+        }
+        let file = dir.join("main.mind");
+        std::fs::write(&file, main).expect("write main.mind");
+        file
+    };
+    let file = project("project_std_module", true);
+    let out = mindc("check", &file);
+    assert!(
+        out.status.success(),
+        "`mindc check` must resolve a project-supplied std.own_extra:\n{}",
+        text(&out)
+    );
+    let out = mindc("test", &file);
+    let all = text(&out);
+    assert!(
+        out.status.success() && all.contains("1 passed; 0 failed"),
+        "`mindc test` must admit a project-supplied std.own_extra:\n{all}"
+    );
+    #[cfg(all(unix, feature = "mlir-build"))]
+    {
+        let out = Command::new(common::mindc_bin())
+            .arg("build")
+            .current_dir(file.parent().expect("project dir"))
+            .output()
+            .expect("run mindc build");
+        if common::gate::compiled("std_bundled_module_table_project_std", &out) {
+            assert!(out.status.success(), "`mindc build` must admit it");
+        }
+    }
+    // Control: the same import with no project module is an unknown module.
+    let out = mindc("check", &project("project_std_module_absent", false));
+    let all = text(&out);
+    assert!(
+        !out.status.success() && all.contains("E2002") && all.contains("std.own_extra"),
+        "without the project module the import must be E2002:\n{all}"
+    );
+}
+
+/// spec/v1.0/stdlib.md, "Environment override": a `MIND_STDLIB_PATH`
+/// directory holding the four specified files is used. Each module it holds
+/// replaces the bundled one for `mindc check` and `mindc test` alike; the
+/// others keep their bundled source. The directory of every module the bundle
+/// carried before it became exhaustive (the implicit set) is used too.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn a_stdlib_override_with_the_specified_files_applies_to_check_and_test() {
+    use libmind::project::stdlib::IMPLICIT_STD_MODULES;
+    let marker = "\npub fn ovr_marker() -> i64 {\n    return 4242;\n}\n";
+    let check = "import std.vec;\n\nfn main() -> i64 {\n    return ovr_marker();\n}\n";
+    let test = "import std.vec;\n\n#[test]\nfn t() {\n    assert ovr_marker() == 4242;\n}\n";
+    let run = |sub: &str, file: &Path, root: Option<&Path>| {
+        let mut cmd = Command::new(common::mindc_bin());
+        cmd.arg(sub)
+            .arg(file.file_name().expect("file name"))
+            .current_dir(file.parent().expect("program dir"));
+        match root {
+            Some(root) => cmd.env("MIND_STDLIB_PATH", root),
+            None => cmd.env_remove("MIND_STDLIB_PATH"),
+        };
+        cmd.output().expect("spawn mindc")
+    };
+    let four: &[&str] = &["std.io", "std.map", "std.string", "std.vec"];
+    for (case, modules) in [("four", four), ("implicit", IMPLICIT_STD_MODULES)] {
+        let root = common::scratch_dir("std_bundled_module_table").join(format!("override_{case}"));
+        std::fs::create_dir_all(&root).expect("create override dir");
+        for module in modules {
+            let name = module.trim_start_matches("std.");
+            let mut text = std::fs::read_to_string(std_dir().join(format!("{name}.mind")))
+                .expect("read std module");
+            if name == "vec" {
+                text.push_str(marker);
+            }
+            std::fs::write(root.join(format!("{name}.mind")), text).expect("write override file");
+        }
+        let file = write_program(&format!("override_check_{case}"), check);
+        let out = run("check", &file, Some(&root));
+        assert!(
+            out.status.success(),
+            "{case}: `mindc check` must use the override:\n{}",
+            text(&out)
+        );
+        let out = run("check", &file, None);
+        assert!(
+            !out.status.success(),
+            "{case}: without the override `ovr_marker` must not resolve"
+        );
+        let file = write_program(&format!("override_test_{case}"), test);
+        let out = run("test", &file, Some(&root));
+        let all = text(&out);
+        assert!(
+            out.status.success() && all.contains("1 passed; 0 failed"),
+            "{case}: `mindc test` must use the override:\n{all}"
         );
     }
 }

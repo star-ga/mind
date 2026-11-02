@@ -520,7 +520,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     // table is scoped to that eval and is torn down when it returns.
     let mut synthetic_items: Vec<Node> = Vec::new();
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-    synthetic_items.extend(resolve_std_import_fns(&module)?);
+    synthetic_items.extend(resolve_std_import_fns(
+        &module,
+        support.map(|s| &s.project_std),
+    )?);
     if let Some(support) = support {
         synthetic_items.extend(support.imported_items.iter().cloned());
     }
@@ -603,16 +606,22 @@ fn grade_returned_value(
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
 /// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
-/// contributes nothing here; a `std` import that names no shipped module is
+/// contributes nothing here, nor does a `std.<name>` the project supplies
+/// (`project_std`); any other `std` import that names no shipped module is
 /// refused at the import, as `mindc check` refuses it; a bundled module that
 /// fails to parse is a fail-loud error.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
-    use crate::project::stdlib::STDLIB_MIND_SOURCES;
+fn resolve_std_import_fns(
+    module: &crate::ast::Module,
+    project_std: Option<&std::collections::BTreeSet<String>>,
+) -> Result<Vec<Node>, String> {
     use std::collections::VecDeque;
 
-    fn import_key(item: &Node) -> Result<Option<String>, String> {
+    let import_key = |item: &Node| -> Result<Option<String>, String> {
         if let Node::Import { path, .. } = item {
+            if project_std.is_some_and(|own| own.contains(&path.join("."))) {
+                return Ok(None);
+            }
             if let Some(refusal) = crate::project::stdlib::unknown_std_import(path) {
                 return Err(format!("error[type-check][E2002]: {refusal}"));
             }
@@ -621,7 +630,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
             }
         }
         Ok(None)
-    }
+    };
 
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -633,7 +642,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         if !visited.insert(key.clone()) {
             continue;
         }
-        let Some((_, src)) = STDLIB_MIND_SOURCES.iter().find(|(k, _)| *k == key) else {
+        let Some(src) = crate::project::stdlib::std_source(&key) else {
             continue;
         };
         let imported = parser::parse(src).map_err(|errs| {
