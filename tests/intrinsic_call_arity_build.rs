@@ -123,3 +123,15 @@ fn a_short_call_inside_an_if_branch_is_refused() {
         3,
     );
 }
+
+#[test]
+fn a_short_call_inside_a_while_body_is_refused() {
+    // The type checker does not type-check while bodies (RFC 0005 Gap 1), so
+    // `mindc check` and the build's own type-check pass both miss this call;
+    // the IR verifier is the layer that refuses it.
+    assert_refused(
+        "short_in_while",
+        "fn main() -> i64 {\n    let s = \"ok\\n\";\n    let mut i: i64 = 0;\n    while i < 1 {\n        __mind_write(1, s.addr, s.len);\n        i = i + 1;\n    }\n    return 0\n}\n",
+        3,
+    );
+}

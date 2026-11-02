@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,801,194
-**Generated:** 2026-11-02 13:02 UTC
+**Files:** 1946 | **Est. tokens:** ~3,801,361
+**Generated:** 2026-11-02 13:29 UTC
 
 ## Token Budget Guide
 
@@ -128,7 +128,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 12 | ~101,702 |
+| `src/ir/` | 12 | ~101,739 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,672 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 429 | ~872,330 |
+| `tests/` | 429 | ~872,460 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1419,7 +1419,7 @@
 - `mod.rs` (~17644 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify_calls.rs` (~753 tok, large) — Copyright 2026 STARGA Inc.
+- `verify_calls.rs` (~790 tok, large) — Copyright 2026 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -2079,7 +2079,7 @@
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
 - `int_determinism.rs` (~1234 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~3085 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsic_call_arity_build.rs` (~1084 tok, large) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity_build.rs` (~1214 tok, large) — Copyright 2026 STARGA Inc.
 - `intrinsic_call_arity.rs` (~1788 tok, huge) — Copyright 2026 STARGA Inc.
 - `int_suffix_literal.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~675 tok, large) — Copyright 2025 STARGA Inc.

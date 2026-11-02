@@ -265,7 +265,7 @@ Measurement notes for the current rows:
   and there is nothing to count. `harness_portability` is what keeps that gate at FILE
   scope instead of per item.
 * `imported_extern_narrow_ret_run` (10), `emit_object_relocatable` (2),
-  `intrinsic_call_arity` (7) and `intrinsic_call_arity_build` (4) are `exec` rows,
+  `intrinsic_call_arity` (7) and `intrinsic_call_arity_build` (5) are `exec` rows,
   each measured executed under this tier's feature set with `MIND_BENCH_REQUIRE=1`.
   The first two landed without their rows; they are added with the arity gates so the
   newest exec-tier gates are not protected by the aggregate floor alone.

@@ -8,11 +8,13 @@
 //! declared arity, at any nesting depth. The C runtime reads that many
 //! arguments, so a short call hands it an undefined trailing argument.
 //!
-//! `mindc check` reports the same rule as E2005 from the type checker; the
-//! build paths do not run `check` first, so this verifier enforces it again. Every
-//! `mindc` path that lowers through MLIR (`build`, `run`, and the `--emit-ir`,
-//! `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj` flags) verifies
-//! the module first. Two paths do not reach this verifier and are fenced
+//! The type checker reports the same rule as E2005, under `mindc check` and in
+//! the type-check step of every build, except inside `while` bodies, which it
+//! does not visit yet (RFC 0005 Gap 1). This verifier runs on every `mindc`
+//! path that lowers through MLIR (`build`, `run`, and the `--emit-ir`,
+//! `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj` flags) and
+//! refuses the call at any depth (E3001), so a call the type checker does not
+//! see still never builds. Two paths do not reach this verifier and are fenced
 //! elsewhere: `--backend native` refuses every intrinsic call at closure
 //! admission, and `mind eval` emits from unverified lowered IR (its own deferred
 //! marker in `src/main.rs`) but no intrinsic call reaches its output today: a

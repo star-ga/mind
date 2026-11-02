@@ -125,7 +125,7 @@ CRITICAL_exec=(
   "imported_extern_narrow_ret_run 10"  # narrow imported extern C arguments and returns
   "emit_object_relocatable 2"       # --emit object writes a linkable ET_REL object
   "intrinsic_call_arity 7"          # wrong-arity intrinsic calls refused at every depth
-  "intrinsic_call_arity_build 4"    # the same refusal through the mindc binary
+  "intrinsic_call_arity_build 5"    # the same refusal through the mindc binary
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.
