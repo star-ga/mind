@@ -189,6 +189,11 @@ pub fn module_const_value(name: &str) -> Option<crate::ast::Node> {
         .or_else(|| PROJECT_CONSTS.with(|c| c.borrow().get(name).cloned()))
 }
 
+/// The whole-project cross-module value of const `name`, ignoring the lowering pass's local table.
+pub fn project_const_value(name: &str) -> Option<crate::ast::Node> {
+    PROJECT_CONSTS.with(|c| c.borrow().get(name).cloned())
+}
+
 /// Mark `name` as currently-resolving; returns `false` if it was already in
 /// flight (a const-reference cycle).
 pub fn begin_resolving_const(name: &str) -> bool {

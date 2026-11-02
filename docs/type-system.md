@@ -63,9 +63,15 @@ across branches, loop iterations, `break`, and `continue`.
 The current implementation requires a proven compatible handle at each call.
 Element types are compared after type-alias resolution: with `type Q = i32`,
 an `array<Q>` value or literal (or an `array<defs.Q>` naming an alias exported
-by `defs`) passes to `&[i32]`, and an `array<i32>` passes to `&[Q]`. A call to a
-module-private helper in a `module m { ... }` block follows the same rules as a
-call to an exported one.
+by `defs`) passes to `&[i32]`, and an `array<i32>` passes to `&[Q]`. A type
+from an imported signature or struct field is read in its owner module, so a
+`Bank` returned by `defs` is the `defs.Bank` the caller names. A literal element
+that names a module constant (`[defs.ONE, ONE + 1]`) has the class of the
+constant's value. A call to a module-private helper in a `module m { ... }` block
+follows the same rules as a call to an exported one. The slice or collection
+annotation itself must be spelled out: a binding, parameter or result typed
+through an alias of a slice or of an `array<T>` (`type SL = &[i32]`,
+`type V = array<i32>`) is refused with `E2032`.
 Opaque integer handles, maps, incompatible element types, and unproven source
 expressions are refused with `E2032`. Range views such as `&xs[a..b]` are not
 slice arguments and are refused with `E2032` as well. Explicit slice local

@@ -7,6 +7,7 @@
 use crate::ast::{FnDefData, Node, Pattern, Span, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
+use super::aliases::type_needs_collection_flow;
 use super::{
     Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, canonical,
     check_stmts, compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
@@ -557,7 +558,7 @@ pub(crate) fn check_struct_fields(
     errs: &mut Vec<Diagnostic>,
 ) {
     for field in fields {
-        if type_contains_slice(&field.ty) {
+        if type_contains_slice(&field.ty) || super::slice_through_alias(&field.ty) {
             report(
                 errs,
                 src,
@@ -631,11 +632,6 @@ pub(crate) fn type_contains_collection_owner(ty: &TypeAnn) -> bool {
         }
 }
 
-fn type_needs_collection_flow(ty: &TypeAnn) -> bool {
-    let ty = &canonical(ty);
-    type_contains_collection_owner(ty) || declared_kind(ty).is_some() || type_contains_slice(ty)
-}
-
 /// Skip scalar-only bodies unless a collection boundary or indexed assignment
 /// needs this pass, keeping its fixed-point analysis off unrelated functions.
 fn function_needs_collection_flow(fd: &FnDefData, has_collection_owner_field: bool) -> bool {
@@ -676,6 +672,7 @@ pub(crate) fn check_fn(
         struct_fields: std::rc::Rc::clone(struct_fields),
         ..Env::default()
     };
+    super::aliases::refuse_slice_aliases_in_signature(fd, src, file, errs);
     for param in &fd.params {
         let param_ty = canonical(&param.ty);
         if !matches!(param_ty, TypeAnn::Slice { .. }) && type_contains_slice(&param_ty) {

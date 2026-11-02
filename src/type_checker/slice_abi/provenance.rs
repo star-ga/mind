@@ -8,7 +8,7 @@ use super::{
     Env, HandleKind, call_signature, canonical, confident_scalar_class, declared_kind,
     scalar_class_of_ann, value_contains_borrow,
 };
-use crate::ast::{Literal, Node, TypeAnn};
+use crate::ast::{BinOp, Literal, Node, TypeAnn};
 
 pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
     match node {
@@ -43,16 +43,32 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
 }
 
 /// Scalar class of an array-literal element. A call reports its canonical
-/// declared result class, an imported callee's included.
+/// declared result class, an imported callee's included; a name no binding
+/// shadows reports the class of the module constant it names.
 fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass> {
-    confident_scalar_class(element, &env.classes).or_else(|| match element {
+    if let Some(class) = confident_scalar_class(element, &env.classes) {
+        return Some(class);
+    }
+    match element {
         Node::Call { callee, .. } => call_signature(callee)?
             .1
             .as_ref()
             .and_then(scalar_class_of_ann),
-        Node::Paren(inner, _) => element_class(inner, env),
+        Node::Lit(Literal::Ident(name), _) if !env.bindings.contains_key(name) => {
+            super::aliases::const_class(name)
+        }
+        Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => element_class(inner, env),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => {
+            let class = element_class(left, env)?;
+            (element_class(right, env) == Some(class)).then_some(class)
+        }
         _ => None,
-    })
+    }
 }
 
 fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) -> bool {
@@ -78,7 +94,7 @@ pub(super) fn expr_type(node: &Node, env: &Env) -> Option<TypeAnn> {
     match node {
         Node::Lit(Literal::Ident(name), _) => env.types.get(name).cloned(),
         Node::Lit(Literal::Str(_), _) => Some(TypeAnn::Named("string".to_string())),
-        Node::StructLit { name, .. } => Some(TypeAnn::Named(name.clone())),
+        Node::StructLit { name, .. } => Some(canonical(&TypeAnn::Named(name.clone()))),
         Node::Paren(inner, _) => expr_type(inner, env),
         Node::Call { callee, .. } => call_signature(callee).and_then(|(_, ret)| ret),
         Node::FieldAccess {
@@ -167,23 +183,29 @@ pub(super) fn field_type(base: &Node, field: &str, env: &Env) -> Option<TypeAnn>
         },
         _ => return None,
     };
-    let exact = (struct_name.to_string(), field.to_string());
-    if let Some(ty) = env.struct_fields.get(&exact) {
-        return Some(canonical(ty));
-    }
-    #[cfg(feature = "cross-module-imports")]
-    if let Some(owner_key) = super::aliases::qualified_type_source(struct_name) {
-        if let Some(ty) = env.struct_fields.get(&(owner_key, field.to_string())) {
-            return Some(canonical(ty));
-        }
-    }
+    let mut keys = vec![struct_name.to_string()];
     if struct_name.contains('.') && !struct_name.starts_with("crate.") {
-        return env
-            .struct_fields
-            .get(&(format!("crate.{struct_name}"), field.to_string()))
-            .map(canonical);
+        keys.push(format!("crate.{struct_name}"));
     }
-    None
+    keys.into_iter().find_map(|key| {
+        let ty = env.struct_fields.get(&(key.clone(), field.to_string()))?;
+        Some(read_field_type(ty, &key))
+    })
+}
+
+/// A local struct is keyed bare. A project struct is keyed by its source key
+/// (`crate.defs.Bank`), and its field types are written in that owner's scope.
+#[cfg(feature = "cross-module-imports")]
+fn read_field_type(ty: &TypeAnn, struct_key: &str) -> TypeAnn {
+    match struct_key.rsplit_once('.') {
+        Some((owner, _)) => super::canonical_in_owner(ty, owner),
+        None => canonical(ty),
+    }
+}
+
+#[cfg(not(feature = "cross-module-imports"))]
+fn read_field_type(ty: &TypeAnn, _struct_key: &str) -> TypeAnn {
+    canonical(ty)
 }
 
 pub(super) fn indexed_type(receiver: &Node, env: &Env) -> Option<TypeAnn> {

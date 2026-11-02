@@ -55,34 +55,22 @@ impl LocalTypeAliases {
         resolve_or_original(ty, &self.aliases)
     }
 
-    /// [`Self::resolve`], then replace every owner-qualified imported alias
-    /// (`defs.Q`) at any nesting depth with its registered target, so
-    /// `array<defs.Q>` and `array<i32>` compare equal when `defs` exports
-    /// `type Q = i32`. An unresolvable name keeps its spelling.
+    /// [`Self::resolve`], then read the result through the project registry:
+    /// every visible project alias, at any nesting depth, becomes its target
+    /// and every other project type its source key, so `array<defs.Q>` and
+    /// `array<i32>` compare equal when `defs` exports `type Q = i32`.
     pub(crate) fn resolve_with_imports(&self, ty: &TypeAnn) -> TypeAnn {
-        let local = self.resolve(ty);
-        #[cfg(feature = "cross-module-imports")]
-        {
-            let mut imported = BTreeMap::new();
-            collect_qualified_names(&local, &mut |name| {
-                if let Some(target) =
-                    crate::qualified_enums::resolve_alias_target(name, &self.imports)
-                {
-                    imported.insert(name.to_string(), target);
-                }
-            });
-            if !imported.is_empty() {
-                return resolve_or_original(&local, &imported);
-            }
-        }
-        local
+        self.read_through_registry(self.resolve(ty))
     }
 
-    /// The registry key (`owner.Name`) of a qualified type spelled in this
-    /// module, such as `defs.Bank`, under the module's imports.
     #[cfg(feature = "cross-module-imports")]
-    pub(crate) fn imported_type_source(&self, name: &str) -> Option<String> {
-        crate::qualified_enums::resolve_type_source(name, &self.imports)
+    fn read_through_registry(&self, ty: TypeAnn) -> TypeAnn {
+        crate::qualified_enums::canonical_type_here(&ty, &self.imports)
+    }
+
+    #[cfg(not(feature = "cross-module-imports"))]
+    fn read_through_registry(&self, ty: TypeAnn) -> TypeAnn {
+        ty
     }
 
     /// Make this module's aliases available to recursive lowering helpers.
@@ -178,38 +166,6 @@ fn collect_signatures(items: &[Node], aliases: &LocalTypeAliases, ir: &mut IRMod
             Node::Block { stmts, .. } => collect_signatures(stmts, aliases, ir),
             _ => {}
         }
-    }
-}
-
-/// Visit each module-qualified `Named` leaf of `ty`; only these can name an
-/// imported alias.
-#[cfg(feature = "cross-module-imports")]
-fn collect_qualified_names(ty: &TypeAnn, visit: &mut dyn FnMut(&str)) {
-    match ty {
-        TypeAnn::Named(name) if name.contains('.') => visit(name),
-        TypeAnn::Slice { element, .. }
-        | TypeAnn::Array { element, .. }
-        | TypeAnn::SparseTensor { element, .. }
-        | TypeAnn::Ref {
-            target: element, ..
-        }
-        | TypeAnn::RawPtr {
-            pointee: element, ..
-        } => collect_qualified_names(element, visit),
-        TypeAnn::Generic { args: items, .. } | TypeAnn::Tuple { elements: items } => {
-            items
-                .iter()
-                .for_each(|item| collect_qualified_names(item, visit));
-        }
-        TypeAnn::FnPtr { params, ret } => {
-            params
-                .iter()
-                .for_each(|param| collect_qualified_names(param, visit));
-            if let Some(ret) = ret {
-                collect_qualified_names(ret, visit);
-            }
-        }
-        _ => {}
     }
 }
 

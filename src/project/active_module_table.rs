@@ -97,6 +97,16 @@ pub(crate) fn lookup_visible_fn(
     owner: Option<&str>,
     name: &str,
 ) -> Option<super::module_table::ExportedFn> {
+    lookup_visible_fn_owned(owner, name).map(|(_, function)| function)
+}
+
+/// [`lookup_visible_fn`] with the module that declares the selected function,
+/// whose scope its signature types are written in. The module is `None` when
+/// several modules export the same signature: no single scope applies.
+pub(crate) fn lookup_visible_fn_owned(
+    owner: Option<&str>,
+    name: &str,
+) -> Option<(Option<String>, super::module_table::ExportedFn)> {
     ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
         let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
         ACTIVE.with(|active| {
@@ -104,9 +114,10 @@ pub(crate) fn lookup_visible_fn(
             let table = table.as_ref()?;
             let candidates = table.exported_fn_candidate_refs(name);
             if let Some(owner) = owner {
-                if let Some((_, function)) = candidates.iter().find(|(module, _)| *module == owner)
+                if let Some((module, function)) =
+                    candidates.iter().find(|(module, _)| *module == owner)
                 {
-                    return Some((*function).clone());
+                    return Some((Some(module.to_string()), (*function).clone()));
                 }
             }
             let mut selected = candidates.iter().filter(|(module, _)| {
@@ -124,8 +135,9 @@ pub(crate) fn lookup_visible_fn(
                 {
                     return None;
                 }
+                return Some((None, first.1.clone()));
             }
-            Some(first.1.clone())
+            Some((Some(first.0.to_string()), first.1.clone()))
         })
     })
 }

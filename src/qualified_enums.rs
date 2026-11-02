@@ -20,7 +20,13 @@ use crate::ast::TypeAnn;
 #[cfg(feature = "cross-module-imports")]
 mod alias_closure;
 #[cfg(feature = "cross-module-imports")]
+mod canonical_types;
+#[cfg(feature = "cross-module-imports")]
 use alias_closure::resolve_qualified_alias_target;
+#[cfg(feature = "cross-module-imports")]
+pub(crate) use canonical_types::{
+    canonical_type_from, canonical_type_here, imported_const_declared_types,
+};
 
 #[cfg(feature = "cross-module-imports")]
 #[derive(Clone, Debug, Default)]
@@ -33,6 +39,10 @@ pub(crate) struct Registry {
     exported_types: BTreeSet<String>,
     /// Canonical source alias key -> target resolved within that source owner.
     alias_targets: BTreeMap<String, TypeAnn>,
+    /// Module path -> its resolved import paths, for reading a type in its owner's scope.
+    module_imports: BTreeMap<String, Vec<String>>,
+    /// `owner.NAME` -> the declared type of that module-level constant.
+    const_types: BTreeMap<String, TypeAnn>,
     pub(crate) variant_tags: BTreeMap<String, i64>,
     pub(crate) payload_types: BTreeMap<String, Vec<TypeAnn>>,
     pub(crate) slots: BTreeMap<String, usize>,
@@ -424,17 +434,6 @@ pub(crate) fn resolve_alias_target(name: &str, imports: &[String]) -> Option<Typ
     })
 }
 
-/// The registry key (`owner.Name`) of a visible qualified type spelling.
-#[cfg(feature = "cross-module-imports")]
-pub(crate) fn resolve_type_source(name: &str, imports: &[String]) -> Option<String> {
-    let current = current_module_path();
-    crate::ir::with_global_enums(|global| {
-        global
-            .qualified
-            .type_source_in(name, imports, current.as_deref())
-    })
-}
-
 /// A bare-headed `Enum::Variant` path that names a project enum but cannot be
 /// resolved from the module that writes it.
 #[cfg(feature = "cross-module-imports")]
@@ -631,6 +630,7 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
     let mut declared = BTreeSet::new();
     let mut raw_alias_targets = BTreeMap::new();
     let mut alias_imports = BTreeMap::new();
+    let mut const_types = BTreeMap::new();
     for (path, module) in parsed {
         let _module_guard = ModuleGuard::install(path.clone());
         let exports = collect_module_exports(path, module);
@@ -656,6 +656,11 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
                     if !explicit_exports || exports.exported.iter().any(|item| item == name) {
                         exported.insert(source_key);
                     }
+                }
+                crate::ast::Node::Const {
+                    name, ty: Some(ty), ..
+                } => {
+                    const_types.insert(format!("{path}.{name}"), ty.clone());
                 }
                 crate::ast::Node::EnumDef { name, .. }
                 | crate::ast::Node::StructDef { name, .. } => {
@@ -705,6 +710,8 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
     enums.qualified.declared_types = declared;
     enums.qualified.exported_types = exported;
     enums.qualified.alias_targets = alias_targets;
+    enums.qualified.module_imports = alias_imports;
+    enums.qualified.const_types = const_types;
 
     for (enum_name, owners) in by_name {
         enums.names.push(enum_name.clone());

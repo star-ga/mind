@@ -25,7 +25,9 @@ mod borrow_flow;
 mod owner_assignment;
 mod provenance;
 pub(super) use aliases::AliasScope;
-use aliases::canonical;
+#[cfg(feature = "cross-module-imports")]
+use aliases::canonical_in_owner;
+use aliases::{call_signature, canonical, slice_through_alias};
 pub(super) use borrow_flow::type_contains_collection_owner;
 use borrow_flow::{
     LoopControl, borrowed_kind, check_call, check_loop_flow, check_while, merge_flow,
@@ -93,23 +95,6 @@ fn vec_element_uses_i64_abi(ty: &TypeAnn) -> bool {
                 | TypeAnn::DiffTensor { .. }
                 | TypeAnn::Array { .. }
         )
-}
-
-fn call_signature(callee: &str) -> Option<(Vec<TypeAnn>, Option<TypeAnn>)> {
-    let canonical_sig = |params: Vec<TypeAnn>, ret: Option<TypeAnn>| {
-        Some((
-            params.iter().map(canonical).collect(),
-            ret.as_ref().map(canonical),
-        ))
-    };
-    if let Some(sig) = intra_lookup_fn(callee) {
-        return canonical_sig(sig.param_types, sig.ret_type);
-    }
-    #[cfg(feature = "cross-module-imports")]
-    if let Some(sig) = super::cm_lookup_fn(callee) {
-        return canonical_sig(sig.param_types, sig.ret_type);
-    }
-    None
 }
 
 fn report(
@@ -450,6 +435,7 @@ fn check_stmts(
                 span,
                 ..
             } => {
+                aliases::refuse_slice_alias_binding(name, ann.as_ref(), value, src, file, errs);
                 let ann = &ann.as_ref().map(canonical);
                 check_expr(value, env, expected_return, src, file, errs);
                 let borrowed = value_contains_borrow(value, env);
