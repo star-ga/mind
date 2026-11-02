@@ -531,7 +531,7 @@ impl ParseScope {
                 return None;
             }
             let key = format!("{enum_name}::{variant}");
-            return self.registry.variant_tags.contains_key(&key).then_some(key);
+            self.registry.variant_tags.contains_key(&key).then_some(key)
         }
         #[cfg(not(feature = "cross-module-imports"))]
         {

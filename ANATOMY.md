@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,802,196
-**Generated:** 2026-11-02 13:29 UTC
+**Files:** 1946 | **Est. tokens:** ~3,802,194
+**Generated:** 2026-11-02 13:38 UTC
 
 ## Token Budget Guide
 
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 12 | ~55,252 |
+| `src/` | 12 | ~55,250 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -1517,7 +1517,7 @@
 - `alias_closure.rs` (~434 tok, medium) — Copyright 2026 STARGA Inc.
 ### `src/`
 
-- `qualified_enums.rs` (~7256 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~7254 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
