@@ -7,6 +7,15 @@
 //! A call to a registered `__mind_*` intrinsic carries exactly the intrinsic's
 //! declared arity, at any nesting depth. The C runtime reads that many
 //! arguments, so a short call hands it an undefined trailing argument.
+//!
+//! The rule runs here, not in the type checker: `mindc check` does not
+//! type-check function bodies, so a check there would miss these calls, while
+//! every path that reaches a backend verifies the module first.
+
+// deferred: would have `mindc check` type-check function bodies (this rule and every other
+// body error), not done here because that changes what `check` reports on every existing
+// program — upgrade path: a separate change that type-checks bodies under `check`, measured
+// by a sweep of std/, examples/ and tests/.
 
 use super::IRModule;
 #[cfg(feature = "std-surface")]

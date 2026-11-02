@@ -237,6 +237,7 @@ pub fn scratch_src_in(dir: &Path, name: &str, text: &str) -> PathBuf {
 /// unattributed in the raw run output — never in the panic message, and never
 /// beside the test that failed. `.output()` captures both streams and the
 /// assertion quotes them, so the next occurrence names itself.
+#[allow(dead_code)]
 pub fn emit_shared_in(
     dir: &Path,
     workload: &str,
