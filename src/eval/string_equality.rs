@@ -44,7 +44,8 @@ pub(crate) fn refusal_message(op: BinOp) -> String {
     let symbol = if op == BinOp::Eq { "==" } else { "!=" };
     format!(
         "`{symbol}` compares a string with an operand whose type is not a string; \
-         it would compare handles, not bytes, and report equal text as unequal"
+         it would compare handles, not bytes, and report equal text as unequal \
+         — use `string_eq(a, b)` for byte-wise equality"
     )
 }
 

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1947 | **Est. tokens:** ~3,807,742
-**Generated:** 2026-11-02 13:08 UTC
+**Files:** 1947 | **Est. tokens:** ~3,807,702
+**Generated:** 2026-11-02 14:02 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 49 | ~163,445 |
+| `src/eval/` | 49 | ~163,460 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/string_equality/` | 2 | ~5,502 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
@@ -153,7 +153,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 428 | ~872,178 |
+| `tests/` | 428 | ~872,123 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,773 |
@@ -1338,7 +1338,7 @@
 - `facts.rs` (~3647 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_equality.rs` (~5120 tok, huge) — Copyright 2025 STARGA Inc.
+- `string_equality.rs` (~5135 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
 - `tests.rs` (~1855 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2660,7 +2660,7 @@
 - `string_escape_fail_closed.rs` (~959 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_from_bytes_run.rs` (~664 tok, large) — Copyright 2025 STARGA Inc.
-- `string_ops_backend_parity.rs` (~3171 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_ops_backend_parity.rs` (~3116 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `string_runtime_shim_run.rs` (~1027 tok, large) — Copyright 2025 STARGA Inc.
 - `string_split_run.rs` (~1826 tok, huge) — Copyright 2025 STARGA Inc.
