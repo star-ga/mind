@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1944 | **Est. tokens:** ~3,801,750
-**Generated:** 2026-11-02 12:04 UTC
+**Files:** 1947 | **Est. tokens:** ~3,805,677
+**Generated:** 2026-11-02 12:08 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 48 | ~162,522 |
+| `src/eval/` | 51 | ~166,449 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1303,11 +1303,13 @@
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
+- `float_ops.rs` (~778 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `imported_extern_decls.rs` (~1157 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
+- `loops.rs` (~2189 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1327,6 +1329,7 @@
 - `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
+- `record_store.rs` (~960 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 

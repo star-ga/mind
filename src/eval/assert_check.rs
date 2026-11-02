@@ -92,7 +92,7 @@ pub(super) fn eval(
     }
 }
 
-fn value_kind_name(value: &Value) -> &'static str {
+pub(super) fn value_kind_name(value: &Value) -> &'static str {
     match value {
         Value::Int(_) => "an integer",
         Value::Float(_) => "a float",

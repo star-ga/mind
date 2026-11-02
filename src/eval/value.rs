@@ -12,7 +12,10 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::fmt;
+use std::rc::Rc;
 
 use crate::types::DType;
 
@@ -125,10 +128,87 @@ pub enum Value {
     /// `(field_name, value)` pairs in literal order. Field access resolves by
     /// NAME (`eval_field_access`), so declared-vs-literal field order never
     /// matters. Deterministic: construction evaluates fields in source order.
+    /// The fields are a shared [`Record`]: a copy of the value denotes the
+    /// SAME record, so a field store is seen through every copy.
     Struct {
         name: String,
-        fields: Vec<(String, Value)>,
+        fields: Record,
     },
+}
+
+/// The fields of one struct record (types.md "Record identity"): binding,
+/// assigning, passing or returning a struct value shares the record and never
+/// clones its fields, so a field store through one reference is visible
+/// through all others. A struct literal is the only way to make a new record.
+#[derive(Clone)]
+pub struct Record(Rc<RefCell<Vec<(String, Value)>>>);
+
+impl Record {
+    pub fn new(fields: Vec<(String, Value)>) -> Self {
+        Record(Rc::new(RefCell::new(fields)))
+    }
+
+    /// The current value of `field`, if the record has it.
+    pub fn get(&self, field: &str) -> Option<Value> {
+        let fields = self.0.borrow();
+        fields
+            .iter()
+            .find(|(f, _)| f == field)
+            .map(|(_, v)| v.clone())
+    }
+
+    /// Store `value` into `field`; `false` when the record has no such field.
+    pub fn set(&self, field: &str, value: Value) -> bool {
+        let mut fields = self.0.borrow_mut();
+        match fields.iter_mut().find(|(f, _)| f == field) {
+            Some(slot) => {
+                slot.1 = value;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A copy of the `(field, value)` pairs, in literal order.
+    pub fn fields(&self) -> Vec<(String, Value)> {
+        self.0.borrow().clone()
+    }
+}
+
+impl PartialEq for Record {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || *self.0.borrow() == *other.0.borrow()
+    }
+}
+
+thread_local! {
+    static PRINT_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Run `f` one record-nesting level deeper, or return `None` past a fixed
+/// depth: a record can reach itself through its fields, and printing one must
+/// stop rather than recurse until the stack overflows.
+fn nested<R>(f: impl FnOnce() -> R) -> Option<R> {
+    struct Restore(u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PRINT_DEPTH.with(|d| d.set(self.0));
+        }
+    }
+    let depth = PRINT_DEPTH.with(Cell::get);
+    if depth >= 16 {
+        return None;
+    }
+    PRINT_DEPTH.with(|d| d.set(depth + 1));
+    let _restore = Restore(depth);
+    Some(f())
+}
+
+impl fmt::Debug for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        nested(|| f.debug_list().entries(self.fields()).finish())
+            .unwrap_or_else(|| f.write_str("[..]"))
+    }
 }
 
 impl Value {
@@ -218,11 +298,11 @@ pub fn format_value_human(v: &Value) -> String {
                 out
             }
         }
-        Value::Struct { name, fields } => {
+        Value::Struct { name, fields } => nested(|| {
             let mut out = String::new();
             out.push_str(name);
             out.push_str(" { ");
-            for (i, (fname, fval)) in fields.iter().enumerate() {
+            for (i, (fname, fval)) in fields.fields().iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
@@ -232,7 +312,8 @@ pub fn format_value_human(v: &Value) -> String {
             }
             out.push_str(" }");
             out
-        }
+        })
+        .unwrap_or_else(|| format!("{name} {{ .. }}")),
     }
 }
 

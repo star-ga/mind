@@ -39,8 +39,10 @@ pub mod conv2d_grad;
 pub(crate) mod declared_width;
 mod enum_cmp;
 pub(crate) mod extern_c_intrinsics;
+mod float_ops;
 pub mod interp_mem;
 pub mod ir_interp;
+mod loops;
 pub mod lower;
 mod module_bindings;
 mod module_globals;
@@ -79,6 +81,7 @@ pub mod mlir_jit;
 pub mod mlir_opt;
 #[cfg(feature = "mlir-exec")]
 pub mod mlir_run;
+mod record_store;
 #[cfg(feature = "std-surface")]
 pub mod struct_resolver;
 pub mod value;
@@ -399,6 +402,13 @@ pub enum EvalError {
     /// body: a bare `return` outside a function is rejected by the type checker.
     #[error("internal: unhandled return control-flow signal")]
     ReturnFlow(Box<Value>),
+    /// Control-flow signal of `break`: caught by the innermost loop in
+    /// `loops`, turned into an error at a function-body boundary (`loops::fence`).
+    #[error("`break` outside of a loop")]
+    BreakFlow,
+    /// Control-flow signal of `continue`; same contract as [`EvalError::BreakFlow`].
+    #[error("`continue` outside of a loop")]
+    ContinueFlow,
 }
 
 pub fn eval_module_value_with_env_mode(
@@ -622,31 +632,15 @@ pub fn eval_module_value_with_env_mode(
             } => {
                 // Use the same threaded executor as function loops so nested
                 // mutations survive, then reflect integer results into `env`.
-                let s = match eval_value_expr_mode(start, &venv, &tensor_env, mode.clone())? {
-                    Value::Int(n) => n,
-                    _ => {
-                        return Err(EvalError::UnsupportedMsg(
-                            "for-loop start must be int".into(),
-                        ));
-                    }
-                };
-                let e = match eval_value_expr_mode(end, &venv, &tensor_env, mode.clone())? {
-                    Value::Int(n) => n,
-                    _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
-                };
-                let saved_var = venv.get(var).cloned();
-                for i in s..e {
-                    venv.insert(var.clone(), Value::Int(i));
-                    last = exec_block_scoped(body, &mut venv, &tensor_env, mode.clone())?;
-                }
-                match saved_var {
-                    Some(v) => {
-                        venv.insert(var.clone(), v);
-                    }
-                    None => {
-                        venv.remove(var);
-                    }
-                }
+                last = loops::run_range_for(
+                    var,
+                    start,
+                    end,
+                    body,
+                    &mut venv,
+                    &tensor_env,
+                    mode.clone(),
+                )?;
                 for (k, v) in venv.iter() {
                     if let Value::Int(n) = v {
                         env.insert(k.clone(), *n);
@@ -662,7 +656,7 @@ pub fn eval_module_value_with_env_mode(
             // the env and silently discards every loop-carried mutation.
             #[cfg(feature = "std-surface")]
             Node::While { cond, body, .. } => {
-                last = eval_while_stmt_threaded(cond, body, &mut venv, &tensor_env, mode.clone())?;
+                last = loops::run_while(cond, body, &mut venv, &tensor_env, mode.clone())?;
                 for (k, v) in venv.iter() {
                     if let Value::Int(n) = v {
                         env.insert(k.clone(), *n);
@@ -962,7 +956,7 @@ fn exec_threaded_stmt(
             cond: inner_cond,
             body: inner_body,
             ..
-        } => eval_while_stmt_threaded(inner_cond, inner_body, env, tensor_env, mode.clone()),
+        } => loops::run_while(inner_cond, inner_body, env, tensor_env, mode.clone()),
         // `if`/`else` in statement position: evaluate the condition, then run
         // the taken branch as its OWN block scope (`exec_block_scoped` — the
         // same per-block frame the `while`/`for` bodies use) against the SAME
@@ -997,56 +991,22 @@ fn exec_threaded_stmt(
         // were lost to later block statements and outer assigns were
         // silently discarded.
         Node::Block { stmts, .. } => exec_block_scoped(stmts, env, tensor_env, mode.clone()),
-        // `for v in start..end`: bounded integer range, body threaded like a
-        // `while` body. The `for` gets its OWN scope, never the enclosing
-        // loop's: each iteration of the body is a block scope
-        // (`exec_block_scoped` — body-`let`s die at iteration end, so a
-        // body-`let` shadowing an outer name, or even the loop var itself,
-        // never leaks or pollutes an enclosing `while`'s restore list), and
-        // the loop VAR's shadowed binding (if any) is saved here and restored
-        // the moment the loop exits, so a later statement in the enclosing
-        // body reads the OUTER binding (compiled scoping).
+        // `for v in start..end` / `for v in coll`: the loop gets its OWN scope
+        // and each iteration is a block scope (`loops` module docs); the loop
+        // VAR's shadowed binding is restored the moment the loop exits.
         Node::For {
             var,
             start,
             end,
             body,
             ..
-        } => {
-            let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
-                Value::Int(n) => n,
-                _ => {
-                    return Err(EvalError::UnsupportedMsg(
-                        "for-loop start must be int".into(),
-                    ));
-                }
-            };
-            let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
-                Value::Int(n) => n,
-                _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
-            };
-            let saved_var = env.get(var).cloned();
-            let run = (|| -> Result<Value, EvalError> {
-                let mut result = Value::Int(0);
-                for i in s..e {
-                    env.insert(var.clone(), Value::Int(i));
-                    result = exec_block_scoped(body, env, tensor_env, mode.clone())?;
-                }
-                Ok(result)
-            })();
-            // Restore on success AND on error/`ReturnFlow`, keeping the env
-            // consistent however the loop unwinds (moot for `ReturnFlow`
-            // — the fn boundary discards the call env — but honest).
-            match saved_var {
-                Some(v) => {
-                    env.insert(var.clone(), v);
-                }
-                None => {
-                    env.remove(var);
-                }
-            }
-            run
-        }
+        } => loops::run_range_for(var, start, end, body, env, tensor_env, mode.clone()),
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            ..
+        } => loops::run_for_each(var, collection, body, env, tensor_env, mode.clone()),
         // Everything else (calls, bare expressions, `return`, …) is a pure
         // expression evaluation; `return` surfaces as `ReturnFlow` and unwinds.
         other => eval_value_expr_mode(other, env, tensor_env, mode.clone()),
@@ -1070,6 +1030,14 @@ fn eval_index_assign_threaded(
 ) -> Result<Value, EvalError> {
     // Preserve the established RHS-first evaluation order.
     let val = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+    if let Node::FieldAccess {
+        receiver: owner,
+        field,
+        ..
+    } = receiver
+    {
+        return record_store::assign_field_element(owner, field, index, val, env, tensor_env, mode);
+    }
     let Node::Lit(Literal::Ident(name), _) = receiver else {
         return Err(EvalError::UnsupportedMsg(
             "indexed assignment receiver must be a simple array variable".into(),
@@ -1144,38 +1112,6 @@ fn exec_block_scoped(
         }
     }
     outcome
-}
-
-#[cfg(feature = "std-surface")]
-fn eval_while_stmt_threaded(
-    cond: &Node,
-    body: &[Node],
-    env: &mut HashMap<String, Value>,
-    tensor_env: &HashMap<String, TensorEnvEntry>,
-    mode: ExecMode,
-) -> Result<Value, EvalError> {
-    const MAX_EVAL_ITERS: u64 = 1_000_000;
-    let mut result = Value::Int(0);
-    let mut iters: u64 = 0;
-    loop {
-        let cond_val = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
-        if matches!(cond_val, Value::Int(0)) {
-            break;
-        }
-        iters += 1;
-        if iters > MAX_EVAL_ITERS {
-            return Err(EvalError::UnsupportedMsg(
-                "`while` exceeded the compile-time evaluation iteration cap \
-                 (possible non-terminating loop)"
-                    .into(),
-            ));
-        }
-        // Each iteration is its own block scope (`exec_block_scoped`):
-        // body-`let`s are restored at iteration end, `assign`s to outer
-        // names survive into the next condition check and past the loop.
-        result = exec_block_scoped(body, env, tensor_env, mode.clone())?;
-    }
-    Ok(result)
 }
 
 pub(crate) fn eval_value_expr_mode(
@@ -1312,7 +1248,7 @@ pub(crate) fn eval_value_expr_mode(
                         Err(EvalError::ReturnFlow(v)) => {
                             return declared_width::narrow_return(&func.ret_type, callee, *v);
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => return Err(loops::fence(e)),
                     }
                 }
                 return declared_width::narrow_return(&func.ret_type, callee, result);
@@ -1747,11 +1683,11 @@ pub(crate) fn eval_value_expr_mode(
             };
             Err(EvalError::ReturnFlow(Box::new(v)))
         }
-        // Best-effort only: the const-fold evaluator has no `break`/`continue`
-        // control-flow signal. Mid-iteration break/continue semantics are
-        // honored solely by the MLIR codegen path.
+        // Loop control signals, caught by the innermost loop (`loops`).
         #[cfg(feature = "std-surface")]
-        Node::Break { .. } | Node::Continue { .. } => Ok(Value::Int(0)),
+        Node::Break { .. } => Err(EvalError::BreakFlow),
+        #[cfg(feature = "std-surface")]
+        Node::Continue { .. } => Err(EvalError::ContinueFlow),
         // Block-expression semantics (mirrors the expression-level `If` arm
         // below): the block is ONE scope — a `let` inside it is visible to
         // later statements and the tail expression, and dies at block exit.
@@ -1801,11 +1737,14 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Tuple(vals))
         }
-        Node::ForEach { .. } => Err(EvalError::UnsupportedMsg(
-            "for-each (`for x in coll`) is lowered by the native compiler over the \
-             std.vec runtime; the tree-walking eval fallback does not interpret it"
-                .into(),
-        )),
+        // Loops in EXPRESSION position run over a clone of the immutable env
+        // (the same contract as the expression-level `If`/`Block` arms).
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            ..
+        } => loops::run_for_each(var, collection, body, &mut env.clone(), tensor_env, mode),
         Node::MapLit { .. } => Err(EvalError::UnsupportedMsg(
             "map literal (`{}` / `{k: v}`) is lowered by the native compiler over the \
              std.map runtime; the tree-walking eval fallback does not interpret it"
@@ -1822,51 +1761,7 @@ pub(crate) fn eval_value_expr_mode(
             end,
             body,
             ..
-        } => {
-            let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
-                Value::Int(n) => n,
-                _ => {
-                    return Err(EvalError::UnsupportedMsg(
-                        "for-loop start must be int".into(),
-                    ));
-                }
-            };
-            let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
-                Value::Int(n) => n,
-                _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
-            };
-            let mut loop_env = env.clone();
-            let mut result = Value::Int(0);
-            for i in s..e {
-                loop_env.insert(var.clone(), Value::Int(i));
-                for stmt in body {
-                    // Handle assignments: propagate back to loop_env
-                    match stmt {
-                        Node::Assign { name, value, .. } => {
-                            let val =
-                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
-                            let val = declared_width::narrow_reassign(name, val)?;
-                            loop_env.insert(name.clone(), val.clone());
-                            result = val;
-                        }
-                        Node::Let {
-                            name, ann, value, ..
-                        } => {
-                            let val =
-                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
-                            let val = declared_width::bind_let(ann, name, val)?;
-                            loop_env.insert(name.clone(), val.clone());
-                            result = val;
-                        }
-                        _ => {
-                            result =
-                                eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
-                        }
-                    }
-                }
-            }
-            Ok(result)
-        }
+        } => loops::run_range_for(var, start, end, body, &mut env.clone(), tensor_env, mode),
         Node::Print { args, .. } => {
             let mut values = Vec::new();
             for arg in args {
@@ -2077,7 +1972,7 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Struct {
                 name: name.clone(),
-                fields: items,
+                fields: value::Record::new(items),
             })
         }
         // Phase 10.6: index access `receiver[index]`. For an array/tuple value
@@ -2161,9 +2056,12 @@ pub(crate) fn eval_value_expr_mode(
         Node::IndexAssign { .. } => Err(EvalError::UnsupportedMsg(
             "indexed assignment is unsupported in expression position".into(),
         )),
-        Node::FieldAssign { field, .. } => Err(EvalError::UnsupportedMsg(format!(
-            "struct field assignment `.{field}` is unsupported by the interpreter; mutation semantics are not defined"
-        ))),
+        Node::FieldAssign {
+            receiver,
+            field,
+            value,
+            ..
+        } => record_store::assign_field(receiver, field, value, env, tensor_env, mode),
         // Phase 10.7: `match`. Evaluate the scrutinee and take the first arm
         // whose pattern matches — `Wildcard`, `Ident` (binds the value), or
         // `Literal` (Int/Float/Str equality). Enum-variant patterns need a
@@ -2263,78 +2161,12 @@ pub(crate) fn eval_value_expr_mode(
              not interpret it (a `?`-using fn is excluded from const-eval)"
                 .into(),
         )),
-        // RFC 0005 Gap 1: while loop. Mirrors the `For`-loop interpreter
-        // contract — a fresh loop scope inheriting the outer env, with
-        // `let`/`assign` statements in the body propagated back into that scope
-        // so the loop condition can make progress. Truthiness matches `If`:
-        // `Value::Int(0)` is false, anything else is true. A hard iteration cap
-        // makes a non-terminating loop fail loudly: this runs at COMPILE-TIME
-        // evaluation, so `while 1 { }` must error, not hang the compiler.
+        // RFC 0005 Gap 1: while loop in expression position, over a clone of
+        // the env (`loops::run_while` holds the truthiness rule and the
+        // iteration cap that makes `while 1 { }` fail loudly).
         #[cfg(feature = "std-surface")]
         Node::While { cond, body, .. } => {
-            const MAX_EVAL_ITERS: u64 = 1_000_000;
-            let mut loop_env = env.clone();
-            let mut result = Value::Int(0);
-            let mut iters: u64 = 0;
-            loop {
-                let cond_val = eval_value_expr_mode(cond, &loop_env, tensor_env, mode.clone())?;
-                if matches!(cond_val, Value::Int(0)) {
-                    break;
-                }
-                iters += 1;
-                if iters > MAX_EVAL_ITERS {
-                    return Err(EvalError::UnsupportedMsg(
-                        "`while` exceeded the compile-time evaluation iteration cap \
-                         (possible non-terminating loop)"
-                            .into(),
-                    ));
-                }
-                for stmt in body {
-                    // Propagate `let`/`assign` into the loop scope so the next
-                    // condition check sees the update (same handling as `For`).
-                    match stmt {
-                        Node::Let {
-                            name, ann, value, ..
-                        } => {
-                            let val =
-                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
-                            let val = declared_width::bind_let(ann, name, val)?;
-                            loop_env.insert(name.clone(), val.clone());
-                            result = val;
-                        }
-                        Node::Assign { name, value, .. } => {
-                            let val =
-                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
-                            let val = declared_width::narrow_reassign(name, val)?;
-                            loop_env.insert(name.clone(), val.clone());
-                            result = val;
-                        }
-                        // `arr[i] = v` inside the while body: rebuild + rebind the
-                        // array tuple in the loop scope (same as For / module level).
-                        Node::IndexAssign {
-                            receiver,
-                            index,
-                            value,
-                            ..
-                        } => {
-                            let val = eval_index_assign_threaded(
-                                receiver,
-                                index,
-                                value,
-                                &mut loop_env,
-                                tensor_env,
-                                mode.clone(),
-                            )?;
-                            result = val;
-                        }
-                        _ => {
-                            result =
-                                eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
-                        }
-                    }
-                }
-            }
-            Ok(result)
+            loops::run_while(cond, body, &mut env.clone(), tensor_env, mode)
         }
         // RFC 0010 Phase A: `extern "C"` blocks are declarations, not
         // expressions. The interpreter returns a unit placeholder; the
@@ -2543,10 +2375,8 @@ fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
     // legitimately declare a field named `len`); a missing field is a loud
     // error naming the struct.
     if let Value::Struct { name, fields } = &receiver {
-        for (fname, fval) in fields {
-            if fname == field {
-                return Ok(fval.clone());
-            }
+        if let Some(value) = fields.get(field) {
+            return Ok(value);
         }
         return Err(EvalError::UnsupportedMsg(format!(
             "struct `{name}` has no field .{field}"
@@ -2622,74 +2452,12 @@ pub fn eval_grad_map(
     Ok(Value::GradMap(out))
 }
 
-fn apply_float_op(op: BinOp, l: f64, r: f64) -> Result<f64, EvalError> {
-    Ok(match op {
-        BinOp::Add => l + r,
-        BinOp::Sub => l - r,
-        BinOp::Mul => l * r,
-        BinOp::Div => {
-            if r == 0.0 {
-                return Err(EvalError::DivZero);
-            }
-            l / r
-        }
-        BinOp::Mod => {
-            if r == 0.0 {
-                return Err(EvalError::DivZero);
-            }
-            l % r
-        }
-        BinOp::Lt => {
-            if l < r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        BinOp::Le => {
-            if l <= r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        BinOp::Gt => {
-            if l > r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        BinOp::Ge => {
-            if l >= r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        BinOp::Eq => {
-            if l == r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        BinOp::Ne => {
-            if l != r {
-                1.0
-            } else {
-                0.0
-            }
-        }
-    })
-}
-
 fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<Value, EvalError> {
     match (left, right) {
         (Value::Int(l), Value::Int(r)) => apply_int_op(op, l, r).map(Value::Int),
-        (Value::Float(l), Value::Float(r)) => apply_float_op(op, l, r).map(Value::Float),
-        (Value::Float(l), Value::Int(r)) => apply_float_op(op, l, r as f64).map(Value::Float),
-        (Value::Int(l), Value::Float(r)) => apply_float_op(op, l as f64, r).map(Value::Float),
+        (Value::Float(l), Value::Float(r)) => float_ops::float_binary(op, l, r),
+        (Value::Float(l), Value::Int(r)) => float_ops::float_binary(op, l, r as f64),
+        (Value::Int(l), Value::Float(r)) => float_ops::float_binary(op, l as f64, r),
         (Value::Str(s), Value::Int(n)) => match op {
             BinOp::Mul => Ok(Value::Str(s.repeat(n.max(0) as usize))),
             _ => Err(EvalError::Unsupported),

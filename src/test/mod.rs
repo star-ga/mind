@@ -605,6 +605,15 @@ fn grade_returned_value(
 /// worklist, `BTreeSet` visited guard against cycles). An import that is not
 /// a bundled `std.*` module contributes nothing (existing behavior for it is
 /// unchanged); a bundled module that fails to parse is a fail-loud error.
+/// The std modules a program calls WITHOUT an import: the compiled build
+/// resolves their `string_*` / `vec_*` / `map_*` functions through the
+/// runtime-support library it links into every artifact, and the std modules
+/// themselves call each other this way (std.io builds strings with
+/// `string_push_byte` and no import line). The test evaluator runs the same
+/// definitions from their bundled MIND source.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+const AMBIENT_STD: [&str; 3] = ["std.string", "std.vec", "std.map"];
+
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
     use crate::project::stdlib::STDLIB_MIND_SOURCES;
@@ -624,6 +633,17 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
     let mut queue: VecDeque<String> = top_level::refs(&module.items)
         .into_iter()
         .filter_map(import_key)
+        .chain(AMBIENT_STD.iter().map(|key| key.to_string()))
+        .collect();
+    // A name the file binds through its own `extern "C"` block calls that
+    // symbol, never the ambient std definition of the same name.
+    let extern_names: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Node::ExternBlock { fns, .. } => Some(fns.iter().map(|f| f.name.as_str())),
+            _ => None,
+        })
+        .flatten()
         .collect();
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
@@ -643,6 +663,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         })?;
         for item in top_level::refs(&imported.items) {
             match item {
+                Node::FnDef(fd, _) if extern_names.contains(fd.name.as_str()) => {}
                 Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
                 Node::Import { .. } => {
                     if let Some(k) = import_key(item) {
