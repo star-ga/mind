@@ -8,6 +8,7 @@
 /// The json-canon-kat driver: imports std.json + std.json_canon and exposes
 /// `json_canon_kat(input_addr, input_len) -> i64`, the polynomial hash
 /// (`acc = acc*31 + byte`) of the canonical dump bytes.
+#[allow(dead_code)]
 pub const DRIVER_SRC: &str = "import std.json;\n\
      import std.json_canon;\n\
      pub fn json_canon_kat(input_addr: i64, input_len: i64) -> i64 {\n\
@@ -30,10 +31,12 @@ pub const DRIVER_SRC: &str = "import std.json;\n\
      \x20   acc\n\
      }\n";
 
+#[allow(dead_code)]
 pub type JsonCanonFn = unsafe extern "C" fn(i64, i64) -> i64;
 
 /// True when the MLIR toolchain the driver build needs is on PATH.
 /// Reports a skip through the gate harness and returns false otherwise.
+#[allow(dead_code)]
 pub fn require_toolchain(target: &str) -> bool {
     for tool in ["mlir-opt", "mlir-translate", "clang"] {
         if which::which(tool).is_err() {
@@ -58,6 +61,7 @@ pub fn require_toolchain(target: &str) -> bool {
 /// 3. non-integer numbers refused
 ///
 /// `f` is `json_canon_kat(input_addr, input_len)` from the compiled driver.
+#[allow(dead_code)]
 pub fn check_properties(f: JsonCanonFn, id: &str) -> i64 {
     // Property 1: shuffled insertion order gives identical bytes.
     // Both documents are the same logical object with different key order.

@@ -29,6 +29,7 @@ pub mod frozen_profile;
 pub mod native_closure;
 mod print;
 mod verify;
+mod verify_calls;
 
 pub use crate::opt::ir_canonical::canonicalize_module;
 pub use canonical_verify::{CanonicalMetadataError, verify_canonical_metadata};
@@ -38,7 +39,8 @@ pub use evidence::{
 };
 pub use fp_mode::{FpMode, fp_contract_mode};
 pub use print::format_ir_module;
-pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed, verify_module};
+pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed};
+pub use verify_calls::verify_module;
 
 /// Whole-project enum registry; single-file compilation leaves it empty.
 #[derive(Debug, Clone, Default)]
@@ -1489,14 +1491,14 @@ impl fmt::Display for IRModule {
 /// Run verification and canonicalization on the module before handing it to a
 /// backend.
 pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError> {
-    verify::verify_module(module)?;
+    verify_calls::verify_module(module)?;
     crate::opt::ir_canonical::canonicalize_module(module);
     // Opt-in native mic@3 -> mic@3 optimizer (roadmap C6). Runs on the canonical IR,
     // UPSTREAM of emitter divergence, so both the Rust and self-host emitters consume
     // Bare has no passes; skip its unused option. Default OFF still preserves bytes.
     #[cfg(feature = "std-surface")]
     crate::opt::native_opt::optimize_mic3(module, crate::opt::native_opt::opt_level_from_env());
-    verify::verify_module(module)
+    verify_calls::verify_module(module)
 }
 
 /// Placeholder MLIR lowering stub for testing.

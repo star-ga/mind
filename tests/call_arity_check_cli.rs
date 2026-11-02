@@ -134,3 +134,57 @@ fn wrong_arity_to_imported_fn_is_e2005() {
         String::from_utf8_lossy(&ok.stderr)
     );
 }
+
+/// `mindc check` on `body` must exit `want`, and a failure must carry E2005 and
+/// the intrinsic arity message.
+#[cfg(feature = "std-surface")]
+fn check_intrinsic_call(name: &str, body: &str, want: i32) {
+    let dir = common::scratch_dir(name);
+    let src = dir.join("main.mind");
+    std::fs::write(&src, body).expect("write fixture");
+    let out = check(&src);
+    assert_eq!(
+        out.status.code(),
+        Some(want),
+        "{name}: mindc check exit; stdout: {} stderr: {}",
+        stdout(&out),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if want != 0 {
+        assert!(
+            stdout(&out).contains("intrinsic `__mind_write` expects 4 i64 argument(s)")
+                && stdout(&out).contains("got 3")
+                && stdout(&out).contains("E2005"),
+            "{name}: the failure must be the intrinsic arity, E2005; stdout: {}",
+            stdout(&out)
+        );
+    }
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn wrong_intrinsic_arity_inside_fn_body_is_e2005() {
+    // The type checker already produced this message; it classified as the
+    // generic code, which the fn-body pass drops, so `check` exited 0.
+    check_intrinsic_call(
+        "intrinsic_arity_body",
+        "fn main() -> i64 {\n    __mind_write(1, 0, 0);\n    return 0;\n}\n",
+        1,
+    );
+    check_intrinsic_call(
+        "intrinsic_arity_if",
+        "fn main() -> i64 {\n    let n: i64 = 1;\n    if n > 0 {\n        __mind_write(1, 0, 0);\n    }\n    return 0;\n}\n",
+        1,
+    );
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn correct_intrinsic_arity_passes_check() {
+    // Negative control for the test above.
+    check_intrinsic_call(
+        "intrinsic_arity_ok",
+        "fn main() -> i64 {\n    __mind_write(1, 0, 0, 0 - 1);\n    return 0;\n}\n",
+        0,
+    );
+}
