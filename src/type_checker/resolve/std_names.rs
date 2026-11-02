@@ -12,7 +12,7 @@
 //!
 //! The imports are the file's: a function inside a `module` block is resolved
 //! as a one-item module, so the checker installs the whole file's imported
-//! names ([`FileScope`]) for its functions, as the loader and the module table
+//! names (`FileScope`) for its functions, as the loader and the module table
 //! read the file's module-scope imports, `module` blocks included.
 
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
@@ -127,7 +127,7 @@ pub(super) fn imported(module: &Module) -> Option<StdNames> {
 
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 thread_local! {
-    /// The imported names of the file being checked (see [`FileScope`]).
+    /// The imported names of the file being checked (see `FileScope`).
     static FILE: RefCell<Option<Rc<Option<StdNames>>>> = const { RefCell::new(None) };
 }
 
@@ -153,7 +153,7 @@ impl Drop for FileScope {
 }
 
 /// The non-implicit std names `module`'s functions see: the installed file's
-/// (see [`FileScope`]), else those `module`'s own imports bring in.
+/// (see `FileScope`), else those `module`'s own imports bring in.
 pub(super) fn visible(module: &Module) -> Rc<Option<StdNames>> {
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
     if let Some(file) = FILE.with(|cell| cell.borrow().clone()) {
