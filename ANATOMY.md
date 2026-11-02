@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1948 | **Est. tokens:** ~3,808,536
-**Generated:** 2026-11-02 15:48 UTC
+**Files:** 1948 | **Est. tokens:** ~3,808,733
+**Generated:** 2026-11-02 16:29 UTC
 
 ## Token Budget Guide
 
@@ -149,11 +149,11 @@
 | `src/test/` | 4 | ~15,775 |
 | `src/type_checker/` | 19 | ~64,862 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
-| `src/type_checker/slice_abi/` | 4 | ~14,388 |
+| `src/type_checker/slice_abi/` | 4 | ~14,442 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 428 | ~874,370 |
+| `tests/` | 428 | ~874,513 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1574,7 +1574,7 @@
 - `aliases.rs` (~2707 tok, huge) — Copyright 2026 STARGA Inc.
 - `borrow_flow.rs` (~7106 tok, huge) — Copyright 2025 STARGA Inc.
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
-- `provenance.rs` (~3430 tok, huge) — Copyright 2026 STARGA Inc.
+- `provenance.rs` (~3484 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
 - `slice_abi.rs` (~7580 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2593,7 +2593,7 @@
 - `mod.rs` (~6173 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
-- `slice_argument_admission_run.rs` (~5363 tok, huge) — Copyright 2026 STARGA Inc.
+- `slice_argument_admission_run.rs` (~5506 tok, huge) — Copyright 2026 STARGA Inc.
 - `slice_call_abi_run.rs` (~5559 tok, huge) — Copyright 2025 STARGA Inc.
 - `smoke.rs` (~261 tok, medium) — Copyright 2025 STARGA Inc.
 - `source_confinement.rs` (~2038 tok, huge) — Copyright 2025-2026 STARGA Inc.

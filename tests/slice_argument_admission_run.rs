@@ -83,6 +83,22 @@ pub fn alias_param_forward_mut() -> i64 {
     let a: array<Q> = [3, -4]
     return forward_alias_mut(a)
 }
+
+struct Pair {
+    left: Q,
+    right: i32,
+}
+
+pub fn read_elements() -> i64 {
+    let a: array<Q> = [6, -2, 9]
+    let b: array<i32> = [a[2], a[0], a[1]]
+    return weigh(b)
+}
+
+pub fn field_elements() -> i64 {
+    let p: Pair = Pair { left: 4, right: -1 }
+    return weigh([p.left, p.right, p.left])
+}
 "#;
 
 const ALIAS_EXPECTED: &[(&str, i64)] = &[
@@ -92,6 +108,8 @@ const ALIAS_EXPECTED: &[(&str, i64)] = &[
     ("alias_mutable", -4),
     ("alias_param_forward", 26),
     ("alias_param_forward_mut", 126),
+    ("read_elements", 3958),
+    ("field_elements", 3394),
 ];
 
 const CONST_ELEMENTS: &str = r#"
@@ -631,6 +649,11 @@ fn unsupported_layouts_and_capabilities_stay_refused() {
             "alias_slice_struct_field",
             "type SL = &[i32]\nstruct S { n: i64, xs: SL }\npub fn run() -> i64 { return 1 }\n",
             "E2033",
+        ),
+        (
+            "float_read_element",
+            "fn take(xs: &[i64]) -> i64 { return xs[0] }\npub fn run() -> i64 { let f: array<f64> = [1.5]; return take([f[0]]) }\n",
+            "E2032",
         ),
         (
             "binding_shadows_const_element",
