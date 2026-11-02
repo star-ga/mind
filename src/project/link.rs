@@ -43,7 +43,7 @@ pub struct LinkCtx<'a> {
     pub cc: &'a str,
     /// Object files to link, in declared order.
     pub objects: &'a [PathBuf],
-    /// Final executable path (the caller appends any OS extension).
+    /// Output path: the executable, or the relocatable object for `--emit object`.
     pub output: &'a Path,
     /// Installed runtime for accelerator backends. Native CPU objects use the
     /// public runtime-support shim and carry no private runtime dependency.
@@ -72,7 +72,8 @@ impl LinkDriver {
         Self { target }
     }
 
-    /// Link the final executable, dispatching on the target's object/link format.
+    /// Link the output: a relocatable object for `--emit object`, otherwise the
+    /// final executable, dispatching on the target's object/link format.
     pub fn link(&self, ctx: &LinkCtx) -> Result<()> {
         // `--emit object` stops before the executable link: one relocatable
         // object with the compiled modules, the substrate archive members they
@@ -260,7 +261,7 @@ fn link_relocatable(ctx: &LinkCtx) -> Result<()> {
         cmd.arg(shim);
     }
     if ctx.opts.verbose {
-        eprintln!("  Relocatable link: {cmd:?}");
+        println!("  Relocatable link: {cmd:?}");
     }
     let out = cmd
         .output()
