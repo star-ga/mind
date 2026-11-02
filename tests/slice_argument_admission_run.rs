@@ -56,6 +56,33 @@ pub fn alias_mutable() -> i64 {
     let xs: array<Q> = [4, 1, -9]
     return fold_first(xs) as i64
 }
+
+fn inner_sum(xs: &[i32]) -> i64 {
+    return (xs[0] as i64) * 10 + (xs[1] as i64)
+}
+
+fn forward_alias(xs: &[Q]) -> i64 {
+    return inner_sum(xs)
+}
+
+fn inner_bump(xs: &mut [i32]) -> i64 {
+    xs[0] = xs[0] + 10
+    return (xs[0] as i64) * 10 + (xs[1] as i64)
+}
+
+fn forward_alias_mut(xs: &mut [Q]) -> i64 {
+    return inner_bump(xs)
+}
+
+pub fn alias_param_forward() -> i64 {
+    let a: array<Q> = [3, -4]
+    return forward_alias(a)
+}
+
+pub fn alias_param_forward_mut() -> i64 {
+    let a: array<Q> = [3, -4]
+    return forward_alias_mut(a)
+}
 "#;
 
 const ALIAS_EXPECTED: &[(&str, i64)] = &[
@@ -63,6 +90,34 @@ const ALIAS_EXPECTED: &[(&str, i64)] = &[
     ("plain_array_to_alias_param", 2757),
     ("direct_literal", 3123),
     ("alias_mutable", -4),
+    ("alias_param_forward", 26),
+    ("alias_param_forward_mut", 126),
+];
+
+const CONST_ELEMENTS: &str = r#"
+type Q = i32
+
+const Z: i32 = 7
+const QZ: Q = -2
+const DERIVED = Z * 3
+
+fn weigh(xs: &[i32]) -> i64 {
+    return (xs.len() as i64) * 1000 + (xs[0] as i64) * 100 + (xs[1] as i64) * 10 + (xs[2] as i64)
+}
+
+pub fn local_const_literal() -> i64 {
+    let xs: array<i32> = [Z, Z, QZ]
+    return weigh(xs)
+}
+
+pub fn const_expression_elements() -> i64 {
+    return weigh([Z + 1, -QZ, DERIVED])
+}
+"#;
+
+const CONST_EXPECTED: &[(&str, i64)] = &[
+    ("local_const_literal", 3768),
+    ("const_expression_elements", 3841),
 ];
 
 const PRIVATE_HELPERS: &str = r#"
@@ -116,19 +171,51 @@ const PRIVATE_NATIVE_ONLY: &[(&str, i64)] = &[("private_mut_write_back", 302)];
 const DEFS_SRC: &str = r#"
 module defs {
     type Q16 = i32
+    type B = u8
+    type R = f64
+
+    const ONE: Q16 = 65536
+    const PONE: i32 = 3
+    const RH: R = 2
 
     struct Bank {
         fill: u32,
         slots: array<Q16>,
     }
 
+    struct Raw {
+        fill: u32,
+        raw: array<i32>,
+    }
+
+    struct Pack {
+        fill: u32,
+        bytes: array<B>,
+    }
+
     fn lift(v: i32) -> Q16 {
         return v * 2
     }
 
-    export type Q16
-    export struct Bank
-    export fn lift
+    fn make_raw() -> Raw {
+        let raw: array<i32> = [7, -8]
+        return Raw { fill: 2, raw: raw }
+    }
+
+    fn make_bank_here() -> Bank {
+        let slots: array<Q16> = [5, -6]
+        return Bank { fill: 2, slots: slots }
+    }
+
+    fn make_pack() -> Pack {
+        let bytes: array<B> = [2, 255]
+        return Pack { fill: 2, bytes: bytes }
+    }
+
+    export type Q16, B, R
+    export const ONE, PONE, RH
+    export struct Bank, Raw, Pack
+    export fn lift, make_raw, make_bank_here, make_pack
 }
 "#;
 
@@ -142,7 +229,11 @@ module maker {
         return defs.Bank { fill: 2, slots: slots }
     }
 
-    export fn make_bank
+    fn total(xs: &[defs.Q16]) -> i64 {
+        return (xs.len() as i64) * 1000 + (xs[0] as i64) * 10 + (xs[1] as i64)
+    }
+
+    export fn make_bank, total
 }
 "#;
 
@@ -154,6 +245,14 @@ import maker;
 module main {
     fn weigh(xs: &[defs.Q16]) -> i64 {
         return (xs.len() as i64) * 1000 + (xs[0] as i64) * 10 + (xs[1] as i64)
+    }
+
+    fn weigh_i32(xs: &[i32]) -> i64 {
+        return (xs.len() as i64) * 1000 + (xs[0] as i64) * 10 + (xs[1] as i64)
+    }
+
+    fn weigh_bytes(xs: &[defs.B]) -> i64 {
+        return (xs.len() as i64) * 100000 + (xs[0] as i64) * 1000 + (xs[1] as i64)
     }
 
     pub fn field_arg() -> i64 {
@@ -171,7 +270,58 @@ module main {
         return weigh(input)
     }
 
+    pub fn unqualified_return_field() -> i64 {
+        let raw: defs.Raw = defs.make_raw()
+        return weigh_i32(raw.raw)
+    }
+
+    pub fn unannotated_return_field() -> i64 {
+        let raw = defs.make_raw()
+        return weigh_i32(raw.raw)
+    }
+
+    pub fn unqualified_return_alias_field() -> i64 {
+        let bank: defs.Bank = defs.make_bank_here()
+        return weigh(bank.slots)
+    }
+
+    pub fn u8_alias_field() -> i64 {
+        let pack: defs.Pack = defs.make_pack()
+        return weigh_bytes(pack.bytes)
+    }
+
+    pub fn imported_const_plain() -> i64 {
+        let xs: array<i32> = [defs.PONE, defs.PONE]
+        return weigh_i32(xs)
+    }
+
+    pub fn imported_const_alias() -> i64 {
+        let xs: array<defs.Q16> = [defs.ONE, defs.ONE]
+        return weigh(xs)
+    }
+
+    pub fn imported_const_direct() -> i64 {
+        return weigh([defs.ONE, defs.ONE])
+    }
+
+    pub fn imported_const_mixed() -> i64 {
+        return weigh([defs.lift(1), defs.ONE])
+    }
+
+    pub fn imported_const_expression() -> i64 {
+        return weigh([defs.ONE + 1, -defs.PONE])
+    }
+
+    pub fn imported_callee_const_literal() -> i64 {
+        let input: array<defs.Q16> = [defs.ONE, defs.PONE]
+        return maker.total(input)
+    }
+
     export fn weigh, field_arg, call_literal_arg, qualified_literal_arg
+    export fn unqualified_return_field, unannotated_return_field
+    export fn unqualified_return_alias_field, u8_alias_field
+    export fn imported_const_plain, imported_const_alias, imported_const_direct
+    export fn imported_const_mixed, imported_const_expression, imported_callee_const_literal
 }
 "#;
 
@@ -180,6 +330,16 @@ const IMPORTED_EXPECTED: &[(&str, i64)] = &[
     ("field_arg", 2044),
     ("call_literal_arg", 2052),
     ("qualified_literal_arg", 2069),
+    ("unqualified_return_field", 2062),
+    ("unannotated_return_field", 2062),
+    ("unqualified_return_alias_field", 2044),
+    ("u8_alias_field", 202255),
+    ("imported_const_plain", 2033),
+    ("imported_const_alias", 722896),
+    ("imported_const_direct", 722896),
+    ("imported_const_mixed", 67556),
+    ("imported_const_expression", 657367),
+    ("imported_callee_const_literal", 657363),
 ];
 
 fn mindc(args: &[&str], cwd: &Path) -> Output {
@@ -295,6 +455,11 @@ fn alias_element_arrays_and_literals_pass_to_alias_slices_and_run() {
 }
 
 #[test]
+fn constant_elements_pass_to_slices_and_run() {
+    check_compile_and_run("const_elements", CONST_ELEMENTS, CONST_EXPECTED, &[]);
+}
+
+#[test]
 fn private_helpers_under_an_export_list_take_slices_and_run() {
     check_compile_and_run(
         "private_helpers",
@@ -373,6 +538,42 @@ fn run_imported_project(sources_list: bool) {
     assert_native(&artifact, IMPORTED_EXPECTED);
 }
 
+/// A struct the checked module declares keeps its own field types: a local
+/// `Raw` is not the imported `defs.Raw` of the same name. An imported constant
+/// keeps its declared type: `RH: R` with `type R = f64` is not an integer.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn owner_scoped_fields_and_constant_types_refuse_mismatches() {
+    let root = common::scratch_dir("slice_argument_admission_run").join("imported_name_collision");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).expect("project src");
+    std::fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"slice_name_collision\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"slice_name_collision\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\n[exports]\nc_abi = [\"run\"]\n",
+    )
+    .expect("write manifest");
+    std::fs::write(root.join("src/defs.mind"), DEFS_SRC).expect("write defs");
+    std::fs::write(
+        root.join("src/main.mind"),
+        "import defs;\n\nmodule main {\n    struct Raw {\n        raw: array<i64>,\n    }\n\n    fn weigh_i32(xs: &[i32]) -> i64 {\n        return xs.len() as i64\n    }\n\n    pub fn run() -> i64 {\n        let imported: defs.Raw = defs.make_raw()\n        let mine: Raw = Raw { raw: [1, 2] }\n        let a: i64 = weigh_i32(imported.raw)\n        let b: i64 = weigh_i32(mine.raw)\n        return a + b + weigh_i32([defs.RH])\n    }\n\n    export fn run\n}\n",
+    )
+    .expect("write main");
+    let checked = mindc(&["check", "--no-fmt", "--no-lint", "src/main.mind"], &root);
+    let text = combined(&checked);
+    assert!(
+        !checked.status.success(),
+        "mismatched slice arguments passed:\n{text}"
+    );
+    assert_eq!(
+        text.matches("E2032").count(),
+        2,
+        "the local field and the float constant must be refused, not the imported field:\n{text}"
+    );
+    for line in ["main.mind:16:", "main.mind:17:"] {
+        assert!(text.contains(line), "no refusal at {line}:\n{text}");
+    }
+}
+
 #[test]
 fn unsupported_layouts_and_capabilities_stay_refused() {
     let cases = [
@@ -399,6 +600,41 @@ fn unsupported_layouts_and_capabilities_stay_refused() {
         (
             "private_helper_wrong_element",
             "module m {\n    fn take(xs: &[i64]) -> i64 { return xs.length }\n    pub fn run() -> i64 { let xs: array<u8> = [1]; return take(xs) }\n    export fn run\n}\n",
+            "E2032",
+        ),
+        (
+            "array_alias_binding",
+            "type V = array<i32>\nfn get(xs: &[i32]) -> i64 { return xs.length }\npub fn run() -> i64 { let v: V = [3, 4]; return get(v) }\n",
+            "E2032",
+        ),
+        (
+            "float_const_element",
+            "const F: f64 = 1.5\nfn take(xs: &[i64]) -> i64 { return xs.length }\npub fn run() -> i64 { return take([F, F]) }\n",
+            "E2032",
+        ),
+        (
+            "const_alias_type_disagrees_with_value",
+            "type Q = f64\nconst H: Q = 2\nfn take(xs: &[i64]) -> i64 { return xs[0] }\npub fn run() -> i64 { return take([H, H]) }\n",
+            "E2032",
+        ),
+        (
+            "alias_slice_parameter",
+            "type SL = &[i32]\nfn g(xs: SL) -> i64 { return xs.len() as i64 }\npub fn run() -> i64 { let a: array<i32> = [5, 6]; return g(a) }\n",
+            "E2032",
+        ),
+        (
+            "alias_slice_binding",
+            "type SL = &[i32]\nfn g(xs: &[i32]) -> i64 { let s: SL = xs; return 3 }\npub fn run() -> i64 { let a: array<i32> = [5, 6]; return g(a) }\n",
+            "E2032",
+        ),
+        (
+            "alias_slice_struct_field",
+            "type SL = &[i32]\nstruct S { n: i64, xs: SL }\npub fn run() -> i64 { return 1 }\n",
+            "E2033",
+        ),
+        (
+            "binding_shadows_const_element",
+            "const SCALE: i64 = 4\nfn take(xs: &[i64]) -> i64 { return xs.length }\nfn run_with(SCALE: f64) -> i64 { return take([SCALE]) }\npub fn run() -> i64 { return run_with(2.5) }\n",
             "E2032",
         ),
         (

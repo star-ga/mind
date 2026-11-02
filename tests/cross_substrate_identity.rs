@@ -43,6 +43,8 @@
 mod common;
 #[path = "xsi_quant/mod.rs"]
 mod xsi_quant;
+#[path = "xsi_support/mod.rs"]
+mod xsi_support;
 use common::mindc_bin;
 use common::xsi_gate::{self, VnniDecision};
 
@@ -431,13 +433,13 @@ fn scratch() -> PathBuf {
 
 /// Write an embedded workload source into this target's scratch dir.
 fn scratch_src(name: &str, text: &str) -> PathBuf {
-    common::scratch_src_in(&scratch(), name, text)
+    xsi_support::scratch_src_in(&scratch(), name, text)
 }
 
 /// Compile `src` to `scratch()/out_name` with `mindc --emit-shared` (shared
 /// helper quotes mindc's own stdout/stderr on failure).
 fn emit_shared(workload: &str, src: &Path, out_name: &str, env: &[(&str, &str)]) -> PathBuf {
-    common::emit_shared_in(&scratch(), workload, src, out_name, env)
+    xsi_support::emit_shared_in(&scratch(), workload, src, out_name, env)
 }
 
 /// Compile SRC to a temp `.so` once for the whole test binary. Returns `None`
@@ -3242,19 +3244,19 @@ fn galperin_pi_reproducibility_gate() {
 // cross-substrate reference hash proves the dump is byte-identical on
 // avx2 == neon.
 
-type JsonCanonFn = common::json_canon_kat::JsonCanonFn;
+type JsonCanonFn = xsi_support::json_canon_kat::JsonCanonFn;
 
 /// Compile the json-canon-kat driver to a temp `.so` once. The driver imports
 /// std.json + std.json_canon and exposes `json_canon_kat(input_addr, input_len)`.
 fn build_json_canon_so() -> Option<&'static PathBuf> {
     static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
     SO.get_or_init(|| {
-        if !common::json_canon_kat::require_toolchain("cross_substrate_identity") {
+        if !xsi_support::json_canon_kat::require_toolchain("cross_substrate_identity") {
             return None;
         }
         let src_path = scratch_src(
             "mind_xsi_json_canon_kat.mind",
-            common::json_canon_kat::DRIVER_SRC,
+            xsi_support::json_canon_kat::DRIVER_SRC,
         );
         Some(emit_shared(
             "json-canon-kat",
@@ -3277,7 +3279,7 @@ fn json_canon_kat_reproducibility_gate() {
     let f: Symbol<JsonCanonFn> =
         unsafe { lib.get(b"json_canon_kat").expect("json_canon_kat symbol") };
 
-    let result = common::json_canon_kat::check_properties(*f, id);
+    let result = xsi_support::json_canon_kat::check_properties(*f, id);
 
     // Cross-substrate hash: the polynomial hash of the canonical dump bytes
     // must be identical on avx2 and neon (RFC 0015 §3.1).
