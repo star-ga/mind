@@ -99,15 +99,12 @@ REQUIRE_TOOLCHAIN_pkg=0
 # rerun_selector() below.
 #
 # CRITICAL_<tier> — per-harness minimums for the gates each tier NAMES as the reason
-# it exists. An AGGREGATE floor cannot protect a SPECIFIC test: re-erasing exactly the
-# two files this gate was written to defend once produced ALL TIERS OK / exit 0.
-# Format: "<target> <min_executed>", checked INDEPENDENTLY of the floors.
-#
-# PER-TIER, not global; the count compared is tests EXECUTED, not passed; and a row is
-# added by the SAME change that adds the gate it protects — a new gate whose only
-# protection is the aggregate floor is a gate anyone may delete. Every minimum below
-# was measured IN ITS OWN TIER, never assumed from another.
-# The full argument and the per-row measurements: docs/gates/exec-semantics-tiers.md §5.
+# it exists, "<target> <min_executed>", checked INDEPENDENTLY of the floors: an
+# AGGREGATE floor cannot protect a SPECIFIC test (re-erasing the two files this gate
+# defends once produced ALL TIERS OK / exit 0). PER-TIER, not global; the count is tests
+# EXECUTED, not passed; a row is added by the SAME change that adds its gate (a gate
+# protected only by the aggregate floor is one anyone may delete); every minimum is
+# measured IN ITS OWN TIER. Argument + measurements: docs/gates/exec-semantics-tiers.md §5.
 CRITICAL_exec=(
   "determinism_veto_control 2"       # the determinism-by-default veto positive control
   "alias_miscompile_run 1"    # the alias-miscompile regression gate
