@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1948 | **Est. tokens:** ~3,808,738
-**Generated:** 2026-11-02 18:25 UTC
+**Files:** 1951 | **Est. tokens:** ~3,813,175
+**Generated:** 2026-11-02 18:36 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
-| `docs/gates/` | 1 | ~3,910 |
+| `docs/gates/` | 1 | ~4,009 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/rfcs/` | 35 | ~173,185 |
 | `docs/specs/` | 2 | ~976 |
@@ -97,7 +97,7 @@
 | `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~123,935 |
+| `scripts/` | 33 | ~123,987 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -128,7 +128,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 11 | ~100,993 |
+| `src/ir/` | 13 | ~101,918 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,672 |
@@ -153,10 +153,10 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 428 | ~874,518 |
+| `tests/` | 430 | ~877,971 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 3 | ~12,308 |
+| `tests/common/` | 4 | ~13,757 |
 | `tests/conformance/cpu_baseline/` | 12 | ~390 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,706 |
@@ -225,7 +225,6 @@
 | `tests/support/` | 10 | ~23,124 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
-| `tests/xsi_support/` | 2 | ~1,541 |
 | `tools/` | 4 | ~20,957 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
@@ -480,7 +479,7 @@
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
-- `exec-semantics-tiers.md` (~3910 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
+- `exec-semantics-tiers.md` (~4009 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
 ### `docs/`
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -1095,7 +1094,7 @@
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~1073 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10038 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10090 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1418,9 +1417,11 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17688 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17660 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
+- `project_consts.rs` (~127 tok, small) — Copyright 2026 STARGA Inc.
+- `verify_calls.rs` (~826 tok, large) — Copyright 2026 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -1684,7 +1685,7 @@
 - `bytes_buffer_run.rs` (~669 tok, large) — Copyright 2025 STARGA Inc.
 - `bytes_fixed_into_vec_run.rs` (~1764 tok, huge) — Copyright 2025 STARGA Inc.
 - `bytes_zero_run.rs` (~843 tok, large) — Copyright 2025 STARGA Inc.
-- `call_arity_check_cli.rs` (~1191 tok, large) — Copyright 2025 STARGA Inc.
+- `call_arity_check_cli.rs` (~1642 tok, huge) — Copyright 2025 STARGA Inc.
 - `canonical_source_bridge.rs` (~3130 tok, huge) — The ordinary evaluator retains its unit-placeholder return convention.
 - `capability_refusal_cause_scan.rs` (~3400 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -1707,7 +1708,8 @@
 ### `tests/common/`
 
 - `gate.rs` (~4999 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2625 tok, huge) — Copyright 2025 STARGA Inc.
+- `json_canon_kat.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3070 tok, huge) — Copyright 2025 STARGA Inc.
 - `xsi_gate.rs` (~4684 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
@@ -2086,6 +2088,8 @@
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
 - `int_determinism.rs` (~1234 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~3085 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsic_call_arity_build.rs` (~1214 tok, large) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity.rs` (~1788 tok, huge) — Copyright 2026 STARGA Inc.
 - `int_suffix_literal.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~675 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_check_run.rs` (~650 tok, large) — Copyright 2025 STARGA Inc.
@@ -2741,10 +2745,6 @@
 - `gates.rs` (~4100 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~4375 tok, huge) — Copyright 2025 STARGA Inc.
 - `oracle.rs` (~3431 tok, huge) — Copyright 2025 STARGA Inc.
-### `tests/xsi_support/`
-
-- `json_canon_kat.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~557 tok, large) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
