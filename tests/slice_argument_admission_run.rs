@@ -657,7 +657,7 @@ fn unsupported_layouts_and_capabilities_stay_refused() {
         ),
         (
             "binding_shadows_const_element",
-            "const SCALE: i64 = 4\nfn take(xs: &[i64]) -> i64 { return xs.length }\nfn run_with(SCALE: f64) -> i64 { return take([SCALE]) }\npub fn run() -> i64 { return run_with(2.5) }\n",
+            "const SCALE: i64 = 4\nstruct P { v: i64 }\nfn take(xs: &[i64]) -> i64 { return xs[0] }\nfn run_with(SCALE: P) -> i64 { return take([SCALE]) }\npub fn run() -> i64 { return run_with(P { v: 1 }) }\n",
             "E2032",
         ),
         (
