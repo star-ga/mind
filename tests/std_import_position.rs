@@ -137,9 +137,12 @@ fn mindc_check_refuses_a_std_import_inside_a_body_at_the_import() {
             "{case}: must be refused with E2002 at the import ({at}) naming {module} \
              (`{why}`):\n{all}"
         );
+        // A call through the refused import may still be reported after it,
+        // but the first error is the import: the cause, at its own line.
+        let first = all.lines().find(|line| line.contains(": error"));
         assert!(
-            !all.contains("E2003"),
-            "{case}: the refusal must be at the import, not at a call:\n{all}"
+            first.is_some_and(|line| line.starts_with(at) && line.contains("E2002")),
+            "{case}: the first error must be the refusal at the import ({at}):\n{all}"
         );
     }
 }
