@@ -67,12 +67,49 @@ impl Registry {
         current: Option<&str>,
     ) -> Option<String> {
         let (qualifier, enum_name) = spelling.rsplit_once('.')?;
-        let owner = self.owner_for(qualifier, imports, current)?;
-        let source_key = format!("{owner}.{enum_name}");
-        if current != Some(owner.as_str()) && !self.exported_types.contains(&source_key) {
-            return None;
+        if let Some(owner) = self.owner_for(qualifier, imports, current) {
+            let source_key = format!("{owner}.{enum_name}");
+            if current == Some(owner.as_str()) || self.exported_types.contains(&source_key) {
+                if let Some(key) = self.type_keys.get(&source_key) {
+                    return Some(key.clone());
+                }
+            }
         }
-        self.type_keys.get(&source_key).cloned()
+        // `canonical_module("config")` is `crate.config`. A sources list that
+        // names `src/config.mind` records the owner as `crate.src.config`.
+        // The qualifier still names that owner. One exported match resolves.
+        // Two matches stay unresolved.
+        let source = self.imported_exported_source(qualifier, enum_name, imports)?;
+        self.type_keys.get(&source).cloned()
+    }
+
+    /// Exported `owner.Type` named by `qualifier` through one of `imports`.
+    ///
+    /// The direct `crate.<import>.Type` key wins. Otherwise the import's last
+    /// segment must match the registered owner's last segment, and exactly
+    /// one exported type may match.
+    fn imported_exported_source(
+        &self,
+        qualifier: &str,
+        type_name: &str,
+        imports: &[String],
+    ) -> Option<String> {
+        let mut hits = BTreeSet::new();
+        for import in imports {
+            if !qualifier_matches(qualifier, &canonical_module(import)) {
+                continue;
+            }
+            let terminal = import.rsplit('.').next().unwrap_or(import);
+            for source in &self.exported_types {
+                let Some((owner, name)) = source.rsplit_once('.') else {
+                    continue;
+                };
+                if name == type_name && qualifier_matches(terminal, owner) {
+                    hits.insert(source.clone());
+                }
+            }
+        }
+        (hits.len() == 1).then(|| hits.into_iter().next()).flatten()
     }
 
     fn resolve_variant_in(
@@ -116,11 +153,20 @@ impl Registry {
     /// `Err(exporters)` with the number of exporters (0, or 2 and more)
     /// otherwise.
     fn imported_enum_key(&self, name: &str, imports: &[String]) -> Result<Option<String>, usize> {
-        let owners: BTreeSet<String> = imports
+        let mut owners: BTreeSet<String> = imports
             .iter()
             .map(|import| format!("{}.{name}", canonical_module(import)))
             .filter(|source| self.exported_types.contains(source))
             .collect();
+        if owners.is_empty() {
+            for import in imports {
+                if let Some(source) =
+                    self.imported_exported_source(import, name, std::slice::from_ref(import))
+                {
+                    owners.insert(source);
+                }
+            }
+        }
         match owners.first() {
             Some(source) if owners.len() == 1 => Ok(self.type_keys.get(source).cloned()),
             _ => Err(owners.len()),
@@ -175,6 +221,12 @@ impl Registry {
             let key = format!("{owner}.{name}");
             if self.exported_types.contains(&key) {
                 owners.insert(owner);
+            } else if let Some(source) =
+                self.imported_exported_source(import, name, std::slice::from_ref(import))
+            {
+                if let Some((found, _)) = source.rsplit_once('.') {
+                    owners.insert(found.to_string());
+                }
             }
         }
         owners.len() == 1
@@ -195,6 +247,12 @@ impl Registry {
             let key = format!("{owner}.{name}");
             if self.exported_types.contains(&key) {
                 owners.insert(owner);
+            } else if let Some(source) =
+                self.imported_exported_source(import, name, std::slice::from_ref(import))
+            {
+                if let Some((found, _)) = source.rsplit_once('.') {
+                    owners.insert(found.to_string());
+                }
             }
         }
         owners.len() > 1

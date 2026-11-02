@@ -116,6 +116,9 @@ pub(crate) mod qualified_enums;
 pub mod test;
 pub mod workspace;
 
+#[cfg(test)]
+mod c_export_reach;
+
 #[cfg(feature = "python-bindings")]
 pub mod python;
 

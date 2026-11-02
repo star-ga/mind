@@ -20,6 +20,7 @@
 /// decoration and the `[targets.*]` block name this build carries, kept out of
 /// the driver so the driver reads as one pass.
 mod artifact;
+mod atomic_publish;
 pub mod cache;
 mod driver_error;
 mod error;
