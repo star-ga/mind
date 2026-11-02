@@ -9,7 +9,15 @@
 //! also sees that module's names, and those of the std modules it imports in
 //! turn. The name of a module nothing imported stays unresolved, exactly as
 //! before that module was bundled, and resolving it costs no parse.
+//!
+//! The imports are the file's: a function inside a `module` block is resolved
+//! as a one-item module, so the checker installs the whole file's imported
+//! names ([`FileScope`]) for its functions, as the loader and the module table
+//! read the file's module-scope imports, `module` blocks included.
 
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use super::{FxSet, fn_values::only_fns};
@@ -52,6 +60,12 @@ impl StdNames {
             .into_iter()
             .filter(|name| !hidden.contains(name))
             .collect()
+    }
+
+    /// For a module's resolver: the function-only names (a value an implicit
+    /// module declares hides a function of the same name) and the value names.
+    pub(super) fn fns_and_values(&self) -> (FxSet, FxSet) {
+        (self.fn_only(&implicit().names.values), self.values.clone())
     }
 }
 
@@ -109,6 +123,43 @@ pub(super) fn imported(module: &Module) -> Option<StdNames> {
 pub(super) fn imported(module: &Module) -> Option<StdNames> {
     let _ = module;
     None
+}
+
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+thread_local! {
+    /// The imported names of the file being checked (see [`FileScope`]).
+    static FILE: RefCell<Option<Rc<Option<StdNames>>>> = const { RefCell::new(None) };
+}
+
+/// While alive, every function of the file it was installed for resolves
+/// against the file's imported std names; the previous scope comes back on
+/// drop, so a nested check of another file keeps its own.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+pub(in crate::type_checker) struct FileScope(Option<Rc<Option<StdNames>>>);
+
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+impl FileScope {
+    pub(in crate::type_checker) fn install(file: &Module) -> Self {
+        let names = Rc::new(imported(file));
+        Self(FILE.with(|cell| cell.borrow_mut().replace(names)))
+    }
+}
+
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+impl Drop for FileScope {
+    fn drop(&mut self) {
+        FILE.with(|cell| *cell.borrow_mut() = self.0.take());
+    }
+}
+
+/// The non-implicit std names `module`'s functions see: the installed file's
+/// (see [`FileScope`]), else those `module`'s own imports bring in.
+pub(super) fn visible(module: &Module) -> Rc<Option<StdNames>> {
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    if let Some(file) = FILE.with(|cell| cell.borrow().clone()) {
+        return file;
+    }
+    Rc::new(imported(module))
 }
 
 /// One bundled module's names, built once per process from its cached AST.

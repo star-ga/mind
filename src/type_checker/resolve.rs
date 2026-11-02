@@ -55,7 +55,7 @@ use super::qualified_imports::{call as qcall, current_symbol as cse, value as qv
 use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
 
 mod fn_values;
-mod std_names;
+pub(super) mod std_names;
 
 /// Deterministic FxHash-backed tables for the lookup-only symbol sets built
 /// per `resolve_fn_body` call (the type checker's `FxBuild` — the same
@@ -411,12 +411,12 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     collect_non_fn_decl_names(module, &mut non_fn_decls, &mut fn_decls);
     let fns = fn_values::only_fns(&fn_decls, &non_fn_decls);
     non_fn_decls.retain(|n| !fn_decls.contains(n));
-    // A non-implicit std module this module imports adds its names here; it
+    // A non-implicit std module this file imports adds its names here; it
     // is small, unlike the implicit surface, which is checked in place.
-    let (std_fns, std_values) = match std_names::imported(module) {
+    let (std_fns, std_values) = match &*std_names::visible(module) {
         Some(std) => {
             names.extend(std.names.iter().cloned());
-            (std.fn_only(&std_names::implicit().names.values), std.values)
+            std.fns_and_values()
         }
         None => Default::default(),
     };
