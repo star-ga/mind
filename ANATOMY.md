@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1943 | **Est. tokens:** ~3,796,926
-**Generated:** 2026-11-02 09:37 UTC
+**Files:** 1944 | **Est. tokens:** ~3,800,536
+**Generated:** 2026-11-02 11:56 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 48 | ~161,516 |
+| `src/eval/` | 48 | ~162,031 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -146,13 +146,13 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~15,775 |
-| `src/type_checker/` | 19 | ~64,866 |
+| `src/type_checker/` | 19 | ~64,951 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
-| `src/type_checker/slice_abi/` | 3 | ~11,245 |
+| `src/type_checker/slice_abi/` | 3 | ~11,279 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 427 | ~869,007 |
+| `tests/` | 428 | ~871,983 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,727 |
@@ -1342,7 +1342,7 @@
 
 - `struct_resolver.rs` (~7171 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
-- `type_aliases.rs` (~2114 tok, huge) — Copyright 2025 STARGA Inc.
+- `type_aliases.rs` (~2629 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2228 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -1563,12 +1563,12 @@
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 
-- `borrow_flow.rs` (~7081 tok, huge) — Copyright 2025 STARGA Inc.
+- `borrow_flow.rs` (~7110 tok, huge) — Copyright 2025 STARGA Inc.
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
-- `provenance.rs` (~3019 tok, huge) — Copyright 2026 STARGA Inc.
+- `provenance.rs` (~3024 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `slice_abi.rs` (~7584 tok, huge) — Copyright 2025 STARGA Inc.
+- `slice_abi.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib_signatures.rs` (~620 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `struct_bindings.rs` (~1070 tok, large) — Copyright 2026 STARGA Inc.
 - `type_display.rs` (~628 tok, large) — Copyright 2026 STARGA Inc.
@@ -2585,6 +2585,7 @@
 - `mod.rs` (~6173 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
+- `slice_argument_admission_run.rs` (~2976 tok, huge) — Copyright 2026 STARGA Inc.
 - `slice_call_abi_run.rs` (~5559 tok, huge) — Copyright 2025 STARGA Inc.
 - `smoke.rs` (~261 tok, medium) — Copyright 2025 STARGA Inc.
 - `source_confinement.rs` (~2038 tok, huge) — Copyright 2025-2026 STARGA Inc.
