@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1952 | **Est. tokens:** ~3,816,544
-**Generated:** 2026-11-02 18:02 UTC
+**Files:** 1952 | **Est. tokens:** ~3,816,598
+**Generated:** 2026-11-02 19:03 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 174 | ~451,653 |
+| `examples/mindc_mind/` | 174 | ~451,707 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,198 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -817,7 +817,7 @@
 - `self_host_tc_self_host_only_call_smoke.py` (~3492 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2024 self-host-only-call rule.
 - `self_host_tc_shape_annot_compat_smoke.py` (~1943 tok, huge) — CPU-as-oracle smoke for the pure-MIND shape annotation-compat rule.
 - `self_host_tc_shape_rules_smoke.py` (~2149 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules + E2023 reserved-prefix rule.
-- `self_host_tc_std_export_smoke.py` (~3500 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
+- `self_host_tc_std_export_smoke.py` (~3554 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
 - `self_host_tc_undeclared_assign_smoke.py` (~7241 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
 - `self_host_tc_unknown_call_smoke.py` (~8549 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
 - `self_host_tc_unknown_ident_smoke.py` (~11370 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
