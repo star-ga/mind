@@ -67,9 +67,10 @@ const CALL: &str = "let out: i64 = __mind_alloc(64);\n    return keccak_sha3_512
 /// A `module` block whose function calls `std.keccak` through the block's own
 /// import, plus a `main`.
 fn module_block_program() -> String {
+    let body = CALL.replace("\n    ", "\n        ");
     format!(
-        "module inner {{\n    import std.keccak;\n\n    pub fn digest() -> i64 {{\n    \
-         {CALL}\n    }}\n}}\n\nfn main() -> i64 {{\n    return 0;\n}}\n"
+        "module inner {{\n    import std.keccak;\n\n    pub fn digest() -> i64 {{\n        \
+         {body}\n    }}\n}}\n\nfn main() -> i64 {{\n    return 0;\n}}\n"
     )
 }
 
@@ -214,8 +215,8 @@ fn mindc_test_refuses_a_std_import_inside_a_linked_module_body() {
     let all = text(&out);
     assert!(
         !out.status.success()
-            && all.contains("provider.mind:3:")
-            && all.contains("std.keccak")
+            && all.contains("line 3 column 5")
+            && all.contains("import std.keccak")
             && all.contains("is not a module item"),
         "the provider's body import must be refused at the import:\n{all}"
     );
