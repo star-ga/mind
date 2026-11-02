@@ -14,12 +14,17 @@
 //!   specified std.string API (`string_len`, `string_slice`, `string_eq`)
 //!   failed on a `string` parameter or a literal argument, because the record
 //!   the interpreter passes was not readable as the std `String` value.
+//! * Strings whose type the pass did not establish (an unannotated binding of
+//!   an `if` expression, a field of an indexed struct-array element, an enum
+//!   payload, a string method result) were neither compared by bytes nor
+//!   refused: the MLIR build still compared handles.
 //!
 //! The same source runs here through the MLIR shared-library build and through
 //! `mindc test`, and every case must produce the SAME value on both. A string
-//! compared with an operand whose type is not a string is refused with
-//! `E2038` naming `string_eq`, by `mindc check`, `mindc build` and `mindc test`
-//! alike, and never compiled to a handle compare.
+//! compared with an operand whose type is not a string, and two operands of
+//! which neither has a known type, are refused with `E2038` naming
+//! `string_eq`, by `mindc check`, `mindc build` and `mindc test` alike, and
+//! never compiled to a handle compare.
 //!
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports" \
 //!        --test string_ops_backend_parity`
@@ -81,6 +86,33 @@ fn first_is_abc(xs: array<string>) -> i64 {
     if xs[0] == "abc" { return 1 }
     return 0
 }
+
+fn pick(a: string, b: string, c: i64) -> i64 {
+    let x = if c == 1 { a } else { b }
+    let y = if c == 1 { b } else { a }
+    if x == y { return 1 }
+    return 0
+}
+
+fn same_first(ds: [Dec; 2]) -> i64 {
+    if ds[0].name == ds[1].name { return 1 }
+    return 0
+}
+
+enum Tok {
+    Word(string),
+    Num(i64),
+}
+
+fn word_is(t: Tok, w: string) -> i64 {
+    match t {
+        Tok::Word(x) => {
+            if x == w { return 1 }
+            return 0
+        },
+        Tok::Num(_) => { return 2 },
+    }
+}
 "#;
 
 /// `(case, expression, expected)`: each case is a zero-argument `pub fn`.
@@ -110,6 +142,20 @@ const CASES: &[(&str, &str, i64)] = &[
     ("std_string_eq_literals", "string_eq(\"abc\", \"abc\")", 1),
     ("std_string_len_literal", "string_len(\"abcd\")", 4),
     ("array_element_equal", "first_is_abc([\"abc\", \"x\"])", 1),
+    ("if_value_equal", "pick(\"abc\", \"abc\", 1)", 1),
+    ("if_value_unequal", "pick(\"abc\", \"abd\", 1)", 0),
+    (
+        "indexed_field_equal",
+        "same_first([Dec { name: \"abc\", n: 1 }, Dec { name: \"abc\", n: 2 }])",
+        1,
+    ),
+    (
+        "indexed_field_unequal",
+        "same_first([Dec { name: \"abc\", n: 1 }, Dec { name: \"abd\", n: 2 }])",
+        0,
+    ),
+    ("payload_equal", "word_is(Tok::Word(\"abc\"), \"abc\")", 1),
+    ("payload_unequal", "word_is(Tok::Word(\"abc\"), \"abd\")", 0),
 ];
 
 fn source() -> String {
@@ -232,6 +278,11 @@ fn null_check(s: string) -> i64 {
     if s == 0 { return 1 }
     return 0
 }
+
+fn same_any<T>(a: T, b: T) -> i64 {
+    if a == b { return 1 }
+    return 0
+}
 "#;
 
 #[test]
@@ -248,10 +299,14 @@ fn text_against_an_untyped_operand_is_refused_by_check_build_and_test() {
     assert!(!check.status.success(), "check accepted:\n{check_text}");
     assert_eq!(
         check_text.matches("E2038").count(),
-        2,
+        3,
         "one E2038 per refused comparison, none for the null check:\n{check_text}"
     );
     assert!(check_text.contains("string_eq"), "{check_text}");
+    assert!(
+        check_text.contains("types are not known at compile time"),
+        "two operands of unknown type are refused:\n{check_text}"
+    );
     assert!(!check_text.contains("panicked"), "{check_text}");
 
     let so = dir.join("refused.so");
@@ -281,6 +336,76 @@ fn text_against_an_untyped_operand_is_refused_by_check_build_and_test() {
     assert!(!test.status.success(), "mindc test passed:\n{test_text}");
     assert!(test_text.contains("[E2038]"), "{test_text}");
     assert!(test_text.contains("string_eq"), "{test_text}");
+}
+
+/// A string method lowers to its `string_<method>` std function on the MLIR
+/// build, so its result is a string and compares by bytes. String methods are
+/// not specified MIND (std.string is free functions), and `mindc test` has
+/// none: it must refuse the method, never report a different value.
+const METHOD_SUGAR: &str = r#"use std.string;
+
+fn tails(a: string, b: string) -> i64 {
+    if a.slice_from(1) == b.slice_from(1) { return 1 }
+    return 0
+}
+
+pub fn tails_equal() -> i64 { return tails("xbc", "ybc") }
+
+pub fn tails_unequal() -> i64 { return tails("xbc", "ybd") }
+"#;
+
+#[test]
+fn string_method_results_compare_by_bytes_or_are_refused() {
+    let dir = scratch_dir("string_ops_backend_parity_methods");
+    let src = dir.join("methods.mind");
+    let so = dir.join("methods.so");
+    std::fs::write(&src, METHOD_SUGAR).expect("write method source");
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    assert!(check.status.success(), "check refused:\n{}", text(&check));
+
+    let test_src = dir.join("methods_test.mind");
+    std::fs::write(
+        &test_src,
+        format!(
+            "{METHOD_SUGAR}\n#[test]\nfn equal_tails() {{ assert tails_equal() == 1, \"wrong value\" }}\n\
+             #[test]\nfn unequal_tails() {{ assert tails_unequal() == 0, \"wrong value\" }}\n"
+        ),
+    )
+    .expect("write method test source");
+    let test = Command::new(mindc_bin())
+        .args(["test", test_src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc test");
+    let test_text = text(&test);
+    assert!(!test_text.contains("wrong value"), "{test_text}");
+    assert!(!test_text.contains("panicked"), "{test_text}");
+
+    let build = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    if !common::gate::compiled("string_ops_backend_parity", &build) {
+        return;
+    }
+    let py = format!(
+        "import ctypes\nlib = ctypes.CDLL(r'{}')\n\
+         for n in ['tails_equal', 'tails_unequal']:\n    f = getattr(lib, n)\n    \
+         f.restype = ctypes.c_int64\n    print(f())\n",
+        so.display()
+    );
+    let ran = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("spawn python3");
+    assert!(
+        ran.status.success(),
+        "shared library run failed:\n{}",
+        text(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "1\n0");
 }
 
 /// Positive control for the refusal test: the same shapes with string-typed
