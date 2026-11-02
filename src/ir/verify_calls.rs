@@ -13,8 +13,8 @@ use super::IRModule;
 use super::Instr;
 use super::verify::IrVerifyError;
 
-/// Verify `module`: the intrinsic call arity, then every structural rule of
-/// [`super::verify::verify_module`].
+/// Verify `module`: the intrinsic call arity, then every structural rule of the
+/// module verifier (SSA definition order, operands, output).
 pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     #[cfg(feature = "std-surface")]
     validate_intrinsic_arity(&module.instrs)?;
