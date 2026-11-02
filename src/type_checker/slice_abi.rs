@@ -20,9 +20,12 @@ use super::{
     ClassCtx, confident_scalar_class, diag_from_span, intra_lookup_fn, scalar_class_of_ann,
 };
 
+mod aliases;
 mod borrow_flow;
 mod owner_assignment;
 mod provenance;
+pub(super) use aliases::AliasScope;
+use aliases::canonical;
 pub(super) use borrow_flow::type_contains_collection_owner;
 use borrow_flow::{
     LoopControl, borrowed_kind, check_call, check_loop_flow, check_while, merge_flow,
@@ -93,12 +96,18 @@ fn vec_element_uses_i64_abi(ty: &TypeAnn) -> bool {
 }
 
 fn call_signature(callee: &str) -> Option<(Vec<TypeAnn>, Option<TypeAnn>)> {
+    let canonical_sig = |params: Vec<TypeAnn>, ret: Option<TypeAnn>| {
+        Some((
+            params.iter().map(canonical).collect(),
+            ret.as_ref().map(canonical),
+        ))
+    };
     if let Some(sig) = intra_lookup_fn(callee) {
-        return Some((sig.param_types, sig.ret_type));
+        return canonical_sig(sig.param_types, sig.ret_type);
     }
     #[cfg(feature = "cross-module-imports")]
     if let Some(sig) = super::cm_lookup_fn(callee) {
-        return Some((sig.param_types, sig.ret_type));
+        return canonical_sig(sig.param_types, sig.ret_type);
     }
     None
 }
@@ -441,6 +450,7 @@ fn check_stmts(
                 span,
                 ..
             } => {
+                let ann = &ann.as_ref().map(canonical);
                 check_expr(value, env, expected_return, src, file, errs);
                 let borrowed = value_contains_borrow(value, env);
                 if let Some(ann) = ann {

@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Slice arguments with alias elements and private helpers**: the slice-call
+  check compares element types after type-alias resolution (local aliases and
+  aliases exported by an imported module), so `array<Q>` with `type Q = i32`
+  passes to `&[Q]` and `&[i32]`; a float element reached through an alias is now
+  refused like a direct one. An imported alias now resolves in a project whose
+  manifest lists `[targets.cpu].sources`, by the same owner rule as imported
+  types. Calls inside a `module m { ... }` block resolve module-private sibling
+  functions, so a slice argument to a non-exported helper is admitted and
+  checked instead of reported as passed to an unresolved function.
+  (`src/type_checker/slice_abi/aliases.rs`, `src/type_checker/mod.rs`,
+  `src/qualified_enums.rs`)
 - **Project source walk**: The project-root tests/ directory is now left out of
   the walked source set (nested tests/ directories stay in). Source sets and
   cache keys of projects with a root tests/ change. (`src/project/sources.rs`)

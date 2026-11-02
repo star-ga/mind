@@ -61,9 +61,15 @@ through a slice. Inferred aliases preserve these capabilities, including
 across branches, loop iterations, `break`, and `continue`.
 
 The current implementation requires a proven compatible handle at each call.
+Element types are compared after type-alias resolution: with `type Q = i32`,
+an `array<Q>` value or literal (or an `array<defs.Q>` naming an alias exported
+by `defs`) passes to `&[i32]`, and an `array<i32>` passes to `&[Q]`. A call to a
+module-private helper in a `module m { ... }` block follows the same rules as a
+call to an exported one.
 Opaque integer handles, maps, incompatible element types, and unproven source
-expressions are refused with `E2032`. Explicit slice local bindings are also
-unsupported. Floating-point, tensor,
+expressions are refused with `E2032`. Range views such as `&xs[a..b]` are not
+slice arguments and are refused with `E2032` as well. Explicit slice local
+bindings are also unsupported. Floating-point, tensor,
 fixed-array, and nested-slice elements are outside the current slice ABI.
 Capability erasure, read-only mutation, and borrowed handles escaping through
 non-slice parameters or returns are refused with `E2033` before emission.

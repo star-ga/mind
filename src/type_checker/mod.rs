@@ -2758,6 +2758,15 @@ fn intra_lookup_fn(name: &str) -> Option<IntraFnSig> {
     })
 }
 
+/// The call signature a module-level `fn` contributes to the intra-module table.
+fn intra_fn_sig(fd: &FnDefData) -> IntraFnSig {
+    IntraFnSig {
+        param_count: fd.params.len(),
+        param_types: fd.params.iter().map(|p| p.ty.clone()).collect(),
+        ret_type: fd.ret_type.clone(),
+    }
+}
+
 // ── Enum-variant registry (match exhaustiveness) ──────────────────────
 //
 // Maps every module-level `enum` name to its ordered set of variant names so
@@ -4500,6 +4509,8 @@ pub fn check_module_types_in_file(
     env: &TypeEnv,
 ) -> Vec<Pretty> {
     crate::diagnostics::reset_line_index_cache();
+    #[cfg(feature = "std-surface")]
+    let _slice_aliases = slice_abi::AliasScope::install(&module.items);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "std-surface")]
@@ -4658,12 +4669,7 @@ fn check_module_types_in_file_impl(
                 }
             }
             Node::FnDef(fd, _) => {
-                let FnDefData {
-                    name,
-                    params,
-                    ret_type,
-                    ..
-                } = &**fd;
+                let FnDefData { name, params, .. } = &**fd;
                 has_fn = true;
                 // Pre-register name for intra-module call resolution.
                 tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
@@ -4683,14 +4689,7 @@ fn check_module_types_in_file_impl(
                     fn_tensor_sigs.insert(name.clone(), tensor_params);
                 }
                 // Collect arity for RFC 0005 Phase B call-site arity checks.
-                intra_fn_sigs.insert(
-                    name.clone(),
-                    IntraFnSig {
-                        param_count: params.len(),
-                        param_types: params.iter().map(|p| p.ty.clone()).collect(),
-                        ret_type: ret_type.clone(),
-                    },
-                );
+                intra_fn_sigs.insert(name.clone(), intra_fn_sig(fd));
             }
             Node::EnumDef { .. } => {
                 has_enum = true;
@@ -5101,6 +5100,17 @@ fn check_module_types_in_file_impl(
                             .entry(name.clone())
                             .or_insert(ValueType::ScalarI64);
                     }
+                    // Sibling fns share this module scope, exported or not:
+                    // their signatures resolve calls exactly as top-level ones do.
+                    let sibling_sigs: IntraFnSigs = stmts
+                        .iter()
+                        .filter_map(|stmt| match stmt {
+                            Node::FnDef(fd, _) => Some((fd.name.clone(), intra_fn_sig(fd))),
+                            _ => None,
+                        })
+                        .collect();
+                    let _sibling_sigs =
+                        (!sibling_sigs.is_empty()).then(|| IntraSigGuard::install(sibling_sigs));
                     for inner in stmts {
                         let inner_module = Module {
                             items: vec![inner.clone()],

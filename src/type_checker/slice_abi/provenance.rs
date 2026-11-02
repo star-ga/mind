@@ -5,8 +5,8 @@
 //! Proof of the Vec-layout owner or borrowed capability carried by a value.
 
 use super::{
-    Env, HandleKind, call_signature, confident_scalar_class, declared_kind, scalar_class_of_ann,
-    value_contains_borrow,
+    Env, HandleKind, call_signature, canonical, confident_scalar_class, declared_kind,
+    scalar_class_of_ann, value_contains_borrow,
 };
 use crate::ast::{Literal, Node, TypeAnn};
 
@@ -42,6 +42,19 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
     }
 }
 
+/// Scalar class of an array-literal element. A call reports its canonical
+/// declared result class, an imported callee's included.
+fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass> {
+    confident_scalar_class(element, &env.classes).or_else(|| match element {
+        Node::Call { callee, .. } => call_signature(callee)?
+            .1
+            .as_ref()
+            .and_then(scalar_class_of_ann),
+        Node::Paren(inner, _) => element_class(inner, env),
+        _ => None,
+    })
+}
+
 fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) -> bool {
     let Node::ArrayLit { elements, .. } = node else {
         return false;
@@ -52,7 +65,7 @@ fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) ->
     if let Some(target_class) = scalar_class_of_ann(target_element) {
         return elements
             .iter()
-            .all(|element| confident_scalar_class(element, &env.classes) == Some(target_class));
+            .all(|element| element_class(element, env) == Some(target_class));
     }
     elements.iter().all(|element| {
         expr_type(element, env)
@@ -156,13 +169,19 @@ pub(super) fn field_type(base: &Node, field: &str, env: &Env) -> Option<TypeAnn>
     };
     let exact = (struct_name.to_string(), field.to_string());
     if let Some(ty) = env.struct_fields.get(&exact) {
-        return Some(ty.clone());
+        return Some(canonical(ty));
+    }
+    #[cfg(feature = "cross-module-imports")]
+    if let Some(owner_key) = super::aliases::qualified_type_source(struct_name) {
+        if let Some(ty) = env.struct_fields.get(&(owner_key, field.to_string())) {
+            return Some(canonical(ty));
+        }
     }
     if struct_name.contains('.') && !struct_name.starts_with("crate.") {
         return env
             .struct_fields
             .get(&(format!("crate.{struct_name}"), field.to_string()))
-            .cloned();
+            .map(canonical);
     }
     None
 }

@@ -18,6 +18,11 @@ use std::collections::BTreeSet;
 use crate::ast::TypeAnn;
 
 #[cfg(feature = "cross-module-imports")]
+mod alias_closure;
+#[cfg(feature = "cross-module-imports")]
+use alias_closure::resolve_qualified_alias_target;
+
+#[cfg(feature = "cross-module-imports")]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Registry {
     /// `crate.path.Enum` -> collision-safe internal enum key.
@@ -279,19 +284,32 @@ impl Registry {
             && (current == Some(owner.as_str()) || self.exported_types.contains(&source_key))
     }
 
+    /// `owner.Name` for a visible qualified type spelling `qualifier.Name`,
+    /// with the sources-list owner rule of `resolve_type_in` (`crate.src.defs`).
+    fn type_source_in(
+        &self,
+        spelling: &str,
+        imports: &[String],
+        current: Option<&str>,
+    ) -> Option<String> {
+        let (qualifier, name) = spelling.rsplit_once('.')?;
+        if let Some(owner) = self.owner_for(qualifier, imports, current) {
+            let source_key = format!("{owner}.{name}");
+            if current == Some(owner.as_str()) || self.exported_types.contains(&source_key) {
+                return Some(source_key);
+            }
+        }
+        self.imported_exported_source(qualifier, name, imports)
+    }
+
     fn resolve_alias_in(
         &self,
         spelling: &str,
         imports: &[String],
         current: Option<&str>,
     ) -> Option<TypeAnn> {
-        let (qualifier, alias_name) = spelling.rsplit_once('.')?;
-        let owner = self.owner_for(qualifier, imports, current)?;
-        let source_key = format!("{owner}.{alias_name}");
-        if current != Some(owner.as_str()) && !self.exported_types.contains(&source_key) {
-            return None;
-        }
-        self.alias_targets.get(&source_key).cloned()
+        let source = self.type_source_in(spelling, imports, current)?;
+        self.alias_targets.get(&source).cloned()
     }
 
     pub(crate) fn is_canonical_variant(&self, name: &str) -> bool {
@@ -406,6 +424,17 @@ pub(crate) fn resolve_alias_target(name: &str, imports: &[String]) -> Option<Typ
     })
 }
 
+/// The registry key (`owner.Name`) of a visible qualified type spelling.
+#[cfg(feature = "cross-module-imports")]
+pub(crate) fn resolve_type_source(name: &str, imports: &[String]) -> Option<String> {
+    let current = current_module_path();
+    crate::ir::with_global_enums(|global| {
+        global
+            .qualified
+            .type_source_in(name, imports, current.as_deref())
+    })
+}
+
 /// A bare-headed `Enum::Variant` path that names a project enum but cannot be
 /// resolved from the module that writes it.
 #[cfg(feature = "cross-module-imports")]
@@ -440,48 +469,6 @@ fn qualifier_matches(qualifier: &str, canonical: &str) -> bool {
         || canonical
             .rsplit_once('.')
             .is_some_and(|(_, terminal)| qualifier == terminal)
-}
-
-#[cfg(feature = "cross-module-imports")]
-fn resolve_qualified_alias_target(
-    target: &TypeAnn,
-    owner: &str,
-    raw: &BTreeMap<String, TypeAnn>,
-    imports: &BTreeMap<String, Vec<String>>,
-    exported: &BTreeSet<String>,
-    resolving: &mut BTreeSet<String>,
-) -> Option<TypeAnn> {
-    let TypeAnn::Named(name) = target else {
-        return Some(target.clone());
-    };
-    let Some((qualifier, alias_name)) = name.rsplit_once('.') else {
-        return Some(target.clone());
-    };
-    let mut owners = BTreeSet::new();
-    if qualifier_matches(qualifier, owner) {
-        owners.insert(owner.to_string());
-    }
-    for import in imports.get(owner).into_iter().flatten() {
-        let imported_owner = canonical_module(import);
-        if qualifier_matches(qualifier, &imported_owner) {
-            owners.insert(imported_owner);
-        }
-    }
-    let resolved_owner = (owners.len() == 1)
-        .then(|| owners.into_iter().next())
-        .flatten()?;
-    let source_key = format!("{resolved_owner}.{alias_name}");
-    if resolved_owner != owner && !exported.contains(&source_key) {
-        return Some(target.clone());
-    }
-    let nested = raw.get(&source_key)?;
-    if !resolving.insert(source_key.clone()) {
-        return None;
-    }
-    let result =
-        resolve_qualified_alias_target(nested, &resolved_owner, raw, imports, exported, resolving);
-    resolving.remove(&source_key);
-    result
 }
 
 #[derive(Clone, Default)]

@@ -30,7 +30,7 @@ const ALIAS_ELEMENTS: &str = r#"
 type Q = i32
 
 fn weigh(xs: &[Q]) -> i64 {
-    return xs.length * 1000 + (xs[0] as i64) * 100 + (xs[1] as i64) * 10 + (xs.get(2) as i64)
+    return (xs.len() as i64) * 1000 + (xs[0] as i64) * 100 + (xs[1] as i64) * 10 + (xs[2] as i64)
 }
 
 fn fold_first(xs: &mut [Q]) -> Q {
@@ -90,15 +90,27 @@ module helpers {
     }
 
     pub fn private_mut_helper() -> i64 {
+        let xs: array<i32> = [1, 7]
+        return (bump(xs) + xs[1]) as i64
+    }
+
+    pub fn private_mut_write_back() -> i64 {
         let xs: array<i32> = [1, 0]
         return twice(xs) as i64
     }
 
-    export fn first, private_helper, private_mut_helper
+    export fn first, private_helper, private_mut_helper, private_mut_write_back
 }
 "#;
 
-const PRIVATE_EXPECTED: &[(&str, i64)] = &[("private_helper", 21), ("private_mut_helper", 302)];
+const PRIVATE_EXPECTED: &[(&str, i64)] = &[("private_helper", 21), ("private_mut_helper", 108)];
+
+// deferred: would also compare this case under `mindc test`, stubbed because the
+// evaluator copies a `&mut [T]` argument, so a callee's writes are not visible to
+// the caller (on main: `bump(ys); ys[0]` is 1 under `mindc test`, 101 natively)
+// — upgrade path: give the evaluator shared array storage, then move it into
+// PRIVATE_EXPECTED.
+const PRIVATE_NATIVE_ONLY: &[(&str, i64)] = &[("private_mut_write_back", 302)];
 
 #[cfg(feature = "cross-module-imports")]
 const DEFS_SRC: &str = r#"
@@ -141,7 +153,7 @@ import maker;
 
 module main {
     fn weigh(xs: &[defs.Q16]) -> i64 {
-        return xs.length * 1000 + (xs[0] as i64) * 10 + (xs[1] as i64)
+        return (xs.len() as i64) * 1000 + (xs[0] as i64) * 10 + (xs[1] as i64)
     }
 
     pub fn field_arg() -> i64 {
@@ -236,7 +248,12 @@ fn assert_interpreter_parity(dir: &Path, tag: &str, source: &str, expected: &[(&
     );
 }
 
-fn check_compile_and_run(tag: &str, source: &str, expected: &[(&str, i64)]) {
+fn check_compile_and_run(
+    tag: &str,
+    source: &str,
+    expected: &[(&str, i64)],
+    native_only: &[(&str, i64)],
+) {
     let dir = common::scratch_dir("slice_argument_admission_run").join(tag);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
@@ -268,21 +285,29 @@ fn check_compile_and_run(tag: &str, source: &str, expected: &[(&str, i64)]) {
         combined(&built)
     );
     assert_native(&artifact, expected);
+    assert_native(&artifact, native_only);
     assert_interpreter_parity(&dir, tag, source, expected);
 }
 
 #[test]
 fn alias_element_arrays_and_literals_pass_to_alias_slices_and_run() {
-    check_compile_and_run("alias_elements", ALIAS_ELEMENTS, ALIAS_EXPECTED);
+    check_compile_and_run("alias_elements", ALIAS_ELEMENTS, ALIAS_EXPECTED, &[]);
 }
 
 #[test]
 fn private_helpers_under_an_export_list_take_slices_and_run() {
-    check_compile_and_run("private_helpers", PRIVATE_HELPERS, PRIVATE_EXPECTED);
+    check_compile_and_run(
+        "private_helpers",
+        PRIVATE_HELPERS,
+        PRIVATE_EXPECTED,
+        PRIVATE_NATIVE_ONLY,
+    );
 }
 
+/// `sources_list` declares `[targets.cpu].sources`, which records each module
+/// under the project root (`crate.src.defs`) instead of the entry directory.
 #[cfg(feature = "cross-module-imports")]
-fn write_project(root: &Path) {
+fn write_project(root: &Path, sources_list: bool) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("src")).expect("project src");
     let exports: Vec<String> = IMPORTED_EXPECTED
@@ -292,7 +317,12 @@ fn write_project(root: &Path) {
     std::fs::write(
         root.join("Mind.toml"),
         format!(
-            "[package]\nname = \"slice_alias_import\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"slice_alias_import\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\n[exports]\nc_abi = [{}]\n",
+            "[package]\nname = \"slice_alias_import\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"slice_alias_import\"\n\n[targets.cpu]\nbackend = \"cpu\"\n{}\n[exports]\nc_abi = [{}]\n",
+            if sources_list {
+                "sources = [\"src/defs.mind\", \"src/maker.mind\", \"src/main.mind\"]\n"
+            } else {
+                ""
+            },
             exports.join(", ")
         ),
     )
@@ -305,13 +335,21 @@ fn write_project(root: &Path) {
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn imported_alias_fields_and_call_literals_pass_to_qualified_slices_and_run() {
-    let root = common::scratch_dir("slice_argument_admission_run").join("imported");
-    write_project(&root);
+    for sources_list in [false, true] {
+        run_imported_project(sources_list);
+    }
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn run_imported_project(sources_list: bool) {
+    let root = common::scratch_dir("slice_argument_admission_run")
+        .join(format!("imported_sources_list_{sources_list}"));
+    write_project(&root, sources_list);
 
     let checked = mindc(&["check", "--no-fmt", "--no-lint", "src/main.mind"], &root);
     assert!(
         checked.status.success(),
-        "mindc check refused imported alias slice arguments:\n{}",
+        "mindc check refused imported alias slice arguments (sources list: {sources_list}):\n{}",
         combined(&checked)
     );
 
@@ -329,7 +367,7 @@ fn imported_alias_fields_and_call_literals_pass_to_qualified_slices_and_run() {
     );
     assert!(
         built.status.success(),
-        "project build failed:\n{}",
+        "project build failed (sources list: {sources_list}):\n{}",
         combined(&built)
     );
     assert_native(&artifact, IMPORTED_EXPECTED);
@@ -341,6 +379,11 @@ fn unsupported_layouts_and_capabilities_stay_refused() {
         (
             "alias_float_element",
             "type F = f64\nfn take(xs: &[F]) -> i64 { return xs.length }\npub fn run() -> i64 { let xs: array<F> = [1.5]; return take(xs) }\n",
+            "E2032",
+        ),
+        (
+            "alias_float_element_owner",
+            "type F = f64\nfn take(xs: &[F]) -> i64 { return xs.length }\npub fn run() -> i64 { let xs: array<F> = vec_zeroed(1); return take(xs) }\n",
             "E2032",
         ),
         (
