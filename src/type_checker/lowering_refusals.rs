@@ -52,8 +52,9 @@ pub(crate) const E_COLLECTION_MUTATION_IN_EXPR: &str = "E2300";
 /// variant: neither a discriminant test nor a catch-all (#237 CASE 3).
 pub(crate) const E_NON_FINAL_VARIANT_BINDING: &str = "E2301";
 
-/// `==`/`!=` between a string and an operand whose type is not a string: the
-/// comparison would read handles, not bytes (see `eval::string_equality`).
+/// `==`/`!=` that would compare string handles, not bytes: a string against an
+/// operand whose type is not a string, or two operands of unknown type (see
+/// `eval::string_equality`).
 pub(crate) const E_STRING_EQUALITY_OPERAND: &str = "E2038";
 
 /// The collection mutating-method names whose std implementation returns a
@@ -161,8 +162,8 @@ pub(crate) fn non_final_variant_binding(pattern: &Pattern, span: AstSpan) {
 pub(crate) fn string_equality_operand(refused: &crate::eval::string_equality::Refused) {
     report(Refusal {
         code: E_STRING_EQUALITY_OPERAND,
-        message: crate::eval::string_equality::refusal_message(refused.op),
-        help: crate::eval::string_equality::REFUSAL_HELP,
+        message: crate::eval::string_equality::refusal_message(refused),
+        help: crate::eval::string_equality::refusal_help(refused),
         span: refused.span,
     });
 }

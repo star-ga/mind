@@ -35,8 +35,8 @@ pub(crate) fn normalize_module(module: &Module) -> Result<Option<Module>, EvalEr
         return Err(EvalError::UnsupportedMsg(format!(
             "[{}] {}. {}",
             crate::type_checker::lowering_refusals::E_STRING_EQUALITY_OPERAND,
-            super::string_equality::refusal_message(refused.op),
-            super::string_equality::REFUSAL_HELP
+            super::string_equality::refusal_message(refused),
+            super::string_equality::refusal_help(refused)
         )));
     }
     Ok(analysis.rewritten)

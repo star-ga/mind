@@ -2,31 +2,43 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Declaration facts and operand classes for typed string equality.
+//! Declaration facts for typed string equality.
 //!
 //! A value is a string when its declared type says so: a `string`/`String`
-//! literal, parameter, annotated binding, constant, call result or struct
-//! field. The interpreter and every lowering read the same facts, so a
-//! comparison is byte-wise on every backend or refused on every backend.
+//! literal, parameter, annotated binding, constant, call result, field or
+//! element. A value whose type the pass cannot establish is [`Fact::Unknown`]:
+//! it is never assumed not to be a string, because a string compared as an
+//! integer compares handles and reports equal text as unequal. The
+//! interpreter and every lowering read the same facts, so a comparison is
+//! byte-wise on every backend or refused on every backend.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::ast::{FnDefData, Literal, Module, Node, Param, TypeAnn};
+use crate::ast::{EnumVariant, FnDefData, Literal, Module, Node, Param, TypeAnn};
 use crate::eval::type_aliases::LocalTypeAliases;
 
-/// What the pass knows about one lexical binding.
+/// What the pass knows about one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Fact {
-    /// The binding holds a `string`/`String` record.
+    /// A `string`/`String` record.
     Str,
-    /// The binding holds a record of the named struct.
+    /// A record of the named struct.
     Record(String),
-    /// The binding holds an `array<string>`, `[string; N]` or `&[string]`.
-    StrArray,
-    /// A binding with no string or record fact. It is recorded only to shadow
-    /// a module-level string constant of the same name (see [`Decls::bind`]).
-    Opaque,
+    /// An `array<T>`, `[T; N]`, `&[T]`, `set<T>` or tensor; the fact is what
+    /// one element is.
+    Elems(Box<Fact>),
+    /// A `map<K, V>`; the fact is what one value is.
+    Map(Box<Fact>),
+    /// A tuple: one fact per position.
+    Tuple(Vec<Fact>),
+    /// A scalar (integer, float, bool, enum, pointer, unit) that is not a
+    /// string and holds none.
+    NotStr,
+    /// An expression that produces no value (`return`, `break`, `continue`).
+    Never,
+    /// A value whose type is not known: it may be a string.
+    Unknown,
 }
 
 /// The equality class of one operand.
@@ -35,33 +47,47 @@ pub(super) enum Class {
     Str,
     /// An integer literal: a handle compared with it is a null or sentinel test.
     IntLiteral,
-    Other,
+    /// A value whose type is known and is not a string.
+    NotStr,
+    /// A value whose type is not known.
+    Unknown,
+}
+
+/// The equality class of a value with fact `fact`.
+pub(super) fn fact_class(fact: &Fact) -> Class {
+    match fact {
+        Fact::Str => Class::Str,
+        Fact::Unknown => Class::Unknown,
+        Fact::Record(_)
+        | Fact::Elems(_)
+        | Fact::Map(_)
+        | Fact::Tuple(_)
+        | Fact::NotStr
+        | Fact::Never => Class::NotStr,
+    }
+}
+
+/// The fact of a value that is either `a` or `b`. Two different facts prove
+/// only that the value is a scalar when both are scalars.
+pub(super) fn join(a: Fact, b: Fact) -> Fact {
+    match (a, b) {
+        (Fact::Never, other) | (other, Fact::Never) => other,
+        (a, b) if a == b => a,
+        _ => Fact::Unknown,
+    }
 }
 
 /// Facts in scope, shared copy-on-write: a statement's sub-walks clone the
 /// pointer, and only a binding that changes a fact copies the map.
 pub(super) type Env = Rc<BTreeMap<String, Fact>>;
 
-/// Methods whose result is a string when their receiver is a string.
-fn string_result_method(name: &str) -> bool {
-    matches!(
-        name,
-        "slice"
-            | "substring"
-            | "trim"
-            | "trim_start"
-            | "trim_end"
-            | "to_lowercase"
-            | "to_uppercase"
-            | "to_lower"
-            | "to_upper"
-            | "replace"
-            | "concat"
-            | "repeat"
-    )
-}
+/// Scalar type names: no value of these types is a string.
+const SCALAR_NAMES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "usize", "isize",
+    "char", "()",
+];
 
-fn is_numeric_literal(node: &Node) -> bool {
+pub(super) fn is_numeric_literal(node: &Node) -> bool {
     match node {
         Node::Lit(Literal::Int(_) | Literal::Float(_), _) => true,
         Node::Neg { operand, .. } | Node::Paren(operand, _) => is_numeric_literal(operand),
@@ -80,13 +106,35 @@ fn merge<T: PartialEq>(map: &mut BTreeMap<String, Option<T>>, name: &str, value:
     }
 }
 
+/// A callee's declared result.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Ret {
+    Unit,
+    Ty(TypeAnn),
+    /// The result type names a generic parameter.
+    Generic,
+}
+
+impl Ret {
+    fn of(ret: Option<&TypeAnn>, type_params: &[String]) -> Self {
+        match ret {
+            None => Ret::Unit,
+            Some(TypeAnn::Named(n)) if type_params.contains(n) => Ret::Generic,
+            Some(ty) => Ret::Ty(ty.clone()),
+        }
+    }
+}
+
 /// Declarations visible to the comparisons of one module, collected once.
 pub(super) struct Decls {
     aliases: LocalTypeAliases,
-    returns: BTreeMap<String, Option<TypeAnn>>,
+    /// Callee name → declared result; `None` when two declarations disagree.
+    pub(super) returns: BTreeMap<String, Option<Ret>>,
     structs: BTreeMap<String, Option<Vec<(String, TypeAnn)>>>,
-    /// Module-level `const` and `let` names: whether each holds a string.
-    string_consts: BTreeMap<String, Option<bool>>,
+    /// Module-local enum name → its variants.
+    enums: BTreeMap<String, Vec<EnumVariant>>,
+    /// Module-level `const` and `let` names → the fact of their value.
+    consts: BTreeMap<String, Option<Fact>>,
 }
 
 impl Decls {
@@ -95,34 +143,35 @@ impl Decls {
             aliases: LocalTypeAliases::new(&module.items),
             returns: BTreeMap::new(),
             structs: BTreeMap::new(),
-            string_consts: BTreeMap::new(),
+            enums: BTreeMap::new(),
+            consts: BTreeMap::new(),
         };
+        let mut globals = Vec::new();
         let mut pending: Vec<&Node> = module.items.iter().collect();
         while let Some(item) = pending.pop() {
             match item {
-                Node::FnDef(fd, _) => merge(&mut decls.returns, &fd.name, fd.ret_type.clone()),
+                Node::FnDef(fd, _) => {
+                    let ret = Ret::of(fd.ret_type.as_ref(), &fd.type_params);
+                    merge(&mut decls.returns, &fd.name, Some(ret));
+                }
+                Node::ExternBlock { fns, .. } => {
+                    for f in fns {
+                        merge(
+                            &mut decls.returns,
+                            &f.name,
+                            Some(Ret::of(f.ret_type.as_ref(), &[])),
+                        );
+                    }
+                }
                 Node::StructDef { name, fields, .. } => {
                     let fields = fields.iter().map(|f| (f.name.clone(), f.ty.clone()));
                     merge(&mut decls.structs, name, Some(fields.collect()));
                 }
-                Node::Const {
-                    name, ty, value, ..
-                } => {
-                    let is_string = match ty {
-                        Some(ty) => decls.is_string(ty),
-                        None => matches!(**value, Node::Lit(Literal::Str(_), _)),
-                    };
-                    merge(&mut decls.string_consts, name, Some(is_string));
+                Node::EnumDef { name, variants, .. } => {
+                    decls.enums.insert(name.clone(), variants.clone());
                 }
-                // A module-level binding is visible in every function body.
-                Node::Let {
-                    name, ann, value, ..
-                } => {
-                    let is_string = match ann {
-                        Some(ty) => decls.is_string(ty) && !is_numeric_literal(value),
-                        None => matches!(**value, Node::Lit(Literal::Str(_), _)),
-                    };
-                    merge(&mut decls.string_consts, name, Some(is_string));
+                Node::Const { .. } | Node::Let { .. } | Node::ExternConst { .. } => {
+                    globals.push(item);
                 }
                 Node::Block { stmts, .. } => pending.extend(stmts),
                 _ => {}
@@ -135,25 +184,35 @@ impl Decls {
         #[cfg(not(feature = "cross-module-imports"))]
         let imported = crate::type_checker::bundled_std_fn_signatures().clone();
         for (name, _, ret) in imported {
-            decls.returns.entry(name).or_insert(ret);
+            decls
+                .returns
+                .entry(name)
+                .or_insert(Some(Ret::of(ret.as_ref(), &[])));
+        }
+        // A module-level binding is visible in every function body; its fact
+        // is computed once every type it may name is registered.
+        let empty = Env::default();
+        for item in globals {
+            let (name, fact) = match item {
+                Node::Const {
+                    name, ty, value, ..
+                } => (name, decls.let_fact(ty.as_ref(), value, &empty)),
+                Node::Let {
+                    name, ann, value, ..
+                } => (name, decls.let_fact(ann.as_ref(), value, &empty)),
+                Node::ExternConst { name, ty, .. } => (name, decls.typed_fact(ty)),
+                _ => continue,
+            };
+            merge(&mut decls.consts, name, Some(fact));
         }
         decls
     }
 
-    pub(super) fn is_string(&self, ty: &TypeAnn) -> bool {
-        matches!(self.aliases.resolve(ty), TypeAnn::Named(n) if n == "string" || n == "String")
+    pub(super) fn resolve(&self, ty: &TypeAnn) -> TypeAnn {
+        self.aliases.resolve_with_imports(ty)
     }
 
-    /// A callee's declared return type. A module-local declaration wins over
-    /// the project registry, and an ambiguous local name proves nothing.
-    fn call_returns(&self, callee: &str) -> Option<TypeAnn> {
-        match self.returns.get(callee) {
-            Some(local) => local.clone(),
-            None => crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned()),
-        }
-    }
-
-    fn field_ty(&self, owner: &str, field: &str) -> Option<TypeAnn> {
+    pub(super) fn field_ty(&self, owner: &str, field: &str) -> Option<TypeAnn> {
         let find = |fields: &[(String, TypeAnn)]| {
             fields
                 .iter()
@@ -175,7 +234,7 @@ impl Decls {
         }
     }
 
-    fn knows_struct(&self, name: &str) -> bool {
+    pub(super) fn knows_struct(&self, name: &str) -> bool {
         match self.structs.get(name) {
             Some(local) => local.is_some(),
             None => crate::ir::with_global_enums(|g| {
@@ -184,83 +243,178 @@ impl Decls {
         }
     }
 
-    fn struct_name(&self, ty: &TypeAnn) -> Option<String> {
-        match self.aliases.resolve(ty) {
-            TypeAnn::Named(name) if !self.is_string(ty) && self.knows_struct(&name) => Some(name),
-            _ => None,
-        }
+    pub(super) fn knows_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+            || crate::ir::with_global_enums(|g| g.names.iter().any(|n| n == name))
     }
 
-    fn has_string_elements(&self, ty: &TypeAnn) -> bool {
-        match self.aliases.resolve(ty) {
-            TypeAnn::Generic { name, args } if name == "array" => {
-                matches!(args.as_slice(), [element] if self.is_string(element))
+    /// The fact of a value of declared type `ty`.
+    pub(super) fn typed_fact(&self, ty: &TypeAnn) -> Fact {
+        let elems = |element: &TypeAnn| Fact::Elems(Box::new(self.typed_fact(element)));
+        match self.resolve(ty) {
+            TypeAnn::Named(n) if n == "string" || n == "String" => Fact::Str,
+            TypeAnn::Named(n) if SCALAR_NAMES.contains(&n.as_str()) => Fact::NotStr,
+            TypeAnn::Named(n) if n == "bytes" || n.starts_with("bytes[") => {
+                Fact::Elems(Box::new(Fact::NotStr))
             }
-            TypeAnn::Array { element, .. } | TypeAnn::Slice { element, .. } => {
-                self.is_string(&element)
+            TypeAnn::Named(n) if self.knows_enum(&n) => Fact::NotStr,
+            TypeAnn::Named(n) if self.knows_struct(&n) => Fact::Record(n),
+            TypeAnn::Named(_) => Fact::Unknown,
+            TypeAnn::Generic { name, args } => match (name.as_str(), args.as_slice()) {
+                ("array" | "set", [element]) => elems(element),
+                ("map", [_, value]) => Fact::Map(Box::new(self.typed_fact(value))),
+                ("Option" | "Result", _) => Fact::NotStr,
+                _ => Fact::Unknown,
+            },
+            TypeAnn::Array { element, .. } | TypeAnn::Slice { element, .. } => elems(&element),
+            TypeAnn::Ref { target, .. } => self.typed_fact(&target),
+            TypeAnn::Tuple { elements } => {
+                Fact::Tuple(elements.iter().map(|t| self.typed_fact(t)).collect())
             }
-            _ => false,
+            TypeAnn::Tensor { .. } | TypeAnn::DiffTensor { .. } | TypeAnn::SparseTensor { .. } => {
+                Fact::Elems(Box::new(Fact::NotStr))
+            }
+            TypeAnn::ScalarI32
+            | TypeAnn::ScalarI64
+            | TypeAnn::ScalarF32
+            | TypeAnn::ScalarF64
+            | TypeAnn::ScalarBool
+            | TypeAnn::ScalarU32
+            | TypeAnn::RawPtr { .. }
+            | TypeAnn::FnPtr { .. } => Fact::NotStr,
         }
     }
 
-    fn typed_fact(&self, ty: &TypeAnn) -> Fact {
-        if self.is_string(ty) {
-            return Fact::Str;
-        }
-        if self.has_string_elements(ty) {
-            return Fact::StrArray;
-        }
-        self.struct_name(ty).map_or(Fact::Opaque, Fact::Record)
-    }
-
-    /// Whether `node` denotes a collection whose elements are strings.
-    pub(super) fn is_string_array(&self, node: &Node, env: &Env) -> bool {
-        match node {
-            Node::Paren(inner, _) => self.is_string_array(inner, env),
-            Node::Lit(Literal::Ident(name), _) => env.get(name) == Some(&Fact::StrArray),
-            Node::Call { callee, .. } => self
-                .call_returns(callee)
-                .is_some_and(|ty| self.has_string_elements(&ty)),
-            Node::FieldAccess {
-                receiver, field, ..
-            } => self
-                .record_of(receiver, env)
-                .and_then(|owner| self.field_ty(&owner, field))
-                .is_some_and(|ty| self.has_string_elements(&ty)),
-            _ => false,
+    /// The fact of a callee's result, when the callee is declared.
+    pub(super) fn ret_fact(&self, ret: &Ret) -> Fact {
+        match ret {
+            Ret::Unit => Fact::NotStr,
+            Ret::Ty(ty) => self.typed_fact(ty),
+            Ret::Generic => Fact::Unknown,
         }
     }
 
-    fn is_string_const(&self, name: &str) -> bool {
-        self.string_consts.get(name) == Some(&Some(true))
+    /// A callee's declared result. A module-local declaration wins over the
+    /// project registry; an ambiguous local name proves nothing.
+    pub(super) fn call_ret(&self, callee: &str) -> Option<Ret> {
+        match self.returns.get(callee) {
+            Some(local) => local.clone(),
+            None => {
+                crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned()).map(Ret::Ty)
+            }
+        }
     }
 
-    /// Bind `name` to `fact`. A binding without a fact is kept out of the map
-    /// (so the map stays as small as the facts it holds) unless it must shadow
-    /// a string constant of the same name.
+    /// The fact of a name with no binding in scope: a module-level constant, a
+    /// function, an enum variant, or unknown.
+    pub(super) fn global_fact(&self, name: &str) -> Fact {
+        match self.consts.get(name) {
+            Some(fact) => fact.clone().unwrap_or(Fact::Unknown),
+            None if self.returns.contains_key(name) || self.is_variant(name) => Fact::NotStr,
+            None => Fact::Unknown,
+        }
+    }
+
+    /// Whether `name` names an enum variant (`E::V`, or a bare registered `V`).
+    pub(super) fn is_variant(&self, name: &str) -> bool {
+        // The built-in `Option` / `Result` prelude.
+        if matches!(name, "Some" | "None" | "Ok" | "Err") {
+            return true;
+        }
+        if let Some((head, _)) = name.rsplit_once("::") {
+            let owner = head.rsplit('.').next().unwrap_or(head);
+            return owner == "Option" || owner == "Result" || self.knows_enum(owner);
+        }
+        let suffix = format!("::{name}");
+        self.enums.values().flatten().any(|v| v.name == name)
+            || crate::ir::with_global_enums(|g| g.variant_tags.keys().any(|k| k.ends_with(&suffix)))
+    }
+
+    /// The declared payload types of the variant a pattern names, with the
+    /// field names of a struct variant. `None` when the variant is unknown or
+    /// a bare name is ambiguous.
+    pub(super) fn variant_payload(&self, path: &str) -> Option<(Vec<TypeAnn>, Vec<String>)> {
+        let of = |v: &EnumVariant| (v.payload.clone(), v.field_names.clone());
+        let Some((head, variant)) = path.rsplit_once("::") else {
+            let mut local = self.enums.values().flatten().filter(|v| v.name == path);
+            return match (local.next(), local.next()) {
+                (Some(v), None) => Some(of(v)),
+                (Some(_), Some(_)) => None,
+                (None, _) => {
+                    self.global_payload(|key| key.rsplit_once("::").is_some_and(|(_, v)| v == path))
+                }
+            };
+        };
+        let owner = head.rsplit('.').next().unwrap_or(head);
+        if let Some(variants) = self.enums.get(owner) {
+            return variants.iter().find(|v| v.name == variant).map(of);
+        }
+        let key = format!("{owner}::{variant}");
+        self.global_payload(|k| k == key)
+    }
+
+    /// The payload of the one registered variant whose key satisfies `wanted`.
+    fn global_payload(&self, wanted: impl Fn(&str) -> bool) -> Option<(Vec<TypeAnn>, Vec<String>)> {
+        crate::ir::with_global_enums(|g| {
+            let mut keys = g.payload_types.keys().filter(|k| wanted(k.as_str()));
+            let (Some(key), None) = (keys.next(), keys.next()) else {
+                return None;
+            };
+            let names = g.struct_field_names.get(key).cloned().unwrap_or_default();
+            Some((g.payload_types[key].clone(), names))
+        })
+    }
+
+    /// Bind `name` to `fact`. Every binding is recorded, so a name with no
+    /// entry is never a local of unknown type mistaken for a constant.
     pub(super) fn bind(&self, env: &mut Env, name: &str, fact: Fact) {
-        if fact == Fact::Opaque && !self.is_string_const(name) {
-            if env.contains_key(name) {
-                Rc::make_mut(env).remove(name);
-            }
-            return;
-        }
         if env.get(name) != Some(&fact) {
             Rc::make_mut(env).insert(name.to_string(), fact);
         }
     }
 
-    /// Bind a declaration's parameters over `env`. A reassigned parameter
-    /// keeps its fact only when it is a declared string never given a numeric
-    /// literal.
+    /// The fact of binding `name`, whose initial value has `fact`, after the
+    /// later `assignments`. The assigned values are read with `name` holding
+    /// `fact`: when every one of them keeps it, no assignment can change it.
+    ///
+    /// A declared binding keeps its declared fact unless an assignment
+    /// contradicts the declaration (a numeric literal into a string, a string
+    /// into anything else); an unannotated binding keeps its fact only when
+    /// every assigned value has the same fact.
+    pub(super) fn reassigned_fact(
+        &self,
+        name: &str,
+        fact: Fact,
+        declared: bool,
+        assignments: &[&Node],
+        env: &Env,
+    ) -> Fact {
+        if assignments.is_empty() {
+            return fact;
+        }
+        let mut env = env.clone();
+        self.bind(&mut env, name, fact.clone());
+        if !declared {
+            return assignments
+                .iter()
+                .fold(fact, |fact, v| join(fact, self.value_fact(v, &env)));
+        }
+        let contradicted = if fact == Fact::Str {
+            assignments.iter().any(|v| is_numeric_literal(v))
+        } else {
+            assignments
+                .iter()
+                .any(|v| self.classify(v, &env) == Class::Str)
+        };
+        if contradicted { Fact::Unknown } else { fact }
+    }
+
+    /// Bind a declaration's parameters over `env`.
     pub(super) fn param_env(&self, mut env: Env, params: &[Param], body: &[Node]) -> Env {
         for param in params {
             let assignments = super::assignment_values(body, &param.name);
-            let fact = match self.typed_fact(&param.ty) {
-                fact if assignments.is_empty() => fact,
-                Fact::Str if !assignments.iter().any(|v| is_numeric_literal(v)) => Fact::Str,
-                _ => Fact::Opaque,
-            };
+            let typed = self.typed_fact(&param.ty);
+            let fact = self.reassigned_fact(&param.name, typed, true, &assignments, &env);
             self.bind(&mut env, &param.name, fact);
         }
         env
@@ -270,112 +424,8 @@ impl Decls {
         self.param_env(Env::default(), &fd.params, &fd.body)
     }
 
-    /// The fact for a reassigned `let`: a declared string keeps it unless a
-    /// numeric literal is assigned; an unannotated binding keeps it only when
-    /// every assigned value is a string too. A record fact is not kept.
-    pub(super) fn reassigned_let_fact(
-        &self,
-        ann: Option<&TypeAnn>,
-        value: &Node,
-        assignments: &[&Node],
-        env: &Env,
-    ) -> Fact {
-        if assignments.iter().any(|v| is_numeric_literal(v)) {
-            return Fact::Opaque;
-        }
-        let declared = ann.is_some_and(|ty| self.is_string(ty));
-        let all_strings = || {
-            assignments
-                .iter()
-                .all(|v| self.classify(v, env) == Class::Str)
-        };
-        match self.let_fact(ann, value, env) {
-            Fact::Str if declared || all_strings() => Fact::Str,
-            _ => Fact::Opaque,
-        }
-    }
-
-    /// The fact for an immutable `let`. A string annotation is trusted unless
-    /// the value is a numeric literal, which no string can be.
+    /// The fact for an immutable `let` (see [`Self::binding_fact`]).
     pub(super) fn let_fact(&self, ann: Option<&TypeAnn>, value: &Node, env: &Env) -> Fact {
-        if let Some(ty) = ann {
-            if self.is_string(ty) && is_numeric_literal(value) {
-                return Fact::Opaque;
-            }
-            return self.typed_fact(ty);
-        }
-        if self.classify(value, env) == Class::Str {
-            return Fact::Str;
-        }
-        if self.is_string_array(value, env) {
-            return Fact::StrArray;
-        }
-        self.record_of(value, env)
-            .map_or(Fact::Opaque, Fact::Record)
-    }
-
-    /// The struct a receiver expression denotes, when its type is declared.
-    fn record_of(&self, node: &Node, env: &Env) -> Option<String> {
-        match node {
-            Node::Paren(inner, _) => self.record_of(inner, env),
-            Node::Lit(Literal::Ident(name), _) => match env.get(name) {
-                Some(Fact::Record(owner)) => Some(owner.clone()),
-                _ => None,
-            },
-            Node::StructLit { name, .. } => self.knows_struct(name).then(|| name.clone()),
-            Node::Call { callee, .. } => self.struct_name(&self.call_returns(callee)?),
-            Node::FieldAccess {
-                receiver, field, ..
-            } => {
-                let owner = self.record_of(receiver, env)?;
-                self.struct_name(&self.field_ty(&owner, field)?)
-            }
-            _ => None,
-        }
-    }
-
-    pub(super) fn classify(&self, mut node: &Node, env: &Env) -> Class {
-        loop {
-            return match node {
-                Node::Lit(Literal::Str(_), _) => Class::Str,
-                Node::Lit(Literal::Int(_), _) => Class::IntLiteral,
-                Node::Neg { operand, .. } if matches!(**operand, Node::Lit(Literal::Int(_), _)) => {
-                    Class::IntLiteral
-                }
-                Node::Lit(Literal::Ident(name), _) => match env.get(name) {
-                    Some(Fact::Str) => Class::Str,
-                    Some(_) => Class::Other,
-                    None if self.is_string_const(name) => Class::Str,
-                    None => Class::Other,
-                },
-                Node::Paren(inner, _) => {
-                    node = inner;
-                    continue;
-                }
-                Node::MethodCall {
-                    receiver, method, ..
-                } if string_result_method(method) => {
-                    node = receiver;
-                    continue;
-                }
-                Node::Call { callee, .. } => match self.call_returns(callee) {
-                    Some(ty) if self.is_string(&ty) => Class::Str,
-                    _ => Class::Other,
-                },
-                Node::IndexAccess { receiver, .. } if self.is_string_array(receiver, env) => {
-                    Class::Str
-                }
-                Node::FieldAccess {
-                    receiver, field, ..
-                } => match self
-                    .record_of(receiver, env)
-                    .and_then(|owner| self.field_ty(&owner, field))
-                {
-                    Some(ty) if self.is_string(&ty) => Class::Str,
-                    _ => Class::Other,
-                },
-                _ => Class::Other,
-            };
-        }
+        self.binding_fact(ann, value, env, 0)
     }
 }

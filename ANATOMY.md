@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1947 | **Est. tokens:** ~3,808,239
-**Generated:** 2026-11-02 16:21 UTC
+**Files:** 1949 | **Est. tokens:** ~3,815,325
+**Generated:** 2026-11-02 16:24 UTC
 
 ## Token Budget Guide
 
@@ -123,7 +123,7 @@
 | `src/doc/` | 3 | ~11,002 |
 | `src/eval/` | 49 | ~160,940 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 2 | ~7,503 |
+| `src/eval/string_equality/` | 4 | ~14,589 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -1335,6 +1335,7 @@
 - `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
+- `classify.rs` (~4211 tok, huge) — Copyright 2026 STARGA Inc.
 - `facts.rs` (~4275 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
@@ -1342,6 +1343,7 @@
 ### `src/eval/string_equality/`
 
 - `tests.rs` (~3228 tok, huge) — Copyright 2025 STARGA Inc.
+- `walk.rs` (~2875 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
 - `string_record.rs` (~2119 tok, huge) — Copyright 2026 STARGA Inc.

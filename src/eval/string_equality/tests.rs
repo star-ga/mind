@@ -231,3 +231,153 @@ fn a_string_binding_stays_a_string_after_string_assignments() {
     let rewritten = analysis.rewritten.expect("both comparisons stay typed");
     assert_eq!(count_calls(&rewritten.items[0], "__mind_string_eq"), 2);
 }
+
+fn string_eq_calls(module: &Module) -> usize {
+    module
+        .items
+        .iter()
+        .map(|n| count_calls(n, "__mind_string_eq"))
+        .sum()
+}
+
+/// The reviewed holes: an unannotated binding of an `if` expression, a field
+/// of an indexed struct-array element, and a method call that lowers to a
+/// `string_<method>` function. Each compiled to a handle compare.
+#[test]
+fn if_values_indexed_record_fields_and_method_results_are_strings() {
+    let module = crate::parser::parse(
+        r#"struct Dec { name: string, n: i64 }
+        fn string_slice_from(s: string, start: i64) -> string { return s }
+        fn pick(a: string, b: string, c: i64) -> i64 {
+            let x = if c == 1 { a } else { b }
+            let y = if c == 1 { b } else { a }
+            if x == y { return 1 }
+            return 0
+        }
+        fn tails(a: string, b: string) -> i64 {
+            if a.slice_from(0) == b.slice_from(0) { return 1 }
+            return 0
+        }
+        fn same_first(ds: [Dec; 2]) -> i64 {
+            if ds[0].name == ds[1].name { return 1 }
+            if ds[0].n == ds[1].n { return 2 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.refused.is_empty());
+    let rewritten = analysis.rewritten.expect("three string comparisons");
+    assert_eq!(string_eq_calls(&rewritten), 3);
+}
+
+/// Two operands of unknown type may both be strings: refused, not compiled to
+/// a handle compare. An operand of known non-string type keeps the other an
+/// integer comparison.
+#[test]
+fn two_operands_of_unknown_type_are_refused() {
+    let module = crate::parser::parse(
+        r#"fn mystery() -> i64 { return 0 }
+        fn generic_eq<T>(a: T, b: T) -> i64 {
+            if a == b { return 1 }
+            return 0
+        }
+        fn control(n: i64) -> i64 {
+            let u = undeclared()
+            let v = undeclared()
+            if u == v { return 1 }
+            if u == n { return 2 }
+            if u == 0 { return 3 }
+            if mystery() == mystery() { return 4 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.rewritten.is_none());
+    let kinds: Vec<RefusedKind> = analysis.refused.iter().map(|r| r.kind).collect();
+    assert_eq!(kinds, vec![RefusedKind::Untyped, RefusedKind::Untyped]);
+    let message = refusal_message(&analysis.refused[0]);
+    assert!(message.contains("string_eq"), "{message}");
+}
+
+/// Enum payload bindings take the variant's declared payload type; a match
+/// whose every arm is a string is a string.
+#[test]
+fn match_payloads_and_match_values_are_typed() {
+    let module = crate::parser::parse(
+        r#"enum Tok { Word(string), Num(i64) }
+        fn same_word(a: Tok, b: string) -> i64 {
+            match a {
+                Tok::Word(w) => { if w == b { return 1 } return 0 },
+                Tok::Num(n) => { if n == 3 { return 2 } return 0 },
+            }
+        }
+        fn label(a: Tok) -> i64 {
+            let text = match a {
+                Tok::Word(w) => w,
+                Tok::Num(_) => "number",
+            }
+            if text == "number" { return 1 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.refused.is_empty());
+    let rewritten = analysis.rewritten.expect("two string comparisons");
+    assert_eq!(string_eq_calls(&rewritten), 2);
+}
+
+/// A reassigned record binding stays a record when every assignment keeps it
+/// one, so its string field still compares by bytes; a binding that is a
+/// string on one path and an integer on another is not a string.
+#[test]
+fn reassignment_keeps_a_fact_only_when_every_value_keeps_it() {
+    let module = crate::parser::parse(
+        r#"struct Node { name: string, next: Node }
+        fn walk(head: Node, flag: i64) -> i64 {
+            let mut cur = head
+            cur = cur.next
+            if cur.name == "x" { return 1 }
+            let mut mixed = "a"
+            if flag == 1 { mixed = 5 }
+            if mixed == "a" { return 2 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    let kinds: Vec<RefusedKind> = analysis.refused.iter().map(|r| r.kind).collect();
+    assert_eq!(kinds, vec![RefusedKind::Mixed]);
+    let rewritten = analysis.rewritten.expect("the record field comparison");
+    assert_eq!(string_eq_calls(&rewritten), 1);
+}
+
+/// Numeric code of every shape stays an integer comparison with no refusal:
+/// loop counters, intrinsic and arithmetic results, enum values, collection
+/// lengths, tuple positions and `as` casts.
+#[test]
+fn typed_numeric_comparisons_are_untouched() {
+    let module = crate::parser::parse(
+        r#"enum Mode { On, Off }
+        const LIMIT = 4
+        fn control(xs: array<i64>, m: Mode, p: (i64, string)) -> i64 {
+            for i in 0..3 {
+                if i == LIMIT { return 1 }
+                if xs[i] == xs.len() { return 2 }
+            }
+            for x in xs { if x == xs[0] { return 3 } }
+            if __mind_load_i64(0) == 1 + 2 { return 4 }
+            if m == Mode::Off { return 5 }
+            if p.0 == (p.0 as i64) { return 6 }
+            if p.1 == "x" { return 7 }
+            return 0
+        }"#,
+    )
+    .unwrap();
+    let analysis = analyze(&module);
+    assert!(analysis.refused.is_empty());
+    let rewritten = analysis.rewritten.expect("the tuple string position");
+    assert_eq!(string_eq_calls(&rewritten), 1);
+}

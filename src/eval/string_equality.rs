@@ -5,68 +5,102 @@
 //! Typed string equality normalization before recursive expression lowering.
 //!
 //! `==` and `!=` on two strings compare bytes. An operand is a string when its
-//! declared type says so (see [`facts`]): a literal, a `string`/`String`
-//! parameter or annotated binding, a string constant, call result or struct
-//! field. Such a comparison is rewritten to the compiler-owned
-//! `__mind_string_eq` before the interpreter or any lowering sees it, so every
-//! backend computes the same byte-wise answer. A string compared with an
-//! operand whose type is not a string (other than an integer literal, which is
-//! a null or sentinel test) would compare handles, which is false for equal
-//! text; it is refused at check time with `E2038`, never lowered silently.
+//! declared type says so (see [`facts`] and [`classify`]): a literal, a
+//! `string`/`String` parameter or annotated binding, a string constant, call
+//! result (including a method call that lowers to a `string_<method>` or
+//! `<type>_<method>` function), struct field, collection element, or an `if`
+//! / `match` whose every branch is a string. Such a comparison is rewritten to
+//! the compiler-owned `__mind_string_eq` before the interpreter or any
+//! lowering sees it, so every backend computes the same byte-wise answer.
 //!
-//! A reassigned name keeps a string fact only when every assignment keeps it a
-//! string (see `Decls::reassigned_let_fact`); facts are never joined across
-//! branches, which avoids branch, loop, and shadowing ambiguity.
+//! Every other comparison that could compare string handles, which is false
+//! for equal text, is refused at check time with `E2038`, never lowered
+//! silently:
+//!
+//! * a string compared with an operand that is not a string (an integer
+//!   literal is exempt: a handle compared with it is a null or sentinel test);
+//! * two operands of which neither has a known type, so both may be strings.
+//!
+//! An operand whose type is known and is not a string makes the comparison an
+//! integer comparison on every backend.
+//!
+//! A reassigned name keeps its fact only when every assignment keeps it (see
+//! `Decls::reassigned_fact`); facts are never joined across branches of
+//! statements, which avoids branch, loop, and shadowing ambiguity.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
 
-use crate::ast::{BinOp, Literal, Module, Node, Pattern, Span};
+use crate::ast::{BinOp, Literal, Module, Node, Span};
 
+mod classify;
 mod facts;
 #[cfg(test)]
 mod tests;
+mod walk;
 
-use facts::{Class, Decls, Env, Fact};
+use facts::Class;
 
 type Targets = BTreeSet<usize>;
 type Assigned = BTreeSet<String>;
 type Ordinals = BTreeMap<usize, usize>;
 
-/// A comparison of a string with an operand that is not known to be a string.
+/// Why a comparison is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefusedKind {
+    /// A string compared with an operand whose type is not a string.
+    Mixed,
+    /// Two operands, neither of a known type.
+    Untyped,
+}
+
+/// A comparison that would compare string handles instead of bytes.
 pub(crate) struct Refused {
     pub(crate) op: BinOp,
+    pub(crate) kind: RefusedKind,
     pub(crate) span: Span,
 }
 
 /// The `E2038` message for `refused`, naming the byte-wise std function.
-pub(crate) fn refusal_message(op: BinOp) -> String {
-    let symbol = if op == BinOp::Eq { "==" } else { "!=" };
+pub(crate) fn refusal_message(refused: &Refused) -> String {
+    let symbol = if refused.op == BinOp::Eq { "==" } else { "!=" };
+    let operands = match refused.kind {
+        RefusedKind::Mixed => "a string with an operand whose type is not a string",
+        RefusedKind::Untyped => {
+            "two operands whose types are not known at compile time, so both may be strings"
+        }
+    };
     format!(
-        "`{symbol}` compares a string with an operand whose type is not a string; \
-         it would compare handles, not bytes, and report equal text as unequal \
-         — use `string_eq(a, b)` for byte-wise equality"
+        "`{symbol}` compares {operands}; it would compare handles, not bytes, and \
+         report equal text as unequal — use `string_eq(a, b)` for byte-wise equality"
     )
 }
 
-/// The `E2038` help text.
-pub(crate) const REFUSAL_HELP: &str = "give the other operand a `string` type (parameter, \
-     annotated binding, field or function return), or compare bytes explicitly with \
-     `string_eq(a, b)` from std.string";
-
-fn remove_pattern_bindings(pattern: &Pattern, env: &mut Env, decls: &Decls) {
-    let mut pending = vec![pattern];
-    while let Some(pattern) = pending.pop() {
-        match pattern {
-            Pattern::Ident(name) => {
-                decls.bind(env, name, Fact::Opaque);
-            }
-            Pattern::EnumVariant { args, .. } | Pattern::Tuple(args) => pending.extend(args),
-            Pattern::EnumStruct { fields, .. } => {
-                pending.extend(fields.iter().map(|(_, pattern)| pattern));
-            }
-            Pattern::Literal(_) | Pattern::Wildcard => {}
+/// The `E2038` help text for `refused`.
+pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
+    match refused.kind {
+        RefusedKind::Mixed => {
+            "give the other operand a `string` type (parameter, annotated binding, \
+             field or function return), or compare bytes explicitly with \
+             `string_eq(a, b)` from std.string"
         }
+        RefusedKind::Untyped => {
+            "give an operand a declared type (an annotated binding such as \
+             `let n: i64 = ...`, a parameter, a field or a function return), or \
+             compare strings explicitly with `string_eq(a, b)` from std.string"
+        }
+    }
+}
+
+/// Decide one equality from its operand classes: `Ok(true)` rewrites it to the
+/// byte-wise comparison, `Ok(false)` keeps it an integer comparison, and
+/// `Err` refuses it.
+fn decide(left: Class, right: Class) -> Result<bool, RefusedKind> {
+    match (left, right) {
+        (Class::Str, Class::Str) => Ok(true),
+        (Class::Str, Class::IntLiteral) | (Class::IntLiteral, Class::Str) => Ok(false),
+        (Class::Str, _) | (_, Class::Str) => Err(RefusedKind::Mixed),
+        (Class::Unknown, Class::Unknown) => Err(RefusedKind::Untyped),
+        _ => Ok(false),
     }
 }
 
@@ -152,308 +186,6 @@ fn equality_ordinals(module: &Module) -> Ordinals {
     ordinals
 }
 
-enum Task<'a> {
-    Stmts {
-        stmts: &'a [Node],
-        index: usize,
-        env: Env,
-        assigned: Rc<Assigned>,
-    },
-    Node {
-        node: &'a Node,
-        env: Env,
-        assigned: Rc<Assigned>,
-    },
-}
-
-fn push_stmts<'a>(pending: &mut Vec<Task<'a>>, stmts: &'a [Node], env: Env) {
-    pending.push(Task::Stmts {
-        stmts,
-        index: 0,
-        env,
-        assigned: Rc::new(assigned_in(stmts)),
-    });
-}
-
-/// Record equality nodes with two string operands, and the comparisons of a
-/// string with an operand that is not one. This visitor owns an explicit heap
-/// worklist so deeply nested std modules do not consume the compiler thread
-/// stack. Since assigned names are excluded for their whole declaration,
-/// branch-local facts never need an optimistic control-flow join.
-fn collect_targets(module: &Module, ordinals: &Ordinals) -> (Targets, Vec<Refused>) {
-    let decls = Decls::new(module);
-    let mut targets = Targets::new();
-    let mut refused = Vec::new();
-    let mut pending = Vec::new();
-    push_stmts(&mut pending, &module.items, Env::default());
-    while let Some(task) = pending.pop() {
-        match task {
-            Task::Stmts {
-                stmts,
-                index,
-                mut env,
-                assigned,
-            } => {
-                let Some(stmt) = stmts.get(index) else {
-                    continue;
-                };
-                match stmt {
-                    Node::Let {
-                        name, ann, value, ..
-                    } => {
-                        let value_env = env.clone();
-                        let fact = if assigned.contains(name) {
-                            let later = assignment_values(&stmts[index + 1..], name);
-                            decls.reassigned_let_fact(ann.as_ref(), value, &later, &env)
-                        } else {
-                            decls.let_fact(ann.as_ref(), value, &env)
-                        };
-                        decls.bind(&mut env, name, fact);
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: value,
-                            env: value_env,
-                            assigned,
-                        });
-                    }
-                    // The binding's fact already accounts for every later
-                    // assignment (`reassigned_let_fact`, `param_env`).
-                    Node::Assign { value, .. } => {
-                        let value_env = env.clone();
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: value,
-                            env: value_env,
-                            assigned,
-                        });
-                    }
-                    Node::FnDef(fd, _) => {
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned,
-                        });
-                        push_stmts(&mut pending, &fd.body, decls.fn_env(fd));
-                    }
-                    _ => {
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: stmt,
-                            env,
-                            assigned,
-                        });
-                    }
-                }
-            }
-            Task::Node {
-                node,
-                env,
-                assigned,
-            } => match node {
-                Node::Block { stmts, .. } | Node::Region { body: stmts, .. } => {
-                    pending.push(Task::Stmts {
-                        stmts,
-                        index: 0,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::If {
-                    cond,
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    if let Some(branch) = else_branch {
-                        pending.push(Task::Stmts {
-                            stmts: branch,
-                            index: 0,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                    pending.push(Task::Stmts {
-                        stmts: then_branch,
-                        index: 0,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: cond,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::For {
-                    var,
-                    start,
-                    end,
-                    body,
-                    ..
-                } => {
-                    let mut body_env = env.clone();
-                    decls.bind(&mut body_env, var, Fact::Opaque);
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: body_env,
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: end,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: start,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::ForEach {
-                    var,
-                    collection,
-                    body,
-                    ..
-                } => {
-                    let mut body_env = env.clone();
-                    let element = if decls.is_string_array(collection, &env)
-                        && assignment_values(body, var).is_empty()
-                    {
-                        Fact::Str
-                    } else {
-                        Fact::Opaque
-                    };
-                    decls.bind(&mut body_env, var, element);
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: body_env,
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: collection,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::While { cond, body, .. } => {
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: cond,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::Match {
-                    scrutinee, arms, ..
-                } => {
-                    for arm in arms.iter().rev() {
-                        let mut arm_env = env.clone();
-                        remove_pattern_bindings(&arm.pattern, &mut arm_env, &decls);
-                        pending.push(Task::Node {
-                            node: &arm.body,
-                            env: arm_env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                        if let Some(guard) = &arm.guard {
-                            pending.push(Task::Node {
-                                node: guard,
-                                env: arm_env,
-                                assigned: assigned.clone(),
-                            });
-                        }
-                    }
-                    pending.push(Task::Node {
-                        node: scrutinee,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::Binary {
-                    op,
-                    left,
-                    right,
-                    span,
-                } => {
-                    if matches!(op, BinOp::Eq | BinOp::Ne) {
-                        match (decls.classify(left, &env), decls.classify(right, &env)) {
-                            (Class::Str, Class::Str) => {
-                                targets.insert(ordinals[&(node as *const Node as usize)]);
-                            }
-                            (Class::Str, Class::Other) | (Class::Other, Class::Str) => {
-                                refused.push(Refused {
-                                    op: *op,
-                                    span: *span,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    let children = super::closures::node_children_ref(node);
-                    for child in children.into_iter().rev() {
-                        pending.push(Task::Node {
-                            node: child,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                }
-                Node::Closure(data, _) => {
-                    let closure_assigned = Rc::new(assigned_in(&data.body));
-                    let captured: Env = Rc::new(
-                        data.captures
-                            .iter()
-                            .filter(|name| !closure_assigned.contains(*name))
-                            .filter_map(|name| env.get(name).map(|f| (name.clone(), f.clone())))
-                            .collect(),
-                    );
-                    let closure_env = decls.param_env(captured, &data.params, &data.body);
-                    pending.push(Task::Stmts {
-                        stmts: &data.body,
-                        index: 0,
-                        env: closure_env,
-                        assigned: closure_assigned,
-                    });
-                }
-                Node::FnDef(fd, _) => push_stmts(&mut pending, &fd.body, decls.fn_env(fd)),
-                _ => {
-                    let children = super::closures::node_children_ref(node);
-                    for child in children.into_iter().rev() {
-                        pending.push(Task::Node {
-                            node: child,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                }
-            },
-        }
-    }
-    (targets, refused)
-}
-
 /// Rewrite in deterministic preorder on an explicit heap worklist. A target is
 /// replaced before its original operands are queued, so the synthesized `!= 0`
 /// comparison is not counted as another source equality.
@@ -524,7 +256,7 @@ pub(crate) fn analyze(module: &Module) -> Analysis {
             refused: Vec::new(),
         };
     }
-    let (mut targets, refused) = collect_targets(module, &ordinals);
+    let (mut targets, refused) = walk::collect_targets(module, &ordinals);
     if targets.is_empty() {
         return Analysis {
             rewritten: None,
