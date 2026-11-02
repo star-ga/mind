@@ -8,8 +8,8 @@
 //! declared arity, at any nesting depth. The C runtime reads that many
 //! arguments, so a short call hands it an undefined trailing argument.
 //!
-//! The rule runs here, not in the type checker: `mindc check` does not
-//! type-check function bodies, so a check there would miss these calls. Every
+//! `mindc check` reports the same rule as E2005 from the type checker; the
+//! build paths do not run `check` first, so this verifier enforces it again. Every
 //! `mindc` path that lowers through MLIR (`build`, `run`, and the `--emit-ir`,
 //! `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj` flags) verifies
 //! the module first. Two paths do not reach this verifier and are fenced
@@ -17,11 +17,6 @@
 //! admission, and `mind eval` emits from unverified lowered IR (its own deferred
 //! marker in `src/main.rs`) but no intrinsic call reaches its output today: a
 //! top-level call is a type error and function definitions are not emitted.
-
-// deferred: would have `mindc check` type-check function bodies (this rule and every other
-// body error), not done here because that changes what `check` reports on every existing
-// program — upgrade path: a separate change that type-checks bodies under `check`, measured
-// by a sweep of std/, examples/ and tests/.
 
 use super::IRModule;
 #[cfg(feature = "std-surface")]
