@@ -22,6 +22,7 @@
 mod common;
 
 use common::mic_record::{Lib, Val, head, load, reference, uleb};
+use libmind::ir::compact::v3::{Mic3NonCanonical, mic3_canonical_check};
 use std::sync::OnceLock;
 
 const TARGET: &str = "std_surface_mic_record_refusals";
@@ -188,7 +189,15 @@ fn non_canonical_maps_are_refused() {
     assert_eq!(
         lib.decode(&one_entry(b"a.b", &eleven)),
         e("varint"),
-        "11 bytes"
+        "11 bytes, zero last"
+    );
+    // A non-zero last byte passes the padding rule, so only the 10-byte
+    // bound refuses it.
+    let eleven = [&[0x01u8][..], &[0x80; 10], &[0x01]].concat();
+    assert_eq!(
+        lib.decode(&one_entry(b"a.b", &eleven)),
+        e("varint"),
+        "11 bytes, non-zero last"
     );
     let bit64 = [&[0x01u8][..], &[0xFF; 9], &[0x02]].concat();
     assert_eq!(
@@ -219,14 +228,30 @@ fn non_canonical_maps_are_refused() {
     assert!(lib.decode(&raw) > 0, "the same bytes as Bytes are valid");
     assert_eq!(lib.decode(&one_entry(b"nodot", &int0)), e("key"));
     assert_eq!(lib.decode(&one_entry(b"", &int0)), e("key"), "empty key");
-    assert_eq!(
-        lib.decode(&one_entry(b"signature.ed", &int0)),
-        e("reserved")
-    );
-    assert_eq!(
-        lib.decode(&one_entry(b"evidence_chain.x", &int0)),
-        e("reserved")
-    );
+    // Reserved namespaces, down to the bare prefix. The compiler's reader
+    // refuses the same keys, and accepts the near misses.
+    for key in [
+        &b"signature."[..],
+        b"signature.ed",
+        b"evidence_chain.",
+        b"evidence_chain.x",
+    ] {
+        let rec = one_entry(key, &int0);
+        let shown = String::from_utf8_lossy(key);
+        assert_eq!(lib.decode(&rec), e("reserved"), "{shown}");
+        assert!(
+            matches!(
+                mic3_canonical_check(&rec),
+                Err(Mic3NonCanonical::ReservedKey(_))
+            ),
+            "the compiler refuses {shown}"
+        );
+    }
+    for key in [&b"signatures.x"[..], b"evidence_chainx.y"] {
+        let rec = one_entry(key, &int0);
+        assert!(lib.decode(&rec) > 0, "{}", String::from_utf8_lossy(key));
+        assert!(mic3_canonical_check(&rec).is_ok());
+    }
     // Bytes after the last entry.
     let trailing = [valid(), vec![0x00]].concat();
     assert_eq!(lib.decode(&trailing), e("trailing"));

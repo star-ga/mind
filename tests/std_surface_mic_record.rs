@@ -341,6 +341,9 @@ mod functional {
         assert_eq!(lib.put_int(h, b"a.\xFF", 1), e("utf8"));
         assert_eq!(lib.put_int(h, b"evidence_chain.x", 1), e("reserved"));
         assert_eq!(lib.put_int(h, b"signature.x", 1), e("reserved"));
+        // The bare prefixes too: the compiler's MAP reader refuses them.
+        assert_eq!(lib.put_int(h, b"evidence_chain.", 1), e("reserved"));
+        assert_eq!(lib.put_int(h, b"signature.", 1), e("reserved"));
         let long = [b"a.".as_slice(), &[b'k'; 255]].concat();
         assert_eq!(lib.put_int(h, &long, 1), e("oversized"), "257-byte key");
         let neg = [h, ptr(b"a.b"), -1, 1];
@@ -527,6 +530,17 @@ mod functional {
             e("not_found"),
             "rolled back"
         );
+        // ... and when the first write is refused: the old score stays and no
+        // scale is stored next to it.
+        let s = lib.new_record();
+        assert_eq!(lib.put_int(s, b"results.score", 9), 0);
+        assert_eq!(lib.call("mres_set_score", &[s, 3, 4]), e("duplicate"));
+        assert_eq!(
+            lib.find(s, b"results.score_scale"),
+            e("not_found"),
+            "no scale written"
+        );
+        assert_eq!(lib.get_int(s, b"results.score"), (0, 9), "old score kept");
 
         // Stored values a reader must not trust.
         let r = lib.new_record();
@@ -540,6 +554,35 @@ mod functional {
         assert_eq!(lib.put_bytes(r, b"results.weights_sha256", &[0; 31]), 0);
         assert_eq!(lib.call("mres_get_weights_sha256", &[r, o]), e("value"));
         assert_eq!(lib.call("mres_get_schema", &[r, o]), e("not_found"));
+
+        // A scale without a score is not a score.
+        let c = lib.new_record();
+        assert_eq!(lib.put_int(c, b"results.score_scale", 4), 0);
+        let mut score = [-1i64; 2];
+        let so = score.as_mut_ptr() as i64;
+        assert_eq!(lib.call("mres_get_score", &[c, so]), e("not_found"));
+        assert_eq!(lib.put_int(c, b"results.score", 3), 0);
+        assert_eq!(lib.call("mres_get_score", &[c, so]), 0, "positive control");
+        assert_eq!(score, [3, 4]);
+
+        // No digest stored: not_found, even when out + 8 already holds 32
+        // from an earlier call.
+        let w = lib.new_record();
+        let mut digest = [0i64, 32];
+        let wo = digest.as_mut_ptr() as i64;
+        assert_eq!(
+            lib.call("mres_get_weights_sha256", &[w, wo]),
+            e("not_found")
+        );
+        assert_eq!(digest, [0, 32], "nothing written");
+        let sha = [0xA5u8; 32];
+        assert_eq!(lib.put_bytes(w, b"results.weights_sha256", &sha), 0);
+        assert_eq!(
+            lib.call("mres_get_weights_sha256", &[w, wo]),
+            0,
+            "positive control"
+        );
+        assert_eq!(bytes_at(digest[0], digest[1]), sha);
     }
 
     /// The real `import` path: the bundled modules, linked through the
