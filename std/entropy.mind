@@ -17,8 +17,10 @@
 // promises a full read for a request of that size from the urandom source, so
 // a short count is a fault, never a retry.
 //
-// Determinism: `getrandom` is a World extern (src/intrinsics.rs), so a program
-// that calls this is attested `nondeterministic`, as it must be.
+// Determinism: `getrandom` is a World extern, and `entropy_fill` is classified
+// by name beside it (src/intrinsics.rs), because a caller's IR holds only the
+// call. A program that calls this is refused by the determinism veto without
+// `--allow-nondeterministic` and, with it, attested `nondeterministic`.
 //
 // Linux only: getrandom(2) (glibc >= 2.25, musl >= 1.1.20).
 //

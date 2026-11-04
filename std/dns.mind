@@ -16,13 +16,18 @@
 // Fail closed:
 //   - the name is checked before the resolver sees it: 1..=253 bytes, every
 //     byte printable ASCII (0x21..=0x7E), so no NUL, space or control byte;
-//   - every getaddrinfo error code maps to its own dns_err_* code;
+//   - each getaddrinfo error code -1..-12 (EAI_BADFLAGS..EAI_OVERFLOW, the
+//     same values in glibc and musl) has its own dns_err_* code, and any other
+//     non-zero code is dns_err_unknown;
 //   - the result list is bounded (dns_max_addrs()); a longer list, or an entry
 //     with an unexpected family or address length, fails the whole call;
 //   - a failed call has count 0: no partial results.
 //
-// Determinism: `getaddrinfo` and `connect` are World externs
-// (src/intrinsics.rs); a program that calls this is attested nondeterministic.
+// Determinism: `getaddrinfo` and `connect` are World externs, and dns_resolve,
+// tcp_connect_host and tcp_connect_host_timeout are classified by name beside
+// them (src/intrinsics.rs), because a caller's IR holds only the call. A
+// program that calls one is refused by the determinism veto without
+// `--allow-nondeterministic` and, with it, attested `nondeterministic`.
 //
 // Linux only (glibc or musl): the `struct addrinfo` offsets, AF_INET6 = 10 and
 // SO_SNDTIMEO = 21 below are the Linux values, as in std.net. On another
@@ -60,7 +65,7 @@ pub fn dns_err_noname() -> i64 {
     0 - 2
 }
 
-// EAI_NODATA / EAI_ADDRFAMILY: the name exists but has no usable address.
+// EAI_NODATA: the name exists but has no address.
 pub fn dns_err_nodata() -> i64 {
     0 - 3
 }
@@ -85,9 +90,8 @@ pub fn dns_err_system() -> i64 {
     0 - 7
 }
 
-// EAI_BADFLAGS / EAI_FAMILY / EAI_SOCKTYPE / EAI_SERVICE / EAI_OVERFLOW: the
-// resolver refused the request itself.
-pub fn dns_err_request() -> i64 {
+// EAI_BADFLAGS: the resolver refused the request flags.
+pub fn dns_err_badflags() -> i64 {
     0 - 8
 }
 
@@ -109,6 +113,31 @@ pub fn dns_err_too_many() -> i64 {
 // An entry with no address, an unexpected family or a wrong address length.
 pub fn dns_err_entry() -> i64 {
     0 - 12
+}
+
+// EAI_ADDRFAMILY: the name has no address in the requested family.
+pub fn dns_err_addrfamily() -> i64 {
+    0 - 13
+}
+
+// EAI_FAMILY: the resolver does not support the requested address family.
+pub fn dns_err_family() -> i64 {
+    0 - 14
+}
+
+// EAI_SOCKTYPE: the resolver does not support the requested socket type.
+pub fn dns_err_socktype() -> i64 {
+    0 - 15
+}
+
+// EAI_SERVICE: the service is not available for the socket type.
+pub fn dns_err_service() -> i64 {
+    0 - 16
+}
+
+// EAI_OVERFLOW: a resolver buffer overflowed.
+pub fn dns_err_overflow() -> i64 {
+    0 - 17
 }
 
 // ---------------------------------------------------------------------------
@@ -235,16 +264,14 @@ fn dns_name_ok(name_addr: i64, name_len: i64) -> i64 {
     1
 }
 
-// getaddrinfo return code -> dns_err_* (glibc and musl share these values).
+// getaddrinfo return code -> dns_err_*, one code each (glibc and musl share
+// these values).
 fn dns_map_gai(rc: i64) -> i64 {
+    if rc == 0 - 1 {
+        return dns_err_badflags();
+    }
     if rc == 0 - 2 {
         return dns_err_noname();
-    }
-    if rc == 0 - 5 {
-        return dns_err_nodata();
-    }
-    if rc == 0 - 9 {
-        return dns_err_nodata();
     }
     if rc == 0 - 3 {
         return dns_err_again();
@@ -252,26 +279,29 @@ fn dns_map_gai(rc: i64) -> i64 {
     if rc == 0 - 4 {
         return dns_err_fail();
     }
+    if rc == 0 - 5 {
+        return dns_err_nodata();
+    }
+    if rc == 0 - 6 {
+        return dns_err_family();
+    }
+    if rc == 0 - 7 {
+        return dns_err_socktype();
+    }
+    if rc == 0 - 8 {
+        return dns_err_service();
+    }
+    if rc == 0 - 9 {
+        return dns_err_addrfamily();
+    }
     if rc == 0 - 10 {
         return dns_err_memory();
     }
     if rc == 0 - 11 {
         return dns_err_system();
     }
-    if rc == 0 - 1 {
-        return dns_err_request();
-    }
-    if rc == 0 - 6 {
-        return dns_err_request();
-    }
-    if rc == 0 - 7 {
-        return dns_err_request();
-    }
-    if rc == 0 - 8 {
-        return dns_err_request();
-    }
     if rc == 0 - 12 {
-        return dns_err_request();
+        return dns_err_overflow();
     }
     dns_err_unknown()
 }

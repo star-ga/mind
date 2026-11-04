@@ -13,11 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
   `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
   bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
-  bytes, each getaddrinfo error has its own code, and a failed call returns no entries.
+  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
+  is `dns_err_unknown`), and a failed call returns no entries.
   `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
   a per-connect timeout and return a std.net TcpStream handle. `getrandom` and
-  `getaddrinfo` are classified as world reads, so programs that call them are attested
-  `nondeterministic`. (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`)
+  `getaddrinfo` are classified as world reads, and so are `entropy_fill`, `dns_resolve`,
+  `tcp_connect_host` and `tcp_connect_host_timeout`, because a caller's IR holds only the
+  call: a program that calls one is refused by the determinism veto without
+  `--allow-nondeterministic` and, with it, attested `nondeterministic`.
+  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
+  `tests/determinism_veto_control.rs`)
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
