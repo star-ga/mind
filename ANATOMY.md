@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1957 | **Est. tokens:** ~3,838,465
-**Generated:** 2026-11-04 12:48 UTC
+**Files:** 1958 | **Est. tokens:** ~3,849,047
+**Generated:** 2026-11-04 16:05 UTC
 
 ## Token Budget Guide
 
@@ -121,15 +121,15 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 49 | ~161,655 |
+| `src/eval/` | 49 | ~164,554 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 8 | ~27,651 |
+| `src/eval/string_equality/` | 8 | ~30,508 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 12 | ~101,775 |
+| `src/ir/` | 12 | ~101,849 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,672 |
@@ -146,14 +146,14 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~15,775 |
-| `src/type_checker/` | 19 | ~65,077 |
+| `src/test/` | 4 | ~16,297 |
+| `src/type_checker/` | 19 | ~65,193 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 431 | ~881,292 |
+| `tests/` | 432 | ~885,406 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1299,7 +1299,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5305 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5396 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1335,22 +1335,22 @@
 - `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `classify.rs` (~5033 tok, huge) — Copyright 2026 STARGA Inc.
-- `facts.rs` (~6702 tok, huge) — Copyright 2026 STARGA Inc.
-- `flows.rs` (~3509 tok, huge) — Copyright 2026 STARGA Inc.
+- `classify.rs` (~5342 tok, huge) — Copyright 2026 STARGA Inc.
+- `facts.rs` (~7677 tok, huge) — Copyright 2026 STARGA Inc.
+- `flows.rs` (~4135 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_equality.rs` (~2856 tok, huge) — Copyright 2025 STARGA Inc.
+- `string_equality.rs` (~4552 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `slots.rs` (~1658 tok, huge) — Copyright 2026 STARGA Inc.
+- `slots.rs` (~2091 tok, huge) — Copyright 2026 STARGA Inc.
 - `slot_tests.rs` (~2413 tok, huge) — Copyright 2026 STARGA Inc.
-- `sums.rs` (~735 tok, large) — Copyright 2026 STARGA Inc.
+- `sums.rs` (~772 tok, large) — Copyright 2026 STARGA Inc.
 - `tests.rs` (~4214 tok, huge) — Copyright 2025 STARGA Inc.
-- `walk.rs` (~3387 tok, huge) — Copyright 2026 STARGA Inc.
+- `walk.rs` (~3864 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_record.rs` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_record.rs` (~3662 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/struct_resolver/`
 
 - `inference.rs` (~2555 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1432,7 +1432,7 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17644 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17718 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_calls.rs` (~826 tok, large) — Copyright 2026 STARGA Inc.
@@ -1553,7 +1553,7 @@
 ### `src/test/`
 
 - `imports.rs` (~5967 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~6780 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7302 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -1565,7 +1565,7 @@
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_declarations.rs` (~2262 tok, huge) — Copyright 2026 STARGA Inc.
-- `lowering_refusals.rs` (~6981 tok, huge) — Copyright 2026 STARGA Inc.
+- `lowering_refusals.rs` (~7037 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_walk.rs` (~2232 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1576,7 +1576,7 @@
 - `fn_values.rs` (~1569 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~15126 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~15186 tok, huge) — Copyright 2025 STARGA Inc.
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 
@@ -2668,6 +2668,7 @@
 - `string_escape_decode_run.rs` (~1159 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_fail_closed.rs` (~959 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_flows_backend_parity.rs` (~4114 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_from_bytes_run.rs` (~664 tok, large) — Copyright 2025 STARGA Inc.
 - `string_ops_backend_parity.rs` (~5537 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
