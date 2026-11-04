@@ -269,6 +269,9 @@ Measurement notes for the current rows:
   each measured executed under this tier's feature set with `MIND_BENCH_REQUIRE=1`.
   The first two landed without their rows; they are added with the arity gates so the
   newest exec-tier gates are not protected by the aggregate floor alone.
+* `std_procgroup_run` (14) is an `exec` row added with the gate: 3 surface tests plus
+  the 11 cases of the one `mindc build` program that spawns itself (`target_os =
+  "linux"`, because it re-runs `/proc/self/exe`).
 
 ---
 

@@ -85,6 +85,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.json_canon",
     "std.net",
     "std.process",
+    "std.procgroup",
     "std.reactor",
     "std.regex",
     "std.ring",

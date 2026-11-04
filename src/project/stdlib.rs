@@ -54,6 +54,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.map", include_str!("../../std/map.mind")),
     ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
+    ("std.procgroup", include_str!("../../std/procgroup.mind")),
     ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
     ("std.ring", include_str!("../../std/ring.mind")),

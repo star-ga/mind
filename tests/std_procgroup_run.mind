@@ -1,0 +1,365 @@
+// Program for tests/std_procgroup_run.rs: one executable that is both the
+// parent and every child. The parent runs each case, spawning this same
+// executable through std.procgroup, and prints "k <key>" / "v <value>" pairs
+// that the Rust side checks. A child reads its slot index from
+// procgroup_task_index() and its case from PG_CASE.
+
+import std.string;
+import std.process;
+import std.procgroup;
+
+extern "C" {
+    unsafe fn sleep(seconds: i32) -> i32;
+    unsafe fn write(fd: i32, buf: *const u8, n: i64) -> i64;
+    unsafe fn getrlimit(resource: i32, rlim: i64) -> i32;
+    unsafe fn setrlimit(resource: i32, rlim: i64) -> i32;
+    unsafe fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32;
+    unsafe fn signal(signum: i32, handler: i64) -> i64;
+}
+
+fn cstr(s: String) -> i64 {
+    procgroup_cstr(s.addr, s.len)
+}
+
+fn kv(key: i64, val: i64) -> i64 {
+    print("k ", key);
+    print("v ", val);
+    0
+}
+
+// Value of the decimal digits a child wrote, or -1 when it wrote none.
+fn out_value(g: i64, i: i64) -> i64 {
+    let a: i64 = procgroup_stdout_addr(g, i);
+    let n: i64 = procgroup_stdout_len(g, i);
+    let mut v: i64 = 0;
+    let mut digits: i64 = 0;
+    let mut k: i64 = 0;
+    while k < n {
+        let c: i64 = __mind_load_i8(a + k);
+        if c >= 48 {
+            if c <= 57 {
+                v = v * 10 + (c - 48);
+                digits = digits + 1;
+            }
+        }
+        k = k + 1;
+    }
+    if digits == 0 {
+        return 0 - 1;
+    }
+    v
+}
+
+fn set_case(c: i64) -> i64 {
+    let _ = proc_setenv(cstr("PG_CASE"), procgroup_decimal(c));
+    0
+}
+
+fn case_of_env() -> i64 {
+    let rec: i64 = proc_getenv(cstr("PG_CASE"));
+    if __mind_load_i64(rec + 8) == 0 {
+        return 0;
+    }
+    __mind_load_i8(__mind_load_i64(rec + 0)) - 48
+}
+
+// Write `n` bytes of 'a' to stdout.
+fn write_bulk(n: i64) -> i64 {
+    let block: i64 = 65536;
+    let buf: i64 = __mind_alloc(block);
+    let mut k: i64 = 0;
+    while k < block {
+        __mind_store_i8(buf + k, 97);
+        k = k + 1;
+    }
+    let mut left: i64 = n;
+    while left > 0 {
+        let mut m: i64 = block;
+        if left < m {
+            m = left;
+        }
+        let w: i64 = write(1, buf as *const u8, m);
+        if w <= 0 {
+            left = 0;
+        } else {
+            left = left - w;
+        }
+    }
+    0
+}
+
+fn spawn_self(g: i64, n: i64) -> i64 {
+    let exe: i64 = procgroup_self_exe();
+    let mut i: i64 = 0;
+    while i < n {
+        let _ = procgroup_spawn(g, exe, 0, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn child_main(c: i64, idx: i64) -> i64 {
+    if c == 1 {
+        print(idx * idx + 1000);
+        return 0;
+    }
+    if c == 2 {
+        if idx == 3 {
+            print(33);
+            return 3;
+        }
+        if idx == 5 {
+            assert idx == 0, "child 5 aborts";
+        }
+        print(idx);
+        return 0;
+    }
+    if c == 3 {
+        print(idx + 70);
+        if idx == 2 {
+            while idx >= 0 {
+                let _ = sleep(30);
+            }
+        }
+        return 0;
+    }
+    if c == 4 {
+        let _ = write_bulk(300000 + idx);
+        return 0;
+    }
+    if c == 6 {
+        let _ = write_bulk(procgroup_max_output() + 100000);
+        return 0;
+    }
+    if c == 7 {
+        print(idx);
+        return 0;
+    }
+    if c == 8 {
+        // stdin must be at EOF (read 0), and the open descriptors past 2
+        // must not grow with the slot index (no sibling pipe inherited).
+        let buf: i64 = __mind_alloc(8);
+        let got: i64 = __mind_read(0, buf, 1, 0 - 1);
+        let mut fds: i64 = 0;
+        let mut fd: i64 = 3;
+        while fd < 256 {
+            if fcntl(fd as i32, 1, 0) as i64 >= 0 {
+                fds = fds + 1;
+            }
+            fd = fd + 1;
+        }
+        print(1000 * (got + 1) + fds);
+        return 0;
+    }
+    return 100;
+}
+
+// Case 1: 25 children, each writes a distinct value.
+fn case_distinct() -> i64 {
+    let _ = set_case(1);
+    let g: i64 = procgroup_new(25);
+    let _ = spawn_self(g, 25);
+    let _ = kv(1900, procgroup_task_index());
+    let _ = kv(1901, procgroup_len(g));
+    let _ = kv(1902, procgroup_wait_all(g, 60000));
+    let mut i: i64 = 0;
+    while i < 25 {
+        let _ = kv(1000 + i, procgroup_state(g, i));
+        let _ = kv(1100 + i, out_value(g, i));
+        let _ = kv(1200 + i, procgroup_exit_code(g, i));
+        i = i + 1;
+    }
+    let _ = kv(1903, procgroup_free(g));
+    0
+}
+
+// Case 2: one child exits 3, one aborts; both are counted and named.
+fn case_failures() -> i64 {
+    let _ = set_case(2);
+    let g: i64 = procgroup_new(8);
+    let _ = spawn_self(g, 8);
+    let _ = kv(2900, procgroup_wait_all(g, 60000));
+    let _ = kv(2901, procgroup_failures(g));
+    let mut i: i64 = 0;
+    while i < 8 {
+        let _ = kv(2000 + i, procgroup_state(g, i));
+        let _ = kv(2100 + i, procgroup_exit_code(g, i));
+        let _ = kv(2200 + i, procgroup_signal(g, i));
+        let _ = kv(2300 + i, out_value(g, i));
+        i = i + 1;
+    }
+    0
+}
+
+// Case 3: one child never ends; the deadline kills it, the rest finish.
+fn case_timeout() -> i64 {
+    let _ = set_case(3);
+    let g: i64 = procgroup_new(4);
+    let _ = spawn_self(g, 4);
+    let _ = kv(3903, procgroup_free(g));
+    let _ = kv(3900, procgroup_wait_all(g, 1500));
+    let mut i: i64 = 0;
+    while i < 4 {
+        let _ = kv(3000 + i, procgroup_state(g, i));
+        let _ = kv(3100 + i, procgroup_signal(g, i));
+        let _ = kv(3200 + i, out_value(g, i));
+        i = i + 1;
+    }
+    let _ = kv(3901, procgroup_wait_all(g, 1500));
+    let _ = kv(3902, procgroup_free(g));
+    0
+}
+
+// Case 4: every child writes more than a pipe holds, at the same time.
+fn case_bulk() -> i64 {
+    let _ = set_case(4);
+    let g: i64 = procgroup_new(4);
+    let _ = spawn_self(g, 4);
+    let _ = kv(4900, procgroup_wait_all(g, 60000));
+    let mut i: i64 = 0;
+    while i < 4 {
+        let _ = kv(4000 + i, procgroup_state(g, i));
+        let _ = kv(4100 + i, procgroup_stdout_len(g, i));
+        let _ = kv(4200 + i, procgroup_truncated(g, i));
+        i = i + 1;
+    }
+    0
+}
+
+// Case 5: arguments reach another program, a missing program is reported,
+// and a full group refuses a spawn.
+fn case_exec_and_full() -> i64 {
+    let g: i64 = procgroup_new(2);
+    let echo: i64 = cstr("echo");
+    let argv: i64 = __mind_alloc(16);
+    __mind_store_i64(argv + 0, cstr("procgroup-arg"));
+    __mind_store_i64(argv + 8, procgroup_decimal(42));
+    let _ = kv(5000, procgroup_spawn(g, echo, argv, 2));
+    let _ = kv(5001, procgroup_spawn(g, cstr("/nonexistent/procgroup-missing"), 0, 0));
+    let _ = kv(5002, procgroup_spawn(g, echo, argv, 2));
+    let _ = kv(5003, procgroup_wait_all(g, 60000));
+    let _ = kv(5004, procgroup_state(g, 0));
+    let _ = kv(5005, procgroup_stdout_len(g, 0));
+    let _ = kv(5006, out_value(g, 0));
+    let _ = kv(5007, procgroup_state(g, 1));
+    let _ = kv(5008, procgroup_exit_code(g, 1));
+    let _ = kv(5009, procgroup_len(g));
+    let _ = write(1, procgroup_stdout_addr(g, 0) as *const u8, procgroup_stdout_len(g, 0));
+    0
+}
+
+// Case 6: output past procgroup_max_output() is dropped and flagged.
+fn case_truncate() -> i64 {
+    let _ = set_case(6);
+    let g: i64 = procgroup_new(1);
+    let _ = spawn_self(g, 1);
+    let _ = kv(6900, procgroup_wait_all(g, 60000));
+    let _ = kv(6000, procgroup_state(g, 0));
+    let _ = kv(6001, procgroup_stdout_len(g, 0));
+    let _ = kv(6002, procgroup_truncated(g, 0));
+    0
+}
+
+// Case 7: a parent that is itself slot 41 keeps its index across spawns;
+// each child sees its own index.
+fn case_nested_index() -> i64 {
+    let _ = set_case(7);
+    let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), procgroup_decimal(41));
+    let g: i64 = procgroup_new(2);
+    let _ = spawn_self(g, 2);
+    let _ = kv(7900, procgroup_task_index());
+    let _ = kv(7901, procgroup_wait_all(g, 60000));
+    let _ = kv(7000, out_value(g, 0));
+    let _ = kv(7001, out_value(g, 1));
+    let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), cstr("4x"));
+    let _ = kv(7903, procgroup_task_index());
+    let _ = proc_unsetenv(cstr("MIND_PROCGROUP_TASK"));
+    let _ = kv(7902, procgroup_task_index());
+    0
+}
+
+// Case 8: inputs outside the contract are refused without side effects.
+fn case_bad_input() -> i64 {
+    let _ = kv(8000, procgroup_new(0));
+    let _ = kv(8001, procgroup_new(procgroup_max_children() + 1));
+    let _ = kv(8002, procgroup_spawn(0, procgroup_self_exe(), 0, 0));
+    let _ = kv(8003, procgroup_wait_all(0, 1000));
+    let g: i64 = procgroup_new(1);
+    let _ = kv(8004, procgroup_spawn(g, procgroup_self_exe(), 0, 0 - 1));
+    let _ = kv(8005, procgroup_len(g));
+    let _ = kv(8006, procgroup_wait_all(g, 1000));
+    let _ = kv(8007, procgroup_state(g, 0));
+    let _ = kv(8008, procgroup_stdout_addr(g, 5));
+    let _ = kv(8009, procgroup_cstr(0, 0 - 1));
+    let _ = kv(8010, procgroup_decimal(0 - 1));
+    0
+}
+
+// Case 9: a pipe that cannot be made (RLIMIT_NOFILE = 7 lowered to 3, so no
+// descriptor is free) still takes the slot and is counted as a failure.
+fn case_spawn_failure() -> i64 {
+    let saved: i64 = __mind_alloc(16);
+    let _ = getrlimit(7, saved);
+    let low: i64 = __mind_alloc(16);
+    __mind_store_i64(low + 0, 3);
+    __mind_store_i64(low + 8, __mind_load_i64(saved + 8));
+    let exe: i64 = procgroup_self_exe();
+    let g: i64 = procgroup_new(1);
+    let _ = kv(9004, setrlimit(7, low) as i64);
+    let _ = kv(9000, procgroup_spawn(g, exe, 0, 0));
+    let _ = setrlimit(7, saved);
+    let _ = kv(9001, procgroup_state(g, 0));
+    let _ = kv(9002, procgroup_wait_all(g, 1000));
+    let _ = kv(9003, procgroup_pid(g, 0));
+    0
+}
+
+// Case 10: stdin is /dev/null and a child holds no sibling's pipe.
+fn case_isolation() -> i64 {
+    let _ = set_case(8);
+    let g: i64 = procgroup_new(6);
+    let _ = spawn_self(g, 6);
+    let _ = kv(10900, procgroup_wait_all(g, 10000));
+    let mut i: i64 = 0;
+    while i < 6 {
+        let _ = kv(10000 + i, out_value(g, i));
+        i = i + 1;
+    }
+    0
+}
+
+// Case 11: with SIGCHLD ignored the kernel reaps the children itself; they
+// are reported lost, not left running and not counted as ok.
+fn case_lost() -> i64 {
+    let _ = set_case(7);
+    let g: i64 = procgroup_new(2);
+    let _ = signal(17, 1);
+    let _ = spawn_self(g, 2);
+    let _ = kv(11900, procgroup_wait_all(g, 5000));
+    let _ = signal(17, 0);
+    let _ = kv(11000, procgroup_state(g, 0));
+    let _ = kv(11001, procgroup_state(g, 1));
+    let _ = kv(11002, out_value(g, 0));
+    let _ = kv(11003, out_value(g, 1));
+    0
+}
+
+fn main() -> i64 {
+    let idx: i64 = procgroup_task_index();
+    if idx >= 0 {
+        return child_main(case_of_env(), idx);
+    }
+    let _ = case_distinct();
+    let _ = case_failures();
+    let _ = case_timeout();
+    let _ = case_bulk();
+    let _ = case_exec_and_full();
+    let _ = case_truncate();
+    let _ = case_nested_index();
+    let _ = case_bad_input();
+    let _ = case_spawn_failure();
+    let _ = case_isolation();
+    let _ = case_lost();
+    print("done ", 1);
+    0
+}

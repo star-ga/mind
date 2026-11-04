@@ -41,9 +41,8 @@ run_tier_cargo() {
 # Re-measure AT THE TIP of a landing, never mid-wave, and read the numbers off a
 # real run's own `harnesses` / `tests executed` lines rather than doing arithmetic
 # on a previous measurement. `-- --show-output` is REJECTED as a way to see skip
-# markers: it inflates these very floors. Both rules were paid for — the
-# measurement history and the demonstrations are in
-# docs/gates/exec-semantics-tiers.md §1-2.
+# markers: it inflates these very floors. Both rules were paid for — measurement
+# history and demonstrations: docs/gates/exec-semantics-tiers.md §1-2.
 # ---------------------------------------------------------------------------
 TIERS=(exec lowering pkg)
 
@@ -126,6 +125,7 @@ CRITICAL_exec=(
   "emit_object_relocatable 2"       # --emit object writes a linkable ET_REL object
   "intrinsic_call_arity 7"          # wrong-arity intrinsic calls refused at every depth
   "intrinsic_call_arity_build 5"    # the same refusal through the mindc binary
+  "std_procgroup_run 14"            # 25 children spawned, reaped, deadline-killed
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.

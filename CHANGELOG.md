@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`std.procgroup` — run many child processes and wait for all of them**
+  (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
+  `procgroup_spawn` / `procgroup_wait_all` start up to 4096 children, capture
+  each child's stdout through its own pipe (drained while the children run),
+  and wait for all of them with one deadline; a child still running at the
+  deadline is killed with `SIGKILL` and reported timed out. Every spawned slot
+  ends in one state (ok, non-zero exit, signal, timed out, spawn failed, lost),
+  and `procgroup_wait_all` returns how many are not ok. `procgroup_self_exe()`
+  plus `procgroup_task_index()` let one `mindc build` executable run itself N
+  times in parallel. Bundled and linked like the other substrate modules; not
+  in the native seed. `tests/std_procgroup_run.rs` builds a program with
+  `mindc build` that spawns 25 copies of itself.
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
