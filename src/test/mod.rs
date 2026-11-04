@@ -544,6 +544,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     let _bindings = support.map(|support| {
         eval::EvalBindingsGuard::install(support.bindings.clone(), support.entry_owner.clone())
     });
+    // `==` on enum values is evaluated only for an enum whose declaration has
+    // no payload variant, the one case the compiled program also compares by
+    // value (`eval::enum_cmp`).
+    let _enum_defs = eval::enum_cmp::install_enum_defs(&synthetic_module.items);
     let mut env = std::collections::HashMap::new();
     let outcome =
         eval::eval_module_value_with_env_mode(&synthetic_module, &mut env, None, ExecMode::Preview);
