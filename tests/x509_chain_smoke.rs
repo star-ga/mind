@@ -388,10 +388,10 @@ fn x509_rsa_3072_and_4096_issuers_verify() {
     type Pss = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64) -> i64;
     let pkcs1: Symbol<Pkcs1> = unsafe { lib.0.get(b"rsa_pkcs1_sha256_verify\0").unwrap() };
     let pss: Symbol<Pss> = unsafe { lib.0.get(b"rsa_pss_verify_sha256\0").unwrap() };
-    let mut n = vec![0u8; 1024];
+    let mut n = [0u8; 1024];
     n[0] = 128;
-    let sig = vec![1u8; 1024];
-    let msg = vec![2u8; 32];
+    let sig = [1u8; 1024];
+    let msg = [2u8; 32];
     for len in [128i64, 500, 1024] {
         let (np, sp, mp) = (n.as_ptr() as i64, sig.as_ptr() as i64, msg.as_ptr() as i64);
         assert_eq!(

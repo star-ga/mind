@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2101 | **Est. tokens:** ~3,936,530
-**Generated:** 2026-11-04 11:58 UTC
+**Files:** 2101 | **Est. tokens:** ~3,936,527
+**Generated:** 2026-11-04 12:20 UTC
 
 ## Token Budget Guide
 
@@ -154,7 +154,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 55 | ~247,999 |
-| `tests/` | 436 | ~902,351 |
+| `tests/` | 436 | ~902,348 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -2803,7 +2803,7 @@
 - `wide_integer_types.rs` (~517 tok, large) — Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
-- `x509_chain_smoke.rs` (~5073 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `x509_chain_smoke.rs` (~5070 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `tests/x509/`
 
 - `README.md` (~1382 tok, large) — X.509 chain and trust-anchor tests
