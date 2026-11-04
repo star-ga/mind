@@ -89,6 +89,8 @@ mod fixed_array;
 #[path = "field_access.rs"]
 mod field_access;
 #[cfg(feature = "std-surface")]
+use field_access::receiver_struct_type;
+#[cfg(feature = "std-surface")]
 #[path = "fixed_array_struct.rs"]
 pub(crate) mod fixed_array_struct;
 #[cfg(feature = "std-surface")]
@@ -1149,10 +1151,10 @@ pub fn lower_to_ir(module: &ast::Module) -> Result<IRModule, MaterializationRefu
 pub struct LoweringContext {
     pub(super) budget: MaterializationBudget,
     pub(super) refusal: Option<MaterializationRefusal>,
-    /// The refusal a field access had before the bundled `String` schema was
-    /// registered for it; reinstated if the module declares its own `String`.
+    /// Whether the module's `String` is the bundled one, so a single
+    /// translation unit lays out and reads `String` values with its schema.
     #[cfg(feature = "std-surface")]
-    pub(super) std_string_seed: Option<MaterializationRefusal>,
+    pub(super) std_string_visible: bool,
     #[cfg(feature = "cross-module-imports")]
     pub(super) canonical: Option<canonical_lowering::CanonicalLoweringState>,
 }
@@ -1163,7 +1165,7 @@ impl LoweringContext {
             budget: MaterializationBudget::new(limits),
             refusal: None,
             #[cfg(feature = "std-surface")]
-            std_string_seed: None,
+            std_string_visible: false,
             #[cfg(feature = "cross-module-imports")]
             canonical: None,
         }
@@ -1320,6 +1322,10 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             }
             return ir;
         }
+    }
+    #[cfg(feature = "std-surface")]
+    {
+        context.std_string_visible = field_access::std_string_visible(&module.items);
     }
     // Run the owning AST prepass before lower_expr's recursive stack.  The
     // prepass also normalizes proven string equality, while this call retains
@@ -1986,8 +1992,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     callable_exports::retain_c_abi_exports(&module.items, &mut ir);
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
     imported_extern_decls::prepend_imported_extern_decls(&mut ir);
-    #[cfg(feature = "std-surface")]
-    field_access::refuse_shadowed_std_string(&module.items, context);
+
     ir
 }
 
@@ -3590,52 +3595,13 @@ fn receiver_collection_sentinel(
     }
 }
 
-/// Resolve the STRUCT-TYPE NAME a receiver evaluates to: an Ident via
-/// `struct_env` (struct-typed param/let), or a nested `s.field` whose declared
-/// field type is itself a struct. None when not a known struct.
-#[cfg(feature = "std-surface")]
-fn receiver_struct_type(
-    receiver: &ast::Node,
-    ir: &IRModule,
-    struct_env: &HashMap<String, String>,
-) -> Option<String> {
-    match receiver {
-        ast::Node::Lit(Literal::Ident(v), _) => {
-            let s = struct_env.get(v)?;
-            let key = struct_key_for(ir, s);
-            if ir.struct_defs.contains_key(key) {
-                Some(key.to_string())
-            } else {
-                None
-            }
-        }
-        ast::Node::FieldAccess {
-            receiver: base,
-            field,
-            ..
-        } => {
-            let sname = receiver_struct_type(base, ir, struct_env)?;
-            let sname = struct_key_for(ir, &sname);
-            let fields = ir.struct_defs.get(sname)?;
-            let idx = fields.iter().position(|f| f == field)?;
-            match ir.struct_field_types.get(sname)?.get(idx)? {
-                TypeAnn::Named(n) if ir.struct_defs.contains_key(struct_key_for(ir, n)) => {
-                    Some(struct_key_for(ir, n).to_string())
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 /// The struct_env value tracking an ELEMENT of declared type `ty`: a string
 /// element → `"String"`; a struct element → its type name; a nested
 /// collection element → its collection sentinel. None for a plain scalar.
 #[cfg(feature = "std-surface")]
 fn element_type_sentinel(ty: &TypeAnn) -> Option<String> {
     match ty {
-        TypeAnn::Named(n) if n == "string" || n == "String" => Some("String".to_string()),
+        _ if field_access::string_type_name(ty).is_some() => Some("String".to_string()),
         // Dynamic `bytes` is physically the SAME growable std.vec u8 record as
         // `array<u8>` (see `is_growable_bytes_ty`). Track it as the vec sentinel
         // so a `let ca = f()` bound to a `-> bytes` call resolves `ca[i]` /
@@ -3734,8 +3700,13 @@ fn let_rhs_collection_track(
     // this existing RHS helper instead of adding string-annotation branches to
     // `lower_expr`: that function recurses once per expression node, and even a
     // small additional branch in its merged debug frame overflows the default
-    // Windows test-thread stack on `std/json.mind`.
-    if matches!(value, ast::Node::Lit(Literal::Str(_), _)) {
+    // Windows test-thread stack on `std/json.mind`. A borrowed or parenthesised
+    // string (`let r = &s;`) is that string.
+    if matches!(
+        value,
+        ast::Node::Lit(Literal::Str(_), _) | ast::Node::Ref { .. } | ast::Node::Paren(..)
+    ) && field_access::receiver_is_string(value, ir, struct_env, receiver_types)
+    {
         return Some(("String".to_string(), None));
     }
     // An indexed read from a tracked collection carries the element owner of
@@ -3879,7 +3850,11 @@ fn resolve_let_struct_binding(
         Some((s.to_string(), None))
     } else if let Some(s) = set_sentinel_for_opt(ann) {
         Some((s.to_string(), None))
-    } else if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String") {
+    } else if ann
+        .as_ref()
+        .and_then(field_access::string_type_name)
+        .is_some()
+    {
         Some(("String".to_string(), None))
     } else if let Some(TypeAnn::Named(n)) = ann {
         ir.struct_defs
@@ -5985,14 +5960,15 @@ pub(super) fn lower_expr_inner(
                 }
                 // Struct-typed param → record its struct TYPE NAME so a field
                 // access on it (`analyzed.determinism`) resolves the field's type
-                // for the collection-method desugar. Just the Named name; the
-                // struct may be cross-module (merged into struct_defs from the
-                // global registry), so no struct_defs check here.
+                // for the collection-method desugar. Just the Named name (a
+                // borrowed string: the string type); the struct may be
+                // cross-module (merged into struct_defs from the global
+                // registry), so no struct_defs check here.
                 #[cfg(feature = "std-surface")]
-                if let TypeAnn::Named(n) = &param.ty {
+                if let Some(n) = field_access::param_owner(&param.ty) {
                     fn_struct_env
                         .entry(param.name.clone())
-                        .or_insert_with(|| n.clone());
+                        .or_insert_with(|| n.to_string());
                 }
             }
 
@@ -8877,6 +8853,9 @@ pub(super) fn lower_expr_inner(
             let struct_key: &str = name.as_str();
 
             // Canonical field order, if the schema is known.
+            #[cfg(feature = "std-surface")]
+            let canonical = field_access::literal_field_order(ir, struct_key, context);
+            #[cfg(not(feature = "std-surface"))]
             let canonical = ir.struct_defs.get(struct_key).cloned();
             let order: Vec<&ast::StructLitField> = match canonical {
                 Some(names) => names

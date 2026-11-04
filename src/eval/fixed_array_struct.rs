@@ -132,24 +132,14 @@ pub(super) fn refuse_unrepresentable_field(
 ) -> ValueId {
     // Preserve the first terminal failure even if an enclosing expression
     // visits another field before the invocation returns its refusal.
-    context
-        .refusal
-        .get_or_insert(unrepresentable_field(operation, span));
+    context.refusal.get_or_insert(
+        crate::eval::materialization::MaterializationRefusal::UnsupportedLoweringOperation {
+            operation,
+            start: span.start(),
+            end: span.end(),
+        },
+    );
     ir.fresh()
-}
-
-/// The E6009 refusal of a field `operation` at `span` that has no inline
-/// struct-field representation.
-#[cfg(feature = "std-surface")]
-pub(super) fn unrepresentable_field(
-    operation: &'static str,
-    span: &ast::Span,
-) -> crate::eval::materialization::MaterializationRefusal {
-    crate::eval::materialization::MaterializationRefusal::UnsupportedLoweringOperation {
-        operation,
-        start: span.start(),
-        end: span.end(),
-    }
 }
 
 #[cfg(feature = "std-surface")]

@@ -9,15 +9,14 @@ use super::fixed_array_struct::{
     fixed_array_cell_bits_ty, fixed_array_cell_supported_in, fixed_array_cell_type,
     load_helper_for_width, lower_struct_field_value, refuse_invalid_field_receiver,
     refuse_unrepresentable_field, store_fixed_array_field, store_helper_for_width,
-    struct_field_type, struct_field_width, struct_layout, unrepresentable_field,
+    struct_field_type, struct_field_width, struct_layout,
 };
 use super::{
     HashMap, LoweringContext, MAP_SENTINEL, MAP_STR_SENTINEL, SET_SENTINEL, SET_STR_SENTINEL,
-    lower_expr, mask_narrow_let, receiver_collection_sentinel, receiver_struct_type,
-    resolve_numeric_field_receiver_ty, struct_key_for,
+    lower_expr, mask_narrow_let, receiver_collection_sentinel, resolve_numeric_field_receiver_ty,
+    struct_key_for,
 };
 use crate::ast::{self, Literal, TypeAnn};
-use crate::eval::materialization::MaterializationRefusal;
 use crate::eval::slice_abi::is_vec_handle_sentinel;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 use crate::project::std_struct_schema::bundled_struct_schema;
@@ -131,19 +130,8 @@ pub(super) fn lower_field_access(
             }
         }
     }
-    let resolved =
-        resolve_field(receiver, field, span, ir, struct_env, receiver_types).or_else(|| {
-            let refusal = unrepresentable_field("struct field read", span);
-            resolve_string_field(
-                receiver,
-                field,
-                refusal,
-                ir,
-                struct_env,
-                receiver_types,
-                context,
-            )
-        });
+    let resolved = resolve_field(receiver, field, span, ir, struct_env, receiver_types)
+        .or_else(|| resolve_string_field(receiver, field, ir, struct_env, receiver_types, context));
 
     match resolved {
         Some((var_name_opt, idx, struct_name)) => {
@@ -302,19 +290,8 @@ pub(super) fn lower_field_assign(
     receiver_types: &HashMap<ast::Span, String>,
     context: &mut LoweringContext,
 ) -> ValueId {
-    let resolved =
-        resolve_field(receiver, field, span, ir, struct_env, receiver_types).or_else(|| {
-            let refusal = unrepresentable_field("struct field assignment", span);
-            resolve_string_field(
-                receiver,
-                field,
-                refusal,
-                ir,
-                struct_env,
-                receiver_types,
-                context,
-            )
-        });
+    let resolved = resolve_field(receiver, field, span, ir, struct_env, receiver_types)
+        .or_else(|| resolve_string_field(receiver, field, ir, struct_env, receiver_types, context));
 
     match resolved {
         Some((var_name_opt, idx, struct_name)) => {
@@ -438,19 +415,17 @@ fn resolve_field(
 /// Resolve `field` on a `String` value against the bundled `std/string.mind`
 /// schema, the layout every compiler-built string has. A project build
 /// installs that schema; a single translation unit has no project registry, so
-/// unless the file declares `String` itself the schema is registered here, and
-/// `refusal` (what this access reported without it) is kept for
-/// [`refuse_shadowed_std_string`]. A registered `String` with another layout
-/// is the program's own, and a string value is never read through it.
+/// the schema is registered here when the module's `String` is the bundled one
+/// ([`std_string_visible`]). A registered `String` with another layout is the
+/// program's own, and a string value is never read through it.
 #[cfg(feature = "std-surface")]
 fn resolve_string_field(
     receiver: &ast::Node,
     field: &str,
-    refusal: MaterializationRefusal,
     ir: &mut IRModule,
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<ast::Span, String>,
-    context: &mut LoweringContext,
+    context: &LoweringContext,
 ) -> Option<FieldSlot> {
     if !receiver_is_string(receiver, ir, struct_env, receiver_types) {
         return None;
@@ -463,12 +438,12 @@ fn resolve_string_field(
                 return None;
             }
         }
-        None => {
+        None if context.std_string_visible => {
             ir.struct_defs.insert(STD_STRING.to_string(), names.clone());
             ir.struct_field_types
                 .insert(STD_STRING.to_string(), types.clone());
-            context.std_string_seed.get_or_insert(refusal);
         }
+        None => return None,
     }
     let binding = match receiver {
         ast::Node::Lit(Literal::Ident(var_name), _) => Some(var_name.clone()),
@@ -477,12 +452,13 @@ fn resolve_string_field(
     Some((binding, idx, STD_STRING.to_string()))
 }
 
-/// A module that declares its own `String` after a field access lowered
-/// against the bundled schema, or inside a `module { … }` block (which this
-/// lowering never registers), does not use that layout: restore the refusal
-/// the access had before the schema was registered.
+/// Whether the module's `String` is the bundled one: it declares no `String`
+/// of its own (a struct, enum or alias), at top level or inside a
+/// `module { … }` block, which this lowering never registers. Decided before
+/// lowering, so a `String` declared after a field access or a literal still
+/// keeps the bundled layout away from both.
 #[cfg(feature = "std-surface")]
-pub(super) fn refuse_shadowed_std_string(items: &[ast::Node], context: &mut LoweringContext) {
+pub(super) fn std_string_visible(items: &[ast::Node]) -> bool {
     fn declares(items: &[ast::Node]) -> bool {
         items.iter().any(|item| match item {
             ast::Node::StructDef { name, .. }
@@ -492,18 +468,103 @@ pub(super) fn refuse_shadowed_std_string(items: &[ast::Node], context: &mut Lowe
             _ => false,
         })
     }
-    if let Some(refusal) = context.std_string_seed.take() {
-        if declares(items) {
-            context.refusal.get_or_insert(refusal);
+    !declares(items)
+}
+
+/// The field order a struct literal of `key` is laid out in: its registered
+/// schema, else, for `String` in a module whose `String` is the bundled one,
+/// the bundled order, the layout a project build gives it and every field
+/// access reads. An all-`i64` bundled layout is the one an unregistered
+/// literal already has, so it is not registered (the module's artifact is
+/// unchanged); any other layout is, so the literal's stores use its widths.
+#[cfg(feature = "std-surface")]
+pub(super) fn literal_field_order(
+    ir: &mut IRModule,
+    key: &str,
+    context: &LoweringContext,
+) -> Option<Vec<String>> {
+    if let Some(names) = ir.struct_defs.get(key) {
+        return Some(names.clone());
+    }
+    if key != STD_STRING || !context.std_string_visible {
+        return None;
+    }
+    let (names, types) = bundled_struct_schema(STD_STRING)?;
+    if !types.iter().all(|ty| struct_field_width(ty) == (8, true)) {
+        ir.struct_defs.insert(STD_STRING.to_string(), names.clone());
+        ir.struct_field_types
+            .insert(STD_STRING.to_string(), types.clone());
+    }
+    Some(names.clone())
+}
+
+/// The string type (`string` or `String`) that `ty` names, looking through
+/// `&` and `&mut`: a borrow lowers to the value it borrows (the `Ref` arm of
+/// `lower_expr`), so a borrowed string is the same `String` record.
+#[cfg(feature = "std-surface")]
+pub(super) fn string_type_name(ty: &TypeAnn) -> Option<&str> {
+    match ty {
+        TypeAnn::Named(n) if n == "string" || n == STD_STRING => Some(n),
+        TypeAnn::Ref { target, .. } => string_type_name(target),
+        _ => None,
+    }
+}
+
+/// The `struct_env` owner of a parameter of type `ty`: a named type, or the
+/// string type a borrowed string names.
+#[cfg(feature = "std-surface")]
+pub(super) fn param_owner(ty: &TypeAnn) -> Option<&str> {
+    match ty {
+        TypeAnn::Named(n) => Some(n),
+        _ => string_type_name(ty),
+    }
+}
+
+/// Resolve the STRUCT-TYPE NAME a receiver evaluates to: an Ident via
+/// `struct_env` (struct-typed param/let), or a nested `s.field` whose declared
+/// field type is itself a struct. None when not a known struct.
+#[cfg(feature = "std-surface")]
+pub(super) fn receiver_struct_type(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+) -> Option<String> {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => {
+            let s = struct_env.get(v)?;
+            let key = struct_key_for(ir, s);
+            if ir.struct_defs.contains_key(key) {
+                Some(key.to_string())
+            } else {
+                None
+            }
         }
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            ..
+        } => {
+            let sname = receiver_struct_type(base, ir, struct_env)?;
+            let sname = struct_key_for(ir, &sname);
+            let fields = ir.struct_defs.get(sname)?;
+            let idx = fields.iter().position(|f| f == field)?;
+            match ir.struct_field_types.get(sname)?.get(idx)? {
+                TypeAnn::Named(n) if ir.struct_defs.contains_key(struct_key_for(ir, n)) => {
+                    Some(struct_key_for(ir, n).to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
 /// True when a receiver is the std `String` type — an Ident bound to a string
-/// (`struct_env` sentinel `"String"`, set for string lets/params and for-each
-/// elements over `array<string>`), a struct-FIELD whose declared type is
-/// `string`, or a typed function call returning `string`. A string receiver's
-/// methods route to the `string_<method>` std free functions
+/// (`struct_env` sentinel `"String"`, set for string lets/params, borrowed
+/// ones included, and for-each elements over `array<string>`), a struct-FIELD
+/// or a typed function call whose declared type is a (borrowed) `string`, a
+/// `String { … }` literal, or a borrow or parenthesis around any of these. A
+/// string receiver's methods route to the `string_<method>` std free functions
 /// (`.split`→string_split, `.trim`→string_trim, etc.), and its fields resolve
 /// against the `String` schema (`resolve_string_field`).
 #[cfg(feature = "std-surface")]
@@ -523,6 +584,10 @@ pub(super) fn receiver_is_string(
             .get(v)
             .map(|s| s == "String" || s == "string")
             .unwrap_or(false),
+        ast::Node::StructLit { name, .. } => name == STD_STRING,
+        ast::Node::Paren(inner, _) | ast::Node::Ref { inner, .. } => {
+            receiver_is_string(inner, ir, struct_env, receiver_types)
+        }
         ast::Node::FieldAccess {
             receiver: base,
             field,
@@ -537,15 +602,14 @@ pub(super) fn receiver_is_string(
                     let idx = ir.struct_defs.get(&sn)?.iter().position(|f| f == field)?;
                     ir.struct_field_types.get(&sn)?.get(idx).cloned()
                 })
-                .map(|ty| matches!(ty, TypeAnn::Named(n) if n == "string" || n == "String"))
-                .unwrap_or(false)
+                .is_some_and(|ty| string_type_name(&ty).is_some())
         }
         ast::Node::Call { callee, .. } => ir
             .fn_signatures
             .get(callee)
             .and_then(|(_, ret)| ret.clone())
             .or_else(|| crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned()))
-            .is_some_and(|ty| matches!(ty, TypeAnn::Named(n) if n == "string" || n == "String")),
+            .is_some_and(|ty| string_type_name(&ty).is_some()),
         _ => false,
     }
 }
