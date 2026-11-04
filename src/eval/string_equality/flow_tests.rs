@@ -71,7 +71,7 @@ fn values_of_unestablished_type_stored_in_integer_slots_are_not_trusted() {
     // A value the pass cannot type at all (a closure's result).
     let closure = format!(
         "{EQH}fn p() -> i64 {{
-            let f = |x| x
+            let f = |; x: i64| -> i64 {{ x }}
             return eqh(f(\"abc\"), f(\"abc\"))
         }}"
     );
