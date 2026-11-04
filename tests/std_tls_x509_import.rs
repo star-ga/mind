@@ -373,7 +373,14 @@ fn x509_refusals_before_any_signature_agree_in_test_and_build() {
 }
 
 /// A valid RSA chain verifies (0) and the same chain under an anchor with the
-/// issuer's name and another key is refused (-3), on both engines.
+/// issuer's name and another key is refused (-3), on both engines. A debug
+/// build of the evaluator needs about 14 minutes for the two verifications, so
+/// this runs in release builds only; the build set runs both chains in every
+/// profile.
+#[cfg_attr(
+    debug_assertions,
+    ignore = "two RSA-2048 verifications take about 14 minutes in a debug-profile mindc test"
+)]
 #[test]
 fn x509_rsa_chain_and_wrong_key_agree_in_test_and_build() {
     x509_interp_and_build("x509_rsa", X509_INTERP_RSA);

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2101 | **Est. tokens:** ~3,936,528
-**Generated:** 2026-11-04 13:19 UTC
+**Files:** 2101 | **Est. tokens:** ~3,936,605
+**Generated:** 2026-11-04 13:57 UTC
 
 ## Token Budget Guide
 
@@ -154,7 +154,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 55 | ~247,999 |
-| `tests/` | 436 | ~902,348 |
+| `tests/` | 436 | ~902,425 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -2714,7 +2714,7 @@
 - `std_surface_vec_module.rs` (~1809 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_zeroed.rs` (~1097 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3251 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_tls_x509_import.rs` (~6737 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_tls_x509_import.rs` (~6814 tok, huge) — Copyright 2026 STARGA Inc.
 - `stmt_keyword_recognizer.rs` (~2527 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
