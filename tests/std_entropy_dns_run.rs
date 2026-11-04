@@ -358,6 +358,19 @@ fn main() -> i64 {
     if dns.dns_status(dns.dns_resolve(string_addr(nul), string_len(nul))) != dns.dns_err_name() {
         return 20;
     }
+    let del: i64 = __mind_alloc(3);
+    __mind_store_i8(del + 0, 97);
+    __mind_store_i8(del + 1, 98);
+    __mind_store_i8(del + 2, 127);
+    if dns.dns_status(dns.dns_resolve(del, 3)) != dns.dns_err_name() {
+        return 21;
+    }
+    if dns.dns_family(r, 0 - 1) != 0 {
+        return 22;
+    }
+    if dns.dns_addr_byte(r, 0, 0 - 1) != 0 - 1 {
+        return 23;
+    }
     return 42;
 }
 "#;
@@ -369,6 +382,200 @@ fn dns_resolves_localhost_and_refuses_bad_names() {
     };
     let (code, _) = run(&exe, None, Duration::from_secs(60));
     assert_eq!(code, 42, "dns_resolve check {code} failed (see DNS_MAIN)");
+}
+
+/// A `getaddrinfo` / `freeaddrinfo` pair, preloaded, whose answer is chosen by
+/// the first byte of the name: `eNN` returns -NN, `z` success with no list,
+/// `k` 32 IPv4 nodes (10.0.0.0 .. 10.0.0.31), `o` 33 nodes, `f` family 99,
+/// `l` an IPv4 node with a 28-byte address length, `n` no address, `s` a
+/// sockaddr family that disagrees with ai_family, `x` one good node then a bad one.
+const GAI_SHIM: &str = r#"fn sh_zero(p: i64, n: i64) {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, 0);
+        i = i + 1;
+    }
+}
+
+fn sh_node(fam: i64, safam: i64, alen: i64, with_addr: i64, octet: i64, next: i64) -> i64 {
+    let nd: i64 = __mind_alloc(48);
+    sh_zero(nd, 48);
+    __mind_store_i32(nd + 4, fam);
+    __mind_store_i32(nd + 8, 1);
+    __mind_store_i32(nd + 16, alen);
+    if with_addr == 1 {
+        let sa: i64 = __mind_alloc(28);
+        sh_zero(sa, 28);
+        __mind_store_i16(sa, safam);
+        __mind_store_i8(sa + 4, 10);
+        __mind_store_i8(sa + 7, octet);
+        __mind_store_i64(nd + 24, sa);
+    }
+    __mind_store_i64(nd + 40, next);
+    return nd;
+}
+
+fn sh_chain(n: i64) -> i64 {
+    let mut head: i64 = 0;
+    let mut i: i64 = n - 1;
+    while i >= 0 {
+        head = sh_node(2, 2, 16, 1, i, head);
+        i = i - 1;
+    }
+    return head;
+}
+
+pub fn getaddrinfo(node: i64, service: i64, hints: i64, res: i64) -> i64 {
+    let b0: i64 = __mind_load_i8(node);
+    __mind_store_i64(res, 0);
+    if b0 == 101 {
+        let d1: i64 = __mind_load_i8(node + 1) - 48;
+        let d2: i64 = __mind_load_i8(node + 2) - 48;
+        return 0 - (d1 * 10 + d2);
+    }
+    let mut head: i64 = 0;
+    if b0 == 107 {
+        head = sh_chain(32);
+    }
+    if b0 == 111 {
+        head = sh_chain(33);
+    }
+    if b0 == 102 {
+        head = sh_node(99, 99, 16, 1, 1, 0);
+    }
+    if b0 == 108 {
+        head = sh_node(2, 2, 28, 1, 1, 0);
+    }
+    if b0 == 110 {
+        head = sh_node(2, 2, 16, 0, 1, 0);
+    }
+    if b0 == 115 {
+        head = sh_node(2, 10, 16, 1, 1, 0);
+    }
+    if b0 == 120 {
+        head = sh_node(2, 2, 16, 1, 1, sh_node(99, 99, 16, 1, 2, 0));
+    }
+    __mind_store_i64(res, head);
+    return 0;
+}
+
+pub fn freeaddrinfo(res: i64) -> i64 {
+    return 0;
+}
+"#;
+
+const GAI_MAIN: &str = r#"import std.dns;
+import std.string;
+
+fn st(s: String) -> i64 {
+    let r: i64 = dns.dns_resolve(string_addr(s), string_len(s));
+    if dns.dns_status(r) != dns.dns_ok() {
+        if dns.dns_count(r) != 0 {
+            return 1000;
+        }
+        if dns.dns_family(r, 0) != 0 {
+            return 1001;
+        }
+    }
+    return dns.dns_status(r);
+}
+
+fn main() -> i64 {
+    if st("e01") != dns.dns_err_request() {
+        return 1;
+    }
+    if st("e02") != dns.dns_err_noname() {
+        return 2;
+    }
+    if st("e03") != dns.dns_err_again() {
+        return 3;
+    }
+    if st("e04") != dns.dns_err_fail() {
+        return 4;
+    }
+    if st("e05") != dns.dns_err_nodata() {
+        return 5;
+    }
+    if st("e06") != dns.dns_err_request() {
+        return 6;
+    }
+    if st("e07") != dns.dns_err_request() {
+        return 7;
+    }
+    if st("e08") != dns.dns_err_request() {
+        return 8;
+    }
+    if st("e09") != dns.dns_err_nodata() {
+        return 9;
+    }
+    if st("e10") != dns.dns_err_memory() {
+        return 10;
+    }
+    if st("e11") != dns.dns_err_system() {
+        return 11;
+    }
+    if st("e12") != dns.dns_err_request() {
+        return 12;
+    }
+    if st("e13") != dns.dns_err_unknown() {
+        return 13;
+    }
+    if st("z") != dns.dns_err_empty() {
+        return 14;
+    }
+    if st("o") != dns.dns_err_too_many() {
+        return 15;
+    }
+    if st("f") != dns.dns_err_entry() {
+        return 16;
+    }
+    if st("l") != dns.dns_err_entry() {
+        return 17;
+    }
+    if st("n") != dns.dns_err_entry() {
+        return 18;
+    }
+    if st("s") != dns.dns_err_entry() {
+        return 19;
+    }
+    if st("x") != dns.dns_err_entry() {
+        return 20;
+    }
+    let k: String = "k";
+    let r: i64 = dns.dns_resolve(string_addr(k), string_len(k));
+    if dns.dns_status(r) != dns.dns_ok() {
+        return 21;
+    }
+    if dns.dns_count(r) != 32 {
+        return 22;
+    }
+    if dns.dns_addr_byte(r, 0, 3) != 0 {
+        return 23;
+    }
+    if dns.dns_addr_byte(r, 31, 0) != 10 {
+        return 24;
+    }
+    if dns.dns_addr_byte(r, 31, 3) != 31 {
+        return 25;
+    }
+    return 42;
+}
+"#;
+
+#[test]
+fn dns_maps_every_resolver_error_and_never_returns_a_partial_list() {
+    let target = "std_dns_gai_run";
+    let Some(exe) = build_exe(target, GAI_MAIN) else {
+        return;
+    };
+    let dir = common::scratch_dir(target);
+    let src = common::scratch_src_in(&dir, "gai_shim.mind", GAI_SHIM);
+    let shim = common::emit_shared_in(&dir, "gai_shim", &src, "gai_shim.so", &[]);
+    let (code, _) = run(&exe, Some(&shim), Duration::from_secs(60));
+    assert_eq!(
+        code, 42,
+        "getaddrinfo shim check {code} failed (see GAI_MAIN)"
+    );
 }
 
 // ─── std.dns: tcp_connect_host ───────────────────────────────────────────────
