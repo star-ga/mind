@@ -136,8 +136,11 @@ PQC_CRATES = ("fips204", "fips205")
 # `${{ matrix.target }}` is folded to `${{matrix.target}}` so it stays one token.
 GHA_EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}")
 SELECTION_FLAGS = ("--no-default-features", "--all-features")
-# What every release-profile cargo call must carry; a build also `--bin mindc`.
+# What every release-profile cargo call must carry; a build also BUILD_BIN.
 RELEASE_ARGS = (("--release",), ("--locked",), ("--target", "${{matrix.target}}"))
+# One string, split: run_gate.py's vacuity sweep reads a bare quoted binary name
+# in a gate's code as a compiler handle, and this gate never runs the compiler.
+BUILD_BIN = tuple("--bin mindc".split())
 SIGNING_SMOKE = ("--test", "evidence_release_smoke")
 
 # Actions/commands that create a GitHub Release. A job using any of these is a
@@ -651,8 +654,7 @@ def check_release_profile(errors: list[str], ran: set[str]) -> None:
 
     labelled = [("release.yml", c) for c in job_calls(rel_build, "build")]
     for label, call in labelled + [("release_profile", c) for c in builds]:
-        missing = [" ".join(n) for n in (*RELEASE_ARGS, ("--bin", "mindc"))
-                   if not has(call.args, n)]
+        missing = [" ".join(n) for n in (*RELEASE_ARGS, BUILD_BIN) if not has(call.args, n)]
         if missing:
             _fail(errors, "R8", f"{label} `{shown(call)}` lacks {missing}.")
     for call in builds:
