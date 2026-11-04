@@ -77,6 +77,8 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.arena",
     "std.async",
     "std.blas",
+    "std.dns",
+    "std.entropy",
     "std.fs",
     "std.http",
     "std.io_canon",

@@ -44,6 +44,8 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.async", include_str!("../../std/async.mind")),
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.dns", include_str!("../../std/dns.mind")),
+    ("std.entropy", include_str!("../../std/entropy.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
     ("std.http", include_str!("../../std/http.mind")),
     ("std.io", include_str!("../../std/io.mind")),

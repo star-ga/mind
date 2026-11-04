@@ -462,6 +462,10 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     "socket",
     "bind",
     "listen",
+    // std.entropy / std.dns: kernel CSPRNG bytes, and the resolver's answer
+    // (hosts file, resolver config, network).
+    "getrandom",
+    "getaddrinfo",
     "ioctl",   // device state
     "fork",    // returns a pid, and diverges the process
     "waitpid", // child scheduling outcome
