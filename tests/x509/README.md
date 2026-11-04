@@ -83,8 +83,8 @@ matrix: positive EC / RSA-PKCS1 / RSA-PSS / P-384 chains through intermediates,
 DER and PEM anchor bundles, and each refusal class), then the regression cases
 for the fixes carried with the validator: RSA-3072/4096 and RSA-PSS 4096
 issuers, an anchor's own signature algorithm not poisoning verification, the
-last-certificate-to-anchor signature check, leaf expiry on its own, the
-wildcard rules, and the trust-anchor policy above. They read `testdata/` and
+last-certificate-to-anchor signature check, leaf expiry and leaf not-yet-valid
+on their own, the wildcard rules, and the trust-anchor policy above. They read `testdata/` and
 `testdata/adv/` (RSA-3072/4096 chains, a SHA-1 self-signed root, mixed DER/PEM
 anchor bundles, a cross-signed anchor pair, and RSASSA-PSS/SHA-384 versus
 sha384WithRSAEncryption self-signed anchors).

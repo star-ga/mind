@@ -9,7 +9,8 @@
 // the retry keeps CH1 entropy, random, session id, identity and offered ALPN.
 // Initial entropy: random[32], session id[32], x25519 scalar[32], optionally
 // hybrid entropy[96]. Build requires the same entropy length on the retry.
-// Only RSA-PSS SHA256 CertificateVerify is implemented. Certificate/handshake
+// Only RSA-PSS SHA256 CertificateVerify with an rsaEncryption leaf key is
+// implemented; any other leaf key type is refused at CV. Certificate/handshake
 // message cap 8192, transcript cap 16384, cookie cap 254, ALPN offer cap 1024.
 // Tests: tests/std_tls_x509_import.rs (mindc test and the mindc build executable).
 // Modules: tls13_client_core (state layout, transcript, record protection),
@@ -251,6 +252,12 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
 
         if leaf_seen == 0 {
             leaf_seen = 1;
+            // RSA len (4752) is the CertificateVerify key gate: it is nonzero
+            // only for a leaf whose SPKI x509_parse decoded strictly as
+            // rsaEncryption. Any other key type (ECDSA included) leaves it 0,
+            // and tls13c_parse_and_verify_cv refuses that leaf with E_CV.
+            tls13c_store_i64(state + 4752, 0);
+            tls13c_store_i64(state + 56, 0);
             let f: i64 = state + 4576;
             if x509_parse(cert_addr, clen, f) != 0 {
                 return tls13ci_err_chain();
@@ -263,8 +270,6 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
                 if n_len > 256 {
                     return tls13ci_err_ovf();
                 }
-                tls13c_copy(state + 4856, cert_addr + n_off, n_len);
-                tls13c_store_i64(state + 4752, n_len);
                 if e_len < 1 || e_len > 8 {
                     return tls13ci_err_chain();
                 }
@@ -274,11 +279,10 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
                     e_val = (e_val << 8) | tls13c_u8(cert_addr + e_off + ei);
                     ei = ei + 1;
                 }
+                tls13c_copy(state + 4856, cert_addr + n_off, n_len);
                 tls13c_store_i64(state + 4784, e_val);
+                tls13c_store_i64(state + 4752, n_len);
                 tls13c_store_i64(state + 56, tls13ci_sig_rsa_pss_rsae_sha256())
-            } else {
-                tls13c_store_i64(state + 4752, 0);
-                tls13c_store_i64(state + 56, 0)
             }
         }
     }
@@ -320,6 +324,8 @@ pub fn tls13c_parse_and_verify_cv(state: i64, msg_addr: i64, msg_len: i64) -> i6
     tls13_hs_cert_verify_content(state + 4544, content);
 
     if alg == tls13ci_sig_rsa_pss_rsae_sha256() {
+        // 0 unless the leaf carries a verified rsaEncryption key (see
+        // tls13c_parse_certificate): an ECDSA or other leaf is refused here.
         let n_len: i64 = tls13c_load_i64(state + 4752);
         if n_len != 128 {
             if n_len != 256 {

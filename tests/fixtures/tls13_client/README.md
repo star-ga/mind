@@ -95,8 +95,10 @@ Known limitations (declared, not fixed here; each fails closed unless marked):
 - Application data and close_notify processed in the same pump: the data is
   dropped and the connection reports a clean close (silent truncation, does
   not fail closed). Pump after every feed until this is fixed.
-- The CertificateVerify key is read from the leaf without checking its SPKI
-  algorithm; only RSA-PSS CV is implemented, so an EC leaf is unsupported.
+- Only RSA-PSS CV is implemented. Its key is taken from the leaf only when
+  the SPKI decodes strictly as rsaEncryption (`x509_rsa_spki`); an ECDSA or
+  other leaf key fails closed at CertificateVerify (E_CV), and a malformed
+  rsaEncryption key at Certificate (E_CHAIN).
 - Hostname bytes are not validated (no NUL/LDH check); SNI sends dns_len bytes
   while the verifier stops at the first NUL. Callers must pass a clean name.
 - write_app with a full output buffer fails the connection (no backpressure).

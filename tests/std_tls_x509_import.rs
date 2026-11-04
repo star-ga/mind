@@ -24,6 +24,8 @@
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 mod common;
+#[path = "support/tls13_leaf_key_program.rs"]
+mod tls13_leaf_key_program;
 #[path = "support/x509_literals_program.rs"]
 mod x509_literals_program;
 
@@ -228,7 +230,13 @@ const X509_INTERP_FAST: &[Chain] = &[
     case("ip_literal_in_dns_san", &["dns_ip_leaf"], &["eku_root"], "127.0.0.1", 0, -8),
     case("eku_without_server_auth", &["eku_client_leaf"], &["eku_root"], "eku.example.com", 0, -11),
     case("outer_sigalg_differs", &["ec_leaf#outer_sigalg_sha384", "ec_inter"], &["ec_root"], "www.example.com", 0, -1),
+    case("leaf_only_not_yet_valid", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", LEAF_IP_NB - 1, -5),
 ];
+
+/// Seconds from the fixture clock to `ec_leaf_ip`'s notBefore. One second
+/// earlier `ec_inter` and `ec_root` are already valid and only the leaf is
+/// not; at notBefore the chain verifies (`leaf_valid_from` in the build set).
+const LEAF_IP_NB: i64 = 1 - 2 * DAY;
 
 /// One RSA-2048 PKCS#1 v1.5 verification each. `wrong_key` names the issuer
 /// correctly but carries another modulus (see `x509_anchor_der`).
@@ -262,6 +270,7 @@ const X509_BUILD: &[Chain] = &[
     case("non_ca_intermediate", &["noca_leaf", "noca_inter"], &["noca_root"], "noca.example.com", 0, -9),
     case("path_length", &["pl_leaf", "pl_i2", "pl_i1"], &["pl_root"], "pl.example.com", 0, -10),
     case("ip_ok", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", 0, 0),
+    case("leaf_valid_from", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", LEAF_IP_NB, 0),
     case("ipv6_ok", &["path_ipv6", "path_ec_inter"], &["path_ec_root"], "2001:db8::1", 0, 0),
     case("eku_root_ok", &["eku_server_leaf"], &["eku_root"], "eku.example.com", 0, 0),
     case("name_constraint_excluded", &["nc_leaf_bad", "nc_inter"], &["nc_root"], "bad.example.com", 0, -17),
@@ -480,6 +489,48 @@ fn a_program_importing_x509_and_the_tls_client_builds_and_runs() {
     assert_interp("capability", &dir, true);
     // `main` returns 1 - x509_peer_auth_supported(), so 0 means it reported 1.
     assert_built(&[("capability", dir.as_path(), 0)]);
+}
+
+// ── The CertificateVerify key (tests/support/tls13_leaf_key_program.rs) ────
+
+/// `x509_parse` records n and e only from a strictly decoded rsaEncryption
+/// key, leaves them zero for an ECDSA or other key and rejects a malformed
+/// one; the TLS client refuses a leaf without an RSA key at CertificateVerify
+/// and a malformed RSA leaf at Certificate, on both engines.
+#[test]
+fn the_cv_key_is_a_verified_rsa_key_in_test_and_build() {
+    let dir = project("leaf_key", &tls13_leaf_key_program::source(false, false));
+    assert_interp("leaf_key", &dir, true);
+    let mdir = project(
+        "leaf_key_mutated",
+        &tls13_leaf_key_program::source(false, true),
+    );
+    assert_interp("leaf_key_mutated", &mdir, false);
+    assert_built(&[
+        ("leaf_key", dir.as_path(), 0),
+        ("leaf_key_mutated", mdir.as_path(), 1),
+    ]);
+}
+
+/// Through the handshake state machine and the real chain verifier: an ECDSA
+/// leaf whose chain verifies (verdict 0) is refused at CertificateVerify for
+/// rsa_pss_rsae_sha256, and a valid RSA chain still verifies and records its
+/// key. ECDSA verification runs in the executable only.
+#[cfg(all(unix, feature = "mlir-build"))]
+#[test]
+fn an_ecdsa_leaf_with_a_valid_chain_is_refused_at_certificate_verify() {
+    let dir = project(
+        "leaf_key_flow",
+        &tls13_leaf_key_program::source(true, false),
+    );
+    let mdir = project(
+        "leaf_key_flow_mutated",
+        &tls13_leaf_key_program::source(true, true),
+    );
+    assert_built(&[
+        ("leaf_key_flow", dir.as_path(), 0),
+        ("leaf_key_flow_mutated", mdir.as_path(), 1),
+    ]);
 }
 
 // ── TLS 1.3 transcript and key schedule (RFC 8448 §3) ──────────────────────

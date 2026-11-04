@@ -462,11 +462,16 @@ const ANCHOR_SIG_AND_LEAF_EXPIRY: &[Row] = &[
     ("anchor_wrong_key", &["adv/xs_leaf", "adv/xs_inter"], &["adv/xs_rootA"], "adv.example.com", 0, -3),
     ("leaf_expired_only", &["path_leaf_expired", "path_ec_inter"], &["path_ec_root"], "path.example.com", 6 * 86_400, -6),
     ("leaf_valid_control", &["path_leaf_expired", "path_ec_inter"], &["path_ec_root"], "path.example.com", 0, 0),
+    // ec_leaf_ip's notBefore is 172799 s before now.txt, one second after
+    // ec_inter's: at -172800 only the leaf is not yet valid.
+    ("leaf_not_yet_valid_only", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", -172_800, -5),
+    ("leaf_valid_from_control", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", -172_799, 0),
 ];
 
 /// The signature from the last certificate to the anchor is checked: an
-/// anchor with the issuer's name and another key is refused (-3), and a leaf
-/// that alone has expired is refused (-6).
+/// anchor with the issuer's name and another key is refused (-3), a leaf
+/// that alone has expired is refused (-6), and a leaf that alone is not yet
+/// valid (its intermediate and root are) is refused (-5).
 #[test]
 fn x509_anchor_signature_and_leaf_expiry_are_enforced() {
     let Some(lib) = Lib::get() else { return };

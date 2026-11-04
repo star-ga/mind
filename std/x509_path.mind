@@ -274,41 +274,16 @@ pub fn x509_parse_full(cert: i64, n: i64, rec: i64) -> i64 {
     let key_len: i64 = bit_clen - 1;
 
     if oid_is_rsa_fam(cert, koid_off, koid_len, 1) == 1 {
-        // rsaEncryption: BIT STRING embeds RSAPublicKey SEQUENCE { n, e }
+        // rsaEncryption: the strict decoder x509_parse uses (std/x509_der.mind)
         __mind_store_i64(rec + 96, 1);
-        if der_tlv(cert, key_content, n, t) != 0 {
-            return -1;
-        }
-        if __mind_load_i64(t + 0) != 48 {
+        let key: i64 = __mind_alloc(32);
+        if x509_rsa_spki(cert, spki, tbs_end, key) != 0 {
             return -14;
         }
-        let rsa_content: i64 = key_content + __mind_load_i64(t + 8);
-        if der_tlv(cert, rsa_content, n, t) != 0 {
-            return -1;
-        }
-        if __mind_load_i64(t + 0) != 2 {
-            return -14;
-        }
-        let mut n_off: i64 = rsa_content + __mind_load_i64(t + 8);
-        let mut n_len: i64 = __mind_load_i64(t + 16);
-        let after_n: i64 = n_off + n_len;
-        if n_len < 1 {
-            return -14;
-        }
-        if xb(cert, n_off) == 0 {
-            n_off = n_off + 1;
-            n_len = n_len - 1;
-        }
-        __mind_store_i64(rec + 104, n_off);
-        __mind_store_i64(rec + 112, n_len);
-        if der_tlv(cert, after_n, n, t) != 0 {
-            return -1;
-        }
-        if __mind_load_i64(t + 0) != 2 {
-            return -14;
-        }
-        __mind_store_i64(rec + 120, after_n + __mind_load_i64(t + 8));
-        __mind_store_i64(rec + 128, __mind_load_i64(t + 16))
+        __mind_store_i64(rec + 104, __mind_load_i64(key + 0));
+        __mind_store_i64(rec + 112, __mind_load_i64(key + 8));
+        __mind_store_i64(rec + 120, __mind_load_i64(key + 16));
+        __mind_store_i64(rec + 128, __mind_load_i64(key + 24))
     } else {
         if oid_is_ecpubkey(cert, koid_off, koid_len) == 1 {
             // id-ecPublicKey: params must be secp256r1 or secp384r1
