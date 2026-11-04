@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
+  `import std.tls13_client;` resolve, link and run in `mindc build` executables
+  and under `mindc test`.
+  - `std/x509.mind` validates a server chain (`x509_verify_server_chain`) from
+    the leaf through intermediates to a caller-supplied anchor set: RSA PKCS#1
+    v1.5 (2048/3072/4096-bit), RSA-PSS, ECDSA P-256/P-384, validity against the
+    caller's `now_unix`, DNS/IP name constraints, keyUsage and serverAuth EKU,
+    RFC 6125 hostname matching (a wildcard only as the complete left-most
+    label, IP SAN for IP literals), SHA-1 refused, and in-memory DER/PEM trust
+    anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
+    Limits: no revocation checking, DNS/IP-only name constraints, at most 8
+    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
+    fail closed. Anchors are trusted key bindings: their self-signature and
+    validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
+    constraints apply to the path below them.
+  - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,
+    `x509_path`, `x509_bundle` and `x509_bignum` (the RSA bignum, which
+    `rsa_pss` and `tls13_handshake` now import instead of `x509`).
+  - `std/tls13_client.mind` (with `_core`, `_hello`, `_handshake`): a bounded
+    sans-IO TLS 1.3 client. The caller owns I/O, entropy, time and the tick
+    budget; DNS-only SNI, caller ALPN, one HelloRetryRequest, fragmented
+    handshake reassembly, latched fail-closed refusal, and every chain
+    authenticated by `x509_verify_server_chain`. CertificateVerify supports
+    `rsa_pss_rsae_sha256` only.
+  - All twelve modules are bundled table rows and substrate members, and none
+    is a native seed row: `--backend native` refuses their import at the import.
+  - `tests/std_tls_x509_import.rs`: X.509 refusals (expired, not yet valid, no
+    CA path, hostname mismatch, wildcard rules, wrong key) and RSA chains under
+    `mindc test` and in the executable, ECDSA/RSA-PSS/IP/name-constraint chains
+    in the executable, the RFC 8448 §3 transcript hash and key schedule on both
+    engines, and the 24 recorded TLS 1.3 flights in the executable; each with a
+    mutated copy that must fail. `tests/x509_chain_smoke.rs` replays the full
+    fixture matrix through `--emit-shared`.
+- `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
+  instead of carrying an identical copy.
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
