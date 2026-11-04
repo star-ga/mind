@@ -599,7 +599,9 @@ fn grade_returned_value(
 /// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
 /// their module-level `Const` items, so a fn body that reads a module const
 /// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
-/// table.
+/// table, plus their `extern "C"` blocks (inert when evaluated), so the
+/// string-equality pass reads the declared result of a libc call in std code
+/// (std.fs `read(...) -> i64`) as `mindc check` and the build do.
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
 /// worklist, `BTreeSet` visited guard against cycles). An import that is not
@@ -644,7 +646,9 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         })?;
         for item in top_level::refs(&imported.items) {
             match item {
-                Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
+                Node::FnDef(..) | Node::Const { .. } | Node::ExternBlock { .. } => {
+                    out.push(item.clone());
+                }
                 Node::Import { .. } => {
                     if let Some(k) = import_key(item) {
                         queue.push_back(k);
