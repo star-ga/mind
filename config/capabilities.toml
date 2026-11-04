@@ -111,7 +111,7 @@ mindcraft   = ["mindc lint src/", "mindc lint --rule"]
 # Keep this section conservative: only declare counts a maintainer is willing
 # to have block a commit. Floor + tolerance keep the false-positive rate low.
 [counts.rust_test_files]
-declared          = 429
+declared          = 431
 mode              = "floor"
 # Ratchet bound: `declared` may sit at most this far below the tree before the
 # gate demands it be raised. A floor that is never re-raised turns its slack
@@ -126,7 +126,7 @@ surface_tolerance = 25
 note              = 'floor over tests/**/*.rs (378 in the composed native-module bridge source tree); the README floor may lag the tree by at most 25 files before the gate demands a refresh.'
 
 [counts.rust_test_fns]
-declared          = 3289
+declared          = 3302
 mode              = "floor"
 floor_tolerance   = 200
 kind              = "regex_count"
@@ -158,7 +158,7 @@ note              = '"11 unit tests under tools/pytorch_bridge/tests/" — exact
 # std/ be deleted while the gate printed `[PASS] floor 13+ <= 42`. The floor is
 # a TREE ratchet — it is not the historical "13 stdlib modules" release claim
 # on the surface, which is why the two numbers differ (see the note below).
-declared  = 43
+declared  = 45
 mode      = "floor"
 floor_tolerance = 4
 kind      = "glob_count"
