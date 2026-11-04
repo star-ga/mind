@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1950 | **Est. tokens:** ~3,810,499
-**Generated:** 2026-11-04 18:07 UTC
+**Files:** 1951 | **Est. tokens:** ~3,816,986
+**Generated:** 2026-11-04 18:27 UTC
 
 ## Token Budget Guide
 
@@ -121,8 +121,8 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 51 | ~166,501 |
-| `src/eval/stdlib/` | 2 | ~8,586 |
+| `src/eval/` | 51 | ~169,298 |
+| `src/eval/stdlib/` | 2 | ~8,600 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -145,14 +145,14 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~16,063 |
+| `src/test/` | 4 | ~16,735 |
 | `src/type_checker/` | 19 | ~64,866 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 430 | ~875,990 |
+| `tests/` | 431 | ~878,994 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1288,7 +1288,7 @@
 - `abi_gate.rs` (~11329 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `abi_gate_struct_ops.rs` (~2866 tok, huge) — Copyright 2026 STARGA Inc.
 - `abi_gate_tensor.rs` (~1232 tok, large) — Tensor-shape admission rules for the runnable artifact ABI gate.
-- `assert_check.rs` (~992 tok, large) — Copyright 2025 STARGA Inc.
+- `assert_check.rs` (~1001 tok, large) — Copyright 2025 STARGA Inc.
 - `assert_trap.rs` (~421 tok, medium) — Copyright 2026 STARGA Inc.
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
@@ -1296,7 +1296,7 @@
 - `canonical_producers.rs` (~734 tok, large) — Copyright 2026 STARGA Inc.
 - `closures.rs` (~6164 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
-- `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
+- `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1309,7 +1309,7 @@
 - `imported_extern_decls.rs` (~1157 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
-- `loops.rs` (~2239 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `loops.rs` (~2354 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1326,15 +1326,15 @@
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_bindings.rs` (~4423 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
-- `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_arith.rs` (~3977 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
-- `record_store.rs` (~962 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `record_store.rs` (~2385 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
-- `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor.rs` (~8431 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `string_equality.rs` (~5380 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1346,7 +1346,7 @@
 - `struct_resolver.rs` (~7171 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
 - `type_aliases.rs` (~2114 tok, huge) — Copyright 2025 STARGA Inc.
-- `value.rs` (~2885 tok, huge) — Copyright 2025 STARGA Inc.
+- `value.rs` (~4122 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
 - `conv.rs` (~435 tok, medium) — Copyright 2025 STARGA Inc.
@@ -1540,7 +1540,7 @@
 ### `src/test/`
 
 - `imports.rs` (~5967 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~7068 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7740 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -2231,6 +2231,7 @@
 
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_test_eval_blockers_parity.rs` (~3004 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_eval_parity.rs` (~3505 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6042 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_imports.rs` (~6333 tok, huge) — Copyright 2025-2026 STARGA Inc.
