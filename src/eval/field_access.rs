@@ -19,6 +19,7 @@ use super::{
 use crate::ast::{self, Literal, TypeAnn};
 use crate::eval::slice_abi::is_vec_handle_sentinel;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::project::std_struct_schema::bundled_struct_schema;
 use crate::types::{DType, ShapeDim};
 
 #[cfg(feature = "std-surface")]
@@ -129,40 +130,8 @@ pub(super) fn lower_field_access(
             }
         }
     }
-    // ── Step 1: cheap Ident-bound lookup ─────────────────────
-    // `struct_key_for` normalizes a module-qualified receiver type
-    // (`contract.DispatchResult`) to the bare key its schema is
-    // registered under, so a cross-module struct's field offset
-    // resolves (else the receiver falls to a null-address placeholder
-    // and any collection field read segfaults). Identity for same-file
-    // names — the keystone is byte-identical.
-    let step1 = match receiver {
-        ast::Node::Lit(Literal::Ident(var_name), _) => {
-            struct_env.get(var_name).and_then(|struct_name| {
-                let key = struct_key_for(ir, struct_name);
-                ir.struct_defs
-                    .get(key)
-                    .and_then(|fields| fields.iter().position(|f| f == field))
-                    .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
-            })
-        }
-        _ => None,
-    };
-    // ── Step 2: side-table fallback (general path) ───────────
-    // Only consulted when Step 1 fast-path failed.
-    let step2 = if step1.is_none() {
-        receiver_types.get(span).and_then(|struct_name| {
-            let key = struct_key_for(ir, struct_name);
-            ir.struct_defs
-                .get(key)
-                .and_then(|fields| fields.iter().position(|f| f == field))
-                .map(|idx| (None::<String>, idx, key.to_string()))
-        })
-    } else {
-        None
-    };
-
-    let resolved = step1.or(step2);
+    let resolved = resolve_field(receiver, field, span, ir, struct_env, receiver_types)
+        .or_else(|| resolve_string_field(receiver, field, ir, struct_env, receiver_types, context));
 
     match resolved {
         Some((var_name_opt, idx, struct_name)) => {
@@ -321,40 +290,8 @@ pub(super) fn lower_field_assign(
     receiver_types: &HashMap<ast::Span, String>,
     context: &mut LoweringContext,
 ) -> ValueId {
-    // ── Step 1: cheap Ident-bound lookup ─────────────────────
-    // `struct_key_for` normalizes a module-qualified receiver type
-    // (`contract.DispatchResult`) to the bare key its schema is
-    // registered under, so a cross-module struct's field offset
-    // resolves (else the receiver falls to a null-address placeholder
-    // and any collection field read segfaults). Identity for same-file
-    // names — the keystone is byte-identical.
-    let step1 = match receiver {
-        ast::Node::Lit(Literal::Ident(var_name), _) => {
-            struct_env.get(var_name).and_then(|struct_name| {
-                let key = struct_key_for(ir, struct_name);
-                ir.struct_defs
-                    .get(key)
-                    .and_then(|fields| fields.iter().position(|f| f == field))
-                    .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
-            })
-        }
-        _ => None,
-    };
-    // ── Step 2: side-table fallback (general path) ───────────
-    // Only consulted when Step 1 fast-path failed.
-    let step2 = if step1.is_none() {
-        receiver_types.get(span).and_then(|struct_name| {
-            let key = struct_key_for(ir, struct_name);
-            ir.struct_defs
-                .get(key)
-                .and_then(|fields| fields.iter().position(|f| f == field))
-                .map(|idx| (None::<String>, idx, key.to_string()))
-        })
-    } else {
-        None
-    };
-
-    let resolved = step1.or(step2);
+    let resolved = resolve_field(receiver, field, span, ir, struct_env, receiver_types)
+        .or_else(|| resolve_string_field(receiver, field, ir, struct_env, receiver_types, context));
 
     match resolved {
         Some((var_name_opt, idx, struct_name)) => {
@@ -422,5 +359,257 @@ pub(super) fn lower_field_assign(
             store_ret
         }
         None => refuse_unrepresentable_field(ir, context, "struct field assignment", span),
+    }
+}
+
+/// The std string type: its struct name, and the `struct_env` sentinel of a
+/// string-typed binding.
+const STD_STRING: &str = "String";
+
+/// A resolved field: the receiver's binding when it is a plain identifier, the
+/// field's index, and the schema key the field resolved against.
+type FieldSlot = (Option<String>, usize, String);
+
+/// Resolve `field` against the schema of the receiver's declared struct type.
+#[cfg(feature = "std-surface")]
+fn resolve_field(
+    receiver: &ast::Node,
+    field: &str,
+    span: &ast::Span,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<ast::Span, String>,
+) -> Option<FieldSlot> {
+    // ── Step 1: cheap Ident-bound lookup ─────────────────────
+    // `struct_key_for` normalizes a module-qualified receiver type
+    // (`contract.DispatchResult`) to the bare key its schema is
+    // registered under, so a cross-module struct's field offset
+    // resolves (else the receiver falls to a null-address placeholder
+    // and any collection field read segfaults). Identity for same-file
+    // names — the keystone is byte-identical.
+    let step1 = match receiver {
+        ast::Node::Lit(Literal::Ident(var_name), _) => {
+            struct_env.get(var_name).and_then(|struct_name| {
+                let key = struct_key_for(ir, struct_name);
+                ir.struct_defs
+                    .get(key)
+                    .and_then(|fields| fields.iter().position(|f| f == field))
+                    .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
+            })
+        }
+        _ => None,
+    };
+    // ── Step 2: side-table fallback (general path) ───────────
+    // Only consulted when Step 1 fast-path failed.
+    step1.or_else(|| {
+        receiver_types.get(span).and_then(|struct_name| {
+            let key = struct_key_for(ir, struct_name);
+            ir.struct_defs
+                .get(key)
+                .and_then(|fields| fields.iter().position(|f| f == field))
+                .map(|idx| (None::<String>, idx, key.to_string()))
+        })
+    })
+}
+
+/// Resolve `field` on a `String` value against the bundled `std/string.mind`
+/// schema, the layout every compiler-built string has. A project build
+/// installs that schema; a single translation unit has no project registry, so
+/// the schema is registered here when the module's `String` is the bundled one
+/// ([`std_string_visible`]). A registered `String` with another layout is the
+/// program's own, and a string value is never read through it.
+#[cfg(feature = "std-surface")]
+fn resolve_string_field(
+    receiver: &ast::Node,
+    field: &str,
+    ir: &mut IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<ast::Span, String>,
+    context: &LoweringContext,
+) -> Option<FieldSlot> {
+    if !receiver_is_string(receiver, ir, struct_env, receiver_types) {
+        return None;
+    }
+    let (names, types) = bundled_struct_schema(STD_STRING)?;
+    let idx = names.iter().position(|f| f == field)?;
+    match ir.struct_defs.get(STD_STRING) {
+        Some(registered) => {
+            if registered != names || ir.struct_field_types.get(STD_STRING) != Some(types) {
+                return None;
+            }
+        }
+        None if context.std_string_visible => {
+            ir.struct_defs.insert(STD_STRING.to_string(), names.clone());
+            ir.struct_field_types
+                .insert(STD_STRING.to_string(), types.clone());
+        }
+        None => return None,
+    }
+    let binding = match receiver {
+        ast::Node::Lit(Literal::Ident(var_name), _) => Some(var_name.clone()),
+        _ => None,
+    };
+    Some((binding, idx, STD_STRING.to_string()))
+}
+
+/// Whether the module's `String` is the bundled one: it declares no `String`
+/// of its own (a struct, enum or alias), at top level or inside a
+/// `module { … }` block, which this lowering never registers. Decided before
+/// lowering, so a `String` declared after a field access or a literal still
+/// keeps the bundled layout away from both.
+#[cfg(feature = "std-surface")]
+pub(super) fn std_string_visible(items: &[ast::Node]) -> bool {
+    fn declares(items: &[ast::Node]) -> bool {
+        items.iter().any(|item| match item {
+            ast::Node::StructDef { name, .. }
+            | ast::Node::EnumDef { name, .. }
+            | ast::Node::TypeAlias { name, .. } => name == STD_STRING,
+            ast::Node::Block { stmts, .. } => declares(stmts),
+            _ => false,
+        })
+    }
+    !declares(items)
+}
+
+/// The field order a struct literal of `key` is laid out in: its registered
+/// schema, else, for `String` in a module whose `String` is the bundled one,
+/// the bundled order, the layout a project build gives it and every field
+/// access reads. An all-`i64` bundled layout is the one an unregistered
+/// literal already has, so it is not registered (the module's artifact is
+/// unchanged); any other layout is, so the literal's stores use its widths.
+#[cfg(feature = "std-surface")]
+pub(super) fn literal_field_order(
+    ir: &mut IRModule,
+    key: &str,
+    context: &LoweringContext,
+) -> Option<Vec<String>> {
+    if let Some(names) = ir.struct_defs.get(key) {
+        return Some(names.clone());
+    }
+    if key != STD_STRING || !context.std_string_visible {
+        return None;
+    }
+    let (names, types) = bundled_struct_schema(STD_STRING)?;
+    if !types.iter().all(|ty| struct_field_width(ty) == (8, true)) {
+        ir.struct_defs.insert(STD_STRING.to_string(), names.clone());
+        ir.struct_field_types
+            .insert(STD_STRING.to_string(), types.clone());
+    }
+    Some(names.clone())
+}
+
+/// The string type (`string` or `String`) that `ty` names, looking through
+/// `&` and `&mut`: a borrow lowers to the value it borrows (the `Ref` arm of
+/// `lower_expr`), so a borrowed string is the same `String` record.
+#[cfg(feature = "std-surface")]
+pub(super) fn string_type_name(ty: &TypeAnn) -> Option<&str> {
+    match ty {
+        TypeAnn::Named(n) if n == "string" || n == STD_STRING => Some(n),
+        TypeAnn::Ref { target, .. } => string_type_name(target),
+        _ => None,
+    }
+}
+
+/// The `struct_env` owner of a parameter of type `ty`: a named type, or the
+/// string type a borrowed string names.
+#[cfg(feature = "std-surface")]
+pub(super) fn param_owner(ty: &TypeAnn) -> Option<&str> {
+    match ty {
+        TypeAnn::Named(n) => Some(n),
+        _ => string_type_name(ty),
+    }
+}
+
+/// Resolve the STRUCT-TYPE NAME a receiver evaluates to: an Ident via
+/// `struct_env` (struct-typed param/let), or a nested `s.field` whose declared
+/// field type is itself a struct. None when not a known struct.
+#[cfg(feature = "std-surface")]
+pub(super) fn receiver_struct_type(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+) -> Option<String> {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => {
+            let s = struct_env.get(v)?;
+            let key = struct_key_for(ir, s);
+            if ir.struct_defs.contains_key(key) {
+                Some(key.to_string())
+            } else {
+                None
+            }
+        }
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            ..
+        } => {
+            let sname = receiver_struct_type(base, ir, struct_env)?;
+            let sname = struct_key_for(ir, &sname);
+            let fields = ir.struct_defs.get(sname)?;
+            let idx = fields.iter().position(|f| f == field)?;
+            match ir.struct_field_types.get(sname)?.get(idx)? {
+                TypeAnn::Named(n) if ir.struct_defs.contains_key(struct_key_for(ir, n)) => {
+                    Some(struct_key_for(ir, n).to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// True when a receiver is the std `String` type — an Ident bound to a string
+/// (`struct_env` sentinel `"String"`, set for string lets/params, borrowed
+/// ones included, and for-each elements over `array<string>`), a struct-FIELD
+/// or a typed function call whose declared type is a (borrowed) `string`, a
+/// `String { … }` literal, or a borrow or parenthesis around any of these. A
+/// string receiver's methods route to the `string_<method>` std free functions
+/// (`.split`→string_split, `.trim`→string_trim, etc.), and its fields resolve
+/// against the `String` schema (`resolve_string_field`).
+#[cfg(feature = "std-surface")]
+pub(super) fn receiver_is_string(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> bool {
+    match receiver {
+        // String literals are materialized by the `Literal::Str` lowering arm
+        // into the same three-field String record as every other string value.
+        // Classify them here so a direct `"text".len()` / `.split(...)` call
+        // takes the same std UFCS path as an identifier-bound String.
+        ast::Node::Lit(Literal::Str(_), _) => true,
+        ast::Node::Lit(Literal::Ident(v), _) => struct_env
+            .get(v)
+            .map(|s| s == "String" || s == "string")
+            .unwrap_or(false),
+        ast::Node::StructLit { name, .. } => name == STD_STRING,
+        ast::Node::Paren(inner, _) | ast::Node::Ref { inner, .. } => {
+            receiver_is_string(inner, ir, struct_env, receiver_types)
+        }
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env));
+            sname
+                .and_then(|sn| {
+                    let idx = ir.struct_defs.get(&sn)?.iter().position(|f| f == field)?;
+                    ir.struct_field_types.get(&sn)?.get(idx).cloned()
+                })
+                .is_some_and(|ty| string_type_name(&ty).is_some())
+        }
+        ast::Node::Call { callee, .. } => ir
+            .fn_signatures
+            .get(callee)
+            .and_then(|(_, ret)| ret.clone())
+            .or_else(|| crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned()))
+            .is_some_and(|ty| string_type_name(&ty).is_some()),
+        _ => false,
     }
 }
