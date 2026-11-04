@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,820,994
-**Generated:** 2026-11-04 16:17 UTC
+**Files:** 1951 | **Est. tokens:** ~3,820,998
+**Generated:** 2026-11-04 16:29 UTC
 
 ## Token Budget Guide
 
@@ -64,7 +64,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 174 | ~451,653 |
+| `examples/mindc_mind/` | 174 | ~451,657 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,176 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -806,7 +806,7 @@
 - `self_host_tc_class_rules_smoke.py` (~1889 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2010/E2011/E2013/E2016 class rules.
 - `self_host_tc_decl_names_smoke.py` (~3651 tok, huge) — CPU-as-oracle smoke for the pure-MIND D1 module DECL-NAME SET.
 - `self_host_tc_fixed_bytes_into_vec_smoke.py` (~1438 tok, large) — CPU-as-oracle smoke for the pure-MIND E2006 FIXED_BYTES_INTO_VEC rule (Bug #38).
-- `self_host_tc_fn_value_call_smoke.py` (~6992 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D4 CAPSTONE — the FULL E2012 rule.
+- `self_host_tc_fn_value_call_smoke.py` (~6993 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D4 CAPSTONE — the FULL E2012 rule.
 - `self_host_tc_let_class_mismatch_smoke.py` (~1319 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 LET_CLASS_MISMATCH let/assign rule.
 - `self_host_tc_let_infer_ident_smoke.py` (~2882 tok, huge) — self_host_tc_let_infer_ident_smoke — three-leg gate for the T2 port.
 - `self_host_tc_let_infer_smoke.py` (~2132 tok, huge) — self_host_tc_let_infer_smoke — three-leg gate for the T1 type-inference port.
@@ -815,7 +815,7 @@
 - `self_host_tc_self_host_only_call_smoke.py` (~3492 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2024 self-host-only-call rule.
 - `self_host_tc_shape_annot_compat_smoke.py` (~1943 tok, huge) — CPU-as-oracle smoke for the pure-MIND shape annotation-compat rule.
 - `self_host_tc_shape_rules_smoke.py` (~2149 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules + E2023 reserved-prefix rule.
-- `self_host_tc_std_export_smoke.py` (~3500 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
+- `self_host_tc_std_export_smoke.py` (~3501 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
 - `self_host_tc_undeclared_assign_smoke.py` (~7241 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
 - `self_host_tc_unknown_call_smoke.py` (~8549 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
 - `self_host_tc_unknown_ident_smoke.py` (~11370 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
@@ -824,11 +824,11 @@
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
 - `SMOKE_WIRING.tsv` (~3822 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
-- `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
+- `stdlib_manifest_lint.py` (~2432 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~2240 tok, huge)
-- `tc_differential_fuzz.py` (~13332 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
+- `tc_differential_fuzz.py` (~13333 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/backend_native_bridge/`
 
 - `add.elf` (binary, 492 bytes)

@@ -233,7 +233,7 @@ def bundled_modules():
     bundling change fails loud here instead of silently drifting."""
     with open(STDLIB_RS) as f:
         rs = f.read()
-    mods = re.findall(r'\("std\.([a-z0-9_]+)",\s*include_str!', rs)
+    mods = re.findall(r'\(\s*"std\.([a-z0-9_]+)",\s*include_str!', rs)
     if len(mods) < 20:
         print(f"FAIL: extracted only {len(mods)} bundled modules from "
               f"{STDLIB_RS} — extraction regex or bundle layout drifted")
