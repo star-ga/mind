@@ -10,6 +10,9 @@
 
 #![cfg(all(unix, feature = "std-surface", feature = "cross-module-imports"))]
 
+#[cfg(feature = "mlir-build")]
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -120,7 +123,26 @@ fn bare_spelling_checks_clean() {
     assert!(ok, "mindc check must accept Boundary.Reflective:\n{text}");
 }
 
+/// `config` declares Boundary, but `use.mind` imports only `util`: the project
+/// registry knows Boundary while Boundary is not visible in `use.mind`.
+fn unimported_enum_project(root: &Path, body: &str) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"enum-local\"\nversion = \"0.0.1\"\n[build]\nentry = \"src/use.mind\"\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/config.mind\", \"src/util.mind\", \"src/use.mind\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/config.mind"), BOUNDARY).unwrap();
+    fs::write(
+        root.join("src/util.mind"),
+        "module util {\n    enum Unit {\n        Only = 0,\n    }\n    export enum Unit\n}\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/use.mind"), body).unwrap();
+}
+
 const LOCAL_FIELD: &str = "\
+import util;\n\
 struct Cfg {\n\
     Zero: i64,\n\
 }\n\
@@ -132,12 +154,38 @@ fn test_local_field() {\n\
 
 #[test]
 fn a_local_named_like_an_unimported_enum_keeps_its_field() {
-    // This module does not import config, so `Boundary.Zero` is the field of
-    // the local, not the enum variant the project registry also knows.
+    // `Boundary.Zero` is the field of the local, not the variant of the enum
+    // the project registry knows from a module this one does not import.
     let temp = tempfile::tempdir().unwrap();
-    project(temp.path(), LOCAL_FIELD);
+    unimported_enum_project(temp.path(), LOCAL_FIELD);
     let (ok, text) = run_test(temp.path());
     assert!(ok, "the local's field must be read:\n{text}");
+}
+
+#[cfg(feature = "mlir-build")]
+#[test]
+fn a_built_module_reads_the_local_field_too() {
+    let temp = tempfile::tempdir().unwrap();
+    unimported_enum_project(
+        temp.path(),
+        "import util;\nstruct Cfg {\n    Zero: i64,\n}\nfn main() -> i64 {\n    let Boundary = Cfg { Zero: 7 };\n    return Boundary.Zero\n}\n",
+    );
+    let program = temp.path().join("program");
+    let out = Command::new(mindc())
+        .current_dir(temp.path())
+        .args(["build", "--target", "cpu", "--no-cache", "--out"])
+        .arg(&program)
+        .output()
+        .expect("run mindc build");
+    if !common::gate::compiled("imported_enum_eval", &out) {
+        return;
+    }
+    let run = Command::new(&program).output().expect("run the program");
+    assert_eq!(
+        run.status.code(),
+        Some(7),
+        "the program returns the local's field, not an enum tag"
+    );
 }
 
 const SHAPE: &str = "module config {\n    enum Shape {\n        Circle(i64),\n        Empty,\n    }\n    export enum Shape\n}\n";
