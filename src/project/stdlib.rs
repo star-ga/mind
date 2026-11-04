@@ -52,6 +52,11 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.json", include_str!("../../std/json.mind")),
     ("std.json_canon", include_str!("../../std/json_canon.mind")),
     ("std.map", include_str!("../../std/map.mind")),
+    ("std.mic_record", include_str!("../../std/mic_record.mind")),
+    (
+        "std.mic_results",
+        include_str!("../../std/mic_results.mind"),
+    ),
     ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
     ("std.reactor", include_str!("../../std/reactor.mind")),

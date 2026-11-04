@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
+  writes and reads its results (per-game and per-level actions, a score as a
+  numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
+  empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
+  keys sorted, so the bytes depend only on the key/value set; the reader accepts only
+  that canonical form and refuses malformed input with a named error, checking every
+  count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
+  allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
+  records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the

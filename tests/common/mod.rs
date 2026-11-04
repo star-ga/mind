@@ -29,6 +29,7 @@
 
 pub mod gate;
 pub mod json_canon_kat;
+pub mod mic_record;
 pub mod xsi_gate;
 
 use std::path::{Path, PathBuf};
