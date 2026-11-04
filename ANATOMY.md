@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1949 | **Est. tokens:** ~3,811,018
-**Generated:** 2026-11-04 15:57 UTC
+**Files:** 1949 | **Est. tokens:** ~3,811,317
+**Generated:** 2026-11-04 17:45 UTC
 
 ## Token Budget Guide
 
@@ -93,8 +93,8 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~919 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/scripts/` | 1 | ~962 |
-| `.github/workflows/` | 9 | ~16,513 |
+| `.github/scripts/` | 1 | ~1,187 |
+| `.github/workflows/` | 9 | ~16,587 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~123,987 |
@@ -1057,7 +1057,7 @@
 - `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
-- `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
+- `pr_review.py` (~1187 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~5329 tok, huge) — name: Bench gate
@@ -1066,7 +1066,7 @@
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
-- `pr-review.yml` (~821 tok, large) — name: pr-review
+- `pr-review.yml` (~895 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -1365,7 +1365,7 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~10997 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9742 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
