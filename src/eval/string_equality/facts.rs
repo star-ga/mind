@@ -12,11 +12,14 @@
 //! interpreter and every lowering read the same facts, so a comparison is
 //! byte-wise on every backend or refused on every backend.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::ast::{EnumVariant, FnDefData, Literal, Module, Node, Param, TypeAnn};
+use crate::ast::{EnumVariant, FnDefData, Module, Node, Param, TypeAnn};
 use crate::eval::type_aliases::LocalTypeAliases;
+
+use super::slots::{Contradicted, contradicts, holds_str, is_null};
+use super::sums::Variant;
 
 /// What the pass knows about one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,13 +35,23 @@ pub(super) enum Fact {
     Map(Box<Fact>),
     /// A tuple: one fact per position.
     Tuple(Vec<Fact>),
+    /// An `Option<T>` or `Result<T, E>`: the fact of the `Some` / `Ok`
+    /// payload, then of the `Err` payload ([`Fact::Never`] where there is
+    /// none).
+    Sum(Box<Fact>, Box<Fact>),
     /// A scalar (integer, float, bool, enum, pointer, unit) that is not a
     /// string and holds none.
     NotStr,
     /// An expression that produces no value (`return`, `break`, `continue`).
     Never,
-    /// A value whose type is not known: it may be a string.
+    /// A value whose type the pass did not establish: it may be a string,
+    /// so it compares as one may, but storing it is not taken to store one.
     Unknown,
+    /// A value of a type this module cannot see: a generic type parameter, or
+    /// the result of an imported function with no declared result type. It
+    /// may be anything, a string included: it compares like
+    /// [`Fact::Unknown`], and storing it stores a value that may be a string.
+    Any,
     /// A value that holds a string on some path: one branch or assignment is
     /// a string, or a string is stored into its declared non-string slot. It
     /// compares like [`Fact::Unknown`], and storing it stores a string.
@@ -61,30 +74,31 @@ pub(super) enum Class {
 pub(super) fn fact_class(fact: &Fact) -> Class {
     match fact {
         Fact::Str => Class::Str,
-        Fact::Unknown | Fact::MaybeStr => Class::Unknown,
+        Fact::Unknown | Fact::MaybeStr | Fact::Any => Class::Unknown,
         Fact::Record(_)
         | Fact::Elems(_)
         | Fact::Map(_)
         | Fact::Tuple(_)
+        | Fact::Sum(..)
         | Fact::NotStr
         | Fact::Never => Class::NotStr,
     }
 }
 
-/// The fact of a value that is either `a` or `b`. Two different facts prove
-/// nothing, except that the value may be a string when either may be one.
+/// The fact of a value that is either `a` or `b`, joined part by part. Two
+/// facts of different shapes prove nothing, except that the value may hold
+/// a string when either may hold one.
 pub(super) fn join(a: Fact, b: Fact) -> Fact {
+    let parts = |a: Box<Fact>, b: Box<Fact>| Box::new(join(*a, *b));
     match (a, b) {
         (Fact::Never, other) | (other, Fact::Never) => other,
         (a, b) if a == b => a,
-        (a, b) if may_be_str(&a) || may_be_str(&b) => Fact::MaybeStr,
+        (Fact::Elems(a), Fact::Elems(b)) => Fact::Elems(parts(a, b)),
+        (Fact::Map(a), Fact::Map(b)) => Fact::Map(parts(a, b)),
+        (Fact::Sum(a, e), Fact::Sum(b, f)) => Fact::Sum(parts(a, b), parts(e, f)),
+        (a, b) if holds_str(&a) || holds_str(&b) => Fact::MaybeStr,
         _ => Fact::Unknown,
     }
-}
-
-/// Whether a value with `fact` is a string on some path.
-fn may_be_str(fact: &Fact) -> bool {
-    matches!(fact, Fact::Str | Fact::MaybeStr)
 }
 
 /// Facts in scope, shared copy-on-write: a statement's sub-walks clone the
@@ -92,18 +106,10 @@ fn may_be_str(fact: &Fact) -> bool {
 pub(super) type Env = Rc<BTreeMap<String, Fact>>;
 
 /// Scalar type names: no value of these types is a string.
-const SCALAR_NAMES: &[&str] = &[
+pub(super) const SCALAR_NAMES: &[&str] = &[
     "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "usize", "isize",
     "char", "()",
 ];
-
-pub(super) fn is_numeric_literal(node: &Node) -> bool {
-    match node {
-        Node::Lit(Literal::Int(_) | Literal::Float(_), _) => true,
-        Node::Neg { operand, .. } | Node::Paren(operand, _) => is_numeric_literal(operand),
-        _ => false,
-    }
-}
 
 /// Record `value` for `name`; two declarations that disagree prove nothing.
 fn merge<T: PartialEq>(map: &mut BTreeMap<String, Option<T>>, name: &str, value: Option<T>) {
@@ -133,10 +139,12 @@ pub(super) enum Ret {
     Ty(TypeAnn),
     /// The result type names a generic parameter.
     Generic,
-    /// No declared result type, but a value may be returned: the body returns
-    /// one (`mindc check` accepts `return <value>` with no `->`), or the body
-    /// is not visible (an imported declaration).
+    /// No declared result type, but the body returns a value (`mindc check`
+    /// accepts `return <value>` with no `->`).
     Undeclared,
+    /// No declared result type and no visible body (an imported
+    /// declaration): the result may be anything.
+    Invisible,
     /// The body returns a string through a non-string result type, or with no
     /// result type.
     Stored,
@@ -149,62 +157,6 @@ impl Ret {
             Some(TypeAnn::Named(n)) if type_params.contains(n) => Ret::Generic,
             Some(ty) => Ret::Ty(ty.clone()),
         }
-    }
-}
-
-/// Declared non-string slots that a string is stored into somewhere in the
-/// module. A declaration proves a slot holds no string only while no string
-/// is stored there: `mindc check` accepts a string argument for an `i64`
-/// parameter, a string returned through an `i64` result and a string field
-/// or payload value, and `==` on such a slot would compare handles.
-#[derive(Default)]
-pub(super) struct Contradicted {
-    /// Local function → indices of parameters given a string.
-    pub(super) params: BTreeMap<String, BTreeSet<usize>>,
-    /// Local functions that return a string through a non-string result, or
-    /// with no declared result type.
-    pub(super) returns: BTreeSet<String>,
-    /// Struct → fields given a string.
-    pub(super) fields: BTreeMap<String, BTreeSet<String>>,
-    /// Variant (`Enum::Variant`) → payload positions given a string.
-    pub(super) payloads: BTreeMap<String, BTreeSet<usize>>,
-}
-
-impl Contradicted {
-    /// Add every slot of `other`; whether any was new.
-    pub(super) fn absorb(&mut self, other: Contradicted) -> bool {
-        fn absorb_map<K: Ord, V: Ord>(
-            into: &mut BTreeMap<K, BTreeSet<V>>,
-            from: BTreeMap<K, BTreeSet<V>>,
-        ) -> bool {
-            let mut grew = false;
-            for (key, values) in from {
-                let at = into.entry(key).or_default();
-                for value in values {
-                    grew |= at.insert(value);
-                }
-            }
-            grew
-        }
-        let mut grew = absorb_map(&mut self.params, other.params);
-        grew |= absorb_map(&mut self.fields, other.fields);
-        grew |= absorb_map(&mut self.payloads, other.payloads);
-        for owner in other.returns {
-            grew |= self.returns.insert(owner);
-        }
-        grew
-    }
-}
-
-/// Whether storing a value with fact `value` where `declared` is declared
-/// stores a string where no string is declared (at any depth).
-pub(super) fn contradicts(declared: &Fact, value: &Fact) -> bool {
-    match (declared, value) {
-        (Fact::Str | Fact::Unknown | Fact::MaybeStr, _) => false,
-        (_, Fact::Str | Fact::MaybeStr) => true,
-        (Fact::Elems(d), Fact::Elems(v)) | (Fact::Map(d), Fact::Map(v)) => contradicts(d, v),
-        (Fact::Tuple(ds), Fact::Tuple(vs)) => ds.iter().zip(vs).any(|(d, v)| contradicts(d, v)),
-        _ => false,
     }
 }
 
@@ -256,7 +208,10 @@ pub(super) struct Decls {
     /// Local function → declared parameter types; `None` when two
     /// declarations disagree.
     pub(super) params: BTreeMap<String, Option<Vec<TypeAnn>>>,
-    /// Slots whose declaration a stored string contradicts (empty until the
+    /// Extern, imported and bundled std function → declared parameter types:
+    /// callees whose body this module does not analyse.
+    pub(super) opaque_params: BTreeMap<String, Vec<TypeAnn>>,
+    /// Slots whose declaration a stored value contradicts (empty until the
     /// first walk has recorded them).
     pub(super) contradicted: Contradicted,
     structs: BTreeMap<String, Option<Vec<(String, TypeAnn)>>>,
@@ -272,6 +227,7 @@ impl Decls {
             aliases: LocalTypeAliases::new(&module.items),
             returns: BTreeMap::new(),
             params: BTreeMap::new(),
+            opaque_params: BTreeMap::new(),
             contradicted: Contradicted::default(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
@@ -297,6 +253,8 @@ impl Decls {
                             &f.name,
                             Some(Ret::of(f.ret_type.as_ref(), &[])),
                         );
+                        let types = f.params.iter().map(|p| p.ty.clone()).collect();
+                        decls.opaque_params.insert(f.name.clone(), types);
                     }
                 }
                 Node::StructDef { name, fields, .. } => {
@@ -319,10 +277,21 @@ impl Decls {
         let imported = crate::type_checker::cm_all_imported_fn_signatures();
         #[cfg(not(feature = "cross-module-imports"))]
         let imported = crate::type_checker::bundled_std_fn_signatures().clone();
-        // An imported declaration with no result type may still return a
-        // value: its body is not visible here.
-        for (name, _, ret) in imported {
-            let ret = ret.map_or(Ret::Undeclared, |ty| Ret::of(Some(&ty), &[]));
+        // The bundled std after them, whatever the project's module table
+        // makes visible: a project build resolves `string_len` or `vec_push`
+        // with no `use`, and `mindc check` of the same file reads the bundled
+        // declarations, so both must see the same ones. An imported
+        // declaration with no result type may return anything: its body is
+        // not visible here.
+        #[cfg(feature = "cross-module-imports")]
+        let imported = imported.into_iter().chain(
+            crate::type_checker::bundled_std_fn_signatures()
+                .iter()
+                .cloned(),
+        );
+        for (name, params, ret) in imported {
+            let ret = ret.map_or(Ret::Invisible, |ty| Ret::of(Some(&ty), &[]));
+            decls.opaque_params.entry(name.clone()).or_insert(params);
             decls.returns.entry(name).or_insert(Some(ret));
         }
         // A module-level binding is visible in every function body; its fact
@@ -380,6 +349,28 @@ impl Decls {
         Some(self.typed_fact(&ty))
     }
 
+    /// Every struct (local or registered) that declares a field `field`.
+    pub(super) fn structs_with_field(&self, field: &str) -> Vec<String> {
+        let mut owners: Vec<String> = self
+            .structs
+            .iter()
+            .filter(|(_, fields)| {
+                fields
+                    .as_ref()
+                    .is_some_and(|fields| fields.iter().any(|(name, _)| name == field))
+            })
+            .map(|(owner, _)| owner.clone())
+            .collect();
+        crate::ir::with_global_enums(|g| {
+            for (owner, (names, _)) in g.structs.iter().chain(g.qualified_structs.iter()) {
+                if names.iter().any(|name| name == field) && !owners.contains(owner) {
+                    owners.push(owner.clone());
+                }
+            }
+        });
+        owners
+    }
+
     pub(super) fn knows_struct(&self, name: &str) -> bool {
         match self.structs.get(name) {
             Some(local) => local.is_some(),
@@ -387,6 +378,16 @@ impl Decls {
                 g.structs.contains_key(name) || g.qualified_structs.contains_key(name)
             }),
         }
+    }
+
+    /// Whether this module declares an enum `name`.
+    pub(super) fn local_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
+
+    /// Whether an enum of this module declares a variant `name`.
+    pub(super) fn local_variant(&self, name: &str) -> bool {
+        self.enums.values().flatten().any(|v| v.name == name)
     }
 
     pub(super) fn knows_enum(&self, name: &str) -> bool {
@@ -397,6 +398,7 @@ impl Decls {
     /// The fact of a value of declared type `ty`.
     pub(super) fn typed_fact(&self, ty: &TypeAnn) -> Fact {
         let elems = |element: &TypeAnn| Fact::Elems(Box::new(self.typed_fact(element)));
+        let never = || Box::new(Fact::Never);
         match self.resolve(ty) {
             TypeAnn::Named(n) if n == "string" || n == "String" => Fact::Str,
             TypeAnn::Named(n) if SCALAR_NAMES.contains(&n.as_str()) => Fact::NotStr,
@@ -409,7 +411,14 @@ impl Decls {
             TypeAnn::Generic { name, args } => match (name.as_str(), args.as_slice()) {
                 ("array" | "set", [element]) => elems(element),
                 ("map", [_, value]) => Fact::Map(Box::new(self.typed_fact(value))),
-                ("Option" | "Result", _) => Fact::NotStr,
+                ("Option", [value]) => Fact::Sum(Box::new(self.typed_fact(value)), never()),
+                ("Result", [value, error]) => Fact::Sum(
+                    Box::new(self.typed_fact(value)),
+                    Box::new(self.typed_fact(error)),
+                ),
+                ("Option" | "Result", _) => {
+                    Fact::Sum(Box::new(Fact::Unknown), Box::new(Fact::Unknown))
+                }
                 _ => Fact::Unknown,
             },
             TypeAnn::Array { element, .. } | TypeAnn::Slice { element, .. } => elems(&element),
@@ -436,7 +445,8 @@ impl Decls {
         match ret {
             Ret::Unit => Fact::NotStr,
             Ret::Ty(ty) => self.typed_fact(ty),
-            Ret::Generic | Ret::Undeclared => Fact::Unknown,
+            Ret::Undeclared => Fact::Unknown,
+            Ret::Generic | Ret::Invisible => Fact::Any,
             Ret::Stored => Fact::MaybeStr,
         }
     }
@@ -459,10 +469,20 @@ impl Decls {
     /// function, an enum variant, or unknown.
     pub(super) fn global_fact(&self, name: &str) -> Fact {
         match self.consts.get(name) {
+            Some(_) if self.contradicted.globals.contains(name) => Fact::MaybeStr,
             Some(fact) => fact.clone().unwrap_or(Fact::Unknown),
+            None if self.builtin_variant(name) == Some(Variant::None) => {
+                Variant::None.build(Fact::Never)
+            }
             None if self.returns.contains_key(name) || self.is_variant(name) => Fact::NotStr,
             None => Fact::Unknown,
         }
+    }
+
+    /// The fact a module-level binding's declaration gives it, when `name`
+    /// is one and its declarations agree.
+    pub(super) fn global_declared(&self, name: &str) -> Option<Fact> {
+        self.consts.get(name).cloned().flatten()
     }
 
     /// Whether `name` names an enum variant (`E::V`, or a bare registered `V`).
@@ -555,9 +575,9 @@ impl Decls {
     /// `fact`: when every one of them keeps it, no assignment can change it.
     ///
     /// A declared binding keeps its declared fact unless an assignment
-    /// contradicts the declaration (a numeric literal into a string, a string
-    /// into anything else); an unannotated binding keeps its fact only when
-    /// every assigned value has the same fact.
+    /// contradicts the declaration (see [`Self::stores_contradiction`]); an
+    /// unannotated binding keeps its fact only when every assigned value has
+    /// the same fact.
     pub(super) fn reassigned_fact(
         &self,
         name: &str,
@@ -576,25 +596,34 @@ impl Decls {
                 .iter()
                 .fold(fact, |fact, v| join(fact, self.value_fact(v, &env)));
         }
-        let contradicted = if fact == Fact::Str {
-            assignments.iter().any(|v| is_numeric_literal(v))
-        } else {
-            assignments
-                .iter()
-                .any(|v| contradicts(&fact, &self.value_fact(v, &env)))
-        };
+        let contradicted = assignments
+            .iter()
+            .any(|v| self.stores_contradiction(&fact, v, &env));
         if contradicted { Fact::MaybeStr } else { fact }
+    }
+
+    /// Whether storing `value` where `declared` is declared contradicts the
+    /// declaration (see [`contradicts`]). The null handle `0` is a valid
+    /// value of a `string` slot.
+    pub(super) fn stores_contradiction(&self, declared: &Fact, value: &Node, env: &Env) -> bool {
+        if *declared == Fact::Str && is_null(value) {
+            return false;
+        }
+        contradicts(declared, &self.value_fact(value, env))
     }
 
     /// Bind a declaration's parameters over `env`. `owner` names the function
     /// they belong to (`None` for a closure): a parameter some call in the
-    /// module gives a string is not proven to hold no string.
+    /// module gives a value its declaration does not hold is not proven to
+    /// hold what is declared. A parameter of a type parameter of the function
+    /// (`type_params`) may hold anything.
     pub(super) fn param_env(
         &self,
         mut env: Env,
         params: &[Param],
         body: &[Node],
         owner: Option<&str>,
+        type_params: &[String],
     ) -> Env {
         let stored = owner.and_then(|name| self.contradicted.params.get(name));
         for (index, param) in params.iter().enumerate() {
@@ -602,7 +631,10 @@ impl Decls {
             let typed = if stored.is_some_and(|at| at.contains(&index)) {
                 Fact::MaybeStr
             } else {
-                self.typed_fact(&param.ty)
+                match &param.ty {
+                    TypeAnn::Named(name) if type_params.contains(name) => Fact::Any,
+                    ty => self.typed_fact(ty),
+                }
             };
             let fact = self.reassigned_fact(&param.name, typed, true, &assignments, &env);
             self.bind(&mut env, &param.name, fact);
@@ -611,7 +643,8 @@ impl Decls {
     }
 
     pub(super) fn fn_env(&self, fd: &FnDefData) -> Env {
-        self.param_env(Env::default(), &fd.params, &fd.body, Some(fd.name.as_str()))
+        let owner = Some(fd.name.as_str());
+        self.param_env(Env::default(), &fd.params, &fd.body, owner, &fd.type_params)
     }
 
     /// The fact for an immutable `let` (see [`Self::binding_fact`]).

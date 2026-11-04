@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1955 | **Est. tokens:** ~3,832,481
-**Generated:** 2026-11-04 11:55 UTC
+**Files:** 1957 | **Est. tokens:** ~3,838,465
+**Generated:** 2026-11-04 12:48 UTC
 
 ## Token Budget Guide
 
@@ -96,7 +96,7 @@
 | `.github/scripts/` | 1 | ~962 |
 | `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~22,857 |
+| `runtime-support/` | 1 | ~22,897 |
 | `scripts/` | 33 | ~123,987 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -121,9 +121,9 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 49 | ~161,358 |
+| `src/eval/` | 49 | ~161,655 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 6 | ~22,004 |
+| `src/eval/string_equality/` | 8 | ~27,651 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -1078,7 +1078,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~22857 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22897 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
@@ -1335,20 +1335,22 @@
 - `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `classify.rs` (~4212 tok, huge) — Copyright 2026 STARGA Inc.
-- `facts.rs` (~6203 tok, huge) — Copyright 2026 STARGA Inc.
-- `flows.rs` (~1711 tok, huge) — Copyright 2026 STARGA Inc.
+- `classify.rs` (~5033 tok, huge) — Copyright 2026 STARGA Inc.
+- `facts.rs` (~6702 tok, huge) — Copyright 2026 STARGA Inc.
+- `flows.rs` (~3509 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_equality.rs` (~2688 tok, huge) — Copyright 2025 STARGA Inc.
+- `string_equality.rs` (~2856 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `slot_tests.rs` (~2312 tok, huge) — Copyright 2026 STARGA Inc.
+- `slots.rs` (~1658 tok, huge) — Copyright 2026 STARGA Inc.
+- `slot_tests.rs` (~2413 tok, huge) — Copyright 2026 STARGA Inc.
+- `sums.rs` (~735 tok, large) — Copyright 2026 STARGA Inc.
 - `tests.rs` (~4214 tok, huge) — Copyright 2025 STARGA Inc.
-- `walk.rs` (~3352 tok, huge) — Copyright 2026 STARGA Inc.
+- `walk.rs` (~3387 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_record.rs` (~2421 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_record.rs` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/struct_resolver/`
 
 - `inference.rs` (~2555 tok, huge) — Copyright 2025 STARGA Inc.

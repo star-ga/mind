@@ -132,7 +132,8 @@ fn operand_bytes(value: &Value) -> Result<Vec<u8>, EvalError> {
 }
 
 /// `__mind_string_eq(a, b)`: 1 when both strings hold the same bytes, else 0
-/// (the runtime `mind_string_eq_impl`: lengths first, then every byte).
+/// (the runtime `mind_string_eq_impl`: the null handle `0` equals only
+/// itself; otherwise lengths first, then every byte).
 pub(crate) fn eval_string_eq(
     args: &[Node],
     env: &HashMap<String, Value>,
@@ -147,8 +148,18 @@ pub(crate) fn eval_string_eq(
     };
     let left = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
     let right = eval_value_expr_mode(right, env, tensor_env, mode)?;
-    let equal = operand_bytes(&left)? == operand_bytes(&right)?;
-    Ok(Value::Int(i64::from(equal)))
+    Ok(Value::Int(i64::from(string_values_equal(&left, &right)?)))
+}
+
+/// Whether two `__mind_string_eq` operands hold the same bytes. The null
+/// handle `0` is no string record: like the runtime `mind_string_eq_impl`,
+/// it equals only itself and nothing is read through it.
+fn string_values_equal(left: &Value, right: &Value) -> Result<bool, EvalError> {
+    let null = |value: &Value| matches!(value, Value::Int(0));
+    if null(left) || null(right) {
+        return Ok(null(left) && null(right));
+    }
+    Ok(operand_bytes(left)? == operand_bytes(right)?)
 }
 
 #[cfg(all(test, feature = "std-surface"))]

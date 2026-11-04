@@ -21,7 +21,8 @@ use std::rc::Rc;
 
 use crate::ast::{BinOp, FnDefData, Module, Node};
 
-use super::facts::{Contradicted, Decls, Env, Fact};
+use super::facts::{Decls, Env, Fact};
+use super::slots::Contradicted;
 use super::{Assigned, Ordinals, Refused, Targets, assigned_in, assignment_values, decide};
 
 /// What a statement list belongs to: the names assigned in the enclosing
@@ -216,7 +217,9 @@ impl<'a> Walk<'a> {
             }
             // The binding's fact already accounts for every later assignment
             // (`reassigned_fact`, `param_env`).
-            Node::Assign { value, .. } => {
+            Node::Assign { name, value, .. } => {
+                self.decls
+                    .record_global_assign(name, value, &env, &mut self.flows);
                 self.push_next(stmts, index, env.clone(), &scope, Vec::new());
                 self.push_node(value, env, &scope);
             }
@@ -337,9 +340,9 @@ impl<'a> Walk<'a> {
                         .filter_map(|name| env.get(name).map(|f| (name.clone(), f.clone())))
                         .collect(),
                 );
-                let closure_env = self
-                    .decls
-                    .param_env(captured, &data.params, &data.body, None);
+                let closure_env =
+                    self.decls
+                        .param_env(captured, &data.params, &data.body, None, &[]);
                 self.pending.push(Task::Stmts {
                     stmts: &data.body,
                     index: 0,

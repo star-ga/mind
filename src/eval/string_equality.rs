@@ -8,10 +8,13 @@
 //! declared type says so (see [`facts`] and [`classify`]): a literal, a
 //! `string`/`String` parameter or annotated binding, a string constant, call
 //! result (including a method call that lowers to a `string_<method>` or
-//! `<type>_<method>` function), struct field, collection element, or an `if`
-//! / `match` whose every branch is a string. Such a comparison is rewritten to
-//! the compiler-owned `__mind_string_eq` before the interpreter or any
-//! lowering sees it, so every backend computes the same byte-wise answer.
+//! `<type>_<method>` function), struct field, collection element, an `if` /
+//! `match` whose every branch is a string, or a payload of an `Option` /
+//! `Result` declared (or constructed) to carry one. Such a comparison is
+//! rewritten to the compiler-owned `__mind_string_eq` before the interpreter
+//! or any lowering sees it, so every backend computes the same byte-wise
+//! answer. The null handle `0` is a `string` value equal only to itself; no
+//! record is read through it.
 //!
 //! Every other comparison that could compare string handles, which is false
 //! for equal text, is refused at check time with `E2038`, never lowered
@@ -22,12 +25,17 @@
 //! * two operands of which neither has a known type, so both may be strings.
 //!
 //! An operand whose type is known and is not a string makes the comparison an
-//! integer comparison on every backend. A declaration proves a value holds
-//! no string only while the module stores none there: a parameter given a
-//! string argument, a result type a string is returned through, and a field
-//! or payload given a string are read as unknown (see [`flows`]). A function
-//! with no declared result type that still returns a value has an unknown
-//! result.
+//! integer comparison on every backend. A declaration proves what its slot
+//! holds only while the module stores nothing else there (see [`slots`] and
+//! [`flows`]): a parameter, result, field, payload, module binding or
+//! collection element given a value that may be a string where none is
+//! declared, or an integer other than the null handle where a string is
+//! declared, is read as maybe a string. So is the integer result of a callee
+//! whose body is not analysed here (a std collection, raw memory) after a
+//! string was handed to such a callee. A value of a type parameter, or the
+//! result of an imported function with no declared result type, may be
+//! anything. A function with no declared result type that still returns a
+//! value has an unknown result.
 //!
 //! A reassigned name keeps its fact only when every assignment keeps it (see
 //! `Decls::reassigned_fact`); facts are never joined across branches of
@@ -42,6 +50,8 @@ mod facts;
 mod flows;
 #[cfg(test)]
 mod slot_tests;
+mod slots;
+mod sums;
 #[cfg(test)]
 mod tests;
 mod walk;
@@ -55,7 +65,7 @@ type Ordinals = BTreeMap<usize, usize>;
 /// Why a comparison is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RefusedKind {
-    /// A string compared with an operand whose type is not a string.
+    /// A string compared with an operand not known to be a string.
     Mixed,
     /// Two operands, neither of a known type.
     Untyped,
@@ -72,7 +82,7 @@ pub(crate) struct Refused {
 pub(crate) fn refusal_message(refused: &Refused) -> String {
     let symbol = if refused.op == BinOp::Eq { "==" } else { "!=" };
     let operands = match refused.kind {
-        RefusedKind::Mixed => "a string with an operand whose type is not a string",
+        RefusedKind::Mixed => "a string with an operand not known to be a string",
         RefusedKind::Untyped => {
             "two operands whose types are not known at compile time, so both may be strings"
         }
@@ -88,7 +98,8 @@ pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
     match refused.kind {
         RefusedKind::Mixed => {
             "give the other operand a `string` type (parameter, annotated binding, \
-             field or function return), or compare bytes explicitly with \
+             field or function return) and store only strings (or the null handle \
+             `0`) where `string` is declared, or compare bytes explicitly with \
              `string_eq(a, b)` from std.string"
         }
         RefusedKind::Untyped => {

@@ -14,9 +14,8 @@
 
 use crate::ast::{Literal, Node, Pattern, TypeAnn};
 
-use super::facts::{
-    Class, Decls, Env, Fact, Ret, contradicts, fact_class, is_numeric_literal, join,
-};
+use super::facts::{Class, Decls, Env, Fact, Ret, fact_class, join};
+use super::flows::{INTRINSIC_PREFIX, RAW_LOAD};
 
 /// Nesting beyond this depth is not analysed: the value is `Unknown`. The
 /// bound keeps the recursive walk off deep `else if` chains, whose analysis
@@ -65,9 +64,10 @@ impl Decls {
     }
 
     /// The fact of a `let` binding. An annotation is trusted unless the value
-    /// contradicts it: no string is a numeric literal, and a string value
-    /// (or a collection of strings) under a non-string annotation is still a
-    /// string handle.
+    /// contradicts it (see `Decls::stores_contradiction`): a value that may
+    /// be a string under a non-string annotation is still a string handle,
+    /// and an integer other than the null handle under a `string` annotation
+    /// is no string record.
     pub(super) fn binding_fact(
         &self,
         ann: Option<&TypeAnn>,
@@ -78,18 +78,18 @@ impl Decls {
         let Some(ty) = ann else {
             return self.fact_at(value, env, depth);
         };
-        match self.typed_fact(ty) {
-            Fact::Str if is_numeric_literal(value) => Fact::Unknown,
-            Fact::Str => Fact::Str,
-            fact if contradicts(&fact, &self.fact_at(value, env, depth)) => Fact::MaybeStr,
-            fact => fact,
+        let declared = self.typed_fact(ty);
+        if self.stores_contradiction(&declared, value, env) {
+            Fact::MaybeStr
+        } else {
+            declared
         }
     }
 
     /// The element fact of a collection expression, `Unknown` when unknown.
     pub(super) fn element_fact(&self, collection: &Node, env: &Env) -> Fact {
         match self.value_fact(collection, env) {
-            Fact::Elems(element) => *element,
+            Fact::Elems(element) => self.contradicted.element(*element),
             _ => Fact::Unknown,
         }
     }
@@ -113,6 +113,8 @@ impl Decls {
             | Node::Neg { .. }
             | Node::Not { .. }
             | Node::BitNot { .. } => Fact::NotStr,
+            // A literal of the std `String` record is a string.
+            Node::StructLit { name, .. } if is_string_record(name) => Fact::Str,
             Node::StructLit { name, .. } => Fact::Record(name.clone()),
             Node::ArrayLit { elements, .. } | Node::SetLit { elements, .. } => {
                 let element = elements
@@ -133,7 +135,13 @@ impl Decls {
             Node::Tuple { elements, .. } => {
                 Fact::Tuple(elements.iter().map(|e| self.fact_at(e, env, d)).collect())
             }
-            Node::Call { callee, .. } => self.call_fact(callee, env),
+            Node::Call { callee, args, .. } => match self.builtin_variant(callee) {
+                Some(variant) if !env.contains_key(callee) => variant.build(
+                    args.first()
+                        .map_or(Fact::Never, |a| self.fact_at(a, env, d)),
+                ),
+                _ => self.call_fact(callee, env),
+            },
             Node::MethodCall {
                 receiver,
                 method,
@@ -144,7 +152,7 @@ impl Decls {
                 receiver, field, ..
             } => self.field_fact(receiver, field, env, d),
             Node::IndexAccess { receiver, .. } => match self.fact_at(receiver, env, d) {
-                Fact::Elems(element) | Fact::Map(element) => *element,
+                Fact::Elems(element) | Fact::Map(element) => self.contradicted.element(*element),
                 // A byte of a string.
                 Fact::Str => Fact::NotStr,
                 _ => Fact::Unknown,
@@ -265,6 +273,11 @@ impl Decls {
                     pending.extend(args.iter().zip(facts));
                 }
                 Pattern::EnumVariant { path, args } => {
+                    let builtin = self.builtin_variant(path);
+                    if let Some(fact) = builtin.and_then(|v| v.payload_of(&fact)) {
+                        pending.extend(args.iter().map(|arg| (arg, fact.clone())));
+                        continue;
+                    }
                     let payload = self.variant_payload(path);
                     for (i, arg) in args.iter().enumerate() {
                         let fact = payload
@@ -288,7 +301,40 @@ impl Decls {
         }
     }
 
+    /// The fact of the result of `callee(args)`. A callee whose body is not
+    /// analysed here may give back, as an integer, a string an earlier call
+    /// handed it (see `Decls::escape_flows`).
     fn call_fact(&self, callee: &str, env: &Env) -> Fact {
+        let fact = self.declared_call_fact(callee, env);
+        if fact == Fact::NotStr && self.returns_escaped(callee, env) {
+            Fact::MaybeStr
+        } else {
+            fact
+        }
+    }
+
+    /// Whether `callee` may return a string handed to an opaque callee
+    /// earlier: it is opaque itself, and its declaration names a record type
+    /// such a string was handed over with, or names none while a string was
+    /// handed over with none (see `Decls::escape_flows`).
+    fn returns_escaped(&self, callee: &str, env: &Env) -> bool {
+        let c = &self.contradicted;
+        if (!c.escaped_raw && c.escaped_records.is_empty()) || !self.is_opaque(callee, env) {
+            return false;
+        }
+        if callee.starts_with(INTRINSIC_PREFIX) {
+            return c.escaped_raw && callee == RAW_LOAD;
+        }
+        let records = self.callee_records(callee);
+        if records.is_empty() {
+            c.escaped_raw
+        } else {
+            !records.is_disjoint(&c.escaped_records)
+        }
+    }
+
+    /// The fact a callee's declaration gives its result.
+    fn declared_call_fact(&self, callee: &str, env: &Env) -> Fact {
         // A local binding called as a function (a closure value).
         if env.contains_key(callee) {
             return Fact::Unknown;
@@ -357,7 +403,7 @@ impl Decls {
         match &receiver_fact {
             Fact::Elems(element) | Fact::Map(element) => {
                 return if ELEMENT_METHODS.contains(&method) {
-                    (**element).clone()
+                    self.contradicted.element((**element).clone())
                 } else if SCALAR_COLLECTION_METHODS.contains(&method) {
                     Fact::NotStr
                 } else {
@@ -373,6 +419,10 @@ impl Decls {
             _ => {}
         }
         match self.method_callee(receiver, &receiver_fact, method, env) {
+            // A method that names no declared function (the runtime library
+            // may supply one, as it does `string_trim`): its result type is
+            // not visible here.
+            Some(callee) if self.call_ret(&callee).is_none() => Fact::Any,
             Some(callee) => self.call_fact(&callee, env),
             None => Fact::Unknown,
         }
@@ -413,8 +463,8 @@ impl Decls {
             }
             _ => None,
         };
-        let ret = callee.and_then(|callee| self.call_ret(&callee));
-        match ret {
+        let ret = callee.as_deref().and_then(|callee| self.call_ret(callee));
+        let payload = match ret {
             Some(Ret::Ty(ty)) => match self.resolve(&ty) {
                 TypeAnn::Generic { name, args } if name == "Result" || name == "Option" => {
                     args.first().map_or(Fact::Unknown, |t| self.typed_fact(t))
@@ -422,6 +472,32 @@ impl Decls {
                 _ => Fact::Unknown,
             },
             _ => Fact::Unknown,
+        };
+        let escaped = callee.is_some_and(|c| self.returns_escaped(&c, env));
+        if payload == Fact::NotStr && escaped {
+            Fact::MaybeStr
+        } else {
+            payload
         }
     }
+}
+
+/// Whether `name` names the std `String` record (a `string` value).
+pub(super) fn is_string_record(name: &str) -> bool {
+    matches!(name.rsplit('.').next(), Some("String" | "string"))
+}
+
+/// The arguments a method call lowers to: a value receiver first; a
+/// type-name receiver (`String.from(x)`) is not an argument.
+pub(super) fn lowered_args<'n>(
+    receiver: &'n Node,
+    receiver_fact: &Fact,
+    args: &'n [Node],
+) -> Vec<&'n Node> {
+    let value_receiver = matches!(receiver_fact, Fact::Str | Fact::Record(_));
+    value_receiver
+        .then_some(receiver)
+        .into_iter()
+        .chain(args)
+        .collect()
 }

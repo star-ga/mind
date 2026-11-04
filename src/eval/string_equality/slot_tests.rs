@@ -273,3 +273,15 @@ fn global_and_unknown_receiver_stores_are_not_trusted() {
     }";
     assert_eq!(refusals(field), vec![UNTYPED]);
 }
+
+/// A literal of the std `String` record is a string value: returning one
+/// through a `-> String` result does not store a non-string there.
+#[test]
+fn a_string_record_literal_is_a_string() {
+    let src = "fn mk() -> String { return String { addr: 0, len: 0, cap: 0 } }
+    fn p(a: string) -> i64 {
+        if mk() == a { return 1 }
+        return 0
+    }";
+    assert_eq!(byte_compares(src), 1);
+}

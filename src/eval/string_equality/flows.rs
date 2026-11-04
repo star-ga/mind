@@ -2,30 +2,56 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Strings stored into declared non-string slots.
+//! Values stored into declared slots that cannot hold them.
 //!
-//! `mindc check` accepts a string where a declaration names another type: a
-//! call argument for an `i64` parameter, a value returned through an `i64`
-//! result, a struct field or a variant payload. The declaration then no
-//! longer proves the slot holds no string, and `==` on two such slots would
-//! compare string handles, which is false for equal text. A walk records each
-//! such store here; the next walk reads every recorded slot as
-//! [`Fact::MaybeStr`], so a comparison of two of them is refused like any
-//! other pair of operands of unknown type, and storing one of them into
-//! another declared non-string slot is recorded in turn. A function with no
-//! declared result type that returns a string is recorded the same way.
+//! `mindc check` accepts a value of another type where a declaration names
+//! one: a call argument for a parameter, a value returned through a result, a
+//! struct field, a variant payload, a collection element (by index
+//! assignment or `push` / `set` / `insert` / `add`), and a module-level
+//! binding assigned in a function. The declaration then no longer proves what
+//! the slot holds (see [`super::slots`]), and `==` on two such slots would
+//! compare string handles, which is false for equal text, or read an integer
+//! as a string record. A walk records each such store here; the next walk
+//! reads every recorded slot as [`Fact::MaybeStr`], so a comparison of two of
+//! them is refused like any other pair of operands of unknown type, and
+//! storing one of them into another declared slot is recorded in turn. A
+//! function with no declared result type that returns a string is recorded
+//! the same way.
 //!
-//! Only declarations of this module are recorded: an imported function's
-//! body is analysed with its own module.
+//! A value that may be a string handed to a callee whose body this module
+//! does not analyse (an imported or std function, an extern, an intrinsic),
+//! through a parameter not declared `string`, may be kept there and given
+//! back as an integer: `vec_push(v, "abc")` and `vec_get(v, 0)`,
+//! `__mind_store_i64(p, s)` and `__mind_load_i64(p)`. Such a store is
+//! recorded by the record types the callee's declaration names (or as a raw
+//! store when it names none), and the integer result of a later call to such
+//! a callee whose declaration names one of those record types (or, after a
+//! raw store, names none) is maybe a string. Of the intrinsics only
+//! `__mind_store_i64` keeps a handle whole, and only `__mind_load_i64` gives
+//! one back.
 
-use crate::ast::{FnDefData, Node, StructLitField};
+use std::collections::BTreeSet;
 
-use super::facts::{Contradicted, Decls, Env, Fact, Ret, contradicts, tail_value};
+use crate::ast::{FnDefData, Node, StructLitField, TypeAnn};
+
+use super::classify::lowered_args;
+use super::facts::{Decls, Env, Fact, Ret, SCALAR_NAMES, tail_value};
+use super::slots::{Contradicted, holds_str};
+
+/// Collection methods that store their last argument as an element.
+const STORE_METHODS: &[&str] = &["push", "set", "insert", "add"];
+
+/// The prefix of compiler intrinsics.
+pub(super) const INTRINSIC_PREFIX: &str = "__mind_";
+
+/// The intrinsic that stores a 64-bit value, and the one that loads it back.
+const RAW_STORE: &str = "__mind_store_i64";
+pub(super) const RAW_LOAD: &str = "__mind_load_i64";
 
 impl Decls {
-    /// Record in `out` every declared non-string slot `node` stores a string
-    /// into. `owner` is the function whose body holds `node` (`None` at
-    /// module level and in a closure).
+    /// Record in `out` every declared slot `node` stores a contradicting
+    /// value into. `owner` is the function whose body holds `node` (`None`
+    /// at module level and in a closure).
     pub(super) fn record_flows(
         &self,
         node: &Node,
@@ -34,29 +60,21 @@ impl Decls {
         out: &mut Contradicted,
     ) {
         match node {
-            Node::Call { callee, args, .. } if !env.contains_key(callee) => {
-                self.call_flows(callee, args.iter(), env, out);
+            Node::Call { callee, args, .. } => {
+                let args: Vec<&Node> = args.iter().collect();
+                self.call_flows(callee, &args, env, out);
             }
             Node::MethodCall {
                 receiver,
                 method,
                 args,
                 ..
-            } => {
-                let receiver_fact = self.value_fact(receiver, env);
-                if let Some(callee) = self.method_callee(receiver, &receiver_fact, method, env) {
-                    // A value receiver is the lowered call's first argument; a
-                    // type-name receiver (`String.from(x)`) is not an argument.
-                    let value_receiver = matches!(receiver_fact, Fact::Str | Fact::Record(_));
-                    let first = value_receiver.then_some(&**receiver);
-                    self.call_flows(&callee, first.into_iter().chain(args), env, out);
-                }
-            }
+            } => self.method_flows(receiver, method, args, env, out),
             Node::Return {
                 value: Some(value), ..
             } => {
                 if let Some(owner) = owner {
-                    self.return_flow(owner, &self.value_fact(value, env), out);
+                    self.return_flow(owner, value, &self.value_fact(value, env), out);
                 }
             }
             Node::StructLit { name, fields, .. } => self.struct_flows(name, fields, env, out),
@@ -65,17 +83,44 @@ impl Decls {
                 field,
                 value,
                 ..
-            } => {
-                if let Fact::Record(owner) = self.value_fact(receiver, env) {
-                    if let Some(declared) = self.declared_field_fact(&owner, field) {
-                        if contradicts(&declared, &self.value_fact(value, env)) {
-                            let fields = out.fields.entry(owner).or_default();
-                            fields.insert(field.clone());
-                        }
+            } => self.field_assign_flow(receiver, field, value, env, out),
+            Node::IndexAssign {
+                receiver, value, ..
+            } => match self.value_fact(receiver, env) {
+                // A byte stored into a string.
+                Fact::Str => {}
+                Fact::Elems(element) | Fact::Map(element) => {
+                    if self.stores_contradiction(&element, value, env) {
+                        out.add_element(*element);
                     }
                 }
-            }
+                _ => {
+                    if holds_str(&self.value_fact(value, env)) {
+                        out.add_element(Fact::Unknown);
+                    }
+                }
+            },
             _ => {}
+        }
+    }
+
+    /// Record `name = value` on a module-level binding (a local binding's
+    /// assignments are read with its declaration, `reassigned_fact`).
+    pub(super) fn record_global_assign(
+        &self,
+        name: &str,
+        value: &Node,
+        env: &Env,
+        out: &mut Contradicted,
+    ) {
+        if env.contains_key(name) {
+            return;
+        }
+        let Some(declared) = self.global_declared(name) else {
+            return;
+        };
+        if self.stores_contradiction(&declared, value, env) {
+            out.globals.insert(name.to_string());
         }
     }
 
@@ -83,39 +128,48 @@ impl Decls {
     pub(super) fn record_tail_flow(&self, fd: &FnDefData, env: &Env, out: &mut Contradicted) {
         if tail_value(&fd.body) {
             let tail = self.block_fact(&fd.body, env, 0);
-            self.return_flow(&fd.name, &tail, out);
+            if let Some(last) = fd.body.last() {
+                self.return_flow(&fd.name, last, &tail, out);
+            }
         }
     }
 
-    /// Record a value with fact `value` returned from `owner`. With no
+    /// Record `value` (with fact `fact`) returned from `owner`. With no
     /// declared result type, a returned string makes the result one on some
     /// path.
-    fn return_flow(&self, owner: &str, value: &Fact, out: &mut Contradicted) {
+    fn return_flow(&self, owner: &str, value: &Node, fact: &Fact, out: &mut Contradicted) {
         let declared = match self.returns.get(owner) {
             Some(Some(Ret::Ty(ty))) => self.typed_fact(ty),
             Some(Some(Ret::Undeclared)) => Fact::NotStr,
             _ => return,
         };
-        if contradicts(&declared, value) {
+        let null = declared == Fact::Str && super::slots::is_null(value);
+        if !null && super::slots::contradicts(&declared, fact) {
             out.returns.insert(owner.to_string());
         }
     }
 
-    /// Record the arguments of a call to a local function or a variant
-    /// constructor.
-    fn call_flows<'n>(
-        &self,
-        callee: &str,
-        args: impl Iterator<Item = &'n Node>,
-        env: &Env,
-        out: &mut Contradicted,
-    ) {
+    /// Whether `callee` is not a function this module analyses: not a local
+    /// binding (a closure value), not a local function with one declaration,
+    /// not a variant constructor.
+    pub(super) fn is_opaque(&self, callee: &str, env: &Env) -> bool {
+        !env.contains_key(callee)
+            && !matches!(self.params.get(callee), Some(Some(_)))
+            && !self.is_variant(callee)
+    }
+
+    /// Record the arguments of a call to a local function, a variant
+    /// constructor or an opaque callee.
+    fn call_flows(&self, callee: &str, args: &[&Node], env: &Env, out: &mut Contradicted) {
+        if env.contains_key(callee) {
+            return;
+        }
         if let Some(declared) = self.params.get(callee) {
             let Some(types) = declared else {
-                return;
+                return self.escape_flows(callee, args, env, out);
             };
             for (index, (ty, arg)) in types.iter().zip(args).enumerate() {
-                if contradicts(&self.typed_fact(ty), &self.value_fact(arg, env)) {
+                if self.stores_contradiction(&self.typed_fact(ty), arg, env) {
                     let at = out.params.entry(callee.to_string()).or_default();
                     at.insert(index);
                 }
@@ -123,11 +177,135 @@ impl Decls {
         } else if self.is_variant(callee) {
             if let Some(payload) = self.variant_payload(callee) {
                 for (index, (ty, arg)) in payload.types.iter().zip(args).enumerate() {
-                    if contradicts(&self.typed_fact(ty), &self.value_fact(arg, env)) {
+                    if self.stores_contradiction(&self.typed_fact(ty), arg, env) {
                         let at = out.payloads.entry(payload.key.clone()).or_default();
                         at.insert(index);
                     }
                 }
+            }
+        } else {
+            self.escape_flows(callee, args, env, out);
+        }
+    }
+
+    /// Record a method call: an element stored into a collection, or the
+    /// arguments of the function the method lowers to.
+    fn method_flows(
+        &self,
+        receiver: &Node,
+        method: &str,
+        args: &[Node],
+        env: &Env,
+        out: &mut Contradicted,
+    ) {
+        let receiver_fact = self.value_fact(receiver, env);
+        if let Fact::Elems(element) | Fact::Map(element) = &receiver_fact {
+            if let (true, Some(value)) = (STORE_METHODS.contains(&method), args.last()) {
+                if self.stores_contradiction(element, value, env) {
+                    out.add_element((**element).clone());
+                }
+            }
+            return;
+        }
+        match self.method_callee(receiver, &receiver_fact, method, env) {
+            Some(callee) => {
+                let lowered = lowered_args(receiver, &receiver_fact, args);
+                self.call_flows(&callee, &lowered, env, out);
+            }
+            // The callee is not known: whatever it is, it is not analysed.
+            None => {
+                let args: Vec<&Node> = args.iter().collect();
+                self.escape_flows("", &args, env, out);
+            }
+        }
+    }
+
+    /// The declared parameter types of opaque `callee`, when declared.
+    fn opaque_types(&self, callee: &str) -> Option<&Vec<TypeAnn>> {
+        let tail = callee.rsplit_once('.').map_or(callee, |(_, tail)| tail);
+        self.opaque_params
+            .get(callee)
+            .or_else(|| self.opaque_params.get(tail))
+    }
+
+    /// The record types opaque `callee`'s declaration names (parameters and
+    /// result, other than scalars and strings): what it can keep a value in.
+    /// Read off the declaration, not the arguments, so the answer does not
+    /// depend on which records this module's registry knows.
+    pub(super) fn callee_records(&self, callee: &str) -> BTreeSet<String> {
+        let ret = match self.call_ret(callee) {
+            Some(Ret::Ty(ty)) => Some(ty),
+            _ => None,
+        };
+        let params = self.opaque_types(callee).into_iter().flatten();
+        let mut records = BTreeSet::new();
+        for ty in params.chain(ret.as_ref()) {
+            let mut ty = self.resolve(ty);
+            while let TypeAnn::Ref { target, .. } = ty {
+                ty = self.resolve(&target);
+            }
+            if let TypeAnn::Named(name) = ty {
+                let scalar = SCALAR_NAMES.contains(&name.as_str());
+                if !scalar && name != "string" && name != "String" {
+                    records.insert(name);
+                }
+            }
+        }
+        records
+    }
+
+    /// Record a call to an opaque callee (see [`Self::is_opaque`]) that is
+    /// handed a value that may be a string through a parameter not declared
+    /// `string`: by the record types its declaration names, or as a raw store
+    /// when it names none. Of the compiler intrinsics only the 64-bit store
+    /// keeps a value whole for a later load to give back.
+    fn escape_flows(&self, callee: &str, args: &[&Node], env: &Env, out: &mut Contradicted) {
+        if callee.starts_with(INTRINSIC_PREFIX) {
+            let value = (callee == RAW_STORE).then(|| args.get(1)).flatten();
+            if value.is_some_and(|v| holds_str(&self.value_fact(v, env))) {
+                out.escaped_raw = true;
+            }
+            return;
+        }
+        let types = self.opaque_types(callee);
+        let escapes = args.iter().enumerate().any(|(index, arg)| {
+            let declared = types.and_then(|types| types.get(index));
+            let string_param = declared.is_some_and(|ty| self.typed_fact(ty) == Fact::Str);
+            !string_param && holds_str(&self.value_fact(arg, env))
+        });
+        if !escapes {
+            return;
+        }
+        let records = self.callee_records(callee);
+        if records.is_empty() {
+            out.escaped_raw = true;
+        }
+        out.escaped_records.extend(records);
+    }
+
+    /// Record `receiver.field = value`. A receiver whose struct is not known
+    /// records the field of every struct declaring one of that name.
+    fn field_assign_flow(
+        &self,
+        receiver: &Node,
+        field: &str,
+        value: &Node,
+        env: &Env,
+        out: &mut Contradicted,
+    ) {
+        let owners = match self.value_fact(receiver, env) {
+            Fact::Record(owner) => vec![owner],
+            _ => self.structs_with_field(field),
+        };
+        for owner in owners {
+            let Some(declared) = self.declared_field_fact(&owner, field) else {
+                continue;
+            };
+            if self.stores_contradiction(&declared, value, env) {
+                out.fields
+                    .entry(owner)
+                    .or_default()
+                    .insert(field.to_string());
             }
         }
     }
@@ -146,7 +324,7 @@ impl Decls {
                 let Some(declared) = self.declared_field_fact(name, &field.name) else {
                     continue;
                 };
-                if contradicts(&declared, &self.value_fact(&field.value, env)) {
+                if self.stores_contradiction(&declared, &field.value, env) {
                     let at = out.fields.entry(name.to_string()).or_default();
                     at.insert(field.name.clone());
                 }
@@ -157,7 +335,7 @@ impl Decls {
                 let Some((index, ty)) = index.and_then(|i| Some((i, payload.types.get(i)?))) else {
                     continue;
                 };
-                if contradicts(&self.typed_fact(ty), &self.value_fact(&field.value, env)) {
+                if self.stores_contradiction(&self.typed_fact(ty), &field.value, env) {
                     let at = out.payloads.entry(payload.key.clone()).or_default();
                     at.insert(index);
                 }
