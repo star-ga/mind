@@ -30,8 +30,8 @@ feed/pump/tick/write/close.
 
 ## Provenance and regeneration
 
-The inherited round-2 fixture draft was completed in this lane. Client entropy
-byte i is i mod 256; server entropy byte i is (101+i) mod 256. Time is 1700000000.
+Client entropy byte i is i mod 256; server entropy byte i is (101+i) mod 256.
+Time is 1700000000.
 The fixture PKI uses deterministic seed 20261014, RSA-2048, SAN `rsa`, serverAuth
 EKU, and validity 2020-01-01 through 2030-01-01. The unrelated root is separate.
 `fixture_private.mind` contains a PUBLIC, TEST-ONLY private RSA key. NEVER use it

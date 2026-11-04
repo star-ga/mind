@@ -17,9 +17,9 @@
 //!
 //! Cost decides which engine runs which set. The tree-walking evaluator takes
 //! tens of seconds per RSA-2048 verification and minutes per ECDSA P-256 one,
-//! so the `mindc test` sets use RSA chains and the checks that refuse before
-//! any signature is verified. The build sets add the ECDSA chains, the IP
-//! address names and the recorded flights.
+//! so the `mindc test` sets use RSA chains, the checks that refuse before any
+//! signature is verified, the IP literal parsers and the anchor-bundle loader.
+//! The build sets add the ECDSA chains that verify and the recorded flights.
 
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
@@ -199,9 +199,12 @@ const fn case(
     }
 }
 
-/// Refused before any signature is verified. A DNS name of 7 to 15 bytes is
-/// first tried as an IPv4 literal, a loop the evaluator leaves only through
-/// `break`, so these hosts are longer than that.
+/// Refused before any signature is verified. Short DNS names (7 to 15 bytes,
+/// first tried as an IPv4 literal) and IP literals are in this set, so both
+/// engines run the literal parsers. The `eku_*` and `dns_ip_leaf` chains are
+/// valid under `eku_root` (`eku_root_ok` in the build set): only the refused
+/// rule stops them, an EKU without serverAuth or an IP literal against a
+/// dNSName. `#outer_sigalg_sha384` changes only the outer signatureAlgorithm.
 #[rustfmt::skip]
 const X509_INTERP_FAST: &[Chain] = &[
     case("expired", &["ec_leaf", "ec_inter"], &["ec_root"], "www.example.com", 3800 * DAY, -6),
@@ -216,6 +219,13 @@ const X509_INTERP_FAST: &[Chain] = &[
     case("no_anchor", &["rsa_leaf"], &[], "www.rsa-test.example.com", 0, -7),
     case("no_server_auth", &["ec_leaf_noeku", "ec_inter"], &["ec_root"], "www.example.com", 0, -11),
     case("no_san", &["ec_leaf_nosan", "ec_inter"], &["ec_root"], "www.example.com", 0, -15),
+    case("short_hostname_mismatch", &["ec_leaf", "ec_inter"], &["ec_root"], "example.com", 0, -8),
+    case("ip_mismatch", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "192.168.1.1", 0, -8),
+    case("ipv6_mismatch", &["path_ipv6", "path_ec_inter"], &["path_ec_root"], "2001:db8::2", 0, -8),
+    case("dns_name_for_ip", &["ec_leaf", "ec_inter"], &["ec_root"], "127.0.0.1", 0, -8),
+    case("ip_literal_in_dns_san", &["dns_ip_leaf"], &["eku_root"], "127.0.0.1", 0, -8),
+    case("eku_without_server_auth", &["eku_client_leaf"], &["eku_root"], "eku.example.com", 0, -11),
+    case("outer_sigalg_differs", &["ec_leaf#outer_sigalg_sha384", "ec_inter"], &["ec_root"], "www.example.com", 0, -1),
 ];
 
 /// One RSA-2048 PKCS#1 v1.5 verification each. `wrong_key` names the issuer
@@ -227,7 +237,7 @@ const X509_INTERP_RSA: &[Chain] = &[
 ];
 
 /// The build set adds ECDSA P-256 / P-384 and RSA-PSS chains, intermediates,
-/// IP address names, name constraints and the wildcard positives.
+/// the IP address positives, name constraints and the wildcard positives.
 #[rustfmt::skip]
 const X509_BUILD: &[Chain] = &[
     case("ec_ok", &["ec_leaf", "ec_inter"], &["ec_root"], "www.example.com", 0, 0),
@@ -250,8 +260,8 @@ const X509_BUILD: &[Chain] = &[
     case("non_ca_intermediate", &["noca_leaf", "noca_inter"], &["noca_root"], "noca.example.com", 0, -9),
     case("path_length", &["pl_leaf", "pl_i2", "pl_i1"], &["pl_root"], "pl.example.com", 0, -10),
     case("ip_ok", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", 0, 0),
-    case("ip_mismatch", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "192.168.1.1", 0, -8),
-    case("dns_name_for_ip", &["ec_leaf", "ec_inter"], &["ec_root"], "127.0.0.1", 0, -8),
+    case("ipv6_ok", &["path_ipv6", "path_ec_inter"], &["path_ec_root"], "2001:db8::1", 0, 0),
+    case("eku_root_ok", &["eku_server_leaf"], &["eku_root"], "eku.example.com", 0, 0),
     case("name_constraint_excluded", &["nc_leaf_bad", "nc_inter"], &["nc_root"], "bad.example.com", 0, -17),
     case("sha1_refused", &["sha1_leaf"], &["sha1_root"], "www.sha1-test.example.com", 0, -2),
 ];
@@ -275,9 +285,26 @@ fn wrong_key(root: &[u8]) -> Vec<u8> {
     out
 }
 
+/// An ECDSA P-256 / SHA-256 certificate whose outer signatureAlgorithm says
+/// SHA-384 while tbsCertificate.signature still says SHA-256; the signed
+/// bytes are unchanged.
+fn outer_sigalg_sha384(cert: &[u8]) -> Vec<u8> {
+    // OBJECT IDENTIFIER 1.2.840.10045.4.3.2 (ecdsa-with-SHA256).
+    let oid = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+    let hits: Vec<usize> = (0..cert.len())
+        .filter(|&i| cert[i..].starts_with(&oid))
+        .collect();
+    assert_eq!(hits.len(), 2, "inner and outer ecdsa-with-SHA256");
+    let mut out = cert.to_vec();
+    // ...4.3.3 is ecdsa-with-SHA384.
+    out[hits[1] + oid.len() - 1] = 0x03;
+    out
+}
+
 fn x509_anchor_der(name: &str) -> Vec<u8> {
     match name.split_once('#') {
         Some((base, "wrong_key")) => wrong_key(&read_fixture(base)),
+        Some((base, "outer_sigalg_sha384")) => outer_sigalg_sha384(&read_fixture(base)),
         Some((_, tweak)) => panic!("unknown fixture tweak `{tweak}`"),
         None => read_fixture(name),
     }
@@ -405,6 +432,148 @@ fn x509_full_set_runs_in_the_built_executable() {
     ]);
 }
 
+/// `differs(a, b, len)`: 1 when the `len` bytes at `a` and `b` differ, else 0.
+const DIFFERS: &str = "fn differs(a: i64, b: i64, len: i64) -> i64 {\n    let mut i: i64 = 0;\n\
+     \x20   let mut d: i64 = 0;\n    while i < len {\n\
+     \x20       d = d | ((__mind_load_i8(a + i) ^ __mind_load_i8(b + i)) & 255);\n\
+     \x20       i = i + 1;\n    }\n    if d == 0 {\n        return 0;\n    }\n    return 1;\n}\n\n";
+
+/// The checks of [`x509_literals_and_bundles_program`]: the literal parsers
+/// on IPv4 and IPv6 literals and on a DNS name, and the anchor loader on the
+/// DER and PEM bundles (the same eight certificates) and on malformed PEM.
+const LITERALS_AND_BUNDLES: &str = r#"fn check_v4() -> i64 {
+    let h: i64 = __mind_alloc(16);
+    let n: i64 = host_v4(h);
+    let w: i64 = __mind_alloc(8);
+    want_v4(w);
+    let o: i64 = __mind_alloc(8);
+    if x509_parse_ipv4(h, n, o) != 1 {
+        return 1;
+    }
+    return differs(o, w, 4);
+}
+
+fn check_dns_name() -> i64 {
+    let h: i64 = __mind_alloc(16);
+    let n: i64 = host_dns(h);
+    let o: i64 = __mind_alloc(16);
+    if x509_parse_ipv4(h, n, o) != 0 {
+        return 1;
+    }
+    if x509_parse_ipv6(h, n, o) != 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn check_v6(h: i64, n: i64, w: i64) -> i64 {
+    let o: i64 = __mind_alloc(16);
+    if x509_parse_ipv6(h, n, o) != 1 {
+        return 1;
+    }
+    return differs(o, w, 16);
+}
+
+fn check_bundle(blob: i64, count: i64, der: i64, der_len: i64) -> i64 {
+    if blob <= 0 {
+        return 1;
+    }
+    if __mind_load_i64(blob) != count {
+        return 1;
+    }
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < count {
+        total = total + __mind_load_i64(blob + 16 + 16 * i);
+        i = i + 1;
+    }
+    if total != der_len {
+        return 1;
+    }
+    return differs(blob + 8 + 16 * count, der, der_len);
+}
+
+fn checks() -> i64 {
+    let mut n: i64 = check_v4();
+    n = n + check_dns_name();
+    let h6: i64 = __mind_alloc(48);
+    let w6: i64 = __mind_alloc(16);
+    want_v6(w6);
+    n = n + check_v6(h6, host_v6(h6), w6);
+    let h6l: i64 = __mind_alloc(48);
+    let w6l: i64 = __mind_alloc(16);
+    want_v6_loop(w6l);
+    n = n + check_v6(h6l, host_v6_loop(h6l), w6l);
+    let der: i64 = __mind_alloc(8192);
+    let der_len: i64 = der_bundle(der);
+    let pem: i64 = __mind_alloc(8192);
+    let pem_len: i64 = pem_bundle(pem);
+    n = n + check_bundle(x509_load_anchors(pem, pem_len), want_count(), der, der_len);
+    n = n + check_bundle(x509_load_anchors(der, der_len), 8, der, der_len);
+    let bad: i64 = __mind_alloc(1024);
+    let bad_len: i64 = bad_bundle(bad);
+    if x509_load_anchors(bad, bad_len) != 0 - 1 {
+        n = n + 1;
+    }
+    return n;
+}
+
+"#;
+
+/// The source of the literal-parser and anchor-bundle checks; `mutate`
+/// expects nine anchors in the PEM bundle instead of eight.
+fn x509_literals_and_bundles_program(mutate: bool) -> String {
+    let read = |f: &str| {
+        let path = format!("{TD}/{f}");
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    };
+    let mut v6 = [0u8; 16];
+    v6[..4].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8]);
+    v6[15] = 1;
+    let mut v6_loop = [0u8; 16];
+    v6_loop[15] = 1;
+    let mut body = String::new();
+    for (name, data) in [
+        ("der_bundle", read("bundle_anchors.der")),
+        ("pem_bundle", read("bundle_anchors.pem")),
+        ("bad_bundle", read("bundle_bad.pem")),
+        ("host_v4", b"192.168.1.1".to_vec()),
+        ("want_v4", vec![192, 168, 1, 1]),
+        ("host_dns", b"example.com".to_vec()),
+        ("host_v6", b"2001:db8::1".to_vec()),
+        ("want_v6", v6.to_vec()),
+        ("host_v6_loop", b"::1".to_vec()),
+        ("want_v6_loop", v6_loop.to_vec()),
+    ] {
+        body.push_str(&stores(name, &data));
+    }
+    let count = if mutate { 9 } else { 8 };
+    body.push_str(&format!(
+        "fn want_count() -> i64 {{\n    return {count};\n}}\n\n"
+    ));
+    body.push_str(DIFFERS);
+    body.push_str(LITERALS_AND_BUNDLES);
+    program(&["x509"], &body)
+}
+
+/// The IPv4 and IPv6 literal parsers and the DER and PEM anchor loader give
+/// the same answers under `mindc test` as in the executable: their loops end
+/// on a flag, not on `break`. One wrong anchor count fails both engines.
+#[test]
+fn x509_ip_literals_and_anchor_bundles_agree_in_test_and_build() {
+    let dir = project("x509_literals", &x509_literals_and_bundles_program(false));
+    assert_interp("x509_literals", &dir, true);
+    let mdir = project(
+        "x509_literals_mutated",
+        &x509_literals_and_bundles_program(true),
+    );
+    assert_interp("x509_literals_mutated", &mdir, false);
+    assert_built(&[
+        ("x509_literals", dir.as_path(), 0),
+        ("x509_literals_mutated", mdir.as_path(), 1),
+    ]);
+}
+
 // ── The import, the link and the capability ────────────────────────────────
 
 const CAPABILITY: &str = "fn checks() -> i64 {\n    let st: i64 = __mind_alloc(tls13c_state_size());\n\
@@ -492,12 +661,7 @@ fn tls_keyschedule_program(mutate: bool) -> String {
             expect.push_str("    tls13c_derive_app_keys(s);\n");
         }
     }
-    body.push_str(
-        "fn differs(a: i64, b: i64, len: i64) -> i64 {\n    let mut i: i64 = 0;\n\
-         \x20   let mut d: i64 = 0;\n    while i < len {\n\
-         \x20       d = d | ((__mind_load_i8(a + i) ^ __mind_load_i8(b + i)) & 255);\n\
-         \x20       i = i + 1;\n    }\n    if d == 0 {\n        return 0;\n    }\n    return 1;\n}\n\n",
-    );
+    body.push_str(DIFFERS);
     body.push_str(&format!(
         "fn checks() -> i64 {{\n    let s: i64 = __mind_alloc(tls13c_state_size());\n\
          \x20   tls13c_zero(s, tls13c_state_size());\n\

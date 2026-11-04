@@ -6,20 +6,25 @@ trust store is used, and every case runs at the fixed clock in `testdata/now.txt
 
 ## API and supported policy
 
-`x509_verify_server_chain(chain, anchors, expected_dns, now_unix)` returns zero
-on success and a negative verdict on failure. Both blobs contain an i64 count,
-then count pairs of i64 offset/length, followed by DER bytes. The first chain
+`x509_verify_server_chain(chain, anchors, expected_dns, now_unix)` (in
+`std/x509_path.mind`; `import std.x509;` loads it) returns zero on success and
+a negative verdict on failure. Both blobs contain an i64 count, then count
+pairs of i64 offset/length, followed by DER bytes. The first chain
 certificate is the leaf; the remaining certificates are unordered candidates.
 The caller must provide valid blob storage and offsets: this pointer-only ABI
 has no total buffer-length argument. The DNS/IP argument is NUL-terminated.
 
 Path search is bounded to eight supplied certificates and 32 anchors, retries
 alternative issuers, and enforces signatures, validity, CA/pathLen, KU, EKU,
-and SAN identity. Supported signatures: RSA PKCS#1 SHA-256, RSA-PSS with explicit
-SHA-256/MGF1-SHA-256, ECDSA P-256 SHA-256/SHA-384, ECDSA P-384 SHA-384. SHA-1 is
-refused, including implicit PSS hash/MGF defaults. Name constraints support DNS
-subtrees and IPv4/IPv6 address/mask subtrees; other constraint name forms and
-nonzero subtree bounds fail closed. Issuer/subject matching uses exact DER names.
+and SAN identity. A leaf must carry an EKU that lists serverAuth (-11), an IP
+literal host matches only an iPAddress SAN (-8), and a certificate whose
+tbsCertificate signature AlgorithmIdentifier differs from its outer
+signatureAlgorithm does not parse (-1). Supported signatures: RSA PKCS#1
+SHA-256, RSA-PSS with explicit SHA-256/MGF1-SHA-256, ECDSA P-256
+SHA-256/SHA-384, ECDSA P-384 SHA-384. SHA-1 is refused, including implicit PSS
+hash/MGF defaults. Name constraints support DNS subtrees and IPv4/IPv6
+address/mask subtrees; other constraint name forms and nonzero subtree bounds
+fail closed. Issuer/subject matching uses exact DER names.
 Revocation and certificate-policy processing are outside this implementation.
 
 Trust-anchor policy (RFC 5280 §6.1.1(d)): anchors are trusted public-key
@@ -86,7 +91,12 @@ sha384WithRSAEncryption self-signed anchors).
 
 `tests/std_tls_x509_import.rs` runs the verifier through `import std.x509;`
 under `mindc test` and in a `mindc build` executable, each with a mutated copy
-that must fail. `scripts/run_crypto_vectors.sh` builds the same module set for
+that must fail. Both engines also run the short DNS names, the IPv4 and IPv6
+literal parsers and the DER and PEM anchor loader. Three rules have their own
+fixtures under `eku_root`: `eku_client_leaf` (EKU clientAuth only, -11),
+`dns_ip_leaf` (a dNSName `127.0.0.1`, -8 for host `127.0.0.1`) and the valid
+control `eku_server_leaf`; the test derives an `ec_leaf` whose outer
+signatureAlgorithm says SHA-384 while its tbsCertificate says SHA-256 (-1). `scripts/run_crypto_vectors.sh` builds the same module set for
 the field-level `tests/x509_vectors_driver.py`.
 
 ## `--backend native`
