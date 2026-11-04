@@ -38,7 +38,7 @@ use crate::ast::{FnDefData, Node, StructLitField, TypeAnn};
 
 use super::classify::lowered_args;
 use super::facts::{Decls, Env, Fact, Ret, SCALAR_NAMES, join, tail_value};
-use super::slots::{Contradicted, holds_str, struct_key};
+use super::slots::{Contradicted, holds_known_str, holds_str, struct_key};
 
 /// Collection methods that store their last argument as an element.
 const STORE_METHODS: &[&str] = &["push", "set", "insert", "add"];
@@ -308,7 +308,7 @@ impl Decls {
     fn escape_flows(&self, callee: &str, args: &[&Node], env: &Env, out: &mut Contradicted) {
         if callee.starts_with(INTRINSIC_PREFIX) {
             let value = (callee == RAW_STORE).then(|| args.get(1)).flatten();
-            if value.is_some_and(|v| holds_str(&self.value_fact(v, env))) {
+            if value.is_some_and(|v| holds_known_str(&self.value_fact(v, env))) {
                 out.escaped_raw = true;
             }
             return;
@@ -319,7 +319,7 @@ impl Decls {
             // `vec_get(v: Vec, i)`) keeps no handle as an integer.
             let declared = types.and_then(|types| types.get(index));
             let kept = declared.is_none_or(|ty| !self.names_record(ty));
-            kept && holds_str(&self.value_fact(arg, env))
+            kept && holds_known_str(&self.value_fact(arg, env))
         });
         if !escapes {
             return;

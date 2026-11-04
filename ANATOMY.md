@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1960 | **Est. tokens:** ~3,853,604
-**Generated:** 2026-11-04 16:46 UTC
+**Files:** 1960 | **Est. tokens:** ~3,853,843
+**Generated:** 2026-11-04 17:03 UTC
 
 ## Token Budget Guide
 
@@ -123,13 +123,13 @@
 | `src/doc/` | 3 | ~11,002 |
 | `src/eval/` | 49 | ~164,554 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 10 | ~35,057 |
+| `src/eval/string_equality/` | 10 | ~35,267 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 12 | ~101,849 |
+| `src/ir/` | 12 | ~101,832 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,672 |
@@ -153,7 +153,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 432 | ~885,406 |
+| `tests/` | 432 | ~885,452 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1337,7 +1337,7 @@
 
 - `classify.rs` (~5342 tok, huge) — Copyright 2026 STARGA Inc.
 - `facts.rs` (~7677 tok, huge) — Copyright 2026 STARGA Inc.
-- `flows.rs` (~4135 tok, huge) — Copyright 2026 STARGA Inc.
+- `flows.rs` (~4142 tok, huge) — Copyright 2026 STARGA Inc.
 - `flow_tests.rs` (~2951 tok, huge) — Copyright 2026 STARGA Inc.
 - `project.rs` (~1598 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
@@ -1345,7 +1345,7 @@
 - `string_equality.rs` (~4552 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `slots.rs` (~2091 tok, huge) — Copyright 2026 STARGA Inc.
+- `slots.rs` (~2294 tok, huge) — Copyright 2026 STARGA Inc.
 - `slot_tests.rs` (~2413 tok, huge) — Copyright 2026 STARGA Inc.
 - `sums.rs` (~772 tok, large) — Copyright 2026 STARGA Inc.
 - `tests.rs` (~4214 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1434,7 +1434,7 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17718 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17701 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_calls.rs` (~826 tok, large) — Copyright 2026 STARGA Inc.
@@ -2670,7 +2670,7 @@
 - `string_escape_decode_run.rs` (~1159 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_fail_closed.rs` (~959 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
-- `string_flows_backend_parity.rs` (~4114 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_flows_backend_parity.rs` (~4160 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_from_bytes_run.rs` (~664 tok, large) — Copyright 2025 STARGA Inc.
 - `string_ops_backend_parity.rs` (~5537 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.

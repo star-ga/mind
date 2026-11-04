@@ -79,8 +79,7 @@ pub struct GlobalEnums {
     pub fn_returns: std::collections::BTreeMap<String, crate::ast::TypeAnn>,
     #[cfg(feature = "cross-module-imports")]
     pub(crate) qualified: crate::qualified_enums::Registry,
-    /// The project's modules for the cross-module string-equality slots
-    /// (`eval::string_equality::ProjectModules`); `None` below two modules.
+    /// The project's modules for the cross-module string slots; `None` below two.
     #[cfg(feature = "cross-module-imports")]
     pub(crate) string_project: Option<std::sync::Arc<crate::eval::string_equality::ProjectModules>>,
 }

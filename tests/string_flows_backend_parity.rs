@@ -348,26 +348,26 @@ fn defined_source() -> String {
     src
 }
 
-/// The value each case produces under `mindc test` (the interpreter).
+/// The value each case produces under `mindc test` (the interpreter), one
+/// module per case (a module with every case overflows the interpreter's
+/// stack on the previous head too, which is not what this test measures).
 fn interpreter_values(dir: &Path) -> Vec<i64> {
-    let mut src = defined_source();
-    for (i, (case, _, _)) in DEFINED_CASES.iter().enumerate() {
-        src.push_str(&format!(
-            "\n#[test]\nfn t{i:02}_{case}() {{\n    let v: i64 = {case}()\n"
-        ));
-        for candidate in 0..=4 {
-            src.push_str(&format!(
-                "    assert v != {candidate}, \"value of {case} is {candidate}.\"\n"
-            ));
-        }
-        src.push_str("}\n");
-    }
-    let path = dir.join("defined_interp.mind");
-    std::fs::write(&path, src).expect("write interpreter source");
-    let log = text(&mindc(&["test", path.to_str().unwrap()]));
     DEFINED_CASES
         .iter()
-        .map(|(case, _, _)| {
+        .map(|(case, expr, _)| {
+            let mut src = format!(
+                "{DEFINED}\npub fn {case}() -> i64 {{ return {expr} }}\n\n#[test]\n\
+                 fn probed() {{\n    let v: i64 = {case}()\n"
+            );
+            for candidate in 0..=4 {
+                src.push_str(&format!(
+                    "    assert v != {candidate}, \"value of {case} is {candidate}.\"\n"
+                ));
+            }
+            src.push_str("}\n");
+            let path = dir.join(format!("interp_{case}.mind"));
+            std::fs::write(&path, src).expect("write interpreter source");
+            let log = text(&mindc(&["test", path.to_str().unwrap()]));
             (0..=4)
                 .find(|candidate| log.contains(&format!("value of {case} is {candidate}.")))
                 .unwrap_or_else(|| panic!("mindc test gave no value for `{case}`:\n{log}"))

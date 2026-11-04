@@ -155,6 +155,22 @@ pub(super) fn holds_str(fact: &Fact) -> bool {
     }
 }
 
+/// Whether a value with `fact` is known to hold a string on some path (a
+/// string, a maybe-string, a value of a type this module cannot see), at any
+/// depth: what an escape into a callee this module does not analyse records.
+/// A value whose type the pass did not establish is not counted there: std
+/// code merged into a `mindc test` module hands such values to raw memory
+/// throughout, and a string that reaches one is a recorded store already.
+pub(super) fn holds_known_str(fact: &Fact) -> bool {
+    match fact {
+        Fact::Unknown => false,
+        Fact::Elems(part) | Fact::Map(part) => holds_known_str(part),
+        Fact::Sum(ok, err) => holds_known_str(ok) || holds_known_str(err),
+        Fact::Tuple(parts) => parts.iter().any(holds_known_str),
+        fact => holds_str(fact),
+    }
+}
+
 /// Whether storing a value with fact `value` where `declared` is declared
 /// stores what the declaration says the slot cannot hold, at any depth: a
 /// value that may be a string ([`holds_str`], so also a value whose type the
