@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1962 | **Est. tokens:** ~3,862,214
-**Generated:** 2026-11-04 21:07 UTC
+**Files:** 1962 | **Est. tokens:** ~3,862,488
+**Generated:** 2026-11-04 21:38 UTC
 
 ## Token Budget Guide
 
@@ -123,7 +123,7 @@
 | `src/doc/` | 3 | ~11,002 |
 | `src/eval/` | 49 | ~166,535 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 10 | ~35,490 |
+| `src/eval/string_equality/` | 10 | ~35,764 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -1335,10 +1335,10 @@
 - `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `classify.rs` (~5342 tok, huge) — Copyright 2026 STARGA Inc.
+- `classify.rs` (~5475 tok, huge) — Copyright 2026 STARGA Inc.
 - `facts.rs` (~7746 tok, huge) — Copyright 2026 STARGA Inc.
 - `flows.rs` (~4142 tok, huge) — Copyright 2026 STARGA Inc.
-- `flow_tests.rs` (~3022 tok, huge) — Copyright 2026 STARGA Inc.
+- `flow_tests.rs` (~3163 tok, huge) — Copyright 2026 STARGA Inc.
 - `project.rs` (~1668 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 

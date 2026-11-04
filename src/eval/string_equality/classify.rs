@@ -399,14 +399,24 @@ impl Decls {
     /// Whether the method call `receiver.method(..)` is a method on a string,
     /// which lowering makes a call of `string_<method>`: `Some(true)` for a
     /// string value receiver (passed first), `Some(false)` for the type name
-    /// `string` / `String` (not passed).
+    /// `string` / `String` (not passed). `None` when the evaluator has no
+    /// `string_<method>` to run: the module does not define it (`mindc test`
+    /// merges the std module that does) and the evaluator does not supply it
+    /// itself, so the call stays a method call the evaluator runs as before.
     pub(super) fn string_method(&self, receiver: &Node, method: &str, env: &Env) -> Option<bool> {
+        let function = format!("string_{method}");
+        let runs = self.params.contains_key(&function)
+            || function == "string_trim"
+            || crate::eval::extern_c_intrinsics::is_extern_c_intrinsic(&function);
+        if !runs {
+            return None;
+        }
         let fact = self.value_fact(receiver, env);
         if fact == Fact::Str {
             return Some(true);
         }
         let callee = self.method_callee(receiver, &fact, method, env)?;
-        (callee == format!("string_{method}")).then_some(false)
+        (callee == function).then_some(false)
     }
 
     fn method_fact(

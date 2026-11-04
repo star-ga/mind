@@ -261,8 +261,12 @@ fn interpreted_calls(src: &str) -> Vec<(String, usize)> {
 /// MLIR lowering makes for it; the lowering's own input is unchanged.
 #[test]
 fn string_methods_become_calls_for_the_interpreter_only() {
+    // The module defines `string_len` / `string_slice`, as the merged std
+    // module does under `mindc test`.
     let calls = interpreted_calls(
-        "fn p(s: string) -> i64 {
+        "fn string_len(s: String) -> i64 { return 0 }
+        fn string_slice(s: String, a: i64, b: i64) -> String { return s }
+        fn p(s: string) -> i64 {
             return s.len() + string_len(s.slice(1, 3)) + string_len(s.trim())
         }",
     );
@@ -271,6 +275,11 @@ fn string_methods_become_calls_for_the_interpreter_only() {
     let expected: Vec<(String, usize)> =
         expected.iter().map(|(c, n)| (c.to_string(), *n)).collect();
     assert_eq!(calls, expected);
+    // With no `string_len` to run (no std merged, as for `eval_module`), the
+    // method call stays the evaluator's own; it supplies `string_trim`.
+    let calls =
+        interpreted_calls("fn p(s: string) -> i64 { return s.len() + string_len(s.trim()) }");
+    assert_eq!(calls, vec![("string_trim".to_string(), 1)]);
     // Positive control: a method on a record is not a string method.
     let calls = interpreted_calls(
         "struct Box { v: i64 }
