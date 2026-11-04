@@ -5,7 +5,10 @@
 //! `std/procgroup.mind`: start many child processes, wait for all of them.
 //!
 //! Section A (`std-surface`): the module parses, lowers, exports its public
-//! surface and resolves through the bundled stdlib.
+//! surface and resolves through the bundled stdlib. With `cross-module-imports`,
+//! the flat `mindc <file>` path refuses an artifact for a program that calls a
+//! world-reading procgroup function unless `--allow-nondeterministic` is given,
+//! and attests such a program `nondeterministic`.
 //!
 //! Section B (`mlir-build`, Linux): `tests/std_procgroup_run.mind` is built
 //! with `mindc build` (the MLIR path) and run once. It is its own child: the
@@ -15,7 +18,8 @@
 //! killed at the deadline, pipes drained while children run, arguments and a
 //! missing program, output truncation, the task index, refused inputs, a
 //! spawn whose pipe cannot be made, stdin and descriptor isolation, and
-//! children the kernel reaped.
+//! children the kernel reaped. A second run of the same executable makes
+//! fork() fail (RLIMIT_NPROC 0) and checks that spawn is counted.
 
 #![cfg(feature = "std-surface")]
 
@@ -101,6 +105,129 @@ mod bundle {
         );
     }
 
+    /// docs/std-procgroup.md's example, verbatim, so the docs show what is tested.
+    fn doc_example() -> &'static str {
+        const DOC: &str = include_str!("../docs/std-procgroup.md");
+        let start = DOC
+            .find("```mind\n")
+            .expect("the doc has a ```mind example")
+            + 8;
+        let len = DOC[start..]
+            .find("\n```")
+            .expect("the example block is closed");
+        &DOC[start..=start + len]
+    }
+
+    /// `mindc <tag>.mind <args>` from a scratch dir; (exit ok, stderr, stdout).
+    fn flat(tag: &str, src: &str, args: &[&str]) -> (bool, String, String) {
+        let dir = crate::common::scratch_dir("std_procgroup_flat");
+        let path = dir.join(format!("{tag}.mind"));
+        std::fs::write(&path, src).expect("write the program");
+        let out = std::process::Command::new(crate::common::mindc_bin())
+            .arg(&path)
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("run mindc");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    }
+
+    fn one_call(body: &str) -> String {
+        format!("import std.procgroup;\n\nfn main() -> i64 {{\n{body}}}\n")
+    }
+
+    /// A program reaching any of the three world-reading functions (fork and
+    /// the environment, the clock deadline, the environment) is refused an
+    /// artifact without the flag, and the refusal names that function.
+    #[test]
+    fn a_world_reading_procgroup_call_needs_allow_nondeterministic() {
+        let cases = [
+            (
+                "spawn",
+                one_call(
+                    "    let g: i64 = procgroup_new(1);\n    return procgroup_spawn(g, procgroup_self_exe(), 0, 0);\n",
+                ),
+                "procgroup_spawn",
+            ),
+            (
+                "wait_all",
+                one_call(
+                    "    let g: i64 = procgroup_new(1);\n    return procgroup_wait_all(g, 1000);\n",
+                ),
+                "procgroup_wait_all",
+            ),
+            (
+                "task_index",
+                one_call("    return procgroup_task_index();\n"),
+                "procgroup_task_index",
+            ),
+            ("doc", doc_example().to_string(), "procgroup_task_index"),
+        ];
+        for (tag, src, offender) in &cases {
+            let so = format!("{tag}.so");
+            let (ok, stderr, _) = flat(tag, src, &["--emit-shared", &so]);
+            assert!(
+                !ok,
+                "{tag}: --emit-shared succeeded without the flag\n{stderr}"
+            );
+            assert!(
+                stderr.contains(&format!("error[determinism]: `{offender}()`")),
+                "{tag}: the refusal must name `{offender}()`\n{stderr}"
+            );
+            let (_, stderr, _) = flat(
+                tag,
+                src,
+                &["--emit-shared", &so, "--allow-nondeterministic"],
+            );
+            assert!(
+                !stderr.contains("error[determinism]"),
+                "{tag}: the flag must authorise the build\n{stderr}"
+            );
+        }
+    }
+
+    /// With the flag the doc example is attested `nondeterministic`; a program
+    /// that only creates, counts and frees a group is not tainted at all.
+    #[test]
+    fn evidence_attests_procgroup_programs_nondeterministic() {
+        let pure = one_call(
+            "    let g: i64 = procgroup_new(1);\n    let n: i64 = procgroup_len(g);\n    let _ = procgroup_free(g);\n    return n;\n",
+        );
+        for (tag, src, args, want) in [
+            (
+                "doc_ev",
+                doc_example().to_string(),
+                &["--allow-nondeterministic"][..],
+                "nondeterministic",
+            ),
+            ("pure_ev", pure, &[][..], "deterministic"),
+        ] {
+            let ev = format!("{tag}.evidence");
+            let mut argv = vec!["--emit-evidence", ev.as_str()];
+            argv.extend_from_slice(args);
+            let (ok, stderr, _) = flat(tag, &src, &argv);
+            assert!(ok, "{tag}: --emit-evidence failed\n{stderr}");
+            let dir = crate::common::scratch_dir("std_procgroup_flat");
+            let out = std::process::Command::new(crate::common::mindc_bin())
+                .args([
+                    "verify",
+                    dir.join(&ev).to_str().expect("utf-8 path"),
+                    "--json",
+                ])
+                .output()
+                .expect("run mindc verify");
+            let report = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                report.contains(&format!("\"determinism\":\"{want}\"")),
+                "{tag}: evidence must attest {want}\n{report}"
+            );
+        }
+    }
+
     /// The substrate list is the link side, which only `mlir-build` compiles.
     #[cfg(feature = "mlir-build")]
     #[test]
@@ -177,6 +304,12 @@ mod run {
     /// Run the program once. An `Err` is stored and reported by every test, so
     /// a hung or failed run costs one `RUN_LIMIT`, not one per test.
     fn execute(exe: &Path) -> Result<Run, String> {
+        let mut cmd = Command::new(exe);
+        cmd.env_remove("PG_CASE");
+        execute_cmd(cmd, exe)
+    }
+
+    fn execute_cmd(mut cmd: Command, exe: &Path) -> Result<Run, String> {
         let dir = exe.parent().expect("artifact dir");
         let out_path = dir.join("run.stdout");
         let err_path = dir.join("run.stderr");
@@ -184,9 +317,8 @@ mod run {
         // stdin stays an open pipe until the program exits: a child that
         // inherited it instead of /dev/null would block reading it. The own
         // process group lets a timeout kill the children with the parent.
-        let mut child = Command::new(exe)
+        let mut child = cmd
             .env_remove("MIND_PROCGROUP_TASK")
-            .env_remove("PG_CASE")
             .process_group(0)
             .stdin(Stdio::piped())
             .stdout(std::fs::File::create(&out_path).expect("stdout file"))
@@ -240,17 +372,48 @@ mod run {
         kv
     }
 
+    fn built() -> Option<&'static std::path::PathBuf> {
+        static EXE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+        EXE.get_or_init(|| build(&crate::common::scratch_dir(TARGET)))
+            .as_ref()
+    }
+
     fn shared() -> Option<&'static Run> {
         static RUN: OnceLock<Option<Result<Run, String>>> = OnceLock::new();
-        let run = RUN.get_or_init(|| {
-            let dir = crate::common::scratch_dir(TARGET);
-            build(&dir).map(|exe| execute(&exe))
-        });
+        let run = RUN.get_or_init(|| built().map(|exe| execute(exe)));
         match run {
             None => None,
             Some(Ok(run)) => Some(run),
             Some(Err(why)) => panic!("{why}"),
         }
+    }
+
+    /// The effective uid from /proc/self/status (field 2 of `Uid:`).
+    fn effective_uid() -> Option<u32> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|l| l.starts_with("Uid:"))?;
+        line.split_whitespace().nth(2)?.parse().ok()
+    }
+
+    /// The fork-failure case, alone (`PG_CASE=9`). The kernel never applies
+    /// RLIMIT_NPROC to root, so as root the run drops to uid/gid 65534, from a
+    /// copy of the executable in a directory that uid can read.
+    fn fork_failure_run() -> Option<Run> {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = built()?;
+        let dir = crate::common::scratch_dir("std_procgroup_run_nproc");
+        let copy = dir.join("pg");
+        std::fs::copy(exe, &copy).expect("copy the executable");
+        for p in [&dir, &copy] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755))
+                .expect("make the copy readable");
+        }
+        let mut cmd = Command::new(&copy);
+        cmd.env("PG_CASE", "9");
+        if effective_uid() == Some(0) {
+            cmd.uid(65534).gid(65534);
+        }
+        Some(execute_cmd(cmd, &copy).unwrap_or_else(|why| panic!("{why}")))
     }
 
     const OK: i64 = 0;
@@ -397,6 +560,9 @@ mod run {
             -1,
             "a value that is not a number is no index"
         );
+        assert_eq!(run.get(7904), -1, "an empty value is no index");
+        assert_eq!(run.get(7905), -1, "ten digits are no index");
+        assert_eq!(run.get(7906), 123_456_789, "nine digits are read");
         assert_eq!(run.get(7902), -1, "unset again");
     }
 
@@ -419,6 +585,28 @@ mod run {
     }
 
     #[test]
+    fn reads_outside_a_group_return_the_missing_value() {
+        let Some(run) = shared() else {
+            return;
+        };
+        assert_eq!(run.get(8011), -1, "len of a 0 handle");
+        assert_eq!(run.get(8012), -1, "failures of a 0 handle");
+        assert_eq!(run.get(8013), 0, "free of a 0 handle");
+        assert_eq!(run.get(8014), -1, "state of a 0 handle");
+        assert_eq!(run.get(8015), 0, "stdout address of a 0 handle");
+        assert_eq!(run.get(8016), 0, "the two-slot group finished");
+        assert_eq!(run.get(8024), OK, "slot 1 exists");
+        // Slot -1 would read the bytes before the slot array.
+        assert_eq!(run.get(8017), -1, "state of slot -1");
+        assert_eq!(run.get(8018), -1, "pid of slot -1");
+        assert_eq!(run.get(8019), -1, "exit code of slot -1");
+        assert_eq!(run.get(8020), -1, "signal of slot -1");
+        assert_eq!(run.get(8021), 0, "stdout address of slot -1");
+        assert_eq!(run.get(8022), -1, "stdout length of slot -1");
+        assert_eq!(run.get(8023), -1, "truncation flag of slot -1");
+    }
+
+    #[test]
     fn a_spawn_that_cannot_make_its_pipe_is_counted() {
         let Some(run) = shared() else {
             return;
@@ -428,6 +616,27 @@ mod run {
         assert_eq!(run.get(9001), SPAWN_FAILED, "and records why");
         assert_eq!(run.get(9002), 1, "wait_all counts it");
         assert_eq!(run.get(9003), -1, "no child was started");
+    }
+
+    /// A failed fork must not be stored as a running child with pid -1:
+    /// waitpid(-1) would then reap slot 1's child under slot 0's name.
+    #[test]
+    fn a_spawn_whose_fork_fails_is_counted_and_shadows_no_sibling() {
+        let Some(run) = fork_failure_run() else {
+            return;
+        };
+        assert_eq!(run.get(12000), 0, "the process limit was lowered");
+        assert_eq!(run.get(12001), 0, "the failed spawn still takes slot 0");
+        assert_eq!(run.get(12002), 0, "the process limit was restored");
+        assert_eq!(run.get(12003), SPAWN_FAILED, "and records why");
+        assert_eq!(run.get(12004), -1, "no child was started");
+        assert_eq!(run.get(12005), 1, "the next spawn takes slot 1");
+        assert_eq!(run.get(12006), 1, "wait_all counts the failed fork");
+        assert_eq!(run.get(12007), 1, "procgroup_failures agrees");
+        assert_eq!(run.get(12008), SPAWN_FAILED, "slot 0 is still spawn_failed");
+        assert_eq!(run.get(12009), OK, "slot 1 is reaped as itself");
+        assert_eq!(run.get(12010), 1, "slot 1 output is its own");
+        assert_eq!(run.get(12011), 1, "nothing is left running");
     }
 
     #[test]

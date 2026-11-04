@@ -2,7 +2,8 @@
 // parent and every child. The parent runs each case, spawning this same
 // executable through std.procgroup, and prints "k <key>" / "v <value>" pairs
 // that the Rust side checks. A child reads its slot index from
-// procgroup_task_index() and its case from PG_CASE.
+// procgroup_task_index() and its case from PG_CASE. Started with PG_CASE=9,
+// the parent runs only the fork-failure case.
 
 import std.string;
 import std.process;
@@ -273,6 +274,12 @@ fn case_nested_index() -> i64 {
     let _ = kv(7001, out_value(g, 1));
     let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), cstr("4x"));
     let _ = kv(7903, procgroup_task_index());
+    let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), cstr(""));
+    let _ = kv(7904, procgroup_task_index());
+    let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), cstr("1234567890"));
+    let _ = kv(7905, procgroup_task_index());
+    let _ = proc_setenv(cstr("MIND_PROCGROUP_TASK"), cstr("123456789"));
+    let _ = kv(7906, procgroup_task_index());
     let _ = proc_unsetenv(cstr("MIND_PROCGROUP_TASK"));
     let _ = kv(7902, procgroup_task_index());
     0
@@ -292,6 +299,24 @@ fn case_bad_input() -> i64 {
     let _ = kv(8008, procgroup_stdout_addr(g, 5));
     let _ = kv(8009, procgroup_cstr(0, 0 - 1));
     let _ = kv(8010, procgroup_decimal(0 - 1));
+    let _ = kv(8011, procgroup_len(0));
+    let _ = kv(8012, procgroup_failures(0));
+    let _ = kv(8013, procgroup_free(0));
+    let _ = kv(8014, procgroup_state(0, 0));
+    let _ = kv(8015, procgroup_stdout_addr(0, 0));
+    // A negative slot of a group with two slots: nothing before slot 0 is read.
+    let h: i64 = procgroup_new(2);
+    let _ = set_case(7);
+    let _ = spawn_self(h, 2);
+    let _ = kv(8016, procgroup_wait_all(h, 60000));
+    let _ = kv(8017, procgroup_state(h, 0 - 1));
+    let _ = kv(8018, procgroup_pid(h, 0 - 1));
+    let _ = kv(8019, procgroup_exit_code(h, 0 - 1));
+    let _ = kv(8020, procgroup_signal(h, 0 - 1));
+    let _ = kv(8021, procgroup_stdout_addr(h, 0 - 1));
+    let _ = kv(8022, procgroup_stdout_len(h, 0 - 1));
+    let _ = kv(8023, procgroup_truncated(h, 0 - 1));
+    let _ = kv(8024, procgroup_state(h, 1));
     0
 }
 
@@ -344,10 +369,42 @@ fn case_lost() -> i64 {
     0
 }
 
+// Case 12 (PG_CASE=9, a run of its own): RLIMIT_NPROC (6) lowered to 0 makes
+// fork() fail with EAGAIN. That spawn still takes slot 0, keeps no pid, and is
+// counted; slot 1, spawned after the limit is back, is reaped as itself.
+fn case_fork_failure() -> i64 {
+    let _ = set_case(7);
+    let saved: i64 = __mind_alloc(16);
+    let _ = getrlimit(6, saved);
+    let low: i64 = __mind_alloc(16);
+    __mind_store_i64(low + 0, 0);
+    __mind_store_i64(low + 8, __mind_load_i64(saved + 8));
+    let exe: i64 = procgroup_self_exe();
+    let g: i64 = procgroup_new(2);
+    let _ = kv(12000, setrlimit(6, low) as i64);
+    let _ = kv(12001, procgroup_spawn(g, exe, 0, 0));
+    let _ = kv(12002, setrlimit(6, saved) as i64);
+    let _ = kv(12003, procgroup_state(g, 0));
+    let _ = kv(12004, procgroup_pid(g, 0));
+    let _ = kv(12005, procgroup_spawn(g, exe, 0, 0));
+    let _ = kv(12006, procgroup_wait_all(g, 60000));
+    let _ = kv(12007, procgroup_failures(g));
+    let _ = kv(12008, procgroup_state(g, 0));
+    let _ = kv(12009, procgroup_state(g, 1));
+    let _ = kv(12010, out_value(g, 1));
+    let _ = kv(12011, procgroup_free(g));
+    0
+}
+
 fn main() -> i64 {
     let idx: i64 = procgroup_task_index();
     if idx >= 0 {
         return child_main(case_of_env(), idx);
+    }
+    if case_of_env() == 9 {
+        let _ = case_fork_failure();
+        print("done ", 1);
+        return 0;
     }
     let _ = case_distinct();
     let _ = case_failures();

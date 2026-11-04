@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus `procgroup_task_index()` let one `mindc build` executable run itself N
   times in parallel. Bundled and linked like the other substrate modules; not
   in the native seed. `tests/std_procgroup_run.rs` builds a program with
-  `mindc build` that spawns 25 copies of itself.
+  `mindc build` that spawns 25 copies of itself. `procgroup_spawn`,
+  `procgroup_wait_all` and `procgroup_task_index` are classified as world
+  readers (`src/intrinsics.rs`), so the flat `mindc <file>` path refuses an
+  artifact for a program that calls them unless `--allow-nondeterministic` is
+  given, and attests it `nondeterministic`.
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the

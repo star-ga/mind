@@ -119,7 +119,10 @@ a child starts some other way inherits the child's index.
   deadline.
 - After `SIGKILL`, the reap waits for the child to exit. A child stuck in
   uninterruptible sleep delays the return until the kernel lets it end.
-- `std.procgroup` reads the world (the clock, process scheduling). The flat
-  `mindc <file> --emit-shared` path therefore refuses a program that uses it
-  unless `--allow-nondeterministic` is given, and evidence for such a program
-  is attested `nondeterministic`.
+- `std.procgroup` reads the world: `procgroup_spawn` forks and reads the
+  environment, `procgroup_wait_all` reads the clock for its deadline, and
+  `procgroup_task_index` reads the environment. The flat `mindc <file>` path
+  (`--emit-shared`, `--emit-obj`, `--emit-evidence`) therefore refuses a
+  program that calls one of them unless `--allow-nondeterministic` is given,
+  and evidence for such a program is attested `nondeterministic`. `mindc
+  build`, the path the example above uses, does not apply this refusal.

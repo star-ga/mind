@@ -68,7 +68,6 @@ pub fn procgroup_max_output() -> i64 {
 }
 
 // ---- libc extern "C" surface ----
-
 extern "C" {
     unsafe fn fork() -> i32;
     unsafe fn execvp(file: *const u8, argv: *const *const u8) -> i32;
@@ -313,6 +312,7 @@ fn pg_child_exec(g: i64, i: i64, rd: i64, wr: i64, devnull: i64, prog: i64, argv
 }
 
 // Record a waitpid status word. `killed` is 1 when the deadline sent SIGKILL.
+#[protection]
 fn pg_record(s: i64, status: i64, killed: i64) -> i64 {
     let low: i64 = status & 127;
     if low == 0 {
@@ -623,10 +623,10 @@ pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
     let buf: i64 = __mind_alloc(pg_read_chunk());
     let mut deadline: i64 = 0 - 1;
     if timeout_ms > 0 {
-        let now: i64 = pg_now_ms();
+        let t_ms: i64 = pg_now_ms();
         deadline = 0;
-        if now >= 0 {
-            deadline = now + timeout_ms;
+        if t_ms >= 0 {
+            deadline = t_ms + timeout_ms;
         }
     }
     let mut active: i64 = pg_active(g);
@@ -634,10 +634,10 @@ pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
         let mut wait_ms: i64 = pg_poll_ms();
         if deadline >= 0 {
             // A clock that stops answering counts as the deadline passing.
-            let now: i64 = pg_now_ms();
+            let t_ms: i64 = pg_now_ms();
             let mut left: i64 = 0;
-            if now >= 0 {
-                left = deadline - now;
+            if t_ms >= 0 {
+                left = deadline - t_ms;
             }
             if left <= 0 {
                 let _ = pg_expire(g, pfds, map, st, buf);
@@ -692,8 +692,7 @@ pub fn procgroup_free(g: i64) -> i64 {
 }
 
 // Results. An `i` that is not a spawned slot reads -1 (0 for an address).
-
-// Number of slots taken by procgroup_spawn.
+// procgroup_len: the number of slots procgroup_spawn took.
 pub fn procgroup_len(g: i64) -> i64 {
     if g == 0 {
         return 0 - 1;
@@ -721,7 +720,8 @@ fn pg_count(g: i64, state: i64, want: i64) -> i64 {
     c
 }
 
-// Number of slots not in procgroup_state_ok().
+// Number of slots not in procgroup_state_ok(): every failed child counts.
+#[protection]
 pub fn procgroup_failures(g: i64) -> i64 {
     pg_count(g, procgroup_state_ok(), 0)
 }
