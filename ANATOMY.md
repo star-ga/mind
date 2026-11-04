@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1948 | **Est. tokens:** ~3,810,490
-**Generated:** 2026-11-04 13:46 UTC
+**Files:** 1948 | **Est. tokens:** ~3,810,789
+**Generated:** 2026-11-04 17:27 UTC
 
 ## Token Budget Guide
 
@@ -94,8 +94,8 @@
 | `.github/` | 4 | ~931 |
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/scripts/` | 1 | ~962 |
-| `.github/workflows/` | 9 | ~16,802 |
+| `.github/scripts/` | 1 | ~1,187 |
+| `.github/workflows/` | 9 | ~16,876 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~128,226 |
@@ -1061,7 +1061,7 @@
 - `required-ci-jobs.tsv` (~773 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
-- `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
+- `pr_review.py` (~1187 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~5397 tok, huge) — name: Bench gate
@@ -1070,7 +1070,7 @@
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
-- `pr-review.yml` (~821 tok, large) — name: pr-review
+- `pr-review.yml` (~895 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3943 tok, huge) — name: Release
 ### `mind/std/cognitive/`
