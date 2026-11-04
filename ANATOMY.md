@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,822,081
-**Generated:** 2026-11-04 18:13 UTC
+**Files:** 1951 | **Est. tokens:** ~3,822,497
+**Generated:** 2026-11-04 22:00 UTC
 
 ## Token Budget Guide
 
@@ -151,8 +151,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 45 | ~215,561 |
-| `tests/` | 431 | ~881,311 |
+| `std/` | 45 | ~215,714 |
+| `tests/` | 431 | ~881,574 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~15,706 |
@@ -1611,7 +1611,7 @@
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
-- `mic_record.mind` (~6941 tok, huge) — std/mic_record.mind — write and read program results as mic@3 MAP records.
+- `mic_record.mind` (~7094 tok, huge) — std/mic_record.mind — write and read program results as mic@3 MAP records.
 - `mic_results.mind` (~2555 tok, huge) — std/mic_results.mind — a program's results as a std.mic_record record.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
@@ -2628,8 +2628,8 @@
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_method_call.rs` (~2963 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_mic_record_refusals.rs` (~2420 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_surface_mic_record.rs` (~6431 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_surface_mic_record_refusals.rs` (~2564 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_surface_mic_record.rs` (~6550 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~8341 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1466 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.

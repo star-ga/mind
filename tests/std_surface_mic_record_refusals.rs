@@ -77,11 +77,26 @@ fn oversized_counts_and_lengths_are_refused_before_any_allocation() {
     // A count with bit 63 set: ten ULEB bytes, the last 0x01.
     let bit63 = [0x80u8, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01];
     assert_eq!(lib.decode(&head(&bit63)), e("oversized"), "count 2^63");
-    // A count far above the entries present runs out of input.
+    // A count over the 4096-entry limit is refused before any allocation,
+    // whatever bytes follow it.
+    assert_eq!(lib.decode(&head(&uleb(4097))), e("oversized"), "count 4097");
     assert_eq!(
         lib.decode(&head(&uleb(1 << 40))),
-        e("truncated"),
+        e("oversized"),
         "count 2^40"
+    );
+    // A count inside the limit but larger than the bytes left can hold (every
+    // entry is at least four bytes) is refused before any allocation.
+    assert_eq!(
+        lib.decode(&head(&uleb(4096))),
+        e("truncated"),
+        "count 4096, no entry bytes"
+    );
+    let two_no_room = [head(&[2]), b"a.b".to_vec()].concat();
+    assert_eq!(
+        lib.decode(&two_no_room),
+        e("truncated"),
+        "count 2, three bytes left"
     );
     let mut over = head(&uleb(4097));
     for i in 0..4097 {

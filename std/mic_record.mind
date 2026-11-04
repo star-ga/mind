@@ -72,6 +72,14 @@ pub fn mrec_max_key_bytes() -> i64 {
     256
 }
 
+// The fewest bytes one encoded entry can occupy: a one-byte key length, a
+// one-byte key, a tag byte and a one-byte value. Every accepted entry is at
+// least this long, so a count whose entries could not fit in the bytes left is
+// impossible and is refused before any allocation.
+pub fn mrec_min_entry_bytes() -> i64 {
+    4
+}
+
 pub fn mrec_tag_str() -> i64 {
     0
 }
@@ -909,12 +917,19 @@ pub fn mrec_decode(a: i64, n: i64) -> i64 {
     if cc != 0 {
         return cc;
     }
-    // A count with bit 63 set reads as negative and would skip the loop. Any
-    // other count is bounded by the bytes present and by the entry limit the
-    // put path applies, so nothing is allocated up front.
+    // Refuse an impossible entry count before the handle or any entry is
+    // allocated: bit 63 reads as negative, a count over the entry limit is
+    // oversized, and a count the remaining bytes cannot hold (each entry is at
+    // least mrec_min_entry_bytes()) is truncated.
     let count: i64 = __mind_load_i64(rd + 24);
     if count < 0 {
         return mrec_e_oversized();
+    }
+    if count > mrec_max_entries() {
+        return mrec_e_oversized();
+    }
+    if count > (__mind_load_i64(rd + 8) - __mind_load_i64(rd + 16)) / mrec_min_entry_bytes() {
+        return mrec_e_truncated();
     }
     let h: i64 = mrec_new();
     if h == 0 {

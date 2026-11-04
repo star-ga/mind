@@ -565,6 +565,18 @@ mod functional {
         assert_eq!(lib.call("mres_get_score", &[c, so]), 0, "positive control");
         assert_eq!(score, [3, 4]);
 
+        // A score without a scale is not a score either. The missing scale
+        // must be refused, never passed back from the caller's stale out + 8.
+        let m = lib.new_record();
+        assert_eq!(lib.put_int(m, b"results.score", 5), 0);
+        let mut stale = [0i64, 7];
+        let mo = stale.as_mut_ptr() as i64;
+        assert_eq!(
+            lib.call("mres_get_score", &[m, mo]),
+            e("not_found"),
+            "score without a scale"
+        );
+
         // No digest stored: not_found, even when out + 8 already holds 32
         // from an earlier call.
         let w = lib.new_record();
