@@ -435,12 +435,13 @@ fn resolve_field(
     })
 }
 
-/// Resolve `field` on a `String` value against the `String` schema. A project
-/// build installs that schema from the bundled `std/string.mind`; a single
-/// translation unit has no project registry, so unless the file declares
-/// `String` itself the schema is registered here, from the same bundled
-/// declaration, and `refusal` (what this access reported without it) is kept
-/// for [`refuse_shadowed_std_string`].
+/// Resolve `field` on a `String` value against the bundled `std/string.mind`
+/// schema, the layout every compiler-built string has. A project build
+/// installs that schema; a single translation unit has no project registry, so
+/// unless the file declares `String` itself the schema is registered here, and
+/// `refusal` (what this access reported without it) is kept for
+/// [`refuse_shadowed_std_string`]. A registered `String` with another layout
+/// is the program's own, and a string value is never read through it.
 #[cfg(feature = "std-surface")]
 fn resolve_string_field(
     receiver: &ast::Node,
@@ -454,18 +455,21 @@ fn resolve_string_field(
     if !receiver_is_string(receiver, ir, struct_env, receiver_types) {
         return None;
     }
-    let idx = match ir.struct_defs.get(STD_STRING) {
-        Some(fields) => fields.iter().position(|f| f == field)?,
+    let (names, types) = bundled_struct_schema(STD_STRING)?;
+    let idx = names.iter().position(|f| f == field)?;
+    match ir.struct_defs.get(STD_STRING) {
+        Some(registered) => {
+            if registered != names || ir.struct_field_types.get(STD_STRING) != Some(types) {
+                return None;
+            }
+        }
         None => {
-            let (names, types) = bundled_struct_schema(STD_STRING)?;
-            let idx = names.iter().position(|f| f == field)?;
             ir.struct_defs.insert(STD_STRING.to_string(), names.clone());
             ir.struct_field_types
                 .insert(STD_STRING.to_string(), types.clone());
             context.std_string_seed.get_or_insert(refusal);
-            idx
         }
-    };
+    }
     let binding = match receiver {
         ast::Node::Lit(Literal::Ident(var_name), _) => Some(var_name.clone()),
         _ => None,

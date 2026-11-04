@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1948 | **Est. tokens:** ~3,806,413
-**Generated:** 2026-11-04 11:22 UTC
+**Files:** 1948 | **Est. tokens:** ~3,806,614
+**Generated:** 2026-11-04 11:33 UTC
 
 ## Token Budget Guide
 
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 48 | ~162,803 |
+| `src/eval/` | 48 | ~162,846 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 430 | ~875,349 |
+| `tests/` | 430 | ~875,507 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1299,7 +1299,7 @@
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `field_access.rs` (~5941 tok, huge) — Copyright 2026 STARGA Inc.
+- `field_access.rs` (~5984 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5850 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2048,7 +2048,7 @@
 ### `tests/`
 
 - `flat_emit_sibling_const.rs` (~542 tok, large) — Copyright 2026 STARGA Inc.
-- `flat_string_field_schema.rs` (~2889 tok, huge) — Copyright 2026 STARGA Inc.
+- `flat_string_field_schema.rs` (~3047 tok, huge) — Copyright 2026 STARGA Inc.
 - `fmt_bool_literal_roundtrip.rs` (~1958 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_idempotence.rs` (~5044 tok, huge) — Copyright 2025 STARGA Inc.

@@ -307,6 +307,18 @@ fn a_string_declared_before_the_access_keeps_its_layout() {
     assert_eq!(offsets(&flat_mic3(&dir, &source, &[])), [8, 0, 16]);
 }
 
+/// A string value has the bundled layout, so a program's own `String` with
+/// another layout is never used to read one: the access is refused.
+#[test]
+fn a_string_value_is_never_read_through_a_user_layout() {
+    let dir = scratch("user-layout-value");
+    let source = "struct String {\n    len: i64,\n    addr: i64,\n    cap: i64,\n}\n\n\
+                  fn f(name: string) -> i64 {\n    name.len\n}\n";
+    fs::write(dir.join("value.mind"), source).expect("write source");
+    let out = mindc(&["value.mind", "--emit-mic3", "value.mic3"], &dir, &[]);
+    assert_refused_at(&out, "struct field read", source, "name.len");
+}
+
 #[test]
 fn a_string_declared_after_the_access_is_refused() {
     for (case, tail) in [
