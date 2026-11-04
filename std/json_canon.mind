@@ -90,6 +90,7 @@ fn utf8_cp_at(addr: i64, pos: i64) -> i64 {
 // key can hold an overlong `A` or an encoded lone surrogate: each decodes to
 // the code points of another key, the comparator calls the two equal and the
 // dump would follow insertion order.
+#[protection]
 fn utf8_seq_len(addr: i64, pos: i64, len: i64) -> i64 {
     let b0: i64 = __mind_load_i8(addr + pos);
     if b0 < 128 {
@@ -152,6 +153,7 @@ fn utf8_seq_len(addr: i64, pos: i64, len: i64) -> i64 {
 }
 
 // Returns 1 if the len bytes at addr are well-formed UTF-8, else 0.
+#[protection]
 fn utf8_valid(addr: i64, len: i64) -> i64 {
     let mut pos: i64 = 0;
     while pos < len {
