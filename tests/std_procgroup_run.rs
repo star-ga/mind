@@ -75,7 +75,6 @@ mod bundle {
     use super::*;
     use libmind::project::module_table::{build_module_table, collect_module_exports};
     use libmind::project::stdlib::parsed_stdlib_modules;
-    use libmind::project::substrate_link::{SUBSTRATE_MODULES, substrate_closure};
 
     #[test]
     fn procgroup_exports_its_public_fns() {
@@ -91,7 +90,7 @@ mod bundle {
     }
 
     #[test]
-    fn bundled_stdlib_resolves_and_links_std_procgroup() {
+    fn bundled_stdlib_resolves_std_procgroup() {
         let mods = parsed_stdlib_modules();
         let refs: Vec<(String, &libmind::ast::Module)> =
             mods.iter().map(|(p, m)| (p.clone(), m)).collect();
@@ -100,6 +99,13 @@ mod bundle {
             table.resolves(&["std".into(), "procgroup".into()], "procgroup_wait_all"),
             "the bundled stdlib must expose std.procgroup::procgroup_wait_all"
         );
+    }
+
+    /// The substrate list is the link side, which only `mlir-build` compiles.
+    #[cfg(feature = "mlir-build")]
+    #[test]
+    fn std_procgroup_is_a_self_contained_substrate_module() {
+        use libmind::project::substrate_link::{SUBSTRATE_MODULES, substrate_closure};
         assert!(
             SUBSTRATE_MODULES.contains(&"std.procgroup"),
             "std.procgroup must be linked into executables that import it"

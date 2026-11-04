@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1950 | **Est. tokens:** ~3,816,106
-**Generated:** 2026-11-04 15:58 UTC
+**Files:** 1950 | **Est. tokens:** ~3,816,153
+**Generated:** 2026-11-04 16:37 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 44 | ~211,959 |
-| `tests/` | 431 | ~879,573 |
+| `tests/` | 431 | ~879,620 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -2600,7 +2600,7 @@
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_procgroup_run.mind` (~2754 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
-- `std_procgroup_run.rs` (~4359 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_procgroup_run.rs` (~4406 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.
