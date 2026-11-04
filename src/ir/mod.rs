@@ -1175,14 +1175,16 @@ pub(crate) fn canonical_array_type_in(
 /// `FnDef.body`: the version predicate must find a `value_types` table buried
 /// in any function at any nesting depth (a `FnDef` inside a `Region` inside an
 /// `If` still counts), so it crosses `FnDef` boundaries the scope walks stop at.
-#[cfg(feature = "std-surface")]
+/// Without `std-surface` only `FnDef` carries a body.
 pub(crate) fn instr_bodies(instr: &Instr) -> [&[Instr]; 3] {
     const NONE: &[Instr] = &[];
     match instr {
         Instr::FnDef { body, .. } => [body.as_slice(), NONE, NONE],
+        #[cfg(feature = "std-surface")]
         Instr::While {
             cond_instrs, body, ..
         } => [cond_instrs.as_slice(), body.as_slice(), NONE],
+        #[cfg(feature = "std-surface")]
         Instr::If {
             cond_instrs,
             then_instrs,
@@ -1193,6 +1195,7 @@ pub(crate) fn instr_bodies(instr: &Instr) -> [&[Instr]; 3] {
             then_instrs.as_slice(),
             else_instrs.as_slice(),
         ],
+        #[cfg(feature = "std-surface")]
         Instr::Region { body, .. } => [body.as_slice(), NONE, NONE],
         // Every non-body-carrying variant. WARNING to maintainers: if a NEW
         // `Vec<Instr>` body field is ever added to an `Instr` variant, add an arm
