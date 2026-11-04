@@ -45,15 +45,36 @@ WHAT IS CHECKED
       `<workflow file>:<job id>`; an unqualified row means ci.yml, which is why
       every pre-existing row keeps its meaning unchanged.
   R6  scripts/verify_ci_green.py exists and reads that same manifest.
+  R7  Cargo.lock is committed (tracked, not ignored) and every cargo/cross
+      command in every workflow `run:` block that resolves dependencies passes
+      `--locked` (or `--frozen`) before any `--`. Before this rule the lockfile
+      was gitignored and release.yml built unlocked, so the shipped fips204 /
+      fips205 were whatever 0.4.x was newest on tag day, not what CI tested. One
+      command may be exempted by a `# lockfile-exempt: <reason>` line directly
+      above it; an exemption above a locked command is stale and fails.
+  R8  ci.yml's release_profile job is a faithful pre-tag copy of release.yml's
+      Linux legs: the same runner/target pairs (x86_64 AND aarch64, each on a
+      runner of its own architecture, so nothing is cross-built unexecuted), the
+      same `--features` string, `--release --locked --bin mindc --target`, and
+      both run the shared post-build smoke action on the packaged archive.
+
+A second mode resolves dependency graphs and so needs cargo:
+  --keystone-pqc-free  every feature set the keystone (mindcraft_self_host) and
+      byte-identity (cross_substrate_identity) jobs build with resolves NEITHER
+      fips204 NOR fips205 under `cargo tree --locked --target all -e
+      normal,build,dev`; positive control: release.yml's set resolves BOTH.
 
 Usage:
   python3 scripts/check_release_gating.py           # check (exit 1 on violation)
   python3 scripts/check_release_gating.py --print   # show what it derived
+  python3 scripts/check_release_gating.py --keystone-pqc-free
 """
 
 from __future__ import annotations
 
+import fnmatch
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +83,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # rule; importing a sibling module would create one on every local run.
 sys.dont_write_bytecode = True
 
+from gate_runner_wiring_lint import (  # noqa: E402
+    join_continuations,
+    run_block_lines,
+    split_segments,
+    strip_shell_comment,
+)
 from workflow_scan import (  # noqa: E402
     blocks,
     job_display_name,
@@ -78,6 +105,19 @@ CI_YML = WORKFLOW_DIR / "ci.yml"
 DEFAULT_WORKFLOW = "ci.yml"
 MANIFEST = ROOT / ".github" / "required-ci-jobs.tsv"
 VERIFIER = ROOT / "scripts" / "verify_ci_green.py"
+LOCKFILE = "Cargo.lock"
+# A cargo (or cross) subcommand that resolves the dependency graph. `fmt` does not.
+RESOLVING_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:cargo|cross)\s+(?:build|test|check|clippy|doc|run|bench"
+    r"|metadata|tree|fetch|rustc|rustdoc|install)(?![A-Za-z0-9_-])"
+)
+LOCK_FLAG_RE = re.compile(r"(?<![A-Za-z0-9_-])--(?:locked|frozen)(?![A-Za-z0-9_-])")
+LOCK_EXEMPT_RE = re.compile(r"^#\s*lockfile-exempt:\s*(\S.{19,})$")
+RELEASE_PROFILE_JOB = "release_profile"
+SMOKE_ACTION = "./.github/actions/release-artifact-smoke"
+KEYSTONE_JOBS = ("mindcraft_self_host", "cross_substrate_identity")
+PQC_CRATES = ("fips204", "fips205")
+FEATURES_RE = re.compile(r"--features[ =](?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 
 # Actions/commands that create a GitHub Release. A job using any of these is a
 # publishing job and carries the full weight of the gate.
@@ -109,6 +149,8 @@ RULES: dict[str, str] = {
     "R4": "contents:write scoped to the publishing job",
     "R5": "required-ci-jobs.tsv == every workflow it names (both directions)",
     "R6": "verify_ci_green.py present and reading that manifest",
+    "R7": "Cargo.lock committed; every workflow cargo command is --locked",
+    "R8": "ci.yml release_profile mirrors release.yml's Linux legs exactly",
 }
 
 
@@ -386,12 +428,209 @@ def check_manifest_matches_workflows(
             )
 
 
+def unlocked_cargo_commands(path: Path) -> tuple[list[str], list[str]]:
+    """(unlocked resolving commands, stale exemptions) in one workflow's run blocks."""
+    unlocked: list[str] = []
+    stale: list[str] = []
+    exempt_at: int | None = None
+    for lineno, cmd in join_continuations(run_block_lines(path.read_text(encoding="utf-8"))):
+        if cmd.startswith("#"):
+            if LOCK_EXEMPT_RE.match(cmd):
+                exempt_at = lineno
+            continue
+        hits = []
+        for seg in split_segments(strip_shell_comment(cmd)):
+            m = RESOLVING_RE.search(seg)
+            # Only flags before a bare `--` are cargo's; after it they are libtest's.
+            if m and not LOCK_FLAG_RE.search(re.split(r"\s--(?:\s|$)", seg[m.start():], maxsplit=1)[0]):
+                hits.append(f"{path.name}:{lineno}: {seg.strip()}")
+        if exempt_at is not None and not hits:
+            stale.append(f"{path.name}:{exempt_at}")
+        if exempt_at is None:
+            unlocked.extend(hits)
+        exempt_at = None
+    return unlocked, stale
+
+
+def lockfile_ignored(gitignore: Path) -> list[str]:
+    """Non-negated .gitignore patterns that match the root Cargo.lock."""
+    if not gitignore.is_file():
+        return []
+    hits = []
+    for raw in gitignore.read_text(encoding="utf-8").splitlines():
+        pat = raw.strip()
+        if not pat or pat.startswith(("#", "!")):
+            continue
+        bare = pat.removeprefix("**/").removeprefix("/").rstrip("/")
+        if fnmatch.fnmatchcase(LOCKFILE, bare):
+            hits.append(pat)
+    return hits
+
+
+def check_lockfile(errors: list[str], ran: set[str]) -> None:
+    _ran(ran, "R7")
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", LOCKFILE],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if tracked.returncode != 0 or not (ROOT / LOCKFILE).is_file():
+        _fail(errors, "R7", f"{LOCKFILE} is not a tracked file; release and CI builds "
+              "would each resolve the newest semver-compatible dependencies.")
+    for pat in lockfile_ignored(ROOT / ".gitignore"):
+        _fail(errors, "R7", f".gitignore pattern {pat!r} ignores {LOCKFILE}.")
+    workflows = sorted(WORKFLOW_DIR.glob("*.yml"))
+    if not workflows:
+        _fail(errors, "R7", "no workflow found to scan — a broken scan, not a clean tree.")
+    for path in workflows:
+        unlocked, stale = unlocked_cargo_commands(path)
+        for hit in unlocked:
+            _fail(errors, "R7", f"cargo command resolves without --locked: {hit}")
+        for at in stale:
+            _fail(errors, "R7", f"stale `# lockfile-exempt:` at {at}: the next command is "
+                  "already locked or resolves nothing; remove the exemption.")
+
+
+def features_of(cmd: str) -> str:
+    """The normalised `--features` value of one command ('' when absent)."""
+    m = FEATURES_RE.search(cmd)
+    raw = next((g for g in m.groups() if g is not None), "") if m else ""
+    return " ".join(sorted(f for f in re.split(r"[ ,]+", raw) if f))
+
+
+def build_commands(job_body: str, verb: str = "cargo build") -> list[str]:
+    rows = join_continuations(run_block_lines(job_body))
+    return [strip_shell_comment(c) for _, c in rows if verb in strip_shell_comment(c)]
+
+
+def matrix_rows(job_body: str) -> list[dict[str, str]]:
+    """Scalar `- key: value` items of the job's `matrix: include:` list."""
+    lines = job_body.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.strip() == "include:"), None)
+    if start is None:
+        return []
+    base = len(lines[start]) - len(lines[start].lstrip())
+    rows: list[dict[str, str]] = []
+    for ln in lines[start + 1:]:
+        s = ln.strip()
+        if not s or s.startswith("#"):
+            continue
+        if len(ln) - len(ln.lstrip()) <= base:
+            break
+        m = re.match(r"^(-\s+)?([A-Za-z0-9_-]+):\s*(.*?)\s*$", s)
+        if not m:
+            continue
+        if m.group(1) or not rows:
+            rows.append({})
+        rows[-1][m.group(2)] = m.group(3).strip("\"'")
+    return rows
+
+
+def native_pair(runner: str, target: str) -> bool:
+    return target.startswith("aarch64-") == runner.endswith("-arm")
+
+
+def release_features() -> str:
+    for body in workflow_jobs(RELEASE_YML).values():
+        sets = {features_of(c) for c in build_commands(body)}
+        if sets:
+            return sets.pop() if len(sets) == 1 else ""
+    return ""
+
+
+def check_release_profile(errors: list[str], ran: set[str]) -> None:
+    _ran(ran, "R8")
+    rel_jobs = workflow_jobs(RELEASE_YML)
+    rel_build = next((b for b in rel_jobs.values() if build_commands(b)), "")
+    rel_sets = {features_of(c) for c in build_commands(rel_build)}
+    if len(rel_sets) != 1 or "" in rel_sets:
+        _fail(errors, "R8", f"release.yml must build with ONE --features set; found {rel_sets}.")
+    rel_linux = {(r.get("os", ""), r.get("target", "")) for r in matrix_rows(rel_build)
+                 if r.get("os", "").startswith("ubuntu")}
+    ci = workflow_jobs(CI_YML).get(RELEASE_PROFILE_JOB)
+    if ci is None:
+        _fail(errors, "R8", f"ci.yml has no `{RELEASE_PROFILE_JOB}` job: the release "
+              "feature set first compiles, and aarch64 first runs, on the tag push.")
+        return
+    ci_pairs = {(r.get("runner", ""), r.get("target", "")) for r in matrix_rows(ci)}
+    if ci_pairs != rel_linux:
+        _fail(errors, "R8", f"release_profile runs {sorted(ci_pairs)}; release.yml's Linux "
+              f"legs are {sorted(rel_linux)}.")
+    archs = {t.split("-", 1)[0] for _, t in ci_pairs}
+    if not {"x86_64", "aarch64"} <= archs:
+        _fail(errors, "R8", f"release_profile must cover x86_64 AND aarch64, has {sorted(archs)}.")
+    for runner, target in sorted(ci_pairs | rel_linux):
+        if not native_pair(runner, target):
+            _fail(errors, "R8", f"{target} on {runner} is not native: that binary "
+                  "cannot be executed by the smoke before it ships.")
+    cmds = build_commands(ci)
+    if not cmds:
+        _fail(errors, "R8", "release_profile runs no `cargo build`.")
+    for cmd in cmds:
+        missing = [f for f in ("--release", "--locked", "--bin mindc",
+                               "--target ${{ matrix.target }}") if f not in cmd]
+        if missing or {features_of(cmd)} != rel_sets:
+            _fail(errors, "R8", f"release_profile build {cmd.strip()!r} differs from "
+                  f"release.yml (missing {missing}, features {features_of(cmd)!r} vs "
+                  f"{sorted(rel_sets)}).")
+    for label, body in (("release.yml build", rel_build), ("ci.yml release_profile", ci)):
+        if f"uses: {SMOKE_ACTION}" not in code(body):
+            _fail(errors, "R8", f"{label} does not run {SMOKE_ACTION} on its archive.")
+
+
+def tree_packages(no_default: bool, features: str) -> set[str] | None:
+    cmd = ["cargo", "tree", "--locked", "--target", "all", "-e", "normal,build,dev",
+           "--prefix", "none", "--format", "{p}"]
+    cmd += ["--no-default-features"] if no_default else []
+    cmd += ["--features", features] if features else []
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=False)
+    print(f"$ {' '.join(cmd)}  -> rc={proc.returncode}")
+    if proc.returncode != 0:
+        print(proc.stderr.strip())
+        return None
+    return {ln.split()[0] for ln in proc.stdout.splitlines() if ln.strip()}
+
+
+def keystone_pqc_free() -> int:
+    ok = True
+
+    def verdict(cond: bool, label: str) -> None:
+        nonlocal ok
+        print(f"[{'PASS' if cond else 'FAIL'}] {label}")
+        ok = ok and cond
+
+    jobs = workflow_jobs(CI_YML)
+    sets: set[tuple[bool, str]] = set()
+    for jid in KEYSTONE_JOBS:
+        cmds = [c for c in build_commands(jobs.get(jid, ""), "cargo ")
+                if RESOLVING_RE.search(c)]
+        verdict(bool(cmds), f"{jid}: feature sets derived from its cargo commands")
+        sets |= {("--no-default-features" in c, features_of(c)) for c in cmds}
+    release = release_features()
+    verdict(bool(release), f"release.yml feature set derived: {release!r}")
+    shipped = tree_packages(False, release) if release else None
+    for crate in PQC_CRATES:
+        verdict(shipped is not None and crate in shipped,
+                f"positive control: the release set resolves {crate}")
+    for no_default, features in sorted(sets):
+        pkgs = tree_packages(no_default, features)
+        label = f"{'--no-default-features ' if no_default else ''}--features {features!r}"
+        verdict(pkgs is not None and "mind" in pkgs, f"keystone set {label} resolves")
+        for crate in PQC_CRATES:
+            verdict(pkgs is not None and crate not in pkgs,
+                    f"keystone set {label} does not compile {crate}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str]) -> int:
+    if "--keystone-pqc-free" in argv:
+        return keystone_pqc_free()
     show = "--print" in argv
     errors: list[str] = []
     ran: set[str] = set()
     check_release_workflow(errors, ran)
     check_manifest_matches_workflows(errors, show, ran)
+    check_lockfile(errors, ran)
+    check_release_profile(errors, ran)
 
     # A rule whose body was never reached asserted nothing, and a gate that
     # asserts nothing must not report a contract as upheld.

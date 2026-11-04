@@ -572,8 +572,8 @@ def check_preflight_feature_parity(root: Path, failures: list[str]) -> None:
         policy = ([] if "--no-fail-fast" in original[:separator] else ["--no-fail-fast"]) + ["--locked"]
         if locked != original[:separator] + policy + original[separator:]:
             failures.append("WSP-06(a): typed replay does not preserve the scanner's exact argv")
-    if not any(set(row.get("lock_modes", [])) == {"locked", "unlocked"} for row in rows):
-        failures.append("WSP-06(a): CI Cargo.lock locked/unlocked branch was not normalized")
+    if not rows or any(row.get("lock_modes") != ["locked"] for row in rows):
+        failures.append("WSP-06(a): a CI build_test cargo-test row runs without --locked")
     # Assert what the keystone commands DO, not the exact byte string they were
     # once written as. The previous form required a `BUILD_INCOMPLETE=1` env
     # assignment that no longer exists; a contract test that pins a removed

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,801,397
-**Generated:** 2026-11-02 17:06 UTC
+**Files:** 1948 | **Est. tokens:** ~3,809,068
+**Generated:** 2026-11-04 11:40 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~32,793 |
+| `./` | 35 | ~32,790 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -91,13 +91,14 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
-| `.github/` | 4 | ~919 |
+| `.github/` | 4 | ~931 |
+| `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~962 |
-| `.github/workflows/` | 9 | ~16,513 |
+| `.github/workflows/` | 9 | ~16,771 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~123,987 |
+| `scripts/` | 33 | ~126,898 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -152,7 +153,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 429 | ~872,460 |
+| `tests/` | 430 | ~875,872 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -256,7 +257,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~950 tok, large) — # Rust
+- `.gitignore` (~947 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -1042,6 +1043,9 @@
 - `post-commit` (~410 tok, medium) — #!/usr/bin/env bash
 - `post-merge` (~408 tok, medium) — #!/usr/bin/env bash
 - `pre-commit` (~698 tok, large) — #!/usr/bin/env bash
+### `.github/actions/release-artifact-smoke/`
+
+- `action.yml` (~1081 tok, large) — name: Release artifact smoke
 ### `.github/`
 
 - `CODEOWNERS` (~9 tok, tiny) — *       @star-ga
@@ -1054,21 +1058,21 @@
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
-- `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+- `required-ci-jobs.tsv` (~773 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
 - `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~5329 tok, huge) — name: Bench gate
+- `bench-gate.yml` (~5397 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~302 tok, medium) — name: Cargo Deny
-- `crypto-vectors.yml` (~2070 tok, huge) — name: Crypto Vectors
+- `crypto-vectors.yml` (~2073 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
-- `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
+- `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
 - `pr-review.yml` (~821 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
-- `release.yml` (~3761 tok, huge) — name: Release
+- `release.yml` (~3943 tok, huge) — name: Release
 ### `mind/std/cognitive/`
 
 - `batch_scheduler.mind` (~850 tok, large) — Batch scheduling for inference workloads
@@ -1087,13 +1091,13 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1752 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9416 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9412 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
-- `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
+- `check_release_gating.py` (~7174 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~1073 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10090 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10092 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1114,7 +1118,7 @@
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
 - `preflight.sh` (~9404 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
-- `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
+- `ri_d1_mlir_free_gate.sh` (~2138 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 - `run_gate.py` (~8072 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
 ### `scripts/sdlc/`
@@ -1128,7 +1132,7 @@
 - `test_no_ai_attribution.py` (~6692 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
-- `workflow_scan.py` (~4847 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
+- `workflow_scan.py` (~4926 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
 ### `sdk/ts/mic-map/dist/`
 
 - `errors.d.ts` (~209 tok, medium)
@@ -1913,6 +1917,7 @@
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_struct_variant_run.rs` (~1280 tok, large) — Copyright 2025 STARGA Inc.
 - `evaluator_declared_width.rs` (~5277 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence_release_smoke.rs` (~3412 tok, huge) — Copyright 2026 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~916 tok, large) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.

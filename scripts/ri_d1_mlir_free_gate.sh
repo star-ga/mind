@@ -32,7 +32,7 @@ command -v strace >/dev/null || { echo "BLOCKED: strace missing"; exit 2; }
 echo "== building mindc with mlir-build OFF (MLIR physically compiled out) =="
 # Dedicated target dir so this never clobbers the default (mlir-on) build.
 CARGO_TARGET_DIR="$TARGET_DIR" \
-  cargo build --release --bin mindc \
+  cargo build --release --locked --bin mindc \
   --no-default-features --features "std-surface cross-module-imports" \
   -j "$JOBS" \
   >"$BUILD_LOG" 2>&1

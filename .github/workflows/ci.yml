@@ -194,6 +194,105 @@ jobs:
         shell: bash
         run: MIND_TEST_REQUIRE_PQC=1 cargo test --release --locked --features std-surface,evidence-mldsa,evidence-slhdsa --test verify_canonical_bytes
 
+  release_profile:
+    # PRE-TAG dry run of release.yml's Linux legs. release.yml builds the shipped
+    # binaries with a feature set no other job compiles (mlir-lowering + autodiff
+    # + both signing features), and it used to cross-compile linux-arm64 with
+    # `cross` and publish it unexecuted, so the first compile of that combination
+    # and the first run of an aarch64 mindc were both the tag push. This job runs
+    # the EXACT release.yml build command (plus --locked, which release.yml also
+    # passes) on the two native runners the release uses, packages the binary the
+    # same way, runs the same post-build smoke action, and then drives the
+    # PACKAGED binary through the signing smoke in tests/evidence_release_smoke.rs:
+    # unsigned bytes equal the committed fixture, the TEST seeds sign, the
+    # signature verifies under keys derived independently from those seeds, and
+    # stripping either leg is refused. scripts/check_release_gating.py R8 fails
+    # if this job's command, features or runner/target pairs drift from
+    # release.yml's. Seeds are the public TEST values in source; no key exists here.
+    name: Release profile pre-tag smoke (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            name: Linux x86_64
+            artifact: mindc-linux-x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: Linux ARM64
+            artifact: mindc-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    # Two release builds (the binary, then the test harness against it) plus a
+    # SLH-DSA-256s signature per signing run; healthy runs are well under this.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-profile-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            release-profile-${{ matrix.target }}-
+
+      - name: Build (the release.yml command)
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+
+      - name: Package (as release.yml does)
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release-profile"
+          mkdir -p "$out"
+          tar -czf "$out/${{ matrix.artifact }}.tar.gz" -C "target/${{ matrix.target }}/release" mindc
+          (cd "$out" && sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256")
+          version=$(cargo metadata --locked --no-deps --format-version 1 \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          echo "archive=$out/${{ matrix.artifact }}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Post-build smoke (checksum, unpack, --version == Cargo.toml)
+        id: smoke
+        uses: ./.github/actions/release-artifact-smoke
+        with:
+          archive: ${{ steps.package.outputs.archive }}
+          version: ${{ steps.package.outputs.version }}
+
+      - name: Signing smoke on the packaged binary (TEST seeds, pinned keys, stripped legs)
+        # The PQC test is cfg-gated, so a build that lost a signing feature
+        # would compile it out and still report `ok`. The exact name and the
+        # exact pass count are required, not merely a green exit.
+        shell: bash
+        env:
+          MIND_RELEASE_SMOKE_MINDC: ${{ steps.smoke.outputs.binary }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/release-signing-smoke.log"
+          cargo test --release --locked --target ${{ matrix.target }} \
+            --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa" \
+            --test evidence_release_smoke -- --show-output 2>&1 | tee "$log"
+          grep -qx 'test signing::test_seeds_sign_pinned_keys_verify_and_a_stripped_leg_is_refused ... ok' "$log" \
+            || { echo "FAIL: the signing smoke did not run and pass"; exit 1; }
+          grep -q '^test result: ok\. 4 passed; 0 failed;' "$log" \
+            || { echo "FAIL: expected exactly 4 passing evidence_release_smoke tests"; exit 1; }
+          grep -qF "binary=${MIND_RELEASE_SMOKE_MINDC} pqc_compiled_in=true " "$log" \
+            || { echo "FAIL: the smoke did not drive the packaged binary"; exit 1; }
+
   build_test:
     name: Build & Test
     strategy:
@@ -276,52 +375,27 @@ jobs:
 
       - name: Cargo metadata (smoke)
         shell: bash
-        run: |
-          if [ -f Cargo.lock ]; then
-            cargo metadata --format-version=1 --locked
-          else
-            cargo metadata --format-version=1
-          fi
+        run: cargo metadata --format-version=1 --locked
 
       - name: Check compiles (no features)
         shell: bash
-        run: |
-          if [ -f Cargo.lock ]; then
-            cargo check --no-default-features --locked
-          else
-            cargo check --no-default-features
-          fi
+        run: cargo check --no-default-features --locked
 
       - name: Feature compile matrix
         shell: bash
         run: |
-          if [ -f Cargo.lock ]; then
-            cargo check --no-default-features --locked
-            cargo check --no-default-features --features cpu-exec --locked
-            cargo check --no-default-features --features pkg --locked
-          else
-            cargo check --no-default-features
-            cargo check --no-default-features --features cpu-exec
-            cargo check --no-default-features --features pkg
-          fi
+          cargo check --no-default-features --locked
+          cargo check --no-default-features --features cpu-exec --locked
+          cargo check --no-default-features --features pkg --locked
 
       - name: Build
         shell: bash
-        run: |
-          if [ -f Cargo.lock ]; then
-            cargo build --verbose --no-default-features --locked
-          else
-            cargo build --verbose --no-default-features
-          fi
+        run: cargo build --verbose --no-default-features --locked
 
       - name: Test
         shell: bash
         run: |
-          if [ -f Cargo.lock ]; then
-            cargo test --verbose --no-default-features --locked
-          else
-            cargo test --verbose --no-default-features
-          fi
+          cargo test --verbose --no-default-features --locked
 
       - name: Test (gated — RFC 0005 std-surface + cross-module-imports)
         # The RFC 0005 Phase 2 / Phase B work (std/vec.mind, std/string.mind,
@@ -335,10 +409,10 @@ jobs:
         run: |
           set -e
           # Each feature alone — proves the gate is well-bounded.
-          cargo test --verbose --no-default-features --features std-surface
-          cargo test --verbose --no-default-features --features cross-module-imports
+          cargo test --locked --verbose --no-default-features --features std-surface
+          cargo test --locked --verbose --no-default-features --features cross-module-imports
           # Both together — full RFC 0005 surface (Phase 2 + Phase B).
-          cargo test --verbose --no-default-features --features std-surface,cross-module-imports
+          cargo test --locked --verbose --no-default-features --features std-surface,cross-module-imports
 
       - name: Run gated tests — autodiff + mlir-lowering + cpu-buffers
         # Five tests live behind these three feature flags and were never
@@ -354,9 +428,9 @@ jobs:
         shell: bash
         run: |
           set -e
-          cargo test --verbose --no-default-features --features autodiff
-          cargo test --verbose --no-default-features --features mlir-lowering
-          cargo test --verbose --no-default-features --features cpu-buffers
+          cargo test --locked --verbose --no-default-features --features autodiff
+          cargo test --locked --verbose --no-default-features --features mlir-lowering
+          cargo test --locked --verbose --no-default-features --features cpu-buffers
 
       - name: Install GNU timeout on macOS
         if: runner.os == 'macOS'
@@ -379,8 +453,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          timeout 900 cargo test --verbose --no-default-features --features ffi-c --lib
-          out=$(timeout 300 cargo test --no-default-features --features ffi-c --lib ffi::sys)
+          timeout 900 cargo test --locked --verbose --no-default-features --features ffi-c --lib
+          out=$(timeout 300 cargo test --locked --no-default-features --features ffi-c --lib ffi::sys)
           echo "$out"
           n=$(printf '%s\n' "$out" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
           # Three portable tests plus the Linux-only ptrace-state regression.
@@ -397,7 +471,7 @@ jobs:
           # C-header symbol contract was asserted by nothing. Same positive-count
           # discipline as the ffi::sys assert: a `--test` selector alone is not
           # evidence that the tests inside it existed.
-          hout=$(timeout 300 cargo test --no-default-features --features ffi-c --test ffi_header)
+          hout=$(timeout 300 cargo test --locked --no-default-features --features ffi-c --test ffi_header)
           echo "$hout"
           hn=$(printf '%s\n' "$hout" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
           if [ "${hn:-0}" -lt 1 ]; then
@@ -408,12 +482,7 @@ jobs:
 
       - name: Clippy
         shell: bash
-        run: |
-          if [ -f Cargo.lock ]; then
-            cargo clippy --no-default-features --locked -- -D warnings
-          else
-            cargo clippy --no-default-features -- -D warnings
-          fi
+        run: cargo clippy --no-default-features --locked -- -D warnings
 
   cross_substrate_identity:
     # RFC 0020 §10 — the wedge's load-bearing invariant made enforceable: a
@@ -565,7 +634,7 @@ jobs:
 
       - name: Build mindc (MLIR backend)
         run: |
-          cargo build --no-default-features \
+          cargo build --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" --bin mindc
 
       - name: File read under test and run (ARM)
@@ -573,7 +642,7 @@ jobs:
         # sets MIND_BENCH_REQUIRE=1, so a missing native backend is a failure.
         if: matrix.runner == 'ubuntu-24.04-arm' && matrix.llvm == '23'
         run: |
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test file_read_under_test
 
@@ -586,10 +655,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout 600 cargo test --no-default-features \
+          timeout 600 cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_descriptor_abi_run -- --nocapture
-          timeout 600 cargo test --no-default-features \
+          timeout 600 cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_fail_loud_run -- --nocapture
 
@@ -609,13 +678,13 @@ jobs:
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/mind-xsi-receipts.XXXXXX")"
           echo "receipt_dir=$receipt_dir" >> "$GITHUB_OUTPUT"
           export MIND_XSI_RECEIPTS_DIR="$receipt_dir"
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_identity -- --nocapture
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test vnni_resolved_toolchain -- --nocapture
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_receipts -- --include-ignored --nocapture
 
@@ -650,7 +719,7 @@ jobs:
           # The asserting run above retains the job-level requirement. Harvest
           # only records hashes; its BLESS mode must not claim gate evidence.
           unset MIND_BENCH_REQUIRE
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_identity -- --nocapture
           echo "--- harvested (${{ matrix.substrate }}, $(uname -m)) ---"
@@ -679,7 +748,7 @@ jobs:
         env:
           MINDFUZZ_DIGEST_OUT: ${{ github.workspace }}/mindfuzz_digest_${{ matrix.substrate }}.txt
         run: |
-          cargo test --no-default-features \
+          cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test mindfuzz_cross_substrate -- --nocapture
 
@@ -812,7 +881,7 @@ jobs:
       - name: Build docs
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-default-features --document-private-items
+        run: cargo doc --locked --no-default-features --document-private-items
 
   mindcraft_self_host:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE) (LLVM ${{ matrix.llvm }})
@@ -935,6 +1004,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mindcraft-self-host-
 
+      - name: Keystone feature set compiles no PQC crate (cargo tree)
+        # "The keystone never compiles fips204/fips205" held by construction and
+        # was asserted by nothing: this job restores a cached target, so its log
+        # cannot show what it compiled. The gate reads the feature sets this job
+        # and cross_substrate_identity build with straight out of this file,
+        # resolves each one with `cargo tree --locked --target all` over normal,
+        # build and dev edges, and fails if either PQC crate is in the graph. The
+        # positive control resolves release.yml's feature set the same way and
+        # requires BOTH crates there, so a resolver that can see nothing fails.
+        run: python3 scripts/run_gate.py scripts/check_release_gating.py --keystone-pqc-free
+        working-directory: ${{ github.workspace }}
+
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
         # LLVM 23 (latest) comes from the signed apt.llvm.org suite
         # llvm-toolchain-noble-23, which publishes amd64 and arm64.
@@ -999,7 +1080,7 @@ jobs:
 
       - name: Build mindc (MLIR backend)
         run: |
-          cargo build --release --no-default-features \
+          cargo build --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" --bin mindc
 
       - name: Self-host bootstrap via mindc build (Mind.toml)
@@ -1587,7 +1668,7 @@ jobs:
 
       - name: Run Phase G integration tests
         run: |
-          cargo test --release --no-default-features \
+          cargo test --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test phase_g_keystone_bootstrap -- --nocapture
 
@@ -1696,7 +1777,7 @@ jobs:
 
       - name: Build mindc (MLIR backend)
         run: |
-          cargo build --release --no-default-features \
+          cargo build --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" --bin mindc
 
       # The gate owns compilation and uses a unique temporary output.  Keeping
@@ -2110,7 +2191,7 @@ jobs:
             ${{ runner.os }}-conformance-
 
       - name: Build mindc
-        run: cargo build --release --bin mindc
+        run: cargo build --locked --release --bin mindc
 
       - name: CPU profile must pass with a non-zero case count
         run: |
@@ -2180,11 +2261,11 @@ jobs:
         # undefined-call errors — a project-level check would otherwise be
         # stricter than a build. Without either feature the check rejects valid
         # MIND source and exits non-zero.
-        run: cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc
+        run: cargo build --locked --release --no-default-features --features "std-surface cross-module-imports" --bin mindc
 
       - name: Run mindc check on std/ and examples/
         run: |
-          cargo run --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
+          cargo run --locked --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
             check std/ examples/
 
   arch_mind:

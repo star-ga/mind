@@ -159,12 +159,15 @@ jobs:
             name: Linux x86_64
             artifact: mindc-linux-x64
             ext: tar.gz
-          - os: ubuntu-24.04
+          # Native arm64 runner, the class ci.yml's cross_substrate_identity and
+          # release_profile jobs already use. The leg used to cross-compile with
+          # `cross` on an x86 runner, so the shipped aarch64 binary was never run
+          # before publication; built natively, the post-build smoke below runs it.
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             name: Linux ARM64
             artifact: mindc-linux-arm64
             ext: tar.gz
-            cross: true
           - os: macos-26
             target: x86_64-apple-darwin
             name: macOS x86_64
@@ -205,10 +208,6 @@ jobs:
             target
           key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.toml') }}
 
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       # Ship a REAL compiler, not a check/parse-only binary: enable the MLIR
       # codegen + autodiff + bundled-stdlib features.
       #
@@ -229,13 +228,12 @@ jobs:
       # runners. `--emit-mlir`/`--emit-ir`/`check` work standalone; `--emit-shared`/
       # `--emit-obj` require the LLVM/MLIR tools on the user's PATH (documented in
       # docs/install.md) and fail with a clear "tool not found" error if absent.
-      - name: Build (native)
-        if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
-
-      - name: Build (cross)
-        if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+      #
+      # `--locked`: the dependency set is the committed Cargo.lock that CI tested
+      # (ci.yml release_profile builds this exact command before any tag), not
+      # whatever the newest semver-compatible crypto crates are on tag day.
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -258,6 +256,16 @@ jobs:
           cd ..\..\..
           $hash = (Get-FileHash ${{ matrix.artifact }}.${{ matrix.ext }} -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "${{ matrix.artifact }}.${{ matrix.ext }}.sha256" -Value "$hash  ${{ matrix.artifact }}.${{ matrix.ext }}"
+
+      # Post-build smoke on what ships: the .sha256 file verifies, the archive
+      # unpacks, and `mindc --version` prints exactly the tag's version. A leg
+      # that fails here uploads nothing, so the release job never publishes.
+      # The same action runs in ci.yml's release_profile job on every PR.
+      - name: Post-build smoke (checksum, unpack, --version == tag)
+        uses: ./.github/actions/release-artifact-smoke
+        with:
+          archive: ${{ matrix.artifact }}.${{ matrix.ext }}
+          version: ${{ needs.gate.outputs.version }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
