@@ -1,0 +1,808 @@
+// Internal bounded state storage for std.tls13_client. The public facade keeps
+// the original API names. State is caller-owned and must be state_size() bytes.
+// Scalar fields: status 0, error 8, tick used/budget 16/24, now 32, suite 40,
+// group 48, signature 56, flags 64, entropy need/length 72/80, anchors 88/96,
+// identity 104/112, CH length 120, tx/rx sequences 128..152, input length 160,
+// output length/cursor 168/176, reassembly length 184, app length/cursor 192/200,
+// transcript length 208, ALPN offer ptr/len 216/224, selected length 232,
+// verifier verdict 240 (1 unchecked), version 248.
+// Byte storage: random 256:32, sid 288:32, x scalar/pub/shared 320:96,
+// hybrid private 416:2432, hybrid share 2848:1216, hs secret 4064:32,
+// c/s hs secrets 4096/4128:32, c/s hs keys 4160/4192:32,
+// master 4224:32, c/s app secrets 4256/4288:32, c/s app keys 4320/4352:32,
+// scratch 4384:192, x509 fields 4576:176, RSA len 4752:8, exponent 4784:8,
+// modulus 4856:256, finished 5112/5144:32, hashes 5176/5208:32,
+// transcript 5240:16384, handshake reassembly 21624:8192,
+// inbound 29816:16640, outbound 46456:16640, app receive 63096:2048,
+// chain length 65144:8, cookie length 65280:8, cookie 65288:254,
+// chain evidence 65672:16000, selected ALPN 81672:255,
+// c/s hs IVs 81928/81940:12, c/s app IVs 81952/81964:12,
+// ALPN offer 82176:1024, length-prefixed identity 83200:257.
+// Total 86016. Evidence and configuration survive key erasure.
+
+import std.sha256;
+import std.hkdf;
+import std.tls13_keyschedule;
+import std.tls13_record;
+import std.chacha20_poly1305;
+import std.x25519;
+import std.x25519mlkem768;
+
+pub fn tls13ci_st_init() -> i64 {
+    0
+}
+
+pub fn tls13ci_st_ch_sent() -> i64 {
+    1
+}
+
+pub fn tls13ci_st_wait_sh() -> i64 {
+    2
+}
+
+pub fn tls13ci_st_wait_ee() -> i64 {
+    3
+}
+
+pub fn tls13ci_st_wait_cert() -> i64 {
+    4
+}
+
+pub fn tls13ci_st_wait_cv() -> i64 {
+    5
+}
+
+pub fn tls13ci_st_wait_fin() -> i64 {
+    6
+}
+
+pub fn tls13ci_st_connected() -> i64 {
+    7
+}
+
+pub fn tls13ci_st_closed() -> i64 {
+    8
+}
+
+pub fn tls13ci_st_error() -> i64 {
+    9
+}
+
+pub fn tls13ci_st_hrr() -> i64 {
+    10
+}
+
+pub fn tls13ci_err_inval() -> i64 {
+    0 - 1
+}
+
+pub fn tls13ci_err_entropy() -> i64 {
+    0 - 2
+}
+
+pub fn tls13ci_err_state() -> i64 {
+    0 - 3
+}
+
+pub fn tls13ci_err_io() -> i64 {
+    0 - 4
+}
+
+pub fn tls13ci_err_record() -> i64 {
+    0 - 5
+}
+
+pub fn tls13ci_err_hs() -> i64 {
+    0 - 6
+}
+
+pub fn tls13ci_err_alert() -> i64 {
+    0 - 7
+}
+
+pub fn tls13ci_err_auth() -> i64 {
+    0 - 8
+}
+
+pub fn tls13ci_err_timeout() -> i64 {
+    0 - 9
+}
+
+pub fn tls13ci_err_eof() -> i64 {
+    0 - 10
+}
+
+pub fn tls13ci_err_hrr() -> i64 {
+    0 - 11
+}
+
+pub fn tls13ci_err_suite() -> i64 {
+    0 - 12
+}
+
+pub fn tls13ci_err_group() -> i64 {
+    0 - 13
+}
+
+pub fn tls13ci_err_app() -> i64 {
+    0 - 14
+}
+
+pub fn tls13ci_err_closed() -> i64 {
+    0 - 15
+}
+
+pub fn tls13ci_err_ovf() -> i64 {
+    0 - 16
+}
+
+pub fn tls13ci_err_chain() -> i64 {
+    0 - 17
+}
+
+pub fn tls13ci_err_cv() -> i64 {
+    0 - 18
+}
+
+pub fn tls13ci_err_fin() -> i64 {
+    0 - 19
+}
+
+pub fn tls13ci_err_cipher() -> i64 {
+    0 - 20
+}
+
+pub fn tls13ci_suite_aes128gcm_sha256() -> i64 {
+    4865
+}
+
+pub fn tls13ci_suite_chacha20_poly1305_sha256() -> i64 {
+    4867
+}
+
+pub fn tls13ci_group_x25519() -> i64 {
+    29
+}
+
+pub fn tls13ci_group_x25519mlkem768() -> i64 {
+    4588
+}
+
+pub fn tls13ci_sig_rsa_pss_rsae_sha256() -> i64 {
+    2052
+}
+
+pub fn tls13ci_sig_ecdsa_secp256r1_sha256() -> i64 {
+    1027
+}
+
+pub fn tls13ci_sig_rsa_pkcs1_sha256() -> i64 {
+    1025
+}
+
+pub fn tls13ci_ct_change_cipher_spec() -> i64 {
+    20
+}
+
+pub fn tls13ci_ct_alert() -> i64 {
+    21
+}
+
+pub fn tls13ci_ct_handshake() -> i64 {
+    22
+}
+
+pub fn tls13ci_ct_app_data() -> i64 {
+    23
+}
+
+pub fn tls13ci_hs_client_hello() -> i64 {
+    1
+}
+
+pub fn tls13ci_hs_server_hello() -> i64 {
+    2
+}
+
+pub fn tls13ci_hs_encrypted_extensions() -> i64 {
+    8
+}
+
+pub fn tls13ci_hs_certificate() -> i64 {
+    11
+}
+
+pub fn tls13ci_hs_certificate_verify() -> i64 {
+    15
+}
+
+pub fn tls13ci_hs_finished() -> i64 {
+    20
+}
+
+pub fn tls13ci_max_record() -> i64 {
+    16640
+}
+
+pub fn tls13ci_max_hs_msg() -> i64 {
+    8192
+}
+
+pub fn tls13ci_max_transcript() -> i64 {
+    16384
+}
+
+pub fn tls13ci_max_sni() -> i64 {
+    253
+}
+
+pub fn tls13ci_max_chain_bytes() -> i64 {
+    8192
+}
+
+pub fn tls13ci_state_size() -> i64 {
+    86016
+}
+
+pub fn tls13c_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+pub fn tls13c_zero(dst: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+pub fn tls13c_store_i64(p: i64, v: i64) -> i64 {
+    __mind_store_i64(p, v);
+    0
+}
+
+pub fn tls13c_load_i64(p: i64) -> i64 {
+    __mind_load_i64(p)
+}
+
+pub fn tls13c_u8(p: i64) -> i64 {
+    __mind_load_i8(p) & 255
+}
+
+pub fn tls13c_be16(p: i64) -> i64 {
+    (tls13c_u8(p) << 8) | tls13c_u8(p + 1)
+}
+
+pub fn tls13c_be24(p: i64) -> i64 {
+    (tls13c_u8(p) << 16) | (tls13c_u8(p + 1) << 8) | tls13c_u8(p + 2)
+}
+
+pub fn tls13c_put_be16(p: i64, v: i64) -> i64 {
+    __mind_store_i8(p, (v >> 8) & 255);
+    __mind_store_i8(p + 1, v & 255);
+    0
+}
+
+pub fn tls13c_put_be24(p: i64, v: i64) -> i64 {
+    __mind_store_i8(p, (v >> 16) & 255);
+    __mind_store_i8(p + 1, (v >> 8) & 255);
+    __mind_store_i8(p + 2, v & 255);
+    0
+}
+
+pub fn tls13c_is_ip_literal(addr: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut dots: i64 = 0;
+    let mut digits: i64 = 0;
+    let mut value: i64 = 0;
+    let mut ipv4: i64 = 1;
+    while i < len {
+        let c: i64 = tls13c_u8(addr + i);
+        if c == 58 {
+            return 1;
+        }
+        if c == 46 {
+            if digits == 0 || digits > 3 || value > 255 {
+                ipv4 = 0;
+            }
+            dots = dots + 1;
+            digits = 0;
+            value = 0;
+        } else {
+            if c < 48 || c > 57 {
+                ipv4 = 0;
+            } else {
+                if digits < 4 {
+                    value = value * 10 + c - 48;
+                }
+                digits = digits + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if dots != 3 || digits == 0 || digits > 3 || value > 255 {
+        ipv4 = 0;
+    }
+    ipv4
+}
+
+pub fn tls13ci_set_alpn(state: i64, alpn_addr: i64, alpn_len: i64) -> i64 {
+    if tls13ci_status(state) != tls13ci_st_init() {
+        return tls13ci_err_state();
+    }
+    if alpn_len < 0 {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    if alpn_len == 0 {
+        tls13c_store_i64(state + 216, 0);
+        tls13c_store_i64(state + 224, 0);
+        return 0;
+    }
+    if alpn_len > 1024 {
+        return tls13c_fail(state, tls13ci_err_ovf());
+    }
+    let mut off: i64 = 0;
+    while off < alpn_len {
+        let n: i64 = tls13c_u8(alpn_addr + off);
+        if n < 1 {
+            return tls13c_fail(state, tls13ci_err_inval());
+        }
+        off = off + 1 + n;
+        if off > alpn_len {
+            return tls13c_fail(state, tls13ci_err_inval());
+        }
+    }
+    if off != alpn_len {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    tls13c_copy(state + 82176, alpn_addr, alpn_len);
+    tls13c_store_i64(state + 216, state + 82176);
+    tls13c_store_i64(state + 224, alpn_len);
+    0
+}
+
+pub fn tls13ci_version(s: i64) -> i64 {
+    tls13c_load_i64(s + 248)
+}
+
+pub fn tls13ci_verdict(s: i64) -> i64 {
+    tls13c_load_i64(s + 240)
+}
+
+pub fn tls13ci_alpn_len(s: i64) -> i64 {
+    tls13c_load_i64(s + 232)
+}
+
+pub fn tls13ci_alpn(s: i64, out_addr: i64, max_len: i64) -> i64 {
+    let n: i64 = tls13c_load_i64(s + 232);
+    if n <= 0 {
+        return 0;
+    }
+    let mut c: i64 = n;
+    if c > max_len {
+        c = max_len;
+    }
+    if c < 0 {
+        c = 0;
+    }
+    tls13c_copy(out_addr, s + 81672, c);
+    if c < n {
+        return 0 - 16;
+    }
+    n
+}
+
+pub fn tls13ci_chain_count(s: i64) -> i64 {
+    let n: i64 = (tls13c_u8(s + 65672) << 24) | (tls13c_u8(s + 65673) << 16) | (tls13c_u8(s + 65674) << 8) | tls13c_u8(s + 65675);
+    n
+}
+
+pub fn tls13ci_chain_cert(s: i64, idx: i64, out_addr: i64, max_len: i64) -> i64 {
+    let enc_len: i64 = tls13c_load_i64(s + 65144);
+    if enc_len < 4 {
+        return 0;
+    }
+    let base: i64 = s + 65672;
+    let ncert: i64 = tls13ci_chain_count(s);
+    if idx < 0 || idx >= ncert {
+        return 0;
+    }
+    let mut pos: i64 = 4;
+    let mut i: i64 = 0;
+    while i <= idx {
+        if pos + 4 > enc_len {
+            return 0 - 6;
+        }
+        let clen: i64 = (tls13c_u8(base + pos) << 24) | (tls13c_u8(base + pos + 1) << 16) | (tls13c_u8(base + pos + 2) << 8) | tls13c_u8(base + pos + 3);
+        if clen < 0 || pos + 4 + clen > enc_len {
+            return 0 - 6;
+        }
+        if i == idx {
+            let mut c: i64 = clen;
+            if c > max_len {
+                c = max_len;
+            }
+            if c < 0 {
+                c = 0;
+            }
+            tls13c_copy(out_addr, base + pos + 4, c);
+            if c < clen {
+                return 0 - 16;
+            }
+            return clen;
+        }
+        pos = pos + 4 + clen;
+        i = i + 1;
+    }
+    0
+}
+
+pub fn tls13c_set_status(s: i64, v: i64) -> i64 {
+    tls13c_store_i64(s + 0, v);
+    0
+}
+
+pub fn tls13ci_status(s: i64) -> i64 {
+    tls13c_load_i64(s + 0)
+}
+
+pub fn tls13c_set_error(s: i64, e: i64) -> i64 {
+    tls13c_store_i64(s + 8, e);
+    0
+}
+
+pub fn tls13ci_error(s: i64) -> i64 {
+    tls13c_load_i64(s + 8)
+}
+
+pub fn tls13c_fail(s: i64, e: i64) -> i64 {
+    tls13c_set_error(s, e);
+    tls13c_set_status(s, tls13ci_st_error());
+    tls13c_zero_keys(s);
+    tls13c_store_i64(s + 168, 0);
+    tls13c_store_i64(s + 176, 0);
+    tls13c_store_i64(s + 192, 0);
+    tls13c_store_i64(s + 200, 0);
+    e
+}
+
+pub fn tls13c_zero_keys(s: i64) -> i64 {
+    tls13c_zero(s + 320, 4064);
+    tls13c_zero(s + 4384, 856);
+    tls13c_zero(s + 81928, 48);
+    0
+}
+
+pub fn tls13c_zero_all(s: i64) -> i64 {
+    tls13c_zero(s, tls13ci_state_size());
+    0
+}
+
+pub fn tls13ci_entropy_need(flags: i64) -> i64 {
+    let mut n: i64 = 96;
+    if (flags & 1) != 0 {
+        n = n + 96;
+    }
+    n
+}
+
+pub fn tls13ci_init(state: i64, entropy_addr: i64, entropy_len: i64, anchors_addr: i64, anchors_len: i64, dns_addr: i64, dns_len: i64, now_unix: i64, tick_budget: i64, flags: i64) -> i64 {
+    tls13c_zero_all(state);
+    tls13c_store_i64(state + 0, tls13ci_st_init());
+    tls13c_store_i64(state + 8, 0);
+    tls13c_store_i64(state + 16, 0);
+    tls13c_store_i64(state + 24, tick_budget);
+    tls13c_store_i64(state + 32, now_unix);
+    tls13c_store_i64(state + 240, 1);
+    if (flags & 9) != flags {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    tls13c_store_i64(state + 64, flags);
+    let need: i64 = tls13ci_entropy_need(flags);
+    tls13c_store_i64(state + 72, need);
+    tls13c_store_i64(state + 80, entropy_len);
+    tls13c_store_i64(state + 88, anchors_addr);
+    tls13c_store_i64(state + 96, anchors_len);
+    tls13c_store_i64(state + 104, dns_addr);
+    tls13c_store_i64(state + 112, dns_len);
+
+    if entropy_len < need {
+        return tls13c_fail(state, tls13ci_err_entropy());
+    }
+    if dns_len < 1 {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    if dns_len > tls13ci_max_sni() {
+        return tls13c_fail(state, tls13ci_err_ovf());
+    }
+    if anchors_len < 4 {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    let count: i64 = (tls13c_be16(anchors_addr) << 16) | tls13c_be16(anchors_addr + 2);
+    if count > (anchors_len - 4) / 5 {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    let mut ap: i64 = 4;
+    let mut ai: i64 = 0;
+    while ai < count {
+        if anchors_len - ap < 4 {
+            return tls13c_fail(state, tls13ci_err_inval());
+        }
+        let an: i64 = (tls13c_be16(anchors_addr + ap) << 16) | tls13c_be16(anchors_addr + ap + 2);
+        ap = ap + 4;
+        if an < 1 || an > anchors_len - ap {
+            return tls13c_fail(state, tls13ci_err_inval());
+        }
+        ap = ap + an;
+        ai = ai + 1;
+    }
+    if ap != anchors_len {
+        return tls13c_fail(state, tls13ci_err_inval());
+    }
+    tls13c_put_be16(state + 83200, 0);
+    tls13c_put_be16(state + 83202, dns_len);
+    tls13c_copy(state + 83204, dns_addr, dns_len);
+    tls13c_store_i64(state + 104, state + 83204);
+    0
+}
+
+pub fn tls13c_out_append(state: i64, src: i64, len: i64) -> i64 {
+    let out_len: i64 = tls13c_load_i64(state + 168);
+    if len < 0 || len > 16640 - out_len {
+        return tls13ci_err_io();
+    }
+    tls13c_copy(state + 46456 + out_len, src, len);
+    tls13c_store_i64(state + 168, out_len + len);
+    0
+}
+
+pub fn tls13ci_out_pending(state: i64) -> i64 {
+    let out_len: i64 = tls13c_load_i64(state + 168);
+    let out_rd: i64 = tls13c_load_i64(state + 176);
+    out_len - out_rd
+}
+
+pub fn tls13ci_read_out(state: i64, dst: i64, max_len: i64) -> i64 {
+    let pending: i64 = tls13ci_out_pending(state);
+    let mut n: i64 = pending;
+    if n > max_len {
+        n = max_len;
+    }
+    if n <= 0 {
+        return 0;
+    }
+    let out_rd: i64 = tls13c_load_i64(state + 176);
+    tls13c_copy(dst, state + 46456 + out_rd, n);
+    tls13c_store_i64(state + 176, out_rd + n);
+    if tls13c_load_i64(state + 176) >= tls13c_load_i64(state + 168) {
+        tls13c_store_i64(state + 168, 0);
+        tls13c_store_i64(state + 176, 0)
+    }
+    n
+}
+
+pub fn tls13c_transcript_append(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    let tlen: i64 = tls13c_load_i64(state + 208);
+    if tlen + msg_len > tls13ci_max_transcript() {
+        return tls13ci_err_ovf();
+    }
+    tls13c_copy(state + 5240 + tlen, msg_addr, msg_len);
+    tls13c_store_i64(state + 208, tlen + msg_len);
+    0
+}
+
+pub fn tls13c_transcript_hash_into(state: i64, out_addr: i64) -> i64 {
+    let tlen: i64 = tls13c_load_i64(state + 208);
+    sha256(state + 5240, tlen, out_addr);
+    0
+}
+
+pub fn tls13ci_suite(state: i64) -> i64 {
+    tls13c_load_i64(state + 40)
+}
+
+pub fn tls13ci_group(state: i64) -> i64 {
+    tls13c_load_i64(state + 48)
+}
+
+pub fn tls13ci_is_connected(state: i64) -> i64 {
+    if tls13ci_status(state) == tls13ci_st_connected() {
+        1
+    } else {
+        0
+    }
+}
+
+// Suite dispatch and key schedule. IV slots never overlap 32-byte keys.
+
+pub fn tls13c_derive_key_n(secret_addr: i64, key_len: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(8);
+    __mind_store_i8(lbl + 0, 107);
+    __mind_store_i8(lbl + 1, 101);
+    __mind_store_i8(lbl + 2, 121);
+    tls13_hkdf_expand_label(secret_addr, 32, lbl, 3, secret_addr, 0, key_len, out_addr);
+    0
+}
+
+pub fn tls13c_suite_key_len(suite: i64) -> i64 {
+    if suite == tls13ci_suite_chacha20_poly1305_sha256() {
+        32
+    } else {
+        16
+    }
+}
+
+pub fn tls13ci_record_seal(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, content_addr: i64, content_len: i64, inner_type: i64, out_record_addr: i64) -> i64 {
+    if seq < 0 {
+        return tls13ci_err_record();
+    }
+    if content_len < 0 {
+        return tls13ci_err_inval();
+    }
+    if content_len > 16384 {
+        return tls13ci_err_ovf();
+    }
+    if suite == tls13ci_suite_aes128gcm_sha256() {
+        return tls13_record_seal(key_addr, iv_addr, seq, content_addr, content_len, inner_type, out_record_addr);
+    }
+    if suite == tls13ci_suite_chacha20_poly1305_sha256() {
+        let inner_len: i64 = content_len + 1;
+        let inner: i64 = __mind_alloc(inner_len);
+        tls13c_copy(inner, content_addr, content_len);
+        __mind_store_i8(inner + content_len, inner_type & 255);
+        let enc_len: i64 = inner_len + 16;
+        __mind_store_i8(out_record_addr + 0, 23);
+        __mind_store_i8(out_record_addr + 1, 3);
+        __mind_store_i8(out_record_addr + 2, 3);
+        tls13c_put_be16(out_record_addr + 3, enc_len);
+        let nonce: i64 = __mind_alloc(12);
+        tls13_record_nonce(iv_addr, seq, nonce);
+        chacha20_poly1305_encrypt(key_addr, nonce, inner, inner_len, out_record_addr, 5, out_record_addr + 5, out_record_addr + 5 + inner_len);
+        5 + enc_len
+    } else {
+        tls13ci_err_suite()
+    }
+}
+
+pub fn tls13ci_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64, record_len: i64, out_content_addr: i64) -> i64 {
+    if seq < 0 {
+        return 0 - 1;
+    }
+    if record_len < 22 {
+        return 0 - 1;
+    }
+    if record_len > tls13ci_max_record() {
+        return 0 - 1;
+    }
+    if suite == tls13ci_suite_aes128gcm_sha256() {
+        return tls13_record_open(key_addr, iv_addr, seq, record_addr, record_len, out_content_addr);
+    }
+    if suite == tls13ci_suite_chacha20_poly1305_sha256() {
+        if tls13c_u8(record_addr + 0) != 23 {
+            return 0 - 1;
+        }
+        if tls13c_u8(record_addr + 1) != 3 {
+            return 0 - 1;
+        }
+        if tls13c_u8(record_addr + 2) != 3 {
+            return 0 - 1;
+        }
+        let enc_len: i64 = tls13c_be16(record_addr + 3);
+        if enc_len != record_len - 5 {
+            return 0 - 1;
+        }
+        if enc_len < 17 {
+            return 0 - 1;
+        }
+        let ct_len: i64 = enc_len - 16;
+        let nonce: i64 = __mind_alloc(12);
+        tls13_record_nonce(iv_addr, seq, nonce);
+        let inner: i64 = __mind_alloc(ct_len);
+        let rc: i64 = chacha20_poly1305_decrypt(key_addr, nonce, record_addr + 5, ct_len, record_addr, 5, record_addr + 5 + ct_len, inner);
+        if rc != 0 {
+            return 0 - 2;
+        }
+        let mut idx: i64 = ct_len - 1;
+        let mut stop: i64 = 0;
+        while stop == 0 {
+            if idx < 0 {
+                stop = 1;
+            } else {
+                if tls13c_u8(inner + idx) != 0 {
+                    stop = 1;
+                } else {
+                    idx = idx - 1;
+                }
+            }
+        }
+        if idx < 0 {
+            return 0 - 1;
+        }
+        let inner_type: i64 = tls13c_u8(inner + idx);
+        let content_len: i64 = idx;
+        tls13c_copy(out_content_addr, inner, content_len);
+        (content_len << 8) | inner_type
+    } else {
+        0 - 1
+    }
+}
+
+pub fn tls13c_handshake_secret(dhe_addr: i64, dhe_len: i64, out_addr: i64) -> i64 {
+    let early: i64 = __mind_alloc(32);
+    let derived: i64 = __mind_alloc(32);
+    let lbl: i64 = __mind_alloc(16);
+    __mind_store_i8(lbl + 0, 100);
+    __mind_store_i8(lbl + 1, 101);
+    __mind_store_i8(lbl + 2, 114);
+    __mind_store_i8(lbl + 3, 105);
+    __mind_store_i8(lbl + 4, 118);
+    __mind_store_i8(lbl + 5, 101);
+    __mind_store_i8(lbl + 6, 100);
+    tls13_early_secret(early);
+    tls13_derive_secret(early, 32, lbl, 7, early, 0, derived);
+    hkdf_extract(derived, 32, dhe_addr, dhe_len, out_addr);
+    0
+}
+
+pub fn tls13c_derive_hs_keys(state: i64) -> i64 {
+    let dhe_addr: i64 = __mind_alloc(64);
+    let grp: i64 = tls13c_load_i64(state + 48);
+    if grp == tls13ci_group_x25519() {
+        let spub: i64 = __mind_alloc(32);
+        tls13c_copy(spub, state + 384, 32);
+        x25519(state + 320, spub, dhe_addr)
+    } else {
+        if grp == tls13ci_group_x25519mlkem768() {
+            if x25519mlkem768_decaps(state + 416, state + 2848, dhe_addr) != 0 {
+                return tls13ci_err_group();
+            }
+        } else {
+            return tls13ci_err_group();
+        }
+    }
+    let dhe_len: i64 = 32;
+    if grp == tls13ci_group_x25519mlkem768() {
+        dhe_len = 64;
+    }
+    let mut nonzero: i64 = 0;
+    let mut di: i64 = dhe_len - 32;
+    while di < dhe_len {
+        nonzero = nonzero | tls13c_u8(dhe_addr + di);
+        di = di + 1;
+    }
+    if nonzero == 0 {
+        return tls13ci_err_group();
+    }
+    tls13c_transcript_hash_into(state, state + 5176);
+    tls13c_handshake_secret(dhe_addr, dhe_len, state + 4064);
+    tls13c_zero(dhe_addr, 64);
+    tls13_client_handshake_traffic_secret(state + 4064, state + 5176, state + 4096);
+    tls13_server_handshake_traffic_secret(state + 4064, state + 5176, state + 4128);
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let klen: i64 = tls13c_suite_key_len(suite);
+    tls13c_derive_key_n(state + 4096, klen, state + 4160);
+    tls13_derive_iv(state + 4096, state + 81928);
+    tls13c_derive_key_n(state + 4128, klen, state + 4192);
+    tls13_derive_iv(state + 4128, state + 81940);
+    0
+}
+
+pub fn tls13c_derive_app_keys(state: i64) -> i64 {
+    tls13c_transcript_hash_into(state, state + 5208);
+    tls13_master_secret(state + 4064, state + 4224);
+    tls13_client_application_traffic_secret(state + 4224, state + 5208, state + 4256);
+    tls13_server_application_traffic_secret(state + 4224, state + 5208, state + 4288);
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let klen: i64 = tls13c_suite_key_len(suite);
+    tls13c_derive_key_n(state + 4256, klen, state + 4320);
+    tls13_derive_iv(state + 4256, state + 81952);
+    tls13c_derive_key_n(state + 4288, klen, state + 4352);
+    tls13_derive_iv(state + 4288, state + 81964);
+    0
+}

@@ -1,0 +1,404 @@
+// std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
+//
+// Loads trust anchors from a caller-supplied byte buffer in memory into the
+// internal anchor-blob representation used by x509_verify_server_chain:
+//   Offset 0: count (i64)
+//   Offset 8 + 16*i: offset of certificate i (i64)
+//   Offset 16 + 16*i: length of certificate i (i64)
+//   Followed by concatenated raw DER bytes.
+//
+// Supported formats:
+//   - PEM bundle: one or more "-----BEGIN CERTIFICATE-----" ... "-----END CERTIFICATE-----"
+//     blocks containing RFC 4648 base64-encoded DER certificates.
+//   - DER bundle: concatenated DER-encoded X.509 certificates (SEQUENCE tags).
+//
+// Fail-closed: returns a negative error code on any parse error, corrupted
+// base64, missing trailer, or empty bundle.
+
+import std.x509_name;
+
+fn x509_b64_val(c: i64) -> i64 {
+    if c >= 65 && c <= 90 {
+        return c - 65;
+    }
+    if c >= 97 && c <= 122 {
+        return c - 71;
+    }
+    if c >= 48 && c <= 57 {
+        return c + 4;
+    }
+    if c == 43 {
+        return 62;
+    }
+    if c == 47 {
+        return 63;
+    }
+    -1
+}
+
+fn x509_is_pem_begin(buf: i64, pos: i64, lim: i64) -> i64 {
+    if pos + 27 > lim {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i < 5 {
+        if (__mind_load_i8(buf + pos + i) & 255) != 45 {
+            return 0;
+        }
+        if (__mind_load_i8(buf + pos + 22 + i) & 255) != 45 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (__mind_load_i8(buf + pos + 5) & 255) != 66 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 6) & 255) != 69 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 7) & 255) != 71 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 8) & 255) != 73 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 9) & 255) != 78 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 10) & 255) != 32 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 11) & 255) != 67 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 12) & 255) != 69 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 13) & 255) != 82 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 14) & 255) != 84 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 15) & 255) != 73 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 16) & 255) != 70 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 17) & 255) != 73 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 18) & 255) != 67 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 19) & 255) != 65 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 20) & 255) != 84 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 21) & 255) != 69 {
+        return 0;
+    }
+    1
+}
+
+fn x509_is_pem_end(buf: i64, pos: i64, lim: i64) -> i64 {
+    if pos + 25 > lim {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i < 5 {
+        if (__mind_load_i8(buf + pos + i) & 255) != 45 {
+            return 0;
+        }
+        if (__mind_load_i8(buf + pos + 20 + i) & 255) != 45 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (__mind_load_i8(buf + pos + 5) & 255) != 69 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 6) & 255) != 78 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 7) & 255) != 68 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 8) & 255) != 32 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 9) & 255) != 67 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 10) & 255) != 69 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 11) & 255) != 82 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 12) & 255) != 84 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 13) & 255) != 73 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 14) & 255) != 70 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 15) & 255) != 73 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 16) & 255) != 67 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 17) & 255) != 65 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 18) & 255) != 84 {
+        return 0;
+    }
+    if (__mind_load_i8(buf + pos + 19) & 255) != 69 {
+        return 0;
+    }
+    1
+}
+
+pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
+    if bundle_len < 4 {
+        return -1;
+    }
+    // Find first non-whitespace byte to detect PEM vs DER
+    let mut p: i64 = 0;
+    let mut first: i64 = -1;
+    while p < bundle_len {
+        let ch: i64 = __mind_load_i8(bundle + p) & 255;
+        if ch != 32 && ch != 10 && ch != 13 && ch != 9 {
+            first = ch;
+            break
+        }
+        p = p + 1;
+    }
+    if first < 0 {
+        return -1;
+    }
+
+    let cert_ptrs: i64 = __mind_alloc(256);
+    let cert_lens: i64 = __mind_alloc(256);
+    let mut count: i64 = 0;
+
+    if first == 45 {
+        // PEM bundle
+        p = 0;
+        while p < bundle_len {
+            // Skip whitespace before next BEGIN
+            while p < bundle_len {
+                let ch_ws: i64 = __mind_load_i8(bundle + p) & 255;
+                if ch_ws == 32 || ch_ws == 10 || ch_ws == 13 || ch_ws == 9 {
+                    p = p + 1;
+                } else {
+                    break
+                }
+            }
+            if p >= bundle_len {
+                break
+            }
+            if x509_is_pem_begin(bundle, p, bundle_len) == 0 {
+                return -1;
+            }
+            p = p + 27;
+            if count >= 32 {
+                return -1;
+            }
+            if p < bundle_len && (__mind_load_i8(bundle + p) & 255) == 13 {
+                p = p + 1;
+            }
+            if p >= bundle_len || (__mind_load_i8(bundle + p) & 255) != 10 {
+                return -1;
+            }
+            p = p + 1;
+            // Decode base64 until END
+            let der_buf: i64 = __mind_alloc(bundle_len);
+            let mut der_len: i64 = 0;
+            let mut b64_quad: i64 = 0;
+            let mut b64_count: i64 = 0;
+            let mut pad_count: i64 = 0;
+            let mut found_end: i64 = 0;
+
+            while p < bundle_len {
+                if x509_is_pem_end(bundle, p, bundle_len) == 1 {
+                    found_end = 1;
+                    p = p + 25;
+                    break
+                }
+                let c2: i64 = __mind_load_i8(bundle + p) & 255;
+                p = p + 1;
+                if c2 == 10 || c2 == 13 || c2 == 32 || c2 == 9 {
+                    continue
+                }
+                if c2 == 61 {
+                    // '=' padding
+                    pad_count = pad_count + 1;
+                    b64_quad = (b64_quad << 6);
+                    b64_count = b64_count + 1;
+                } else {
+                    if pad_count > 0 {
+                        // data after padding is invalid
+                        return -1;
+                    }
+                    let val: i64 = x509_b64_val(c2);
+                    if val < 0 {
+                        return -1;
+                    }
+                    b64_quad = (b64_quad << 6) | val;
+                    b64_count = b64_count + 1;
+                }
+                if b64_count == 4 {
+                    if pad_count == 0 {
+                        __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                        __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
+                        __mind_store_i8(der_buf + der_len + 2, b64_quad & 255);
+                        der_len = der_len + 3;
+                    } else {
+                        if pad_count == 1 {
+                            __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                            __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
+                            der_len = der_len + 2;
+                        } else {
+                            if pad_count == 2 {
+                                __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                                der_len = der_len + 1;
+                            } else {
+                                return -1;
+                            }
+                        }
+                    }
+                    b64_quad = 0;
+                    b64_count = 0;
+                }
+            }
+            if found_end == 0 || b64_count != 0 {
+                return -1;
+            }
+            if der_len < 4 {
+                return -1;
+            }
+            if (__mind_load_i8(der_buf + 0) & 255) != 48 {
+                return -1;
+            }
+            __mind_store_i64(cert_ptrs + count * 8, der_buf);
+            __mind_store_i64(cert_lens + count * 8, der_len);
+            count = count + 1;
+        }
+    } else {
+        if first == 48 {
+            // DER bundle
+            p = 0;
+            while p < bundle_len {
+                // Skip any whitespace between concatenated certs
+                let mut ws_skip: i64 = 1;
+                while p < bundle_len && ws_skip == 1 {
+                    let ch2: i64 = __mind_load_i8(bundle + p) & 255;
+                    if ch2 == 32 || ch2 == 10 || ch2 == 13 || ch2 == 9 {
+                        p = p + 1;
+                    } else {
+                        ws_skip = 0;
+                    }
+                }
+                if p >= bundle_len {
+                    break
+                }
+                if count >= 32 {
+                    return -1;
+                }
+                let tag: i64 = __mind_load_i8(bundle + p) & 255;
+                if tag != 48 {
+                    return -1;
+                }
+                if p + 2 > bundle_len {
+                    return -1;
+                }
+                let b1: i64 = __mind_load_i8(bundle + p + 1) & 255;
+                let mut hlen: i64 = 2;
+                let mut clen: i64 = 0;
+                if b1 < 128 {
+                    clen = b1;
+                } else {
+                    if b1 == 128 {
+                        return -1;
+                    }
+                    let nbytes: i64 = b1 & 127;
+                    if nbytes < 1 || nbytes > 3 {
+                        return -1;
+                    }
+                    if p + 2 + nbytes > bundle_len {
+                        return -1;
+                    }
+                    hlen = 2 + nbytes;
+                    let mut bi: i64 = 0;
+                    while bi < nbytes {
+                        clen = (clen << 8) | (__mind_load_i8(bundle + p + 2 + bi) & 255);
+                        bi = bi + 1;
+                    }
+                }
+                let total: i64 = hlen + clen;
+                if total < 4 || p + total > bundle_len {
+                    return -1;
+                }
+                __mind_store_i64(cert_ptrs + count * 8, bundle + p);
+                __mind_store_i64(cert_lens + count * 8, total);
+                count = count + 1;
+                p = p + total;
+            }
+        } else {
+            return -1;
+        }
+    }
+
+    if count < 1 {
+        return -1;
+    }
+
+    let envelope: i64 = __mind_alloc(24);
+    let mut check_i: i64 = 0;
+    while check_i < count {
+        let cp: i64 = __mind_load_i64(cert_ptrs + check_i * 8);
+        let cl: i64 = __mind_load_i64(cert_lens + check_i * 8);
+        if x509_sub_tlv(cp, 0, cl, envelope) != 0 {
+            return -1;
+        }
+        if __mind_load_i64(envelope) != 48 || __mind_load_i64(envelope + 8) + __mind_load_i64(envelope + 16) != cl {
+            return -1;
+        }
+        check_i = check_i + 1;
+    }
+
+    let mut total_der: i64 = 0;
+    let mut i: i64 = 0;
+    while i < count {
+        total_der = total_der + __mind_load_i64(cert_lens + i * 8);
+        i = i + 1;
+    }
+
+    let blob_size: i64 = 8 + 16 * count + total_der;
+    let blob: i64 = __mind_alloc(blob_size);
+    __mind_store_i64(blob + 0, count);
+    let mut off: i64 = 8 + 16 * count;
+    i = 0;
+    while i < count {
+        let clen2: i64 = __mind_load_i64(cert_lens + i * 8);
+        let cptr2: i64 = __mind_load_i64(cert_ptrs + i * 8);
+        __mind_store_i64(blob + 8 + 16 * i, off);
+        __mind_store_i64(blob + 16 + 16 * i, clen2);
+        let mut k: i64 = 0;
+        while k < clen2 {
+            __mind_store_i8(blob + off + k, __mind_load_i8(cptr2 + k));
+            k = k + 1;
+        }
+        off = off + clen2;
+        i = i + 1;
+    }
+    blob
+}

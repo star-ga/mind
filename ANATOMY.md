@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1953 | **Est. tokens:** ~3,821,409
-**Generated:** 2026-11-02 21:36 UTC
+**Files:** 1965 | **Est. tokens:** ~3,863,653
+**Generated:** 2026-11-04 11:46 UTC
 
 ## Token Budget Guide
 
@@ -30,7 +30,7 @@
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~87,439 |
+| `benches/` | 28 | ~87,307 |
 | `benches/common/` | 2 | ~2,995 |
 | `benches/e2e/` | 1 | ~3,047 |
 | `bench/fft/` | 8 | ~8,060 |
@@ -43,7 +43,7 @@
 | `benchmarks/mojo/` | 8 | ~4,276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 2 | ~3,347 |
+| `config/` | 2 | ~3,372 |
 | `docs/` | 40 | ~113,973 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 174 | ~451,769 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,198 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,270 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -97,7 +97,7 @@
 | `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~123,987 |
+| `scripts/` | 33 | ~124,033 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 22 | ~76,606 |
+| `src/project/` | 22 | ~76,890 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -153,8 +153,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 43 | ~206,065 |
-| `tests/` | 431 | ~883,452 |
+| `std/` | 55 | ~247,999 |
+| `tests/` | 431 | ~883,467 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -313,11 +313,11 @@
 - `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_keccak.rs` (~2576 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_mlkem768.rs` (~3696 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_rsa_pss.rs` (~3317 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_rsa_pss.rs` (~3282 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_sha256.rs` (~2594 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_tls13_record.rs` (~6121 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_x25519.rs` (~2469 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_x509.rs` (~3990 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_x509.rs` (~3893 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `benches/common/`
 
@@ -439,7 +439,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~2375 tok, huge) — [ir]
+- `capabilities.toml` (~2400 tok, huge) — [ir]
 - `token_pricing.toml` (~972 tok, large) — [pricing]
 ### `docs/`
 
@@ -921,7 +921,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~870 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~942 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1117,7 +1117,7 @@
 - `preflight.sh` (~9404 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
-- `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
+- `run_crypto_vectors.sh` (~3250 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 - `run_gate.py` (~8072 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
 ### `scripts/sdlc/`
 
@@ -1518,8 +1518,8 @@
 - `load.rs` (~4048 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~4196 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~4706 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~4408 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4778 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1615,7 +1615,7 @@
 - `chacha20_poly1305.mind` (~3972 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4059 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
-- `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
+- `ecdsa_p256.mind` (~7346 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~5043 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
@@ -1636,13 +1636,17 @@
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
-- `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
+- `rsa_pss.mind` (~2400 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
 - `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `sha512.mind` (~5100 tok, huge) — std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
 - `string.mind` (~2725 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
+- `tls13_client_core.mind` (~5243 tok, huge) — Internal bounded state storage for std.tls13_client. The public facade keeps
+- `tls13_client_handshake.mind` (~5764 tok, huge) — Bounded EE/Certificate parsing, CertificateVerify and Finished checks.
+- `tls13_client_hello.mind` (~4601 tok, huge) — ClientHello and bounded HRR negotiation. No verifier or I/O.
+- `tls13_client.mind` (~3267 tok, huge) — std.tls13_client — bounded sans-IO TLS 1.3 client.
 - `tls13_finished.mind` (~1409 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
-- `tls13_handshake.mind` (~5466 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
+- `tls13_handshake.mind` (~4729 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
 - `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
 - `tls13_record.mind` (~2171 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
 - `toml.mind` (~10301 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
@@ -1650,7 +1654,15 @@
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
 - `x25519mlkem768.mind` (~1554 tok, huge) — std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
-- `x509.mind` (~7131 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
+- `x509_bignum.mind` (~1704 tok, huge) — std/x509_bignum.mind — fixed-width big-integer arithmetic (radix 2^16 limbs,
+- `x509_bundle.mind` (~3122 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
+- `x509_der.mind` (~1736 tok, huge) — std/x509_der.mind — DER TLV decoding, OID recognition, and byte utilities.
+- `x509_ext.mind` (~2786 tok, huge) — std/x509_ext.mind — X.509v3 validity date parsing and extension processing
+- `x509.mind` (~4043 tok, huge) — std/x509.mind — X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
+- `x509_name.mind` (~4156 tok, huge) — std/x509_name.mind — RFC 6125 hostname matching, IPv4/IPv6 literal parsing,
+- `x509_p384.mind` (~4342 tok, huge) — std/x509_p384.mind — ECDSA signature verification on NIST P-384
+- `x509_path.mind` (~4311 tok, huge) — std/x509_path.mind — X.509 certificate path building, parent policy validation,
+- `x509_sig.mind` (~3951 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
 ### `tests/`
 
 - `aggregate_const_run.rs` (~1765 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1924,7 +1936,7 @@
 - `dot_enum_variant_run.rs` (~756 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `duplicate_struct_declarations.rs` (~576 tok, large) — Copyright 2026 STARGA Inc.
-- `ecdsa_p256_driver.py` (~2752 tok, huge) — # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
+- `ecdsa_p256_driver.py` (~2777 tok, huge) — # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
 - `emit_ir_for_loop.rs` (~374 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `emit_object_relocatable.rs` (~987 tok, large) — Copyright 2026 STARGA Inc.
 - `enum_match_collision_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
@@ -2376,7 +2388,7 @@
 - `rfc0012_phase_b_operators.rs` (~4737 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~2405 tok, huge) — Copyright 2025 STARGA Inc.
 - `roofline_peak.rs` (~697 tok, large) — Correctness proof for the CPUID-gated roofline denominator (B4).
-- `rsa_pss_driver.py` (~2692 tok, huge) — # Ground-truth driver for std/rsa_pss.mind (pure-MIND RSASSA-PSS-VERIFY,
+- `rsa_pss_driver.py` (~2693 tok, huge) — # Ground-truth driver for std/rsa_pss.mind (pure-MIND RSASSA-PSS-VERIFY,
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
@@ -2750,7 +2762,7 @@
 - `wide_integer_types.rs` (~517 tok, large) — Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
-- `x509_vectors_driver.py` (~3593 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
+- `x509_vectors_driver.py` (~3582 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
 ### `tests/xsi_quant/`
 
 - `gates.rs` (~4100 tok, huge) — Copyright 2025 STARGA Inc.

@@ -1,0 +1,504 @@
+// std.tls13_client — bounded sans-IO TLS 1.3 client.
+// No socket, clock, system trust store, or verifier override. Caller owns I/O,
+// entropy, time and the trust-anchor buffer (immutable for the connection).
+// x509_verify_server_chain (std/x509 path validation) is mandatory for every chain.
+// Evidence remains available after refusal: version/suite/group, selected ALPN,
+// presented DER chain and verifier verdict (1 = unchecked, 0 = accept, <0 refusal).
+// Flags: bit0 enables hybrid; bit3 sends an empty initial key_share for HRR.
+// HRR parks status 10. Call build_client_hello2 then seal_client_hello2 once;
+// the retry keeps CH1 entropy, random, session id, identity and offered ALPN.
+// Initial entropy: random[32], session id[32], x25519 scalar[32], optionally
+// hybrid entropy[96]. Build requires the same entropy length on the retry.
+// Only RSA-PSS SHA256 CertificateVerify is implemented. Certificate/handshake
+// message cap 8192, transcript cap 16384, cookie cap 254, ALPN offer cap 1024.
+// Drivers: tests/tls13_handshake_driver.py client (same MIND assertions for both backends).
+
+import std.tls13_client_core;
+import std.tls13_client_hello;
+import std.tls13_client_handshake;
+
+pub fn tls13c_feed(state: i64, data_addr: i64, data_len: i64) -> i64 {
+    if data_len < 0 {
+        return tls13ci_err_inval();
+    }
+    if tls13ci_status(state) == tls13ci_st_error() {
+        return tls13ci_error(state);
+    }
+    if tls13ci_status(state) == tls13ci_st_closed() {
+        return tls13ci_err_closed();
+    }
+    let in_len: i64 = tls13c_load_i64(state + 160);
+    if data_len > 16640 - in_len {
+        return tls13c_fail(state, tls13ci_err_io());
+    }
+    tls13c_copy(state + 29816 + in_len, data_addr, data_len);
+    tls13c_store_i64(state + 160, in_len + data_len);
+    0
+}
+
+pub fn tls13c_tick(state: i64) -> i64 {
+    let st: i64 = tls13ci_status(state);
+    if st == tls13ci_st_error() {
+        return tls13ci_error(state);
+    }
+    if st == tls13ci_st_closed() {
+        return tls13ci_err_closed();
+    }
+    let budget: i64 = tls13c_load_i64(state + 24);
+    if budget == 0 {
+        return 0;
+    }
+    let used: i64 = tls13c_load_i64(state + 16) + 1;
+    tls13c_store_i64(state + 16, used);
+    if used > budget {
+        return tls13c_fail(state, tls13ci_err_timeout());
+    }
+    0
+}
+
+pub fn tls13c_signal_eof(state: i64) -> i64 {
+    let st: i64 = tls13ci_status(state);
+    if st == tls13ci_st_closed() {
+        return 0;
+    }
+    if st == tls13ci_st_error() {
+        return tls13ci_error(state);
+    }
+    tls13c_fail(state, tls13ci_err_eof())
+}
+
+pub fn tls13c_pump(state: i64) -> i64 {
+    let st: i64 = tls13ci_status(state);
+    if st == tls13ci_st_error() {
+        return tls13ci_error(state);
+    }
+    if st == tls13ci_st_closed() {
+        return tls13ci_err_closed();
+    }
+    let mut guard: i64 = 0;
+    let mut rc: i64 = 0;
+    while guard < 64 {
+        guard = guard + 1;
+        let in_len: i64 = tls13c_load_i64(state + 160);
+        if in_len < 5 {
+            return 0;
+        }
+        let rec_len: i64 = tls13c_be16(state + 29816 + 3) + 5;
+        if rec_len < 5 {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        if rec_len > tls13ci_max_record() {
+            return tls13c_fail(state, tls13ci_err_ovf());
+        }
+        if in_len < rec_len {
+            return 0;
+        }
+        let rec: i64 = __mind_alloc(rec_len);
+        tls13c_copy(rec, state + 29816, rec_len);
+        let mut i: i64 = 0;
+        let rem: i64 = in_len - rec_len;
+        while i < rem {
+            __mind_store_i8(state + 29816 + i, __mind_load_i8(state + 29816 + rec_len + i));
+            i = i + 1;
+        }
+        tls13c_store_i64(state + 160, rem);
+        rc = tls13c_handle_record(state, rec, rec_len);
+        if rc != 0 {
+            return rc;
+        }
+    }
+    0
+}
+
+pub fn tls13c_write_app(state: i64, data_addr: i64, data_len: i64) -> i64 {
+    if data_len < 0 {
+        return tls13ci_err_inval();
+    }
+    let st: i64 = tls13ci_status(state);
+    if st == tls13ci_st_error() {
+        return tls13ci_error(state);
+    }
+    if st == tls13ci_st_closed() {
+        return tls13ci_err_closed();
+    }
+    if st != tls13ci_st_connected() {
+        return tls13ci_err_app();
+    }
+    if data_len > 16384 {
+        return tls13ci_err_ovf();
+    }
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let seq: i64 = tls13c_load_i64(state + 136);
+    let rec: i64 = __mind_alloc(tls13ci_max_record());
+    let rlen: i64 = tls13ci_record_seal(suite, state + 4320, state + 81952, seq, data_addr, data_len, tls13ci_ct_app_data(), rec);
+    if rlen < 0 {
+        return tls13c_fail(state, rlen);
+    }
+    tls13c_store_i64(state + 136, seq + 1);
+    let orc: i64 = tls13c_out_append(state, rec, rlen);
+    if orc != 0 {
+        return tls13c_fail(state, orc);
+    }
+    data_len
+}
+
+pub fn tls13c_read_app(state: i64, out_addr: i64, max_len: i64) -> i64 {
+    let st: i64 = tls13ci_status(state);
+    if st != tls13ci_st_connected() {
+        return 0;
+    }
+    let avail: i64 = tls13c_load_i64(state + 192);
+    let rd: i64 = tls13c_load_i64(state + 200);
+    let mut n: i64 = avail - rd;
+    if n > max_len {
+        n = max_len;
+    }
+    if n <= 0 {
+        return 0;
+    }
+    tls13c_copy(out_addr, state + 63096 + rd, n);
+    tls13c_store_i64(state + 200, rd + n);
+    if tls13c_load_i64(state + 200) >= tls13c_load_i64(state + 192) {
+        tls13c_store_i64(state + 192, 0);
+        tls13c_store_i64(state + 200, 0)
+    }
+    n
+}
+
+pub fn tls13c_close(state: i64) -> i64 {
+    let st: i64 = tls13ci_status(state);
+    if st == tls13ci_st_error() {
+        tls13c_zero_keys(state);
+        return tls13ci_error(state);
+    }
+    if st == tls13ci_st_closed() {
+        tls13c_zero_keys(state);
+        return 0;
+    }
+    if st == tls13ci_st_connected() {
+        let alert: i64 = __mind_alloc(2);
+        __mind_store_i8(alert + 0, 1);
+        __mind_store_i8(alert + 1, 0);
+        let suite: i64 = tls13c_load_i64(state + 40);
+        let seq: i64 = tls13c_load_i64(state + 136);
+        let rec: i64 = __mind_alloc(tls13ci_max_record());
+        let rlen: i64 = tls13ci_record_seal(suite, state + 4320, state + 81952, seq, alert, 2, tls13ci_ct_alert(), rec);
+        if rlen < 0 {
+            return tls13c_fail(state, rlen);
+        }
+        if rlen > 0 {
+            tls13c_store_i64(state + 136, seq + 1);
+            let orc: i64 = tls13c_out_append(state, rec, rlen);
+            if orc != 0 {
+                return tls13c_fail(state, orc);
+            }
+        }
+    }
+    tls13c_zero_keys(state);
+    tls13c_set_status(state, tls13ci_st_closed());
+    0
+}
+
+pub fn tls13c_st_init() -> i64 {
+    tls13ci_st_init()
+}
+
+pub fn tls13c_st_ch_sent() -> i64 {
+    tls13ci_st_ch_sent()
+}
+
+pub fn tls13c_st_wait_sh() -> i64 {
+    tls13ci_st_wait_sh()
+}
+
+pub fn tls13c_st_wait_ee() -> i64 {
+    tls13ci_st_wait_ee()
+}
+
+pub fn tls13c_st_wait_cert() -> i64 {
+    tls13ci_st_wait_cert()
+}
+
+pub fn tls13c_st_wait_cv() -> i64 {
+    tls13ci_st_wait_cv()
+}
+
+pub fn tls13c_st_wait_fin() -> i64 {
+    tls13ci_st_wait_fin()
+}
+
+pub fn tls13c_st_connected() -> i64 {
+    tls13ci_st_connected()
+}
+
+pub fn tls13c_st_closed() -> i64 {
+    tls13ci_st_closed()
+}
+
+pub fn tls13c_st_error() -> i64 {
+    tls13ci_st_error()
+}
+
+pub fn tls13c_st_hrr() -> i64 {
+    tls13ci_st_hrr()
+}
+
+pub fn tls13c_err_inval() -> i64 {
+    tls13ci_err_inval()
+}
+
+pub fn tls13c_err_entropy() -> i64 {
+    tls13ci_err_entropy()
+}
+
+pub fn tls13c_err_state() -> i64 {
+    tls13ci_err_state()
+}
+
+pub fn tls13c_err_io() -> i64 {
+    tls13ci_err_io()
+}
+
+pub fn tls13c_err_record() -> i64 {
+    tls13ci_err_record()
+}
+
+pub fn tls13c_err_hs() -> i64 {
+    tls13ci_err_hs()
+}
+
+pub fn tls13c_err_alert() -> i64 {
+    tls13ci_err_alert()
+}
+
+pub fn tls13c_err_auth() -> i64 {
+    tls13ci_err_auth()
+}
+
+pub fn tls13c_err_timeout() -> i64 {
+    tls13ci_err_timeout()
+}
+
+pub fn tls13c_err_eof() -> i64 {
+    tls13ci_err_eof()
+}
+
+pub fn tls13c_err_hrr() -> i64 {
+    tls13ci_err_hrr()
+}
+
+pub fn tls13c_err_suite() -> i64 {
+    tls13ci_err_suite()
+}
+
+pub fn tls13c_err_group() -> i64 {
+    tls13ci_err_group()
+}
+
+pub fn tls13c_err_app() -> i64 {
+    tls13ci_err_app()
+}
+
+pub fn tls13c_err_closed() -> i64 {
+    tls13ci_err_closed()
+}
+
+pub fn tls13c_err_ovf() -> i64 {
+    tls13ci_err_ovf()
+}
+
+pub fn tls13c_err_chain() -> i64 {
+    tls13ci_err_chain()
+}
+
+pub fn tls13c_err_cv() -> i64 {
+    tls13ci_err_cv()
+}
+
+pub fn tls13c_err_fin() -> i64 {
+    tls13ci_err_fin()
+}
+
+pub fn tls13c_err_cipher() -> i64 {
+    tls13ci_err_cipher()
+}
+
+pub fn tls13c_suite_aes128gcm_sha256() -> i64 {
+    tls13ci_suite_aes128gcm_sha256()
+}
+
+pub fn tls13c_suite_chacha20_poly1305_sha256() -> i64 {
+    tls13ci_suite_chacha20_poly1305_sha256()
+}
+
+pub fn tls13c_group_x25519() -> i64 {
+    tls13ci_group_x25519()
+}
+
+pub fn tls13c_group_x25519mlkem768() -> i64 {
+    tls13ci_group_x25519mlkem768()
+}
+
+pub fn tls13c_sig_rsa_pss_rsae_sha256() -> i64 {
+    tls13ci_sig_rsa_pss_rsae_sha256()
+}
+
+pub fn tls13c_sig_ecdsa_secp256r1_sha256() -> i64 {
+    tls13ci_sig_ecdsa_secp256r1_sha256()
+}
+
+pub fn tls13c_sig_rsa_pkcs1_sha256() -> i64 {
+    tls13ci_sig_rsa_pkcs1_sha256()
+}
+
+pub fn tls13c_ct_change_cipher_spec() -> i64 {
+    tls13ci_ct_change_cipher_spec()
+}
+
+pub fn tls13c_ct_alert() -> i64 {
+    tls13ci_ct_alert()
+}
+
+pub fn tls13c_ct_handshake() -> i64 {
+    tls13ci_ct_handshake()
+}
+
+pub fn tls13c_ct_app_data() -> i64 {
+    tls13ci_ct_app_data()
+}
+
+pub fn tls13c_hs_client_hello() -> i64 {
+    tls13ci_hs_client_hello()
+}
+
+pub fn tls13c_hs_server_hello() -> i64 {
+    tls13ci_hs_server_hello()
+}
+
+pub fn tls13c_hs_encrypted_extensions() -> i64 {
+    tls13ci_hs_encrypted_extensions()
+}
+
+pub fn tls13c_hs_certificate() -> i64 {
+    tls13ci_hs_certificate()
+}
+
+pub fn tls13c_hs_certificate_verify() -> i64 {
+    tls13ci_hs_certificate_verify()
+}
+
+pub fn tls13c_hs_finished() -> i64 {
+    tls13ci_hs_finished()
+}
+
+pub fn tls13c_max_record() -> i64 {
+    tls13ci_max_record()
+}
+
+pub fn tls13c_max_hs_msg() -> i64 {
+    tls13ci_max_hs_msg()
+}
+
+pub fn tls13c_max_transcript() -> i64 {
+    tls13ci_max_transcript()
+}
+
+pub fn tls13c_max_sni() -> i64 {
+    tls13ci_max_sni()
+}
+
+pub fn tls13c_max_chain_bytes() -> i64 {
+    tls13ci_max_chain_bytes()
+}
+
+pub fn tls13c_state_size() -> i64 {
+    tls13ci_state_size()
+}
+
+pub fn tls13c_set_alpn(state: i64, alpn_addr: i64, alpn_len: i64) -> i64 {
+    tls13ci_set_alpn(state, alpn_addr, alpn_len)
+}
+
+pub fn tls13c_version(s: i64) -> i64 {
+    tls13ci_version(s)
+}
+
+pub fn tls13c_verdict(s: i64) -> i64 {
+    tls13ci_verdict(s)
+}
+
+pub fn tls13c_alpn_len(s: i64) -> i64 {
+    tls13ci_alpn_len(s)
+}
+
+pub fn tls13c_alpn(s: i64, out_addr: i64, max_len: i64) -> i64 {
+    tls13ci_alpn(s, out_addr, max_len)
+}
+
+pub fn tls13c_chain_count(s: i64) -> i64 {
+    tls13ci_chain_count(s)
+}
+
+pub fn tls13c_chain_cert(s: i64, idx: i64, out_addr: i64, max_len: i64) -> i64 {
+    tls13ci_chain_cert(s, idx, out_addr, max_len)
+}
+
+pub fn tls13c_status(s: i64) -> i64 {
+    tls13ci_status(s)
+}
+
+pub fn tls13c_error(s: i64) -> i64 {
+    tls13ci_error(s)
+}
+
+pub fn tls13c_entropy_need(flags: i64) -> i64 {
+    tls13ci_entropy_need(flags)
+}
+
+pub fn tls13c_init(state: i64, entropy_addr: i64, entropy_len: i64, anchors_addr: i64, anchors_len: i64, dns_addr: i64, dns_len: i64, now_unix: i64, tick_budget: i64, flags: i64) -> i64 {
+    tls13ci_init(state, entropy_addr, entropy_len, anchors_addr, anchors_len, dns_addr, dns_len, now_unix, tick_budget, flags)
+}
+
+pub fn tls13c_build_client_hello(state: i64, entropy_addr: i64, entropy_len: i64, out_addr: i64) -> i64 {
+    tls13ci_build_client_hello(state, entropy_addr, entropy_len, out_addr)
+}
+
+pub fn tls13c_build_client_hello2(state: i64, entropy_addr: i64, entropy_len: i64, out_addr: i64) -> i64 {
+    tls13ci_build_client_hello2(state, entropy_addr, entropy_len, out_addr)
+}
+
+pub fn tls13c_seal_client_hello2(state: i64, ch_addr: i64, ch_len: i64) -> i64 {
+    tls13ci_seal_client_hello2(state, ch_addr, ch_len)
+}
+
+pub fn tls13c_record_seal(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, content_addr: i64, content_len: i64, inner_type: i64, out_record_addr: i64) -> i64 {
+    tls13ci_record_seal(suite, key_addr, iv_addr, seq, content_addr, content_len, inner_type, out_record_addr)
+}
+
+pub fn tls13c_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64, record_len: i64, out_content_addr: i64) -> i64 {
+    tls13ci_record_open(suite, key_addr, iv_addr, seq, record_addr, record_len, out_content_addr)
+}
+
+pub fn tls13c_out_pending(state: i64) -> i64 {
+    tls13ci_out_pending(state)
+}
+
+pub fn tls13c_read_out(state: i64, dst: i64, max_len: i64) -> i64 {
+    tls13ci_read_out(state, dst, max_len)
+}
+
+pub fn tls13c_seal_client_hello(state: i64, ch_addr: i64, ch_len: i64) -> i64 {
+    tls13ci_seal_client_hello(state, ch_addr, ch_len)
+}
+
+pub fn tls13c_suite(state: i64) -> i64 {
+    tls13ci_suite(state)
+}
+
+pub fn tls13c_group(state: i64) -> i64 {
+    tls13ci_group(state)
+}
+
+pub fn tls13c_is_connected(state: i64) -> i64 {
+    tls13ci_is_connected(state)
+}

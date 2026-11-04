@@ -46,8 +46,9 @@
 //                                 tls13_master_secret / tls13_derive_key/iv /
 //                                 tls13_finished_key
 //   - std/tls13_finished.mind     tls13_finished_check / tls13_finished_from_secret
-//   - std/rsa_pss.mind            mgf1_sha256 (MGF1-SHA256, RFC 8017 §B.2.1)
-//   - std/x509.mind               130-limb radix-2^16 bignum: bn_from_bytes /
+//   - std/rsa_pss.mind            mgf1_sha256 (MGF1-SHA256, RFC 8017 §B.2.1),
+//                                 rsa_pss_emsa_check (EMSA-PSS-VERIFY, §9.1.2)
+//   - std/x509_bignum.mind        130-limb radix-2^16 bignum: bn_from_bytes /
 //                                 bn_to_bytes / bn_cmp_ge / modexp_2048
 //                                 (all width-generic: bn_mod_reduce is binary
 //                                 shift-and-subtract mod ANY n <= 2048 bits)
@@ -66,7 +67,7 @@
 // Combined-file build (order matters — deps must precede dependents):
 //   cat std/sha256.mind                                     > /tmp/tls13hs.mind
 //   grep -v '^import std.sha256;' std/hkdf.mind            >> /tmp/tls13hs.mind
-//   grep -v '^import std.sha256;' std/x509.mind            >> /tmp/tls13hs.mind
+//   grep -v '^import std.sha256;' std/x509_bignum.mind     >> /tmp/tls13hs.mind
 //   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
 //                                                          >> /tmp/tls13hs.mind
 //   grep -vE '^import std\.' std/aes_gcm.mind              >> /tmp/tls13hs.mind
@@ -86,7 +87,7 @@
 
 import std.sha256;
 import std.hkdf;
-import std.x509;
+import std.x509_bignum;
 import std.tls13_keyschedule;
 import std.tls13_finished;
 import std.rsa_pss;
@@ -267,100 +268,14 @@ pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// (3b) Geometry-generic EMSA-PSS-VERIFY (RFC 8017 §9.1.2), SHA-256/MGF1-SHA256.
-// Same step-by-step algorithm as std/rsa_pss.mind's rsa_pss_emsa_check but
-// parameterized on emLen (em_len = 128 for RSA-1024, 256 for RSA-2048; the
-// caller guarantees the modulus top bit is set, so emBits = 8*em_len - 1 and
-// the leftmost-bit rule masks exactly 1 bit in both geometries).
-//   hLen = 32, dbLen = em_len - 33.  Returns 1 iff consistent, else 0.
-// ---------------------------------------------------------------------------
-
-fn tls13_hs_pss_emsa_check(em: i64, em_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
-    let db_len: i64 = em_len - 33;
-    // emLen - hLen - 1
-    if salt_len < 0 {
-        return 0;
-    }
-    // Step 3: emLen < hLen + sLen + 2  <=>  sLen > dbLen - 1  => inconsistent.
-    if salt_len > db_len - 1 {
-        return 0;
-    }
-    // Step 4: rightmost octet of EM must be 0xbc.
-    if (__mind_load_i8(em + em_len - 1) & 255) != 188 {
-        return 0;
-    }
-    // Step 6: the leftmost 8*emLen - emBits = 1 bit of maskedDB must be zero.
-    if (__mind_load_i8(em + 0) & 128) != 0 {
-        return 0;
-    }
-    // Step 5 split: maskedDB = em[0..dbLen), H = em[dbLen..dbLen+32).
-    // Steps 7-8: dbMask = MGF1(H, dbLen); DB = maskedDB XOR dbMask.
-    let db: i64 = __mind_alloc(db_len);
-    mgf1_sha256(em + db_len, 32, db, db_len);
-    let mut i: i64 = 0;
-    while i < db_len {
-        let masked: i64 = __mind_load_i8(em + i) & 255;
-        let mask: i64 = __mind_load_i8(db + i) & 255;
-        __mind_store_i8(db + i, masked ^ mask);
-        i = i + 1;
-    }
-    // Step 9: set the leftmost 1 bit of DB to zero.
-    __mind_store_i8(db + 0, __mind_load_i8(db + 0) & 127);
-    // Step 10: DB = PS (dbLen - sLen - 1 zero octets) || 0x01 || salt.
-    let one_pos: i64 = db_len - salt_len - 1;
-    // index of the 0x01 separator
-    let mut ok: i64 = 1;
-    let mut k: i64 = 0;
-    while k < one_pos {
-        if (__mind_load_i8(db + k) & 255) != 0 {
-            ok = 0;
-        }
-        k = k + 1;
-    }
-    if (__mind_load_i8(db + one_pos) & 255) != 1 {
-        ok = 0;
-    }
-    if ok == 0 {
-        return 0;
-    }
-    // Steps 2 + 11-13: mHash = SHA-256(msg); salt = last sLen octets of DB;
-    // M' = 0x00 x8 || mHash || salt; H' = SHA-256(M').
-    let mp: i64 = __mind_alloc(40 + salt_len);
-    let mut z: i64 = 0;
-    while z < 8 {
-        __mind_store_i8(mp + z, 0);
-        z = z + 1;
-    }
-    sha256(msg_addr, msg_len, mp + 8);
-    // mHash into M'[8..40)
-    let mut s: i64 = 0;
-    while s < salt_len {
-        __mind_store_i8(mp + 40 + s, __mind_load_i8(db + db_len - salt_len + s));
-        s = s + 1;
-    }
-    let hp: i64 = __mind_alloc(32);
-    sha256(mp, 40 + salt_len, hp);
-    // Step 14: consistent iff H == H' (constant-shape compare, no early exit).
-    let mut m: i64 = 0;
-    let mut eq: i64 = 1;
-    while m < 32 {
-        if (__mind_load_i8(hp + m) & 255) != (__mind_load_i8(em + db_len + m) & 255) {
-            eq = 0;
-        }
-        m = m + 1;
-    }
-    eq
-}
-
-// ---------------------------------------------------------------------------
-// (3c) Geometry-generic RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-1024 or
+// (3b) Geometry-generic RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-1024 or
 // RSA-2048 / SHA-256 / MGF1-SHA256 (TLS 1.3 rsa_pss_rsae_sha256).
 //   (n_addr, n_len)   big-endian modulus, n_len 128 or 256, top bit set;
 //   e                 public exponent (fits i64: 3 / 17 / 65537);
 //   (sig_addr,sig_len) signature S, must be exactly n_len octets;
 //   (msg_addr,msg_len) the signed message M;
 //   salt_len          expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
-// Returns 1 (valid) or 0 (invalid).  Fail-closed.  Reuses the std/x509.mind
+// Returns 1 (valid) or 0 (invalid).  Fail-closed.  Reuses the std/x509_bignum.mind
 // 130-limb bignum (bn_mod_reduce is generic shift-and-subtract mod n, so a
 // 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
 // ---------------------------------------------------------------------------
@@ -390,7 +305,7 @@ pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, s
         return 0;
     }
     let n: i64 = __mind_alloc(1040);
-    // 130 limbs (std/x509.mind bignum)
+    // 130 limbs (std/x509_bignum.mind bignum)
     let s: i64 = __mind_alloc(1040);
     let em_limbs: i64 = __mind_alloc(1040);
     bn_from_bytes(n_addr, n_len, n);
@@ -405,7 +320,8 @@ pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, s
     let em: i64 = __mind_alloc(n_len);
     bn_to_bytes(em_limbs, em, n_len);
     // Step 3: EMSA-PSS-VERIFY(M, EM, emBits = 8*n_len - 1).
-    tls13_hs_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
+    // Same geometry-generic check as RSASSA-PSS in std/rsa_pss.mind.
+    rsa_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
 }
 
 // ---------------------------------------------------------------------------

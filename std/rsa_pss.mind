@@ -2,15 +2,17 @@
 // SHA-256 and MGF1-SHA256, in pure MIND.  This is the rsa_pss_rsae_sha256
 // signature scheme TLS 1.3 uses for CertificateVerify (RFC 8446 §4.4.3).
 //
-// Built ON TOP of std/sha256.mind (the `sha256` entry point) and std/x509.mind
-// (the 130-limb radix-2^16 RSA-2048 bignum: bn_from_bytes / bn_to_bytes /
-// bn_cmp_ge / modexp_2048) — nothing is reimplemented here.  Like std/x509.mind
-// itself, the standalone --emit-shared build combines the three sources into
-// one file with the import lines stripped:
+// Built ON TOP of std/sha256.mind (the `sha256` entry point) and
+// std/x509_bignum.mind (the radix-2^16 RSA bignum: bn_from_bytes / bn_to_bytes /
+// bn_cmp_ge / modexp_rsa) - nothing is reimplemented here.  The standalone
+// --emit-shared build combines the sources into one file with the import lines
+// stripped:
 //   cat std/sha256.mind > /tmp/rsa_pss_combined.mind
-//   grep -v '^import std.sha256;' std/x509.mind >> /tmp/rsa_pss_combined.mind
-//   grep -v '^import '            std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/x509_bignum.mind >> /tmp/rsa_pss_combined.mind
+//   grep -v '^import ' std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
 //   mindc /tmp/rsa_pss_combined.mind --emit-shared /tmp/rsa_pss.so
+// (scripts/run_crypto_vectors.sh builds rsa_pss.so from the X.509 validator's
+// module set, which includes both.)
 //
 // Scope (deliberately minimal):
 //   - RSA-2048 only: k = 256 octets, modBits = 2048, so emBits = modBits - 1 =
@@ -44,7 +46,7 @@
 //     Returns 1 (valid signature) or 0 (invalid).  Fail-closed.
 
 import std.sha256;
-import std.x509;
+import std.x509_bignum;
 
 // ---------------------------------------------------------------------------
 // mgf1_sha256 — MGF1 (RFC 8017 §B.2.1) with SHA-256.
@@ -92,44 +94,43 @@ pub fn mgf1_sha256(seed_addr: i64, seed_len: i64, mask_addr: i64, mask_len: i64)
 
 // ---------------------------------------------------------------------------
 // rsa_pss_emsa_check — EMSA-PSS-VERIFY (RFC 8017 §9.1.2) of a recovered
-// encoded message em (256 bytes) against msg, for the fixed RSA-2048/SHA-256
-// geometry: emBits = 2047, emLen = 256, hLen = 32, dbLen = emLen - hLen - 1 =
-// 223.  Step numbers below are §9.1.2's.  Returns 1 iff consistent, else 0.
+// encoded message em (em_len bytes) against msg.
+//   emBits = 8*em_len - 1, hLen = 32, dbLen = em_len - hLen - 1 = em_len - 33.
+// Returns 1 iff consistent, else 0.
 // ---------------------------------------------------------------------------
-fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
-    // Step 3: emLen < hLen + sLen + 2 => inconsistent.  (salt_len < 0 is
-    // rejected by the caller; re-checked here for fail-closed defense.)
+pub fn rsa_pss_emsa_check(em: i64, em_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
+    let db_len: i64 = em_len - 33;
     if salt_len < 0 {
         return 0;
     }
-    if salt_len > 222 {
-        // 256 < 32 + salt_len + 2
+    if salt_len > db_len - 1 {
+        // em_len < 32 + salt_len + 2
         return 0;
     }
-    // Step 4: rightmost octet of EM must be 0xbc.
-    if (__mind_load_i8(em + 255) & 255) != 188 {
+    // Step 4: rightmost octet of EM must be 0xbc (188).
+    if (__mind_load_i8(em + em_len - 1) & 255) != 188 {
         return 0;
     }
-    // Step 6: the leftmost 8*emLen - emBits = 8*256 - 2047 = 1 bit of
+    // Step 6: the leftmost 8*emLen - emBits = 1 bit of
     // maskedDB (i.e. the top bit of em[0]) must be zero.
     if (__mind_load_i8(em + 0) & 128) != 0 {
         return 0;
     }
-    // Step 5 split: maskedDB = em[0..223), H = em[223..255).
-    // Steps 7-8: dbMask = MGF1(H, 223); DB = maskedDB XOR dbMask.
-    let db: i64 = __mind_alloc(223);
-    mgf1_sha256(em + 223, 32, db, 223);
+    // Step 5 split: maskedDB = em[0..db_len), H = em[db_len..db_len+32).
+    // Steps 7-8: dbMask = MGF1(H, db_len); DB = maskedDB XOR dbMask.
+    let db: i64 = __mind_alloc(db_len);
+    mgf1_sha256(em + db_len, 32, db, db_len);
     let mut i: i64 = 0;
-    while i < 223 {
+    while i < db_len {
         let masked: i64 = __mind_load_i8(em + i) & 255;
         let mask: i64 = __mind_load_i8(db + i) & 255;
         __mind_store_i8(db + i, masked ^ mask);
         i = i + 1;
     }
-    // Step 9: set the leftmost 8*emLen - emBits = 1 bit of DB to zero.
+    // Step 9: set the leftmost 1 bit of DB to zero.
     __mind_store_i8(db + 0, __mind_load_i8(db + 0) & 127);
     // Step 10: DB = PS (emLen - hLen - sLen - 2 zero octets) || 0x01 || salt.
-    let one_pos: i64 = 223 - salt_len - 1;
+    let one_pos: i64 = db_len - salt_len - 1;
     // index of the 0x01 separator
     let mut ok: i64 = 1;
     let mut k: i64 = 0;
@@ -157,7 +158,7 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
     // mHash into M'[8..40)
     let mut s: i64 = 0;
     while s < salt_len {
-        __mind_store_i8(mp + 40 + s, __mind_load_i8(db + 223 - salt_len + s));
+        __mind_store_i8(mp + 40 + s, __mind_load_i8(db + db_len - salt_len + s));
         s = s + 1;
     }
     let hp: i64 = __mind_alloc(32);
@@ -166,7 +167,7 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
     let mut m: i64 = 0;
     let mut eq: i64 = 1;
     while m < 32 {
-        if (__mind_load_i8(hp + m) & 255) != (__mind_load_i8(em + 223 + m) & 255) {
+        if (__mind_load_i8(hp + m) & 255) != (__mind_load_i8(em + db_len + m) & 255) {
             eq = 0;
         }
         m = m + 1;
@@ -176,56 +177,52 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
 
 // ---------------------------------------------------------------------------
 // rsa_pss_verify_sha256 — RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for
-// RSA-2048 / SHA-256 / MGF1-SHA256 (TLS 1.3 rsa_pss_rsae_sha256).
-//   (n_addr, n_len) big-endian modulus, e public exponent (fits i64: 3/17/65537),
-//   (sig_addr, sig_len) signature S, (msg_addr, msg_len) signed message M,
+// RSA-2048 / RSA-3072 / RSA-4096 / SHA-256 / MGF1-SHA256.
+//   (n_addr, n_len) big-endian modulus (256, 384, or 512 bytes, top bit set),
+//   e public exponent (fits i64: 3/17/65537),
+//   (sig_addr, sig_len) signature S (must equal n_len),
+//   (msg_addr, msg_len) signed message M,
 //   salt_len expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
 // Returns 1 (valid) or 0 (invalid).  Fail-closed.
 // ---------------------------------------------------------------------------
 pub fn rsa_pss_verify_sha256(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
-    // Geometry guards: this module's emBits/emLen constants assume a full
-    // 2048-bit modulus (k = 256, top bit of n set).  §8.1.2 step 1: the
-    // signature must be exactly k octets.
-    if n_len != 256 {
+    // Fail-closed input guards: accept 2048 (256B), 3072 (384B), and 4096 (512B) bit RSA.
+    if n_len != 256 && n_len != 384 && n_len != 512 {
         return 0;
     }
     if (__mind_load_i8(n_addr + 0) & 128) == 0 {
-        // modBits must be 2048
         return 0;
     }
-    if sig_len != 256 {
+    if sig_len != n_len {
         return 0;
     }
     // RFC 8017: a valid RSA public exponent is odd and >= 3 (3/17/65537).
-    // Reject e < 3 (e=1 gives m = s^1 = s, so the attacker chooses EM directly
-    // = universal forgery) and any even e (non-invertible mod phi(n)).
     if e < 3 || (e & 1) == 0 {
         return 0;
     }
     if msg_len < 0 {
         return 0;
     }
-    if salt_len < 0 {
+    let db_len: i64 = n_len - 33;
+    if salt_len < 0 || salt_len > db_len - 1 {
         return 0;
     }
-    if salt_len > 222 {
-        return 0;
-    }
-    let n: i64 = __mind_alloc(1040);
-    // 130 limbs (std/x509.mind bignum)
-    let s: i64 = __mind_alloc(1040);
-    let em_limbs: i64 = __mind_alloc(1040);
+    let n_limbs: i64 = n_len / 2;
+    let buf_limbs: i64 = n_limbs + 2;
+    let buf_bytes: i64 = buf_limbs * 8;
+    let n: i64 = __mind_alloc(buf_bytes);
+    let s: i64 = __mind_alloc(buf_bytes);
+    let em_limbs: i64 = __mind_alloc(buf_bytes);
     bn_from_bytes(n_addr, n_len, n);
     bn_from_bytes(sig_addr, sig_len, s);
-    // §8.1.2 step 2a / RSAVP1 (§5.2.2): the signature representative must be
-    // in [0, n-1]; s >= n => "signature representative out of range" => invalid.
-    if bn_cmp_ge(s, n, 130) == 1 {
+    // §8.1.2 step 2a / RSAVP1 (§5.2.2): signature representative must be in [0, n-1].
+    if bn_cmp_ge(s, n, buf_limbs) == 1 {
         return 0;
     }
-    // Step 2b: m = s^e mod n; step 2c: EM = I2OSP(m, emLen) with emLen = 256.
-    modexp_2048(s, e, n, em_limbs);
-    let em: i64 = __mind_alloc(256);
-    bn_to_bytes(em_limbs, em, 256);
+    // Step 2b: m = s^e mod n; step 2c: EM = I2OSP(m, emLen) with emLen = n_len.
+    modexp_rsa(s, e, n, em_limbs, n_limbs);
+    let em: i64 = __mind_alloc(n_len);
+    bn_to_bytes(em_limbs, em, n_len);
     // Step 3: EMSA-PSS-VERIFY(M, EM, modBits - 1).
-    rsa_pss_emsa_check(em, msg_addr, msg_len, salt_len)
+    rsa_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
 }

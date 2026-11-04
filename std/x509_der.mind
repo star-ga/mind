@@ -1,0 +1,319 @@
+// std/x509_der.mind — DER TLV decoding, OID recognition, and byte utilities.
+//
+// Definite-length encoding only (no BER indefinite length).
+// Single-byte tags (SEQUENCE 0x30, INTEGER 0x02, BIT STRING 0x03,
+// OBJECT IDENTIFIER 0x06, context [0] 0xA0, UTCTime 0x17, GeneralizedTime 0x18).
+
+pub fn der_tlv(buf: i64, pos: i64, limit: i64, out3: i64) -> i64 {
+    if pos < 0 {
+        return 1;
+    }
+    if pos + 2 > limit {
+        return 1;
+    }
+    let tag: i64 = __mind_load_i8(buf + pos) & 255;
+    let l0: i64 = __mind_load_i8(buf + pos + 1) & 255;
+    let mut hlen: i64 = 2;
+    let mut clen: i64 = 0;
+    if l0 < 128 {
+        clen = l0;
+    } else {
+        let nb: i64 = l0 & 127;
+        if nb < 1 {
+            return 1;
+        }
+        if nb > 3 {
+            return 1;
+        }
+        hlen = 2 + nb;
+        if pos + hlen > limit {
+            return 1;
+        }
+        let mut i: i64 = 0;
+        let mut acc: i64 = 0;
+        while i < nb {
+            acc = (acc << 8) | (__mind_load_i8(buf + pos + 2 + i) & 255);
+            i = i + 1;
+        }
+        clen = acc;
+    }
+    if pos + hlen + clen > limit {
+        return 1;
+    }
+    __mind_store_i64(out3 + 0, tag);
+    __mind_store_i64(out3 + 8, hlen);
+    __mind_store_i64(out3 + 16, clen);
+    0
+}
+
+pub fn xb(buf: i64, at: i64) -> i64 {
+    __mind_load_i8(buf + at) & 255
+}
+
+// xb_eq — 1 iff the n bytes at a equal the n bytes at b.
+pub fn xb_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < n {
+        if xb(a, i) != xb(b, i) {
+            ok = 0;
+        }
+        i = i + 1;
+    }
+    ok
+}
+
+// bytes_be_to_i64 — decode up to 8 big-endian bytes into a non-negative i64.
+pub fn bytes_be_to_i64(src: i64, len: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < len {
+        acc = (acc << 8) | (__mind_load_i8(src + i) & 255);
+        i = i + 1;
+    }
+    acc
+}
+
+// ---------------------------------------------------------------------------
+// OID recognisers.  All take (buf, content_off, content_len) and return 0/1.
+// ---------------------------------------------------------------------------
+
+// id-<arc>  2.5.29.x  ->  55 1d xx   (basicConstraints/keyUsage/SAN/EKU)
+pub fn oid_is_id29(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 3 {
+        return 0;
+    }
+    if xb(buf, off) != 85 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 29 {
+        return 0;
+    }
+    if xb(buf, off + 2) == last {
+        return 1;
+    }
+    0
+}
+
+// PKCS-1 RSA family  1.2.840.113549.1.1.xx  ->  2a 86 48 86 f7 0d 01 01 xx
+pub fn oid_is_rsa_fam(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 9 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 247 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 13 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 7) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 8) == last {
+        return 1;
+    }
+    0
+}
+
+// ecdsa-with-SHA2 family  1.2.840.10045.4.3.xx  ->  2a 86 48 ce 3d 04 03 xx
+pub fn oid_is_ecdsa_sig(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 7) == last {
+        return 1;
+    }
+    0
+}
+
+// id-ecPublicKey  1.2.840.10045.2.1  ->  2a 86 48 ce 3d 02 01
+pub fn oid_is_ecpubkey(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 7 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 2 {
+        return 0;
+    }
+    if xb(buf, off + 6) == 1 {
+        return 1;
+    }
+    0
+}
+
+// secp256r1  1.2.840.10045.3.1.7  ->  2a 86 48 ce 3d 03 01 07
+pub fn oid_is_p256(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 7) == 7 {
+        return 1;
+    }
+    0
+}
+
+// secp384r1  1.3.132.0.34  ->  2b 81 04 00 22
+pub fn oid_is_p384(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 5 {
+        return 0;
+    }
+    if xb(buf, off) != 43 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 129 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 0 {
+        return 0;
+    }
+    if xb(buf, off + 4) == 34 {
+        return 1;
+    }
+    0
+}
+
+// id-sha256  2.16.840.1.101.3.4.2.1  ->  60 86 48 01 65 03 04 02 01
+pub fn oid_is_sha256(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 9 {
+        return 0;
+    }
+    if xb(buf, off) != 96 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 101 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 7) != 2 {
+        return 0;
+    }
+    if xb(buf, off + 8) == 1 {
+        return 1;
+    }
+    0
+}
+
+// id-mgf1  1.2.840.113549.1.1.8  ->  2a 86 48 86 f7 0d 01 01 08
+pub fn oid_is_mgf1(buf: i64, off: i64, len: i64) -> i64 {
+    oid_is_rsa_fam(buf, off, len, 8)
+}
+
+// id-kp-serverAuth  1.3.6.1.5.5.7.3.1  ->  2b 06 01 05 05 07 03 01
+pub fn oid_is_serverauth(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 43 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 6 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 5 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 5 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 7 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 7) == 1 {
+        return 1;
+    }
+    0
+}

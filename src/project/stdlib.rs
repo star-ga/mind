@@ -89,6 +89,10 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.sha512", include_str!("../../std/sha512.mind")),
     ("std.string", include_str!("../../std/string.mind")),
     ("std.time", include_str!("../../std/time.mind")),
+    ("std.tls13_client", include_str!("../../std/tls13_client.mind")),
+    ("std.tls13_client_core", include_str!("../../std/tls13_client_core.mind")),
+    ("std.tls13_client_handshake", include_str!("../../std/tls13_client_handshake.mind")),
+    ("std.tls13_client_hello", include_str!("../../std/tls13_client_hello.mind")),
     ("std.tls13_finished", include_str!("../../std/tls13_finished.mind")),
     ("std.tls13_handshake", include_str!("../../std/tls13_handshake.mind")),
     ("std.tls13_keyschedule", include_str!("../../std/tls13_keyschedule.mind")),
@@ -99,6 +103,14 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.x25519", include_str!("../../std/x25519.mind")),
     ("std.x25519mlkem768", include_str!("../../std/x25519mlkem768.mind")),
     ("std.x509", include_str!("../../std/x509.mind")),
+    ("std.x509_bignum", include_str!("../../std/x509_bignum.mind")),
+    ("std.x509_bundle", include_str!("../../std/x509_bundle.mind")),
+    ("std.x509_der", include_str!("../../std/x509_der.mind")),
+    ("std.x509_ext", include_str!("../../std/x509_ext.mind")),
+    ("std.x509_name", include_str!("../../std/x509_name.mind")),
+    ("std.x509_p384", include_str!("../../std/x509_p384.mind")),
+    ("std.x509_path", include_str!("../../std/x509_path.mind")),
+    ("std.x509_sig", include_str!("../../std/x509_sig.mind")),
 ];
 
 /// The standard-library modules the Core v1 specification names whose
