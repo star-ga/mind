@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,816,986
-**Generated:** 2026-11-04 18:48 UTC
+**Files:** 1951 | **Est. tokens:** ~3,817,154
+**Generated:** 2026-11-04 19:29 UTC
 
 ## Token Budget Guide
 
@@ -121,8 +121,8 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 51 | ~169,298 |
-| `src/eval/stdlib/` | 2 | ~8,600 |
+| `src/eval/` | 51 | ~169,420 |
+| `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 431 | ~878,994 |
+| `tests/` | 431 | ~879,063 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1298,7 +1298,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5356 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1334,7 +1334,7 @@
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
-- `tensor.rs` (~8431 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor.rs` (~8408 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `string_equality.rs` (~5380 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2625,7 +2625,7 @@
 - `std_surface_io_canon.rs` (~4912 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_iouring.rs` (~3678 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_json_canon.rs` (~3353 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_json_canon.rs` (~3422 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7071 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.
