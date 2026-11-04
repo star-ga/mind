@@ -41,6 +41,8 @@ mod classify;
 mod facts;
 mod flows;
 #[cfg(test)]
+mod slot_tests;
+#[cfg(test)]
 mod tests;
 mod walk;
 

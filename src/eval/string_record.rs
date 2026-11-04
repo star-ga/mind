@@ -178,6 +178,29 @@ mod tests {
         assert!(operand_bytes(&Value::Float(1.0)).is_err());
     }
 
+    /// The null handle `0` (what a `string` slot given `0` holds) is no
+    /// string record: `__mind_string_eq` read a record at address 8 through
+    /// it ("memory access out of bounds"). It equals only itself, and no
+    /// record is read through it, as the runtime `mind_string_eq_impl`
+    /// compares it.
+    #[test]
+    fn the_null_handle_equals_only_itself() {
+        interp_mem::reset();
+        let span = crate::ast::Span::new(0, 0);
+        let int = |n: i64| Node::Lit(crate::ast::Literal::Int(n), span);
+        let text = |s: &str| Node::Lit(crate::ast::Literal::Str(s.to_string()), span);
+        let run = |a: Node, b: Node| {
+            eval_string_eq(&[a, b], &HashMap::new(), &HashMap::new(), ExecMode::Preview)
+                .expect("the null handle compares without reading a record")
+        };
+        assert_eq!(run(int(0), int(0)), Value::Int(1));
+        assert_eq!(run(int(0), text("abc")), Value::Int(0));
+        assert_eq!(run(text(""), int(0)), Value::Int(0));
+        // Positive control: equal texts still compare by bytes.
+        assert_eq!(run(text("abc"), text("abc")), Value::Int(1));
+        assert_eq!(run(text("abc"), text("abd")), Value::Int(0));
+    }
+
     #[test]
     fn string_parameters_bind_records_and_string_structs() {
         interp_mem::reset();
