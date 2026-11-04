@@ -387,7 +387,8 @@ fn dns_resolves_localhost_and_refuses_bad_names() {
 /// A `getaddrinfo` / `freeaddrinfo` pair, preloaded, whose answer is chosen by
 /// the first byte of the name: `eNN` returns -NN, `z` success with no list,
 /// `k` 32 IPv4 nodes (10.0.0.0 .. 10.0.0.31), `o` 33 nodes, `f` family 99,
-/// `l` an IPv4 node with a 28-byte address length, `n` no address, `s` a
+/// `l` an IPv4 node with a 28-byte address length, `w` an IPv6 node with a
+/// 16-byte one, `n` no address, `s` a
 /// sockaddr family that disagrees with ai_family, `x` one good node then a bad one.
 const GAI_SHIM: &str = r#"fn sh_zero(p: i64, n: i64) {
     let mut i: i64 = 0;
@@ -445,6 +446,9 @@ pub fn getaddrinfo(node: i64, service: i64, hints: i64, res: i64) -> i64 {
     }
     if b0 == 108 {
         head = sh_node(2, 2, 28, 1, 1, 0);
+    }
+    if b0 == 119 {
+        head = sh_node(10, 10, 16, 1, 1, 0);
     }
     if b0 == 110 {
         head = sh_node(2, 2, 16, 0, 1, 0);
@@ -540,6 +544,9 @@ fn main() -> i64 {
     }
     if st("x") != dns.dns_err_entry() {
         return 20;
+    }
+    if st("w") != dns.dns_err_entry() {
+        return 26;
     }
     let k: String = "k";
     let r: i64 = dns.dns_resolve(string_addr(k), string_len(k));
