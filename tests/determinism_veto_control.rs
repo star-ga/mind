@@ -78,7 +78,8 @@ fn compile(src: &Path, tag: &str, allow: bool) -> (bool, String) {
     // Unique per case AND per leg: the two tests run concurrently and the
     // authorised leg really does emit under `mlir-build`, so a shared output
     // path would be a write race between processes.
-    let out_so = std::env::temp_dir().join(format!("mind_determinism_veto_{tag}.so"));
+    let out_so = common::scratch_dir("determinism_veto_control")
+        .join(format!("mind_determinism_veto_{tag}.so"));
     let mut args = vec![
         src.to_str().expect("utf-8 source path").to_string(),
         "--emit-shared".to_string(),
