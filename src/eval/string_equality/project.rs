@@ -58,6 +58,15 @@ impl ProjectModules {
             })
         })
     }
+
+    /// `enums` carrying the modules of `parsed` (see [`Self::of`]).
+    pub(crate) fn attach(
+        parsed: &[(String, Module)],
+        mut enums: crate::ir::GlobalEnums,
+    ) -> crate::ir::GlobalEnums {
+        enums.string_project = Self::of(parsed);
+        enums
+    }
 }
 
 /// What every module of a project stores into the slots of the others.
