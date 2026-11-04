@@ -2174,12 +2174,7 @@ pub(crate) fn eval_value_expr_mode(
                         bindings.push((name.clone(), val.clone()));
                         true
                     }
-                    crate::ast::Pattern::Literal(lit) => match (lit, &val) {
-                        (crate::ast::Literal::Int(m), Value::Int(n)) => n == m,
-                        (crate::ast::Literal::Float(a), Value::Float(b)) => a == b,
-                        (crate::ast::Literal::Str(s), Value::Str(v)) => v == s,
-                        _ => false,
-                    },
+                    crate::ast::Pattern::Literal(lit) => string_record::literal_matches(lit, &val)?,
                     // Phase 10.7: enum-variant pattern. Matches when the
                     // scrutinee is a `Value::Enum` whose variant path equals the
                     // pattern path and whose payload arity matches the

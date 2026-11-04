@@ -123,6 +123,12 @@ const BARE_BUILTINS: &[&str] = &[
     "sum",
 ];
 
+/// Whether `name` is one of the bare math / tensor / autodiff builtins
+/// ([`BARE_BUILTINS`]): none of them takes or returns a string.
+pub(crate) fn is_bare_builtin(name: &str) -> bool {
+    BARE_BUILTINS.binary_search(&name).is_ok()
+}
+
 /// Undefined-variable diagnostic code (issue #23). A bare identifier that
 /// resolves to nothing in any scope frame or module-level symbol source.
 pub const UNKNOWN_IDENT_CODE: &str = "E2002";

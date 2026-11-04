@@ -23,18 +23,18 @@ use std::collections::HashMap;
 
 use super::autodiff::TensorEnvEntry;
 use super::{EvalError, ExecMode, Value, eval_value_expr_mode, interp_mem};
-use crate::ast::{Module, Node, TypeAnn};
+use crate::ast::{Literal, Module, Node, TypeAnn};
 
 /// Apply the shared string-equality normalization to a module about to be
 /// interpreted. A refused comparison is an evaluation error carrying the
 /// check-time code, so `mindc test` and `mindc build` refuse the same source.
 #[cfg(feature = "std-surface")]
 pub(crate) fn normalize_module(module: &Module) -> Result<Option<Module>, EvalError> {
-    let analysis = super::string_equality::analyze(module);
+    let analysis = super::string_equality::analyze_interpreted(module);
     if let Some(refused) = analysis.refused.first() {
         return Err(EvalError::UnsupportedMsg(format!(
             "[{}] {}. {}",
-            crate::type_checker::lowering_refusals::E_STRING_EQUALITY_OPERAND,
+            super::string_equality::refusal_code(refused),
             super::string_equality::refusal_message(refused),
             super::string_equality::refusal_help(refused)
         )));
@@ -151,6 +151,62 @@ pub(crate) fn eval_string_eq(
     Ok(Value::Int(i64::from(string_values_equal(&left, &right)?)))
 }
 
+/// `string_trim(s)`: the runtime support library's string with its leading
+/// and trailing ASCII whitespace (space, tab, LF, CR) removed, in a fresh
+/// record (`string_from_range`: no data for an empty result, otherwise a
+/// buffer padded by 7 bytes, capacity = length). The MLIR build links that
+/// function for `s.trim()`, which std.string does not define; the interpreter
+/// computes the same bytes, as a std `String` value.
+#[cfg(feature = "std-surface")]
+pub(crate) fn eval_string_trim(
+    arg: &Node,
+    env: &HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
+    let value = eval_value_expr_mode(arg, env, tensor_env, mode)?;
+    let bytes = operand_bytes(&value)?;
+    let space = |b: &u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r');
+    let start = bytes.iter().position(|b| !space(b)).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !space(b))
+        .map_or(start, |i| i + 1);
+    let kept = &bytes[start..end];
+    if kept.is_empty() {
+        return Ok(string_struct([0, 0, 0]));
+    }
+    let n = kept.len() as i64;
+    let intrinsic = |name: &str, args: &[i64]| {
+        interp_mem::eval_intrinsic(name, args).map_err(EvalError::UnsupportedMsg)
+    };
+    let buf = intrinsic("__mind_alloc", &[n + 7])?;
+    for (i, byte) in kept.iter().enumerate() {
+        intrinsic("__mind_store_i8", &[buf + i as i64, i64::from(*byte)])?;
+    }
+    Ok(string_struct([buf, n, n]))
+}
+
+/// Whether a literal `match` pattern `lit` matches `value`. An integer or
+/// float literal compares the number. A string literal compares bytes, as
+/// the lowered pattern test (`__mind_string_eq`) does, in every form the
+/// interpreter holds a string in; the null handle matches no literal, and a
+/// value of another kind matches none (the string-equality pass refuses such
+/// a `match` at check time).
+pub(crate) fn literal_matches(lit: &Literal, value: &Value) -> Result<bool, EvalError> {
+    match (lit, value) {
+        (Literal::Int(m), Value::Int(n)) => Ok(n == m),
+        (Literal::Float(a), Value::Float(b)) => Ok(a == b),
+        (Literal::Str(text), Value::Str(_) | Value::Int(_)) => {
+            string_values_equal(value, &Value::Str(text.clone()))
+        }
+        (Literal::Str(text), Value::Struct { name, .. }) if name == "String" => {
+            string_values_equal(value, &Value::Str(text.clone()))
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Whether two `__mind_string_eq` operands hold the same bytes. The null
 /// handle `0` is no string record: like the runtime `mind_string_eq_impl`,
 /// it equals only itself and nothing is read through it.
@@ -210,6 +266,44 @@ mod tests {
         // Positive control: equal texts still compare by bytes.
         assert_eq!(run(text("abc"), text("abc")), Value::Int(1));
         assert_eq!(run(text("abc"), text("abd")), Value::Int(0));
+    }
+
+    /// A string literal `match` arm compares bytes in every form a string
+    /// takes in the interpreter (a `string` parameter is a record), as the
+    /// lowered `__mind_string_eq` test does; the null handle matches none.
+    #[test]
+    fn string_literal_patterns_compare_bytes() {
+        interp_mem::reset();
+        let lit = |s: &str| Literal::Str(s.to_string());
+        let rec = interp_mem::materialize_str("abc").unwrap();
+        assert!(literal_matches(&lit("abc"), &Value::Int(rec)).unwrap());
+        assert!(!literal_matches(&lit("abd"), &Value::Int(rec)).unwrap());
+        let view = string_struct(record_fields(rec).unwrap());
+        assert!(literal_matches(&lit("abc"), &view).unwrap());
+        assert!(literal_matches(&lit("abc"), &Value::Str("abc".into())).unwrap());
+        assert!(!literal_matches(&lit("abc"), &Value::Int(0)).unwrap());
+        assert!(!literal_matches(&lit(""), &Value::Int(0)).unwrap());
+        // Positive control: number literals compare the number.
+        assert!(literal_matches(&Literal::Int(5), &Value::Int(5)).unwrap());
+        assert!(!literal_matches(&Literal::Int(5), &Value::Int(6)).unwrap());
+    }
+
+    /// `string_trim` drops leading and trailing ASCII whitespace, as the
+    /// runtime support library's function the MLIR build links does.
+    #[test]
+    fn string_trim_matches_the_runtime_function() {
+        interp_mem::reset();
+        let span = crate::ast::Span::new(0, 0);
+        let trim = |s: &str| {
+            let arg = Node::Lit(Literal::Str(s.to_string()), span);
+            let value = eval_string_trim(&arg, &HashMap::new(), &HashMap::new(), ExecMode::Preview)
+                .expect("trim a string");
+            operand_bytes(&value).expect("a string")
+        };
+        assert_eq!(trim(" \t ab c\r\n"), b"ab c".to_vec());
+        assert_eq!(trim("abc"), b"abc".to_vec());
+        assert_eq!(trim("  "), Vec::<u8>::new());
+        assert_eq!(trim(""), Vec::<u8>::new());
     }
 
     #[test]

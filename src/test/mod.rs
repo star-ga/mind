@@ -625,6 +625,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         .into_iter()
         .filter_map(import_key)
         .collect();
+    queue.extend(bare_std_modules(module));
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
             continue;
@@ -654,6 +655,57 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         }
     }
     Ok(out)
+}
+
+/// The bundled std modules that define a std.string function (`string_*`)
+/// `module` calls by its bare name and does not define itself. `mindc check`
+/// and the build see every bundled std declaration with no `import` (the
+/// bundled std signatures), so `mindc test` loads the module that defines
+/// the callee too. A method call on a string names its `string_<method>`
+/// function, which is the call the build makes for it. Callees the evaluator
+/// runs itself (the runtime-support emulations) load nothing.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+fn bare_std_modules(module: &crate::ast::Module) -> Vec<String> {
+    use crate::project::stdlib::STDLIB_MIND_SOURCES;
+    use std::collections::BTreeSet;
+
+    let mut defined = BTreeSet::new();
+    let mut wanted = BTreeSet::new();
+    let mut pending: Vec<&Node> = module.items.iter().collect();
+    while let Some(node) = pending.pop() {
+        match node {
+            Node::FnDef(fd, _) => {
+                defined.insert(fd.name.clone());
+                pending.extend(fd.body.iter());
+                continue;
+            }
+            Node::Call { callee, .. } if !callee.contains('.') && !callee.contains("::") => {
+                wanted.insert(callee.clone());
+            }
+            Node::MethodCall { method, .. } => {
+                wanted.insert(format!("string_{method}"));
+            }
+            _ => {}
+        }
+        pending.extend(crate::eval::closures::node_children_ref(node));
+    }
+    let wanted: Vec<String> = wanted
+        .into_iter()
+        .filter(|name| {
+            name.starts_with("string_")
+                && !defined.contains(name)
+                && !crate::eval::extern_c_intrinsics::is_extern_c_intrinsic(name)
+        })
+        .collect();
+    STDLIB_MIND_SOURCES
+        .iter()
+        .filter(|(_, src)| {
+            wanted
+                .iter()
+                .any(|name| src.contains(&format!("fn {name}(")))
+        })
+        .map(|(path, _)| (*path).to_string())
+        .collect()
 }
 
 /// Extract a human-readable string from a panic payload.

@@ -7,8 +7,10 @@
 //! `mindc check` accepts a value of another type where a declaration names
 //! one: a call argument for a parameter, a value returned through a result, a
 //! struct field, a variant payload, a collection element (by index
-//! assignment or `push` / `set` / `insert` / `add`), and a module-level
-//! binding assigned in a function. The declaration then no longer proves what
+//! assignment or `push` / `set` / `insert` / `add`), a module-level binding
+//! assigned in a function, and a local binding assigned in its own scope. A
+//! value whose type the pass did not establish may be a string, so storing
+//! it counts as storing one. The declaration then no longer proves what
 //! the slot holds (see [`super::slots`]), and `==` on two such slots would
 //! compare string handles, which is false for equal text, or read an integer
 //! as a string record. A walk records each such store here; the next walk
@@ -26,17 +28,17 @@
 //! recorded by the record types the callee's declaration names (or as a raw
 //! store when it names none), and the integer result of a later call to such
 //! a callee whose declaration names one of those record types (or, after a
-//! raw store, names none) is maybe a string. Of the intrinsics only
+//! raw store, any opaque callee) is maybe a string. Of the intrinsics only
 //! `__mind_store_i64` keeps a handle whole, and only `__mind_load_i64` gives
-//! one back.
+//! one back, from raw memory or from a collection's storage (`vec_addr(v)`).
 
 use std::collections::BTreeSet;
 
 use crate::ast::{FnDefData, Node, StructLitField, TypeAnn};
 
 use super::classify::lowered_args;
-use super::facts::{Decls, Env, Fact, Ret, SCALAR_NAMES, tail_value};
-use super::slots::{Contradicted, holds_str};
+use super::facts::{Decls, Env, Fact, Ret, SCALAR_NAMES, join, tail_value};
+use super::slots::{Contradicted, holds_str, struct_key};
 
 /// Collection methods that store their last argument as an element.
 const STORE_METHODS: &[&str] = &["push", "set", "insert", "add"];
@@ -104,8 +106,36 @@ impl Decls {
         }
     }
 
-    /// Record `name = value` on a module-level binding (a local binding's
-    /// assignments are read with its declaration, `reassigned_fact`).
+    /// Record `name = value` on a local binding in scope (see
+    /// `Decls::local_fact`): a value that contradicts a declared binding, or
+    /// whose fact an unannotated binding does not have, read in the scope of
+    /// the assignment.
+    pub(super) fn record_local_assign(
+        &self,
+        name: &str,
+        value: &Node,
+        env: &Env,
+        out: &mut Contradicted,
+    ) {
+        let Some(bound) = env.get(name) else {
+            return;
+        };
+        let Some((site, declared)) = bound.site else {
+            return;
+        };
+        if declared {
+            if self.stores_contradiction(&bound.fact, value, env) {
+                out.add_local(site, Fact::MaybeStr);
+            }
+        } else {
+            let assigned = self.value_fact(value, env);
+            if join(bound.fact.clone(), assigned.clone()) != bound.fact {
+                out.add_local(site, assigned);
+            }
+        }
+    }
+
+    /// Record `name = value` on a module-level binding.
     pub(super) fn record_global_assign(
         &self,
         name: &str,
@@ -172,6 +202,22 @@ impl Decls {
                 if self.stores_contradiction(&self.typed_fact(ty), arg, env) {
                     let at = out.params.entry(callee.to_string()).or_default();
                     at.insert(index);
+                }
+            }
+        } else if let Some(name) = self.project_fn(callee) {
+            // Its body is analysed in its own module, which reads this store
+            // (see [`super::project`]).
+            let types = self.project_fns.get(name).cloned().flatten();
+            for (index, arg) in args.iter().enumerate() {
+                let stored = match types.as_ref().and_then(|t| t.get(index)) {
+                    Some(ty) => self.stores_contradiction(&self.typed_fact(ty), arg, env),
+                    None => holds_str(&self.value_fact(arg, env)),
+                };
+                if stored {
+                    out.params
+                        .entry(name.to_string())
+                        .or_default()
+                        .insert(index);
                 }
             }
         } else if self.is_variant(callee) {
@@ -269,9 +315,11 @@ impl Decls {
         }
         let types = self.opaque_types(callee);
         let escapes = args.iter().enumerate().any(|(index, arg)| {
+            // A string or record parameter (`string_len(s: String)`,
+            // `vec_get(v: Vec, i)`) keeps no handle as an integer.
             let declared = types.and_then(|types| types.get(index));
-            let string_param = declared.is_some_and(|ty| self.typed_fact(ty) == Fact::Str);
-            !string_param && holds_str(&self.value_fact(arg, env))
+            let kept = declared.is_none_or(|ty| !self.names_record(ty));
+            kept && holds_str(&self.value_fact(arg, env))
         });
         if !escapes {
             return;
@@ -281,6 +329,17 @@ impl Decls {
             out.escaped_raw = true;
         }
         out.escaped_records.extend(records);
+    }
+
+    /// Whether `ty` names a string or a record type (not a scalar, a
+    /// collection, a tensor or a type of unknown shape): a parameter of that
+    /// type does not keep an integer handle.
+    fn names_record(&self, ty: &TypeAnn) -> bool {
+        let mut ty = self.resolve(ty);
+        while let TypeAnn::Ref { target, .. } = ty {
+            ty = self.resolve(&target);
+        }
+        matches!(ty, TypeAnn::Named(name) if !SCALAR_NAMES.contains(&name.as_str()))
     }
 
     /// Record `receiver.field = value`. A receiver whose struct is not known
@@ -303,7 +362,7 @@ impl Decls {
             };
             if self.stores_contradiction(&declared, value, env) {
                 out.fields
-                    .entry(owner)
+                    .entry(struct_key(&owner).to_string())
                     .or_default()
                     .insert(field.to_string());
             }
@@ -325,7 +384,7 @@ impl Decls {
                     continue;
                 };
                 if self.stores_contradiction(&declared, &field.value, env) {
-                    let at = out.fields.entry(name.to_string()).or_default();
+                    let at = out.fields.entry(struct_key(name).to_string()).or_default();
                     at.insert(field.name.clone());
                 }
             }

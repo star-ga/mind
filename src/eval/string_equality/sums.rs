@@ -41,7 +41,9 @@ impl Variant {
         let part = match (self, fact) {
             (Variant::Ok, Fact::Sum(ok, _)) => (**ok).clone(),
             (Variant::Err, Fact::Sum(_, err)) => (**err).clone(),
-            (_, Fact::MaybeStr) => Fact::MaybeStr,
+            // A payload of a value that may hold a string, or whose type is
+            // not known, is no better known.
+            (_, Fact::MaybeStr | Fact::Any | Fact::Unknown) => fact.clone(),
             _ => return None,
         };
         // A payload the sum never holds: the arm is unreachable.

@@ -14,7 +14,7 @@
 
 use crate::ast::{Literal, Node, Pattern, TypeAnn};
 
-use super::facts::{Class, Decls, Env, Fact, Ret, fact_class, join};
+use super::facts::{Class, Decls, Env, Fact, Ret, fact_class, join, tuple_parts};
 use super::flows::{INTRINSIC_PREFIX, RAW_LOAD};
 
 /// Nesting beyond this depth is not analysed: the value is `Unknown`. The
@@ -103,7 +103,7 @@ impl Decls {
             Node::Lit(Literal::Str(_), _) => Fact::Str,
             Node::Lit(Literal::Int(_) | Literal::Float(_), _) => Fact::NotStr,
             Node::Lit(Literal::Ident(name), _) => match env.get(name) {
-                Some(fact) => fact.clone(),
+                Some(bound) => bound.fact.clone(),
                 None => self.global_fact(name),
             },
             Node::Paren(inner, _) | Node::Ref { inner, .. } => self.fact_at(inner, env, d),
@@ -230,6 +230,8 @@ impl Decls {
         let Some((last, init)) = stmts.split_last() else {
             return Fact::NotStr;
         };
+        // A binding of this list has the fact every recorded store into it
+        // leaves it (`Decls::local_fact`).
         let mut env = env.clone();
         for stmt in init {
             match stmt {
@@ -237,12 +239,15 @@ impl Decls {
                     name, ann, value, ..
                 } => {
                     let fact = self.binding_fact(ann.as_ref(), value, &env, depth);
-                    self.bind(&mut env, name, fact);
+                    self.bind_local(&mut env, name, fact, ann.is_some());
                 }
-                Node::LetTuple { names, .. } => {
-                    for name in names {
-                        self.bind(&mut env, name, Fact::Unknown);
+                Node::LetTuple { names, value, .. } => {
+                    let parts = tuple_parts(self.fact_at(value, &env, depth), names.len());
+                    let mut bound = env.clone();
+                    for (name, fact) in names.iter().zip(parts) {
+                        self.bind_local(&mut bound, name, fact, false);
                     }
+                    env = bound;
                 }
                 // A diverging statement: the list produces no value.
                 Node::Return { .. } | Node::Break { .. } | Node::Continue { .. } => {
@@ -250,10 +255,6 @@ impl Decls {
                 }
                 _ => {}
             }
-        }
-        // A name assigned inside the list may hold anything at its end.
-        for name in super::assigned_in(stmts) {
-            self.bind(&mut env, &name, Fact::Unknown);
         }
         self.fact_at(last, &env, depth)
     }
@@ -264,17 +265,16 @@ impl Decls {
         let mut pending = vec![(pattern, fact)];
         while let Some((pattern, fact)) = pending.pop() {
             match pattern {
-                Pattern::Ident(name) => self.bind(env, name, fact),
+                Pattern::Ident(name) => self.bind_local(env, name, fact, false),
                 Pattern::Tuple(args) => {
-                    let facts = match fact {
-                        Fact::Tuple(facts) if facts.len() == args.len() => facts,
-                        _ => vec![Fact::Unknown; args.len()],
-                    };
-                    pending.extend(args.iter().zip(facts));
+                    pending.extend(args.iter().zip(tuple_parts(fact, args.len())));
                 }
                 Pattern::EnumVariant { path, args } => {
-                    let builtin = self.builtin_variant(path);
-                    if let Some(fact) = builtin.and_then(|v| v.payload_of(&fact)) {
+                    // A built-in `Option` / `Result` payload has the scrutinee's
+                    // payload fact; the prelude's registered payload type is
+                    // generic and proves nothing about it.
+                    if let Some(variant) = self.builtin_variant(path) {
+                        let fact = variant.payload_of(&fact).unwrap_or(Fact::Unknown);
                         pending.extend(args.iter().map(|arg| (arg, fact.clone())));
                         continue;
                     }
@@ -315,22 +315,22 @@ impl Decls {
 
     /// Whether `callee` may return a string handed to an opaque callee
     /// earlier: it is opaque itself, and its declaration names a record type
-    /// such a string was handed over with, or names none while a string was
-    /// handed over with none (see `Decls::escape_flows`).
+    /// such a string was handed over with, or a string was stored to raw
+    /// memory (which may be any record's storage), or it names no record
+    /// while a string was handed over with none (see `Decls::escape_flows`).
+    /// The raw 64-bit load reads any record's storage (`vec_addr(v)`,
+    /// `map_vals_addr(m)`), so it may give back a string handed over by
+    /// either route.
     fn returns_escaped(&self, callee: &str, env: &Env) -> bool {
         let c = &self.contradicted;
         if (!c.escaped_raw && c.escaped_records.is_empty()) || !self.is_opaque(callee, env) {
             return false;
         }
         if callee.starts_with(INTRINSIC_PREFIX) {
-            return c.escaped_raw && callee == RAW_LOAD;
+            return callee == RAW_LOAD;
         }
         let records = self.callee_records(callee);
-        if records.is_empty() {
-            c.escaped_raw
-        } else {
-            !records.is_disjoint(&c.escaped_records)
-        }
+        c.escaped_raw || !records.is_disjoint(&c.escaped_records)
     }
 
     /// The fact a callee's declaration gives its result.
@@ -353,8 +353,13 @@ impl Decls {
             }
         }
         // Compiler intrinsics return integers or floats; a `tensor.` builtin is
-        // a tensor operation; a variant constructor builds an enum record.
-        if callee.starts_with("__mind_") || callee.starts_with("tensor.") || self.is_variant(callee)
+        // a tensor operation; a bare math / tensor builtin (`sqrt`, `exp`)
+        // returns a number or a tensor; a variant constructor builds an enum
+        // record.
+        if callee.starts_with("__mind_")
+            || callee.starts_with("tensor.")
+            || crate::type_checker::is_bare_builtin(callee)
+            || self.is_variant(callee)
         {
             return Fact::NotStr;
         }
@@ -389,6 +394,19 @@ impl Decls {
             }
             _ => None,
         }
+    }
+
+    /// Whether the method call `receiver.method(..)` is a method on a string,
+    /// which lowering makes a call of `string_<method>`: `Some(true)` for a
+    /// string value receiver (passed first), `Some(false)` for the type name
+    /// `string` / `String` (not passed).
+    pub(super) fn string_method(&self, receiver: &Node, method: &str, env: &Env) -> Option<bool> {
+        let fact = self.value_fact(receiver, env);
+        if fact == Fact::Str {
+            return Some(true);
+        }
+        let callee = self.method_callee(receiver, &fact, method, env)?;
+        (callee == format!("string_{method}")).then_some(false)
     }
 
     fn method_fact(

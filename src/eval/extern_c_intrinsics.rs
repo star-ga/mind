@@ -360,6 +360,14 @@ pub(crate) fn dispatch(
             args, env, tensor_env, mode,
         ));
     }
+    // The runtime support library's `string_trim`, which `s.trim()` calls on
+    // the MLIR build (std.string defines none; a MIND definition shadows it).
+    #[cfg(feature = "std-surface")]
+    if let ("string_trim", [arg]) = (callee, args) {
+        return Some(super::string_record::eval_string_trim(
+            arg, env, tensor_env, mode,
+        ));
+    }
     if !is_extern_c_intrinsic(callee) {
         return None;
     }

@@ -12,7 +12,7 @@
 //! interpreter and every lowering read the same facts, so a comparison is
 //! byte-wise on every backend or refused on every backend.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::ast::{EnumVariant, FnDefData, Module, Node, Param, TypeAnn};
@@ -45,7 +45,7 @@ pub(super) enum Fact {
     /// An expression that produces no value (`return`, `break`, `continue`).
     Never,
     /// A value whose type the pass did not establish: it may be a string,
-    /// so it compares as one may, but storing it is not taken to store one.
+    /// so it compares as one may, and storing it stores one that may be.
     Unknown,
     /// A value of a type this module cannot see: a generic type parameter, or
     /// the result of an imported function with no declared result type. It
@@ -101,9 +101,38 @@ pub(super) fn join(a: Fact, b: Fact) -> Fact {
     }
 }
 
+/// The facts of the `n` parts of a value with `fact` destructured as a tuple
+/// (`let (a, b) = v`, a tuple pattern). A part of a value that may hold a
+/// string may be one; a part of a value whose shape is not known is unknown.
+pub(super) fn tuple_parts(fact: Fact, n: usize) -> Vec<Fact> {
+    match fact {
+        Fact::Tuple(facts) if facts.len() == n => facts,
+        Fact::MaybeStr | Fact::Any => vec![fact; n],
+        _ => vec![Fact::Unknown; n],
+    }
+}
+
+/// One name in scope: the fact of its value and, for a local binding, where
+/// it is bound.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Bound {
+    pub(super) fact: Fact,
+    /// The binding site ([`site`]) and whether its type is declared (an
+    /// annotated `let` or a parameter); `None` for a name an assignment
+    /// cannot store into here (a capture or a module-level binding).
+    pub(super) site: Option<(usize, bool)>,
+}
+
 /// Facts in scope, shared copy-on-write: a statement's sub-walks clone the
 /// pointer, and only a binding that changes a fact copies the map.
-pub(super) type Env = Rc<BTreeMap<String, Fact>>;
+pub(super) type Env = Rc<BTreeMap<String, Bound>>;
+
+/// The identity of the binding whose name is `name`: the address of the
+/// name in the analysed AST (a `let`, a tuple `let` position, a parameter, a
+/// loop variable or a pattern binding), stable while the module is analysed.
+pub(super) fn site(name: &String) -> usize {
+    name as *const String as usize
+}
 
 /// Scalar type names: no value of these types is a string.
 pub(super) const SCALAR_NAMES: &[&str] = &[
@@ -200,6 +229,10 @@ fn returns_value(body: &[Node]) -> bool {
     false
 }
 
+/// Function name → declared parameter types (`None` when two declarations
+/// disagree).
+pub(super) type Fns = BTreeMap<String, Option<Vec<TypeAnn>>>;
+
 /// Declarations visible to the comparisons of one module, collected once.
 pub(super) struct Decls {
     aliases: LocalTypeAliases,
@@ -212,8 +245,14 @@ pub(super) struct Decls {
     /// callees whose body this module does not analyse.
     pub(super) opaque_params: BTreeMap<String, Vec<TypeAnn>>,
     /// Slots whose declaration a stored value contradicts (empty until the
-    /// first walk has recorded them).
+    /// first walk has recorded them, except for the slots the other modules
+    /// of a project build store into).
     pub(super) contradicted: Contradicted,
+    /// Every function the modules of the active project build declare (see
+    /// [`super::project`]); empty outside a project build of several modules.
+    pub(super) project_fns: std::sync::Arc<Fns>,
+    /// The project functions whose own module refuses a comparison in them.
+    pub(super) project_refusing: std::sync::Arc<BTreeSet<String>>,
     structs: BTreeMap<String, Option<Vec<(String, TypeAnn)>>>,
     /// Module-local enum name → its variants.
     enums: BTreeMap<String, Vec<EnumVariant>>,
@@ -223,12 +262,30 @@ pub(super) struct Decls {
 
 impl Decls {
     pub(super) fn new(module: &Module) -> Self {
+        #[cfg(feature = "cross-module-imports")]
+        if let Some(project) = super::project::current() {
+            let mut decls = Self::seeded(module, project.fns.clone(), project.slots.shared());
+            decls.project_refusing = project.refusing.clone();
+            return decls;
+        }
+        Self::seeded(module, Default::default(), Contradicted::default())
+    }
+
+    /// The declarations of `module`, with `contradicted` already recorded
+    /// and the functions of the other modules of its project build.
+    pub(super) fn seeded(
+        module: &Module,
+        project_fns: std::sync::Arc<Fns>,
+        contradicted: Contradicted,
+    ) -> Self {
         let mut decls = Self {
             aliases: LocalTypeAliases::new(&module.items),
             returns: BTreeMap::new(),
             params: BTreeMap::new(),
             opaque_params: BTreeMap::new(),
-            contradicted: Contradicted::default(),
+            contradicted,
+            project_fns,
+            project_refusing: Default::default(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             consts: BTreeMap::new(),
@@ -342,7 +399,10 @@ impl Decls {
     /// The fact of field `field` of struct `owner`, when declared.
     pub(super) fn declared_field_fact(&self, owner: &str, field: &str) -> Option<Fact> {
         let ty = self.field_ty(owner, field)?;
-        let stored = self.contradicted.fields.get(owner);
+        let stored = self
+            .contradicted
+            .fields
+            .get(super::slots::struct_key(owner));
         if stored.is_some_and(|fields| fields.contains(field)) {
             return Some(Fact::MaybeStr);
         }
@@ -457,12 +517,39 @@ impl Decls {
         if self.contradicted.returns.contains(callee) {
             return Some(Ret::Stored);
         }
+        // A function of another module of the project that returns a string
+        // through its result (see [`super::project`]).
+        if let Some(name) = self.project_fn(callee) {
+            if self.contradicted.returns.contains(name) {
+                return Some(Ret::Stored);
+            }
+        }
         match self.returns.get(callee) {
             Some(local) => local.clone(),
             None => {
                 crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned()).map(Ret::Ty)
             }
         }
+    }
+
+    /// The name of the project function another module declares that
+    /// `callee` calls (`provider.eqh`, or a bare imported `eqh`), when it is
+    /// not a function of this module.
+    pub(super) fn project_fn<'c>(&self, callee: &'c str) -> Option<&'c str> {
+        let name = callee.rsplit_once('.').map_or(callee, |(_, tail)| tail);
+        let local = matches!(self.params.get(callee), Some(Some(_)));
+        (!local && self.project_fns.contains_key(name)).then_some(name)
+    }
+
+    /// The project function of another module that `callee` calls, when
+    /// that module refuses a comparison in it: calling it makes the project
+    /// fail to build, so the call is refused where it is checked too.
+    pub(super) fn refusing_project_fn<'c>(&self, callee: &'c str, env: &Env) -> Option<&'c str> {
+        if env.contains_key(callee) {
+            return None;
+        }
+        self.project_fn(callee)
+            .filter(|name| self.project_refusing.contains(*name))
     }
 
     /// The fact of a name with no binding in scope: a module-level constant, a
@@ -562,44 +649,43 @@ impl Decls {
         }
     }
 
-    /// Bind `name` to `fact`. Every binding is recorded, so a name with no
+    /// Bind `name` as `bound`. Every binding is recorded, so a name with no
     /// entry is never a local of unknown type mistaken for a constant.
-    pub(super) fn bind(&self, env: &mut Env, name: &str, fact: Fact) {
-        if env.get(name) != Some(&fact) {
-            Rc::make_mut(env).insert(name.to_string(), fact);
+    fn bind_bound(&self, env: &mut Env, name: &str, bound: Bound) {
+        if env.get(name) != Some(&bound) {
+            Rc::make_mut(env).insert(name.to_string(), bound);
         }
     }
 
-    /// The fact of binding `name`, whose initial value has `fact`, after the
-    /// later `assignments`. The assigned values are read with `name` holding
-    /// `fact`: when every one of them keeps it, no assignment can change it.
-    ///
-    /// A declared binding keeps its declared fact unless an assignment
-    /// contradicts the declaration (see [`Self::stores_contradiction`]); an
-    /// unannotated binding keeps its fact only when every assigned value has
-    /// the same fact.
-    pub(super) fn reassigned_fact(
-        &self,
-        name: &str,
-        fact: Fact,
-        declared: bool,
-        assignments: &[&Node],
-        env: &Env,
-    ) -> Fact {
-        if assignments.is_empty() {
-            return fact;
+    /// Bind the local binding `name` (see [`site`]), whose initial value has
+    /// `fact`, as every store into it leaves it (see [`Self::local_fact`]).
+    pub(super) fn bind_local(&self, env: &mut Env, name: &String, fact: Fact, declared: bool) {
+        let at = site(name);
+        let fact = self.local_fact(at, fact, declared);
+        self.bind_bound(
+            env,
+            name,
+            Bound {
+                fact,
+                site: Some((at, declared)),
+            },
+        );
+    }
+
+    /// The fact of the local binding at `site` whose initial value has
+    /// `fact`, after every assignment a walk recorded (see
+    /// `Decls::record_local_assign`): a declared binding keeps its declared
+    /// fact unless an assignment contradicts the declaration, and an
+    /// unannotated one keeps its fact only while every assigned value has
+    /// the same fact. Each assigned value is read in its own scope, with the
+    /// binding holding the fact the previous walk gave it, so the module is
+    /// walked again until no binding changes.
+    pub(super) fn local_fact(&self, site: usize, fact: Fact, declared: bool) -> Fact {
+        match self.contradicted.locals.get(&site) {
+            None => fact,
+            Some(_) if declared => Fact::MaybeStr,
+            Some(assigned) => join(fact, assigned.clone()),
         }
-        let mut env = env.clone();
-        self.bind(&mut env, name, fact.clone());
-        if !declared {
-            return assignments
-                .iter()
-                .fold(fact, |fact, v| join(fact, self.value_fact(v, &env)));
-        }
-        let contradicted = assignments
-            .iter()
-            .any(|v| self.stores_contradiction(&fact, v, &env));
-        if contradicted { Fact::MaybeStr } else { fact }
     }
 
     /// Whether storing `value` where `declared` is declared contradicts the
@@ -621,13 +707,11 @@ impl Decls {
         &self,
         mut env: Env,
         params: &[Param],
-        body: &[Node],
         owner: Option<&str>,
         type_params: &[String],
     ) -> Env {
         let stored = owner.and_then(|name| self.contradicted.params.get(name));
         for (index, param) in params.iter().enumerate() {
-            let assignments = super::assignment_values(body, &param.name);
             let typed = if stored.is_some_and(|at| at.contains(&index)) {
                 Fact::MaybeStr
             } else {
@@ -636,15 +720,14 @@ impl Decls {
                     ty => self.typed_fact(ty),
                 }
             };
-            let fact = self.reassigned_fact(&param.name, typed, true, &assignments, &env);
-            self.bind(&mut env, &param.name, fact);
+            self.bind_local(&mut env, &param.name, typed, true);
         }
         env
     }
 
     pub(super) fn fn_env(&self, fd: &FnDefData) -> Env {
         let owner = Some(fd.name.as_str());
-        self.param_env(Env::default(), &fd.params, &fd.body, owner, &fd.type_params)
+        self.param_env(Env::default(), &fd.params, owner, &fd.type_params)
     }
 
     /// The fact for an immutable `let` (see [`Self::binding_fact`]).

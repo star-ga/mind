@@ -24,14 +24,14 @@ use crate::ast::{Literal, Node};
 use super::facts::Fact;
 
 /// Every declared slot of one module that a store contradicts.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct Contradicted {
     /// Local function → indices of parameters given a contradicting value.
     pub(super) params: BTreeMap<String, BTreeSet<usize>>,
     /// Local functions that return a value their result type does not hold,
     /// or a string with no declared result type.
     pub(super) returns: BTreeSet<String>,
-    /// Struct → fields given a contradicting value.
+    /// Struct (by [`struct_key`]) → fields given a contradicting value.
     pub(super) fields: BTreeMap<String, BTreeSet<String>>,
     /// Variant (`Enum::Variant`) → payload positions given one.
     pub(super) payloads: BTreeMap<String, BTreeSet<usize>>,
@@ -50,6 +50,11 @@ pub(super) struct Contradicted {
     /// A string was handed to such a callee with no record beside it (the
     /// address of `__mind_store_i64(p, s)`).
     pub(super) escaped_raw: bool,
+    /// Local binding site (see [`super::facts::site`]) → the joined facts of
+    /// the values assigned to it that do not keep its fact ([`Fact::MaybeStr`]
+    /// for a declared binding an assignment contradicts). Sites are AST
+    /// addresses of one module, so these never leave the module's analysis.
+    pub(super) locals: BTreeMap<usize, Fact>,
 }
 
 impl Contradicted {
@@ -81,8 +86,38 @@ impl Contradicted {
         for element in other.elements {
             grew |= self.add_element(element);
         }
+        for (site, fact) in other.locals {
+            grew |= self.add_local(site, fact);
+        }
         grew |= other.escaped_raw && !std::mem::replace(&mut self.escaped_raw, true);
         grew
+    }
+
+    /// The slots other modules of a project build can declare or read:
+    /// every one but the module's own local and module-level bindings.
+    pub(super) fn shared(&self) -> Contradicted {
+        Contradicted {
+            locals: BTreeMap::new(),
+            globals: BTreeSet::new(),
+            ..self.clone()
+        }
+    }
+
+    /// Record a value with `fact` assigned to the local binding at `site`;
+    /// whether the recorded fact changed.
+    pub(super) fn add_local(&mut self, site: usize, fact: Fact) -> bool {
+        match self.locals.get_mut(&site) {
+            Some(at) => {
+                let joined = super::facts::join(at.clone(), fact);
+                let grew = joined != *at;
+                *at = joined;
+                grew
+            }
+            None => {
+                self.locals.insert(site, fact);
+                true
+            }
+        }
     }
 
     /// Record an element fact; whether it was new.
@@ -105,35 +140,43 @@ impl Contradicted {
     }
 }
 
-/// Whether a value with `fact` is, or has a part that is, a string on some
-/// path: a string, a maybe-string, or a value of a type this module cannot
-/// see ([`Fact::Any`]).
+/// Whether a value with `fact` may be, or have a part that may be, a string
+/// on some path: a string, a maybe-string, a value of a type this module
+/// cannot see ([`Fact::Any`]), or a value whose type the pass did not
+/// establish ([`Fact::Unknown`]). A value is taken to hold no string only
+/// when its type is known to hold none.
 pub(super) fn holds_str(fact: &Fact) -> bool {
     match fact {
-        Fact::Str | Fact::MaybeStr | Fact::Any => true,
+        Fact::Str | Fact::MaybeStr | Fact::Any | Fact::Unknown => true,
         Fact::Elems(part) | Fact::Map(part) => holds_str(part),
         Fact::Sum(ok, err) => holds_str(ok) || holds_str(err),
         Fact::Tuple(parts) => parts.iter().any(holds_str),
-        Fact::Record(_) | Fact::NotStr | Fact::Never | Fact::Unknown => false,
+        Fact::Record(_) | Fact::NotStr | Fact::Never => false,
     }
 }
 
 /// Whether storing a value with fact `value` where `declared` is declared
 /// stores what the declaration says the slot cannot hold, at any depth: a
-/// value that may be a string ([`holds_str`]) where no string is declared,
-/// or a value not proven a string where a string is declared. A slot whose
-/// type is not known or not visible proves nothing, so no store contradicts
-/// it, and a value whose type the pass did not establish
-/// ([`Fact::Unknown`]) is not taken to contradict a declaration.
+/// value that may be a string ([`holds_str`], so also a value whose type the
+/// pass did not establish) where no string is declared, or a value not
+/// proven a string where a string is declared. A slot whose type is not
+/// known or not visible proves nothing, so no store contradicts it.
 pub(super) fn contradicts(declared: &Fact, value: &Fact) -> bool {
     match (declared, value) {
-        (Fact::Unknown | Fact::MaybeStr | Fact::Any, _) | (_, Fact::Never | Fact::Unknown) => false,
+        (Fact::Unknown | Fact::MaybeStr | Fact::Any, _) | (_, Fact::Never) => false,
         (Fact::Str, value) => *value != Fact::Str,
         (Fact::Elems(d), Fact::Elems(v)) | (Fact::Map(d), Fact::Map(v)) => contradicts(d, v),
         (Fact::Tuple(ds), Fact::Tuple(vs)) => ds.iter().zip(vs).any(|(d, v)| contradicts(d, v)),
         (Fact::Sum(d, e), Fact::Sum(v, f)) => contradicts(d, v) || contradicts(e, f),
-        (_, value) => matches!(value, Fact::Str | Fact::MaybeStr | Fact::Any),
+        (_, value) => holds_str(value),
     }
+}
+
+/// The key of struct `owner` in [`Contradicted::fields`]: its bare name, so a
+/// struct named through its module (`provider.Box`, `crate.provider.Box`)
+/// and by its own module (`Box`) share one entry.
+pub(super) fn struct_key(owner: &str) -> &str {
+    owner.rsplit('.').next().unwrap_or(owner)
 }
 
 /// Whether `node` is the integer literal `0`: the null handle, the one

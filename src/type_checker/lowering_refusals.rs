@@ -57,6 +57,10 @@ pub(crate) const E_NON_FINAL_VARIANT_BINDING: &str = "E2301";
 /// `eval::string_equality`).
 pub(crate) const E_STRING_EQUALITY_OPERAND: &str = "E2038";
 
+/// `s.length` on a string: a member no string record has, which the build
+/// refuses as an unsupported field read (see `eval::string_equality`).
+pub(crate) const E_STRING_MEMBER: &str = "E6009";
+
 /// The collection mutating-method names whose std implementation returns a
 /// FRESH handle on realloc (`vec_push`, `map_insert`, …).
 ///
@@ -161,7 +165,7 @@ pub(crate) fn non_final_variant_binding(pattern: &Pattern, span: AstSpan) {
 /// executes, so check and build refuse the same comparisons.
 pub(crate) fn string_equality_operand(refused: &crate::eval::string_equality::Refused) {
     report(Refusal {
-        code: E_STRING_EQUALITY_OPERAND,
+        code: crate::eval::string_equality::refusal_code(refused),
         message: crate::eval::string_equality::refusal_message(refused),
         help: crate::eval::string_equality::refusal_help(refused),
         span: refused.span,
