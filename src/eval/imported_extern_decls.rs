@@ -64,7 +64,9 @@ fn prepend_called_imports(ir: &mut IRModule) {
             .ret_type
             .as_ref()
             .map(|ty| extern_c_ret_token(ty, &empty, effective_callconv));
-        ir.imported_extern_names.insert(ext.name.clone());
+        ir.imported_extern_names
+            .get_or_insert_default()
+            .insert(ext.name.clone());
         decls.push(Instr::ExternFnDecl {
             name: ext.name,
             param_types,

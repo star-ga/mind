@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1946 | **Est. tokens:** ~3,801,696
-**Generated:** 2026-11-04 16:58 UTC
+**Files:** 1946 | **Est. tokens:** ~3,801,884
+**Generated:** 2026-11-04 13:00 UTC
 
 ## Token Budget Guide
 
@@ -93,8 +93,8 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~919 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/scripts/` | 1 | ~1,187 |
-| `.github/workflows/` | 9 | ~16,587 |
+| `.github/scripts/` | 1 | ~962 |
+| `.github/workflows/` | 9 | ~16,513 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~123,987 |
@@ -108,7 +108,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 12 | ~55,349 |
+| `src/` | 12 | ~55,388 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -121,21 +121,21 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 48 | ~161,516 |
+| `src/eval/` | 48 | ~161,528 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 12 | ~101,775 |
+| `src/ir/` | 12 | ~101,786 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
-| `src/ir/compact/v3/` | 15 | ~76,672 |
+| `src/ir/compact/v3/` | 15 | ~76,669 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 5 | ~13,149 |
+| `src/mlir/` | 5 | ~13,577 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -1057,7 +1057,7 @@
 - `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
-- `pr_review.py` (~1187 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
+- `pr_review.py` (~962 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~5329 tok, huge) — name: Bench gate
@@ -1066,7 +1066,7 @@
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
-- `pr-review.yml` (~895 tok, large) — name: pr-review
+- `pr-review.yml` (~821 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -1250,7 +1250,7 @@
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/`
 
-- `c_export_reach.rs` (~1579 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `c_export_reach.rs` (~1618 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/check/`
 
 - `early_failure.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
@@ -1305,7 +1305,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
-- `imported_extern_decls.rs` (~1157 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `imported_extern_decls.rs` (~1169 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1399,7 +1399,7 @@
 - `format.rs` (~911 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mldsa.rs` (~2688 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~20273 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~13090 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~13087 tok, huge) — Copyright 2025 STARGA Inc.
 - `slhdsa.rs` (~3201 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/v04/`
 
@@ -1416,7 +1416,7 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17644 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17655 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_calls.rs` (~826 tok, large) — Copyright 2026 STARGA Inc.
@@ -1443,7 +1443,7 @@
 - `main.rs` (~6847 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `c_export.rs` (~3309 tok, huge) — Copyright 2025 STARGA Inc.
+- `c_export.rs` (~3737 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_narrow_args.rs` (~821 tok, large) — Copyright 2026 STARGA Inc.
 - `gemm_tuning.rs` (~6147 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.

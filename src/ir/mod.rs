@@ -1375,10 +1375,10 @@ pub struct IRModule {
     /// iteration deterministic.
     #[cfg(feature = "std-surface")]
     pub struct_field_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
-    /// Imported extern names. C export must not treat these as this module's
-    /// own foreign symbols. Not serialised.
+    /// Imported extern names (not serialised; `None` after a mic@3 decode). C
+    /// export must not treat these as this module's own foreign symbols.
     #[cfg(feature = "std-surface")]
-    pub imported_extern_names: std::collections::BTreeSet<String>,
+    pub imported_extern_names: Option<std::collections::BTreeSet<String>>,
 }
 
 impl IRModule {
@@ -1413,7 +1413,7 @@ impl IRModule {
             #[cfg(feature = "std-surface")]
             struct_field_types: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
-            imported_extern_names: std::collections::BTreeSet::new(),
+            imported_extern_names: Some(std::collections::BTreeSet::new()),
         }
     }
 
