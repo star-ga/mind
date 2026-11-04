@@ -27,6 +27,7 @@
 
 extern "C" {
     unsafe fn getrandom(buf: *mut u8, buflen: i64, flags: i32) -> i64;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,14 +62,6 @@ fn entropy_chunk_len() -> i64 {
     256
 }
 
-fn entropy_wipe(buf: i64, len: i64) {
-    let mut i: i64 = 0;
-    while i < len {
-        __mind_store_i8(buf + i, 0);
-        i = i + 1;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Public: entropy_fill
 // ---------------------------------------------------------------------------
@@ -76,6 +69,7 @@ fn entropy_wipe(buf: i64, len: i64) {
 // entropy_fill — write `len` random bytes at `buf`.
 // Returns entropy_ok() (0) or a negative entropy_err_* code. On every error
 // after the argument checks the whole buffer is zeroed.
+#[protection]
 pub fn entropy_fill(buf: i64, len: i64) -> i64 {
     if buf == 0 {
         return entropy_err_arg();
@@ -94,7 +88,7 @@ pub fn entropy_fill(buf: i64, len: i64) -> i64 {
         }
         let got: i64 = getrandom((buf + done) as *mut u8, want, 0);
         if got != want {
-            entropy_wipe(buf, len);
+            let _ = memset(buf as *mut u8, 0, len);
             if got < 0 {
                 return entropy_err_os();
             }

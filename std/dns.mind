@@ -38,6 +38,7 @@ extern "C" {
     unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
     unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
     unsafe fn close(fd: i32) -> i32;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +193,7 @@ pub fn dns_scope_id(r: i64, i: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 fn dns_zero(p: i64, n: i64) {
-    let mut i: i64 = 0;
-    while i < n {
-        __mind_store_i8(p + i, 0);
-        i = i + 1;
-    }
+    let _ = memset(p as *mut u8, 0, n);
 }
 
 fn dns_new_record() -> i64 {
@@ -213,6 +210,7 @@ fn dns_fail(r: i64, code: i64) -> i64 {
 }
 
 // 1 when the name may be handed to the resolver.
+#[protection]
 fn dns_name_ok(name_addr: i64, name_len: i64) -> i64 {
     if name_addr == 0 {
         return 0;
@@ -282,6 +280,7 @@ fn dns_map_gai(rc: i64) -> i64 {
 //   struct addrinfo (LP64 Linux): ai_family +4, ai_addrlen +16, ai_addr +24, ai_next +40
 //   sockaddr_in:  family u16 +0, addr +4 (4 bytes)              -- 16 bytes
 //   sockaddr_in6: family u16 +0, addr +8 (16 bytes), scope +24  -- 28 bytes
+#[protection]
 fn dns_take(r: i64, i: i64, node: i64) -> i64 {
     let fam: i64 = __mind_load_i32(node + 4);
     let alen: i64 = __mind_load_i32(node + 16);
@@ -326,6 +325,7 @@ fn dns_take(r: i64, i: i64, node: i64) -> i64 {
 
 // dns_resolve — resolve `name` (name_len bytes at name_addr, no NUL needed) to
 // its stream-socket addresses. Always returns a record; check dns_status first.
+#[protection]
 pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
     let r: i64 = dns_new_record();
     if dns_name_ok(name_addr, name_len) == 0 {
@@ -349,7 +349,7 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
     let head: i64 = __mind_load_i64(slot);
     if rc != 0 {
         if head != 0 {
-            freeaddrinfo(head as *mut u8);
+            freeaddrinfo(head as *mut u8)
         }
         return dns_fail(r, dns_map_gai(rc));
     }
@@ -371,7 +371,7 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
         }
     }
     if head != 0 {
-        freeaddrinfo(head as *mut u8);
+        freeaddrinfo(head as *mut u8)
     }
     if st != dns_ok() {
         return dns_fail(r, st);
@@ -452,6 +452,7 @@ fn dns_connect_one(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
 // address in resolver order; each connect is bounded by `timeout_ms`
 // (1..=dns_max_timeout_ms()). Returns a std.net TcpStream handle, or 0 on a bad
 // argument, a resolution failure, or when no address accepts.
+#[protection]
 pub fn tcp_connect_host_timeout(name_addr: i64, name_len: i64, port: i64, timeout_ms: i64) -> i64 {
     if port < 1 {
         return 0;
