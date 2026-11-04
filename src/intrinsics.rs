@@ -423,14 +423,12 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     // artifact does not name. They are listed because leaving them UNCLASSIFIED
     // was measured to be a determinism REGRESSION, not merely a labelling gap.
     //
-    // Before the shipping veto was split from the attestation label, an
-    // unclassified extern blocked artifact emission, so these were caught by
-    // accident. After the split the hard gate consults only genuine World rows,
-    // and a program calling `clock_gettime` EMITTED with exit 0 — a wall-clock
-    // read passing a gate whose own doc scopes it to "PRNG / wall-clock /
-    // stdin". Classifying them restores the block for real nondeterminism
-    // without re-blocking `memset`, which is the whole point of the split.
-    //
+    // Before the shipping veto was split from the attestation label, an unclassified extern blocked
+    // artifact emission, so these were caught by accident. After the split the hard gate consults
+    // only genuine World rows, and a program calling `clock_gettime` EMITTED with exit 0 — a
+    // wall-clock read passing a gate whose own doc scopes it to "PRNG / wall-clock / stdin".
+    // Classifying them restores the block for real nondeterminism without re-blocking `memset`,
+    // which is the whole point of the split.
     // Each row names the unnamed channel it reads:
     "clock_gettime",     // wall / monotonic clock
     "getenv",            // process environment
@@ -440,6 +438,8 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     "sched_getaffinity", // host CPU topology
     "syscall",           // arbitrary kernel entry — unbounded by construction
     "mmap",              // kernel-chosen address, and file bytes when fd is real
+    "getrandom",         // kernel CSPRNG bytes (std.entropy)
+    "getaddrinfo",       // hosts file, resolver config, network (std.dns)
     // Descriptor / socket reads: the bytes come from outside the artifact. This
     // is the discriminator the classification pass named -- `read(fd, buf, n)`
     // writes through a caller pointer exactly as `memset` does, and the two
@@ -462,10 +462,6 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     "socket",
     "bind",
     "listen",
-    // std.entropy / std.dns: kernel CSPRNG bytes, and the resolver's answer
-    // (hosts file, resolver config, network).
-    "getrandom",
-    "getaddrinfo",
     "ioctl",   // device state
     "fork",    // returns a pid, and diverges the process
     "waitpid", // child scheduling outcome
