@@ -18,7 +18,8 @@
 //! Lowering reads an annotation's own type constructor. A slice or collection
 //! type named through an alias (`type V = array<i32>`) is not lowered as a
 //! Vec-layout handle, so such an annotation keeps its alias spelling here too:
-//! the slice boundary refuses it instead of admitting a call lowering rejects.
+//! the slice boundary refuses a parameter, result or binding spelled this way
+//! instead of admitting a call lowering rejects.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -119,6 +120,25 @@ pub(super) fn slice_through_alias(ty: &TypeAnn) -> bool {
     matches!(ty, TypeAnn::Named(_)) && type_contains_slice(&resolve_fully(ty))
 }
 
+/// Bit-width of an integer type annotation, or `None` for a non-integer or
+/// unknown annotation. A literal element proven to be wider than a slice's
+/// element type silently truncates in the native build, so the literal lane
+/// compares element widths with it.
+pub(super) fn int_width_of_ann(ty: &TypeAnn) -> Option<u32> {
+    match ty {
+        TypeAnn::ScalarI32 | TypeAnn::ScalarU32 => Some(32),
+        TypeAnn::ScalarI64 => Some(64),
+        TypeAnn::Named(name) => match name.as_str() {
+            "i8" | "u8" => Some(8),
+            "i16" | "u16" => Some(16),
+            "i32" | "u32" => Some(32),
+            "i64" | "u64" | "isize" | "usize" => Some(64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Parameter and result types of `callee`, in the checked file's terms.
 pub(super) fn call_signature(callee: &str) -> Option<(Vec<TypeAnn>, Option<TypeAnn>)> {
     if let Some(sig) = intra_lookup_fn(callee) {
@@ -161,47 +181,65 @@ pub(super) fn canonical_in_owner(ty: &TypeAnn, owner: &str) -> TypeAnn {
     }
 }
 
-/// Refuse a parameter or result of `fd` that names a slice type through an
-/// alias: lowering reads only a spelled `&[T]` there.
+/// Refuse a parameter or result of `fd` that names a slice or collection type
+/// through an alias: lowering reads only a spelled `&[T]`/`array<T>` there, so
+/// a signature spelled through `type SL = &[i32]` or `type V = array<i32>`
+/// passes the check and dies in lowering.
 pub(super) fn refuse_slice_aliases_in_signature(
     fd: &FnDefData,
     src: &str,
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    for param in fd
-        .params
-        .iter()
-        .filter(|param| slice_through_alias(&param.ty))
-    {
-        report(
-            errs,
-            src,
-            file,
-            format!(
+    for param in &fd.params {
+        let message = if slice_through_alias(&param.ty) {
+            Some(format!(
                 "parameter `{}` names a slice type through a type alias, which the slice call ABI does not resolve; spell the parameter `&[T]` or `&mut [T]`",
                 param.name
-            ),
-            param.span,
-            SLICE_ARG_ABI_CODE,
-        );
+            ))
+        } else if names_handle_through_alias(&param.ty, &resolve_fully(&param.ty)) {
+            Some(format!(
+                "parameter `{}` names a collection type through a type alias, which the slice call ABI does not resolve; spell the parameter `array<T>`, `map<K, V>` or `set<T>`",
+                param.name
+            ))
+        } else {
+            None
+        };
+        if let Some(message) = message {
+            report(errs, src, file, message, param.span, SLICE_ARG_ABI_CODE);
+        }
     }
-    if fd.ret_type.as_ref().is_some_and(slice_through_alias) {
-        let span = fd.body.last().map(Node::span);
-        report(
-            errs,
-            src,
-            file,
-            "function return type names a slice type through a type alias, which the slice call ABI does not resolve; spell it `&[T]`"
-                .to_string(),
-            span.or_else(|| fd.params.first().map(|p| p.span)).unwrap_or_else(|| Span::new(0, 0)),
-            SLICE_ARG_ABI_CODE,
-        );
+    if let Some(ret) = fd.ret_type.as_ref() {
+        let message = if slice_through_alias(ret) {
+            Some(
+                "function return type names a slice type through a type alias, which the slice call ABI does not resolve; spell it `&[T]`"
+                    .to_string(),
+            )
+        } else if names_handle_through_alias(ret, &resolve_fully(ret)) {
+            Some(
+                "function return type names a collection type through a type alias, which the slice call ABI does not resolve; spell it `array<T>`"
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+        if let Some(message) = message {
+            let span = fd.body.last().map(Node::span);
+            report(
+                errs,
+                src,
+                file,
+                message,
+                span.or_else(|| fd.params.first().map(|p| p.span))
+                    .unwrap_or_else(|| Span::new(0, 0)),
+                SLICE_ARG_ABI_CODE,
+            );
+        }
     }
 }
 
-/// Refuse a `let` whose annotation names a slice type through an alias, like
-/// a spelled slice binding.
+/// Refuse a `let` whose annotation names a slice or collection type through an
+/// alias, like a spelled slice binding.
 pub(super) fn refuse_slice_alias_binding(
     name: &str,
     ann: Option<&TypeAnn>,
@@ -210,17 +248,22 @@ pub(super) fn refuse_slice_alias_binding(
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    if ann.is_some_and(slice_through_alias) {
-        report(
-            errs,
-            src,
-            file,
-            format!(
-                "binding `{name}` names a slice type through a type alias, which the current Option-C lowering does not resolve; keep the value as `array<T>`"
-            ),
-            value.span(),
-            SLICE_ARG_ABI_CODE,
-        );
+    let Some(ann) = ann else {
+        return;
+    };
+    let message = if slice_through_alias(ann) {
+        Some(format!(
+            "binding `{name}` names a slice type through a type alias, which the current Option-C lowering does not resolve; keep the value as `array<T>`"
+        ))
+    } else if names_handle_through_alias(ann, &resolve_fully(ann)) {
+        Some(format!(
+            "binding `{name}` names a collection type through a type alias, which the current Option-C lowering does not resolve; spell it `array<T>`, `map<K, V>` or `set<T>`"
+        ))
+    } else {
+        None
+    };
+    if let Some(message) = message {
+        report(errs, src, file, message, value.span(), SLICE_ARG_ABI_CODE);
     }
 }
 
@@ -238,20 +281,69 @@ pub(super) fn const_class(name: &str) -> Option<ScalarClass> {
     const_class_at(name, 0)
 }
 
-fn const_class_at(name: &str, depth: usize) -> Option<ScalarClass> {
+/// The declaration of the constant `name`: every declared type, read in its
+/// owner's scope, and the value lowering inlines. The nesting bound keeps a
+/// cyclic constant (`const A = B`, `const B = A`) from recursing without end.
+fn const_record(name: &str, depth: usize) -> Option<(Vec<TypeAnn>, Node)> {
     if depth > CONST_DEPTH_LIMIT {
         return None;
     }
     let local = FILE_SCOPE.with(|cell| cell.borrow().as_ref()?.consts.get(name).cloned());
-    let (declared, value) = match local {
-        Some((ty, value)) => (ty.map(|ty| canonical(&ty)).into_iter().collect(), value),
-        None => imported_const(name)?,
-    };
+    match local {
+        Some((ty, value)) => Some((ty.map(|ty| canonical(&ty)).into_iter().collect(), value)),
+        None => imported_const(name),
+    }
+}
+
+fn const_class_at(name: &str, depth: usize) -> Option<ScalarClass> {
+    let (declared, value) = const_record(name, depth)?;
     let value_class = const_value_class(&value, depth + 1)?;
     declared
         .iter()
         .all(|ty: &TypeAnn| scalar_class_of_ann(ty) == Some(value_class))
         .then_some(value_class)
+}
+
+/// Proven integer bit-width of the module constant `name`, as lowering
+/// inlines it. Every declared type must agree on one integer width; an
+/// undeclared constant takes the width of its value, and a value of no proven
+/// width (a plain literal) has none. `None` never refuses.
+pub(super) fn const_int_width(name: &str) -> Option<u32> {
+    const_int_width_at(name, 0)
+}
+
+fn const_int_width_at(name: &str, depth: usize) -> Option<u32> {
+    let (declared, value) = const_record(name, depth)?;
+    if !declared.is_empty() {
+        let widths: Vec<u32> = declared.iter().filter_map(int_width_of_ann).collect();
+        let [first, rest @ ..] = widths.as_slice() else {
+            return None;
+        };
+        return rest.iter().all(|width| width == first).then_some(*first);
+    }
+    const_value_width(&value, depth + 1)
+}
+
+fn const_value_width(value: &Node, depth: usize) -> Option<u32> {
+    match value {
+        Node::As { ty, .. } => int_width_of_ann(&canonical(ty)),
+        Node::Lit(Literal::Ident(name), _) => const_int_width_at(name, depth),
+        Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => const_value_width(inner, depth),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => match (
+            const_value_width(left, depth),
+            const_value_width(right, depth),
+        ) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(one), None) | (None, Some(one)) => Some(one),
+            (None, None) => None,
+        },
+        _ => None,
+    }
 }
 
 /// The value lowering inlines for the cross-module constant `name`, with the

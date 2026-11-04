@@ -4,6 +4,7 @@
 
 //! Proof of the Vec-layout owner or borrowed capability carried by a value.
 
+use super::aliases::int_width_of_ann;
 use super::{
     Env, HandleKind, call_signature, canonical, confident_scalar_class, declared_kind,
     scalar_class_of_ann, value_contains_borrow,
@@ -75,6 +76,45 @@ fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass>
     }
 }
 
+/// Proven integer bit-width of an array-literal element: the declared width
+/// of a constant, a binding, an element or field read, a call result, or an
+/// explicit `as` target, combined over an arithmetic expression. A plain
+/// literal element declares no width of its own, so it stays `None` — it
+/// already follows the slice element's width — and `None` never refuses.
+fn element_int_width(element: &Node, env: &Env) -> Option<u32> {
+    match element {
+        Node::Lit(Literal::Int(_), _) => None,
+        Node::Lit(Literal::Ident(name), _) if !env.bindings.contains_key(name) => {
+            super::aliases::const_int_width(name)
+        }
+        Node::Lit(Literal::Ident(name), _) => env
+            .declared
+            .get(name)
+            .or_else(|| env.types.get(name))
+            .and_then(int_width_of_ann),
+        Node::As { ty, .. } => int_width_of_ann(&canonical(ty)),
+        Node::Call { callee, .. } => call_signature(callee)?
+            .1
+            .as_ref()
+            .and_then(int_width_of_ann),
+        Node::IndexAccess { .. } | Node::FieldAccess { .. } => {
+            expr_type(element, env).as_ref().and_then(int_width_of_ann)
+        }
+        Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => element_int_width(inner, env),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => match (element_int_width(left, env), element_int_width(right, env)) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(one), None) | (None, Some(one)) => Some(one),
+            (None, None) => None,
+        },
+        _ => None,
+    }
+}
+
 fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) -> bool {
     let Node::ArrayLit { elements, .. } = node else {
         return false;
@@ -83,9 +123,17 @@ fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) ->
         return true;
     }
     if let Some(target_class) = scalar_class_of_ann(target_element) {
-        return elements
-            .iter()
-            .all(|element| element_class(element, env) == Some(target_class));
+        // A literal element proven wider than the slice's integer element type
+        // silently truncates in the native build, so it is refused like a
+        // wider handle source already is by the element-type comparison.
+        let target_width = int_width_of_ann(target_element);
+        return elements.iter().all(|element| {
+            element_class(element, env) == Some(target_class)
+                && target_width.is_none_or(|width| {
+                    element_int_width(element, env)
+                        .is_none_or(|element_width| element_width <= width)
+                })
+        });
     }
     elements.iter().all(|element| {
         expr_type(element, env)

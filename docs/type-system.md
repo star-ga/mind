@@ -67,7 +67,12 @@ by `defs`) passes to `&[i32]`, and an `array<i32>` passes to `&[Q]`. A type
 from an imported signature or struct field is read in its owner module, so a
 `Bank` returned by `defs` is the `defs.Bank` the caller names. A literal element
 that names a module constant (`[defs.ONE, ONE + 1]`) has the class of the
-constant's value. A call to a module-private helper in a `module m { ... }` block
+constant's value. A literal element whose proven integer width is wider than
+the slice's element type — a constant, an element or field read, a call
+result, or arithmetic over any of these at a wider declared width — is
+refused with `E2032` instead of truncating in the native build; a plain
+literal element declares no width of its own, so the rule never fires on one.
+A call to a module-private helper in a `module m { ... }` block
 follows the same rules as a call to an exported one. The slice or collection
 annotation itself must be spelled out: a binding, parameter or result typed
 through an alias of a slice or of an `array<T>` (`type SL = &[i32]`,

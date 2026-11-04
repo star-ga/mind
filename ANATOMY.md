@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,813,597
-**Generated:** 2026-11-04 17:13 UTC
+**Files:** 1952 | **Est. tokens:** ~3,817,313
+**Generated:** 2026-11-04 18:21 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~113,979 |
+| `docs/` | 40 | ~114,068 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -149,11 +149,11 @@
 | `src/test/` | 4 | ~15,775 |
 | `src/type_checker/` | 19 | ~64,862 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
-| `src/type_checker/slice_abi/` | 4 | ~14,442 |
+| `src/type_checker/slice_abi/` | 4 | ~16,042 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 430 | ~878,094 |
+| `tests/` | 431 | ~880,121 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -558,7 +558,7 @@
 - `v1.0.md` (~953 tok, large) — MIND Language Specification v1.0 (Working Draft)
 ### `docs/`
 
-- `type-system.md` (~1747 tok, huge) — Type System
+- `type-system.md` (~1836 tok, huge) — Type System
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
 - `version-matrix.md` (~1828 tok, huge) — MIND Ecosystem — Version Matrix
@@ -1572,10 +1572,10 @@
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 
-- `aliases.rs` (~2707 tok, huge) — Copyright 2026 STARGA Inc.
+- `aliases.rs` (~3744 tok, huge) — Copyright 2026 STARGA Inc.
 - `borrow_flow.rs` (~7106 tok, huge) — Copyright 2025 STARGA Inc.
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
-- `provenance.rs` (~3484 tok, huge) — Copyright 2026 STARGA Inc.
+- `provenance.rs` (~4047 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
 - `slice_abi.rs` (~7580 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2599,6 +2599,7 @@
 
 - `slice_argument_admission_run.rs` (~5511 tok, huge) — Copyright 2026 STARGA Inc.
 - `slice_call_abi_run.rs` (~5559 tok, huge) — Copyright 2025 STARGA Inc.
+- `slice_literal_element_gaps_run.rs` (~2027 tok, huge) — Copyright 2026 STARGA Inc.
 - `smoke.rs` (~261 tok, medium) — Copyright 2025 STARGA Inc.
 - `source_confinement.rs` (~2038 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
