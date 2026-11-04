@@ -1590,9 +1590,8 @@ fn compile_sources(
         } else {
             entry_path.parent().unwrap_or(project_root)
         };
-        // RFC 0005 Phase C — the bundled std modules the project loads
-        // (the implicit set plus what its sources import) come first in the
-        // parsed-modules list, ahead of the project's own src tree. This
+        // RFC 0005 Phase C — the bundled std modules the project loads (implicit set + its imports)
+        // come first in the parsed-modules list, ahead of the project's own src tree. This
         // is what makes `use std.vec` work in a downstream `mind
         // build` without the user vendoring std/*.mind themselves.
         // The bundle is i64-ABI and uses only the seven `__mind_*`
