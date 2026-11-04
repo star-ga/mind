@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1953 | **Est. tokens:** ~3,821,708
-**Generated:** 2026-11-04 17:07 UTC
+**Files:** 1955 | **Est. tokens:** ~3,829,736
+**Generated:** 2026-11-04 22:06 UTC
 
 ## Token Budget Guide
 
@@ -93,8 +93,8 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~919 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/scripts/` | 1 | ~1,187 |
-| `.github/workflows/` | 9 | ~16,587 |
+| `.github/scripts/` | 1 | ~1,296 |
+| `.github/workflows/` | 9 | ~16,753 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~123,987 |
@@ -121,7 +121,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 48 | ~161,518 |
+| `src/eval/` | 48 | ~163,447 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 22 | ~76,606 |
+| `src/project/` | 23 | ~77,446 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -154,7 +154,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 431 | ~883,452 |
+| `tests/` | 432 | ~888,436 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -1059,7 +1059,7 @@
 - `required-ci-jobs.tsv` (~761 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
-- `pr_review.py` (~1187 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
+- `pr_review.py` (~1296 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~5329 tok, huge) — name: Bench gate
@@ -1068,7 +1068,7 @@
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
-- `pr-review.yml` (~895 tok, large) — name: pr-review
+- `pr-review.yml` (~1061 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -1301,7 +1301,7 @@
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5234 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
+- `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1519,6 +1519,7 @@
 ### `src/project/`
 
 - `stdlib.rs` (~4196 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
 - `substrate_link.rs` (~4706 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
@@ -2066,6 +2067,7 @@
 ### `tests/`
 
 - `flat_emit_sibling_const.rs` (~542 tok, large) — Copyright 2026 STARGA Inc.
+- `flat_string_field_schema.rs` (~4984 tok, huge) — Copyright 2026 STARGA Inc.
 - `fmt_bool_literal_roundtrip.rs` (~1958 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_idempotence.rs` (~5044 tok, huge) — Copyright 2025 STARGA Inc.
