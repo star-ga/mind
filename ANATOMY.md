@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2105 | **Est. tokens:** ~3,939,435
-**Generated:** 2026-11-04 15:14 UTC
+**Files:** 2106 | **Est. tokens:** ~3,939,491
+**Generated:** 2026-11-04 16:01 UTC
 
 ## Token Budget Guide
 
@@ -154,7 +154,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 55 | ~248,691 |
-| `tests/` | 436 | ~903,972 |
+| `tests/` | 436 | ~903,085 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,918 |
@@ -224,7 +224,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
-| `tests/support/` | 10 | ~23,124 |
+| `tests/support/` | 11 | ~24,067 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/x509/` | 1 | ~1,565 |
 | `tests/x509/testdata/` | 82 | ~12,571 |
@@ -2714,7 +2714,7 @@
 - `std_surface_vec_module.rs` (~1809 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_zeroed.rs` (~1097 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3251 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_tls_x509_import.rs` (~8361 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_tls_x509_import.rs` (~7474 tok, huge) — Copyright 2026 STARGA Inc.
 - `stmt_keyword_recognizer.rs` (~2527 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2745,6 +2745,7 @@
 - `v04_mirror_intrinsic_vectors.rs` (~1359 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `v04_mirror_modules.rs` (~1936 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `v04_mirror_oracle.rs` (~6008 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `x509_literals_program.rs` (~943 tok, large) — Copyright 2026 STARGA Inc.
 ### `tests/`
 
 - `target_cerebras.rs` (~340 tok, medium) — Cerebras backend target — first-class surface tests.
