@@ -1,0 +1,96 @@
+// Shipped-verifier refusal: the real std/x509 verifier, an anchor set that does
+// not contain the fixture root (unknown anchor, verdict -7), and the refusal must
+// latch across every public operation. No fixture verifier in this compiler input.
+fn tls13ct_shipped_replay(f: i64, size: i64, now: i64, wrong_name: i64) -> i64 {
+    if size < 96 { return 10; }
+    let suite: i64 = __mind_load_i64(f);
+    let group: i64 = __mind_load_i64(f + 8);
+    let flags: i64 = __mind_load_i64(f + 16);
+    let n1: i64 = __mind_load_i64(f + 24);
+    let n2: i64 = __mind_load_i64(f + 32);
+    let nh: i64 = __mind_load_i64(f + 40);
+    let ns: i64 = __mind_load_i64(f + 48);
+    let nf: i64 = __mind_load_i64(f + 56);
+    let na: i64 = __mind_load_i64(f + 64);
+    let ncf: i64 = __mind_load_i64(f + 72);
+    let nca: i64 = __mind_load_i64(f + 80);
+    let mode: i64 = __mind_load_i64(f + 88);
+    if 96 + n1 + n2 + nh + ns + nf + na + ncf + nca != size { return 11; }
+    let ch1: i64 = f + 96;
+    let ch2: i64 = ch1 + n1;
+    let hrr: i64 = ch2 + n2;
+    let sh: i64 = hrr + nh;
+    let flight: i64 = sh + ns;
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    // Name mutation is applied after the frozen CH: same wire, different
+    // caller authentication identity. The wire transcript remains fixed.
+    let entropy: i64 = tls13ct_config(state, flags, now, wrong_name & 2);
+    let out: i64 = __mind_alloc(8192);
+    let got1: i64 = tls13c_build_client_hello(state, entropy, 192, out);
+    if got1 != n1 { return 12; }
+    if tls13ct_equal(out, ch1, n1) != 1 { return 13; }
+    if tls13c_seal_client_hello(state, out, got1) != 0 { return 14; }
+    tls13c_read_out(state, out, 8192);
+    if nh > 0 {
+        let rn: i64 = tls13ct_plain_record(hrr, nh, out);
+        tls13c_feed(state, out, rn);
+        if tls13c_pump(state) != 0 { return 15; }
+        if tls13c_status(state) != 10 { return 16; }
+        let got2: i64 = tls13c_build_client_hello2(state, entropy, 192, out);
+        if got2 != n2 { return 17; }
+        if tls13ct_equal(out, ch2, n2) != 1 { return 18; }
+        if tls13c_seal_client_hello2(state, out, got2) != 0 { return 19; }
+        tls13c_read_out(state, out, 8192);
+    }
+    let sn: i64 = tls13ct_plain_record(sh, ns, out);
+    // Record input fragmented independently of handshake-message boundaries.
+    let mut i: i64 = 0;
+    while i < sn {
+        tls13c_feed(state, out + i, 1);
+        if tls13c_pump(state) < 0 { return 20; }
+        i = i + 1;
+    }
+    if tls13c_status(state) != 3 { return 21; }
+    if tls13c_suite(state) != suite || tls13c_group(state) != group { return 22; }
+    if tls13c_version(state) != 772 { return 23; }
+    if tls13c_write_app(state, out, 1) >= 0 { return 24; }
+    if wrong_name == 1 { __mind_store_i8(state + 83204, 120); }
+    let mut pos: i64 = 0;
+    let mut last: i64 = 0;
+    while pos < nf && last >= 0 {
+        let mut n: i64 = 19;
+        if pos + n > nf { n = nf - pos; }
+        if tls13c_feed(state, flight + pos, n) != 0 { return 25; }
+        last = tls13c_pump(state);
+        pos = pos + n;
+    }
+    // Unknown anchor: the real verifier refuses with -7 at Certificate.
+    if tls13c_verdict(state) != 0 - 7 { return 101; }
+    if last != tls13c_err_chain() { return 102; }
+    if tls13c_status(state) != 9 || tls13c_is_connected(state) != 0 { return 103; }
+    if tls13c_chain_count(state) != 1 { return 104; }
+    if tls13c_read_app(state, out, 8192) != 0 { return 105; }
+    if tls13c_out_pending(state) != 0 { return 106; }
+    if tls13c_write_app(state, out, 1) != tls13c_err_chain() { return 107; }
+    if tls13c_pump(state) != tls13c_err_chain() { return 108; }
+    if tls13c_feed(state, flight, nf) != tls13c_err_chain() { return 109; }
+    if tls13c_tick(state) != tls13c_err_chain() { return 110; }
+    if tls13c_close(state) != tls13c_err_chain() { return 111; }
+    if tls13c_status(state) != 9 || tls13c_is_connected(state) != 0 { return 112; }
+    if tls13c_verdict(state) != 0 - 7 { return 113; }
+    0
+}
+
+pub fn tls13ct_run_shipped() -> i64 {
+    let buf: i64 = __mind_alloc(16384);
+    let mut i: i64 = 0;
+    while i < 24 {
+        // Exactly the eight positive recordings (skip the tamper variants),
+        // each configured with the unrelated anchor (variant 2).
+        let n: i64 = tls13ct_frozen(i, buf);
+        let rc: i64 = tls13ct_shipped_replay(buf, n, 1700000000, 2);
+        if rc != 0 { return rc; }
+        i = i + 3;
+    }
+    0
+}

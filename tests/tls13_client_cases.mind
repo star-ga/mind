@@ -1,0 +1,504 @@
+// Pure-MIND regression entry point; identical assertions on both backends.
+pub fn tls13c_test_basics() -> i64 {
+    let s: i64 = __mind_alloc(tls13c_state_size());
+    let e: i64 = __mind_alloc(192);
+    let a: i64 = __mind_alloc(4);
+    let d: i64 = __mind_alloc(3);
+    let ch: i64 = __mind_alloc(8192);
+    tls13c_zero(e, 192);
+    tls13c_zero(a, 4);
+    __mind_store_i8(d, 97);
+    __mind_store_i8(d + 1, 46);
+    __mind_store_i8(d + 2, 98);
+    if tls13c_init(s, e, 192, a, 4, d, 3, 1700000000, 10, 0) != 0 { return 1; }
+    // A verdict must distinguish "not checked" from accept (0).
+    if tls13c_verdict(s) == 0 { return 2; }
+    let n: i64 = tls13c_build_client_hello(s, e, 192, ch);
+    if n < 1 { return 3; }
+    if tls13c_seal_client_hello(s, ch, n) != 0 { return 4; }
+    // Truncated handshake header in a complete record must latch ERROR.
+    let r: i64 = __mind_alloc(6);
+    __mind_store_i8(r, 22);
+    __mind_store_i8(r + 1, 3);
+    __mind_store_i8(r + 2, 3);
+    tls13c_put_be16(r + 3, 1);
+    __mind_store_i8(r + 5, 2);
+    if tls13c_feed(s, r, 6) != 0 { return 5; }
+    // Reassembly may await another record, but EOF must refuse.
+    tls13c_pump(s);
+    if tls13c_signal_eof(s) >= 0 { return 6; }
+    if tls13c_is_connected(s) != 0 { return 7; }
+    0
+}
+
+fn tls13ct_equal(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if tls13c_u8(a + i) != tls13c_u8(b + i) { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+pub fn tls13ct_replay(f: i64, size: i64, now: i64, wrong_name: i64) -> i64 {
+    if size < 96 { return 10; }
+    let suite: i64 = __mind_load_i64(f);
+    let group: i64 = __mind_load_i64(f + 8);
+    let flags: i64 = __mind_load_i64(f + 16);
+    let n1: i64 = __mind_load_i64(f + 24);
+    let n2: i64 = __mind_load_i64(f + 32);
+    let nh: i64 = __mind_load_i64(f + 40);
+    let ns: i64 = __mind_load_i64(f + 48);
+    let nf: i64 = __mind_load_i64(f + 56);
+    let na: i64 = __mind_load_i64(f + 64);
+    let ncf: i64 = __mind_load_i64(f + 72);
+    let nca: i64 = __mind_load_i64(f + 80);
+    let mode: i64 = __mind_load_i64(f + 88);
+    if 96 + n1 + n2 + nh + ns + nf + na + ncf + nca != size { return 11; }
+    let ch1: i64 = f + 96;
+    let ch2: i64 = ch1 + n1;
+    let hrr: i64 = ch2 + n2;
+    let sh: i64 = hrr + nh;
+    let flight: i64 = sh + ns;
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    // Name mutation is applied after the frozen CH: same wire, different
+    // caller authentication identity. The wire transcript remains fixed.
+    let entropy: i64 = tls13ct_config(state, flags, now, wrong_name & 2);
+    let out: i64 = __mind_alloc(8192);
+    let got1: i64 = tls13c_build_client_hello(state, entropy, 192, out);
+    if got1 != n1 { return 12; }
+    if tls13ct_equal(out, ch1, n1) != 1 { return 13; }
+    if tls13c_seal_client_hello(state, out, got1) != 0 { return 14; }
+    tls13c_read_out(state, out, 8192);
+    if nh > 0 {
+        let rn: i64 = tls13ct_plain_record(hrr, nh, out);
+        tls13c_feed(state, out, rn);
+        if tls13c_pump(state) != 0 { return 15; }
+        if tls13c_status(state) != 10 { return 16; }
+        let got2: i64 = tls13c_build_client_hello2(state, entropy, 192, out);
+        if got2 != n2 { return 17; }
+        if tls13ct_equal(out, ch2, n2) != 1 { return 18; }
+        if tls13c_seal_client_hello2(state, out, got2) != 0 { return 19; }
+        tls13c_read_out(state, out, 8192);
+    }
+    let sn: i64 = tls13ct_plain_record(sh, ns, out);
+    // Record input fragmented independently of handshake-message boundaries.
+    let mut i: i64 = 0;
+    while i < sn {
+        tls13c_feed(state, out + i, 1);
+        if tls13c_pump(state) < 0 { return 20; }
+        i = i + 1;
+    }
+    if tls13c_status(state) != 3 { return 21; }
+    if tls13c_suite(state) != suite || tls13c_group(state) != group { return 22; }
+    if tls13c_version(state) != 772 { return 23; }
+    if tls13c_write_app(state, out, 1) >= 0 { return 24; }
+    if wrong_name == 1 { __mind_store_i8(state + 83204, 120); }
+    let mut pos: i64 = 0;
+    let mut last: i64 = 0;
+    while pos < nf && last >= 0 {
+        let mut n: i64 = 19;
+        if pos + n > nf { n = nf - pos; }
+        if tls13c_feed(state, flight + pos, n) != 0 { return 25; }
+        last = tls13c_pump(state);
+        pos = pos + n;
+    }
+    let mut verdict: i64 = 0;
+    if now > 1893456000 { verdict = 0 - 6; }
+    if wrong_name == 1 { verdict = 0 - 8; }
+    if wrong_name == 2 { verdict = 0 - 7; }
+    let mut error: i64 = 0;
+    if verdict != 0 { error = tls13c_err_chain(); }
+    if verdict == 0 && mode == 1 { error = tls13c_err_cv(); }
+    if verdict == 0 && mode == 2 { error = tls13c_err_fin(); }
+    if tls13c_verdict(state) != verdict { return 28; }
+    if last != error { return 27; }
+    if tls13c_alpn(state, out, 8192) != 8 { return 30; }
+    if __mind_load_i64(out) != 3543824036607063144 { return 31; }
+    if tls13c_chain_count(state) != 1 { return 32; }
+    let cert: i64 = __mind_alloc(1024);
+    let cn: i64 = tls13ct_fx_leaf_der(cert);
+    if tls13c_chain_cert(state, 0, out, 8192) != cn { return 33; }
+    if tls13ct_equal(out, cert, cn) != 1 { return 34; }
+    if error != 0 {
+        if tls13c_status(state) != 9 || tls13c_is_connected(state) != 0 { return 29; }
+        if tls13c_read_app(state, out, 8192) != 0 { return 90; }
+        if tls13c_out_pending(state) != 0 { return 35; }
+        if tls13c_write_app(state, out, 1) >= 0 { return 36; }
+        i = 320;
+        while i < 4384 {
+            if tls13c_u8(state + i) != 0 { return 37; }
+            i = i + 1;
+        }
+        return 0;
+    }
+    if tls13c_is_connected(state) != 1 { return 89; }
+    if tls13c_read_out(state, out, 8192) != ncf { return 91; }
+    if tls13ct_equal(out, flight + nf + na, ncf) != 1 { return 92; }
+    if tls13c_feed(state, flight + nf, na) != 0 { return 93; }
+    if tls13c_pump(state) != 0 { return 94; }
+    if tls13c_read_app(state, out, 8192) != 4 { return 95; }
+    if tls13c_u8(out) != 112 || tls13c_u8(out + 1) != 111 || tls13c_u8(out + 2) != 110 || tls13c_u8(out + 3) != 103 { return 96; }
+    __mind_store_i8(out + 1, 105);
+    if tls13c_write_app(state, out, 4) != 4 { return 97; }
+    if tls13c_read_out(state, out, 8192) != nca { return 98; }
+    if tls13ct_equal(out, flight + nf + na + ncf, nca) != 1 { return 99; }
+    0
+}
+
+// Direct parser test using published RFC signed content. It does not change
+// the production verifier or admit a connection; it isolates CV verification.
+pub fn tls13ct_cv() -> i64 {
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    tls13ct_config(state, 0, 1700000000, 0);
+    let cert: i64 = __mind_alloc(445);
+    tls13ct_rfc_certificate(cert);
+    if tls13c_parse_certificate(state, cert, 445) != 0 { return 40; }
+    let transcript: i64 = __mind_alloc(2048);
+    let tn: i64 = tls13ct_rfc_cv_transcript(transcript);
+    if tls13c_transcript_append(state, transcript, tn) != 0 { return 41; }
+    let cv: i64 = __mind_alloc(136);
+    tls13ct_rfc_cv(cv);
+    if tls13c_parse_and_verify_cv(state, cv, 136) != 0 { return 42; }
+    __mind_store_i8(cv + 8, tls13c_u8(cv + 8) ^ 1);
+    if tls13c_parse_and_verify_cv(state, cv, 136) != tls13c_err_cv() { return 43; }
+    0
+}
+
+pub fn tls13ct_sni(mode: i64) -> i64 {
+    let s: i64 = __mind_alloc(tls13c_state_size());
+    let e: i64 = __mind_alloc(192);
+    tls13c_zero(e, 192);
+    let a: i64 = __mind_alloc(4);
+    tls13c_zero(a, 4);
+    let d: i64 = __mind_alloc(16);
+    let mut n: i64 = 3;
+    __mind_store_i8(d, 97); __mind_store_i8(d + 1, 46); __mind_store_i8(d + 2, 98);
+    if mode == 1 {
+        __mind_store_i64(d, 3328210909095473713);
+        __mind_store_i8(d + 8, 49); n = 9;
+    }
+    if mode == 2 { __mind_store_i8(d, 58); __mind_store_i8(d + 1, 58); __mind_store_i8(d + 2, 49); }
+    if mode == 3 { __mind_store_i8(d, 49); __mind_store_i8(d + 1, 50); __mind_store_i8(d + 2, 51); }
+    if tls13c_init(s, e, 192, a, 4, d, n, 1700000000, 10, 0) != 0 { return 50; }
+    let ch: i64 = __mind_alloc(8192);
+    if tls13c_build_client_hello(s, e, 192, ch) < 0 { return 51; }
+    let ext: i64 = tls13ct_extension(ch, 0);
+    if mode == 1 || mode == 2 {
+        if ext != 0 { return 52; }
+    } else {
+        if ext == 0 { return 53; }
+        if tls13c_be16(ext) != n + 3 || tls13c_be16(ext + 3) != n { return 54; }
+        if tls13ct_equal(ext + 5, d, n) != 1 { return 55; }
+    }
+    // The fixed RSA leaf is signed with PKCS1/SHA256. This scheme may be
+    // offered for certificate signatures, although TLS 1.3 forbids it in CV.
+    let sigs: i64 = tls13ct_extension(ch, 13);
+    if sigs == 0 { return 58; }
+    let mut sigpos: i64 = 2;
+    let mut cert_alg: i64 = 0;
+    while sigpos < 2 + tls13c_be16(sigs) {
+        if tls13c_be16(sigs + sigpos) == 1025 { cert_alg = 1; }
+        sigpos = sigpos + 2;
+    }
+    if cert_alg != 1 { return 59; }
+    let groups: i64 = tls13ct_extension(ch, 10);
+    if groups == 0 { return 56; }
+    if tls13c_be16(groups) != 2 || tls13c_be16(groups + 2) != 29 { return 57; }
+    0
+}
+
+// Malformed peer input through public feed/pump; no direct state transition.
+pub fn tls13ct_negative(mode: i64) -> i64 {
+    let s: i64 = __mind_alloc(tls13c_state_size());
+    let mut flags: i64 = 9;
+    if mode == 3 { flags = 1; }
+    if mode == 14 { flags = 0; }
+    let e: i64 = tls13ct_config(s, flags, 1700000000, 0);
+    let out: i64 = __mind_alloc(8192);
+    let chn: i64 = tls13c_build_client_hello(s, e, 192, out);
+    if chn < 0 { return 60; }
+    tls13c_seal_client_hello(s, out, chn);
+    tls13c_read_out(s, out, 8192);
+    let sh: i64 = __mind_alloc(2048);
+    let zero: i64 = __mind_alloc(1120);
+    tls13c_zero(zero, 1120);
+    let mut n: i64 = tls13ct_server_hello(4865, 29, zero, 32, 1, sh);
+    if mode == 0 {
+        tls13c_copy(sh + n, sh + 76, 6); n = n + 6;
+        tls13c_put_be24(sh + 1, n - 4); tls13c_put_be16(sh + 74, n - 76);
+    }
+    if mode == 2 { tls13c_put_be16(sh + 86, 23); }
+    if mode == 4 { tls13c_put_be16(sh + 4, 769); }
+    if mode == 7 { __mind_store_i8(sh + 39, 255); }
+    if mode == 8 { __mind_store_i8(sh + n, 0); n = n + 1; tls13c_put_be24(sh + 1, n - 4); tls13c_put_be16(sh + 74, n - 76); }
+    if mode == 10 { tls13c_put_be16(sh + 88, 1234); }
+    if mode == 11 { n = 82; tls13c_put_be24(sh + 1, n - 4); tls13c_put_be16(sh + 74, n - 76); }
+    if mode == 12 { tls13c_put_be16(sh + 80, 771); }
+    if mode == 14 { n = tls13ct_server_hello(4865, 29, zero, 32, 0, sh); }
+    let mut rn: i64 = tls13ct_plain_record(sh, n, out);
+    if mode == 9 { __mind_store_i8(out, 20); }
+    if mode == 13 { __mind_store_i8(out, 23); }
+    tls13c_feed(s, out, rn);
+    let mut rc: i64 = tls13c_pump(s);
+    if mode == 1 || mode == 5 || mode == 6 {
+        if rc != 0 || tls13c_status(s) != 10 { return 61; }
+        let ch2n: i64 = tls13c_build_client_hello2(s, e, 192, out);
+        if ch2n < 0 { return 62; }
+        tls13c_seal_client_hello2(s, out, ch2n);
+        tls13c_read_out(s, out, 8192);
+        if mode == 5 { n = tls13ct_server_hello(4867, 29, zero, 32, 0, sh); }
+        if mode == 6 { n = tls13ct_server_hello(4865, 4588, zero, 1120, 0, sh); }
+        rn = tls13ct_plain_record(sh, n, out);
+        tls13c_feed(s, out, rn);
+        rc = tls13c_pump(s);
+    }
+    if rc >= 0 || tls13c_status(s) != 9 { return 63; }
+    if tls13c_is_connected(s) != 0 || tls13c_out_pending(s) != 0 { return 64; }
+    if tls13c_write_app(s, out, 1) >= 0 { return 65; }
+    0
+}
+
+pub fn tls13ct_alpn(mode: i64) -> i64 {
+    let s: i64 = __mind_alloc(tls13c_state_size());
+    let e: i64 = tls13ct_config(s, 0, 1700000000, 0);
+    let list: i64 = __mind_alloc(12);
+    __mind_store_i8(list, 2); __mind_store_i8(list + 1, 104); __mind_store_i8(list + 2, 50);
+    __mind_store_i8(list + 3, 8); __mind_store_i64(list + 4, 3543824036607063144);
+    if mode == 0 { __mind_store_i8(list, 0); }
+    let rc: i64 = tls13c_set_alpn(s, list, 12);
+    if mode == 0 {
+        if rc >= 0 || tls13c_status(s) != 9 { return 70; }
+        return 0;
+    }
+    if rc != 0 { return 71; }
+    // Caller mutation after set_alpn cannot change the snapshotted offer.
+    __mind_store_i8(list + 1, 120);
+    let ch: i64 = __mind_alloc(8192);
+    if tls13c_build_client_hello(s, e, 192, ch) < 0 { return 72; }
+    let offered: i64 = tls13ct_extension(ch, 16);
+    if offered == 0 { return 73; }
+    if tls13c_u8(offered + 3) != 104 { return 74; }
+    let ee: i64 = __mind_alloc(64);
+    __mind_store_i8(ee, 8); tls13c_put_be24(ee + 1, 11);
+    tls13c_put_be16(ee + 4, 9); tls13c_put_be16(ee + 6, 16);
+    tls13c_put_be16(ee + 8, 5); tls13c_put_be16(ee + 10, 3);
+    __mind_store_i8(ee + 12, 2); __mind_store_i8(ee + 13, 104); __mind_store_i8(ee + 14, 50);
+    let mut n: i64 = 15;
+    if mode == 2 { __mind_store_i8(ee + 14, 51); }
+    if mode == 3 {
+        tls13c_copy(ee + 15, ee + 6, 9); n = 24;
+        tls13c_put_be24(ee + 1, 20); tls13c_put_be16(ee + 4, 18);
+    }
+    let erc: i64 = tls13c_parse_ee(s, ee, n);
+    if mode == 1 {
+        if erc != 0 || tls13c_alpn_len(s) != 2 { return 75; }
+    } else {
+        if erc >= 0 { return 76; }
+    }
+    0
+}
+
+pub fn tls13ct_cookie_only(mode: i64) -> i64 {
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    let entropy: i64 = tls13ct_config(state, 1 + mode * 8, 1700000000, 0);
+    let ch1: i64 = __mind_alloc(8192);
+    let n1: i64 = tls13c_build_client_hello(state, entropy, 192, ch1);
+    tls13c_seal_client_hello(state, ch1, n1);
+    let out: i64 = __mind_alloc(8192);
+    tls13c_read_out(state, out, 8192);
+    let hrr: i64 = __mind_alloc(128);
+    tls13ct_server_hello(4865, 29, 0, 0, 1, hrr);
+    // Remove HRR key_share; retry changes only the cookie.
+    tls13c_copy(hrr + 82, hrr + 88, 10);
+    tls13c_put_be24(hrr + 1, 88);
+    tls13c_put_be16(hrr + 74, 16);
+    let rn: i64 = tls13ct_plain_record(hrr, 92, out);
+    tls13c_feed(state, out, rn);
+    let rc: i64 = tls13c_pump(state);
+    if mode == 1 {
+        if rc >= 0 || tls13c_status(state) != 9 { return 86; }
+        return 0;
+    }
+    if rc != 0 || tls13c_status(state) != 10 { return 80; }
+    let ch2: i64 = __mind_alloc(8192);
+    let n2: i64 = tls13c_build_client_hello2(state, entropy, 192, ch2);
+    if n2 != n1 + 10 { return 81; }
+    let share1: i64 = tls13ct_extension(ch1, 51);
+    let share2: i64 = tls13ct_extension(ch2, 51);
+    if share1 == 0 || share2 == 0 { return 82; }
+    let share_len: i64 = 2 + tls13c_be16(share1);
+    if tls13ct_equal(share1, share2, share_len) != 1 { return 83; }
+    let cookie: i64 = tls13ct_extension(ch2, 44);
+    if cookie == 0 || tls13c_be16(cookie) != 4 { return 84; }
+    if tls13ct_equal(cookie + 2, hrr + 88, 4) != 1 { return 85; }
+    0
+}
+
+// Reject unsolicited per-certificate extensions and malformed group lists.
+pub fn tls13ct_extensions(mode: i64) -> i64 {
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    tls13ct_config(state, 0, 1700000000, 0);
+    let msg: i64 = __mind_alloc(512);
+    if mode == 0 {
+        tls13ct_rfc_certificate(msg);
+        tls13c_put_be24(msg + 1, 442);
+        tls13c_put_be24(msg + 5, 438);
+        tls13c_put_be16(msg + 443, 1);
+        __mind_store_i8(msg + 445, 255);
+        if tls13c_parse_certificate(state, msg, 446) >= 0 { return 87; }
+    } else {
+        __mind_store_i8(msg, 8); tls13c_put_be24(msg + 1, 9);
+        tls13c_put_be16(msg + 4, 7); tls13c_put_be16(msg + 6, 10);
+        tls13c_put_be16(msg + 8, 3); tls13c_put_be16(msg + 10, 1);
+        __mind_store_i8(msg + 12, 29);
+        if tls13c_parse_ee(state, msg, 13) >= 0 { return 88; }
+    }
+    0
+}
+
+// Frozen container -> a client state that has sent CH1 (and, for an HRR
+// flight, consumed the HRR and sent CH2), now waiting for ServerHello.
+// Returns 0 if the frozen prefix does not replay byte-for-byte.
+fn tls13ct_to_sh(f: i64) -> i64 {
+    let flags: i64 = __mind_load_i64(f + 16);
+    let n1: i64 = __mind_load_i64(f + 24);
+    let n2: i64 = __mind_load_i64(f + 32);
+    let nh: i64 = __mind_load_i64(f + 40);
+    let ch1: i64 = f + 96;
+    let ch2: i64 = ch1 + n1;
+    let hrr: i64 = ch2 + n2;
+    let state: i64 = __mind_alloc(tls13c_state_size());
+    let entropy: i64 = tls13ct_config(state, flags, 1700000000, 0);
+    let out: i64 = __mind_alloc(8192);
+    let got1: i64 = tls13c_build_client_hello(state, entropy, 192, out);
+    if got1 != n1 { return 0; }
+    if tls13ct_equal(out, ch1, n1) != 1 { return 0; }
+    if tls13c_seal_client_hello(state, out, got1) != 0 { return 0; }
+    tls13c_read_out(state, out, 8192);
+    if nh > 0 {
+        let rn: i64 = tls13ct_plain_record(hrr, nh, out);
+        tls13c_feed(state, out, rn);
+        if tls13c_pump(state) != 0 { return 0; }
+        if tls13c_status(state) != 10 { return 0; }
+        let got2: i64 = tls13c_build_client_hello2(state, entropy, 192, out);
+        if got2 != n2 { return 0; }
+        if tls13ct_equal(out, ch2, n2) != 1 { return 0; }
+        if tls13c_seal_client_hello2(state, out, got2) != 0 { return 0; }
+        tls13c_read_out(state, out, 8192);
+    }
+    state
+}
+
+// Address and length of a frozen container's ServerHello message.
+fn tls13ct_sh_addr(f: i64) -> i64 {
+    f + 96 + __mind_load_i64(f + 24) + __mind_load_i64(f + 32) + __mind_load_i64(f + 40)
+}
+
+fn tls13ct_sh_len(f: i64) -> i64 {
+    __mind_load_i64(f + 48)
+}
+
+// Feed msg[0..n) as one plaintext handshake record; return pump's result.
+fn tls13ct_feed_plain(state: i64, msg: i64, n: i64) -> i64 {
+    let out: i64 = __mind_alloc(n + 8);
+    let rn: i64 = tls13ct_plain_record(msg, n, out);
+    if tls13c_feed(state, out, rn) != 0 { return 0 - 1000; }
+    tls13c_pump(state)
+}
+
+// A refused ServerHello-stage input: negative result and latched ERROR.
+fn tls13ct_refused(state: i64, rc: i64) -> i64 {
+    if rc >= 0 { return 1; }
+    if tls13c_status(state) != 9 || tls13c_is_connected(state) != 0 { return 1; }
+    0
+}
+
+// One fault per case, each preceded by its positive twin through the same
+// path, so that only the check under test can produce the refusal. Valid
+// recorded key shares are used wherever the check runs before key derivation.
+// Containers (driver MATRIX order): 0 = 1301/x25519/no HRR, 3 = 1301/x25519
+// HRR, 9 = 1301/X25519MLKEM768 HRR, 15 = 1303/x25519 HRR.
+pub fn tls13ct_isolated(mode: i64) -> i64 {
+    let a: i64 = __mind_alloc(16384);
+    let b: i64 = __mind_alloc(16384);
+    let mut base: i64 = 0;
+    let mut other: i64 = 0;
+    if mode == 3 { base = 3; other = 15; }
+    if mode == 4 { base = 9; other = 3; }
+    if mode < 5 {
+        tls13ct_frozen(base, a);
+        tls13ct_frozen(other, b);
+        // Positive twin: the container's own ServerHello is accepted.
+        let ok: i64 = tls13ct_to_sh(a);
+        if ok == 0 { return 120 + mode; }
+        if tls13ct_feed_plain(ok, tls13ct_sh_addr(a), tls13ct_sh_len(a)) != 0 { return 125 + mode; }
+        if tls13c_status(ok) != 3 { return 130 + mode; }
+        let s: i64 = tls13ct_to_sh(a);
+        if s == 0 { return 120 + mode; }
+        let sh: i64 = tls13ct_sh_addr(a);
+        let ns: i64 = tls13ct_sh_len(a);
+        let m: i64 = __mind_alloc(ns + 16);
+        tls13c_copy(m, sh, ns);
+        let mut rc: i64 = 0;
+        if mode == 0 {
+            // A ServerHello record may not carry bytes of the next epoch.
+            __mind_store_i8(m + ns, 8);
+            rc = tls13ct_feed_plain(s, m, ns + 1);
+        }
+        if mode == 1 {
+            // A cookie is legal only in a HelloRetryRequest.
+            __mind_store_i8(m + ns, 0); __mind_store_i8(m + ns + 1, 44);
+            tls13c_put_be16(m + ns + 2, 6); tls13c_put_be16(m + ns + 4, 4);
+            __mind_store_i8(m + ns + 6, 1); __mind_store_i8(m + ns + 7, 2);
+            __mind_store_i8(m + ns + 8, 3); __mind_store_i8(m + ns + 9, 4);
+            tls13c_put_be24(m + 1, ns + 10 - 4);
+            tls13c_put_be16(m + 74, tls13c_be16(m + 74) + 10);
+            rc = tls13ct_feed_plain(s, m, ns + 10);
+        }
+        if mode == 2 {
+            // After ServerHello every handshake byte must be encrypted.
+            if tls13ct_feed_plain(s, m, ns) != 0 || tls13c_status(s) != 3 { return 135; }
+            let ee: i64 = __mind_alloc(8);
+            __mind_store_i8(ee, 8); tls13c_put_be24(ee + 1, 2); tls13c_put_be16(ee + 4, 0);
+            rc = tls13ct_feed_plain(s, ee, 6);
+        }
+        if mode == 3 || mode == 4 {
+            // The ServerHello after a retry keeps the HRR suite (3) and group (4):
+            // a valid recorded ServerHello from another flight changes exactly one.
+            rc = tls13ct_feed_plain(s, tls13ct_sh_addr(b), tls13ct_sh_len(b));
+        }
+        if tls13ct_refused(s, rc) != 0 { return 140 + mode; }
+        return 0;
+    }
+    // Encrypted-extension checks through the public EE parser.
+    let ee: i64 = __mind_alloc(16);
+    __mind_store_i8(ee, 8); tls13c_put_be24(ee + 1, 6); tls13c_put_be16(ee + 4, 4);
+    tls13c_put_be16(ee + 8, 0);
+    let s: i64 = __mind_alloc(tls13c_state_size());
+    tls13ct_config(s, 0, 1700000000, 0);
+    let empty: i64 = __mind_alloc(8);
+    __mind_store_i8(empty, 8); tls13c_put_be24(empty + 1, 2); tls13c_put_be16(empty + 4, 0);
+    if tls13c_parse_ee(s, empty, 6) != 0 { return 145; }
+    if mode == 5 {
+        // early_data (42) was never offered: an unsolicited EE extension.
+        tls13c_put_be16(ee + 6, 42);
+        if tls13c_parse_ee(s, ee, 10) >= 0 { return 146; }
+        return 0;
+    }
+    // An empty server_name acknowledgement is legal for a DNS name ...
+    tls13c_put_be16(ee + 6, 0);
+    if tls13c_parse_ee(s, ee, 10) != 0 { return 147; }
+    // ... and illegal when the identity is an IP literal (no SNI was sent).
+    let ip: i64 = __mind_alloc(tls13c_state_size());
+    let e: i64 = __mind_alloc(192);
+    tls13c_zero(e, 192);
+    let anchors: i64 = __mind_alloc(4);
+    tls13c_zero(anchors, 4);
+    let d: i64 = __mind_alloc(4);
+    __mind_store_i8(d, 58); __mind_store_i8(d + 1, 58); __mind_store_i8(d + 2, 49);
+    if tls13c_init(ip, e, 192, anchors, 4, d, 3, 1700000000, 10, 0) != 0 { return 148; }
+    if tls13c_parse_ee(ip, empty, 6) != 0 { return 149; }
+    if tls13c_parse_ee(ip, ee, 10) >= 0 { return 150; }
+    0
+}
