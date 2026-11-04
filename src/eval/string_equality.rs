@@ -406,11 +406,14 @@ pub(crate) fn analyze_interpreted(module: &Module) -> Analysis {
 }
 
 fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
+    // The interpreter's module merges the project's modules and the std code
+    // it runs, so the stores between them are its own (see `Decls::new`).
+    let project = !desugar_methods;
     let ordinals = equality_ordinals(module);
     let methods_wanted = desugar_methods && !ordinals.methods.is_empty();
     if ordinals.equalities.is_empty()
         && !methods_wanted
-        && !calls_may_be_refused()
+        && !(project && calls_may_be_refused())
         && !has_other_string_form(module)
     {
         return Analysis {
@@ -418,7 +421,7 @@ fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
             refused: Vec::new(),
         };
     }
-    let (mut targets, methods, refused) = walk::collect_targets(module, &ordinals);
+    let (mut targets, methods, refused) = walk::collect_targets(module, &ordinals, project);
     let mut methods = if desugar_methods {
         methods
     } else {

@@ -69,8 +69,10 @@ struct Walk<'a> {
 pub(super) fn collect_targets(
     module: &Module,
     ordinals: &Ordinals,
+    project: bool,
 ) -> (Targets, MethodTargets, Vec<Refused>) {
-    let (targets, methods, refused, _) = fixpoint(Decls::new(module), ordinals, module);
+    let decls = Decls::new(module, project);
+    let (targets, methods, refused, _) = fixpoint(decls, ordinals, module);
     (targets, methods, refused)
 }
 

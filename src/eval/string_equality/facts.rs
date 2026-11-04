@@ -261,13 +261,18 @@ pub(super) struct Decls {
 }
 
 impl Decls {
-    pub(super) fn new(module: &Module) -> Self {
+    /// The declarations of `module`; with `project`, starting from the
+    /// stores the other modules of its project build make (see
+    /// [`super::project`]). The interpreter's module already holds the
+    /// project's modules and the std code it runs, so it takes none.
+    pub(super) fn new(module: &Module, project: bool) -> Self {
         #[cfg(feature = "cross-module-imports")]
-        if let Some(project) = super::project::current() {
+        if let Some(project) = super::project::current().filter(|_| project) {
             let mut decls = Self::seeded(module, project.fns.clone(), project.slots.shared());
             decls.project_refusing = project.refusing.clone();
             return decls;
         }
+        let _ = project;
         Self::seeded(module, Default::default(), Contradicted::default())
     }
 
