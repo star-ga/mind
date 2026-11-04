@@ -69,10 +69,12 @@ def ask_model(system: str, user: str) -> str:
         import subprocess
         # The job also exports the workload-identity ANTHROPIC_* variables; the CLI would prefer them over the token.
         env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}
+        import tempfile
+        # Run outside the checkout: inside it the model spends its single turn reading files ("Reached max turns").
         run = subprocess.run(
             ["claude", "-p", "--model", "claude-sonnet-5-5", "--max-turns", "1", "--output-format", "text",
              "--append-system-prompt", system],
-            input=user, capture_output=True, text=True, timeout=900, check=False, env=env,
+            input=user, capture_output=True, text=True, timeout=900, check=False, env=env, cwd=tempfile.mkdtemp(),
         )
         if run.returncode != 0 or not run.stdout.strip():
             detail = (run.stderr.strip() or run.stdout.strip())[:500]
