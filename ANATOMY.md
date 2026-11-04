@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1948 | **Est. tokens:** ~3,806,414
-**Generated:** 2026-11-04 11:07 UTC
+**Files:** 1948 | **Est. tokens:** ~3,806,413
+**Generated:** 2026-11-04 11:22 UTC
 
 ## Token Budget Guide
 
@@ -141,7 +141,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,206 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 23 | ~77,847 |
+| `src/project/` | 23 | ~77,846 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -1507,7 +1507,7 @@
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5879 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3672 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_struct_schema.rs` (~841 tok, large) — Copyright 2026 STARGA Inc.
+- `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
 - `substrate_link.rs` (~4509 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`

@@ -6,8 +6,8 @@
 //! A project build gives lowering the schema of every struct in the project
 //! and the bundled std through the whole-project registry
 //! (`build_global_enums`). A single translation unit has no registry, so it
-//! reads a std struct's schema from [`bundled_struct_schema`] instead. Both
-//! build each schema with [`struct_schema`] from the same bundled sources, so
+//! reads a std struct's schema from `bundled_struct_schema` instead. Both
+//! build each schema with `struct_schema` from the same bundled sources, so
 //! the two paths cannot disagree about a std layout.
 
 use std::collections::BTreeMap;
