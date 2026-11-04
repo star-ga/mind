@@ -404,7 +404,7 @@ fn memory_addresses_treat_carried_constant_initializers_as_runtime_bases() {
         &[],
     );
     assert!(
-        text.contains(&format!("arith.addi %{}", loop_body_root(&text))),
+        text.contains(&format!("arith.addi {}", loop_body_root(&text))),
         "runtime base dropped:\n{text}"
     );
 }
