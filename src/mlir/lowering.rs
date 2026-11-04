@@ -21,6 +21,10 @@ use crate::mlir::gemm_tuning::*;
 use crate::opt::ir_canonical::canonicalize_module;
 use crate::types::{ConvPadding, DType, ShapeDim};
 
+#[cfg(feature = "std-surface")]
+#[path = "memory_address.rs"]
+mod memory_address;
+
 /// RFC 0006 Track B — the statically-known SIMD lane count emitted by the
 /// `dot_f32_v` lowering. Eight f32 lanes is the AVX2 / NEON-pair width;
 /// LLVM legalises wider/narrower targets from the same `vector<8xf32>`.
@@ -360,6 +364,8 @@ type ExternCFnSig = (
 
 struct LoweringContext {
     values: BTreeMap<ValueId, ValueKind>,
+    #[cfg(feature = "std-surface")]
+    memory_addresses: memory_address::MemoryAddresses,
     outputs: Vec<ValueId>,
     body: String,
     /// RFC 0005 Phase 0: callee name -> arity for every `Instr::Call`
@@ -563,6 +569,8 @@ impl LoweringContext {
     fn new() -> Self {
         Self {
             values: BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            memory_addresses: memory_address::MemoryAddresses::default(),
             outputs: Vec::new(),
             body: String::new(),
             #[cfg(feature = "std-surface")]
@@ -1097,6 +1105,7 @@ impl LoweringContext {
         // change (keystone/canary unaffected). Sub-context discoveries still
         // bubble UP via the existing per-arm merge loops.
         sub.i1_values = self.i1_values.clone();
+        sub.memory_addresses = self.memory_addresses.clone();
     }
 
     /// NARROW-INT control-flow merge typing. Given the two branch yields of a
@@ -1477,6 +1486,8 @@ impl LoweringContext {
     }
 
     fn emit_instr(&mut self, instr_index: usize, instr: &Instr) -> Result<(), MlirLowerError> {
+        #[cfg(feature = "std-surface")]
+        self.record_memory_address(instr);
         match instr {
             Instr::ConstI64(id, value) => {
                 self.emit_line(&format!("    %{} = arith.constant {} : i64", id.0, value));
@@ -3004,9 +3015,9 @@ impl LoweringContext {
                 // runtime-support bridge (`runtime-support/mind_intrinsics.c`):
                 // each call costs a PLT-indirected `call` per element, which on a
                 // load/store-bound kernel (e.g. the Q16.16 FFT butterfly) is the
-                // dominant cost. Lower them INLINE to `llvm.inttoptr` +
-                // `llvm.load`/`llvm.store` so the inner loop becomes `mov`-based
-                // like a C compiler's, with NO external symbol and NO PLT hop.
+                // dominant cost. Lower them INLINE to a base `llvm.inttoptr`
+                // plus byte-offset `llvm.getelementptr` and `llvm.load`/`llvm.store`
+                // so address strides remain visible, with no external symbol.
                 //
                 // Byte-identity is preserved EXACTLY because each lowering matches
                 // the C semantics op-for-op:
@@ -3040,10 +3051,7 @@ impl LoweringContext {
                         Some(IntrinsicKind::LoadI16) => ("i16", true),
                         _ => ("i8", true),
                     };
-                    self.emit_line(&format!(
-                        "    %ldp{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
-                        dst.0, args[0].0
-                    ));
+                    self.emit_memory_address(args[0], &format!("ldp{}", dst.0));
                     if zext {
                         self.emit_line(&format!(
                             "    %ldv{0} = llvm.load %ldp{0} {{alignment = 1 : i64}} : \
@@ -3082,10 +3090,7 @@ impl LoweringContext {
                         Some(IntrinsicKind::StoreI16) => "i16",
                         _ => "i8",
                     };
-                    self.emit_line(&format!(
-                        "    %stp{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
-                        dst.0, args[0].0
-                    ));
+                    self.emit_memory_address(args[0], &format!("stp{}", dst.0));
                     // Coerce the value from its physical SSA width to the store
                     // width. The legacy path assumed an i64 value and always
                     // `llvm.trunc`'d it; that emits invalid MLIR (`trunc i32 to
@@ -4147,6 +4152,7 @@ impl LoweringContext {
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut cond_sub);
+                cond_sub.memory_addresses.forget(init_ids);
                 // BOOL-ABI loop carry: a loop-carried variable whose PRE-LOOP
                 // value was physically i1 (e.g. `let mut go = x < y`) is
                 // widened to i64 at the entry edge and carried in an i64 header
@@ -4279,6 +4285,7 @@ impl LoweringContext {
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut body_sub);
+                body_sub.memory_addresses.forget(init_ids);
                 // BOOL-ABI loop carry (same rationale as the cond sub-context):
                 // inside the body a carried variable's init_id resolves to the
                 // i64 `%wbod_*` block arg, so it is no longer physically i1.
