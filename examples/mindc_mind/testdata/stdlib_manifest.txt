@@ -82,8 +82,8 @@ sha512	no	bundled
 string	seed	bundled
 time	seed	bundled
 tls13_client	no	bundled
+tls13_client_api	no	bundled
 tls13_client_core	no	bundled
-tls13_client_handshake	no	bundled
 tls13_client_hello	no	bundled
 tls13_finished	no	bundled
 tls13_handshake	no	bundled

@@ -5,9 +5,10 @@
 //
 // ============================ SECURITY SCOPE ==============================
 // x509_verify_peer / chain authentication IS implemented (see
-// x509_verify_server_chain below): bounded fail-closed DER parsing, per-link
-// signature verification (ECDSA P-256 SHA-256/384, RSA PKCS#1 v1.5 SHA-256,
-// RSASSA-PSS SHA-256, ECDSA P-384 SHA-384), basicConstraints cA + pathLen,
+// x509_verify_server_chain in std/x509_path.mind): bounded fail-closed DER
+// parsing, per-link signature verification (ECDSA P-256 SHA-256/384, RSA
+// PKCS#1 v1.5 SHA-256, RSASSA-PSS SHA-256, ECDSA P-384 SHA-384),
+// basicConstraints cA + pathLen,
 // keyUsage/EKU serverAuth, validity windows against a caller-supplied clock,
 // name constraints (DNS subtrees and IPv4/IPv6 address/mask subtrees), and
 // SAN dNSName / iPAddress matching (RFC 6125, no CN fallback, whole-label
@@ -28,8 +29,14 @@
 //   6. Fail-closed: any parse error, truncation, unknown critical extension,
 //      or policy violation returns a distinct negative error code.
 //
-// The x509_parse / x509_verify_self_signed helpers retained below are
-// signature-math utilities: they authenticate NOTHING by themselves.
+// The x509_parse (std/x509_der.mind) / x509_verify_self_signed (below)
+// helpers are signature-math utilities: they authenticate NOTHING by
+// themselves.
+//
+// Layout: this module is the entry point that imports the whole validator;
+// the code lives in the modules it imports. x509_verify_server_chain is in
+// std/x509_path.mind and x509_parse in std/x509_der.mind, so a client such
+// as std.tls13_client calls them without importing this module.
 // ==========================================================================
 
 import std.sha256;
@@ -50,211 +57,6 @@ import std.x509_path;
 // ---------------------------------------------------------------------------
 pub fn x509_peer_auth_supported() -> i64 {
     1
-}
-
-// ---------------------------------------------------------------------------
-// out_fields slot map (each slot is one i64 at out_fields + slot*8):
-//    0 tbs_offset       1 tbs_len          (full DER of tbsCertificate = signed msg)
-//    2 serial_offset    3 serial_len       (serialNumber INTEGER content)
-//    4 issuer_offset    5 issuer_len       (issuer Name, full DER SEQUENCE)
-//    6 subject_offset   7 subject_len      (subject Name, full DER SEQUENCE)
-//    8 notBefore_offset 9 notBefore_len    (validity notBefore Time content)
-//   10 notAfter_offset 11 notAfter_len     (validity notAfter Time content)
-//   12 n_offset        13 n_len            (RSA modulus, leading 0x00 stripped)
-//   14 e_offset        15 e_len            (RSA publicExponent content)
-//   16 sigalg_offset   17 sigalg_len       (signatureAlgorithm, full DER SEQUENCE)
-//   18 sig_offset      19 sig_len          (signatureValue bytes, unused-bits byte skipped)
-//   20 sigoid_offset   21 sigoid_len       (signatureAlgorithm OID content)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// x509_parse — walk the Certificate and record every extracted field.
-// Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
-// (RFC 5280 §4.1). tbsCertificate is itself a SEQUENCE whose full DER encoding
-// (tag+length+content) is exactly the byte string covered by the signature.
-// ---------------------------------------------------------------------------
-pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
-    let t: i64 = __mind_alloc(24);
-
-    // Outer Certificate SEQUENCE.
-    if der_tlv(cert_addr, 0, cert_len, t) != 0 {
-        return 1;
-    }
-    let cpos: i64 = __mind_load_i64(t + 8);
-    // start of tbsCertificate
-
-    // tbsCertificate SEQUENCE — the signed message is its full DER extent.
-    if der_tlv(cert_addr, cpos, cert_len, t) != 0 {
-        return 1;
-    }
-    let tbs_hlen: i64 = __mind_load_i64(t + 8);
-    let tbs_clen: i64 = __mind_load_i64(t + 16);
-    let tbs_total: i64 = tbs_hlen + tbs_clen;
-    __mind_store_i64(out_fields + 0, cpos);
-    __mind_store_i64(out_fields + 8, tbs_total);
-    let tbs_content: i64 = cpos + tbs_hlen;
-
-    // signatureAlgorithm SEQUENCE (follows tbsCertificate).
-    let sapos: i64 = cpos + tbs_total;
-    if der_tlv(cert_addr, sapos, cert_len, t) != 0 {
-        return 1;
-    }
-    let sa_hlen: i64 = __mind_load_i64(t + 8);
-    let sa_total: i64 = sa_hlen + __mind_load_i64(t + 16);
-    __mind_store_i64(out_fields + 128, sapos);
-    // slot 16
-    __mind_store_i64(out_fields + 136, sa_total);
-    // slot 17
-    // First element inside signatureAlgorithm is the OID.
-    let sa_content: i64 = sapos + sa_hlen;
-    if der_tlv(cert_addr, sa_content, cert_len, t) != 0 {
-        return 1;
-    }
-    __mind_store_i64(out_fields + 160, sa_content + __mind_load_i64(t + 8));
-    // slot 20 oid offset
-    __mind_store_i64(out_fields + 168, __mind_load_i64(t + 16));
-    // slot 21 oid len
-
-    // signatureValue BIT STRING (follows signatureAlgorithm).
-    let sigpos: i64 = sapos + sa_total;
-    if der_tlv(cert_addr, sigpos, cert_len, t) != 0 {
-        return 1;
-    }
-    let sig_hlen: i64 = __mind_load_i64(t + 8);
-    let sig_clen: i64 = __mind_load_i64(t + 16);
-    if sig_clen < 2 {
-        // need the unused-bits byte + at least one signature byte
-        return 1;
-    }
-    // BIT STRING content = [unused-bits byte] || signature bytes.
-    __mind_store_i64(out_fields + 144, sigpos + sig_hlen + 1);
-    // slot 18 sig offset
-    __mind_store_i64(out_fields + 152, sig_clen - 1);
-    // slot 19 sig len
-
-    // --- inside tbsCertificate ---
-    let mut p: i64 = tbs_content;
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    if (__mind_load_i64(t + 0)) == 160 {
-        // [0] EXPLICIT version (0xA0) present (v3)
-        p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-        if der_tlv(cert_addr, p, cert_len, t) != 0 {
-            return 1;
-        }
-    }
-    // serialNumber INTEGER.
-    __mind_store_i64(out_fields + 16, p + __mind_load_i64(t + 8));
-    // slot 2
-    __mind_store_i64(out_fields + 24, __mind_load_i64(t + 16));
-    // slot 3
-    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-
-    // signature AlgorithmIdentifier SEQUENCE (inner copy) — skip.
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-
-    // issuer Name SEQUENCE.
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    __mind_store_i64(out_fields + 32, p);
-    // slot 4
-    __mind_store_i64(out_fields + 40, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
-    // slot 5
-    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-
-    // validity SEQUENCE { notBefore Time, notAfter Time }.
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    let val_content: i64 = p + __mind_load_i64(t + 8);
-    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    if der_tlv(cert_addr, val_content, cert_len, t) != 0 {
-        // notBefore
-        return 1;
-    }
-    __mind_store_i64(out_fields + 64, val_content + __mind_load_i64(t + 8));
-    // slot 8
-    __mind_store_i64(out_fields + 72, __mind_load_i64(t + 16));
-    // slot 9
-    let nb_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    if der_tlv(cert_addr, val_content + nb_total, cert_len, t) != 0 {
-        // notAfter
-        return 1;
-    }
-    __mind_store_i64(out_fields + 80, val_content + nb_total + __mind_load_i64(t + 8));
-    // slot 10
-    __mind_store_i64(out_fields + 88, __mind_load_i64(t + 16));
-    // slot 11
-
-    // subject Name SEQUENCE.
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    __mind_store_i64(out_fields + 48, p);
-    // slot 6
-    __mind_store_i64(out_fields + 56, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
-    // slot 7
-    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-
-    // subjectPublicKeyInfo SEQUENCE { algorithm, subjectPublicKey BIT STRING }.
-    if der_tlv(cert_addr, p, cert_len, t) != 0 {
-        return 1;
-    }
-    let mut ps: i64 = p + __mind_load_i64(t + 8);
-    if der_tlv(cert_addr, ps, cert_len, t) != 0 {
-        // algorithm AlgorithmIdentifier — skip
-        return 1;
-    }
-    ps = ps + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    if der_tlv(cert_addr, ps, cert_len, t) != 0 {
-        // subjectPublicKey BIT STRING
-        return 1;
-    }
-    if (__mind_load_i64(t + 16)) < 2 {
-        // unused-bits byte + at least one key byte
-        return 1;
-    }
-    let bit_content: i64 = ps + __mind_load_i64(t + 8);
-    // skip the unused-bits byte -> RSAPublicKey SEQUENCE { modulus, exponent }.
-    let rsa_seq: i64 = bit_content + 1;
-    if der_tlv(cert_addr, rsa_seq, cert_len, t) != 0 {
-        return 1;
-    }
-    let rsa_content: i64 = rsa_seq + __mind_load_i64(t + 8);
-    // modulus INTEGER.
-    if der_tlv(cert_addr, rsa_content, cert_len, t) != 0 {
-        return 1;
-    }
-    let mut n_off: i64 = rsa_content + __mind_load_i64(t + 8);
-    let mut n_len: i64 = __mind_load_i64(t + 16);
-    let after_n: i64 = rsa_content + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    if n_len < 1 {
-        // sign-byte read below needs a non-empty INTEGER content
-        return 1;
-    }
-    if (__mind_load_i8(cert_addr + n_off) & 255) == 0 {
-        // strip DER sign byte
-        n_off = n_off + 1;
-        n_len = n_len - 1;
-    }
-    __mind_store_i64(out_fields + 96, n_off);
-    // slot 12
-    __mind_store_i64(out_fields + 104, n_len);
-    // slot 13
-    // publicExponent INTEGER.
-    if der_tlv(cert_addr, after_n, cert_len, t) != 0 {
-        return 1;
-    }
-    __mind_store_i64(out_fields + 112, after_n + __mind_load_i64(t + 8));
-    // slot 14
-    __mind_store_i64(out_fields + 120, __mind_load_i64(t + 16));
-    // slot 15
-    0
 }
 
 // ---------------------------------------------------------------------------
@@ -285,120 +87,4 @@ pub fn x509_verify_self_signed(cert_addr: i64, cert_len: i64) -> i64 {
     }
     let e_val: i64 = bytes_be_to_i64(cert_addr + e_off, e_len);
     rsa_pkcs1_sha256_verify(cert_addr + n_off, n_len, e_val, cert_addr + sig_off, sig_len, cert_addr + tbs_off, tbs_len)
-}
-
-// ---------------------------------------------------------------------------
-// pub fn x509_verify_server_chain(chain, anchors, expected_dns, now_unix)
-//     -> i64
-//
-// Full authenticated server-certificate chain validation per RFC 5280 / 6125.
-// Returns 0 on success, negative on failure.
-//
-// Trust-anchor policy (RFC 5280 §6.1.1(d)): anchors are trusted public-key
-// bindings. Their self-signature is never verified and their validity period
-// is not evaluated, so an unrecognised signature algorithm on an anchor is
-// tolerated. Each anchor must still parse as a certificate: malformed DER, or
-// RSASSA-PSS parameters on its own signature other than SHA-256, make the
-// parse fail and the anchor is skipped (a chain that needs it fails -7). An
-// anchor that issues a path link must be a CA (basicConstraints cA, else -9),
-// carry keyCertSign if it has keyUsage (else -11), list serverAuth if it has
-// an EKU (else -11), and its pathLen (-10) and name constraints (-17) apply to
-// the path below it. Every non-anchor certificate in the path is checked for
-// signature, validity, CA/pathLen, key usage and name constraints.
-// A chain, anchor or hostname pointer <= 0 is refused with -1.
-// ---------------------------------------------------------------------------
-#[protection]
-pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now_unix: i64) -> i64 {
-    if chain <= 0 || anchors <= 0 || expected_dns <= 0 {
-        return -1;
-    }
-    let count: i64 = __mind_load_i64(chain + 0);
-    if count < 1 {
-        return -1;
-    }
-    if count > 8 {
-        return -13;
-    }
-    let recs: i64 = __mind_alloc(2304);
-    // 8 records of 288 bytes
-    let mut i: i64 = 0;
-    while i < count {
-        let rec: i64 = recs + i * 288;
-        let rc: i64 = x509_parse_full(chain + x509_blob_off(chain, i), x509_blob_len(chain, i), rec);
-        if rc != 0 {
-            return rc;
-        }
-        if __mind_load_i64(rec + 64) == 0 {
-            return -2;
-        }
-        i = i + 1;
-    }
-    // hostname to byte length (NUL-terminated input, cap 253)
-    let mut host_len: i64 = 0;
-    let mut scanning: i64 = 1;
-    while scanning == 1 {
-        if host_len >= 254 {
-            scanning = 0;
-        } else {
-            if (__mind_load_i8(expected_dns + host_len) & 255) == 0 {
-                scanning = 0;
-            } else {
-                host_len = host_len + 1;
-            }
-        }
-    }
-    if host_len < 1 || host_len > 253 {
-        return -8;
-    }
-
-    let leaf: i64 = recs;
-    // leaf validity
-    if now_unix < __mind_load_i64(leaf + 80) {
-        return -5;
-    }
-    if now_unix > __mind_load_i64(leaf + 88) {
-        return -6;
-    }
-    // leaf EKU must contain serverAuth
-    if __mind_load_i64(leaf + 208) != 1 || __mind_load_i64(leaf + 216) != 1 {
-        return -11;
-    }
-    // leaf keyUsage (if present) must contain digitalSignature
-    if __mind_load_i64(leaf + 192) == 1 {
-        if (__mind_load_i64(leaf + 200) & 128) == 0 {
-            return -11;
-        }
-    }
-    // SAN must be present and some dNSName must match expected_dns
-    if __mind_load_i64(leaf + 224) != 1 {
-        return -15;
-    }
-    let leaf_base: i64 = __mind_load_i64(leaf + 0);
-    let san_off: i64 = __mind_load_i64(leaf + 232);
-    let san_len: i64 = __mind_load_i64(leaf + 240);
-    if san_len < 1 {
-        return -15;
-    }
-    if x509_san_match(leaf_base, san_off, san_off + san_len, expected_dns, host_len) == 0 {
-        return -8;
-    }
-
-    let acount: i64 = __mind_load_i64(anchors);
-    if acount < 0 || acount > 32 {
-        return -13;
-    }
-    let arecs: i64 = __mind_alloc(9216);
-    let mut j: i64 = 0;
-    let mut valid_anchors: i64 = 0;
-    while j < acount {
-        let ar: i64 = arecs + valid_anchors * 288;
-        let arc: i64 = x509_parse_full(anchors + x509_blob_off(anchors, j), x509_blob_len(anchors, j), ar);
-        if arc == 0 {
-            valid_anchors = valid_anchors + 1;
-        }
-        j = j + 1;
-    }
-    let path: i64 = __mind_alloc(64);
-    __mind_store_i64(path, leaf);
-    x509_path_search(recs, count, arecs, valid_anchors, path, 1, 1, now_unix)
 }

@@ -543,7 +543,7 @@ const FLIGHT_IMPORTS: &[&str] = &[
     "x25519mlkem768",
     "tls13_client_core",
     "tls13_client_hello",
-    "tls13_client_handshake",
+    "tls13_client_api",
     "tls13_client",
 ];
 

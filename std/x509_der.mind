@@ -1,4 +1,6 @@
-// std/x509_der.mind — DER TLV decoding, OID recognition, and byte utilities.
+// std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
+// x509_parse (the field walker for a certificate's TBS, names, validity, RSA
+// key and signature; see the slot map at the end of this file).
 //
 // Definite-length encoding only (no BER indefinite length).
 // Single-byte tags (SEQUENCE 0x30, INTEGER 0x02, BIT STRING 0x03,
@@ -315,5 +317,210 @@ pub fn oid_is_serverauth(buf: i64, off: i64, len: i64) -> i64 {
     if xb(buf, off + 7) == 1 {
         return 1;
     }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// out_fields slot map (each slot is one i64 at out_fields + slot*8):
+//    0 tbs_offset       1 tbs_len          (full DER of tbsCertificate = signed msg)
+//    2 serial_offset    3 serial_len       (serialNumber INTEGER content)
+//    4 issuer_offset    5 issuer_len       (issuer Name, full DER SEQUENCE)
+//    6 subject_offset   7 subject_len      (subject Name, full DER SEQUENCE)
+//    8 notBefore_offset 9 notBefore_len    (validity notBefore Time content)
+//   10 notAfter_offset 11 notAfter_len     (validity notAfter Time content)
+//   12 n_offset        13 n_len            (RSA modulus, leading 0x00 stripped)
+//   14 e_offset        15 e_len            (RSA publicExponent content)
+//   16 sigalg_offset   17 sigalg_len       (signatureAlgorithm, full DER SEQUENCE)
+//   18 sig_offset      19 sig_len          (signatureValue bytes, unused-bits byte skipped)
+//   20 sigoid_offset   21 sigoid_len       (signatureAlgorithm OID content)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// x509_parse — walk the Certificate and record every extracted field.
+// Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+// (RFC 5280 §4.1). tbsCertificate is itself a SEQUENCE whose full DER encoding
+// (tag+length+content) is exactly the byte string covered by the signature.
+// ---------------------------------------------------------------------------
+pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+
+    // Outer Certificate SEQUENCE.
+    if der_tlv(cert_addr, 0, cert_len, t) != 0 {
+        return 1;
+    }
+    let cpos: i64 = __mind_load_i64(t + 8);
+    // start of tbsCertificate
+
+    // tbsCertificate SEQUENCE — the signed message is its full DER extent.
+    if der_tlv(cert_addr, cpos, cert_len, t) != 0 {
+        return 1;
+    }
+    let tbs_hlen: i64 = __mind_load_i64(t + 8);
+    let tbs_clen: i64 = __mind_load_i64(t + 16);
+    let tbs_total: i64 = tbs_hlen + tbs_clen;
+    __mind_store_i64(out_fields + 0, cpos);
+    __mind_store_i64(out_fields + 8, tbs_total);
+    let tbs_content: i64 = cpos + tbs_hlen;
+
+    // signatureAlgorithm SEQUENCE (follows tbsCertificate).
+    let sapos: i64 = cpos + tbs_total;
+    if der_tlv(cert_addr, sapos, cert_len, t) != 0 {
+        return 1;
+    }
+    let sa_hlen: i64 = __mind_load_i64(t + 8);
+    let sa_total: i64 = sa_hlen + __mind_load_i64(t + 16);
+    __mind_store_i64(out_fields + 128, sapos);
+    // slot 16
+    __mind_store_i64(out_fields + 136, sa_total);
+    // slot 17
+    // First element inside signatureAlgorithm is the OID.
+    let sa_content: i64 = sapos + sa_hlen;
+    if der_tlv(cert_addr, sa_content, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 160, sa_content + __mind_load_i64(t + 8));
+    // slot 20 oid offset
+    __mind_store_i64(out_fields + 168, __mind_load_i64(t + 16));
+    // slot 21 oid len
+
+    // signatureValue BIT STRING (follows signatureAlgorithm).
+    let sigpos: i64 = sapos + sa_total;
+    if der_tlv(cert_addr, sigpos, cert_len, t) != 0 {
+        return 1;
+    }
+    let sig_hlen: i64 = __mind_load_i64(t + 8);
+    let sig_clen: i64 = __mind_load_i64(t + 16);
+    if sig_clen < 2 {
+        // need the unused-bits byte + at least one signature byte
+        return 1;
+    }
+    // BIT STRING content = [unused-bits byte] || signature bytes.
+    __mind_store_i64(out_fields + 144, sigpos + sig_hlen + 1);
+    // slot 18 sig offset
+    __mind_store_i64(out_fields + 152, sig_clen - 1);
+    // slot 19 sig len
+
+    // --- inside tbsCertificate ---
+    let mut p: i64 = tbs_content;
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    if (__mind_load_i64(t + 0)) == 160 {
+        // [0] EXPLICIT version (0xA0) present (v3)
+        p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        if der_tlv(cert_addr, p, cert_len, t) != 0 {
+            return 1;
+        }
+    }
+    // serialNumber INTEGER.
+    __mind_store_i64(out_fields + 16, p + __mind_load_i64(t + 8));
+    // slot 2
+    __mind_store_i64(out_fields + 24, __mind_load_i64(t + 16));
+    // slot 3
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // signature AlgorithmIdentifier SEQUENCE (inner copy) — skip.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // issuer Name SEQUENCE.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 32, p);
+    // slot 4
+    __mind_store_i64(out_fields + 40, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    // slot 5
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // validity SEQUENCE { notBefore Time, notAfter Time }.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    let val_content: i64 = p + __mind_load_i64(t + 8);
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert_addr, val_content, cert_len, t) != 0 {
+        // notBefore
+        return 1;
+    }
+    __mind_store_i64(out_fields + 64, val_content + __mind_load_i64(t + 8));
+    // slot 8
+    __mind_store_i64(out_fields + 72, __mind_load_i64(t + 16));
+    // slot 9
+    let nb_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert_addr, val_content + nb_total, cert_len, t) != 0 {
+        // notAfter
+        return 1;
+    }
+    __mind_store_i64(out_fields + 80, val_content + nb_total + __mind_load_i64(t + 8));
+    // slot 10
+    __mind_store_i64(out_fields + 88, __mind_load_i64(t + 16));
+    // slot 11
+
+    // subject Name SEQUENCE.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 48, p);
+    // slot 6
+    __mind_store_i64(out_fields + 56, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    // slot 7
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // subjectPublicKeyInfo SEQUENCE { algorithm, subjectPublicKey BIT STRING }.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    let mut ps: i64 = p + __mind_load_i64(t + 8);
+    if der_tlv(cert_addr, ps, cert_len, t) != 0 {
+        // algorithm AlgorithmIdentifier — skip
+        return 1;
+    }
+    ps = ps + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert_addr, ps, cert_len, t) != 0 {
+        // subjectPublicKey BIT STRING
+        return 1;
+    }
+    if (__mind_load_i64(t + 16)) < 2 {
+        // unused-bits byte + at least one key byte
+        return 1;
+    }
+    let bit_content: i64 = ps + __mind_load_i64(t + 8);
+    // skip the unused-bits byte -> RSAPublicKey SEQUENCE { modulus, exponent }.
+    let rsa_seq: i64 = bit_content + 1;
+    if der_tlv(cert_addr, rsa_seq, cert_len, t) != 0 {
+        return 1;
+    }
+    let rsa_content: i64 = rsa_seq + __mind_load_i64(t + 8);
+    // modulus INTEGER.
+    if der_tlv(cert_addr, rsa_content, cert_len, t) != 0 {
+        return 1;
+    }
+    let mut n_off: i64 = rsa_content + __mind_load_i64(t + 8);
+    let mut n_len: i64 = __mind_load_i64(t + 16);
+    let after_n: i64 = rsa_content + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if n_len < 1 {
+        // sign-byte read below needs a non-empty INTEGER content
+        return 1;
+    }
+    if (__mind_load_i8(cert_addr + n_off) & 255) == 0 {
+        // strip DER sign byte
+        n_off = n_off + 1;
+        n_len = n_len - 1;
+    }
+    __mind_store_i64(out_fields + 96, n_off);
+    // slot 12
+    __mind_store_i64(out_fields + 104, n_len);
+    // slot 13
+    // publicExponent INTEGER.
+    if der_tlv(cert_addr, after_n, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 112, after_n + __mind_load_i64(t + 8));
+    // slot 14
+    __mind_store_i64(out_fields + 120, __mind_load_i64(t + 16));
+    // slot 15
     0
 }

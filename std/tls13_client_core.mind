@@ -21,12 +21,8 @@
 // Total 86016. Evidence and configuration survive key erasure.
 
 import std.sha256;
-import std.hkdf;
-import std.tls13_keyschedule;
 import std.tls13_record;
 import std.chacha20_poly1305;
-import std.x25519;
-import std.x25519mlkem768;
 
 pub fn tls13ci_st_init() -> i64 {
     0
@@ -619,16 +615,7 @@ pub fn tls13ci_is_connected(state: i64) -> i64 {
     }
 }
 
-// Suite dispatch and key schedule. IV slots never overlap 32-byte keys.
-
-pub fn tls13c_derive_key_n(secret_addr: i64, key_len: i64, out_addr: i64) -> i64 {
-    let lbl: i64 = __mind_alloc(8);
-    __mind_store_i8(lbl + 0, 107);
-    __mind_store_i8(lbl + 1, 101);
-    __mind_store_i8(lbl + 2, 121);
-    tls13_hkdf_expand_label(secret_addr, 32, lbl, 3, secret_addr, 0, key_len, out_addr);
-    0
-}
+// Suite dispatch and record protection. IV slots never overlap 32-byte keys.
 
 pub fn tls13c_suite_key_len(suite: i64) -> i64 {
     if suite == tls13ci_suite_chacha20_poly1305_sha256() {
@@ -731,78 +718,4 @@ pub fn tls13ci_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, re
     } else {
         0 - 1
     }
-}
-
-pub fn tls13c_handshake_secret(dhe_addr: i64, dhe_len: i64, out_addr: i64) -> i64 {
-    let early: i64 = __mind_alloc(32);
-    let derived: i64 = __mind_alloc(32);
-    let lbl: i64 = __mind_alloc(16);
-    __mind_store_i8(lbl + 0, 100);
-    __mind_store_i8(lbl + 1, 101);
-    __mind_store_i8(lbl + 2, 114);
-    __mind_store_i8(lbl + 3, 105);
-    __mind_store_i8(lbl + 4, 118);
-    __mind_store_i8(lbl + 5, 101);
-    __mind_store_i8(lbl + 6, 100);
-    tls13_early_secret(early);
-    tls13_derive_secret(early, 32, lbl, 7, early, 0, derived);
-    hkdf_extract(derived, 32, dhe_addr, dhe_len, out_addr);
-    0
-}
-
-pub fn tls13c_derive_hs_keys(state: i64) -> i64 {
-    let dhe_addr: i64 = __mind_alloc(64);
-    let grp: i64 = tls13c_load_i64(state + 48);
-    if grp == tls13ci_group_x25519() {
-        let spub: i64 = __mind_alloc(32);
-        tls13c_copy(spub, state + 384, 32);
-        x25519(state + 320, spub, dhe_addr)
-    } else {
-        if grp == tls13ci_group_x25519mlkem768() {
-            if x25519mlkem768_decaps(state + 416, state + 2848, dhe_addr) != 0 {
-                return tls13ci_err_group();
-            }
-        } else {
-            return tls13ci_err_group();
-        }
-    }
-    let dhe_len: i64 = 32;
-    if grp == tls13ci_group_x25519mlkem768() {
-        dhe_len = 64;
-    }
-    let mut nonzero: i64 = 0;
-    let mut di: i64 = dhe_len - 32;
-    while di < dhe_len {
-        nonzero = nonzero | tls13c_u8(dhe_addr + di);
-        di = di + 1;
-    }
-    if nonzero == 0 {
-        return tls13ci_err_group();
-    }
-    tls13c_transcript_hash_into(state, state + 5176);
-    tls13c_handshake_secret(dhe_addr, dhe_len, state + 4064);
-    tls13c_zero(dhe_addr, 64);
-    tls13_client_handshake_traffic_secret(state + 4064, state + 5176, state + 4096);
-    tls13_server_handshake_traffic_secret(state + 4064, state + 5176, state + 4128);
-    let suite: i64 = tls13c_load_i64(state + 40);
-    let klen: i64 = tls13c_suite_key_len(suite);
-    tls13c_derive_key_n(state + 4096, klen, state + 4160);
-    tls13_derive_iv(state + 4096, state + 81928);
-    tls13c_derive_key_n(state + 4128, klen, state + 4192);
-    tls13_derive_iv(state + 4128, state + 81940);
-    0
-}
-
-pub fn tls13c_derive_app_keys(state: i64) -> i64 {
-    tls13c_transcript_hash_into(state, state + 5208);
-    tls13_master_secret(state + 4064, state + 4224);
-    tls13_client_application_traffic_secret(state + 4224, state + 5208, state + 4256);
-    tls13_server_application_traffic_secret(state + 4224, state + 5208, state + 4288);
-    let suite: i64 = tls13c_load_i64(state + 40);
-    let klen: i64 = tls13c_suite_key_len(suite);
-    tls13c_derive_key_n(state + 4256, klen, state + 4320);
-    tls13_derive_iv(state + 4256, state + 81952);
-    tls13c_derive_key_n(state + 4288, klen, state + 4352);
-    tls13_derive_iv(state + 4288, state + 81964);
-    0
 }

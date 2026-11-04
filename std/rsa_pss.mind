@@ -44,6 +44,11 @@
 //                                msg_addr, msg_len, salt_len) -> i64
 //     RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-2048 / SHA-256 / MGF1.
 //     Returns 1 (valid signature) or 0 (invalid).  Fail-closed.
+//   pub fn tls13_hs_rsa_pss_verify(n_addr, n_len, e, sig_addr, sig_len,
+//                                  msg_addr, msg_len, salt_len) -> i64
+//     The same verification for RSA-1024 or RSA-2048 geometry (n_len 128 or
+//     256), for TLS 1.3 CertificateVerify in std.tls13_handshake and
+//     std.tls13_client; see std/tls13_handshake.mind step (3b).
 
 import std.sha256;
 import std.x509_bignum;
@@ -224,5 +229,62 @@ pub fn rsa_pss_verify_sha256(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig
     let em: i64 = __mind_alloc(n_len);
     bn_to_bytes(em_limbs, em, n_len);
     // Step 3: EMSA-PSS-VERIFY(M, EM, modBits - 1).
+    rsa_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
+}
+
+// ---------------------------------------------------------------------------
+// (3b) Geometry-generic RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-1024 or
+// RSA-2048 / SHA-256 / MGF1-SHA256 (TLS 1.3 rsa_pss_rsae_sha256).
+//   (n_addr, n_len)   big-endian modulus, n_len 128 or 256, top bit set;
+//   e                 public exponent (fits i64: 3 / 17 / 65537);
+//   (sig_addr,sig_len) signature S, must be exactly n_len octets;
+//   (msg_addr,msg_len) the signed message M;
+//   salt_len          expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
+// Returns 1 (valid) or 0 (invalid).  Fail-closed.  Reuses the std/x509_bignum.mind
+// 130-limb bignum (bn_mod_reduce is generic shift-and-subtract mod n, so a
+// 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
+    // Geometry guards: modulus 128 (RSA-1024) or 256 (RSA-2048) octets with
+    // the top bit set, so modBits = 8*n_len and emBits = 8*n_len - 1.
+    if n_len != 128 {
+        if n_len != 256 {
+            return 0;
+        }
+    }
+    if (__mind_load_i8(n_addr + 0) & 128) == 0 {
+        return 0;
+    }
+    // §8.1.2 step 1: the signature must be exactly k = n_len octets.
+    if sig_len != n_len {
+        return 0;
+    }
+    // RFC 8017: a valid RSA public exponent is odd and >= 3 (3/17/65537).
+    // Reject e < 3 (e=1 gives m = s^1 = s, so the attacker chooses EM directly
+    // = universal forgery) and any even e (non-invertible mod phi(n)).
+    if e < 3 || (e & 1) == 0 {
+        return 0;
+    }
+    if msg_len < 0 {
+        return 0;
+    }
+    let n: i64 = __mind_alloc(1040);
+    // 130 limbs (std/x509_bignum.mind bignum)
+    let s: i64 = __mind_alloc(1040);
+    let em_limbs: i64 = __mind_alloc(1040);
+    bn_from_bytes(n_addr, n_len, n);
+    bn_from_bytes(sig_addr, sig_len, s);
+    // §8.1.2 step 2a / RSAVP1 (§5.2.2): the signature representative must be
+    // in [0, n-1]; s >= n => "signature representative out of range" => invalid.
+    if bn_cmp_ge(s, n, 130) == 1 {
+        return 0;
+    }
+    // Step 2b: m = s^e mod n; step 2c: EM = I2OSP(m, emLen) with emLen = n_len.
+    modexp_2048(s, e, n, em_limbs);
+    let em: i64 = __mind_alloc(n_len);
+    bn_to_bytes(em_limbs, em, n_len);
+    // Step 3: EMSA-PSS-VERIFY(M, EM, emBits = 8*n_len - 1).
+    // Same geometry-generic check as RSASSA-PSS in std/rsa_pss.mind.
     rsa_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
 }

@@ -45,9 +45,14 @@
 //   - std/tls13_keyschedule.mind  tls13_handshake_secret / traffic secrets /
 //                                 tls13_master_secret / tls13_derive_key/iv /
 //                                 tls13_finished_key
-//   - std/tls13_finished.mind     tls13_finished_check / tls13_finished_from_secret
+//   - std/tls13_finished.mind     tls13_finished_check / tls13_finished_from_secret,
+//                                 and steps 3a, 4 and 5 below:
+//                                 tls13_hs_cert_verify_content /
+//                                 tls13_hs_verify_server_finished /
+//                                 tls13_hs_client_finished
 //   - std/rsa_pss.mind            mgf1_sha256 (MGF1-SHA256, RFC 8017 §B.2.1),
-//                                 rsa_pss_emsa_check (EMSA-PSS-VERIFY, §9.1.2)
+//                                 rsa_pss_emsa_check (EMSA-PSS-VERIFY, §9.1.2),
+//                                 tls13_hs_rsa_pss_verify (step 3b below)
 //   - std/x509_bignum.mind        130-limb radix-2^16 bignum: bn_from_bytes /
 //                                 bn_to_bytes / bn_cmp_ge / modexp_2048
 //                                 (all width-generic: bn_mod_reduce is binary
@@ -56,7 +61,11 @@
 //   (std/x25519.mind supplies the ECDHE shared secret to the caller; this
 //   module consumes the 32-byte result.)
 //
-// WHY a generic PSS verify here: the RFC 8448 §3 server certificate is
+// Steps 3a, 3b, 4 and 5 live in std/tls13_finished.mind and std/rsa_pss.mind,
+// so std.tls13_client calls them without importing this module; their names
+// are unchanged and resolve here through the imports below.
+//
+// WHY a generic PSS verify (3b): the RFC 8448 §3 server certificate is
 // RSA-1024 (128-byte modulus), while std/rsa_pss.mind's rsa_pss_verify_sha256
 // is deliberately fixed to RSA-2048 geometry (n_len == 256, emLen = 256).
 // tls13_hs_rsa_pss_verify runs the SAME RFC 8017 §8.1.2 / §9.1.2 algorithm
@@ -87,7 +96,6 @@
 
 import std.sha256;
 import std.hkdf;
-import std.x509_bignum;
 import std.tls13_keyschedule;
 import std.tls13_finished;
 import std.rsa_pss;
@@ -172,159 +180,6 @@ pub fn tls13_hs_derive_app_secrets(hs_secret_addr: i64, fin_hash_addr: i64, out_
 }
 
 // ---------------------------------------------------------------------------
-// (3a) CertificateVerify signed content (RFC 8446 §4.4.3), server variant:
-//   content = 0x20 repeated 64 times
-//          || "TLS 1.3, server CertificateVerify"   (33 bytes)
-//          || 0x00                                  (single separator byte)
-//          || Transcript-Hash(Handshake Context, Certificate)   (32 bytes)
-// Writes exactly 130 bytes to out_addr and returns 130 (the content length).
-// Exposed pub so the byte-exact construction is directly testable.
-// ---------------------------------------------------------------------------
-
-pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
-    // 64 repetitions of 0x20 (space).
-    let mut i: i64 = 0;
-    while i < 64 {
-        __mind_store_i8(out_addr + i, 32);
-        i = i + 1;
-    }
-    // Context string "TLS 1.3, server CertificateVerify" (33 bytes, NO NUL —
-    // the 0x00 below is the §4.4.3 separator, not part of the string).
-    __mind_store_i8(out_addr + 64, 84);
-    // 'T'
-    __mind_store_i8(out_addr + 65, 76);
-    // 'L'
-    __mind_store_i8(out_addr + 66, 83);
-    // 'S'
-    __mind_store_i8(out_addr + 67, 32);
-    // ' '
-    __mind_store_i8(out_addr + 68, 49);
-    // '1'
-    __mind_store_i8(out_addr + 69, 46);
-    // '.'
-    __mind_store_i8(out_addr + 70, 51);
-    // '3'
-    __mind_store_i8(out_addr + 71, 44);
-    // ','
-    __mind_store_i8(out_addr + 72, 32);
-    // ' '
-    __mind_store_i8(out_addr + 73, 115);
-    // 's'
-    __mind_store_i8(out_addr + 74, 101);
-    // 'e'
-    __mind_store_i8(out_addr + 75, 114);
-    // 'r'
-    __mind_store_i8(out_addr + 76, 118);
-    // 'v'
-    __mind_store_i8(out_addr + 77, 101);
-    // 'e'
-    __mind_store_i8(out_addr + 78, 114);
-    // 'r'
-    __mind_store_i8(out_addr + 79, 32);
-    // ' '
-    __mind_store_i8(out_addr + 80, 67);
-    // 'C'
-    __mind_store_i8(out_addr + 81, 101);
-    // 'e'
-    __mind_store_i8(out_addr + 82, 114);
-    // 'r'
-    __mind_store_i8(out_addr + 83, 116);
-    // 't'
-    __mind_store_i8(out_addr + 84, 105);
-    // 'i'
-    __mind_store_i8(out_addr + 85, 102);
-    // 'f'
-    __mind_store_i8(out_addr + 86, 105);
-    // 'i'
-    __mind_store_i8(out_addr + 87, 99);
-    // 'c'
-    __mind_store_i8(out_addr + 88, 97);
-    // 'a'
-    __mind_store_i8(out_addr + 89, 116);
-    // 't'
-    __mind_store_i8(out_addr + 90, 101);
-    // 'e'
-    __mind_store_i8(out_addr + 91, 86);
-    // 'V'
-    __mind_store_i8(out_addr + 92, 101);
-    // 'e'
-    __mind_store_i8(out_addr + 93, 114);
-    // 'r'
-    __mind_store_i8(out_addr + 94, 105);
-    // 'i'
-    __mind_store_i8(out_addr + 95, 102);
-    // 'f'
-    __mind_store_i8(out_addr + 96, 121);
-    // 'y'
-    // Single 0x00 separator.
-    __mind_store_i8(out_addr + 97, 0);
-    // 32-byte transcript hash.
-    let mut j: i64 = 0;
-    while j < 32 {
-        __mind_store_i8(out_addr + 98 + j, __mind_load_i8(thash_addr + j));
-        j = j + 1;
-    }
-    130
-}
-
-// ---------------------------------------------------------------------------
-// (3b) Geometry-generic RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-1024 or
-// RSA-2048 / SHA-256 / MGF1-SHA256 (TLS 1.3 rsa_pss_rsae_sha256).
-//   (n_addr, n_len)   big-endian modulus, n_len 128 or 256, top bit set;
-//   e                 public exponent (fits i64: 3 / 17 / 65537);
-//   (sig_addr,sig_len) signature S, must be exactly n_len octets;
-//   (msg_addr,msg_len) the signed message M;
-//   salt_len          expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
-// Returns 1 (valid) or 0 (invalid).  Fail-closed.  Reuses the std/x509_bignum.mind
-// 130-limb bignum (bn_mod_reduce is generic shift-and-subtract mod n, so a
-// 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
-// ---------------------------------------------------------------------------
-
-pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
-    // Geometry guards: modulus 128 (RSA-1024) or 256 (RSA-2048) octets with
-    // the top bit set, so modBits = 8*n_len and emBits = 8*n_len - 1.
-    if n_len != 128 {
-        if n_len != 256 {
-            return 0;
-        }
-    }
-    if (__mind_load_i8(n_addr + 0) & 128) == 0 {
-        return 0;
-    }
-    // §8.1.2 step 1: the signature must be exactly k = n_len octets.
-    if sig_len != n_len {
-        return 0;
-    }
-    // RFC 8017: a valid RSA public exponent is odd and >= 3 (3/17/65537).
-    // Reject e < 3 (e=1 gives m = s^1 = s, so the attacker chooses EM directly
-    // = universal forgery) and any even e (non-invertible mod phi(n)).
-    if e < 3 || (e & 1) == 0 {
-        return 0;
-    }
-    if msg_len < 0 {
-        return 0;
-    }
-    let n: i64 = __mind_alloc(1040);
-    // 130 limbs (std/x509_bignum.mind bignum)
-    let s: i64 = __mind_alloc(1040);
-    let em_limbs: i64 = __mind_alloc(1040);
-    bn_from_bytes(n_addr, n_len, n);
-    bn_from_bytes(sig_addr, sig_len, s);
-    // §8.1.2 step 2a / RSAVP1 (§5.2.2): the signature representative must be
-    // in [0, n-1]; s >= n => "signature representative out of range" => invalid.
-    if bn_cmp_ge(s, n, 130) == 1 {
-        return 0;
-    }
-    // Step 2b: m = s^e mod n; step 2c: EM = I2OSP(m, emLen) with emLen = n_len.
-    modexp_2048(s, e, n, em_limbs);
-    let em: i64 = __mind_alloc(n_len);
-    bn_to_bytes(em_limbs, em, n_len);
-    // Step 3: EMSA-PSS-VERIFY(M, EM, emBits = 8*n_len - 1).
-    // Same geometry-generic check as RSASSA-PSS in std/rsa_pss.mind.
-    rsa_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
-}
-
-// ---------------------------------------------------------------------------
 // (3) Server CertificateVerify validation (RFC 8446 §4.4.3) — THE server-
 // authentication step.  Builds the exact §4.4.3 signed content from the
 // Transcript-Hash(ClientHello..Certificate) and verifies the signature with
@@ -341,36 +196,4 @@ pub fn tls13_hs_verify_cert_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i6
     let content: i64 = __mind_alloc(130);
     let content_len: i64 = tls13_hs_cert_verify_content(thash_addr, content);
     tls13_hs_rsa_pss_verify(n_addr, n_len, e, sig_addr, sig_len, content, content_len, 32)
-}
-
-// ---------------------------------------------------------------------------
-// (4) Server Finished verification (RFC 8446 §4.4.4) — fail-closed.
-//   server_hs_traffic_secret_addr — 32-byte server_handshake_traffic_secret
-//                                   (out+64 of tls13_hs_derive_handshake_secrets);
-//   thash_addr                    — 32-byte Transcript-Hash(CH..CertificateVerify);
-//   received_vd_addr              — the 32-byte verify_data from the server's
-//                                   Finished message.
-// finished_key = HKDF-Expand-Label(shts, "finished", "", 32); expected =
-// HMAC(finished_key, thash); constant-time compare via tls13_finished_check.
-// Returns 1 (match) or 0 (MUST terminate with decrypt_error per §4.4.4).
-// ---------------------------------------------------------------------------
-
-pub fn tls13_hs_verify_server_finished(server_hs_traffic_secret_addr: i64, thash_addr: i64, received_vd_addr: i64) -> i64 {
-    let fk: i64 = __mind_alloc(32);
-    tls13_finished_key(server_hs_traffic_secret_addr, fk);
-    tls13_finished_check(fk, thash_addr, received_vd_addr)
-}
-
-// ---------------------------------------------------------------------------
-// (5) Client Finished (RFC 8446 §4.4.4) — the client's own verify_data.
-//   client_hs_traffic_secret_addr — 32-byte client_handshake_traffic_secret
-//                                   (out+32 of tls13_hs_derive_handshake_secrets);
-//   thash_addr                    — 32-byte Transcript-Hash(CH..server Finished);
-//   out_vd_addr                   — 32-byte output verify_data.
-// Returns 0.
-// ---------------------------------------------------------------------------
-
-pub fn tls13_hs_client_finished(client_hs_traffic_secret_addr: i64, thash_addr: i64, out_vd_addr: i64) -> i64 {
-    tls13_finished_from_secret(client_hs_traffic_secret_addr, thash_addr, out_vd_addr);
-    0
 }

@@ -1,5 +1,6 @@
 // std/x509_path.mind — X.509 certificate path building, parent policy validation,
-// and full certificate record decoding.
+// full certificate record decoding, and x509_verify_server_chain (the
+// authenticated server-chain check at the end of this file).
 
 import std.x509_der;
 import std.x509_ext;
@@ -500,4 +501,120 @@ pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: 
         ci = ci + 1;
     }
     error
+}
+
+// ---------------------------------------------------------------------------
+// pub fn x509_verify_server_chain(chain, anchors, expected_dns, now_unix)
+//     -> i64
+//
+// Full authenticated server-certificate chain validation per RFC 5280 / 6125.
+// Returns 0 on success, negative on failure.
+//
+// Trust-anchor policy (RFC 5280 §6.1.1(d)): anchors are trusted public-key
+// bindings. Their self-signature is never verified and their validity period
+// is not evaluated, so an unrecognised signature algorithm on an anchor is
+// tolerated. Each anchor must still parse as a certificate: malformed DER, or
+// RSASSA-PSS parameters on its own signature other than SHA-256, make the
+// parse fail and the anchor is skipped (a chain that needs it fails -7). An
+// anchor that issues a path link must be a CA (basicConstraints cA, else -9),
+// carry keyCertSign if it has keyUsage (else -11), list serverAuth if it has
+// an EKU (else -11), and its pathLen (-10) and name constraints (-17) apply to
+// the path below it. Every non-anchor certificate in the path is checked for
+// signature, validity, CA/pathLen, key usage and name constraints.
+// A chain, anchor or hostname pointer <= 0 is refused with -1.
+// ---------------------------------------------------------------------------
+#[protection]
+pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now_unix: i64) -> i64 {
+    if chain <= 0 || anchors <= 0 || expected_dns <= 0 {
+        return -1;
+    }
+    let count: i64 = __mind_load_i64(chain + 0);
+    if count < 1 {
+        return -1;
+    }
+    if count > 8 {
+        return -13;
+    }
+    let recs: i64 = __mind_alloc(2304);
+    // 8 records of 288 bytes
+    let mut i: i64 = 0;
+    while i < count {
+        let rec: i64 = recs + i * 288;
+        let rc: i64 = x509_parse_full(chain + x509_blob_off(chain, i), x509_blob_len(chain, i), rec);
+        if rc != 0 {
+            return rc;
+        }
+        if __mind_load_i64(rec + 64) == 0 {
+            return -2;
+        }
+        i = i + 1;
+    }
+    // hostname to byte length (NUL-terminated input, cap 253)
+    let mut host_len: i64 = 0;
+    let mut scanning: i64 = 1;
+    while scanning == 1 {
+        if host_len >= 254 {
+            scanning = 0;
+        } else {
+            if (__mind_load_i8(expected_dns + host_len) & 255) == 0 {
+                scanning = 0;
+            } else {
+                host_len = host_len + 1;
+            }
+        }
+    }
+    if host_len < 1 || host_len > 253 {
+        return -8;
+    }
+
+    let leaf: i64 = recs;
+    // leaf validity
+    if now_unix < __mind_load_i64(leaf + 80) {
+        return -5;
+    }
+    if now_unix > __mind_load_i64(leaf + 88) {
+        return -6;
+    }
+    // leaf EKU must contain serverAuth
+    if __mind_load_i64(leaf + 208) != 1 || __mind_load_i64(leaf + 216) != 1 {
+        return -11;
+    }
+    // leaf keyUsage (if present) must contain digitalSignature
+    if __mind_load_i64(leaf + 192) == 1 {
+        if (__mind_load_i64(leaf + 200) & 128) == 0 {
+            return -11;
+        }
+    }
+    // SAN must be present and some dNSName must match expected_dns
+    if __mind_load_i64(leaf + 224) != 1 {
+        return -15;
+    }
+    let leaf_base: i64 = __mind_load_i64(leaf + 0);
+    let san_off: i64 = __mind_load_i64(leaf + 232);
+    let san_len: i64 = __mind_load_i64(leaf + 240);
+    if san_len < 1 {
+        return -15;
+    }
+    if x509_san_match(leaf_base, san_off, san_off + san_len, expected_dns, host_len) == 0 {
+        return -8;
+    }
+
+    let acount: i64 = __mind_load_i64(anchors);
+    if acount < 0 || acount > 32 {
+        return -13;
+    }
+    let arecs: i64 = __mind_alloc(9216);
+    let mut j: i64 = 0;
+    let mut valid_anchors: i64 = 0;
+    while j < acount {
+        let ar: i64 = arecs + valid_anchors * 288;
+        let arc: i64 = x509_parse_full(anchors + x509_blob_off(anchors, j), x509_blob_len(anchors, j), ar);
+        if arc == 0 {
+            valid_anchors = valid_anchors + 1;
+        }
+        j = j + 1;
+    }
+    let path: i64 = __mind_alloc(64);
+    __mind_store_i64(path, leaf);
+    x509_path_search(recs, count, arecs, valid_anchors, path, 1, 1, now_unix)
 }
