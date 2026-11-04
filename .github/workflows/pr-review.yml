@@ -55,7 +55,10 @@ jobs:
           # goes to /tmp/leaks.txt, which the "Fail on a leak" step enforces and which is non-empty (red) when
           # the leak list is missing, so an unchecked run cannot pass.
           git show "$BASE:.github/scripts/pr_review.py" > /tmp/pr_review.py 2>/dev/null || cp .github/scripts/pr_review.py /tmp/pr_review.py
-          python3 /tmp/pr_review.py > /tmp/review.md
+          python3 /tmp/pr_review.py > /tmp/review.md || { rc=$?
+            # On the token path, show the CLI's own error (stdout) so a failed review is diagnosable.
+            if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then echo "Reply OK" | claude -p --max-turns 1 --output-format text 2>&1 | head -c 400; echo; fi
+            exit $rc; }
       - name: Post or update the review comment
         run: |
           marker='<!-- pr-review -->'
