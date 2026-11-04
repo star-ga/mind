@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,820,998
-**Generated:** 2026-11-04 16:29 UTC
+**Files:** 1951 | **Est. tokens:** ~3,821,047
+**Generated:** 2026-11-04 16:50 UTC
 
 ## Token Budget Guide
 
@@ -151,7 +151,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 45 | ~215,512 |
+| `std/` | 45 | ~215,561 |
 | `tests/` | 431 | ~880,576 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -1611,8 +1611,8 @@
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
-- `mic_record.mind` (~6906 tok, huge) — std/mic_record.mind — write and read program results as mic@3 MAP records.
-- `mic_results.mind` (~2541 tok, huge) — std/mic_results.mind — a program's results as a std.mic_record record.
+- `mic_record.mind` (~6941 tok, huge) — std/mic_record.mind — write and read program results as mic@3 MAP records.
+- `mic_results.mind` (~2555 tok, huge) — std/mic_results.mind — a program's results as a std.mic_record record.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.

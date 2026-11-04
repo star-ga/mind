@@ -350,6 +350,7 @@ fn mrec_utf8_hi(b0: i64) -> i64 {
 
 // 1 when [a, a + n) is well-formed UTF-8, else 0: the rule of Rust's
 // str::from_utf8, which the compiler's MAP reader applies.
+#[protection]
 fn mrec_utf8_ok(a: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     while i < n {
@@ -385,6 +386,7 @@ fn mrec_utf8_ok(a: i64, n: i64) -> i64 {
 }
 
 // 1 when the key starts with "signature." or "evidence_chain.", else 0.
+#[protection]
 fn mrec_reserved(a: i64, n: i64) -> i64 {
     if n >= 10 {
         if mrec_eq5(a, 0, 115, 105, 103, 110, 97) == 1 {
@@ -419,6 +421,7 @@ fn mrec_index_of(a: i64, n: i64, c: i64) -> i64 {
 
 // 0 when the key may be stored, else the named error. An empty key has no
 // '.', so the last check refuses it too.
+#[protection]
 fn mrec_key_check(a: i64, n: i64) -> i64 {
     if n > mrec_max_key_bytes() {
         return mrec_e_oversized();
@@ -538,6 +541,7 @@ fn mrec_total(n: i64, payload: i64) -> i64 {
 
 // 0 when `extra` more entries with `bytes` more payload stay inside the entry
 // and size limits, else mrec_e_oversized().
+#[protection]
 fn mrec_room(h: i64, extra: i64, bytes: i64) -> i64 {
     let n: i64 = __mind_load_i64(h + 8) + extra;
     if n > mrec_max_entries() {
@@ -603,6 +607,7 @@ fn mrec_insert(h: i64, pos: i64, e: i64) -> i64 {
     0
 }
 
+#[protection]
 fn mrec_put(h: i64, ka: i64, kn: i64, tag: i64, iv: i64, va: i64, vn: i64) -> i64 {
     if h == 0 {
         return mrec_e_handle();
@@ -744,6 +749,7 @@ pub fn mrec_buf_len(b: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 // Read one minimal ULEB128 at the cursor into its value slot; 0 or an error.
+#[protection]
 fn mrec_rd_uleb(rd: i64) -> i64 {
     let a: i64 = __mind_load_i64(rd + 0);
     let n: i64 = __mind_load_i64(rd + 8);
@@ -779,6 +785,7 @@ fn mrec_rd_uleb(rd: i64) -> i64 {
 }
 
 // Read a length no larger than `limit` and no larger than the bytes left.
+#[protection]
 fn mrec_rd_len(rd: i64, limit: i64) -> i64 {
     let rc: i64 = mrec_rd_uleb(rd);
     if rc != 0 {
@@ -798,6 +805,7 @@ fn mrec_rd_len(rd: i64, limit: i64) -> i64 {
 }
 
 // Check the magic, the version, the empty-module body and the MAP sentinel.
+#[protection]
 fn mrec_check_head(a: i64, n: i64) -> i64 {
     if n < 5 {
         return mrec_e_truncated();
@@ -829,6 +837,7 @@ fn mrec_check_head(a: i64, n: i64) -> i64 {
 
 // Read one entry into h through the writer's own checks (key rules, UTF-8,
 // duplicates, limits), so reader and writer accept the same records.
+#[protection]
 fn mrec_rd_entry(rd: i64, h: i64) -> i64 {
     let a: i64 = __mind_load_i64(rd + 0);
     let kl: i64 = mrec_rd_len(rd, mrec_max_key_bytes());
@@ -876,6 +885,7 @@ fn mrec_rd_entry(rd: i64, h: i64) -> i64 {
 
 // Decode the n bytes at a. Returns a record handle (> 0), or a named error
 // (< 0). Only the canonical form mrec_encode writes is accepted.
+#[protection]
 pub fn mrec_decode(a: i64, n: i64) -> i64 {
     if n < 0 {
         return mrec_e_value();
