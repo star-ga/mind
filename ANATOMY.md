@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2101 | **Est. tokens:** ~3,937,214
-**Generated:** 2026-11-04 15:03 UTC
+**Files:** 2101 | **Est. tokens:** ~3,937,289
+**Generated:** 2026-11-04 15:09 UTC
 
 ## Token Budget Guide
 
@@ -153,7 +153,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 55 | ~248,616 |
+| `std/` | 55 | ~248,691 |
 | `tests/` | 436 | ~902,424 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -1659,11 +1659,11 @@
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
 - `x25519mlkem768.mind` (~1554 tok, huge) — std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
 - `x509_bignum.mind` (~1704 tok, huge) — std/x509_bignum.mind — fixed-width big-integer arithmetic (radix 2^16 limbs,
-- `x509_bundle.mind` (~3122 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
+- `x509_bundle.mind` (~3123 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
 - `x509_der.mind` (~3778 tok, huge) — std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
 - `x509_ext.mind` (~2786 tok, huge) — std/x509_ext.mind — X.509v3 validity date parsing and extension processing
 - `x509.mind` (~1080 tok, large) — std/x509.mind — X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
-- `x509_name.mind` (~4156 tok, huge) — std/x509_name.mind — RFC 6125 hostname matching, IPv4/IPv6 literal parsing,
+- `x509_name.mind` (~4230 tok, huge) — std/x509_name.mind — RFC 6125 hostname matching, IPv4/IPv6 literal parsing,
 - `x509_p384.mind` (~4342 tok, huge) — std/x509_p384.mind — ECDSA signature verification on NIST P-384
 - `x509_path.mind` (~5374 tok, huge) — std/x509_path.mind — X.509 certificate path building, parent policy validation,
 - `x509_sig.mind` (~3951 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature

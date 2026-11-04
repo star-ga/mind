@@ -141,14 +141,17 @@ pub fn x509_parse_ipv4(host: i64, host_len: i64, out4: i64) -> i64 {
     while p < host_len {
         let mut val: i64 = 0;
         let mut dcnt: i64 = 0;
-        while p < host_len {
+        // The digit run ends on a flag, not `break`, so `mindc test` runs it
+        // as the compiled build does.
+        let mut digits: i64 = 1;
+        while digits == 1 && p < host_len {
             let c: i64 = __mind_load_i8(host + p) & 255;
             if c >= 48 && c <= 57 {
                 val = val * 10 + (c - 48);
                 dcnt = dcnt + 1;
                 p = p + 1;
             } else {
-                break
+                digits = 0;
             }
         }
         if dcnt < 1 || dcnt > 3 || val > 255 {
@@ -203,7 +206,9 @@ pub fn x509_parse_ipv6(host: i64, host_len: i64, out16: i64) -> i64 {
     while p < host_len {
         let mut val: i64 = 0;
         let mut hcnt: i64 = 0;
-        while p < host_len {
+        // The hex run ends on a flag, not `break` (see x509_parse_ipv4).
+        let mut hexd: i64 = 1;
+        while hexd == 1 && p < host_len {
             let c: i64 = __mind_load_i8(host + p) & 255;
             let mut h: i64 = -1;
             if c >= 48 && c <= 57 {
@@ -222,7 +227,7 @@ pub fn x509_parse_ipv6(host: i64, host_len: i64, out16: i64) -> i64 {
                 hcnt = hcnt + 1;
                 p = p + 1;
             } else {
-                break
+                hexd = 0;
             }
         }
         if hcnt < 1 || hcnt > 4 || nwords >= 8 {

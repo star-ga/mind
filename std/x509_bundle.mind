@@ -166,24 +166,34 @@ fn x509_is_pem_end(buf: i64, pos: i64, lim: i64) -> i64 {
     1
 }
 
+// The first index at or after p whose byte is not space, tab, CR or LF
+// (len when there is none). The loops here stop on a flag in the loop
+// condition, never on `break` or `continue`, so `mindc test` runs them as
+// the compiled build does.
+fn x509_bundle_skip_ws(buf: i64, p: i64, len: i64) -> i64 {
+    let mut q: i64 = p;
+    let mut ws: i64 = 1;
+    while ws == 1 && q < len {
+        let ch: i64 = __mind_load_i8(buf + q) & 255;
+        if ch == 32 || ch == 10 || ch == 13 || ch == 9 {
+            q = q + 1;
+        } else {
+            ws = 0;
+        }
+    }
+    q
+}
+
 pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
     if bundle_len < 4 {
         return -1;
     }
     // Find first non-whitespace byte to detect PEM vs DER
-    let mut p: i64 = 0;
-    let mut first: i64 = -1;
-    while p < bundle_len {
-        let ch: i64 = __mind_load_i8(bundle + p) & 255;
-        if ch != 32 && ch != 10 && ch != 13 && ch != 9 {
-            first = ch;
-            break
-        }
-        p = p + 1;
-    }
-    if first < 0 {
+    let mut p: i64 = x509_bundle_skip_ws(bundle, 0, bundle_len);
+    if p >= bundle_len {
         return -1;
     }
+    let first: i64 = __mind_load_i8(bundle + p) & 255;
 
     let cert_ptrs: i64 = __mind_alloc(256);
     let cert_lens: i64 = __mind_alloc(256);
@@ -191,20 +201,7 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
 
     if first == 45 {
         // PEM bundle
-        p = 0;
         while p < bundle_len {
-            // Skip whitespace before next BEGIN
-            while p < bundle_len {
-                let ch_ws: i64 = __mind_load_i8(bundle + p) & 255;
-                if ch_ws == 32 || ch_ws == 10 || ch_ws == 13 || ch_ws == 9 {
-                    p = p + 1;
-                } else {
-                    break
-                }
-            }
-            if p >= bundle_len {
-                break
-            }
             if x509_is_pem_begin(bundle, p, bundle_len) == 0 {
                 return -1;
             }
@@ -227,56 +224,55 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
             let mut pad_count: i64 = 0;
             let mut found_end: i64 = 0;
 
-            while p < bundle_len {
+            while found_end == 0 && p < bundle_len {
                 if x509_is_pem_end(bundle, p, bundle_len) == 1 {
                     found_end = 1;
                     p = p + 25;
-                    break
-                }
-                let c2: i64 = __mind_load_i8(bundle + p) & 255;
-                p = p + 1;
-                if c2 == 10 || c2 == 13 || c2 == 32 || c2 == 9 {
-                    continue
-                }
-                if c2 == 61 {
-                    // '=' padding
-                    pad_count = pad_count + 1;
-                    b64_quad = (b64_quad << 6);
-                    b64_count = b64_count + 1;
                 } else {
-                    if pad_count > 0 {
-                        // data after padding is invalid
-                        return -1;
-                    }
-                    let val: i64 = x509_b64_val(c2);
-                    if val < 0 {
-                        return -1;
-                    }
-                    b64_quad = (b64_quad << 6) | val;
-                    b64_count = b64_count + 1;
-                }
-                if b64_count == 4 {
-                    if pad_count == 0 {
-                        __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
-                        __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
-                        __mind_store_i8(der_buf + der_len + 2, b64_quad & 255);
-                        der_len = der_len + 3;
-                    } else {
-                        if pad_count == 1 {
-                            __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
-                            __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
-                            der_len = der_len + 2;
+                    let c2: i64 = __mind_load_i8(bundle + p) & 255;
+                    p = p + 1;
+                    if c2 != 10 && c2 != 13 && c2 != 32 && c2 != 9 {
+                        if c2 == 61 {
+                            // '=' padding
+                            pad_count = pad_count + 1;
+                            b64_quad = (b64_quad << 6);
+                            b64_count = b64_count + 1;
                         } else {
-                            if pad_count == 2 {
-                                __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
-                                der_len = der_len + 1;
-                            } else {
+                            if pad_count > 0 {
+                                // data after padding is invalid
                                 return -1;
                             }
+                            let val: i64 = x509_b64_val(c2);
+                            if val < 0 {
+                                return -1;
+                            }
+                            b64_quad = (b64_quad << 6) | val;
+                            b64_count = b64_count + 1;
+                        }
+                        if b64_count == 4 {
+                            if pad_count == 0 {
+                                __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                                __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
+                                __mind_store_i8(der_buf + der_len + 2, b64_quad & 255);
+                                der_len = der_len + 3;
+                            } else {
+                                if pad_count == 1 {
+                                    __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                                    __mind_store_i8(der_buf + der_len + 1, (b64_quad >> 8) & 255);
+                                    der_len = der_len + 2;
+                                } else {
+                                    if pad_count == 2 {
+                                        __mind_store_i8(der_buf + der_len + 0, (b64_quad >> 16) & 255);
+                                        der_len = der_len + 1;
+                                    } else {
+                                        return -1;
+                                    }
+                                }
+                            }
+                            b64_quad = 0;
+                            b64_count = 0;
                         }
                     }
-                    b64_quad = 0;
-                    b64_count = 0;
                 }
             }
             if found_end == 0 || b64_count != 0 {
@@ -291,25 +287,13 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
             __mind_store_i64(cert_ptrs + count * 8, der_buf);
             __mind_store_i64(cert_lens + count * 8, der_len);
             count = count + 1;
+            // Skip whitespace before next BEGIN
+            p = x509_bundle_skip_ws(bundle, p, bundle_len);
         }
     } else {
         if first == 48 {
             // DER bundle
-            p = 0;
             while p < bundle_len {
-                // Skip any whitespace between concatenated certs
-                let mut ws_skip: i64 = 1;
-                while p < bundle_len && ws_skip == 1 {
-                    let ch2: i64 = __mind_load_i8(bundle + p) & 255;
-                    if ch2 == 32 || ch2 == 10 || ch2 == 13 || ch2 == 9 {
-                        p = p + 1;
-                    } else {
-                        ws_skip = 0;
-                    }
-                }
-                if p >= bundle_len {
-                    break
-                }
                 if count >= 32 {
                     return -1;
                 }
@@ -350,7 +334,8 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
                 __mind_store_i64(cert_ptrs + count * 8, bundle + p);
                 __mind_store_i64(cert_lens + count * 8, total);
                 count = count + 1;
-                p = p + total;
+                // Skip any whitespace between concatenated certs
+                p = x509_bundle_skip_ws(bundle, p + total, bundle_len);
             }
         } else {
             return -1;
