@@ -68,6 +68,14 @@ fn values_of_unestablished_type_stored_in_integer_slots_are_not_trusted() {
         }}"
     );
     assert_eq!(refusals(&field), vec![UNTYPED]);
+    // A value the pass cannot type at all (a closure's result).
+    let closure = format!(
+        "{EQH}fn p() -> i64 {{
+            let f = |x| x
+            return eqh(f(\"abc\"), f(\"abc\"))
+        }}"
+    );
+    assert_eq!(refusals(&closure), vec![UNTYPED]);
     // Positive controls: the same shapes carrying integers.
     let ints = format!(
         "{EQH}fn pair() -> (i64, i64) {{ return (7, 7) }}
