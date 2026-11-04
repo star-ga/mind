@@ -34,6 +34,7 @@ mod struct_bindings;
 use qualified_enums::variant_payload_of;
 use struct_bindings::{StructNamesGuard, struct_name_in_scope};
 mod resolve;
+#[cfg(feature = "std-surface")]
 pub(crate) use resolve::is_bare_builtin;
 mod type_display;
 #[cfg(feature = "cross-module-imports")]

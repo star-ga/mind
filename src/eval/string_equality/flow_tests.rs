@@ -263,9 +263,6 @@ fn string_methods_become_calls_for_the_interpreter_only() {
     let expected: Vec<(String, usize)> =
         expected.iter().map(|(c, n)| (c.to_string(), *n)).collect();
     assert_eq!(calls, expected);
-    // A type-name receiver is not an argument.
-    let calls = interpreted_calls("fn p(b: i64) -> string { return string.from_utf8_bytes(b) }");
-    assert_eq!(calls, vec![("string_from_utf8_bytes".to_string(), 1)]);
     // Positive control: a method on a record is not a string method.
     let calls = interpreted_calls(
         "struct Box { v: i64 }

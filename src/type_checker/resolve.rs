@@ -125,6 +125,7 @@ const BARE_BUILTINS: &[&str] = &[
 
 /// Whether `name` is one of the bare math / tensor / autodiff builtins
 /// ([`BARE_BUILTINS`]): none of them takes or returns a string.
+#[cfg(feature = "std-surface")]
 pub(crate) fn is_bare_builtin(name: &str) -> bool {
     BARE_BUILTINS.binary_search(&name).is_ok()
 }
