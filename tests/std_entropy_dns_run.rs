@@ -548,6 +548,12 @@ fn main() -> i64 {
     if st("w") != dns.dns_err_entry() {
         return 26;
     }
+    // The good entry `x` wrote before failing is wiped, not just uncounted.
+    let x: String = "x";
+    let rx: i64 = dns.dns_resolve(string_addr(x), string_len(x));
+    if __mind_load_i64(rx + 16) != 0 {
+        return 27;
+    }
     let k: String = "k";
     let r: i64 = dns.dns_resolve(string_addr(k), string_len(k));
     if dns.dns_status(r) != dns.dns_ok() {
