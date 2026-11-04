@@ -519,15 +519,12 @@ impl Decls {
     /// A callee's declared result. A module-local declaration wins over the
     /// project registry; an ambiguous local name proves nothing.
     pub(super) fn call_ret(&self, callee: &str) -> Option<Ret> {
+        // This also covers a function of another module of the project that
+        // returns a string through its result: the project summary records
+        // it under the name the project build's calls use (see
+        // [`super::project`]).
         if self.contradicted.returns.contains(callee) {
             return Some(Ret::Stored);
-        }
-        // A function of another module of the project that returns a string
-        // through its result (see [`super::project`]).
-        if let Some(name) = self.project_fn(callee) {
-            if self.contradicted.returns.contains(name) {
-                return Some(Ret::Stored);
-            }
         }
         match self.returns.get(callee) {
             Some(local) => local.clone(),
