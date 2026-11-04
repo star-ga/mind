@@ -3,6 +3,15 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Preserve integer address additions as byte offsets on an LLVM pointer.
+//!
+//! A memory address is an `i64` sum. Rewriting it as `inttoptr` plus byte
+//! `getelementptr`s keeps address strides visible to the optimizer, but only
+//! when the byte offset is provably free of pointer provenance: promoting a
+//! value that may itself be an allocation base to GEP *index* place, or
+//! promoting a bare integer offset to GEP *root*, both invent an aliasing
+//! relationship the source never had. When neither addend is provably
+//! provenance-free the sum stays an opaque integer address, exactly as a
+//! plain `inttoptr` of the whole sum.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +20,10 @@ use super::{BinOp, Instr, LoweringContext, ValueId, ValueKind};
 #[derive(Clone, Default)]
 pub(super) struct MemoryAddresses {
     adds: BTreeMap<ValueId, (ValueId, ValueId)>,
-    constants: BTreeSet<ValueId>,
+    /// Values that are provably provenance-free: a constant, a comparison, or
+    /// an integer arithmetic result of provenance-free operands. Such a value
+    /// is safe to add to a pointer as a byte offset.
+    offsets: BTreeSet<ValueId>,
 }
 
 impl MemoryAddresses {
@@ -32,7 +44,37 @@ impl MemoryAddresses {
             }
         }
         self.adds.retain(|id, _| !invalid.contains(id));
-        self.constants.retain(|id| !invalid.contains(id));
+        self.offsets.retain(|id| !invalid.contains(id));
+    }
+
+    /// Extend the provenance-free set with the values defined by a straight-line
+    /// instruction sequence. Used to prove a loop-carried variable immutable in
+    /// provenance: its initializer and every body update are provenance-free.
+    /// Nested control flow is deliberately not traversed, so a value updated
+    /// under a branch stays unknown (conservative, hence sound).
+    pub(super) fn offsets_after(&self, instrs: &[Instr]) -> BTreeSet<ValueId> {
+        let mut offsets = self.offsets.clone();
+        for instr in instrs {
+            if let Instr::ConstI64(id, _) = instr {
+                offsets.insert(*id);
+            } else if let Instr::BinOp { dst, lhs, rhs, .. } = instr {
+                if offsets.contains(lhs) && offsets.contains(rhs) {
+                    offsets.insert(*dst);
+                }
+            }
+        }
+        offsets
+    }
+
+    pub(super) fn is_offset(&self, id: &ValueId) -> bool {
+        self.offsets.contains(id)
+    }
+
+    /// Re-assert offset-ness for a loop-carried value after `forget`: the value
+    /// is proven provenance-free by `offsets_after`, so `forget` dropping the
+    /// stale initializer facts must not also drop that proof.
+    pub(super) fn restore_offset(&mut self, id: ValueId) {
+        self.offsets.insert(id);
     }
 }
 
@@ -40,7 +82,7 @@ impl LoweringContext {
     pub(super) fn record_memory_address(&mut self, instr: &Instr) {
         match instr {
             Instr::ConstI64(id, _) => {
-                self.memory_addresses.constants.insert(*id);
+                self.memory_addresses.offsets.insert(*id);
             }
             Instr::BinOp {
                 dst,
@@ -55,6 +97,14 @@ impl LoweringContext {
             }) =>
             {
                 self.memory_addresses.adds.insert(*dst, (*lhs, *rhs));
+                if self.memory_addresses.is_offset(lhs) && self.memory_addresses.is_offset(rhs) {
+                    self.memory_addresses.offsets.insert(*dst);
+                }
+            }
+            Instr::BinOp { dst, lhs, rhs, .. }
+                if self.memory_addresses.is_offset(lhs) && self.memory_addresses.is_offset(rhs) =>
+            {
+                self.memory_addresses.offsets.insert(*dst);
             }
             _ => {}
         }
@@ -62,15 +112,19 @@ impl LoweringContext {
 
     pub(super) fn emit_memory_address(&mut self, mut address: ValueId, name: &str) {
         let mut offsets = Vec::new();
-        // Follow the base side of each add, preferring a nonconstant operand.
+        // Follow the root side of each add. The GEP root may be any value (it
+        // is `inttoptr`'d anyway); the GEP *index* must be a proven byte
+        // offset. An add with zero or two provenance-free addends is left
+        // intact so both contributors stay in the integer address.
         // Iteration keeps arbitrarily long source add chains off the call stack.
         while let Some(&(lhs, rhs)) = self.memory_addresses.adds.get(&address) {
-            let (base, offset) = if self.memory_addresses.constants.contains(&lhs)
-                && !self.memory_addresses.constants.contains(&rhs)
-            {
-                (rhs, lhs)
-            } else {
-                (lhs, rhs)
+            let (base, offset) = match (
+                self.memory_addresses.is_offset(&lhs),
+                self.memory_addresses.is_offset(&rhs),
+            ) {
+                (true, false) => (rhs, lhs),
+                (false, true) => (lhs, rhs),
+                _ => break,
             };
             address = base;
             offsets.push(offset);

@@ -109,7 +109,9 @@ fn memory_addresses_use_byte_geps_for_every_load_and_store_width() {
         for store in [false, true] {
             let mut module = IRModule::new();
             let base = call(&mut module, "address_base", vec![]);
-            let offset = call(&mut module, "address_offset", vec![]);
+            let low = constant(&mut module, 3);
+            let high = constant(&mut module, 5);
+            let offset = binary(&mut module, BinOp::Add, low, high);
             let negative = constant(&mut module, -7);
             let inner = binary(&mut module, BinOp::Add, base, offset);
             let address = binary(&mut module, BinOp::Add, negative, inner);
@@ -166,15 +168,13 @@ fn memory_addresses_choose_nonconstant_base_at_each_add() {
 #[test]
 fn memory_addresses_preserve_unsigned_64_bit_add_chains() {
     let mut module = IRModule::new();
-    for name in ["unsigned_base", "unsigned_offset"] {
-        module.fn_signatures.insert(
-            name.to_string(),
-            (vec![], Some(TypeAnn::Named("u64".to_string()))),
-        );
-    }
+    module.fn_signatures.insert(
+        "unsigned_base".to_string(),
+        (vec![], Some(TypeAnn::Named("u64".to_string()))),
+    );
     let base = call(&mut module, "unsigned_base", vec![]);
-    let offset = call(&mut module, "unsigned_offset", vec![]);
-    let tail = constant(&mut module, 7);
+    let offset = constant(&mut module, 7);
+    let tail = constant(&mut module, 9);
     let inner = binary(&mut module, BinOp::Add, base, offset);
     let address = binary(&mut module, BinOp::Add, tail, inner);
     let result = call(&mut module, "__mind_load_i64", vec![address]);
@@ -188,6 +188,34 @@ fn memory_addresses_preserve_unsigned_64_bit_add_chains() {
         &reference(base),
         &[reference(offset), reference(tail)],
     );
+}
+
+#[test]
+fn memory_addresses_keep_two_dynamic_addends_in_the_address() {
+    // Both addends have unknown provenance (parameters may hold an allocation
+    // base or a plain integer). Promoting either one to the getelementptr root
+    // would attach the pointer to the wrong value — e.g. root at the offset and
+    // index with the base — so the sum must stay an opaque integer address.
+    // This is the adversarial form: restoring an offset-first root must fail.
+    for (first, second) in [("offset", "base"), ("base", "offset")] {
+        let mut module = IRModule::new();
+        let lhs = call(&mut module, &format!("address_{first}"), vec![]);
+        let rhs = call(&mut module, &format!("address_{second}"), vec![]);
+        let address = binary(&mut module, BinOp::Add, lhs, rhs);
+        let stored = constant(&mut module, 1);
+        let result = call(&mut module, "__mind_store_i64", vec![address, stored]);
+        module.instrs.push(Instr::Output(result));
+        let text = lower_ir_to_mlir(&module)
+            .expect("lower ambiguous address")
+            .text;
+        assert_address(
+            &text,
+            &format!("%stp{}", result.0),
+            &reference(address),
+            &[],
+        );
+        assert!(!text.contains("getelementptr"), "{text}");
+    }
 }
 
 #[test]
@@ -339,6 +367,10 @@ fn memory_addresses_preserve_loop_carried_roots_and_outer_addresses() {
 
 #[test]
 fn memory_addresses_treat_carried_constant_initializers_as_runtime_bases() {
+    // The carried value starts at a literal but accumulates a dynamic offset,
+    // so neither the initializer nor the runtime block argument is a proven
+    // byte offset. The address stays opaque, yet it must still be computed
+    // from the loop's runtime block argument — not folded back to the literal.
     let mut module = IRModule::new();
     let initial = constant(&mut module, 4096);
     let offset = call(&mut module, "address_offset", vec![]);
@@ -368,7 +400,11 @@ fn memory_addresses_treat_carried_constant_initializers_as_runtime_bases() {
     assert_address(
         &text,
         &format!("%ldp{}", loaded.0),
-        loop_body_root(&text),
-        &[reference(offset)],
+        &reference(address),
+        &[],
+    );
+    assert!(
+        text.contains(&format!("arith.addi %{}", loop_body_root(&text))),
+        "runtime base dropped:\n{text}"
     );
 }

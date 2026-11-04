@@ -4091,6 +4091,25 @@ impl LoweringContext {
                     .map(|a| (a.init_id, a.body_name.clone(), a.post_id))
                     .collect();
 
+                // A loop-carried variable is a proven byte offset when its
+                // pre-loop value and every body update are provenance-free
+                // (a constant induction counter, say). Re-assert that fact in
+                // the cond/body sub-contexts after `forget` drops the stale
+                // initializer facts, so an address `base + counter` still
+                // lowers to a byte GEP on `base` rather than an opaque sum.
+                let carried_offsets: Vec<ValueId> = {
+                    let body_offsets = self.memory_addresses.offsets_after(body);
+                    loop_args
+                        .iter()
+                        .filter(|a| {
+                            let init = ValueId(a.init_id);
+                            self.memory_addresses.is_offset(&init)
+                                && body_offsets.contains(&ValueId(a.post_id))
+                        })
+                        .map(|a| ValueId(a.init_id))
+                        .collect()
+                };
+
                 // Entry branch: carry initial values into the header, each
                 // operand typed by its loop-carried kind (f64/f32/i64).
                 // BOOL-ABI loop carry: an initial value that is PHYSICALLY i1
@@ -4153,6 +4172,9 @@ impl LoweringContext {
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut cond_sub);
                 cond_sub.memory_addresses.forget(init_ids);
+                for id in &carried_offsets {
+                    cond_sub.memory_addresses.restore_offset(*id);
+                }
                 // BOOL-ABI loop carry: a loop-carried variable whose PRE-LOOP
                 // value was physically i1 (e.g. `let mut go = x < y`) is
                 // widened to i64 at the entry edge and carried in an i64 header
@@ -4286,6 +4308,9 @@ impl LoweringContext {
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut body_sub);
                 body_sub.memory_addresses.forget(init_ids);
+                for id in &carried_offsets {
+                    body_sub.memory_addresses.restore_offset(*id);
+                }
                 // BOOL-ABI loop carry (same rationale as the cond sub-context):
                 // inside the body a carried variable's init_id resolves to the
                 // i64 `%wbod_*` block arg, so it is no longer physically i1.
