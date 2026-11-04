@@ -8,12 +8,13 @@
 //! `tests/fixtures/evidence/unsigned_reference.mic3`, but that whole file is
 //! compiled only when BOTH signing features are on. No build WITHOUT them was
 //! compared with the same bytes, so "compiling signing in does not move unsigned
-//! output" rested on a manual cross-check. This file is not feature-gated: the
-//! std-surface `cargo test` rows of ci.yml's build_test job run the fixture
-//! comparison with PQC compiled OUT, and the release-profile job runs it with
-//! the exact release feature set compiled IN. Both compare with the one
-//! committed fixture, so the two builds emit byte-identical unsigned evidence or
-//! one of them goes red.
+//! output" rested on a manual cross-check. This file is not gated on the signing
+//! features. Its fixture comparison needs `std-surface` (see the twin's note), so
+//! the `--no-default-features` row does not run it; the std-surface `cargo test`
+//! rows of ci.yml's build_test job run it with PQC compiled OUT, and the
+//! release-profile job runs it with the exact release feature set compiled IN.
+//! Both compare with the one committed fixture, so the two builds emit
+//! byte-identical unsigned evidence or one of them goes red.
 //!
 //! The binary under test is `CARGO_BIN_EXE_mindc` unless
 //! `MIND_RELEASE_SMOKE_MINDC` names another. The release-profile job points it

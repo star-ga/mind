@@ -207,8 +207,10 @@ jobs:
     # unsigned bytes equal the committed fixture, the TEST seeds sign, the
     # signature verifies under keys derived independently from those seeds, and
     # stripping either leg is refused. scripts/check_release_gating.py R8 fails
-    # if this job's command, features or runner/target pairs drift from
-    # release.yml's. Seeds are the public TEST values in source; no key exists here.
+    # if this job's cargo build differs from release.yml's in any argument, if the
+    # signing-smoke cargo test is gone or loses release.yml's feature selection or
+    # --release/--locked/--target, or if the runner/target pairs drift. Seeds are
+    # the public TEST values in source; no key exists here.
     name: Release profile pre-tag smoke (${{ matrix.name }})
     strategy:
       fail-fast: false
