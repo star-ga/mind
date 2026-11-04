@@ -501,6 +501,42 @@ def case_identity_guard_keeps_synthetic_ci_merge_out_of_scope() -> None:
               "workflow no longer references the pull_request base/head shas")
 
 
+def case_identity_anchor_exempts_history_unless_forced() -> None:
+    """The historical identity anchor: a commit at or before it predates exact
+    author identity enforcement and is exempt from that rule, and `--identity`
+    lifts the exemption. A scratch repo never contains the anchor commit, so
+    both arms run against this checkout's own history (the CI job clones it in
+    full). A checkout without the anchor fails here rather than silently
+    checking a different scope."""
+    ccm = ROOT / "scripts" / "check_commit_messages.sh"
+    m = re.search(r'^IDENTITY_ANCHOR="([0-9a-f]{40})"', ccm.read_text(), re.M)
+    check("check_commit_messages.sh pins a 40-hex IDENTITY_ANCHOR", m is not None)
+    if m is None:
+        return
+    anchor = m.group(1)
+    present = subprocess.run(["git", "cat-file", "-e", f"{anchor}^{{commit}}"],
+                             cwd=ROOT, capture_output=True).returncode == 0
+    check("the identity anchor is in this checkout", present,
+          "shallow clone: fetch full history (actions/checkout fetch-depth: 0)")
+    if not present:
+        return
+    ident = git("log", "-1", "--format=%an <%ae>", anchor, cwd=ROOT).stdout.strip()
+    house = re.compile(rulebook("EXPECTED_AUTHOR_IDENTITY_REGEX"))
+    check("the anchor commit predates the house identity (the case the exemption is for)",
+          not house.match(ident))
+    rng = f"{anchor}~1..{anchor}"
+    r_skip = subprocess.run(["bash", str(ccm), rng], cwd=ROOT,
+                            capture_output=True, text=True)
+    check("a commit at the anchor is exempt from the identity rule -> PASS",
+          r_skip.returncode == 0 and "scanned 1 commits" in r_skip.stdout,
+          f"rc={r_skip.returncode} out={r_skip.stdout.strip()[:200]!r}")
+    r_forced = subprocess.run(["bash", str(ccm), "--identity", rng], cwd=ROOT,
+                              capture_output=True, text=True)
+    check("--identity checks the same commit's identity -> RED",
+          r_forced.returncode != 0 and "identity:" in r_forced.stdout,
+          f"rc={r_forced.returncode} out={r_forced.stdout.strip()[:200]!r}")
+
+
 def main() -> int:
     for case in (
         case_generated_doc_is_in_scope,
@@ -515,6 +551,7 @@ def main() -> int:
         case_identity_guard_rejects_foreign_author_merge_in_range,
         case_identity_guard_accepts_house_identity_merge_in_range,
         case_identity_guard_keeps_synthetic_ci_merge_out_of_scope,
+        case_identity_anchor_exempts_history_unless_forced,
     ):
         case()
     # No `asserted=` line here on purpose: scripts/run_gate.py owns that
