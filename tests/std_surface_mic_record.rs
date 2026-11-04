@@ -127,8 +127,10 @@ mod functional {
         0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52,
         0xb8, 0x55,
     ];
-    /// (game id, total actions, per-level actions). Level 10 sorts before level 2.
-    const GAMES: [(&str, i64, &[(i64, i64)]); 2] = [
+    /// (game id, total actions, per-level (level, actions)).
+    type Game = (&'static str, i64, &'static [(i64, i64)]);
+    /// Level 10 sorts before level 2.
+    const GAMES: [Game; 2] = [
         ("ls20-cb3b57cc", 214, &[(0, 17), (1, 42), (2, 9), (10, 146)]),
         ("ft09-b8377d4b", 88, &[(0, 31), (1, 57)]),
     ];

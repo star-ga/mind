@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1951 | **Est. tokens:** ~3,820,980
-**Generated:** 2026-11-04 16:00 UTC
+**Files:** 1951 | **Est. tokens:** ~3,820,994
+**Generated:** 2026-11-04 16:17 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 45 | ~215,512 |
-| `tests/` | 431 | ~880,562 |
+| `tests/` | 431 | ~880,576 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~15,706 |
@@ -2629,7 +2629,7 @@
 - `std_surface_map_module.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_method_call.rs` (~2963 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_mic_record_refusals.rs` (~2160 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_surface_mic_record.rs` (~5942 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_surface_mic_record.rs` (~5956 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~8341 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1466 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
