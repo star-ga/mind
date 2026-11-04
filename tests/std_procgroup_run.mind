@@ -11,11 +11,14 @@ import std.procgroup;
 
 extern "C" {
     unsafe fn sleep(seconds: i32) -> i32;
+    unsafe fn usleep(usecs: i32) -> i32;
     unsafe fn write(fd: i32, buf: *const u8, n: i64) -> i64;
     unsafe fn getrlimit(resource: i32, rlim: i64) -> i32;
     unsafe fn setrlimit(resource: i32, rlim: i64) -> i32;
     unsafe fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32;
     unsafe fn signal(signum: i32, handler: i64) -> i64;
+    unsafe fn fork() -> i32;
+    safe fn _exit(status: i32);
 }
 
 fn cstr(s: String) -> i64 {
@@ -150,6 +153,21 @@ fn child_main(c: i64, idx: i64) -> i64 {
             fd = fd + 1;
         }
         print(1000 * (got + 1) + fds);
+        return 0;
+    }
+    if c == 13 {
+        // The child forks a grandchild that keeps the stdout pipe open,
+        // waits ~500 ms, writes "77" and exits; the child itself returns 0
+        // at once, so its slot is reaped while the pipe is still open.
+        let pid: i64 = fork() as i64;
+        if pid == 0 {
+            let _ = usleep(500000);
+            let two: i64 = __mind_alloc(2);
+            __mind_store_i8(two + 0, 55);
+            __mind_store_i8(two + 1, 55);
+            let _ = write(1, two as *const u8, 2);
+            _exit(0);
+        }
         return 0;
     }
     return 100;
@@ -396,6 +414,21 @@ fn case_fork_failure() -> i64 {
     0
 }
 
+// Case 13: the child exits 0 at once but a grandchild it forked still holds
+// the stdout pipe open and writes "77" ~500 ms later. The parent must keep
+// reading the open pipe after the child is reaped.
+fn case_open_pipe() -> i64 {
+    let _ = set_case(13);
+    let g: i64 = procgroup_new(1);
+    let _ = spawn_self(g, 1);
+    let _ = kv(13000, procgroup_wait_all(g, 60000));
+    let _ = kv(13001, procgroup_stdout_len(g, 0));
+    let _ = kv(13002, procgroup_truncated(g, 0));
+    let _ = kv(13003, procgroup_state(g, 0));
+    let _ = kv(13004, out_value(g, 0));
+    0
+}
+
 fn main() -> i64 {
     let idx: i64 = procgroup_task_index();
     if idx >= 0 {
@@ -417,6 +450,7 @@ fn main() -> i64 {
     let _ = case_spawn_failure();
     let _ = case_isolation();
     let _ = case_lost();
+    let _ = case_open_pipe();
     print("done ", 1);
     0
 }

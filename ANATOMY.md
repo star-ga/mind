@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1953 | **Est. tokens:** ~3,827,417
-**Generated:** 2026-11-04 20:48 UTC
+**Files:** 1953 | **Est. tokens:** ~3,827,960
+**Generated:** 2026-11-04 23:06 UTC
 
 ## Token Budget Guide
 
@@ -151,8 +151,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 44 | ~211,977 |
-| `tests/` | 432 | ~887,538 |
+| `std/` | 44 | ~211,976 |
+| `tests/` | 432 | ~888,082 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1618,7 +1618,7 @@
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3084 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
-- `procgroup.mind` (~5912 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
+- `procgroup.mind` (~5911 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
@@ -2602,8 +2602,8 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_procgroup_run.mind` (~3388 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
-- `std_procgroup_run.rs` (~6706 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_procgroup_run.mind` (~3707 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
+- `std_procgroup_run.rs` (~6931 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.

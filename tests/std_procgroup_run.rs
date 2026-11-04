@@ -672,4 +672,21 @@ mod run {
         assert_eq!(run.get(11002), 0, "slot 0 output is kept");
         assert_eq!(run.get(11003), 1, "slot 1 output is kept");
     }
+
+    /// The child exits 0 at once, but a grandchild it forked still holds the
+    /// stdout pipe open and writes `77` ~500 ms later. The parent reaps the
+    /// child while the write end is still open, so it must keep reading the
+    /// open pipe instead of stopping at the reap, or the grandchild's bytes
+    /// are lost (state ok, no failure, no truncation, empty output).
+    #[test]
+    fn a_pipe_a_grandchild_holds_open_is_read_after_the_child_exits() {
+        let Some(run) = shared() else {
+            return;
+        };
+        assert_eq!(run.get(13000), 0, "the child exited 0: no failure");
+        assert_eq!(run.get(13001), 2, "the grandchild's `77` is kept");
+        assert_eq!(run.get(13002), 0, "two bytes are not truncated");
+        assert_eq!(run.get(13003), OK, "the child's own state is ok");
+        assert_eq!(run.get(13004), 77, "the kept bytes are exactly `77`");
+    }
 }
