@@ -159,7 +159,11 @@ pub(super) fn run_while(
 /// iteration reads the stored element. When the collection is a variable, the
 /// element is therefore read from the variable's CURRENT array each
 /// iteration (an indexed store rebinds it here); any other collection
-/// expression is evaluated once. A body that rebinds the collection variable
+/// expression is evaluated once. A collection that IS a shared dynamic-array
+/// run (a struct field declared `array<T>`, read once into the snapshot) is
+/// read THROUGH the run each iteration, exactly as the compiled loop calls
+/// `vec_get` on the captured handle — a body store through the field reaches
+/// the run and is read back. A body that rebinds the collection variable
 /// itself is refused: the compiled loop keeps walking the old handle, and an
 /// interpreter that cannot tell the two apart must not guess.
 pub(super) fn run_for_each(
@@ -188,6 +192,7 @@ pub(super) fn run_for_each(
     let snapshot = eval_value_expr_mode(collection, env, tensor_env, mode.clone())?;
     let len = match &snapshot {
         Value::Tuple(items) => items.len(),
+        Value::Array(run) => run.len(),
         other => {
             return Err(EvalError::UnsupportedMsg(format!(
                 "for-each collection must be an array, got {}",
@@ -200,8 +205,10 @@ pub(super) fn run_for_each(
         for idx in 0..len {
             let element = match live.and_then(|name| env.get(name)) {
                 Some(Value::Tuple(items)) => items.get(idx).cloned(),
+                Some(Value::Array(run)) => run.get(idx),
                 _ => match &snapshot {
                     Value::Tuple(items) => items.get(idx).cloned(),
+                    Value::Array(run) => run.get(idx),
                     _ => None,
                 },
             };

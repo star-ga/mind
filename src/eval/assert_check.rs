@@ -98,6 +98,7 @@ pub(super) fn value_kind_name(value: &Value) -> &'static str {
         Value::Float(_) => "a float",
         Value::Str(_) => "a string",
         Value::Tuple(_) => "a tuple",
+        Value::Array(_) => "an array",
         Value::Tensor(_) => "a tensor",
         Value::GradMap(_) => "a gradient map",
         Value::Enum { .. } => "an enum value",

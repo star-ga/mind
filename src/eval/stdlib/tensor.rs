@@ -405,6 +405,7 @@ fn shape_dim_from_value(value: &Value) -> Result<ShapeDim, EvalError> {
         }
         Value::Float(_) => Err(EvalError::Unsupported),
         Value::Tuple(_) => Err(EvalError::Unsupported),
+        Value::Array(_) => Err(EvalError::Unsupported),
         Value::GradMap(_) => Err(EvalError::Unsupported),
         Value::Enum { .. } => Err(EvalError::Unsupported),
     }

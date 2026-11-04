@@ -487,6 +487,11 @@ pub fn eval_module_value_with_env_mode(
     // narrow-field schema from this module's `StructDef`s so `Node::StructLit`
     // materialises a `u8` / `[u8; N]` field. Restored on drop (no leak).
     let _struct_defs = declared_width::install_struct_defs(&m.items);
+    // Dynamic-array fields (`array<T>`): the same `StructDef`s decide which
+    // fields hold a shared element run (`record_store`), so an element store
+    // is seen through every alias of the field, like the vec handle the
+    // compiled build stores there. Restored on drop (no leak).
+    let _dynamic_array_fields = record_store::install_dynamic_array_fields(&m.items);
     let _fn_prev = fn_table_install(m);
     // Register module-level `const`s AFTER the fn table (an initializer may
     // call a const-evaluable fn); called fn bodies resolve them through the
@@ -657,6 +662,32 @@ pub fn eval_module_value_with_env_mode(
             #[cfg(feature = "std-surface")]
             Node::While { cond, body, .. } => {
                 last = loops::run_while(cond, body, &mut venv, &tensor_env, mode.clone())?;
+                for (k, v) in venv.iter() {
+                    if let Value::Int(n) = v {
+                        env.insert(k.clone(), *n);
+                    }
+                }
+                module_globals::sync(current_eval_owner().as_deref(), &venv, &tensor_env);
+            }
+            // Top-level `for v in coll`: threaded exactly like the range
+            // `for` and `while` above. Without this arm a module-level
+            // for-each fell to the expression-level arm, which runs the loop
+            // over a CLONE of the env — every loop-carried store was silently
+            // dropped, and a test asserting the pre-loop value passed.
+            Node::ForEach {
+                var,
+                collection,
+                body,
+                ..
+            } => {
+                last = loops::run_for_each(
+                    var,
+                    collection,
+                    body,
+                    &mut venv,
+                    &tensor_env,
+                    mode.clone(),
+                )?;
                 for (k, v) in venv.iter() {
                     if let Value::Int(n) = v {
                         env.insert(k.clone(), *n);
@@ -1016,10 +1047,13 @@ fn exec_threaded_stmt(
 /// Evaluate a statement-position indexed assignment and thread the rebuilt
 /// array value into `env`.
 ///
-/// The tree evaluator currently supports only a simple variable holding an
-/// array tuple. Every other receiver shape fails explicitly: returning the RHS
-/// while leaving the receiver unchanged would let a test's setup disappear and
-/// a later assertion over the old value report a false pass.
+/// The tree evaluator currently supports a simple variable holding an array
+/// value (a plain tuple, or a shared dynamic-array run — the store goes
+/// through it, `record_store`), plus a field receiver through
+/// `record_store::assign_field_element`. Every other receiver shape fails
+/// explicitly: returning the RHS while leaving the receiver unchanged would
+/// let a test's setup disappear and a later assertion over the old value
+/// report a false pass.
 fn eval_index_assign_threaded(
     receiver: &Node,
     index: &Node,
@@ -1047,6 +1081,28 @@ fn eval_index_assign_threaded(
         .get(name)
         .cloned()
         .ok_or_else(|| EvalError::UnknownVar(name.clone()))?;
+    // A shared dynamic-array run (a field alias, `record_store`) stores
+    // THROUGH the run — the way the compiled vec_set writes the handle's
+    // backing — so every alias of the run sees the element. The binding
+    // itself is rebound to the same run it already holds.
+    if let Value::Array(run) = &current {
+        let idx = match eval_value_expr_mode(index, env, tensor_env, mode)? {
+            Value::Int(i) => i,
+            other => {
+                return Err(EvalError::UnsupportedMsg(format!(
+                    "array index must be an integer, got {other:?}"
+                )));
+            }
+        };
+        let len = run.len();
+        if !usize::try_from(idx).is_ok_and(|i| run.set(i, val.clone())) {
+            return Err(EvalError::BoundsTrap(format!(
+                "array index {idx} out of bounds (len {len})"
+            )));
+        }
+        env.insert(name.clone(), current);
+        return Ok(val);
+    }
     let Value::Tuple(mut items) = current else {
         return Err(EvalError::UnsupportedMsg(format!(
             "indexed assignment receiver `{name}` must be an array"
@@ -1968,6 +2024,12 @@ pub(crate) fn eval_value_expr_mode(
                 // structs pass through; an unmaterialisable narrow field is
                 // refused, never returned wide (`declared_width` module docs).
                 let value = declared_width::narrow_struct_field(name, &f.name, value)?;
+                // A field declared `array<T>` becomes a shared element run
+                // (`record_store::wrap_struct_field`): the compiled build
+                // stores a std.vec handle there, and a copy of the handle
+                // shares the heap backing, so element stores must be visible
+                // through every alias of the field.
+                let value = record_store::wrap_struct_field(name, &f.name, value);
                 items.push((f.name.clone(), value));
             }
             Ok(Value::Struct {
@@ -2001,6 +2063,26 @@ pub(crate) fn eval_value_expr_mode(
                         )));
                     }
                     Ok(items[idx as usize].clone())
+                }
+                // A shared dynamic-array run reads its CURRENT element, the
+                // way the compiled `vec_get(handle, i)` re-reads the backing
+                // on every access — a store through any alias is seen here.
+                Value::Array(run) => {
+                    let idx = match eval_value_expr_mode(index, env, tensor_env, mode)? {
+                        Value::Int(i) => i,
+                        other => {
+                            return Err(EvalError::UnsupportedMsg(format!(
+                                "array index must be an integer, got {other:?}"
+                            )));
+                        }
+                    };
+                    let len = run.len();
+                    match usize::try_from(idx).ok().and_then(|i| run.get(i)) {
+                        Some(element) => Ok(element),
+                        None => Err(EvalError::BoundsTrap(format!(
+                            "array index {idx} out of bounds (len {len})"
+                        ))),
+                    }
                 }
                 other => Ok(other),
             }
@@ -2045,6 +2127,19 @@ pub(crate) fn eval_value_expr_mode(
                         )));
                     }
                     Ok(Value::Tuple(items[s as usize..e as usize].to_vec()))
+                }
+                // Slicing a shared dynamic-array run snapshots the CURRENT
+                // elements into a fresh value container — the compiled build
+                // materialises a new vec for the slice, it does not alias the
+                // backing.
+                Value::Array(run) => {
+                    let len = run.len();
+                    if s < 0 || e < s || e as usize > len {
+                        return Err(EvalError::UnsupportedMsg(format!(
+                            "range-slice [{s}..{e}] out of bounds (len {len})"
+                        )));
+                    }
+                    Ok(Value::Tuple(run.items()[s as usize..e as usize].to_vec()))
                 }
                 other => Err(EvalError::UnsupportedMsg(format!(
                     "range-slice receiver must be an array/slice, got {other:?}"
@@ -2247,6 +2342,7 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
     match method {
         "len" => match &receiver {
             Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
+            Value::Array(run) => Ok(Value::Int(run.len() as i64)),
             Value::Str(s) => Ok(Value::Int(s.len() as i64)),
             Value::Tensor(t) => {
                 let mut total: i64 = 1;
@@ -2294,6 +2390,13 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
                     Err(EvalError::OutOfBounds)
                 } else {
                     Ok(items.last().unwrap().clone())
+                }
+            }
+            Value::Array(run) => {
+                if run.is_empty() {
+                    Err(EvalError::OutOfBounds)
+                } else {
+                    run.get(run.len() - 1).ok_or(EvalError::OutOfBounds)
                 }
             }
             other => Err(EvalError::UnsupportedMsg(format!(
@@ -2385,6 +2488,7 @@ fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
     match field {
         "len" => match &receiver {
             Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
+            Value::Array(run) => Ok(Value::Int(run.len() as i64)),
             Value::Str(s) => Ok(Value::Int(s.len() as i64)),
             _ => Err(EvalError::UnsupportedMsg(format!(
                 "no field .len for {:?}",
@@ -3576,13 +3680,27 @@ fn const_table_install(m: &Module, mode: ExecMode) -> Result<HashMap<String, Val
 }
 
 /// Look up a module-level `const` by name (Ident-arm fallback).
+///
+/// Every read returns a value FRESH for this use ([`Value::fresh_for_const_use`]):
+/// the compiled build inlines a const's literal at each use, so a use never
+/// shares records or array runs with another use, and a store through one
+/// cannot leak into the next (or back into the const). Returning the table's
+/// own value here shared one record across every use, turning the second
+/// `bump()` below into `+10` over the first one's residue:
+///
+/// ```text
+/// struct P { x: i64 }
+/// const ORIGIN: P = P { x: 1 };
+/// fn bump() -> i64 { let p: P = ORIGIN; p.x = p.x + 10; return p.x; }
+/// // native: bump() + bump() == 11 + 11; a shared record gave 11 + 21.
+/// ```
 fn const_table_lookup(name: &str, span: Span) -> Result<Option<Value>, EvalError> {
     if let Some(bound) = eval_bound_symbol(span, EvalBindingKind::Value) {
         return CONST_TABLE.with(|table| {
             table
                 .borrow()
                 .get(&bound)
-                .cloned()
+                .map(Value::fresh_for_const_use)
                 .map(Some)
                 .ok_or_else(|| {
                     EvalError::UnsupportedMsg(format!(
@@ -3594,7 +3712,7 @@ fn const_table_lookup(name: &str, span: Span) -> Result<Option<Value>, EvalError
     let (keys, ambiguity) = module_bindings::const_lookup_keys(name);
     for key in &keys {
         if let Some(value) = CONST_TABLE.with(|t| t.borrow().get(key).cloned()) {
-            return Ok(Some(value));
+            return Ok(Some(value.fresh_for_const_use()));
         }
     }
     if let Some(err) = ambiguity {

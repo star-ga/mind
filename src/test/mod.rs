@@ -592,7 +592,52 @@ fn grade_returned_value(
     }
 }
 
-/// Resolve `import std.X` / `use std::X` declarations of a test module (and,
+/// The std modules a program calls WITHOUT an import: the compiled build
+/// resolves their `string_*` / `vec_*` / `map_*` functions through the
+/// runtime-support library it links into every artifact, and the std modules
+/// themselves call each other this way (std.io builds strings with
+/// `string_push_byte` and no import line). The test evaluator runs the same
+/// definitions from their bundled MIND source.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+const AMBIENT_STD: [&str; 3] = ["std.string", "std.vec", "std.map"];
+
+/// The runtime-support source every artifact links — the authority on which
+/// std names the compiled build can actually call without an import.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+const MIND_RUNTIME_SUPPORT_C: &str = include_str!("../../runtime-support/mind_intrinsics.c");
+
+/// The function names the runtime-support library exports (`MIND_EXPORT` /
+/// `MIND_EXPORT_WEAK` definitions in [`MIND_RUNTIME_SUPPORT_C`]). An ambient
+/// std fn is admissible exactly when its name is exported here: the ambient
+/// set is "the names the compiled build links", so admitting anything else
+/// made `mindc test` pass a program whose `mindc build` cannot link —
+/// `vec_free` was callable with no import while the linker answered
+/// `undefined reference to 'vec_free'`.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+fn runtime_support_exports() -> &'static std::collections::HashSet<&'static str> {
+    static EXPORTS: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+        std::sync::OnceLock::new();
+    EXPORTS.get_or_init(|| {
+        MIND_RUNTIME_SUPPORT_C
+            .lines()
+            .filter_map(|line| {
+                // `MIND_EXPORT int64_t name(...)` / `MIND_EXPORT_WEAK ... name(...)`.
+                // The `#  define MIND_EXPORT ...` macro lines start with `#`
+                // and never match.
+                let rest = line.trim_start().strip_prefix("MIND_EXPORT")?;
+                let rest = rest.strip_prefix("_WEAK").unwrap_or(rest);
+                let paren = rest.find('(')?;
+                rest[..paren]
+                    .trim()
+                    .rsplit(char::is_whitespace)
+                    .next()
+                    .filter(|name| !name.is_empty())
+            })
+            .collect()
+    })
+}
+
+/// Resolve `import std.X` / `use std.X` declarations of a test module (and,
 /// transitively, of the modules they import) against the stdlib sources baked
 /// into the binary (RFC 0005 Phase C, `project::stdlib`), returning the
 /// imported modules' `FnDef` items so the interpreter's fn table can dispatch
@@ -605,15 +650,9 @@ fn grade_returned_value(
 /// worklist, `BTreeSet` visited guard against cycles). An import that is not
 /// a bundled `std.*` module contributes nothing (existing behavior for it is
 /// unchanged); a bundled module that fails to parse is a fail-loud error.
-/// The std modules a program calls WITHOUT an import: the compiled build
-/// resolves their `string_*` / `vec_*` / `map_*` functions through the
-/// runtime-support library it links into every artifact, and the std modules
-/// themselves call each other this way (std.io builds strings with
-/// `string_push_byte` and no import line). The test evaluator runs the same
-/// definitions from their bundled MIND source.
-#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-const AMBIENT_STD: [&str; 3] = ["std.string", "std.vec", "std.map"];
-
+/// An EXPLICIT import admits the module's every definition; an AMBIENT module
+/// admits only the fns its runtime support links
+/// ([`runtime_support_exports`]).
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
     use crate::project::stdlib::STDLIB_MIND_SOURCES;
@@ -630,6 +669,15 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
 
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // The file's OWN imports come first, in source-encounter order (the
+    // documented FIFO discipline); the ambient modules follow. An explicit
+    // import keeps admitting the module's every definition (that is the
+    // documented cross-module behavior), while an AMBIENT module admits only
+    // the names the compiled build links from its runtime support.
+    let explicit: std::collections::BTreeSet<String> = top_level::refs(&module.items)
+        .into_iter()
+        .filter_map(import_key)
+        .collect();
     let mut queue: VecDeque<String> = top_level::refs(&module.items)
         .into_iter()
         .filter_map(import_key)
@@ -661,9 +709,12 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
                     .join("; ")
             )
         })?;
+        let ambient = !explicit.contains(&key);
         for item in top_level::refs(&imported.items) {
             match item {
                 Node::FnDef(fd, _) if extern_names.contains(fd.name.as_str()) => {}
+                Node::FnDef(fd, _)
+                    if ambient && !runtime_support_exports().contains(fd.name.as_str()) => {}
                 Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
                 Node::Import { .. } => {
                     if let Some(k) = import_key(item) {

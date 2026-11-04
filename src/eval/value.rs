@@ -134,6 +134,15 @@ pub enum Value {
         name: String,
         fields: Record,
     },
+    /// A dynamic `array<T>` element run (a std.vec handle in the compiled
+    /// build). The elements live in ONE shared backing ([`ArrayBuf`]), so a
+    /// copy of the value denotes the SAME run: an element store through one
+    /// reference is seen through every alias, the way a copied handle shares
+    /// the heap backing. Only a struct field DECLARED `array<T>` carries this
+    /// variant (the `record_store` schema decides at construction); a fixed
+    /// `[T; N]` field stays a value container ([`Value::Tuple`]), exactly as
+    /// the compiled build stores it inline.
+    Array(ArrayBuf),
 }
 
 /// The fields of one struct record (types.md "Record identity"): binding,
@@ -181,6 +190,63 @@ impl PartialEq for Record {
     }
 }
 
+/// The shared element run of a dynamic `array<T>` value: binding, assigning,
+/// passing or returning the value shares the run and never clones it, so an
+/// element store made through one reference is visible through every alias.
+/// That is the tree evaluator's model of the std.vec handle the compiled
+/// build copies by value while its heap backing stays shared. A struct
+/// literal whose field is DECLARED `array<T>` is the only producer
+/// (`record_store::wrap_struct_field`); the interpreter keeps carrying every
+/// other array shape as a plain [`Value::Tuple`].
+#[derive(Clone)]
+pub struct ArrayBuf(Rc<RefCell<Vec<Value>>>);
+
+impl ArrayBuf {
+    pub fn new(items: Vec<Value>) -> Self {
+        ArrayBuf(Rc::new(RefCell::new(items)))
+    }
+
+    /// The current element at `idx`, if the run has it.
+    pub fn get(&self, idx: usize) -> Option<Value> {
+        self.0.borrow().get(idx).cloned()
+    }
+
+    /// Store `value` into `idx`; `false` (storing nothing) when `idx` is out
+    /// of bounds.
+    pub fn set(&self, idx: usize, value: Value) -> bool {
+        let mut items = self.0.borrow_mut();
+        match items.get_mut(idx) {
+            Some(slot) => {
+                *slot = value;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The run's current length.
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    /// An empty run is a legal `array<T>` value (a never-pushed vec).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// A value-snapshot of the whole run, as the plain `Value::Tuple` the
+    /// interpreter uses for array copies.
+    pub fn items(&self) -> Vec<Value> {
+        self.0.borrow().clone()
+    }
+}
+
+impl PartialEq for ArrayBuf {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || *self.0.borrow() == *other.0.borrow()
+    }
+}
+
 thread_local! {
     static PRINT_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
@@ -211,6 +277,15 @@ impl fmt::Debug for Record {
     }
 }
 
+impl fmt::Debug for ArrayBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Same recursion guard as `Record`: a run can reach itself through a
+        // record field, and printing one must stop, not overflow the stack.
+        nested(|| f.debug_list().entries(self.items()).finish())
+            .unwrap_or_else(|| f.write_str("[..]"))
+    }
+}
+
 impl Value {
     pub fn is_int(&self) -> bool {
         matches!(self, Value::Int(_))
@@ -223,6 +298,48 @@ impl Value {
             None
         }
     }
+
+    /// A copy of this value for a NEW read of a module `const`. The compiled
+    /// build inlines a const's literal at every use, so every use gets its
+    /// own records and array runs and a store through one use can never leak
+    /// into another use — or back into the const. Shared backings ([`Value::Struct`]
+    /// records, [`Value::Array`] runs, and the same nested inside tuples and
+    /// enum payloads) are rebuilt fresh; scalars, strings and tensors pass
+    /// through unchanged (they share nothing).
+    pub fn fresh_for_const_use(&self) -> Value {
+        match self {
+            Value::Struct { name, fields } => Value::Struct {
+                name: name.clone(),
+                fields: Record::new(
+                    fields
+                        .fields()
+                        .into_iter()
+                        .map(|(fname, fval)| (fname, fval.fresh_for_const_use()))
+                        .collect(),
+                ),
+            },
+            Value::Array(run) => Value::Array(ArrayBuf::new(
+                run.items()
+                    .into_iter()
+                    .map(|item| item.fresh_for_const_use())
+                    .collect(),
+            )),
+            Value::Tuple(items) => Value::Tuple(
+                items
+                    .iter()
+                    .map(|item| item.fresh_for_const_use())
+                    .collect(),
+            ),
+            Value::Enum { variant, payload } => Value::Enum {
+                variant: variant.clone(),
+                payload: payload
+                    .iter()
+                    .map(|item| item.fresh_for_const_use())
+                    .collect(),
+            },
+            other => other.clone(),
+        }
+    }
 }
 
 pub fn format_value_human(v: &Value) -> String {
@@ -233,6 +350,17 @@ pub fn format_value_human(v: &Value) -> String {
         Value::Tuple(items) => {
             let mut out = String::from("(");
             for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&format_value_human(item));
+            }
+            out.push(')');
+            out
+        }
+        Value::Array(run) => {
+            let mut out = String::from("(");
+            for (i, item) in run.items().iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
