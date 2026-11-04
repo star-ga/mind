@@ -291,7 +291,7 @@ fn a_string_literal_arm_lowers_to_the_byte_wise_comparison() {
     );
 }
 
-/// String match arms, string methods and positive controls: each case is a
+/// String match arms and string methods: each case is a
 /// zero-argument `pub fn`, and both backends must give the expected value.
 const DEFINED: &str = r#"fn is_abc(s: string) -> i64 {
     match s {
@@ -311,17 +311,6 @@ fn tails(a: string, b: string) -> i64 {
     return 0
 }
 
-fn eqh(a: i64, b: i64) -> i64 {
-    if a == b { return 1 }
-    return 0
-}
-
-fn pair() -> (i64, i64) { return (7, 7) }
-
-fn tuple_ints() -> i64 {
-    let (a, b) = pair()
-    return eqh(a, b)
-}
 "#;
 
 const DEFINED_CASES: &[(&str, &str, i64)] = &[
@@ -337,7 +326,6 @@ const DEFINED_CASES: &[(&str, &str, i64)] = &[
     ("bare_string_len", "string_len(\"abc\")", 3),
     ("slices_equal", "tails(\"xbcd\", \"ybce\")", 1),
     ("slices_unequal", "tails(\"xbcd\", \"ybde\")", 0),
-    ("tuple_ints", "tuple_ints()", 1),
 ];
 
 fn defined_source() -> String {
@@ -349,8 +337,11 @@ fn defined_source() -> String {
 }
 
 /// The value each case produces under `mindc test` (the interpreter), one
-/// module per case (a module with every case overflows the interpreter's
-/// stack on the previous head too, which is not what this test measures).
+/// module per case. Integer controls of these shapes are unit tests
+/// (`string_equality::flow_tests`): a `mindc test` module that holds these
+/// helpers and a loop or tuple helper calling `eqh` overflows the
+/// interpreter's stack on the previous head too, which this test does not
+/// measure.
 fn interpreter_values(dir: &Path) -> Vec<i64> {
     DEFINED_CASES
         .iter()
