@@ -132,7 +132,7 @@ fn getrandom_shim(tail_rc: &str) -> String {
 
 fn build_shim(dir: &Path, name: &str, tail_rc: &str) -> std::path::PathBuf {
     let src = common::scratch_src_in(dir, &format!("{name}.mind"), &getrandom_shim(tail_rc));
-    common::emit_shared_in(dir, name, &src, &format!("{name}.so"), &[])
+    std_entropy_dns_support::emit_shim(dir, name, &src)
 }
 
 #[test]

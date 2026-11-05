@@ -29,7 +29,7 @@ mod std_entropy_dns_support;
 
 use std::path::PathBuf;
 use std::time::Duration;
-use std_entropy_dns_support::{build_exe, run};
+use std_entropy_dns_support::{build_exe, emit_shim, run};
 
 /// Shared shim helpers: zero a block, and the one node builder per layout.
 const SHIM_COMMON: &str = r#"fn sh_zero(p: i64, n: i64) {
@@ -156,7 +156,7 @@ fn shim(target: &str, name: &str, body: &str) -> PathBuf {
     let dir = common::scratch_dir(target);
     let text = format!("{SHIM_COMMON}{body}");
     let src = common::scratch_src_in(&dir, &format!("{name}.mind"), &text);
-    common::emit_shared_in(&dir, name, &src, &format!("{name}.so"), &[])
+    emit_shim(&dir, name, &src)
 }
 
 /// Exit 42 when every check passes; any other value names the failed check.

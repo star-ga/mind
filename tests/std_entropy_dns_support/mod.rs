@@ -39,6 +39,26 @@ pub fn build_exe(target: &str, main: &str) -> Option<PathBuf> {
     Some(dir.join("target").join("debug").join("ed"))
 }
 
+/// Compile the shim source `src` to `dir/<name>.so` with `mindc --emit-shared`;
+/// a failed compile panics with mindc's own stdout and stderr.
+pub fn emit_shim(dir: &Path, name: &str, src: &Path) -> PathBuf {
+    let so = dir.join(format!("{name}.so"));
+    let out = Command::new(crate::common::mindc_bin())
+        .arg(src)
+        .arg("--emit-shared")
+        .arg(&so)
+        .output()
+        .expect("run mindc --emit-shared");
+    assert!(
+        out.status.success(),
+        "mindc --emit-shared failed for the {name} shim ({})\nstdout: {}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    so
+}
+
 /// Run `exe` (optionally with `LD_PRELOAD`), killing it after `limit`.
 /// Returns the exit code and the elapsed time.
 pub fn run(exe: &Path, preload: Option<&Path>, limit: Duration) -> (i32, Duration) {
@@ -166,5 +186,5 @@ pub fn freeaddrinfo(res: i64) -> i64 {
 pub fn gai_shim(target: &str) -> PathBuf {
     let dir = crate::common::scratch_dir(target);
     let src = crate::common::scratch_src_in(&dir, "gai_shim.mind", GAI_SHIM);
-    crate::common::emit_shared_in(&dir, "gai_shim", &src, "gai_shim.so", &[])
+    emit_shim(&dir, "gai_shim", &src)
 }

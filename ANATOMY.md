@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1977 | **Est. tokens:** ~3,911,098
-**Generated:** 2026-11-05 10:11 UTC
+**Files:** 1977 | **Est. tokens:** ~3,911,436
+**Generated:** 2026-11-05 10:27 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~114,323 |
+| `docs/` | 40 | ~114,509 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -158,7 +158,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 47 | ~221,830 |
-| `tests/` | 440 | ~928,309 |
+| `tests/` | 440 | ~928,297 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -227,7 +227,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
-| `tests/std_entropy_dns_support/` | 1 | ~1,419 |
+| `tests/std_entropy_dns_support/` | 1 | ~1,583 |
 | `tests/support/` | 10 | ~23,124 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
@@ -479,7 +479,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~4404 tok, huge) — The Determinism Contract
+- `determinism.md` (~4590 tok, huge) — The Determinism Contract
 - `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
 - `errors.md` (~1338 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
@@ -2646,11 +2646,11 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8134 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_dns_layout_run.rs` (~2228 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_entropy_dns_run.rs` (~5017 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_dns_layout_run.rs` (~2220 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_entropy_dns_run.rs` (~5013 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/std_entropy_dns_support/`
 
-- `mod.rs` (~1419 tok, large) — Copyright 2026 STARGA Inc.
+- `mod.rs` (~1583 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/`
 
 - `std_import_position.rs` (~2682 tok, huge) — Copyright 2026 STARGA Inc.
