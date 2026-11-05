@@ -1,0 +1,99 @@
+name: Release artifact smoke
+description: >-
+  Check a packaged mindc archive the way a downloader does: the sibling .sha256
+  file matches it, it unpacks, and the binary inside runs and prints the
+  expected version on its first line. release.yml runs this after packaging each
+  leg; ci.yml's release_profile job runs the SAME action on the archive it
+  builds with the exact release command, so this logic executes on every PR
+  before any tag can depend on it.
+
+inputs:
+  archive:
+    description: Path to the packaged archive (.tar.gz or .zip), with `<archive>.sha256` beside it.
+    required: true
+  version:
+    description: Version the first line of `mindc --version` must report, without a leading `v`.
+    required: true
+
+outputs:
+  binary:
+    description: Path of the unpacked binary that was run.
+    value: ${{ steps.smoke.outputs.binary }}
+
+runs:
+  using: composite
+  steps:
+    - id: smoke
+      shell: bash
+      env:
+        ARCHIVE: ${{ inputs.archive }}
+        WANT_VERSION: ${{ inputs.version }}
+      # Written for bash 3.2 too (macOS runners): no arrays under `set -u`.
+      run: |
+        set -euo pipefail
+        native() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        archive=$(native "$ARCHIVE")
+        dir=$(cd "$(dirname "$archive")" && pwd)
+        name=$(basename "$archive")
+        test -f "$dir/$name" || { echo "FAIL: archive $archive is missing"; exit 1; }
+        test -f "$dir/$name.sha256" || { echo "FAIL: $name.sha256 is missing"; exit 1; }
+        test -n "$WANT_VERSION" || { echo "FAIL: no expected version was given"; exit 1; }
+
+        # 1. The checksum file names this archive and matches its bytes.
+        if command -v sha256sum >/dev/null 2>&1; then
+          got=$(sha256sum "$dir/$name" | cut -d' ' -f1)
+        else
+          got=$(shasum -a 256 "$dir/$name" | cut -d' ' -f1)
+        fi
+        line=$(head -n 1 "$dir/$name.sha256" | tr -d '\r')
+        want=$(printf '%s' "${line%% *}" | tr 'A-F' 'a-f')
+        named=${line#* }
+        named=${named# }
+        named=${named#\*}
+        if [ "$want" != "$got" ] || [ "$named" != "$name" ]; then
+          echo "FAIL: $name.sha256 reads '$line'; the archive hashes to '$got'"
+          exit 1
+        fi
+        # The exact command a downloader runs, where the file is in that tool's
+        # format (the Windows leg writes CRLF, which the comparison above covers).
+        if [ "$RUNNER_OS" != "Windows" ]; then
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$dir" && sha256sum -c "$name.sha256")
+          else
+            (cd "$dir" && shasum -a 256 -c "$name.sha256")
+          fi
+        fi
+
+        # 2. It unpacks to the one binary the release promises.
+        tmp_root=$(native "${RUNNER_TEMP:-/tmp}")
+        out=$(mktemp -d "$tmp_root/release-smoke.XXXXXX")
+        case "$name" in
+          *.tar.gz) tar -xzf "$dir/$name" -C "$out"; bin="$out/mindc" ;;
+          *.zip)
+            if command -v cygpath >/dev/null 2>&1; then
+              7z x -y "-o$(cygpath -w "$out")" "$(cygpath -w "$dir/$name")" >/dev/null
+            else
+              7z x -y "-o$out" "$dir/$name" >/dev/null
+            fi
+            bin="$out/mindc.exe" ;;
+          *) echo "FAIL: unknown archive type: $name"; exit 1 ;;
+        esac
+        test -f "$bin" || { echo "FAIL: $name does not contain $(basename "$bin")"; exit 1; }
+
+        # 3. The shipped binary runs and reports the expected version. An x86_64
+        # macOS binary built on an Apple-silicon runner runs under Rosetta 2.
+        prefix=""
+        if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] && file "$bin" | grep -q 'x86_64'; then
+          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          prefix="arch -x86_64"
+        fi
+        version_out=$($prefix "$bin" --version)
+        first=$(printf '%s\n' "$version_out" | head -n 1 | tr -d '\r')
+        if [ "$first" != "mind $WANT_VERSION" ]; then
+          echo "FAIL: $name: '$bin --version' printed '$first', expected 'mind $WANT_VERSION'"
+          exit 1
+        fi
+        echo "PASS: $name: checksum verified, unpacked, '$first' == 'mind $WANT_VERSION'"
+        echo "binary=$bin" >> "$GITHUB_OUTPUT"

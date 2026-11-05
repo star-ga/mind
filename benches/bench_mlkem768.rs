@@ -37,11 +37,11 @@
 //! ## Build recipe — COMBINE CHAIN (not self-contained)
 //!
 //! `std/mlkem768.mind` begins with `import std.keccak;` (G/H/J/XOF/PRF are all
-//! SHA3/SHAKE from `std/keccak.mind`). `std.keccak` is **not** one of the
-//! `include_str!`-bundled stdlib modules in `src/project/stdlib.rs` (only
-//! `std.sha256` is), so a standalone `mindc std/mlkem768.mind --emit-shared`
-//! cannot resolve the keccak bodies and would emit unresolved `keccak_*`
-//! references. This bench therefore reproduces the driver-style combine chain
+//! SHA3/SHAKE from `std/keccak.mind`). When this bench was written `std.keccak`
+//! was not in the `include_str!` bundle in `src/project/stdlib.rs`, so a
+//! standalone `mindc std/mlkem768.mind --emit-shared` could not resolve the
+//! keccak bodies and emitted unresolved `keccak_*` references. This bench
+//! therefore reproduces the driver-style combine chain
 //!
 //! ```text
 //! cat std/keccak.mind                       > combined.mind   # dependency first

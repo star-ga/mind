@@ -73,51 +73,73 @@ use crate::runtime::types::BackendTarget;
 /// `std.time` is a member but cannot compile until `__mind_now_ns` is
 /// registered for the Rust/MLIR path; a program importing it fails the build
 /// with that diagnostic, as it already did before this list grew.
+///
+/// Every other bundled module is a member: a module `mindc check` admits at
+/// its import must also link, or a call into it type-checks and then fails in
+/// the linker with an untyped undefined reference.
+/// `tests/std_bundled_module_table.rs` builds a call into every shipped
+/// module. `std.llvm` and `std.mlir` declare only `extern "C"` bindings to the
+/// LLVM and MLIR C APIs; their objects define nothing, and a program calling
+/// those functions links the C libraries as for any other extern.
 pub const SUBSTRATE_MODULES: &[&str] = &[
+    "std.aes_gcm",
     "std.arena",
     "std.async",
     "std.blas",
+    "std.chacha20_poly1305",
+    "std.detmath",
+    "std.ecdsa_p256",
     "std.fs",
+    "std.hkdf",
+    "std.hpack",
     "std.http",
+    "std.http2_frame",
     "std.io_canon",
     "std.iouring",
     "std.json",
     "std.json_canon",
+    "std.keccak",
+    "std.llvm",
     "std.mic_record",
     "std.mic_results",
+    "std.mlir",
+    "std.mlkem768",
     "std.net",
     "std.process",
     "std.reactor",
     "std.regex",
     "std.ring",
+    "std.rsa_pss",
     "std.sha256",
     "std.sha512",
     "std.time",
+    "std.tls13_finished",
+    "std.tls13_handshake",
+    "std.tls13_keyschedule",
+    "std.tls13_record",
     "std.toml",
     "std.tui",
+    "std.x25519",
+    "std.x25519mlkem768",
+    "std.x509",
 ];
 
 /// Substrate modules directly imported by `src`.
 ///
 /// Keyed on the RESOLVED import path (`path.join(".")`), never on a bare
 /// leading segment: only an import naming a member of [`SUBSTRATE_MODULES`]
-/// admits that module's object. An unparseable source contributes nothing.
+/// admits that module's object. The imports are the module-scope ones the
+/// type checker and the module table load (`std_import_roots`, `module`
+/// blocks included), so a call the check admits also links. An unparseable
+/// source contributes nothing.
 pub fn scan_substrate_imports(src: &str) -> Vec<&'static str> {
-    let mut found = Vec::new();
     let Ok(ast) = crate::parser::parse(src) else {
-        return found;
+        return Vec::new();
     };
-    for item in &ast.items {
-        if let crate::ast::Node::Import { path, .. } = item {
-            let key = path.join(".");
-            for &name in SUBSTRATE_MODULES {
-                if key == name {
-                    found.push(name);
-                }
-            }
-        }
-    }
-    found
+    crate::project::stdlib::std_import_roots(&ast)
+        .iter()
+        .filter_map(|key| SUBSTRATE_MODULES.iter().copied().find(|name| name == key))
+        .collect()
 }
 
 /// Transitive closure of the substrate imports reachable from `seed_texts`.
@@ -142,10 +164,7 @@ where
     }
     while let Some(modname) = worklist.pop() {
         if imported.insert(modname) {
-            if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
-                .iter()
-                .find(|(n, _)| *n == modname)
-            {
+            if let Some(src) = crate::project::stdlib::std_source(modname) {
                 for dep in scan_substrate_imports(src) {
                     if !imported.contains(dep) {
                         worklist.push(dep);
@@ -233,7 +252,7 @@ pub(crate) fn linkage_plan<'a>(
     closure: &BTreeSet<&'static str>,
     link: &LinkSurface<'_>,
 ) -> super::private_linkage::LinkagePlan {
-    let std_sources = crate::project::stdlib::STDLIB_MIND_SOURCES
+    let std_sources = crate::project::stdlib::std_sources()
         .iter()
         .filter(|(name, _)| closure.contains(name))
         .map(|(name, src)| (Path::new(*name), *src));
@@ -241,12 +260,15 @@ pub(crate) fn linkage_plan<'a>(
 }
 
 /// Install a module table and enum registry holding ONLY the bundled std
-/// modules for the std substrate compiles that follow; the previous ones come
-/// back on drop. A std module must resolve its calls against std and its own
-/// `extern "C"` blocks: under a build's project table, a program fn named
-/// `read` stood in for std.fs's libc `read` and failed std.fs with E2005.
-pub(crate) fn std_only_scope() -> super::single_file_scope::ProjectTableGuard {
-    let parsed = crate::project::stdlib::parsed_stdlib_modules();
+/// modules `closure` loads, for the std substrate compiles that follow; the
+/// previous ones come back on drop. A std module must resolve its calls against
+/// std and its own `extern "C"` blocks: under a build's project table, a
+/// program fn named `read` stood in for std.fs's libc `read` and failed std.fs
+/// with E2005.
+pub(crate) fn std_only_scope(
+    closure: &BTreeSet<&'static str>,
+) -> super::single_file_scope::ProjectTableGuard {
+    let parsed = crate::project::stdlib::parsed_std_modules(closure.iter().map(|m| m.to_string()));
     let refs: Vec<(String, &crate::ast::Module)> =
         parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
     let table = super::module_table::build_module_table(&refs);
@@ -305,7 +327,7 @@ pub(crate) fn compile_substrate_objects<'a>(
         .tempdir()
         .map_err(|e| anyhow!("cannot create the substrate build directory: {e}"))?;
     let plan = linkage_plan(sources, closure, link);
-    let _std_scope = std_only_scope();
+    let _std_scope = std_only_scope(closure);
     let sub_opts = CompileOptions {
         func: None,
         enable_autodiff: false,
@@ -317,10 +339,7 @@ pub(crate) fn compile_substrate_objects<'a>(
     let mut objs: Vec<PathBuf> = Vec::new();
     for modname in closure {
         let modname = *modname;
-        let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
-            .iter()
-            .find(|(n, _)| *n == modname)
-        else {
+        let Some(src) = crate::project::stdlib::std_source(modname) else {
             continue;
         };
         let prod = compile_source_with_name(src, Some(modname), &sub_opts).map_err(|e| {
@@ -405,11 +424,7 @@ pub fn substrate_objects_for_entry<'a>(
     let mut closure = substrate_closure(
         std::iter::once(entry_src).chain(linked_siblings.iter().map(|(_, t)| *t)),
     );
-    closure.retain(|modname| {
-        !crate::project::stdlib::STDLIB_MIND_SOURCES
-            .iter()
-            .any(|(n, s)| n == modname && *s == entry_src)
-    });
+    closure.retain(|modname| crate::project::stdlib::std_source(modname) != Some(entry_src));
     let sources =
         std::iter::once((Path::new(ENTRY_KEY), entry_src)).chain(linked_siblings.iter().copied());
     let no_c_abi = BTreeSet::new();

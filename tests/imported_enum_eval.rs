@@ -5,8 +5,13 @@
 //!
 //! Reflective is tag 0 and Zero is tag 1. Comparing a Reflective value to
 //! Zero must fail. Both the qualified spelling and the bare spelling run.
+//! `==` on an enum with a payload variant is refused: the compiled program
+//! compares those values by heap record, so no answer would match it.
 
 #![cfg(all(unix, feature = "std-surface", feature = "cross-module-imports"))]
+
+#[cfg(feature = "mlir-build")]
+mod common;
 
 use std::fs;
 use std::path::Path;
@@ -16,27 +21,33 @@ fn mindc() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_mindc"))
 }
 
+const BOUNDARY: &str = "module config {\n    enum Boundary {\n        Reflective = 0,\n        Zero = 1,\n    }\n    export enum Boundary\n}\n";
+
 fn project(root: &Path, body: &str) {
+    project_with(root, BOUNDARY, body);
+}
+
+fn project_with(root: &Path, config: &str, body: &str) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
         root.join("Mind.toml"),
         "[package]\nname = \"enum-eval\"\nversion = \"0.0.1\"\n[build]\nentry = \"src/use.mind\"\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/config.mind\", \"src/use.mind\"]\n",
     )
     .unwrap();
-    fs::write(
-        root.join("src/config.mind"),
-        "module config {\n    enum Boundary {\n        Reflective = 0,\n        Zero = 1,\n    }\n    export enum Boundary\n}\n",
-    )
-    .unwrap();
+    fs::write(root.join("src/config.mind"), config).unwrap();
     fs::write(root.join("src/use.mind"), body).unwrap();
 }
 
 fn run_test(root: &Path) -> (bool, String) {
+    run(root, &["test", "src/use.mind"])
+}
+
+fn run(root: &Path, args: &[&str]) -> (bool, String) {
     let out = Command::new(mindc())
         .current_dir(root)
-        .args(["test", "src/use.mind"])
+        .args(args)
         .output()
-        .expect("run mindc test");
+        .expect("run mindc");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -96,7 +107,126 @@ fn comparing_to_the_other_tag_is_red() {
     let (ok, text) = run_test(temp.path());
     assert!(!ok, "the other tag must fail:\n{text}");
     assert!(
-        text.contains("other tag") || text.contains("FAILED"),
-        "{text}"
+        text.contains("other tag"),
+        "the failure must be the tag assertion, not another error:\n{text}"
     );
+}
+
+#[test]
+fn bare_spelling_checks_clean() {
+    let temp = tempfile::tempdir().unwrap();
+    project(temp.path(), BARE);
+    let (ok, text) = run(
+        temp.path(),
+        &["check", "--no-fmt", "--no-lint", "src/use.mind"],
+    );
+    assert!(ok, "mindc check must accept Boundary.Reflective:\n{text}");
+}
+
+/// `config` declares Boundary, but `use.mind` imports only `util`: the project
+/// registry knows Boundary while Boundary is not visible in `use.mind`.
+fn unimported_enum_project(root: &Path, body: &str) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"enum-local\"\nversion = \"0.0.1\"\n[build]\nentry = \"src/use.mind\"\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/config.mind\", \"src/util.mind\", \"src/use.mind\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/config.mind"), BOUNDARY).unwrap();
+    fs::write(
+        root.join("src/util.mind"),
+        "module util {\n    enum Unit {\n        Only = 0,\n    }\n    export enum Unit\n}\n",
+    )
+    .unwrap();
+    fs::write(root.join("src/use.mind"), body).unwrap();
+}
+
+const LOCAL_FIELD: &str = "\
+import util;\n\
+struct Cfg {\n\
+    Zero: i64,\n\
+}\n\
+#[test]\n\
+fn test_local_field() {\n\
+    let Boundary = Cfg { Zero: 7 }\n\
+    assert Boundary.Zero == 7, \"field read\"\n\
+}\n";
+
+#[test]
+fn a_local_named_like_an_unimported_enum_keeps_its_field() {
+    // `Boundary.Zero` is the field of the local, not the variant of the enum
+    // the project registry knows from a module this one does not import.
+    let temp = tempfile::tempdir().unwrap();
+    unimported_enum_project(temp.path(), LOCAL_FIELD);
+    let (ok, text) = run_test(temp.path());
+    assert!(ok, "the local's field must be read:\n{text}");
+}
+
+#[cfg(feature = "mlir-build")]
+#[test]
+fn a_built_module_reads_the_local_field_too() {
+    let temp = tempfile::tempdir().unwrap();
+    unimported_enum_project(
+        temp.path(),
+        "import util;\nstruct Cfg {\n    Zero: i64,\n}\nfn main() -> i64 {\n    let Boundary = Cfg { Zero: 7 };\n    return Boundary.Zero\n}\n",
+    );
+    let program = temp.path().join("program");
+    let out = Command::new(mindc())
+        .current_dir(temp.path())
+        .args(["build", "--target", "cpu", "--no-cache", "--out"])
+        .arg(&program)
+        .output()
+        .expect("run mindc build");
+    if !common::gate::compiled("imported_enum_eval", &out) {
+        return;
+    }
+    let run = Command::new(&program).output().expect("run the program");
+    assert_eq!(
+        run.status.code(),
+        Some(7),
+        "the program returns the local's field, not an enum tag"
+    );
+}
+
+const SHAPE: &str = "module config {\n    enum Shape {\n        Circle(i64),\n        Empty,\n    }\n    export enum Shape\n}\n";
+
+const BOXED_EQ: &str = "\
+import config;\n\
+#[test]\n\
+fn test_boxed_eq() {\n\
+    let a = config.Shape.Empty\n\
+    let b = config.Shape.Empty\n\
+    assert a == b, \"boxed\"\n\
+}\n";
+
+#[test]
+fn equality_on_an_imported_boxed_enum_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    project_with(temp.path(), SHAPE, BOXED_EQ);
+    let (ok, text) = run_test(temp.path());
+    assert!(
+        !ok,
+        "a compiled program compares these by heap record:\n{text}"
+    );
+    assert!(text.contains("heap record"), "{text}");
+}
+
+#[test]
+fn single_file_enum_equality_follows_the_declaration() {
+    let temp = tempfile::tempdir().unwrap();
+    let decls =
+        "enum Color {\n    Red,\n    Blue,\n}\nenum Shape {\n    Circle(i64),\n    Empty,\n}\n";
+    let unit = format!(
+        "{decls}#[test]\nfn test_unit() {{\n    let a = Color::Red\n    assert a == Color::Red, \"same\"\n    assert a != Color::Blue, \"other\"\n}}\n"
+    );
+    let boxed = format!(
+        "{decls}#[test]\nfn test_boxed() {{\n    let a = Shape::Empty\n    assert a == Shape::Empty, \"boxed\"\n}}\n"
+    );
+    fs::write(temp.path().join("unit.mind"), unit).unwrap();
+    fs::write(temp.path().join("boxed.mind"), boxed).unwrap();
+    let (ok, text) = run(temp.path(), &["test", "unit.mind"]);
+    assert!(ok, "a unit-only enum compares by variant:\n{text}");
+    let (ok, text) = run(temp.path(), &["test", "boxed.mind"]);
+    assert!(!ok, "a boxed enum is not compared:\n{text}");
+    assert!(text.contains("heap record"), "{text}");
 }

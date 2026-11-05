@@ -183,13 +183,22 @@ pub fn resolve_native_sources(
     };
 
     match discovery {
-        Discovery::SingleTranslationUnit => Ok((
-            NativeSourceSet::SingleFile {
-                path: entry.to_path_buf(),
-                source: entry_source.to_vec(),
-            },
-            None,
-        )),
+        Discovery::SingleTranslationUnit => {
+            // No project scope means no type check below, so the entry's own
+            // `std` imports are admitted here; the project branch admits each
+            // captured source's below.
+            #[cfg(feature = "std-surface")]
+            if let Ok((_module, raw_imports)) = crate::parser::parse_with_imports(text) {
+                refuse_unknown_std_import(entry, &raw_imports, |_| false)?;
+            }
+            Ok((
+                NativeSourceSet::SingleFile {
+                    path: entry.to_path_buf(),
+                    source: entry_source.to_vec(),
+                },
+                None,
+            ))
+        }
         Discovery::MissingProject(imports) => refuse(
             "scope.missing_project",
             format!(
@@ -246,6 +255,15 @@ pub fn resolve_native_sources(
                             );
                         }
                     };
+                // A `std` import the project supplies itself (a linked
+                // `std.<name>` module) is in the image; any other must be in
+                // the frozen compiler's std seed.
+                #[cfg(feature = "std-surface")]
+                refuse_unknown_std_import(&src.path, &raw_imports, |path| {
+                    scope
+                        .resolve_import_path(&src.module_path, path)
+                        .is_some_and(|target| linked.contains(target))
+                })?;
                 for path in local_import_segments(&raw_imports) {
                     let resolved = scope.resolve_import_path(&src.module_path, &path);
                     match resolved {
@@ -378,6 +396,8 @@ pub fn resolve_native_sources(
             );
         }
     };
+    #[cfg(feature = "std-surface")]
+    refuse_unknown_std_import(entry, &raw_imports, |_| false)?;
     let local = local_import_segments(&raw_imports);
     if !local.is_empty() {
         return refuse(
@@ -441,6 +461,58 @@ pub(crate) fn owner_sensitive_imported_bodies(sources: &[NativeSource]) -> Vec<S
             owner_bearing(&module.items).map(|kind| format!("{} ({kind})", src.module_path))
         })
         .collect()
+}
+
+/// Refuse, at the import, a `std` import the frozen compiler cannot satisfy.
+///
+/// The frozen compiler treats every import as a no-op and sees only the std
+/// modules its seed blob was minted from (the manifest's `native_seed` rows),
+/// so without this an import of any other module was accepted and each call
+/// into it refused later as an unresolved closure edge. A module no std
+/// table names is `scope.unknown_std_module` (as `mindc check` refuses it,
+/// E2002); a shipped module outside the seed is
+/// `scope.std_module_not_in_native_seed`. Builtin modules
+/// (`BUILTIN_STD_MODULES`) need no source, and `supplied` admits a
+/// `std.<name>` the build's own sources provide.
+#[cfg(feature = "std-surface")]
+fn refuse_unknown_std_import(
+    entry: &Path,
+    raw_imports: &[String],
+    supplied: impl Fn(&[String]) -> bool,
+) -> Result<(), ScopeRefusal> {
+    let seed = super::native_bridge::frozen_std_seed_modules();
+    for dotted in raw_imports {
+        let path: Vec<String> = dotted.split('.').map(str::to_string).collect();
+        let Some(module) = dotted.strip_prefix("std.") else {
+            continue;
+        };
+        if supplied(&path) {
+            continue;
+        }
+        if let Some(why) = crate::project::stdlib::unknown_std_import(&path) {
+            return refuse(
+                "scope.unknown_std_module",
+                format!("`{}`: {why}", entry.display()),
+            );
+        }
+        if crate::project::stdlib::BUILTIN_STD_MODULES.contains(&dotted.as_str())
+            || seed.contains(&module)
+        {
+            continue;
+        }
+        return refuse(
+            "scope.std_module_not_in_native_seed",
+            format!(
+                "`{}` imports `{dotted}`, which ships with mindc but is not in the std seed \
+                 the frozen native compiler was minted from (the `native_seed` column of \
+                 examples/mindc_mind/testdata/stdlib_manifest.txt), so none of its \
+                 functions can be called from a native build. Use `--backend mlir`, which \
+                 links every bundled module",
+                entry.display()
+            ),
+        );
+    }
+    Ok(())
 }
 
 /// The parser's recorded import paths, as LOCAL dependency segments.

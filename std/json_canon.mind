@@ -8,6 +8,9 @@
 //     with UTF-16 surrogate pairs above U+FFFF; control chars incl. U+007F
 //     escape to \u00XX except \n \r \t \b \f \" \\ ; / unescaped
 //   - -0 renders 0
+//   - every string and key must be well-formed UTF-8 (RFC 3629): a stray or
+//     truncated byte, an overlong form, an encoded surrogate or a code point
+//     above U+10FFFF makes the dump REFUSE (return 0)
 //
 // Returns a String heap record [addr | len | cap], or 0 to refuse.
 import std.json;
@@ -82,13 +85,95 @@ fn utf8_cp_at(addr: i64, pos: i64) -> i64 {
     ((b0 & 7) << 18) | ((b1 & 63) << 12) | ((b2 & 63) << 6) | (b3 & 63)
 }
 
+// Length of the well-formed UTF-8 sequence at (addr + pos), or 0 when the
+// bytes there are not one.  The parser copies raw string bytes through, so a
+// key can hold an overlong `A` or an encoded lone surrogate: each decodes to
+// the code points of another key, the comparator calls the two equal and the
+// dump would follow insertion order.
+#[protection]
+fn utf8_seq_len(addr: i64, pos: i64, len: i64) -> i64 {
+    let b0: i64 = __mind_load_i8(addr + pos);
+    if b0 < 128 {
+        return 1;
+    }
+    let mut n: i64 = 0;
+    if b0 >= 194 {
+        n = 2;
+    }
+    if b0 >= 224 {
+        n = 3;
+    }
+    if b0 >= 240 {
+        n = 4;
+    }
+    if b0 > 244 {
+        n = 0;
+    }
+    if n == 0 {
+        return 0;
+    }
+    if pos + n > len {
+        return 0;
+    }
+    // The second byte carries the shortest-form, surrogate and U+10FFFF
+    // limits; every later byte is a plain continuation byte.
+    let mut lo: i64 = 128;
+    let mut hi: i64 = 191;
+    if b0 == 224 {
+        lo = 160;
+    }
+    if b0 == 237 {
+        hi = 159;
+    }
+    if b0 == 240 {
+        lo = 144;
+    }
+    if b0 == 244 {
+        hi = 143;
+    }
+    let b1: i64 = __mind_load_i8(addr + pos + 1);
+    if b1 < lo {
+        return 0;
+    }
+    if b1 > hi {
+        return 0;
+    }
+    let mut i: i64 = 2;
+    while i < n {
+        let b: i64 = __mind_load_i8(addr + pos + i);
+        if b < 128 {
+            return 0;
+        }
+        if b > 191 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    n
+}
+
+// Returns 1 if the len bytes at addr are well-formed UTF-8, else 0.
+#[protection]
+fn utf8_valid(addr: i64, len: i64) -> i64 {
+    let mut pos: i64 = 0;
+    while pos < len {
+        let n: i64 = utf8_seq_len(addr, pos, len);
+        if n == 0 {
+            return 0;
+        }
+        pos = pos + n;
+    }
+    1
+}
+
 // ---------------------------------------------------------------------------
 // UTF-16 code-unit order comparison.
 //
 // A BMP code point (cp < 0x10000) maps to ONE UTF-16 unit equal to cp.
 // A non-BMP code point maps to a surrogate PAIR: lead in 0xD800..0xDBFF,
 // trail in 0xDC00..0xDFFF.  A BMP code point never produces a lead surrogate
-// (it maps to cp < 0xD800 or cp >= 0xDC00), so first-unit equality implies
+// (it maps to cp < 0xD800 or cp >= 0xDC00; dump_value refuses an encoded
+// surrogate through utf8_valid before any key is compared), so first-unit equality implies
 // both sides are BMP (done) or both non-BMP (compare trails).
 // ---------------------------------------------------------------------------
 
@@ -335,8 +420,13 @@ fn dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
         return dump_uint(sb, json.jv_n_int(h));
     }
     if k == json.jv_kind_string() {
+        let s_addr: i64 = json.jv_s_addr(h);
+        let s_len: i64 = json.jv_s_len(h);
+        if utf8_valid(s_addr, s_len) == 0 {
+            return 0 - 1;
+        }
         let _ = json.jvsb_push(sb, 34);
-        let _ = escape_string(sb, json.jv_s_addr(h), json.jv_s_len(h));
+        let _ = escape_string(sb, s_addr, s_len);
         let _ = json.jvsb_push(sb, 34);
         return 0;
     }
@@ -378,6 +468,16 @@ fn dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
     let _ = json.jvsb_push(sb, 123);
     let tlen: i64 = json.jv_tbl_len(h);
     if tlen > 0 {
+        // Every key is checked before the sort: the comparator orders only
+        // well-formed UTF-8.
+        let mut vi: i64 = 0;
+        while vi < tlen {
+            let vk: i64 = json.jv_tbl_key(h, vi);
+            if utf8_valid(__mind_load_i64(vk + 0), __mind_load_i64(vk + 8)) == 0 {
+                return 0 - 1;
+            }
+            vi = vi + 1;
+        }
         let idx: i64 = __mind_alloc(tlen * 8);
         let mut ii: i64 = 0;
         while ii < tlen {

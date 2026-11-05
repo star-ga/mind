@@ -377,9 +377,13 @@ def _self_test() -> int:
     missing = sorted(required - features)
     if missing:
         raise AssertionError(f"build_test cargo matrix missing feature rows: {missing}")
-    bare = next(row for row in rows if row["features"] == "")
-    if set(bare["lock_modes"]) != {"locked", "unlocked"}:
-        raise AssertionError(f"lock/no-lock CI branches were not normalized together: {bare}")
+    # Cargo.lock is committed, so every CI row must resolve against it.
+    unlocked = [row["command"] for row in rows if row["lock_modes"] != ["locked"]]
+    if unlocked:
+        raise AssertionError(f"build_test runs cargo test without --locked: {unlocked}")
+    pair = cargo_test_matrix("cargo test --features x\ncargo test --locked --features x")
+    if len(pair) != 1 or set(pair[0]["lock_modes"]) != {"locked", "unlocked"}:
+        raise AssertionError(f"lock/no-lock forms of one argv were not normalized together: {pair}")
     # Adversarial parser contract: continuations and quoted arguments must
     # remain one invocation, while the lock/no-lock duplicate collapses only
     # after preserving its selector and strongest timeout.
