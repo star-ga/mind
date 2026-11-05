@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2127 | **Est. tokens:** ~4,014,578
-**Generated:** 2026-11-05 10:32 UTC
+**Files:** 2127 | **Est. tokens:** ~4,014,604
+**Generated:** 2026-11-05 10:58 UTC
 
 ## Token Budget Guide
 
@@ -155,7 +155,7 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 57 | ~259,821 |
+| `std/` | 57 | ~259,847 |
 | `tests/` | 443 | ~938,683 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -1656,7 +1656,7 @@
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
-- `rsa_pss.mind` (~3146 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
+- `rsa_pss.mind` (~3150 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
 - `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `sha512.mind` (~5100 tok, huge) — std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
 - `string.mind` (~2725 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
@@ -1664,11 +1664,11 @@
 - `tls13_client_api.mind` (~2553 tok, huge) — Public constants, accessors and sans-IO calls of std.tls13_client: input
 - `tls13_client_core.mind` (~4433 tok, huge) — Internal bounded state storage for std.tls13_client. The public facade keeps
 - `tls13_client_hello.mind` (~5613 tok, huge) — ClientHello, ServerHello and bounded HRR negotiation, and the handshake and
-- `tls13_client.mind` (~6614 tok, huge) — std.tls13_client — bounded sans-IO TLS 1.3 client.
+- `tls13_client.mind` (~6621 tok, huge) — std.tls13_client — bounded sans-IO TLS 1.3 client.
 - `tls13_finished.mind` (~2712 tok, huge) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
 - `tls13_handshake.mind` (~2986 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
 - `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
-- `tls13_record.mind` (~2171 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
+- `tls13_record.mind` (~2175 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
 - `toml.mind` (~10301 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
@@ -1676,13 +1676,13 @@
 - `x25519mlkem768.mind` (~1554 tok, huge) — std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
 - `x509_bignum.mind` (~1704 tok, huge) — std/x509_bignum.mind — fixed-width big-integer arithmetic (radix 2^16 limbs,
 - `x509_bundle.mind` (~3123 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
-- `x509_der.mind` (~4576 tok, huge) — std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
+- `x509_der.mind` (~4580 tok, huge) — std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
 - `x509_ext.mind` (~2786 tok, huge) — std/x509_ext.mind — X.509v3 validity date parsing and extension processing
 - `x509.mind` (~1080 tok, large) — std/x509.mind — X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
 - `x509_name.mind` (~4230 tok, huge) — std/x509_name.mind — RFC 6125 hostname matching, IPv4/IPv6 literal parsing,
 - `x509_p384.mind` (~4342 tok, huge) — std/x509_p384.mind — ECDSA signature verification on NIST P-384
 - `x509_path.mind` (~5199 tok, huge) — std/x509_path.mind — X.509 certificate path building, parent policy validation,
-- `x509_sig.mind` (~3951 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
+- `x509_sig.mind` (~3958 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
 ### `tests/`
 
 - `aggregate_const_run.rs` (~1765 tok, huge) — Copyright 2026 STARGA Inc.

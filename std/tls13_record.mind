@@ -132,6 +132,7 @@ pub fn tls13_record_seal(key_addr: i64, iv_addr: i64, seq: i64, content_addr: i6
 // AEAD authentication failure (tampered ciphertext, tag, or header/AAD).
 // ---------------------------------------------------------------------------
 
+#[protection]
 pub fn tls13_record_open(key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64, record_len: i64, out_content_addr: i64) -> i64 {
     // Minimum record: 5 header + 1 inner-type byte + 16 tag.
     if record_len < 22 {
