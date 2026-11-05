@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
+  writes and reads its results (per-game and per-level actions, a score as a
+  numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
+  empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
+  keys sorted, so the bytes depend only on the key/value set; the reader accepts only
+  that canonical form and refuses malformed input with a named error, checking every
+  count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
+  allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
+  records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
 - **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
   dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
   compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries

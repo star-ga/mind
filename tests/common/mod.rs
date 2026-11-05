@@ -28,6 +28,7 @@
 //! `CARGO_BIN_EXE_mindc` is available to every integration test in this crate.
 
 pub mod gate;
+pub mod mic_record;
 pub mod xsi_gate;
 
 use std::path::{Path, PathBuf};
@@ -217,4 +218,12 @@ pub fn reported_artifact(out: &Output) -> PathBuf {
             )
         });
     PathBuf::from(path)
+}
+
+/// Write an embedded workload source into `dir`.
+#[allow(dead_code)]
+pub fn scratch_src_in(dir: &Path, name: &str, text: &str) -> PathBuf {
+    let p = dir.join(name);
+    std::fs::write(&p, text).unwrap_or_else(|e| panic!("write {}: {e}", p.display()));
+    p
 }

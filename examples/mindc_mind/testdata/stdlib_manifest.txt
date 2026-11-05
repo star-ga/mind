@@ -39,8 +39,8 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 43
-# TOTAL_COUNT 43
+# BUNDLED_COUNT 45
+# TOTAL_COUNT 45
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
@@ -69,6 +69,8 @@ json_canon	no	bundled
 keccak	no	bundled
 llvm	no	bundled
 map	seed	bundled
+mic_record	no	bundled
+mic_results	no	bundled
 mlir	no	bundled
 mlkem768	no	bundled
 net	seed	bundled
