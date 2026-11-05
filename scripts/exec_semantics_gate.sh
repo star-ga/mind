@@ -126,6 +126,7 @@ CRITICAL_exec=(
   "emit_object_relocatable 2"       # --emit object writes a linkable ET_REL object
   "intrinsic_call_arity 7"          # wrong-arity intrinsic calls refused at every depth
   "intrinsic_call_arity_build 5"    # the same refusal through the mindc binary
+  "std_surface_mic_record 11" "std_surface_mic_record_refusals 5"  # mic@3 results records
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.
@@ -158,8 +159,7 @@ CRITICAL_pkg=(
   "module_size_ratchet 5"           # the 800-line ceiling and its budget table
 )
 
-QUARANTINE_exec=(
-)
+QUARANTINE_exec=()
 QUARANTINE_lowering=()
 QUARANTINE_pkg=()
 

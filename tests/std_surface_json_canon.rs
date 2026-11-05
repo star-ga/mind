@@ -30,10 +30,7 @@ mod common;
 
 /// (input JSON text, expected compact bytes, expected pretty bytes).
 /// Pretty = Python `json.dumps(sort_keys-by-utf16, indent=2, ensure_ascii=True)`.
-///
-/// Gated exactly like `mod kat` below, its only consumer: without the gate a
-/// build whose features compile the file but not the module (the default
-/// std-surface set) reports the table as dead code.
+/// Only the `kat` module below reads it, so it exists under the same features.
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 const KATS: &[(&str, &str, &str)] = &[
     // Shuffled insertion order — the same logical object must produce the same

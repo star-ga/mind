@@ -1,0 +1,1043 @@
+// std/mic_record.mind — write and read program results as mic@3 MAP records.
+//
+// A MIND program stores what it measured in the project's own artifact format
+// through this module. JSON stays at external API boundaries only.
+//
+// A record IS a mic@3 artifact: the canonical body of the EMPTY IR module,
+// then the MAP epilogue the compiler already defines in
+// src/ir/compact/v3/evidence.rs. Nothing in the wire format is new, and the
+// compiler's own readers accept a record: `parse_mic3_envelope` decodes it and
+// `mic3_canonical_check` finds it canonical.
+//
+//   4D 49 43 33             magic "MIC3"
+//   02                      mic@3 version (the base layout)
+//   00 00 00 00 00 00 00    empty module: strings, next_id, exports, instrs,
+//                           struct_defs, const_array_defs, repr_c_structs
+//   4D                      MAP sentinel ('M')
+//   uleb                    entry count
+//   per entry, keys in strictly ascending byte order:
+//     uleb key_len, key bytes (UTF-8)
+//     tag 00 String: uleb len, UTF-8 bytes
+//     tag 01 Int:    uleb zigzag(i64)
+//     tag 02 Bytes:  uleb len, raw bytes
+//
+// Every uleb is the minimal ULEB128 encoding. Keys follow the compiler's
+// application-key rule (validate_app_entries): not empty, contain a '.', and
+// never start with the reserved `evidence_chain.` or `signature.` namespaces.
+// Limits: 4096 entries, 256-byte keys, 10 MiB per record (the mic@3 reader's
+// input cap).
+//
+// Determinism: the writer keeps the entries sorted by key bytes, so the bytes
+// are a pure function of the key/value set. Insertion order never reaches the
+// output, and two runs or two machines write identical records. Integer
+// arithmetic only: no clock, no float, no host state.
+//
+// Errors are negative i64 codes, each with a named function (mrec_e_*). The
+// reader checks every count and length against the fixed limits and against
+// the bytes that remain BEFORE it allocates, so a hostile length cannot become
+// an allocation bomb. It accepts exactly the canonical form the writer emits.
+//
+// std.mic_results builds the results schema (score, scorecard id, weights
+// SHA-256, per-game and per-level actions) on this codec.
+//
+// Store and load through std.fs:
+//   let b: i64 = mic_record.mrec_encode(h);
+//   fs.write_string(path, mic_record.mrec_buf_addr(b), mic_record.mrec_buf_len(b));
+//   let s: i64 = fs.read_to_string(path);
+//   let r: i64 = mic_record.mrec_decode(__mind_load_i64(s + 0), __mind_load_i64(s + 8));
+//   // r > 0 is a record handle; r < 0 is a named error.
+//
+// Layouts:
+//   record handle (32 bytes): [ table | count | cap | payload ]
+//     table   address of `cap` entry pointers, sorted by key bytes
+//     payload encoded bytes of every entry, so a put can refuse a record that
+//             would pass the size limit
+//   entry (48 bytes): [ key_addr | key_len | tag | int | val_addr | val_len ]
+//   byte buffer (24 bytes): [ addr | len | cap ], the String record layout
+//   reader cursor (32 bytes): [ addr | len | pos | value ]
+
+// ---------------------------------------------------------------------------
+// Limits, tags and named errors.
+// ---------------------------------------------------------------------------
+
+pub fn mrec_max_record_bytes() -> i64 {
+    10485760
+}
+
+pub fn mrec_max_entries() -> i64 {
+    4096
+}
+
+pub fn mrec_max_key_bytes() -> i64 {
+    256
+}
+
+// The fewest bytes one encoded entry can occupy before it is checked: a one-byte
+// key length, a tag byte and a one-byte value (an empty key is still read, then
+// refused as empty). This matches the compiler's MAP decoder (MIN_ENTRY_BYTES = 3),
+// so a count whose entries could not fit in the bytes left is refused before any
+// allocation without changing which error a malformed entry reports.
+pub fn mrec_min_entry_bytes() -> i64 {
+    3
+}
+
+pub fn mrec_tag_str() -> i64 {
+    0
+}
+
+pub fn mrec_tag_int() -> i64 {
+    1
+}
+
+pub fn mrec_tag_bytes() -> i64 {
+    2
+}
+
+// Bytes in the empty-module mic@3 body that opens every record.
+fn mrec_body_len() -> i64 {
+    12
+}
+
+// The MAP sentinel 0x4D ('M').
+fn mrec_sentinel() -> i64 {
+    77
+}
+
+pub fn mrec_ok() -> i64 {
+    0
+}
+
+// The input ends inside an element, or a length passes the bytes left.
+pub fn mrec_e_truncated() -> i64 {
+    0 - 1
+}
+
+// A count or length passes a fixed limit (entries, key bytes, record bytes).
+pub fn mrec_e_oversized() -> i64 {
+    0 - 2
+}
+
+// The first four bytes are not "MIC3".
+pub fn mrec_e_magic() -> i64 {
+    0 - 3
+}
+
+// The mic@3 version byte is not 0x02.
+pub fn mrec_e_version() -> i64 {
+    0 - 4
+}
+
+// The mic@3 body is not the empty module, so the input is not a record.
+pub fn mrec_e_body() -> i64 {
+    0 - 5
+}
+
+// No MAP epilogue follows the body.
+pub fn mrec_e_no_map() -> i64 {
+    0 - 6
+}
+
+// A ULEB128 is zero-padded, longer than 10 bytes, or passes 64 bits.
+pub fn mrec_e_varint() -> i64 {
+    0 - 7
+}
+
+// A key or a String value is not well-formed UTF-8.
+pub fn mrec_e_utf8() -> i64 {
+    0 - 8
+}
+
+// A value tag is not 0, 1 or 2.
+pub fn mrec_e_tag() -> i64 {
+    0 - 9
+}
+
+// The keys are not in ascending byte order.
+pub fn mrec_e_order() -> i64 {
+    0 - 10
+}
+
+// A key is empty or has no '.'.
+pub fn mrec_e_key() -> i64 {
+    0 - 11
+}
+
+// A key starts with `evidence_chain.` or `signature.`.
+pub fn mrec_e_reserved() -> i64 {
+    0 - 12
+}
+
+// Bytes remain after the last entry.
+pub fn mrec_e_trailing() -> i64 {
+    0 - 13
+}
+
+// A key occurs twice.
+pub fn mrec_e_duplicate() -> i64 {
+    0 - 14
+}
+
+// No entry has the key, or the index is out of range.
+pub fn mrec_e_not_found() -> i64 {
+    0 - 15
+}
+
+// The entry holds a different value type.
+pub fn mrec_e_type() -> i64 {
+    0 - 16
+}
+
+// An argument is outside its domain: a negative length, level or action
+// count, a score scale <= 0, a game id that is empty or holds a '.', or a
+// weights digest that is not 32 bytes.
+pub fn mrec_e_value() -> i64 {
+    0 - 17
+}
+
+// An allocation failed.
+pub fn mrec_e_no_memory() -> i64 {
+    0 - 18
+}
+
+// The record handle is 0.
+pub fn mrec_e_handle() -> i64 {
+    0 - 19
+}
+
+// ---------------------------------------------------------------------------
+// Bytes, 64-bit patterns and ULEB128.
+// ---------------------------------------------------------------------------
+
+fn mrec_b(a: i64, i: i64) -> i64 {
+    __mind_load_i8(a + i) & 255
+}
+
+fn mrec_copy(src: i64, dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// Heap copy of n bytes: the address, 0 when n is 0, -1 when allocation fails.
+fn mrec_dup(src: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    let d: i64 = __mind_alloc(n);
+    if d == 0 {
+        return 0 - 1;
+    }
+    let _ = mrec_copy(src, d, n);
+    d
+}
+
+// Logical right shift by n (1 <= n <= 63). `>>` is arithmetic on i64, so the
+// sign-extended bits are masked off (the std/sha512.mind shr64u rule).
+fn mrec_shr_u(x: i64, n: i64) -> i64 {
+    (x >> n) & ((1 << (64 - n)) - 1)
+}
+
+// Zigzag maps an i64 to the 64-bit pattern the MAP Int value carries.
+fn mrec_zigzag(v: i64) -> i64 {
+    (v << 1) ^ (v >> 63)
+}
+
+fn mrec_unzigzag(z: i64) -> i64 {
+    mrec_shr_u(z, 1) ^ (0 - (z & 1))
+}
+
+// Bytes in the ULEB128 encoding of the 64-bit pattern v.
+fn mrec_uleb_len(v: i64) -> i64 {
+    let mut n: i64 = 1;
+    let mut x: i64 = mrec_shr_u(v, 7);
+    while x != 0 {
+        n = n + 1;
+        x = mrec_shr_u(x, 7);
+    }
+    n
+}
+
+// Write the 64-bit pattern v as ULEB128 at d + p; returns the next position.
+fn mrec_uleb_put(d: i64, p: i64, v: i64) -> i64 {
+    let mut pos: i64 = p;
+    let mut x: i64 = v;
+    let mut more: i64 = 1;
+    while more == 1 {
+        let low: i64 = x & 127;
+        x = mrec_shr_u(x, 7);
+        if x == 0 {
+            __mind_store_i8(d + pos, low);
+            more = 0;
+        } else {
+            __mind_store_i8(d + pos, low | 128)
+        }
+        pos = pos + 1;
+    }
+    pos
+}
+
+// Write 1..4 constant bytes at d + p; each returns the next position.
+fn mrec_w1(d: i64, p: i64, c0: i64) -> i64 {
+    __mind_store_i8(d + p, c0);
+    p + 1
+}
+
+fn mrec_w2(d: i64, p: i64, c0: i64, c1: i64) -> i64 {
+    mrec_w1(d, mrec_w1(d, p, c0), c1)
+}
+
+fn mrec_w4(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
+    mrec_w2(d, mrec_w2(d, p, c0, c1), c2, c3)
+}
+
+// 1 when the 5 bytes at a + off equal c0..c4, else 0.
+fn mrec_eq5(a: i64, off: i64, c0: i64, c1: i64, c2: i64, c3: i64, c4: i64) -> i64 {
+    if mrec_b(a, off) != c0 {
+        return 0;
+    }
+    if mrec_b(a, off + 1) != c1 {
+        return 0;
+    }
+    if mrec_b(a, off + 2) != c2 {
+        return 0;
+    }
+    if mrec_b(a, off + 3) != c3 {
+        return 0;
+    }
+    if mrec_b(a, off + 4) != c4 {
+        return 0;
+    }
+    1
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 and keys.
+// ---------------------------------------------------------------------------
+
+// Sequence width for a lead byte >= 0x80, or 0 for a byte that cannot lead
+// (a continuation byte, an overlong C0/C1 lead, or F5..FF).
+fn mrec_utf8_width(b0: i64) -> i64 {
+    if b0 < 194 {
+        return 0;
+    }
+    if b0 < 224 {
+        return 2;
+    }
+    if b0 < 240 {
+        return 3;
+    }
+    if b0 < 245 {
+        return 4;
+    }
+    0
+}
+
+// The second-byte range rules out overlongs (E0, F0), surrogates (ED) and code
+// points above U+10FFFF (F4).
+fn mrec_utf8_lo(b0: i64) -> i64 {
+    if b0 == 224 {
+        return 160;
+    }
+    if b0 == 240 {
+        return 144;
+    }
+    128
+}
+
+fn mrec_utf8_hi(b0: i64) -> i64 {
+    if b0 == 237 {
+        return 159;
+    }
+    if b0 == 244 {
+        return 143;
+    }
+    191
+}
+
+// 1 when [a, a + n) is well-formed UTF-8, else 0: the rule of Rust's
+// str::from_utf8, which the compiler's MAP reader applies.
+#[protection]
+fn mrec_utf8_ok(a: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        let b0: i64 = mrec_b(a, i);
+        if b0 < 128 {
+            i = i + 1;
+        } else {
+            let w: i64 = mrec_utf8_width(b0);
+            if w == 0 {
+                return 0;
+            }
+            if i + w > n {
+                return 0;
+            }
+            let b1: i64 = mrec_b(a, i + 1);
+            if b1 < mrec_utf8_lo(b0) {
+                return 0;
+            }
+            if b1 > mrec_utf8_hi(b0) {
+                return 0;
+            }
+            let mut j: i64 = 2;
+            while j < w {
+                if (mrec_b(a, i + j) & 192) != 128 {
+                    return 0;
+                }
+                j = j + 1;
+            }
+            i = i + w;
+        }
+    }
+    1
+}
+
+// 1 when the key starts with "signature." or "evidence_chain.", else 0.
+#[protection]
+fn mrec_reserved(a: i64, n: i64) -> i64 {
+    if n >= 10 {
+        if mrec_eq5(a, 0, 115, 105, 103, 110, 97) == 1 {
+            if mrec_eq5(a, 5, 116, 117, 114, 101, 46) == 1 {
+                return 1;
+            }
+        }
+    }
+    if n >= 15 {
+        if mrec_eq5(a, 0, 101, 118, 105, 100, 101) == 1 {
+            if mrec_eq5(a, 5, 110, 99, 101, 95, 99) == 1 {
+                if mrec_eq5(a, 10, 104, 97, 105, 110, 46) == 1 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// Index of the first byte equal to c in [a, a + n), or -1.
+fn mrec_index_of(a: i64, n: i64, c: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if mrec_b(a, i) == c {
+            return i;
+        }
+        i = i + 1;
+    }
+    0 - 1
+}
+
+// 0 when the key may be stored, else the named error. An empty key has no
+// '.', so the last check refuses it too.
+#[protection]
+fn mrec_key_check(a: i64, n: i64) -> i64 {
+    if n > mrec_max_key_bytes() {
+        return mrec_e_oversized();
+    }
+    if mrec_utf8_ok(a, n) == 0 {
+        return mrec_e_utf8();
+    }
+    if mrec_reserved(a, n) == 1 {
+        return mrec_e_reserved();
+    }
+    if mrec_index_of(a, n, 46) < 0 {
+        return mrec_e_key();
+    }
+    0
+}
+
+// Byte-order compare: -1, 0 or 1. A proper prefix sorts first.
+fn mrec_cmp(a: i64, an: i64, b: i64, bn: i64) -> i64 {
+    let m: i64 = if an < bn {
+        an
+    } else {
+        bn
+    };
+    let mut i: i64 = 0;
+    while i < m {
+        let x: i64 = mrec_b(a, i);
+        let y: i64 = mrec_b(b, i);
+        if x < y {
+            return 0 - 1;
+        }
+        if x > y {
+            return 1;
+        }
+        i = i + 1;
+    }
+    if an < bn {
+        return 0 - 1;
+    }
+    if an > bn {
+        return 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Record table.
+// ---------------------------------------------------------------------------
+
+// A new, empty record. Returns the handle, or 0 when allocation fails.
+pub fn mrec_new() -> i64 {
+    let h: i64 = __mind_alloc(32);
+    if h == 0 {
+        return 0;
+    }
+    let t: i64 = __mind_alloc(64);
+    if t == 0 {
+        return 0;
+    }
+    __mind_store_i64(h + 0, t);
+    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 16, 8);
+    __mind_store_i64(h + 24, 0);
+    h
+}
+
+// Number of entries, or mrec_e_handle() for a 0 handle.
+pub fn mrec_count(h: i64) -> i64 {
+    if h == 0 {
+        return mrec_e_handle();
+    }
+    __mind_load_i64(h + 8)
+}
+
+fn mrec_ent(h: i64, i: i64) -> i64 {
+    __mind_load_i64(__mind_load_i64(h + 0) + i * 8)
+}
+
+fn mrec_ent_cmp(e: i64, ka: i64, kn: i64) -> i64 {
+    mrec_cmp(__mind_load_i64(e + 0), __mind_load_i64(e + 8), ka, kn)
+}
+
+// First index whose key is >= the probe (binary search on the sorted table).
+fn mrec_lower_bound(h: i64, ka: i64, kn: i64) -> i64 {
+    let mut lo: i64 = 0;
+    let mut hi: i64 = __mind_load_i64(h + 8);
+    while lo < hi {
+        let mid: i64 = lo + (hi - lo) / 2;
+        if mrec_ent_cmp(mrec_ent(h, mid), ka, kn) < 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+// Encoded bytes of one entry: key length, key, tag and value.
+fn mrec_entry_size(kn: i64, tag: i64, iv: i64, vn: i64) -> i64 {
+    let head: i64 = mrec_uleb_len(kn) + kn + 1;
+    if tag == 1 {
+        return head + mrec_uleb_len(mrec_zigzag(iv));
+    }
+    head + mrec_uleb_len(vn) + vn
+}
+
+// Encoded bytes of the stored entry e.
+fn mrec_ent_size(e: i64) -> i64 {
+    let kn: i64 = __mind_load_i64(e + 8);
+    let tag: i64 = __mind_load_i64(e + 16);
+    mrec_entry_size(kn, tag, __mind_load_i64(e + 24), __mind_load_i64(e + 40))
+}
+
+// Encoded bytes of a record with n entries and `payload` entry bytes.
+fn mrec_total(n: i64, payload: i64) -> i64 {
+    mrec_body_len() + 1 + mrec_uleb_len(n) + payload
+}
+
+// 0 when `extra` more entries with `bytes` more payload stay inside the entry
+// and size limits, else mrec_e_oversized().
+#[protection]
+fn mrec_room(h: i64, extra: i64, bytes: i64) -> i64 {
+    let n: i64 = __mind_load_i64(h + 8) + extra;
+    if n > mrec_max_entries() {
+        return mrec_e_oversized();
+    }
+    if mrec_total(n, __mind_load_i64(h + 24) + bytes) > mrec_max_record_bytes() {
+        return mrec_e_oversized();
+    }
+    0
+}
+
+// A heap entry holding copies of the key and value bytes, or 0 on failure.
+fn mrec_ent_new(ka: i64, kn: i64, tag: i64, iv: i64, va: i64, vn: i64) -> i64 {
+    let e: i64 = __mind_alloc(48);
+    if e == 0 {
+        return 0;
+    }
+    let kd: i64 = mrec_dup(ka, kn);
+    let vd: i64 = mrec_dup(va, vn);
+    if kd < 0 {
+        return 0;
+    }
+    if vd < 0 {
+        return 0;
+    }
+    __mind_store_i64(e + 0, kd);
+    __mind_store_i64(e + 8, kn);
+    __mind_store_i64(e + 16, tag);
+    __mind_store_i64(e + 24, iv);
+    __mind_store_i64(e + 32, vd);
+    __mind_store_i64(e + 40, vn);
+    e
+}
+
+// Insert entry e at index pos and account its bytes; 0, or -1 on failure.
+fn mrec_insert(h: i64, pos: i64, e: i64) -> i64 {
+    let n: i64 = __mind_load_i64(h + 8);
+    let cap: i64 = __mind_load_i64(h + 16);
+    let mut t: i64 = __mind_load_i64(h + 0);
+    if n == cap {
+        let nt: i64 = __mind_alloc(cap * 16);
+        if nt == 0 {
+            return 0 - 1;
+        }
+        let mut i: i64 = 0;
+        while i < n {
+            __mind_store_i64(nt + i * 8, __mind_load_i64(t + i * 8));
+            i = i + 1;
+        }
+        t = nt;
+        __mind_store_i64(h + 0, nt);
+        __mind_store_i64(h + 16, cap * 2)
+    }
+    let mut j: i64 = n;
+    while j > pos {
+        __mind_store_i64(t + j * 8, __mind_load_i64(t + (j - 1) * 8));
+        j = j - 1;
+    }
+    __mind_store_i64(t + pos * 8, e);
+    __mind_store_i64(h + 8, n + 1);
+    let size: i64 = mrec_ent_size(e);
+    __mind_store_i64(h + 24, __mind_load_i64(h + 24) + size);
+    0
+}
+
+#[protection]
+fn mrec_put(h: i64, ka: i64, kn: i64, tag: i64, iv: i64, va: i64, vn: i64) -> i64 {
+    if h == 0 {
+        return mrec_e_handle();
+    }
+    if kn < 0 {
+        return mrec_e_value();
+    }
+    if vn < 0 {
+        return mrec_e_value();
+    }
+    let kc: i64 = mrec_key_check(ka, kn);
+    if kc != 0 {
+        return kc;
+    }
+    if vn > mrec_max_record_bytes() {
+        return mrec_e_oversized();
+    }
+    if tag == 0 {
+        if mrec_utf8_ok(va, vn) == 0 {
+            return mrec_e_utf8();
+        }
+    }
+    let pos: i64 = mrec_lower_bound(h, ka, kn);
+    if pos < __mind_load_i64(h + 8) {
+        if mrec_ent_cmp(mrec_ent(h, pos), ka, kn) == 0 {
+            return mrec_e_duplicate();
+        }
+    }
+    let rc: i64 = mrec_room(h, 1, mrec_entry_size(kn, tag, iv, vn));
+    if rc != 0 {
+        return rc;
+    }
+    let e: i64 = mrec_ent_new(ka, kn, tag, iv, va, vn);
+    if e == 0 {
+        return mrec_e_no_memory();
+    }
+    if mrec_insert(h, pos, e) != 0 {
+        return mrec_e_no_memory();
+    }
+    0
+}
+
+// Store an Int under the key. Returns 0 or a named error.
+pub fn mrec_put_int(h: i64, ka: i64, kn: i64, v: i64) -> i64 {
+    mrec_put(h, ka, kn, 1, v, 0, 0)
+}
+
+// Store a UTF-8 String under the key. Returns 0 or a named error.
+pub fn mrec_put_str(h: i64, ka: i64, kn: i64, va: i64, vn: i64) -> i64 {
+    mrec_put(h, ka, kn, 0, 0, va, vn)
+}
+
+// Store raw Bytes under the key. Returns 0 or a named error.
+pub fn mrec_put_bytes(h: i64, ka: i64, kn: i64, va: i64, vn: i64) -> i64 {
+    mrec_put(h, ka, kn, 2, 0, va, vn)
+}
+
+// Remove the entry with the key. Returns 0 or a named error.
+pub fn mrec_remove(h: i64, ka: i64, kn: i64) -> i64 {
+    let i: i64 = mrec_find(h, ka, kn);
+    if i < 0 {
+        return i;
+    }
+    let e: i64 = mrec_ent(h, i);
+    let n: i64 = __mind_load_i64(h + 8);
+    let t: i64 = __mind_load_i64(h + 0);
+    let mut j: i64 = i;
+    while j < n - 1 {
+        __mind_store_i64(t + j * 8, __mind_load_i64(t + (j + 1) * 8));
+        j = j + 1;
+    }
+    __mind_store_i64(h + 8, n - 1);
+    let size: i64 = mrec_ent_size(e);
+    __mind_store_i64(h + 24, __mind_load_i64(h + 24) - size);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Encode.
+// ---------------------------------------------------------------------------
+
+// The record as mic@3 bytes, in a byte buffer [ addr | len | cap ]. Returns 0
+// for a 0 handle or when allocation fails.
+pub fn mrec_encode(h: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    let n: i64 = __mind_load_i64(h + 8);
+    let total: i64 = mrec_total(n, __mind_load_i64(h + 24));
+    let d: i64 = __mind_alloc(total);
+    let b: i64 = __mind_alloc(24);
+    if d == 0 {
+        return 0;
+    }
+    if b == 0 {
+        return 0;
+    }
+    let mut p: i64 = mrec_w4(d, 0, 77, 73, 67, 51);
+    p = mrec_w1(d, p, 2);
+    while p < mrec_body_len() {
+        p = mrec_w1(d, p, 0);
+    }
+    p = mrec_w1(d, p, mrec_sentinel());
+    p = mrec_uleb_put(d, p, n);
+    let mut i: i64 = 0;
+    while i < n {
+        let e: i64 = mrec_ent(h, i);
+        let kn: i64 = __mind_load_i64(e + 8);
+        let tag: i64 = __mind_load_i64(e + 16);
+        p = mrec_uleb_put(d, p, kn);
+        let _ = mrec_copy(__mind_load_i64(e + 0), d + p, kn);
+        p = mrec_w1(d, p + kn, tag);
+        if tag == 1 {
+            p = mrec_uleb_put(d, p, mrec_zigzag(__mind_load_i64(e + 24)));
+        } else {
+            let vn: i64 = __mind_load_i64(e + 40);
+            p = mrec_uleb_put(d, p, vn);
+            let _ = mrec_copy(__mind_load_i64(e + 32), d + p, vn);
+            p = p + vn;
+        }
+        i = i + 1;
+    }
+    __mind_store_i64(b + 0, d);
+    __mind_store_i64(b + 8, total);
+    __mind_store_i64(b + 16, total);
+    b
+}
+
+pub fn mrec_buf_addr(b: i64) -> i64 {
+    __mind_load_i64(b + 0)
+}
+
+pub fn mrec_buf_len(b: i64) -> i64 {
+    __mind_load_i64(b + 8)
+}
+
+// ---------------------------------------------------------------------------
+// Decode.
+// ---------------------------------------------------------------------------
+
+// Read one minimal ULEB128 at the cursor into its value slot; 0 or an error.
+#[protection]
+fn mrec_rd_uleb(rd: i64) -> i64 {
+    let a: i64 = __mind_load_i64(rd + 0);
+    let n: i64 = __mind_load_i64(rd + 8);
+    let mut pos: i64 = __mind_load_i64(rd + 16);
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 10 {
+        if pos >= n {
+            return mrec_e_truncated();
+        }
+        let byte: i64 = mrec_b(a, pos);
+        pos = pos + 1;
+        let low: i64 = byte & 127;
+        if i == 9 {
+            if low > 1 {
+                return mrec_e_varint();
+            }
+        }
+        acc = acc | (low << (i * 7));
+        if byte < 128 {
+            if byte == 0 {
+                if i > 0 {
+                    return mrec_e_varint();
+                }
+            }
+            __mind_store_i64(rd + 16, pos);
+            __mind_store_i64(rd + 24, acc);
+            return 0;
+        }
+        i = i + 1;
+    }
+    mrec_e_varint()
+}
+
+// Read a length no larger than `limit` and no larger than the bytes left.
+#[protection]
+fn mrec_rd_len(rd: i64, limit: i64) -> i64 {
+    let rc: i64 = mrec_rd_uleb(rd);
+    if rc != 0 {
+        return rc;
+    }
+    let v: i64 = __mind_load_i64(rd + 24);
+    if v < 0 {
+        return mrec_e_oversized();
+    }
+    if v > limit {
+        return mrec_e_oversized();
+    }
+    if v > __mind_load_i64(rd + 8) - __mind_load_i64(rd + 16) {
+        return mrec_e_truncated();
+    }
+    0
+}
+
+// Check the magic, the version, the empty-module body and the MAP sentinel.
+#[protection]
+fn mrec_check_head(a: i64, n: i64) -> i64 {
+    if n < 5 {
+        return mrec_e_truncated();
+    }
+    if mrec_eq5(a, 0, 77, 73, 67, 51, mrec_b(a, 4)) == 0 {
+        return mrec_e_magic();
+    }
+    if mrec_b(a, 4) != 2 {
+        return mrec_e_version();
+    }
+    let mut i: i64 = 5;
+    while i < mrec_body_len() {
+        if i >= n {
+            return mrec_e_truncated();
+        }
+        if mrec_b(a, i) != 0 {
+            return mrec_e_body();
+        }
+        i = i + 1;
+    }
+    if n == mrec_body_len() {
+        return mrec_e_no_map();
+    }
+    if mrec_b(a, mrec_body_len()) != mrec_sentinel() {
+        return mrec_e_no_map();
+    }
+    0
+}
+
+// Read one entry into h through the writer's own checks (key rules, UTF-8,
+// duplicates, limits), so reader and writer accept the same records.
+#[protection]
+fn mrec_rd_entry(rd: i64, h: i64) -> i64 {
+    let a: i64 = __mind_load_i64(rd + 0);
+    let kl: i64 = mrec_rd_len(rd, mrec_max_key_bytes());
+    if kl != 0 {
+        return kl;
+    }
+    let kn: i64 = __mind_load_i64(rd + 24);
+    let ka: i64 = a + __mind_load_i64(rd + 16);
+    let tp: i64 = __mind_load_i64(rd + 16) + kn;
+    if tp >= __mind_load_i64(rd + 8) {
+        return mrec_e_truncated();
+    }
+    let tag: i64 = mrec_b(a, tp);
+    __mind_store_i64(rd + 16, tp + 1);
+    let mut rc: i64 = 0;
+    if tag == 1 {
+        let ic: i64 = mrec_rd_uleb(rd);
+        if ic != 0 {
+            return ic;
+        }
+        rc = mrec_put(h, ka, kn, 1, mrec_unzigzag(__mind_load_i64(rd + 24)), 0, 0);
+    } else {
+        if tag > 2 {
+            return mrec_e_tag();
+        }
+        let vl: i64 = mrec_rd_len(rd, mrec_max_record_bytes());
+        if vl != 0 {
+            return vl;
+        }
+        let vn: i64 = __mind_load_i64(rd + 24);
+        let va: i64 = a + __mind_load_i64(rd + 16);
+        __mind_store_i64(rd + 16, __mind_load_i64(rd + 16) + vn);
+        rc = mrec_put(h, ka, kn, tag, 0, va, vn);
+    }
+    if rc != 0 {
+        return rc;
+    }
+    // The table stays sorted, so a key that sorts before an earlier key does
+    // not land at the end: the input is out of order.
+    if mrec_find(h, ka, kn) != __mind_load_i64(h + 8) - 1 {
+        return mrec_e_order();
+    }
+    0
+}
+
+// Decode the n bytes at a. Returns a record handle (> 0), or a named error
+// (< 0). Only the canonical form mrec_encode writes is accepted.
+#[protection]
+pub fn mrec_decode(a: i64, n: i64) -> i64 {
+    if n < 0 {
+        return mrec_e_value();
+    }
+    if n > mrec_max_record_bytes() {
+        return mrec_e_oversized();
+    }
+    let hc: i64 = mrec_check_head(a, n);
+    if hc != 0 {
+        return hc;
+    }
+    let rd: i64 = __mind_alloc(32);
+    if rd == 0 {
+        return mrec_e_no_memory();
+    }
+    __mind_store_i64(rd + 0, a);
+    __mind_store_i64(rd + 8, n);
+    __mind_store_i64(rd + 16, mrec_body_len() + 1);
+    __mind_store_i64(rd + 24, 0);
+    let cc: i64 = mrec_rd_uleb(rd);
+    if cc != 0 {
+        return cc;
+    }
+    // Refuse an impossible entry count before the handle or any entry is
+    // allocated: bit 63 reads as negative, a count over the entry limit is
+    // oversized, and a count the remaining bytes cannot hold (each entry is at
+    // least mrec_min_entry_bytes()) is truncated.
+    let count: i64 = __mind_load_i64(rd + 24);
+    if count < 0 {
+        return mrec_e_oversized();
+    }
+    if count > mrec_max_entries() {
+        return mrec_e_oversized();
+    }
+    if count > (__mind_load_i64(rd + 8) - __mind_load_i64(rd + 16)) / mrec_min_entry_bytes() {
+        return mrec_e_truncated();
+    }
+    let h: i64 = mrec_new();
+    if h == 0 {
+        return mrec_e_no_memory();
+    }
+    let mut i: i64 = 0;
+    while i < count {
+        let ec: i64 = mrec_rd_entry(rd, h);
+        if ec != 0 {
+            return ec;
+        }
+        i = i + 1;
+    }
+    if __mind_load_i64(rd + 16) != n {
+        return mrec_e_trailing();
+    }
+    h
+}
+
+// ---------------------------------------------------------------------------
+// Lookup.
+// ---------------------------------------------------------------------------
+
+// Index of the entry with the key, or mrec_e_not_found().
+pub fn mrec_find(h: i64, ka: i64, kn: i64) -> i64 {
+    if h == 0 {
+        return mrec_e_handle();
+    }
+    if kn < 0 {
+        return mrec_e_value();
+    }
+    let pos: i64 = mrec_lower_bound(h, ka, kn);
+    if pos < __mind_load_i64(h + 8) {
+        if mrec_ent_cmp(mrec_ent(h, pos), ka, kn) == 0 {
+            return pos;
+        }
+    }
+    mrec_e_not_found()
+}
+
+// Field at byte offset `off` of entry i, or mrec_e_not_found() out of range.
+fn mrec_field(h: i64, i: i64, off: i64) -> i64 {
+    if h == 0 {
+        return mrec_e_handle();
+    }
+    if i < 0 {
+        return mrec_e_not_found();
+    }
+    if i >= __mind_load_i64(h + 8) {
+        return mrec_e_not_found();
+    }
+    __mind_load_i64(mrec_ent(h, i) + off)
+}
+
+pub fn mrec_key_addr_at(h: i64, i: i64) -> i64 {
+    mrec_field(h, i, 0)
+}
+
+pub fn mrec_key_len_at(h: i64, i: i64) -> i64 {
+    mrec_field(h, i, 8)
+}
+
+pub fn mrec_tag_at(h: i64, i: i64) -> i64 {
+    mrec_field(h, i, 16)
+}
+
+pub fn mrec_val_addr_at(h: i64, i: i64) -> i64 {
+    mrec_field(h, i, 32)
+}
+
+pub fn mrec_val_len_at(h: i64, i: i64) -> i64 {
+    mrec_field(h, i, 40)
+}
+
+// Int value of entry i. Any i64 is a valid Int, so check mrec_tag_at first:
+// this returns 0 for an index out of range or an entry of another type.
+pub fn mrec_int_at(h: i64, i: i64) -> i64 {
+    if mrec_tag_at(h, i) != 1 {
+        return 0;
+    }
+    mrec_field(h, i, 24)
+}
+
+// Write the Int under the key to out (8 bytes). Returns 0 or a named error.
+pub fn mrec_get_int(h: i64, ka: i64, kn: i64, out: i64) -> i64 {
+    let i: i64 = mrec_find(h, ka, kn);
+    if i < 0 {
+        return i;
+    }
+    if mrec_tag_at(h, i) != 1 {
+        return mrec_e_type();
+    }
+    __mind_store_i64(out, mrec_field(h, i, 24));
+    0
+}
+
+// Write the address and length of the String (tag 0) or Bytes (tag 2) value
+// under the key to out and out + 8. Returns 0 or a named error.
+pub fn mrec_get_val(h: i64, ka: i64, kn: i64, tag: i64, out: i64) -> i64 {
+    let i: i64 = mrec_find(h, ka, kn);
+    if i < 0 {
+        return i;
+    }
+    if mrec_tag_at(h, i) != tag {
+        return mrec_e_type();
+    }
+    __mind_store_i64(out + 0, mrec_field(h, i, 32));
+    __mind_store_i64(out + 8, mrec_field(h, i, 40));
+    0
+}

@@ -100,6 +100,8 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.json_canon",
     "std.keccak",
     "std.llvm",
+    "std.mic_record",
+    "std.mic_results",
     "std.mlir",
     "std.mlkem768",
     "std.net",
