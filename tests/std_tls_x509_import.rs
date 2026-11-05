@@ -209,6 +209,8 @@ const fn case(
 /// valid under `eku_root` (`eku_root_ok` in the build set): only the refused
 /// rule stops them, an EKU without serverAuth or an IP literal against a
 /// dNSName. `#outer_sigalg_sha384` changes only the outer signatureAlgorithm.
+/// `kp_leaf_badkey` is `kp_leaf` with a third INTEGER in its RSAPublicKey,
+/// signed again by `kp_root`: only the key is malformed (`kp_ok` below).
 #[rustfmt::skip]
 const X509_INTERP_FAST: &[Chain] = &[
     case("expired", &["ec_leaf", "ec_inter"], &["ec_root"], "www.example.com", 3800 * DAY, -6),
@@ -231,6 +233,7 @@ const X509_INTERP_FAST: &[Chain] = &[
     case("eku_without_server_auth", &["eku_client_leaf"], &["eku_root"], "eku.example.com", 0, -11),
     case("outer_sigalg_differs", &["ec_leaf#outer_sigalg_sha384", "ec_inter"], &["ec_root"], "www.example.com", 0, -1),
     case("leaf_only_not_yet_valid", &["ec_leaf_ip", "ec_inter"], &["ec_root"], "127.0.0.1", LEAF_IP_NB - 1, -5),
+    case("leaf_rsa_key_malformed", &["kp_leaf_badkey"], &["kp_root"], "www.kp-test.example.com", 0, -14),
 ];
 
 /// Seconds from the fixture clock to `ec_leaf_ip`'s notBefore. One second
@@ -243,6 +246,7 @@ const LEAF_IP_NB: i64 = 1 - 2 * DAY;
 #[rustfmt::skip]
 const X509_INTERP_RSA: &[Chain] = &[
     case("rsa_ok", &["rsa_leaf"], &["rsa_root"], "www.rsa-test.example.com", 0, 0),
+    case("kp_ok", &["kp_leaf"], &["kp_root"], "www.kp-test.example.com", 0, 0),
     case("rsa_wrong_key", &["rsa_leaf"], &["rsa_root#wrong_key"], "www.rsa-test.example.com", 0, -3),
 ];
 
@@ -275,6 +279,7 @@ const X509_BUILD: &[Chain] = &[
     case("eku_root_ok", &["eku_server_leaf"], &["eku_root"], "eku.example.com", 0, 0),
     case("name_constraint_excluded", &["nc_leaf_bad", "nc_inter"], &["nc_root"], "bad.example.com", 0, -17),
     case("sha1_refused", &["sha1_leaf"], &["sha1_root"], "www.sha1-test.example.com", 0, -2),
+    case("rsa3072_leaf_ok", &["kp_rsa3072_leaf"], &["kp_root"], "www.kp-test.example.com", 0, 0),
 ];
 
 fn read_fixture(name: &str) -> Vec<u8> {
@@ -410,14 +415,14 @@ fn x509_refusals_before_any_signature_agree_in_test_and_build() {
     x509_interp_and_build("x509_fast", X509_INTERP_FAST);
 }
 
-/// A valid RSA chain verifies (0) and the same chain under an anchor with the
+/// Two valid RSA chains verify (0) and one of them under an anchor with the
 /// issuer's name and another key is refused (-3), on both engines. A debug
-/// build of the evaluator needs about 14 minutes for the two verifications, so
-/// this runs in release builds only; the build set runs both chains in every
+/// build of the evaluator needs about 7 minutes per verification, so this
+/// runs in release builds only; the build set runs every chain in every
 /// profile.
 #[cfg_attr(
     debug_assertions,
-    ignore = "two RSA-2048 verifications take about 14 minutes in a debug-profile mindc test"
+    ignore = "each RSA-2048 verification takes about 7 minutes in a debug-profile mindc test"
 )]
 #[test]
 fn x509_rsa_chain_and_wrong_key_agree_in_test_and_build() {
@@ -495,8 +500,9 @@ fn a_program_importing_x509_and_the_tls_client_builds_and_runs() {
 
 /// `x509_parse` records n and e only from a strictly decoded rsaEncryption
 /// key, leaves them zero for an ECDSA or other key and rejects a malformed
-/// one; the TLS client refuses a leaf without an RSA key at CertificateVerify
-/// and a malformed RSA leaf at Certificate, on both engines.
+/// one; the TLS client refuses a leaf without an RSA key at CertificateVerify,
+/// and a malformed RSA leaf (E_CHAIN) and an RSA-3072 leaf (E_OVF) at
+/// Certificate, on both engines.
 #[test]
 fn the_cv_key_is_a_verified_rsa_key_in_test_and_build() {
     let dir = project("leaf_key", &tls13_leaf_key_program::source(false, false));

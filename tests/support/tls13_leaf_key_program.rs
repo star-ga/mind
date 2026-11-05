@@ -10,9 +10,11 @@
 //! positive and minimal). An ECDSA or other key leaves the key slots zero, and
 //! a malformed rsaEncryption key rejects the certificate. The TLS client takes
 //! its CertificateVerify key from those slots, so an ECDSA leaf is refused at
-//! CertificateVerify (E_CV) and a malformed RSA leaf at Certificate (E_CHAIN).
-//! The malformed keys are derived from `rsa_leaf` here, re-encoding every
-//! enclosing length, so each one differs from the valid key in one rule.
+//! CertificateVerify (E_CV), a malformed RSA leaf at Certificate (E_CHAIN) and
+//! an RSA-3072 leaf at Certificate (E_OVF: its modulus does not fit the
+//! 256-byte key slot). The malformed keys are derived from `rsa_leaf` here,
+//! re-encoding every enclosing length, so each one differs from the valid key
+//! in one rule.
 
 use super::{TD, program, stores};
 
@@ -90,12 +92,35 @@ struct Parts {
 
 /// SEQUENCE { SEQUENCE { alg }, BIT STRING { unused, key } }.
 fn spki(alg: &[u8], unused: u8, key: &[u8]) -> Vec<u8> {
-    let bits = cat(&[&[unused], key]);
-    tlv(0x30, &cat(&[&tlv(0x30, alg), &tlv(0x03, &bits)]))
+    spki_tagged([0x30, 0x30, 0x03], alg, &cat(&[&[unused], key]), &[])
+}
+
+/// `tags` = (SPKI, AlgorithmIdentifier, subjectPublicKey) around `alg` and
+/// `bits`, with `tail` after the subjectPublicKey inside the SPKI.
+fn spki_tagged(tags: [u8; 3], alg: &[u8], bits: &[u8], tail: &[u8]) -> Vec<u8> {
+    tlv(
+        tags[0],
+        &cat(&[&tlv(tags[1], alg), &tlv(tags[2], bits), tail]),
+    )
 }
 
 fn rsa_key(p: &Parts) -> Vec<u8> {
     tlv(0x30, &cat(&[&p.n, &p.e]))
+}
+
+/// OID and NULL parameters, as in `rsa_leaf`.
+fn alg(p: &Parts) -> Vec<u8> {
+    cat(&[&p.oid, &p.null])
+}
+
+/// The valid SPKI with `key` as the subjectPublicKey content.
+fn with_key(p: &Parts, key: &[u8]) -> Vec<u8> {
+    spki(&alg(p), 0, key)
+}
+
+/// `rsa_leaf`'s RSAPublicKey with the exponent INTEGER replaced by `e`.
+fn with_e(p: &Parts, e: &[u8]) -> Vec<u8> {
+    with_key(p, &tlv(0x30, &cat(&[&p.n, e])))
 }
 
 type Variant = (&'static str, fn(&Parts) -> Vec<u8>);
@@ -114,6 +139,16 @@ const VARIANTS: &[Variant] = &[
     ("params_not_null", |p| spki(&cat(&[&p.oid, &[4, 0]]), 0, &rsa_key(p))),
     ("negative_modulus", |p| spki(&cat(&[&p.oid, &p.null]), 0, &tlv(0x30, &cat(&[&tlv(2, &content(&p.n)[1..]), &p.e])))),
     ("modulus_extra_zero", |p| spki(&cat(&[&p.oid, &p.null]), 0, &tlv(0x30, &cat(&[&tlv(2, &cat(&[&[0], content(&p.n)])), &p.e])))),
+    ("params_then_tlv", |p| spki(&cat(&[&alg(p), &[4, 0]]), 0, &rsa_key(p))),
+    ("key_not_bit_string", |p| spki_tagged([0x30, 0x30, 0x04], &alg(p), &cat(&[&[0], &rsa_key(p)]), &[])),
+    ("tlv_after_key", |p| spki_tagged([0x30, 0x30, 0x03], &alg(p), &cat(&[&[0], &rsa_key(p)]), &[4, 0])),
+    ("exponent_not_integer", |p| with_e(p, &tlv(0x04, content(&p.e)))),
+    ("exponent_extra_zero", |p| with_e(p, &tlv(2, &cat(&[&[0], content(&p.e)])))),
+    ("negative_exponent", |p| { let mut e = content(&p.e).to_vec(); e[0] |= 0x80; with_e(p, &tlv(2, &e)) }),
+    ("spki_not_sequence", |p| spki_tagged([0x31, 0x30, 0x03], &alg(p), &cat(&[&[0], &rsa_key(p)]), &[])),
+    ("alg_not_sequence", |p| spki_tagged([0x30, 0x31, 0x03], &alg(p), &cat(&[&[0], &rsa_key(p)]), &[])),
+    ("oid_not_oid", |p| spki(&cat(&[&tlv(0x04, content(&p.oid)), &p.null]), 0, &rsa_key(p))),
+    ("key_sequence_n_only", |p| with_key(p, &cat(&[&tlv(0x30, &p.n), &p.e]))),
 ];
 
 fn read(name: &str) -> Vec<u8> {
@@ -214,6 +249,17 @@ const PARSE: &[(&str, i64, i64, i64)] = &[
     ("rsa_leaf#params_not_null", 1, 0, 0),
     ("rsa_leaf#negative_modulus", 1, 0, 0),
     ("rsa_leaf#modulus_extra_zero", 1, 0, 0),
+    ("rsa_leaf#params_then_tlv", 1, 0, 0),
+    ("rsa_leaf#key_not_bit_string", 1, 0, 0),
+    ("rsa_leaf#tlv_after_key", 1, 0, 0),
+    ("rsa_leaf#exponent_not_integer", 1, 0, 0),
+    ("rsa_leaf#exponent_extra_zero", 1, 0, 0),
+    ("rsa_leaf#negative_exponent", 1, 0, 0),
+    ("rsa_leaf#spki_not_sequence", 1, 0, 0),
+    ("rsa_leaf#alg_not_sequence", 1, 0, 0),
+    ("rsa_leaf#oid_not_oid", 1, 0, 0),
+    ("rsa_leaf#key_sequence_n_only", 1, 0, 0),
+    ("kp_rsa3072_leaf", 0, 384, 3),
 ];
 
 /// `(Certificate chain, tls13c_parse_certificate rc, RSA len, exponent)`.
@@ -226,6 +272,7 @@ const TLS: &[(&[&str], &str, i64, i64)] = &[
     (&["rsa_leaf#third_integer"], "tls13c_err_chain()", 0, 0),
     (&["rsa_leaf#key_not_sequence"], "tls13c_err_chain()", 0, 0),
     (&["rsa_leaf#trailing_bytes"], "tls13c_err_chain()", 0, 0),
+    (&["kp_rsa3072_leaf", "kp_root"], "tls13c_err_ovf()", 0, 0),
 ];
 
 const HELPERS: &str = r#"fn leaf_state() -> i64 {

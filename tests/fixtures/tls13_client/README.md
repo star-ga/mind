@@ -86,8 +86,8 @@ of authentication. Limits: 8192-byte handshake messages, 16384-byte transcript,
 application receive buffer (a larger record, or several records that together
 exceed it in one pump, fails the connection with an overflow error), and at most
 32 trust anchors (the std/x509 verifier refuses a larger anchor set with -13);
-CV supports RSA-PSS/SHA256 with 1024/2048-bit keys. Other CV algorithms fail
-closed.
+CV supports RSA-PSS/SHA256 with an RSA-2048 leaf key only. Other CV
+algorithms and keys fail closed.
 
 Known limitations (declared, not fixed here; each fails closed unless marked):
 - A post-handshake NewSessionTicket or KeyUpdate is fatal (the connection
@@ -95,10 +95,14 @@ Known limitations (declared, not fixed here; each fails closed unless marked):
 - Application data and close_notify processed in the same pump: the data is
   dropped and the connection reports a clean close (silent truncation, does
   not fail closed). Pump after every feed until this is fixed.
-- Only RSA-PSS CV is implemented. Its key is taken from the leaf only when
-  the SPKI decodes strictly as rsaEncryption (`x509_rsa_spki`); an ECDSA or
-  other leaf key fails closed at CertificateVerify (E_CV), and a malformed
-  rsaEncryption key at Certificate (E_CHAIN).
+- Only RSA-PSS CV with an RSA-2048 leaf key is implemented. Its key is taken
+  from the leaf only when the SPKI decodes strictly as rsaEncryption
+  (`x509_rsa_spki`); an ECDSA or other leaf key and an RSA-1024 key fail
+  closed at CertificateVerify (E_CV), a malformed rsaEncryption key at
+  Certificate (E_CHAIN), and an RSA-3072 or larger key at Certificate (E_OVF).
+  The RFC 8448 §3 server key is RSA-1024: `tls13ct_cv` checks its published
+  CertificateVerify signature with the RSA-PSS verify primitive
+  (`tls13_hs_rsa_pss_verify`) and checks that the client refuses it (E_CV).
 - Hostname bytes are not validated (no NUL/LDH check); SNI sends dns_len bytes
   while the verifier stops at the first NUL. Callers must pass a clean name.
 - write_app with a full output buffer fails the connection (no backpressure).

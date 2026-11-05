@@ -9,8 +9,9 @@
 // the retry keeps CH1 entropy, random, session id, identity and offered ALPN.
 // Initial entropy: random[32], session id[32], x25519 scalar[32], optionally
 // hybrid entropy[96]. Build requires the same entropy length on the retry.
-// Only RSA-PSS SHA256 CertificateVerify with an rsaEncryption leaf key is
-// implemented; any other leaf key type is refused at CV. Certificate/handshake
+// Only RSA-PSS SHA256 CertificateVerify with an RSA-2048 rsaEncryption leaf
+// key is implemented: any other leaf key type and RSA-1024 are refused at CV,
+// RSA-3072 and above at Certificate (E_OVF). Certificate/handshake
 // message cap 8192, transcript cap 16384, cookie cap 254, ALPN offer cap 1024.
 // Tests: tests/std_tls_x509_import.rs (mindc test and the mindc build executable).
 // Modules: tls13_client_core (state layout, transcript, record protection),
@@ -326,11 +327,11 @@ pub fn tls13c_parse_and_verify_cv(state: i64, msg_addr: i64, msg_len: i64) -> i6
     if alg == tls13ci_sig_rsa_pss_rsae_sha256() {
         // 0 unless the leaf carries a verified rsaEncryption key (see
         // tls13c_parse_certificate): an ECDSA or other leaf is refused here.
+        // The CertificateVerify key is RSA-2048 only (256-byte modulus); an
+        // RSA-1024 leaf is refused here, RSA-3072 and above at Certificate.
         let n_len: i64 = tls13c_load_i64(state + 4752);
-        if n_len != 128 {
-            if n_len != 256 {
-                return tls13ci_err_cv();
-            }
+        if n_len != 256 {
+            return tls13ci_err_cv();
         }
         let e_val: i64 = tls13c_load_i64(state + 4784);
         let ok: i64 = tls13_hs_rsa_pss_verify(state + 4856, n_len, e_val, sig, slen, content, 130, 32);
