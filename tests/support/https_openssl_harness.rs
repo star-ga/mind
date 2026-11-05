@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -140,11 +140,21 @@ impl Drop for Reaped {
     }
 }
 
-pub fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("bind an ephemeral port")
-        .port()
+/// A port for s_server below the kernel's ephemeral range (32768 and up on
+/// Linux), distinct for every call in this process. A port taken from an
+/// ephemeral bind and released could be handed straight to another test's
+/// proxy listener before s_server binds it, joining two cases' streams.
+pub fn server_port() -> u16 {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let base = 20000 + (std::process::id() as usize % 400) * 16;
+    for _ in 0..6000 {
+        let k = NEXT.fetch_add(1, Ordering::SeqCst);
+        let port = (base + k % 6000) as u16;
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no free port in 20000..32767 for s_server");
 }
 
 /// `openssl s_server` for one connection on 127.0.0.1:`port`.
@@ -314,7 +324,7 @@ pub struct Reply {
     pub body: Vec<u8>,
 }
 
-pub fn take_line<'a>(s: &mut &'a [u8], tag: u8) -> i64 {
+pub fn take_line(s: &mut &[u8], tag: u8) -> i64 {
     let nl = s.iter().position(|&b| b == b'\n').expect("result line");
     let line = &s[..nl];
     assert!(
@@ -459,7 +469,7 @@ pub fn request_complete(buf: &[u8]) -> bool {
 }
 
 pub fn run_case(env: &Env, case: &Case) -> Seen {
-    let s_port = free_port();
+    let s_port = server_port();
     let (mut server, err_log) = start_server(env, case.leaf, s_port, case.tag);
     let stop = Arc::new(AtomicBool::new(false));
     let (p_port, proxy) = start_proxy(s_port, case.cut, Arc::clone(&stop));

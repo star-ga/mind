@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2143 | **Est. tokens:** ~4,042,944
-**Generated:** 2026-11-05 07:35 UTC
+**Files:** 2143 | **Est. tokens:** ~4,043,087
+**Generated:** 2026-11-05 08:08 UTC
 
 ## Token Budget Guide
 
@@ -228,7 +228,7 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/std_entropy_dns_support/` | 1 | ~1,595 |
-| `tests/support/` | 13 | ~33,009 |
+| `tests/support/` | 13 | ~33,152 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/x509/` | 1 | ~2,228 |
 | `tests/x509/testdata/` | 86 | ~13,454 |
@@ -2785,7 +2785,7 @@
 - `g2_capability_ratchet.rs` (~783 tok, large) — Copyright 2026 STARGA Inc.
 - `g2_compile_result.rs` (~364 tok, medium) — Copyright 2026 STARGA Inc.
 - `g2_policy_rejections.rs` (~755 tok, large) — Copyright 2026 STARGA Inc.
-- `https_openssl_harness.rs` (~4839 tok, huge) — Copyright 2026 STARGA Inc.
+- `https_openssl_harness.rs` (~4982 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_bare_imports.rs` (~3717 tok, huge) — Copyright 2026 STARGA Inc.
 - `pqc_hybrid_cli_support.rs` (~1429 tok, large) — Copyright 2026 STARGA Inc.
 - `tls13_leaf_key_program.rs` (~4103 tok, huge) — Copyright 2026 STARGA Inc.
