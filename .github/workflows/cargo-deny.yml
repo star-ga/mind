@@ -36,5 +36,6 @@ jobs:
       - name: Run cargo-deny (advisories, licenses, bans, sources)
         # --all-features: an optional dependency a release can ship (the
         # evidence-* signers, mlir-jit) is held to the same advisory and
-        # license policy as a default one.
-        run: cargo deny --all-features check
+        # license policy as a default one. --locked: the graph checked is the
+        # committed Cargo.lock that release builds link, not a fresh resolution.
+        run: cargo deny --all-features --locked check
