@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2143 | **Est. tokens:** ~4,042,637
-**Generated:** 2026-11-05 07:22 UTC
+**Files:** 2143 | **Est. tokens:** ~4,042,757
+**Generated:** 2026-11-05 07:28 UTC
 
 ## Token Budget Guide
 
@@ -155,7 +155,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 59 | ~272,719 |
+| `std/` | 59 | ~272,839 |
 | `tests/` | 442 | ~933,649 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -1639,7 +1639,7 @@
 - `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `https_http1.mind` (~6093 tok, huge) — std/https_http1.mind — the HTTP/1.1 response side of std.https: the
-- `https.mind` (~9581 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
+- `https.mind` (~9701 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
 - `https_url.mind` (~4958 tok, huge) — std/https_url.mind — the std.https error codes and bounds, URL parsing and
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1719 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.

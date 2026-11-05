@@ -10,9 +10,13 @@
 // kernel (std.entropy), authenticate the server against the system CA bundle
 // (/etc/ssl/certs/ca-certificates.crt; https_get_ca / https_post_ca take
 // another path) at the system clock, and speak HTTP/1.1 (std.https_http1).
-// Each call returns a response record (std/https_http1.mind accessors): the
-// error is 0 or a named https_err_* code, and a refusal never carries a status
-// or a body. Fail closed:
+// https_get_with_headers / https_post_with_headers also send a caller block of
+// request headers (X-API-Key, Cookie, ...; std/https_url.mind hx_headers_ok).
+// Each call returns a response record (std/https_http1.mind accessors,
+// Set-Cookie included; https_free releases it): the error is 0 or a named
+// https_err_* code, and a refusal never carries a status or a body. The body
+// streams through the client's one-record plaintext window into the record,
+// up to https_max_body(). Fail closed:
 //   - the server profile is TLS 1.3, X25519, AES-128-GCM or ChaCha20-Poly1305,
 //     and an RSA-2048 leaf with an rsa_pss_rsae_sha256 CertificateVerify; an
 //     ECDSA, RSA-3072+ or other leaf key is refused (https_err_unsupported_key);
@@ -22,7 +26,7 @@
 //   - redirects are not followed: a 3xx is returned as the response;
 //   - bounded: URL, header block, body, request body, the read timeout
 //     (https_io_timeout_s()) and the whole call (https_deadline_s()).
-// The four request functions read the world (DNS, network, kernel entropy,
+// The six request functions read the world (DNS, network, kernel entropy,
 // clock, the bundle file) and are classified nondeterministic by name.
 //
 // TLS 1.3 client (sans-IO; the functions above are its I/O driver):
@@ -42,9 +46,12 @@
 // message cap 8192, transcript cap 16384, cookie cap 254, ALPN offer cap 1024.
 // After the handshake, whole NewSessionTicket messages are discarded; any
 // other post-handshake message is refused. Decrypted application data is held
-// one record at a time: the pump opens no further record until it is read.
+// one record at a time (up to the RFC 8446 maximum of 2^14 bytes): the pump
+// opens no further record until it is read, so the state stays fixed-size
+// however long the stream.
 // Tests: tests/std_tls_x509_import.rs (mindc test and the mindc build
-// executable) and tests/std_https_loopback.rs (a loopback TLS 1.3 server).
+// executable), tests/std_https_loopback.rs (a loopback TLS 1.3 server in
+// MIND) and tests/std_https_openssl.rs (openssl s_server).
 // Modules: tls13_client_core (state layout, transcript, record protection),
 // tls13_client_hello (hellos, HelloRetryRequest, traffic keys),
 // tls13_client_api (public constants, accessors, application data, the
