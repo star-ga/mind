@@ -30,6 +30,8 @@ mod common;
 
 /// (input JSON text, expected compact bytes, expected pretty bytes).
 /// Pretty = Python `json.dumps(sort_keys-by-utf16, indent=2, ensure_ascii=True)`.
+/// Only the `kat` module below reads it, so it exists under the same features.
+#[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 const KATS: &[(&str, &str, &str)] = &[
     // Shuffled insertion order — the same logical object must produce the same
     // bytes regardless of the order the parser saw the keys in.

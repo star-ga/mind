@@ -28,6 +28,8 @@ pub(crate) mod fp_mode;
 pub mod frozen_profile;
 pub mod native_closure;
 mod print;
+mod project_consts;
+pub use project_consts::project_const_value;
 mod verify;
 mod verify_calls;
 
