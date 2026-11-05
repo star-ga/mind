@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1962 | **Est. tokens:** ~3,862,763
-**Generated:** 2026-11-04 22:13 UTC
+**Files:** 1963 | **Est. tokens:** ~3,866,889
+**Generated:** 2026-11-05 11:09 UTC
 
 ## Token Budget Guide
 
@@ -121,9 +121,9 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 49 | ~166,535 |
+| `src/eval/` | 49 | ~167,059 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
-| `src/eval/string_equality/` | 10 | ~35,764 |
+| `src/eval/string_equality/` | 10 | ~36,499 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
@@ -146,14 +146,14 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 4 | ~16,365 |
+| `src/test/` | 4 | ~16,611 |
 | `src/type_checker/` | 19 | ~65,201 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 43 | ~206,065 |
-| `tests/` | 433 | ~890,412 |
+| `tests/` | 434 | ~893,033 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 4 | ~13,757 |
@@ -1299,7 +1299,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~283 tok, medium) — Copyright 2026 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5396 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5627 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1335,21 +1335,21 @@
 - `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `classify.rs` (~5475 tok, huge) — Copyright 2026 STARGA Inc.
+- `classify.rs` (~5784 tok, huge) — Copyright 2026 STARGA Inc.
 - `facts.rs` (~7746 tok, huge) — Copyright 2026 STARGA Inc.
-- `flows.rs` (~4142 tok, huge) — Copyright 2026 STARGA Inc.
-- `flow_tests.rs` (~3163 tok, huge) — Copyright 2026 STARGA Inc.
+- `flows.rs` (~4169 tok, huge) — Copyright 2026 STARGA Inc.
+- `flow_tests.rs` (~3654 tok, huge) — Copyright 2026 STARGA Inc.
 - `project.rs` (~1668 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_equality.rs` (~4604 tok, huge) — Copyright 2025 STARGA Inc.
+- `string_equality.rs` (~4897 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/string_equality/`
 
-- `slots.rs` (~2294 tok, huge) — Copyright 2026 STARGA Inc.
+- `slots.rs` (~2103 tok, huge) — Copyright 2026 STARGA Inc.
 - `slot_tests.rs` (~2413 tok, huge) — Copyright 2026 STARGA Inc.
 - `sums.rs` (~772 tok, large) — Copyright 2026 STARGA Inc.
 - `tests.rs` (~4214 tok, huge) — Copyright 2025 STARGA Inc.
-- `walk.rs` (~3877 tok, huge) — Copyright 2026 STARGA Inc.
+- `walk.rs` (~3976 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
 - `string_record.rs` (~3662 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1556,7 +1556,7 @@
 ### `src/test/`
 
 - `imports.rs` (~5967 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~7370 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7616 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
@@ -2668,6 +2668,7 @@
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~244 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_edges_backend_parity.rs` (~2621 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_eq_len_run.rs` (~2598 tok, huge) — Copyright 2025 STARGA Inc.
 - `string_escape_decode_run.rs` (~1159 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_fail_closed.rs` (~959 tok, large) — Copyright 2025 STARGA Inc.
