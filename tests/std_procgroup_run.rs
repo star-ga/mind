@@ -142,7 +142,8 @@ mod bundle {
 
     /// A program reaching any of the three world-reading functions (fork and
     /// the environment, the clock deadline, the environment) is refused an
-    /// artifact without the flag, and the refusal names that function.
+    /// artifact without the flag, and the refusal names that function. So is a
+    /// direct call into the effect module `std.procgroup_sys` (its clock read).
     #[test]
     fn a_world_reading_procgroup_call_needs_allow_nondeterministic() {
         let cases = [
@@ -166,6 +167,11 @@ mod bundle {
                 "procgroup_task_index",
             ),
             ("doc", doc_example().to_string(), "procgroup_task_index"),
+            (
+                "sys_deadline",
+                "import std.procgroup_sys;\n\nfn main() -> i64 {\n    return procgroup_sys_deadline(1000);\n}\n".to_string(),
+                "procgroup_sys_deadline",
+            ),
         ];
         for (tag, src, offender) in &cases {
             let so = format!("{tag}.so");
@@ -229,19 +235,30 @@ mod bundle {
     }
 
     /// The substrate list is the link side, which only `mlir-build` compiles.
+    /// `std.procgroup` makes its OS calls through `std.procgroup_sys`, so
+    /// importing it links exactly those two modules; the effect module itself
+    /// links only itself.
     #[cfg(feature = "mlir-build")]
     #[test]
     fn std_procgroup_is_a_self_contained_substrate_module() {
         use libmind::project::substrate_link::{SUBSTRATE_MODULES, substrate_closure};
-        assert!(
-            SUBSTRATE_MODULES.contains(&"std.procgroup"),
-            "std.procgroup must be linked into executables that import it"
-        );
+        for module in ["std.procgroup", "std.procgroup_sys"] {
+            assert!(
+                SUBSTRATE_MODULES.contains(&module),
+                "{module} must be linked into executables that import it"
+            );
+        }
         let closure = substrate_closure(["import std.procgroup;\n"]);
         assert_eq!(
             closure.iter().copied().collect::<Vec<_>>(),
-            vec!["std.procgroup"],
-            "std.procgroup is self-contained: importing it links only itself"
+            vec!["std.procgroup", "std.procgroup_sys"],
+            "importing std.procgroup links it and its effect module, nothing else"
+        );
+        let closure = substrate_closure(["import std.procgroup_sys;\n"]);
+        assert_eq!(
+            closure.iter().copied().collect::<Vec<_>>(),
+            vec!["std.procgroup_sys"],
+            "std.procgroup_sys is self-contained: importing it links only itself"
         );
     }
 }

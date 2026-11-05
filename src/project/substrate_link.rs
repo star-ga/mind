@@ -105,6 +105,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.net",
     "std.process",
     "std.procgroup",
+    "std.procgroup_sys",
     "std.reactor",
     "std.regex",
     "std.ring",

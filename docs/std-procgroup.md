@@ -2,9 +2,12 @@
 
 `std.procgroup` starts a group of child processes, captures each child's
 stdout, and waits for all of them with one call that has a deadline. It is
-pure MIND over POSIX calls (`pipe`, `fork`, `execvp`, `poll`, `waitpid`,
-`kill`), and it is linked into `mindc build` executables (the MLIR path) like
-the other bundled `std` modules.
+pure MIND in two modules: `std.procgroup` keeps the slots, states and output
+buffers and makes no OS call of its own, and `std.procgroup_sys` holds every
+OS call it needs (`pipe`, `fork`, `execvp`, `waitpid`, `kill`, `read`,
+`poll`, the monotonic clock of the deadline, the environment), one small
+primitive each. Importing `std.procgroup` links both into `mindc build`
+executables (the MLIR path), like the other bundled `std` modules.
 
 The common use is to run the same program many times at once, for example to
 play 25 games in parallel: the program spawns itself 25 times, each child
@@ -125,4 +128,7 @@ a child starts some other way inherits the child's index.
   (`--emit-shared`, `--emit-obj`, `--emit-evidence`) therefore refuses a
   program that calls one of them unless `--allow-nondeterministic` is given,
   and evidence for such a program is attested `nondeterministic`. `mindc
-  build`, the path the example above uses, does not apply this refusal.
+  build`, the path the example above uses, does not apply this refusal. A
+  program that imports `std.procgroup_sys` directly is held to the same rule
+  for each primitive that forks, waits, reads a pipe, reads the clock or reads
+  the environment.

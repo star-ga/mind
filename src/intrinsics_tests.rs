@@ -99,6 +99,14 @@ fn world_reading_intrinsics_are_nondeterministic() {
         "procgroup_wait_all",
         "procgroup_task_index",
         "std.procgroup.procgroup_wait_all",
+        "procgroup_sys_spawn_piped",
+        "procgroup_sys_wait",
+        "procgroup_sys_read",
+        "procgroup_sys_deadline",
+        "procgroup_sys_poll_until",
+        "procgroup_sys_env_read",
+        "procgroup_sys_env_push",
+        "std.procgroup_sys.procgroup_sys_deadline",
     ] {
         assert!(
             callee_is_nondeterministic(name),
@@ -126,6 +134,11 @@ fn pure_intrinsics_are_not_tainted() {
         "procgroup_failures",
         "procgroup_state",
         "procgroup_free",
+        "procgroup_sys_close",
+        "procgroup_sys_pollfd_set",
+        "procgroup_sys_pollfd_ready",
+        "procgroup_sys_expired",
+        "procgroup_sys_env_pop",
     ] {
         assert!(
             !callee_is_nondeterministic(name),

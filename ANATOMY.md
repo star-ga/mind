@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1963 | **Est. tokens:** ~3,870,928
-**Generated:** 2026-11-05 08:34 UTC
+**Files:** 1964 | **Est. tokens:** ~3,873,253
+**Generated:** 2026-11-05 10:01 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 41 | ~115,674 |
+| `docs/` | 41 | ~115,782 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 174 | ~451,769 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,204 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,210 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -109,7 +109,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~55,607 |
+| `src/` | 13 | ~55,863 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -142,7 +142,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 23 | ~77,468 |
+| `src/project/` | 23 | ~77,493 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -154,8 +154,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 44 | ~212,636 |
-| `tests/` | 436 | ~912,029 |
+| `std/` | 45 | ~214,345 |
+| `tests/` | 436 | ~912,250 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,971 |
@@ -560,7 +560,7 @@
 - `v1.0.md` (~953 tok, large) — MIND Language Specification v1.0 (Working Draft)
 ### `docs/`
 
-- `std-procgroup.md` (~1651 tok, huge) — `std.procgroup`: run many child processes and wait for all of them
+- `std-procgroup.md` (~1759 tok, huge) — `std.procgroup`: run many child processes and wait for all of them
 - `type-system.md` (~1520 tok, huge) — Type System
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
@@ -923,7 +923,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~876 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~882 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1372,8 +1372,8 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~9637 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics_tests.rs` (~1519 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9778 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics_tests.rs` (~1634 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1524,9 +1524,9 @@
 - `load.rs` (~4048 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~4213 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~4231 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
-- `substrate_link.rs` (~4711 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4718 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1640,7 +1640,8 @@
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3084 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
-- `procgroup.mind` (~5911 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
+- `procgroup.mind` (~5045 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
+- `procgroup_sys.mind` (~2575 tok, huge) — std.procgroup_sys — the OS calls of std.procgroup, one small primitive each.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
@@ -2630,7 +2631,7 @@
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_procgroup_run.mind` (~3772 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
-- `std_procgroup_run.rs` (~6931 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_procgroup_run.rs` (~7152 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.

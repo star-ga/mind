@@ -531,6 +531,18 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "procgroup_spawn",
     "procgroup_task_index",
     "procgroup_wait_all",
+    // `std.procgroup_sys`, the effect module those three reach their OS calls
+    // through: each primitive whose body calls a World row above (`fork`,
+    // `waitpid`, `read`, `clock_gettime`, `getenv`). Its other primitives
+    // (close, kill, plain poll, pollfd fields, the environment restore) call
+    // none and stay pure, like `procgroup_new`.
+    "procgroup_sys_deadline",
+    "procgroup_sys_env_push",
+    "procgroup_sys_env_read",
+    "procgroup_sys_poll_until",
+    "procgroup_sys_read",
+    "procgroup_sys_spawn_piped",
+    "procgroup_sys_wait",
     "read_input",
     "read_line",
     "system_time",

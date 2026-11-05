@@ -23,7 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `procgroup_wait_all` and `procgroup_task_index` are classified as world
   readers (`src/intrinsics.rs`), so the flat `mindc <file>` path refuses an
   artifact for a program that calls them unless `--allow-nondeterministic` is
-  given, and attests it `nondeterministic`.
+  given, and attests it `nondeterministic`. `std.procgroup` itself makes no
+  OS call: every pipe, fork, exec, wait, kill, read, poll, clock and
+  environment call is a primitive of the new effect module
+  `std.procgroup_sys` (`std/procgroup_sys.mind`, not in the native seed), and
+  the primitives that read the world are classified the same way.
 - **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
   dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
   compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
