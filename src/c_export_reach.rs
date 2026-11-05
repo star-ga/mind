@@ -15,9 +15,10 @@
 
 //! Pin: a decoded mic@3 module does not reach C-export wrapping.
 //!
-//! `imported_extern_names` is not on the wire. After `parse_mic3` the set is
-//! empty, so an exported foreign declaration looks like this module's own
-//! symbol. The entry points that decode an artifact must not lower it.
+//! `imported_extern_names` is not on the wire. After `parse_mic3` it is `None`
+//! (unknown), and `emit_c_export_wrappers` refuses any foreign export of such
+//! a module (`mlir::c_export` tests). This source pin is the second line: the
+//! entry points that decode an artifact must not lower it at all.
 
 #[cfg(feature = "std-surface")]
 use crate::ir::{IRModule, Instr};
@@ -142,7 +143,9 @@ fn assert_body_does_not_decode(src: &str, sig: &str) {
 fn assert_mic_round_trip_drops_import_provenance() {
     let mut live = IRModule::new();
     live.exports.insert("open".to_string());
-    live.imported_extern_names.insert("open".to_string());
+    live.imported_extern_names
+        .get_or_insert_default()
+        .insert("open".to_string());
     live.instrs.push(Instr::ExternFnDecl {
         name: "open".to_string(),
         param_types: vec![
@@ -158,8 +161,8 @@ fn assert_mic_round_trip_drops_import_provenance() {
     let bytes = crate::ir::compact::emit_mic3(&live);
     let decoded = crate::ir::compact::parse_mic3(&bytes).expect("mic@3 round trip");
     assert!(
-        decoded.imported_extern_names.is_empty(),
-        "decode must not invent import provenance"
+        decoded.imported_extern_names.is_none(),
+        "decode must mark import provenance unknown, not invent it"
     );
     assert!(decoded.exports.contains("open"));
     assert!(
@@ -173,7 +176,7 @@ fn assert_mic_round_trip_drops_import_provenance() {
         bytes,
         "a decoded module must re-emit the same mic@3 bytes"
     );
-    live.imported_extern_names.clear();
+    live.imported_extern_names = Some(Default::default());
     assert_eq!(
         crate::ir::compact::emit_mic3(&live),
         bytes,

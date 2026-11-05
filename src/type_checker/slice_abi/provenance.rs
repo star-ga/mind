@@ -4,11 +4,12 @@
 
 //! Proof of the Vec-layout owner or borrowed capability carried by a value.
 
+use super::aliases::int_width_of_ann;
 use super::{
-    Env, HandleKind, call_signature, confident_scalar_class, declared_kind, scalar_class_of_ann,
-    value_contains_borrow,
+    Env, HandleKind, call_signature, canonical, confident_scalar_class, declared_kind,
+    scalar_class_of_ann, value_contains_borrow,
 };
-use crate::ast::{Literal, Node, TypeAnn};
+use crate::ast::{BinOp, Literal, Node, TypeAnn};
 
 pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
     match node {
@@ -42,6 +43,78 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
     }
 }
 
+/// Scalar class of an array-literal element. A call reports its canonical
+/// declared result class, an imported callee's included; an element or field
+/// read reports its declared type's class; a name no binding shadows reports
+/// the class of the module constant it names.
+fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass> {
+    if let Some(class) = confident_scalar_class(element, &env.classes) {
+        return Some(class);
+    }
+    match element {
+        Node::Call { callee, .. } => call_signature(callee)?
+            .1
+            .as_ref()
+            .and_then(scalar_class_of_ann),
+        Node::Lit(Literal::Ident(name), _) if !env.bindings.contains_key(name) => {
+            super::aliases::const_class(name)
+        }
+        Node::IndexAccess { .. } | Node::FieldAccess { .. } => expr_type(element, env)
+            .as_ref()
+            .and_then(scalar_class_of_ann),
+        Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => element_class(inner, env),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => {
+            let class = element_class(left, env)?;
+            (element_class(right, env) == Some(class)).then_some(class)
+        }
+        _ => None,
+    }
+}
+
+/// Proven integer bit-width of an array-literal element: the declared width
+/// of a constant, a binding, an element or field read, a call result, or an
+/// explicit `as` target, combined over an arithmetic expression. A plain
+/// literal element declares no width of its own, so it stays `None` — it
+/// already follows the slice element's width — and `None` never refuses.
+fn element_int_width(element: &Node, env: &Env) -> Option<u32> {
+    match element {
+        Node::Lit(Literal::Int(_), _) => None,
+        Node::Lit(Literal::Ident(name), _) if !env.bindings.contains_key(name) => {
+            super::aliases::const_int_width(name)
+        }
+        Node::Lit(Literal::Ident(name), _) => env
+            .declared
+            .get(name)
+            .or_else(|| env.types.get(name))
+            .and_then(int_width_of_ann),
+        Node::As { ty, .. } => int_width_of_ann(&canonical(ty)),
+        Node::Call { callee, .. } => call_signature(callee)?
+            .1
+            .as_ref()
+            .and_then(int_width_of_ann),
+        Node::IndexAccess { .. } | Node::FieldAccess { .. } => {
+            expr_type(element, env).as_ref().and_then(int_width_of_ann)
+        }
+        Node::Paren(inner, _) | Node::Neg { operand: inner, .. } => element_int_width(inner, env),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => match (element_int_width(left, env), element_int_width(right, env)) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(one), None) | (None, Some(one)) => Some(one),
+            (None, None) => None,
+        },
+        _ => None,
+    }
+}
+
 fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) -> bool {
     let Node::ArrayLit { elements, .. } = node else {
         return false;
@@ -50,9 +123,17 @@ fn compatible_array_literal(node: &Node, target_element: &TypeAnn, env: &Env) ->
         return true;
     }
     if let Some(target_class) = scalar_class_of_ann(target_element) {
-        return elements
-            .iter()
-            .all(|element| confident_scalar_class(element, &env.classes) == Some(target_class));
+        // A literal element proven wider than the slice's integer element type
+        // silently truncates in the native build, so it is refused like a
+        // wider handle source already is by the element-type comparison.
+        let target_width = int_width_of_ann(target_element);
+        return elements.iter().all(|element| {
+            element_class(element, env) == Some(target_class)
+                && target_width.is_none_or(|width| {
+                    element_int_width(element, env)
+                        .is_none_or(|element_width| element_width <= width)
+                })
+        });
     }
     elements.iter().all(|element| {
         expr_type(element, env)
@@ -65,7 +146,7 @@ pub(super) fn expr_type(node: &Node, env: &Env) -> Option<TypeAnn> {
     match node {
         Node::Lit(Literal::Ident(name), _) => env.types.get(name).cloned(),
         Node::Lit(Literal::Str(_), _) => Some(TypeAnn::Named("string".to_string())),
-        Node::StructLit { name, .. } => Some(TypeAnn::Named(name.clone())),
+        Node::StructLit { name, .. } => Some(canonical(&TypeAnn::Named(name.clone()))),
         Node::Paren(inner, _) => expr_type(inner, env),
         Node::Call { callee, .. } => call_signature(callee).and_then(|(_, ret)| ret),
         Node::FieldAccess {
@@ -154,17 +235,29 @@ pub(super) fn field_type(base: &Node, field: &str, env: &Env) -> Option<TypeAnn>
         },
         _ => return None,
     };
-    let exact = (struct_name.to_string(), field.to_string());
-    if let Some(ty) = env.struct_fields.get(&exact) {
-        return Some(ty.clone());
-    }
+    let mut keys = vec![struct_name.to_string()];
     if struct_name.contains('.') && !struct_name.starts_with("crate.") {
-        return env
-            .struct_fields
-            .get(&(format!("crate.{struct_name}"), field.to_string()))
-            .cloned();
+        keys.push(format!("crate.{struct_name}"));
     }
-    None
+    keys.into_iter().find_map(|key| {
+        let ty = env.struct_fields.get(&(key.clone(), field.to_string()))?;
+        Some(read_field_type(ty, &key))
+    })
+}
+
+/// A local struct is keyed bare. A project struct is keyed by its source key
+/// (`crate.defs.Bank`), and its field types are written in that owner's scope.
+#[cfg(feature = "cross-module-imports")]
+fn read_field_type(ty: &TypeAnn, struct_key: &str) -> TypeAnn {
+    match struct_key.rsplit_once('.') {
+        Some((owner, _)) => super::canonical_in_owner(ty, owner),
+        None => canonical(ty),
+    }
+}
+
+#[cfg(not(feature = "cross-module-imports"))]
+fn read_field_type(ty: &TypeAnn, _struct_key: &str) -> TypeAnn {
+    canonical(ty)
 }
 
 pub(super) fn indexed_type(receiver: &Node, env: &Env) -> Option<TypeAnn> {

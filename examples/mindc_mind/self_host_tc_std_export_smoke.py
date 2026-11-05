@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
 
-Ports resolve.rs `stdlib_export_names()`: the flattened union of
-`collect_decl_names` over the BUNDLED std modules — the exact list in
-src/project/stdlib.rs STDLIB_MIND_SOURCES, which this smoke re-extracts on
-every run so a bundling change (module added/dropped) fails LOUD here rather
-than silently drifting the MIND answer. An on-disk std/*.mind file that is
-not bundled (e.g. x509.mind) is NOT a member. Unlike the D1 per-module set
+Ports the resolver's implicit std export set (`std_names::implicit()`): the
+flattened union of `collect_decl_names` over the IMPLICIT std modules — the
+exact list in src/project/stdlib/load.rs IMPLICIT_STD_MODULES, which this smoke
+re-extracts on every run so a change to that set fails LOUD here rather than
+silently drifting the MIND answer. A bundled module outside that set (e.g.
+x509.mind) resolves only through its import, so it is NOT a member.
+Unlike the D1 per-module set
 there is NO prelude injection: Result/Option/Ok/Err/Some/None live in
 `collect_module_syms`, never in the std export set — this smoke asserts the
 MIND core answers 0 for them.
@@ -59,7 +60,7 @@ from gate_assert import check  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAIN_MIND = os.path.join(HERE, "main.mind")
 REPO = os.path.dirname(os.path.dirname(HERE))
-STDLIB_RS = os.path.join(REPO, "src", "project", "stdlib.rs")
+STDLIB_RS = os.path.join(REPO, "src", "project", "stdlib", "load.rs")
 STD_DIR = os.path.join(REPO, "std")
 
 PRELUDE = {"Result", "Option", "Ok", "Err", "Some", "None"}
@@ -108,8 +109,8 @@ CASES = [
     ("Err", False),
     ("Some", False),
     ("None", False),
-    # NON-bundled std files: on disk under std/ but not in
-    # STDLIB_MIND_SOURCES, so NOT exports.
+    # NON-implicit std modules: bundled, but outside IMPLICIT_STD_MODULES,
+    # so their names resolve only through their import: NOT exports.
     ("x509_parse", True),
     ("x509_peer_auth_supported", True),
     # near-misses / traps
@@ -229,11 +230,12 @@ def collect_decl_names(src):
 
 
 def bundled_modules():
-    """Re-extract STDLIB_MIND_SOURCES from src/project/stdlib.rs so a
-    bundling change fails loud here instead of silently drifting."""
+    """Re-extract IMPLICIT_STD_MODULES from src/project/stdlib/load.rs so a
+    change to the implicit set fails loud here instead of silently drifting."""
     with open(STDLIB_RS) as f:
         rs = f.read()
-    mods = re.findall(r'\("std\.([a-z0-9_]+)",\s*include_str!', rs)
+    block = re.search(r'pub const IMPLICIT_STD_MODULES: &\[&str\] = &\[(.*?)\];', rs, re.S)
+    mods = re.findall(r'"std\.([a-z0-9_]+)"', block.group(1)) if block else []
     if len(mods) < 20:
         print(f"FAIL: extracted only {len(mods)} bundled modules from "
               f"{STDLIB_RS} — extraction regex or bundle layout drifted")
