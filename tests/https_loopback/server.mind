@@ -1,0 +1,873 @@
+// Loopback TLS 1.3 server for tests/std_https_loopback.rs (TEST-ONLY).
+//
+// One process serves hl_case_count() connections on 127.0.0.1, one per case,
+// in the order the client program makes them; it prints "PORT <n>\n" first.
+// Every case is a full TLS 1.3 handshake (X25519, TLS_AES_128_GCM_SHA256,
+// rsa_pss_rsae_sha256 signed here with the test-only RSA-2048 key) built from
+// the std primitives the client also uses; the case decides the certificate,
+// a corrupted signature, or the HTTP response. The fixture functions
+// (hl_leaf_*, hl_inter, hl_key_n, hl_key_d) are written by the test harness.
+//
+// Cases: 0 GET (a NewSessionTicket first, headers and body in two records),
+// 1 POST echo, 2 chunked, 3 a 40000-byte body, 4 a 301 redirect, 5 a leaf for
+// another host, 6 an expired leaf, 7 the good chain (the client holds another
+// anchor), 8 a corrupted CertificateVerify, 9 half of a record then EOF,
+// 10 an oversized Content-Length, 11 an ECDSA leaf, 12 an RSA-3072 leaf.
+
+fn hl_case_count() -> i64 {
+    13
+}
+
+// ---------------------------------------------------------------------------
+// Socket helpers
+// ---------------------------------------------------------------------------
+
+// Read exactly n bytes; returns n, or -1 at EOF or on an error.
+fn hl_read_n(s: i64, buf: i64, n: i64) -> i64 {
+    let mut got: i64 = 0;
+    let mut rc: i64 = n;
+    while rc == n && got < n {
+        let k: i64 = tcp_read(s, buf + got, n - got);
+        if k <= 0 {
+            rc = 0 - 1;
+        } else {
+            got = got + k;
+        }
+    }
+    rc
+}
+
+// Read one TLS record into buf; returns its length (header included) or -1.
+fn hl_read_record(s: i64, buf: i64) -> i64 {
+    if hl_read_n(s, buf, 5) != 5 {
+        return 0 - 1;
+    }
+    let len: i64 = tls13c_be16(buf + 3);
+    if len < 1 || len > 16640 {
+        return 0 - 1;
+    }
+    if hl_read_n(s, buf + 5, len) != len {
+        return 0 - 1;
+    }
+    len + 5
+}
+
+fn hl_send(s: i64, buf: i64, n: i64) -> i64 {
+    tcp_write_all(s, buf, n)
+}
+
+// ---------------------------------------------------------------------------
+// RSA-2048 private-key operation: Montgomery multiplication over 16-bit limbs
+// (128 limbs, stored as i64 at an 8-byte stride, least significant first).
+// ---------------------------------------------------------------------------
+
+fn hl_ld(a: i64, i: i64) -> i64 {
+    __mind_load_i64(a + i * 8)
+}
+
+fn hl_st(a: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(a + i * 8, v);
+    0
+}
+
+fn hl_bn_zero(a: i64, k: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < k {
+        hl_st(a, i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// Big-endian bytes -> limbs (k limbs).
+fn hl_bn_from_be(src: i64, len: i64, out: i64, k: i64) -> i64 {
+    hl_bn_zero(out, k);
+    let mut i: i64 = 0;
+    while i < len {
+        let b: i64 = tls13c_u8(src + len - 1 - i);
+        let li: i64 = i / 2;
+        hl_st(out, li, hl_ld(out, li) | (b << (8 * (i % 2))));
+        i = i + 1;
+    }
+    0
+}
+
+fn hl_bn_to_be(a: i64, out: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(out + len - 1 - i, (hl_ld(a, i / 2) >> (8 * (i % 2))) & 255);
+        i = i + 1;
+    }
+    0
+}
+
+// 1 iff a (k limbs) >= n (k limbs).
+fn hl_bn_ge(a: i64, n: i64, k: i64) -> i64 {
+    let mut i: i64 = k - 1;
+    let mut verdict: i64 = 1;
+    let mut decided: i64 = 0;
+    while decided == 0 && i >= 0 {
+        let x: i64 = hl_ld(a, i);
+        let y: i64 = hl_ld(n, i);
+        if x > y {
+            decided = 1;
+        } else {
+            if x < y {
+                verdict = 0;
+                decided = 1;
+            }
+        }
+        i = i - 1;
+    }
+    verdict
+}
+
+// a -= n over k limbs; returns the borrow out of the top limb.
+fn hl_bn_sub(a: i64, n: i64, k: i64) -> i64 {
+    let mut borrow: i64 = 0;
+    let mut i: i64 = 0;
+    while i < k {
+        let mut x: i64 = hl_ld(a, i) - hl_ld(n, i) - borrow;
+        borrow = 0;
+        if x < 0 {
+            x = x + 65536;
+            borrow = 1;
+        }
+        hl_st(a, i, x);
+        i = i + 1;
+    }
+    borrow
+}
+
+// -n0^-1 mod 2^16 (n0 odd), by Newton iteration.
+fn hl_n0p(n0: i64) -> i64 {
+    let mut x: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 5 {
+        x = (x * (2 - ((n0 * x) & 65535))) & 65535;
+        i = i + 1;
+    }
+    (65536 - x) & 65535
+}
+
+// out = a * b * R^-1 mod n (R = 2^(16k)); t is a scratch of k + 2 limbs.
+fn hl_mont_mul(a: i64, b: i64, n: i64, k: i64, n0p: i64, t: i64, out: i64) -> i64 {
+    hl_bn_zero(t, k + 2);
+    let mut i: i64 = 0;
+    while i < k {
+        let bi: i64 = hl_ld(b, i);
+        let mut c: i64 = 0;
+        let mut j: i64 = 0;
+        while j < k {
+            let x: i64 = hl_ld(t, j) + hl_ld(a, j) * bi + c;
+            hl_st(t, j, x & 65535);
+            c = x >> 16;
+            j = j + 1;
+        }
+        let x1: i64 = hl_ld(t, k) + c;
+        hl_st(t, k, x1 & 65535);
+        hl_st(t, k + 1, hl_ld(t, k + 1) + (x1 >> 16));
+        let m: i64 = (hl_ld(t, 0) * n0p) & 65535;
+        let x2: i64 = hl_ld(t, 0) + m * hl_ld(n, 0);
+        c = x2 >> 16;
+        j = 1;
+        while j < k {
+            let x: i64 = hl_ld(t, j) + m * hl_ld(n, j) + c;
+            hl_st(t, j - 1, x & 65535);
+            c = x >> 16;
+            j = j + 1;
+        }
+        let x3: i64 = hl_ld(t, k) + c;
+        hl_st(t, k - 1, x3 & 65535);
+        hl_st(t, k, hl_ld(t, k + 1) + (x3 >> 16));
+        hl_st(t, k + 1, 0);
+        i = i + 1;
+    }
+    // t < 2n: subtract n once when t >= n (t[k] is the carry limb; n has k).
+    if hl_ld(t, k) != 0 || hl_bn_ge(t, n, k) == 1 {
+        let borrow: i64 = hl_bn_sub(t, n, k);
+        hl_st(t, k, hl_ld(t, k) - borrow);
+    }
+    let mut q: i64 = 0;
+    while q < k {
+        hl_st(out, q, hl_ld(t, q));
+        q = q + 1;
+    }
+    0
+}
+
+// R^2 mod n, by doubling 1 a total of 2 * 16k times.
+fn hl_r2(n: i64, k: i64, out: i64) -> i64 {
+    let r: i64 = __mind_alloc((k + 1) * 8);
+    let n1: i64 = __mind_alloc((k + 1) * 8);
+    hl_bn_zero(r, k + 1);
+    hl_bn_zero(n1, k + 1);
+    let mut q: i64 = 0;
+    while q < k {
+        hl_st(n1, q, hl_ld(n, q));
+        q = q + 1;
+    }
+    hl_st(r, 0, 1);
+    let mut step: i64 = 0;
+    while step < 32 * k {
+        let mut carry: i64 = 0;
+        let mut i: i64 = 0;
+        while i < k + 1 {
+            let x: i64 = (hl_ld(r, i) << 1) | carry;
+            hl_st(r, i, x & 65535);
+            carry = x >> 16;
+            i = i + 1;
+        }
+        if hl_bn_ge(r, n1, k + 1) == 1 {
+            hl_bn_sub(r, n1, k + 1);
+        }
+        step = step + 1;
+    }
+    q = 0;
+    while q < k {
+        hl_st(out, q, hl_ld(r, q));
+        q = q + 1;
+    }
+    0
+}
+
+// sig = em^d mod n for the 256-byte big-endian em, d and n.
+fn hl_rsa_private(em: i64, d: i64, nb: i64, sig: i64) -> i64 {
+    let k: i64 = 128;
+    let n: i64 = __mind_alloc(k * 8);
+    let b: i64 = __mind_alloc(k * 8);
+    let r2: i64 = __mind_alloc(k * 8);
+    let one: i64 = __mind_alloc(k * 8);
+    let x: i64 = __mind_alloc(k * 8);
+    let bm: i64 = __mind_alloc(k * 8);
+    let tmp: i64 = __mind_alloc(k * 8);
+    let t: i64 = __mind_alloc((k + 2) * 8);
+    hl_bn_from_be(nb, 256, n, k);
+    hl_bn_from_be(em, 256, b, k);
+    hl_bn_zero(one, k);
+    hl_st(one, 0, 1);
+    let n0p: i64 = hl_n0p(hl_ld(n, 0));
+    hl_r2(n, k, r2);
+    hl_mont_mul(b, r2, n, k, n0p, t, bm);
+    hl_mont_mul(one, r2, n, k, n0p, t, x);
+    let mut byte: i64 = 0;
+    while byte < 256 {
+        let v: i64 = tls13c_u8(d + byte);
+        let mut bit: i64 = 7;
+        while bit >= 0 {
+            hl_mont_mul(x, x, n, k, n0p, t, tmp);
+            if ((v >> bit) & 1) == 1 {
+                hl_mont_mul(tmp, bm, n, k, n0p, t, x);
+            } else {
+                let mut q: i64 = 0;
+                while q < k {
+                    hl_st(x, q, hl_ld(tmp, q));
+                    q = q + 1;
+                }
+            }
+            bit = bit - 1;
+        }
+        byte = byte + 1;
+    }
+    hl_mont_mul(x, one, n, k, n0p, t, tmp);
+    hl_bn_to_be(tmp, sig, 256);
+    0
+}
+
+// RSASSA-PSS sign (RFC 8017 §9.1.1; SHA-256, MGF1-SHA-256, 32-byte salt).
+fn hl_pss_sign(msg: i64, mlen: i64, sig: i64) -> i64 {
+    let nb: i64 = __mind_alloc(256);
+    let dkey: i64 = __mind_alloc(256);
+    hl_key_n(nb);
+    hl_key_d(dkey);
+    let mhash: i64 = __mind_alloc(32);
+    sha256(msg, mlen, mhash);
+    let mp: i64 = __mind_alloc(72);
+    tls13c_zero(mp, 8);
+    tls13c_copy(mp + 8, mhash, 32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(mp + 40 + i, (90 + 3 * i) & 255);
+        i = i + 1;
+    }
+    let h: i64 = __mind_alloc(32);
+    sha256(mp, 72, h);
+    let em: i64 = __mind_alloc(256);
+    tls13c_zero(em, 256);
+    __mind_store_i8(em + 190, 1);
+    tls13c_copy(em + 191, mp + 40, 32);
+    let mask: i64 = __mind_alloc(223);
+    mgf1_sha256(h, 32, mask, 223);
+    i = 0;
+    while i < 223 {
+        __mind_store_i8(em + i, tls13c_u8(em + i) ^ tls13c_u8(mask + i));
+        i = i + 1;
+    }
+    __mind_store_i8(em, tls13c_u8(em) & 127);
+    tls13c_copy(em + 223, h, 32);
+    __mind_store_i8(em + 255, 188);
+    hl_rsa_private(em, dkey, nb, sig)
+}
+
+// ---------------------------------------------------------------------------
+// Handshake
+// ---------------------------------------------------------------------------
+
+fn hl_leaf(cid: i64, dst: i64) -> i64 {
+    if cid == 5 {
+        return hl_leaf_wronghost(dst);
+    }
+    if cid == 6 {
+        return hl_leaf_expired(dst);
+    }
+    if cid == 11 {
+        return hl_leaf_ec(dst);
+    }
+    if cid == 12 {
+        return hl_leaf_rsa3072(dst);
+    }
+    hl_leaf_good(dst)
+}
+
+// The x25519 key share of the ClientHello message at ch, or 0.
+fn hl_client_share(ch: i64, chlen: i64) -> i64 {
+    let body: i64 = ch + 4;
+    let sid: i64 = tls13c_u8(body + 34);
+    let mut p: i64 = 35 + sid;
+    let cs: i64 = tls13c_be16(body + p);
+    let mut aes: i64 = 0;
+    let mut c: i64 = 0;
+    while c < cs {
+        if tls13c_be16(body + p + 2 + c) == 4865 {
+            aes = 1;
+        }
+        c = c + 2;
+    }
+    if aes == 0 {
+        return 0;
+    }
+    p = p + 2 + cs;
+    p = p + 1 + tls13c_u8(body + p);
+    let ext_end: i64 = p + 2 + tls13c_be16(body + p);
+    p = p + 2;
+    let mut share: i64 = 0;
+    while share == 0 && p + 4 <= ext_end && p + 4 <= chlen - 4 {
+        let typ: i64 = tls13c_be16(body + p);
+        let len: i64 = tls13c_be16(body + p + 2);
+        if typ == 51 {
+            let mut q: i64 = p + 6;
+            let end: i64 = p + 4 + len;
+            while share == 0 && q + 4 <= end {
+                if tls13c_be16(body + q) == 29 && tls13c_be16(body + q + 2) == 32 {
+                    share = body + q + 4;
+                }
+                q = q + 4 + tls13c_be16(body + q + 2);
+            }
+        }
+        p = p + 4 + len;
+    }
+    share
+}
+
+// Seal content (inner type ty) into records of at most 16384 bytes and send.
+// keys: key at +0, iv at +16, sequence at +32. limit > 0 sends only that
+// many bytes of the first record and stops (the truncation cid).
+fn hl_send_sealed(s: i64, keys: i64, data: i64, n: i64, ty: i64, limit: i64) -> i64 {
+    let rec: i64 = __mind_alloc(16640);
+    let mut off: i64 = 0;
+    let mut rc: i64 = 0;
+    while rc == 0 && off < n {
+        let mut part: i64 = n - off;
+        if part > 16384 {
+            part = 16384;
+        }
+        let seq: i64 = __mind_load_i64(keys + 32);
+        let rn: i64 = tls13c_record_seal(4865, keys, keys + 16, seq, data + off, part, ty, rec);
+        __mind_store_i64(keys + 32, seq + 1);
+        if rn < 0 {
+            rc = 0 - 1;
+        } else {
+            if limit > 0 {
+                hl_send(s, rec, limit);
+                rc = 1;
+            } else {
+                if hl_send(s, rec, rn) != rn {
+                    rc = 0 - 1;
+                }
+            }
+        }
+        off = off + part;
+    }
+    __mind_free(rec);
+    rc
+}
+
+fn hl_traffic_keys(secret: i64, keys: i64) -> i64 {
+    tls13c_derive_key_n(secret, 16, keys);
+    tls13_derive_iv(secret, keys + 16);
+    __mind_store_i64(keys + 32, 0);
+    0
+}
+
+// Append n bytes to the transcript (length at tr + 0, bytes from tr + 8).
+fn hl_tr_add(tr: i64, msg: i64, n: i64) -> i64 {
+    let used: i64 = __mind_load_i64(tr);
+    tls13c_copy(tr + 8 + used, msg, n);
+    __mind_store_i64(tr, used + n);
+    0
+}
+
+fn hl_tr_hash(tr: i64, out: i64) -> i64 {
+    sha256(tr + 8, __mind_load_i64(tr), out)
+}
+
+// ---------------------------------------------------------------------------
+// HTTP side
+// ---------------------------------------------------------------------------
+
+fn hl_put(dst: i64, v: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        __mind_store_i8(dst + k, (v >> (8 * k)) & 255);
+        k = k + 1;
+    }
+    n
+}
+
+fn hl_put_dec(dst: i64, v: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(24);
+    let mut n: i64 = 0;
+    let mut x: i64 = v;
+    if x == 0 {
+        __mind_store_i8(tmp, 48);
+        n = 1;
+    }
+    while x > 0 {
+        __mind_store_i8(tmp + n, 48 + x % 10);
+        x = x / 10;
+        n = n + 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(tmp + n - 1 - i));
+        i = i + 1;
+    }
+    n
+}
+
+// Index just past "\r\n\r\n" in [buf, buf+n), or -1.
+fn hl_head_end(buf: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut at: i64 = 0 - 1;
+    while at < 0 && i + 3 < n {
+        if tls13c_u8(buf + i) == 13 && tls13c_u8(buf + i + 1) == 10 && tls13c_u8(buf + i + 2) == 13 && tls13c_u8(buf + i + 3) == 10 {
+            at = i + 4;
+        }
+        i = i + 1;
+    }
+    at
+}
+
+// Value of the request header whose lower-cased name starts with the 8-byte
+// word w and is `nlen` long; writes {addr, len} at out, returns 1 or 0.
+fn hl_req_header(buf: i64, head: i64, w: i64, nlen: i64, out: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut found: i64 = 0;
+    while found == 0 && i + nlen < head {
+        let mut match8: i64 = 1;
+        let mut k: i64 = 0;
+        while k < 8 {
+            let mut c: i64 = tls13c_u8(buf + i + k);
+            if c >= 65 && c <= 90 {
+                c = c + 32;
+            }
+            if c != ((w >> (8 * k)) & 255) {
+                match8 = 0;
+            }
+            k = k + 1;
+        }
+        if match8 == 1 && tls13c_u8(buf + i + nlen) == 58 && (i == 0 || tls13c_u8(buf + i - 1) == 10) {
+            let mut vs: i64 = i + nlen + 1;
+            while tls13c_u8(buf + vs) == 32 {
+                vs = vs + 1;
+            }
+            let mut ve: i64 = vs;
+            while tls13c_u8(buf + ve) != 13 {
+                ve = ve + 1;
+            }
+            __mind_store_i64(out, buf + vs);
+            __mind_store_i64(out + 8, ve - vs);
+            found = 1;
+        }
+        i = i + 1;
+    }
+    found
+}
+
+// The HTTP response for a case that reaches the request, at dst; returns its
+// length (the body follows the headers).
+fn hl_response(cid: i64, req: i64, rlen: i64, head: i64, dst: i64) -> i64 {
+    let mut p: i64 = 0;
+    if cid == 4 {
+        p = p + hl_put(dst + p, 3543824036068086856, 8);
+        p = p + hl_put(dst + p, 8534124619549913888, 8);
+        p = p + hl_put(dst + p, 7020393173602034789, 8);
+        p = p + hl_put(dst + p, 724368621793338734, 8);
+        p = p + hl_put(dst + p, 7957695015157985100, 8);
+        p = p + hl_put(dst + p, 4211833721993044026, 8);
+        p = p + hl_put(dst + p, 7524496157128273711, 8);
+        p = p + hl_put(dst + p, 7310305801996104559, 8);
+        p = p + hl_put(dst + p, 4830688279670384759, 8);
+        p = p + hl_put(dst + p, 5489171538331856495, 8);
+        p = p + hl_put(dst + p, 3467835933379227237, 8);
+        p = p + hl_put(dst + p, 168626701, 4);
+        return p;
+    }
+    p = p + hl_put(dst + p, 3543824036068086856, 8);
+    p = p + hl_put(dst + p, 957946345412375072, 8);
+    p = p + hl_put(dst + p, 10, 1);
+    if cid == 2 {
+        p = p + hl_put(dst + p, 8243107338930713172, 8);
+        p = p + hl_put(dst + p, 7956000646299010349, 8);
+        p = p + hl_put(dst + p, 7741253900696566375, 8);
+        p = p + hl_put(dst + p, 951677947378230373, 8);
+        p = p + hl_put(dst + p, 724357626542254090, 8);
+        p = p + hl_put(dst + p, 950608566797286200, 8);
+        p = p + hl_put(dst + p, 2406169500004133898, 8);
+        p = p + hl_put(dst + p, 3267372581414112522, 8);
+        p = p + hl_put(dst + p, 4211540117843702356, 8);
+        p = p + hl_put(dst + p, 11051119489312, 6);
+        return p;
+    }
+    p = p + hl_put(dst + p, 3275364211029339971, 8);
+    p = p + hl_put(dst + p, 2322283407023695180, 8);
+    if cid == 10 {
+        p = p + hl_put_dec(dst + p, 99999999999);
+        p = p + hl_put(dst + p, 168626701, 4);
+        return p;
+    }
+    if cid == 1 {
+        let rec: i64 = __mind_alloc(16);
+        let blen: i64 = rlen - head;
+        p = p + hl_put_dec(dst + p, blen);
+        p = p + hl_put(dst + p, 2573, 2);
+        if hl_req_header(req, head, 3275364211029340003, 12, rec) == 1 {
+            p = p + hl_put(dst + p, 6065626767270686040, 8);
+            p = p + hl_put(dst + p, 138418679929, 5);
+            tls13c_copy(dst + p, __mind_load_i64(rec), __mind_load_i64(rec + 8));
+            p = p + __mind_load_i64(rec + 8);
+            p = p + hl_put(dst + p, 2573, 2);
+        }
+        p = p + hl_put(dst + p, 2573, 2);
+        tls13c_copy(dst + p, req + head, blen);
+        return p + blen;
+    }
+    if cid == 3 {
+        p = p + hl_put_dec(dst + p, 40000);
+        p = p + hl_put(dst + p, 168626701, 4);
+        let mut i: i64 = 0;
+        while i < 40000 {
+            __mind_store_i8(dst + p + i, (i * 7 + 3) & 255);
+            i = i + 1;
+        }
+        return p + 40000;
+    }
+    p = p + hl_put_dec(dst + p, 13);
+    p = p + hl_put(dst + p, 7812730951100598797, 8);
+    p = p + hl_put(dst + p, 2406169500004133999, 8);
+    p = p + hl_put(dst + p, 10, 1);
+    p
+}
+
+// Read application records until a whole request is in (headers, and a body
+// of the request's Content-Length). Returns the request length or -1.
+fn hl_read_request(s: i64, ckeys: i64, req: i64, rec: i64, plain: i64, head_out: i64) -> i64 {
+    let mut have: i64 = 0;
+    let mut need: i64 = 0 - 1;
+    let mut rc: i64 = 0;
+    while rc == 0 && (need < 0 || have < need) {
+        let n: i64 = hl_read_record(s, rec);
+        if n < 0 {
+            rc = 0 - 1;
+        } else {
+            if tls13c_u8(rec) == 23 {
+                let seq: i64 = __mind_load_i64(ckeys + 32);
+                let prc: i64 = tls13c_record_open(4865, ckeys, ckeys + 16, seq, rec, n, plain);
+                __mind_store_i64(ckeys + 32, seq + 1);
+                if prc < 0 || (prc & 255) != 23 {
+                    rc = 0 - 1;
+                } else {
+                    tls13c_copy(req + have, plain, prc >> 8);
+                    have = have + (prc >> 8);
+                    if need < 0 {
+                        let head: i64 = hl_head_end(req, have);
+                        if head > 0 {
+                            __mind_store_i64(head_out, head);
+                            let v: i64 = __mind_alloc(16);
+                            need = head;
+                            // "content-length" starts "content-".
+                            if hl_req_header(req, head, 3275364211029340003, 14, v) == 1 {
+                                let mut cl: i64 = 0;
+                                let mut k: i64 = 0;
+                                while k < __mind_load_i64(v + 8) {
+                                    cl = cl * 10 + tls13c_u8(__mind_load_i64(v) + k) - 48;
+                                    k = k + 1;
+                                }
+                                need = head + cl;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if rc < 0 {
+        return 0 - 1;
+    }
+    have
+}
+
+// One connection. Returns 0 (served or refused by the client) or -1.
+fn hl_serve(s: i64, cid: i64) -> i64 {
+    let rec: i64 = __mind_alloc(16700);
+    let n: i64 = hl_read_record(s, rec);
+    if n < 9 || tls13c_u8(rec) != 22 || tls13c_u8(rec + 5) != 1 {
+        return 0 - 1;
+    }
+    let ch: i64 = rec + 5;
+    let chlen: i64 = n - 5;
+    let cshare: i64 = hl_client_share(ch, chlen);
+    if cshare == 0 {
+        return 0 - 1;
+    }
+    let tr: i64 = __mind_alloc(32776);
+    __mind_store_i64(tr, 0);
+    hl_tr_add(tr, ch, chlen);
+    // Server key share (fixed test scalar) and the shared secret.
+    let skey: i64 = __mind_alloc(32);
+    let base: i64 = __mind_alloc(32);
+    let spub: i64 = __mind_alloc(32);
+    let shared: i64 = __mind_alloc(32);
+    tls13c_zero(base, 32);
+    __mind_store_i8(base, 9);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(skey + i, (77 + 5 * i + cid) & 255);
+        i = i + 1;
+    }
+    x25519(skey, base, spub);
+    x25519(skey, cshare, shared);
+    // ServerHello.
+    let sid: i64 = tls13c_u8(ch + 4 + 34);
+    let sh: i64 = __mind_alloc(160);
+    __mind_store_i8(sh, 2);
+    tls13c_put_be16(sh + 4, 771);
+    i = 0;
+    while i < 32 {
+        __mind_store_i8(sh + 6 + i, (201 + i) & 255);
+        i = i + 1;
+    }
+    __mind_store_i8(sh + 38, sid);
+    tls13c_copy(sh + 39, ch + 4 + 35, sid);
+    let mut p: i64 = 39 + sid;
+    tls13c_put_be16(sh + p, 4865);
+    __mind_store_i8(sh + p + 2, 0);
+    tls13c_put_be16(sh + p + 3, 46);
+    tls13c_put_be16(sh + p + 5, 43);
+    tls13c_put_be16(sh + p + 7, 2);
+    tls13c_put_be16(sh + p + 9, 772);
+    tls13c_put_be16(sh + p + 11, 51);
+    tls13c_put_be16(sh + p + 13, 36);
+    tls13c_put_be16(sh + p + 15, 29);
+    tls13c_put_be16(sh + p + 17, 32);
+    tls13c_copy(sh + p + 19, spub, 32);
+    let shlen: i64 = p + 51;
+    tls13c_put_be24(sh + 1, shlen - 4);
+    hl_tr_add(tr, sh, shlen);
+    let out: i64 = __mind_alloc(16700);
+    __mind_store_i8(out, 22);
+    tls13c_put_be16(out + 1, 771);
+    tls13c_put_be16(out + 3, shlen);
+    tls13c_copy(out + 5, sh, shlen);
+    hl_send(s, out, shlen + 5);
+    // Handshake secrets.
+    let hs: i64 = __mind_alloc(32);
+    let hash: i64 = __mind_alloc(32);
+    let s_hs: i64 = __mind_alloc(32);
+    let c_hs: i64 = __mind_alloc(32);
+    tls13c_handshake_secret(shared, 32, hs);
+    hl_tr_hash(tr, hash);
+    tls13_server_handshake_traffic_secret(hs, hash, s_hs);
+    tls13_client_handshake_traffic_secret(hs, hash, c_hs);
+    let skeys: i64 = __mind_alloc(48);
+    let ckeys: i64 = __mind_alloc(48);
+    hl_traffic_keys(s_hs, skeys);
+    hl_traffic_keys(c_hs, ckeys);
+    // EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    let fl: i64 = __mind_alloc(8192);
+    __mind_store_i8(fl, 8);
+    tls13c_put_be24(fl + 1, 2);
+    tls13c_put_be16(fl + 4, 0);
+    let mut f: i64 = 6;
+    let leaf: i64 = __mind_alloc(2048);
+    let llen: i64 = hl_leaf(cid, leaf);
+    let inter: i64 = __mind_alloc(2048);
+    let ilen: i64 = hl_inter(inter);
+    let cstart: i64 = f;
+    __mind_store_i8(fl + f, 11);
+    tls13c_put_be24(fl + f + 1, 1 + 3 + 3 + llen + 2 + 3 + ilen + 2);
+    __mind_store_i8(fl + f + 4, 0);
+    tls13c_put_be24(fl + f + 5, 3 + llen + 2 + 3 + ilen + 2);
+    f = f + 8;
+    tls13c_put_be24(fl + f, llen);
+    tls13c_copy(fl + f + 3, leaf, llen);
+    tls13c_put_be16(fl + f + 3 + llen, 0);
+    f = f + 3 + llen + 2;
+    tls13c_put_be24(fl + f, ilen);
+    tls13c_copy(fl + f + 3, inter, ilen);
+    tls13c_put_be16(fl + f + 3 + ilen, 0);
+    f = f + 3 + ilen + 2;
+    hl_tr_add(tr, fl, f);
+    hl_tr_hash(tr, hash);
+    let content: i64 = __mind_alloc(130);
+    tls13_hs_cert_verify_content(hash, content);
+    let cv: i64 = fl + f;
+    __mind_store_i8(cv, 15);
+    if cid == 11 {
+        // An ECDSA leaf: ecdsa_secp256r1_sha256 and a signature the client
+        // must never accept.
+        tls13c_put_be24(cv + 1, 76);
+        tls13c_put_be16(cv + 4, 1027);
+        tls13c_put_be16(cv + 6, 72);
+        i = 0;
+        while i < 72 {
+            __mind_store_i8(cv + 8 + i, (i * 13 + 1) & 255);
+            i = i + 1;
+        }
+        f = f + 80;
+    } else {
+        tls13c_put_be24(cv + 1, 260);
+        tls13c_put_be16(cv + 4, 2052);
+        tls13c_put_be16(cv + 6, 256);
+        if cid == 12 {
+            tls13c_zero(cv + 8, 256);
+        } else {
+            hl_pss_sign(content, 130, cv + 8);
+        }
+        if cid == 8 {
+            __mind_store_i8(cv + 8 + 10, tls13c_u8(cv + 8 + 10) ^ 1);
+        }
+        f = f + 264;
+    }
+    hl_tr_add(tr, cv, fl + f - cv);
+    hl_tr_hash(tr, hash);
+    let fin: i64 = fl + f;
+    __mind_store_i8(fin, 20);
+    tls13c_put_be24(fin + 1, 32);
+    tls13_finished_from_secret(s_hs, hash, fin + 4);
+    f = f + 36;
+    hl_tr_add(tr, fin, 36);
+    if hl_send_sealed(s, skeys, fl, f, 22, 0) != 0 {
+        return 0 - 1;
+    }
+    // Application secrets from the transcript through the server Finished.
+    hl_tr_hash(tr, hash);
+    let master: i64 = __mind_alloc(32);
+    let c_ap: i64 = __mind_alloc(32);
+    let s_ap: i64 = __mind_alloc(32);
+    tls13_master_secret(hs, master);
+    tls13_client_application_traffic_secret(master, hash, c_ap);
+    tls13_server_application_traffic_secret(master, hash, s_ap);
+    let sakeys: i64 = __mind_alloc(48);
+    let cakeys: i64 = __mind_alloc(48);
+    hl_traffic_keys(s_ap, sakeys);
+    hl_traffic_keys(c_ap, cakeys);
+    // The client's Finished (any ChangeCipherSpec before it is skipped). A
+    // client that refused the server closes here instead.
+    let plain: i64 = __mind_alloc(16700);
+    let mut fin_seen: i64 = 0;
+    while fin_seen == 0 {
+        let rn: i64 = hl_read_record(s, rec);
+        if rn < 0 {
+            return 0;
+        }
+        if tls13c_u8(rec) == 23 {
+            let prc: i64 = tls13c_record_open(4865, ckeys, ckeys + 16, 0, rec, rn, plain);
+            if prc < 0 || (prc & 255) != 22 || tls13c_u8(plain) != 20 {
+                return 0 - 1;
+            }
+            fin_seen = 1;
+        }
+    }
+    if cid == 0 {
+        // A NewSessionTicket the client must skip.
+        let nst: i64 = __mind_alloc(64);
+        tls13c_zero(nst, 64);
+        __mind_store_i8(nst, 4);
+        tls13c_put_be24(nst + 1, 30);
+        tls13c_put_be16(nst + 4, 1);
+        __mind_store_i8(nst + 12, 1);
+        tls13c_put_be16(nst + 14, 16);
+        hl_send_sealed(s, sakeys, nst, 34, 22, 0);
+    }
+    let req: i64 = __mind_alloc(65536);
+    let head: i64 = __mind_alloc(8);
+    let rlen: i64 = hl_read_request(s, cakeys, req, rec, plain, head);
+    if rlen < 0 {
+        return 0 - 1;
+    }
+    let resp: i64 = __mind_alloc(131072);
+    let respn: i64 = hl_response(cid, req, rlen, __mind_load_i64(head), resp);
+    if cid == 9 {
+        // Half of the first application record, then EOF without close_notify.
+        hl_send_sealed(s, sakeys, resp, respn, 23, 40);
+        return 0;
+    }
+    if cid == 0 {
+        // Headers and body in separate records.
+        let hb: i64 = hl_head_end(resp, respn);
+        hl_send_sealed(s, sakeys, resp, hb, 23, 0);
+        hl_send_sealed(s, sakeys, resp + hb, respn - hb, 23, 0);
+    } else {
+        hl_send_sealed(s, sakeys, resp, respn, 23, 0);
+    }
+    let alert: i64 = __mind_alloc(2);
+    __mind_store_i8(alert, 1);
+    __mind_store_i8(alert + 1, 0);
+    hl_send_sealed(s, sakeys, alert, 2, 21, 0);
+    0
+}
+
+fn main() -> i64 {
+    let host: i64 = __mind_alloc(16);
+    // "127.0.0.1\0"
+    __mind_store_i64(host, 3328210909095473713);
+    __mind_store_i8(host + 8, 49);
+    __mind_store_i8(host + 9, 0);
+    let l: i64 = tcp_listen(host, 0);
+    if l == 0 {
+        return 1;
+    }
+    let line: i64 = __mind_alloc(32);
+    // "PORT "
+    hl_put(line, 138853633872, 5);
+    let mut n: i64 = 5 + hl_put_dec(line + 5, tcp_listen_port(l));
+    __mind_store_i8(line + n, 10);
+    n = n + 1;
+    __mind_write(1, line, n, 0 - 1);
+    let mut failures: i64 = 0;
+    let mut cid: i64 = 0;
+    while cid < hl_case_count() {
+        let s: i64 = tcp_accept(l);
+        if s == 0 {
+            return 2;
+        }
+        if hl_serve(s, cid) != 0 {
+            failures = failures + 1;
+        }
+        tcp_close(s);
+        cid = cid + 1;
+    }
+    tcp_listener_close(l);
+    failures
+}

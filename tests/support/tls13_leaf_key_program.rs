@@ -351,12 +351,7 @@ pub fn source(full: bool, mutate: bool) -> String {
         calls.join(" + ")
     ));
     program(
-        &[
-            "x509_der",
-            "tls13_client_core",
-            "tls13_client_api",
-            "tls13_client",
-        ],
+        &["x509_der", "tls13_client_core", "tls13_client_api", "https"],
         &body,
     )
 }

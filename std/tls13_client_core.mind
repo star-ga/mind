@@ -13,12 +13,14 @@
 // scratch 4384:192, x509 fields 4576:176, RSA len 4752:8, exponent 4784:8,
 // modulus 4856:256, finished 5112/5144:32, hashes 5176/5208:32,
 // transcript 5240:16384, handshake reassembly 21624:8192,
-// inbound 29816:16640, outbound 46456:16640, app receive 63096:2048,
+// inbound 29816:16640, outbound 46456:16640, (unused 63096:2048),
 // chain length 65144:8, cookie length 65280:8, cookie 65288:254,
 // chain evidence 65672:16000, selected ALPN 81672:255,
 // c/s hs IVs 81928/81940:12, c/s app IVs 81952/81964:12,
-// ALPN offer 82176:1024, length-prefixed identity 83200:257.
-// Total 86016. Evidence and configuration survive key erasure.
+// ALPN offer 82176:1024, length-prefixed identity 83200:257,
+// app receive 86016:16384 (one full record), leaf key kind 4760:8 and
+// presented RSA modulus length 4768:8.
+// Total 102400. Evidence and configuration survive key erasure.
 
 import std.sha256;
 import std.tls13_record;
@@ -237,7 +239,17 @@ pub fn tls13ci_max_chain_bytes() -> i64 {
 }
 
 pub fn tls13ci_state_size() -> i64 {
+    102400
+}
+
+// Offset and size of the decrypted application-data buffer: one full TLS
+// record of plaintext (2^14 bytes), drained by tls13c_read_app.
+pub fn tls13ci_app_rx_off() -> i64 {
     86016
+}
+
+pub fn tls13ci_app_rx_cap() -> i64 {
+    16384
 }
 
 pub fn tls13c_copy(dst: i64, src: i64, len: i64) -> i64 {

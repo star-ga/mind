@@ -1,4 +1,5 @@
-// std/dns.mind — host name resolution and connect-by-name.
+// std/dns.mind — host name resolution, connect-by-name, and the stream options
+// (I/O timeout, signal-free write) std.https sets on the connection.
 //
 // Copyright 2026 STARGA Inc.
 // Licensed under the Apache License, Version 2.0.
@@ -42,6 +43,7 @@ extern "C" {
     unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
     unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
     unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    unsafe fn send(sockfd: i32, buf: *const u8, len: i64, flags: i32) -> i64;
     unsafe fn close(fd: i32) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
 }
@@ -517,4 +519,56 @@ pub fn tcp_connect_host_timeout(name_addr: i64, name_len: i64, port: i64, timeou
 // tcp_connect_host — tcp_connect_host_timeout with dns_connect_timeout_ms().
 pub fn tcp_connect_host(name_addr: i64, name_len: i64, port: i64) -> i64 {
     tcp_connect_host_timeout(name_addr, name_len, port, dns_connect_timeout_ms())
+}
+
+// ---------------------------------------------------------------------------
+// Stream options for a connected TcpStream (std.https uses both)
+// ---------------------------------------------------------------------------
+
+// tcp_set_io_timeout — bound every blocking read and write on the stream to
+// `ms` milliseconds (SO_RCVTIMEO 20, SO_SNDTIMEO 21; 1..=dns_max_timeout_ms()).
+// A read that times out returns -1 from std.net tcp_read. Returns 0, or -1 on a
+// bad argument or a setsockopt failure.
+pub fn tcp_set_io_timeout(s: i64, ms: i64) -> i64 {
+    if s == 0 || ms < 1 || ms > dns_max_timeout_ms() {
+        return 0 - 1;
+    }
+    let fd: i64 = __mind_load_i64(s);
+    let tv: i64 = __mind_alloc(16);
+    __mind_store_i64(tv + 0, ms / 1000);
+    __mind_store_i64(tv + 8, (ms % 1000) * 1000);
+    let mut rc: i64 = setsockopt(fd as i32, 1, 20, tv as *const u8, 16) as i64;
+    if rc == 0 {
+        rc = setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64;
+    }
+    __mind_free(tv);
+    if rc != 0 {
+        return 0 - 1;
+    }
+    0
+}
+
+// tcp_write_all — write all `len` bytes at `buf`, with MSG_NOSIGNAL (0x4000),
+// so a peer that reset the connection is a -1 here, never a SIGPIPE that ends
+// the process. Returns `len`, or -1.
+pub fn tcp_write_all(s: i64, buf: i64, len: i64) -> i64 {
+    if s == 0 || len < 0 {
+        return 0 - 1;
+    }
+    let fd: i64 = __mind_load_i64(s);
+    let mut done: i64 = 0;
+    let mut failed: i64 = 0;
+    while failed == 0 && done < len {
+        let at: i64 = buf + done;
+        let n: i64 = send(fd as i32, at as *const u8, len - done, 16384) as i64;
+        if n <= 0 {
+            failed = 1;
+        } else {
+            done = done + n;
+        }
+    }
+    if failed == 1 {
+        return 0 - 1;
+    }
+    len
 }

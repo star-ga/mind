@@ -1,0 +1,612 @@
+// std/https_http1.mind — the HTTP/1.1 response side of std.https: the
+// response record, its accessors and the incremental response parser.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Pure byte work: std.https feeds it the decrypted application bytes of one
+// TLS connection.
+//
+// Response framing (RFC 9112 §6): Content-Length, `Transfer-Encoding: chunked`
+// (decoded in place), or a body that ends with the connection, which std.https
+// accepts only on a TLS close_notify. Both Content-Length and
+// Transfer-Encoding, a transfer coding other than chunked, a repeated
+// Content-Length, an obsolete folded header line and a 1xx status are refused.
+// Header block at most https_max_header_bytes(), body at most
+// https_max_body(): a larger response is refused, never truncated.
+
+import std.https_url;
+
+// ---------------------------------------------------------------------------
+// Response record (176 bytes; slot k at r + 8*k)
+//   0 error (0 or a negative https_err_* code)   1 status (0 until parsed)
+//   2 body_addr   3 body_len   4 raw_addr   5 raw_len   6 raw_cap
+//   7 header end (index of CRLFCRLF, -1 until found)   8 framing
+//     (0 unknown, 1 Content-Length, 2 chunked, 3 until close, 4 no body)
+//   9 content length   10 chunk read position   11 body write end
+//   12 chunk state (0 size line, 1 data, 2 data CRLF, 3 trailer, 4 done)
+//   13 chunk bytes remaining   14 complete (1)   15 status-line length
+//   16 header search position   17 TLS chain verdict (evidence)
+//   18 trailer bytes   19 status-line address   20 header block address
+//   21 header block length
+// The raw buffer holds the header block and the body (a chunked body is
+// decoded in place behind the read position).
+// ---------------------------------------------------------------------------
+
+pub fn hx_resp_new() -> i64 {
+    let r: i64 = __mind_alloc(176);
+    let mut i: i64 = 0;
+    while i < 22 {
+        __mind_store_i64(r + i * 8, 0);
+        i = i + 1;
+    }
+    __mind_store_i64(r + 56, -1);
+    __mind_store_i64(r + 136, 1);
+    r
+}
+
+// Record a refusal: the response keeps its error and no status or body.
+pub fn hx_fail(r: i64, code: i64) -> i64 {
+    if __mind_load_i64(r) == 0 {
+        __mind_store_i64(r, code);
+    }
+    __mind_store_i64(r + 8, 0);
+    __mind_store_i64(r + 16, 0);
+    __mind_store_i64(r + 24, 0);
+    __mind_store_i64(r + 112, 0);
+    r
+}
+
+pub fn hx_set_verdict(r: i64, v: i64) -> i64 {
+    __mind_store_i64(r + 136, v);
+    0
+}
+
+pub fn https_error(r: i64) -> i64 {
+    __mind_load_i64(r)
+}
+
+pub fn https_status(r: i64) -> i64 {
+    __mind_load_i64(r + 8)
+}
+
+pub fn https_body_addr(r: i64) -> i64 {
+    __mind_load_i64(r + 16)
+}
+
+pub fn https_body_len(r: i64) -> i64 {
+    __mind_load_i64(r + 24)
+}
+
+// The status line without its CRLF, e.g. "HTTP/1.1 200 OK".
+pub fn https_status_line_addr(r: i64) -> i64 {
+    __mind_load_i64(r + 152)
+}
+
+pub fn https_status_line_len(r: i64) -> i64 {
+    __mind_load_i64(r + 120)
+}
+
+// The X.509 chain verdict of the connection: 1 not checked, 0 accepted, or the
+// negative x509_verify_server_chain code.
+pub fn https_tls_verdict(r: i64) -> i64 {
+    __mind_load_i64(r + 136)
+}
+
+pub fn hx_complete(r: i64) -> i64 {
+    __mind_load_i64(r + 112)
+}
+
+// https_header — the value of the first header named [name, name+n)
+// (case-insensitive), with surrounding spaces and tabs removed, as a 16-byte
+// record {addr, len}; 0 when there is none or the response has no headers.
+pub fn https_header(r: i64, name: i64, n: i64) -> i64 {
+    if __mind_load_i64(r + 8) == 0 || n < 1 {
+        return 0;
+    }
+    let base: i64 = __mind_load_i64(r + 160);
+    let hlen: i64 = __mind_load_i64(r + 168);
+    let mut pos: i64 = 0;
+    let mut found: i64 = 0;
+    while found == 0 && pos < hlen {
+        let eol: i64 = hx_find_crlf(base, pos, hlen);
+        let mut line_end: i64 = eol;
+        if eol < 0 {
+            line_end = hlen;
+        }
+        if line_end - pos > n && hx_b(base + pos + n) == 58 && hx_ci_eq(base + pos, name, n) == 1 {
+            let mut vs: i64 = pos + n + 1;
+            let mut ve: i64 = line_end;
+            while vs < ve && (hx_b(base + vs) == 32 || hx_b(base + vs) == 9) {
+                vs = vs + 1;
+            }
+            while ve > vs && (hx_b(base + ve - 1) == 32 || hx_b(base + ve - 1) == 9) {
+                ve = ve - 1;
+            }
+            let rec: i64 = __mind_alloc(16);
+            __mind_store_i64(rec, base + vs);
+            __mind_store_i64(rec + 8, ve - vs);
+            found = rec;
+        }
+        pos = line_end + 2;
+    }
+    found
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing
+// ---------------------------------------------------------------------------
+
+// Index of the first CRLF in [from, lim) of buf, or -1.
+fn hx_find_crlf(buf: i64, from: i64, lim: i64) -> i64 {
+    let mut i: i64 = from;
+    let mut at: i64 = -1;
+    while at < 0 && i + 1 < lim {
+        if hx_b(buf + i) == 13 && hx_b(buf + i + 1) == 10 {
+            at = i;
+        }
+        i = i + 1;
+    }
+    at
+}
+
+// Parse the status line in [raw, raw+line_len): "HTTP/1.x SP DDD [SP reason]".
+// Returns the status code, or -1.
+fn hx_parse_status(raw: i64, line_len: i64) -> i64 {
+    if line_len < 12 {
+        return -1;
+    }
+    // "HTTP/1."
+    if hx_ci_word(raw, 7, 13001928209617992) == 0 {
+        return -1;
+    }
+    let minor: i64 = hx_b(raw + 7);
+    if minor != 48 && minor != 49 {
+        return -1;
+    }
+    if hx_b(raw + 8) != 32 {
+        return -1;
+    }
+    let mut code: i64 = 0;
+    let mut i: i64 = 9;
+    while i < 12 {
+        let d: i64 = hx_b(raw + i);
+        if d < 48 || d > 57 {
+            return -1;
+        }
+        code = code * 10 + d - 48;
+        i = i + 1;
+    }
+    if line_len > 12 && hx_b(raw + 12) != 32 {
+        return -1;
+    }
+    let mut k: i64 = 12;
+    while k < line_len {
+        let c: i64 = hx_b(raw + k);
+        if (c < 32 && c != 9) || c == 127 {
+            return -1;
+        }
+        k = k + 1;
+    }
+    if code < 100 {
+        return -1;
+    }
+    code
+}
+
+// Decimal Content-Length value of [v, v+n): 1..18 digits, else -1.
+fn hx_parse_len(v: i64, n: i64) -> i64 {
+    if n < 1 || n > 18 {
+        return -1;
+    }
+    let mut x: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let d: i64 = hx_b(v + i);
+        if d < 48 || d > 57 {
+            return -1;
+        }
+        x = x * 10 + d - 48;
+        i = i + 1;
+    }
+    x
+}
+
+// Walk the header lines in [base, base+hlen) (after the status line) and set
+// the framing. Returns 0 or a negative code.
+fn hx_parse_headers(r: i64, base: i64, hlen: i64) -> i64 {
+    let mut pos: i64 = 0;
+    let mut cl: i64 = -1;
+    let mut chunked: i64 = 0;
+    let mut te_seen: i64 = 0;
+    let mut rc: i64 = 0;
+    while rc == 0 && pos < hlen {
+        let mut line_end: i64 = hx_find_crlf(base, pos, hlen);
+        if line_end < 0 {
+            line_end = hlen;
+        }
+        let first: i64 = hx_b(base + pos);
+        if first == 32 || first == 9 || line_end == pos {
+            // obs-fold, or an empty line inside the block.
+            rc = https_err_response();
+        } else {
+            let mut colon: i64 = -1;
+            let mut i: i64 = pos;
+            while colon < 0 && i < line_end {
+                let c: i64 = hx_b(base + i);
+                if c == 58 {
+                    colon = i;
+                } else {
+                    if c <= 32 || c >= 127 {
+                        rc = https_err_response();
+                        i = line_end;
+                    }
+                }
+                i = i + 1;
+            }
+            if rc == 0 && colon <= pos {
+                rc = https_err_response();
+            }
+            if rc == 0 {
+                let mut vs: i64 = colon + 1;
+                let mut ve: i64 = line_end;
+                while vs < ve && (hx_b(base + vs) == 32 || hx_b(base + vs) == 9) {
+                    vs = vs + 1;
+                }
+                while ve > vs && (hx_b(base + ve - 1) == 32 || hx_b(base + ve - 1) == 9) {
+                    ve = ve - 1;
+                }
+                let nlen: i64 = colon - pos;
+                // "content-length" (14 bytes) in two words.
+                if nlen == 14 && hx_ci_word(base + pos, 8, 3275364211029339971) == 1 && hx_ci_word(base + pos + 8, 6, 114849160783212) == 1 {
+                    if cl >= 0 {
+                        rc = https_err_response();
+                    } else {
+                        cl = hx_parse_len(base + vs, ve - vs);
+                        if cl < 0 {
+                            rc = https_err_response();
+                        }
+                    }
+                }
+                // "transfer-encoding" (17 bytes) in three words.
+                if nlen == 17 && hx_ci_word(base + pos, 8, 8243107338930713204) == 1 && hx_ci_word(base + pos + 8, 8, 7956000646299018541) == 1 && hx_ci_word(base + pos + 16, 1, 103) == 1 {
+                    if te_seen == 1 {
+                        rc = https_err_response();
+                    }
+                    te_seen = 1;
+                    // Only "chunked" (7 bytes).
+                    if ve - vs == 7 && hx_ci_word(base + vs, 7, 28259009760159843) == 1 {
+                        chunked = 1;
+                    } else {
+                        rc = https_err_response();
+                    }
+                }
+            }
+        }
+        pos = line_end + 2;
+    }
+    if rc != 0 {
+        return rc;
+    }
+    if chunked == 1 && cl >= 0 {
+        return https_err_response();
+    }
+    let status: i64 = __mind_load_i64(r + 8);
+    if status == 204 || status == 304 {
+        __mind_store_i64(r + 64, 4);
+        return 0;
+    }
+    if chunked == 1 {
+        __mind_store_i64(r + 64, 2);
+        return 0;
+    }
+    if cl >= 0 {
+        if cl > https_max_body() {
+            return https_err_body_too_large();
+        }
+        __mind_store_i64(r + 64, 1);
+        __mind_store_i64(r + 72, cl);
+        return 0;
+    }
+    __mind_store_i64(r + 64, 3);
+    0
+}
+
+// Header phase: find the end of the header block and parse it.
+fn hx_step_headers(r: i64) -> i64 {
+    let raw: i64 = __mind_load_i64(r + 32);
+    let rlen: i64 = __mind_load_i64(r + 40);
+    let mut from: i64 = __mind_load_i64(r + 128) - 3;
+    if from < 0 {
+        from = 0;
+    }
+    let mut at: i64 = -1;
+    let mut i: i64 = from;
+    while at < 0 && i + 3 < rlen {
+        if hx_b(raw + i) == 13 && hx_b(raw + i + 1) == 10 && hx_b(raw + i + 2) == 13 && hx_b(raw + i + 3) == 10 {
+            at = i;
+        }
+        i = i + 1;
+    }
+    __mind_store_i64(r + 128, rlen);
+    if at < 0 {
+        if rlen > https_max_header_bytes() {
+            return https_err_header_too_large();
+        }
+        return 0;
+    }
+    if at + 4 > https_max_header_bytes() {
+        return https_err_header_too_large();
+    }
+    let sl_end: i64 = hx_find_crlf(raw, 0, at + 2);
+    let status: i64 = hx_parse_status(raw, sl_end);
+    if status < 0 {
+        return https_err_response();
+    }
+    if status < 200 {
+        // 1xx interim responses are not supported (no Expect is sent).
+        return https_err_response();
+    }
+    __mind_store_i64(r + 8, status);
+    __mind_store_i64(r + 120, sl_end);
+    __mind_store_i64(r + 152, raw);
+    __mind_store_i64(r + 160, raw + sl_end + 2);
+    let mut hblock: i64 = at - sl_end - 2;
+    if hblock < 0 {
+        hblock = 0;
+    }
+    __mind_store_i64(r + 168, hblock);
+    __mind_store_i64(r + 56, at);
+    let hrc: i64 = hx_parse_headers(r, raw + sl_end + 2, hblock);
+    if hrc != 0 {
+        return hrc;
+    }
+    let body_start: i64 = at + 4;
+    __mind_store_i64(r + 16, raw + body_start);
+    __mind_store_i64(r + 80, body_start);
+    __mind_store_i64(r + 88, body_start);
+    0
+}
+
+// Value of one hex digit, or -1.
+fn hx_hex(c: i64) -> i64 {
+    if c >= 48 && c <= 57 {
+        return c - 48;
+    }
+    let l: i64 = hx_lower(c);
+    if l >= 97 && l <= 102 {
+        return l - 87;
+    }
+    -1
+}
+
+// Chunked phase: decode what is available. Returns 0 or a negative code; sets
+// complete when the last chunk and the trailer section are in.
+fn hx_step_chunked(r: i64) -> i64 {
+    let raw: i64 = __mind_load_i64(r + 32);
+    let mut rlen: i64 = __mind_load_i64(r + 40);
+    let mut cpos: i64 = __mind_load_i64(r + 80);
+    let mut wpos: i64 = __mind_load_i64(r + 88);
+    let mut cst: i64 = __mind_load_i64(r + 96);
+    let mut rem: i64 = __mind_load_i64(r + 104);
+    let body_start: i64 = __mind_load_i64(r + 56) + 4;
+    let mut rc: i64 = 0;
+    let mut more: i64 = 1;
+    while rc == 0 && more == 1 && cst != 4 {
+        if cst == 0 {
+            let eol: i64 = hx_find_crlf(raw, cpos, rlen);
+            if eol < 0 {
+                if rlen - cpos > 1024 {
+                    rc = https_err_response();
+                }
+                more = 0;
+            } else {
+                let mut size: i64 = 0;
+                let mut nd: i64 = 0;
+                let mut k: i64 = cpos;
+                let mut in_digits: i64 = 1;
+                while in_digits == 1 && k < eol {
+                    let h: i64 = hx_hex(hx_b(raw + k));
+                    if h < 0 {
+                        in_digits = 0;
+                    } else {
+                        size = size * 16 + h;
+                        nd = nd + 1;
+                        if nd > 8 {
+                            rc = https_err_response();
+                            in_digits = 0;
+                        }
+                        k = k + 1;
+                    }
+                }
+                if rc == 0 && nd == 0 {
+                    rc = https_err_response();
+                }
+                // After the digits: optional spaces/tabs, then ';' and an
+                // extension that is ignored, or the end of the line.
+                while rc == 0 && k < eol && (hx_b(raw + k) == 32 || hx_b(raw + k) == 9) {
+                    k = k + 1;
+                }
+                if rc == 0 && k < eol && hx_b(raw + k) != 59 {
+                    rc = https_err_response();
+                }
+                if rc == 0 {
+                    cpos = eol + 2;
+                    if size == 0 {
+                        cst = 3;
+                    } else {
+                        if wpos - body_start + size > https_max_body() {
+                            rc = https_err_body_too_large();
+                        }
+                        rem = size;
+                        cst = 1;
+                    }
+                }
+            }
+        } else {
+            if cst == 1 {
+                let mut take: i64 = rlen - cpos;
+                if take > rem {
+                    take = rem;
+                }
+                let mut j: i64 = 0;
+                while j < take {
+                    __mind_store_i8(raw + wpos + j, __mind_load_i8(raw + cpos + j));
+                    j = j + 1;
+                }
+                wpos = wpos + take;
+                cpos = cpos + take;
+                rem = rem - take;
+                if rem == 0 {
+                    cst = 2;
+                } else {
+                    more = 0;
+                }
+            } else {
+                if cst == 2 {
+                    if rlen - cpos < 2 {
+                        more = 0;
+                    } else {
+                        if hx_b(raw + cpos) != 13 || hx_b(raw + cpos + 1) != 10 {
+                            rc = https_err_response();
+                        }
+                        cpos = cpos + 2;
+                        cst = 0;
+                    }
+                } else {
+                    // Trailer section: lines up to an empty line.
+                    let eol: i64 = hx_find_crlf(raw, cpos, rlen);
+                    if eol < 0 {
+                        if rlen - cpos > https_max_header_bytes() {
+                            rc = https_err_header_too_large();
+                        }
+                        more = 0;
+                    } else {
+                        if eol == cpos {
+                            cpos = cpos + 2;
+                            cst = 4;
+                        } else {
+                            let tb: i64 = __mind_load_i64(r + 144) + eol + 2 - cpos;
+                            __mind_store_i64(r + 144, tb);
+                            if tb > https_max_header_bytes() {
+                                rc = https_err_header_too_large();
+                            }
+                            cpos = eol + 2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Compact: the unread bytes move down behind the decoded body.
+    let unread: i64 = rlen - cpos;
+    let mut m: i64 = 0;
+    while m < unread {
+        __mind_store_i8(raw + wpos + m, __mind_load_i8(raw + cpos + m));
+        m = m + 1;
+    }
+    rlen = wpos + unread;
+    cpos = wpos;
+    __mind_store_i64(r + 40, rlen);
+    __mind_store_i64(r + 80, cpos);
+    __mind_store_i64(r + 88, wpos);
+    __mind_store_i64(r + 96, cst);
+    __mind_store_i64(r + 104, rem);
+    __mind_store_i64(r + 24, wpos - body_start);
+    if rc == 0 && cst == 4 {
+        __mind_store_i64(r + 112, 1);
+    }
+    rc
+}
+
+// Advance the parser over everything in the raw buffer.
+fn hx_step(r: i64) -> i64 {
+    if __mind_load_i64(r + 56) < 0 {
+        let hrc: i64 = hx_step_headers(r);
+        if hrc != 0 {
+            return hrc;
+        }
+        if __mind_load_i64(r + 56) < 0 {
+            return 0;
+        }
+    }
+    let framing: i64 = __mind_load_i64(r + 64);
+    let body_start: i64 = __mind_load_i64(r + 56) + 4;
+    let have: i64 = __mind_load_i64(r + 40) - body_start;
+    if framing == 4 {
+        __mind_store_i64(r + 24, 0);
+        __mind_store_i64(r + 112, 1);
+        return 0;
+    }
+    if framing == 1 {
+        let cl: i64 = __mind_load_i64(r + 72);
+        if have >= cl {
+            __mind_store_i64(r + 24, cl);
+            __mind_store_i64(r + 112, 1);
+        } else {
+            __mind_store_i64(r + 24, have);
+        }
+        return 0;
+    }
+    if framing == 2 {
+        return hx_step_chunked(r);
+    }
+    if have > https_max_body() {
+        return https_err_body_too_large();
+    }
+    __mind_store_i64(r + 24, have);
+    0
+}
+
+// hx_feed — append [data, data+n) (decrypted application bytes) and advance
+// the parser. Returns 1 when the response is complete, 0 when more is needed,
+// or a negative code (also recorded in the response).
+pub fn hx_feed(r: i64, data: i64, n: i64) -> i64 {
+    if __mind_load_i64(r) != 0 {
+        return __mind_load_i64(r);
+    }
+    if __mind_load_i64(r + 112) == 1 {
+        return 1;
+    }
+    if __mind_load_i64(r + 32) == 0 {
+        // Header block + body + room for one decrypted record of slack.
+        let cap: i64 = https_max_header_bytes() + https_max_body() + 33280;
+        __mind_store_i64(r + 32, __mind_alloc(cap));
+        __mind_store_i64(r + 48, cap);
+    }
+    let rlen: i64 = __mind_load_i64(r + 40);
+    if rlen + n > __mind_load_i64(r + 48) {
+        if __mind_load_i64(r + 56) < 0 {
+            hx_fail(r, https_err_header_too_large());
+        } else {
+            hx_fail(r, https_err_body_too_large());
+        }
+        return __mind_load_i64(r);
+    }
+    hx_copy(__mind_load_i64(r + 32) + rlen, data, n);
+    __mind_store_i64(r + 40, rlen + n);
+    let rc: i64 = hx_step(r);
+    if rc != 0 {
+        hx_fail(r, rc);
+        return rc;
+    }
+    __mind_load_i64(r + 112)
+}
+
+// hx_on_close — the server ended the TLS stream with close_notify. A body
+// framed by the connection is complete; anything else still open is truncated.
+pub fn hx_on_close(r: i64) -> i64 {
+    if __mind_load_i64(r) != 0 {
+        return __mind_load_i64(r);
+    }
+    if __mind_load_i64(r + 112) == 1 {
+        return 1;
+    }
+    if __mind_load_i64(r + 56) >= 0 && __mind_load_i64(r + 64) == 3 {
+        __mind_store_i64(r + 112, 1);
+        return 1;
+    }
+    hx_fail(r, https_err_truncated());
+    https_err_truncated()
+}

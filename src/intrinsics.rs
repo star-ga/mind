@@ -532,7 +532,7 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     // `entropy.entropy_fill` emitted without `--allow-nondeterministic`, attested
     // `deterministic` and passed `mindc verify --require-deterministic`, while a
     // direct `getrandom` call was refused. The test
-    // `public_world_reach_of_std_entropy_and_dns_is_named` derives this set from
+    // `public_world_reach_of_std_entropy_dns_and_https_is_named` derives this set from
     // the module sources and fails on a missing row or an extra one.
     // deferred: would also name the World-reaching functions of std.net, std.fs,
     // std.process and std.iouring, not done because the veto would then refuse
@@ -542,6 +542,10 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "entropy_fill",             // std.entropy: getrandom
     "tcp_connect_host",         // std.dns: getaddrinfo, connect
     "tcp_connect_host_timeout", // std.dns: getaddrinfo, connect
+    "https_get",                // std.https: DNS, network, entropy, clock, CA file
+    "https_get_ca",             // std.https: DNS, network, entropy, clock, CA file
+    "https_post",               // std.https: DNS, network, entropy, clock, CA file
+    "https_post_ca",            // std.https: DNS, network, entropy, clock, CA file
 ];
 
 /// The determinism classification of an intrinsic, or `None` when the name is

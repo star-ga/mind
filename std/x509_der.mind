@@ -6,6 +6,14 @@
 // Single-byte tags (SEQUENCE 0x30, INTEGER 0x02, BIT STRING 0x03,
 // OBJECT IDENTIFIER 0x06, context [0] 0xA0, UTCTime 0x17, GeneralizedTime 0x18).
 
+// The most trust anchors one bundle may carry (x509_load_anchors) and one
+// chain check may search (x509_verify_server_chain). A system CA bundle holds
+// about 150; the bound keeps a hostile or corrupt bundle from turning one
+// handshake into an unbounded parse.
+pub fn x509_max_anchors() -> i64 {
+    1024
+}
+
 pub fn der_tlv(buf: i64, pos: i64, limit: i64, out3: i64) -> i64 {
     if pos < 0 {
         return 1;

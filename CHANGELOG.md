@@ -8,6 +8,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
+  (Linux).** `https_get(url)` / `https_post(url, body, content_type)` (and
+  `https_get_ca` / `https_post_ca` with a CA bundle path) resolve the host with
+  `tcp_connect_host`, draw the TLS randoms and key share from `entropy_fill`,
+  run the TLS 1.3 client, authenticate the chain against the system CA bundle
+  (`/etc/ssl/certs/ca-certificates.crt`) at the system clock, and speak
+  HTTP/1.1: Host header, Content-Length and chunked bodies, a body that ends
+  with close_notify, bounded URL / header block (32 KiB) / body (8 MiB) /
+  request body, a 30 s socket timeout and a 120 s deadline. Redirects are not
+  followed: a 3xx is returned. Each call returns a response record whose error
+  is 0 or a named `https_err_*` code (wrong hostname, certificate validity,
+  unknown anchor, other chain refusal, CertificateVerify, unsupported leaf key,
+  truncated, body too large, malformed response, ...); a refusal carries no
+  status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
+  rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
+  is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
+  checked.** The four request functions are classified nondeterministic by
+  name, like `entropy_fill`.
+  - The TLS 1.3 client's record pump and handshake state machine move from
+    `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
+    the HTTPS driver: the import chain under the state machine is already five
+    modules deep, the arch-mind DEPTH ceiling. The EncryptedExtensions and
+    Certificate parsers move to `std.tls13_client_api`; every name is kept.
+    New modules `std.https_url` (error codes, bounds, URL, request) and
+    `std.https_http1` (response record and parser).
+  - The client now discards whole post-handshake NewSessionTicket messages
+    (any other post-handshake message is refused), holds one full record of
+    decrypted application data (16 KiB, was 2 KiB) and opens no further record
+    until it is read, records the presented leaf key (`tls13c_leaf_key_kind`,
+    `tls13c_leaf_rsa_len`), and reports its inbound space (`tls13c_in_space`).
+    `tls13c_state_size()` is 102400.
+  - CA bundles: `x509_load_anchors` accepts blank lines and `#` comment lines
+    between PEM blocks (other text is still refused), decodes into one buffer,
+    and holds up to `x509_max_anchors()` (1024) anchors in at most 4 MiB. The
+    32-anchor cap in `x509_verify_server_chain` is replaced by a bounded search
+    over the whole set: each anchor is parsed once and only one whose subject
+    issues a supplied certificate enters the path search.
+  - `std.dns`: `tcp_set_io_timeout` (SO_RCVTIMEO and SO_SNDTIMEO) and
+    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream.
+  - `tests/std_https_loopback.rs`: a hermetic loopback TLS 1.3 server in MIND
+    (test-only RSA-2048 chain, `tests/https_loopback/`) proves GET, POST,
+    chunked, a multi-record body and an unfollowed 301, and the named refusals;
+    an ignored test is the manual release smoke against
+    `https://three.arcprize.org/`.
 - **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.

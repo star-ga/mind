@@ -9,13 +9,27 @@
 //
 // Supported formats:
 //   - PEM bundle: one or more "-----BEGIN CERTIFICATE-----" ... "-----END CERTIFICATE-----"
-//     blocks containing RFC 4648 base64-encoded DER certificates.
+//     blocks containing RFC 4648 base64-encoded DER certificates. Between
+//     blocks (and before the first) blank lines and comment lines are
+//     accepted: a comment line starts with '#' (after optional spaces or tabs)
+//     and runs to the end of the line, as in the system bundles that carry a
+//     label per certificate. Any other text outside a block is refused.
 //   - DER bundle: concatenated DER-encoded X.509 certificates (SEQUENCE tags).
+//
+// Bounds: at most x509_max_anchors() certificates and x509_max_bundle_len()
+// bytes; a larger bundle is refused, never truncated.
 //
 // Fail-closed: returns a negative error code on any parse error, corrupted
 // base64, missing trailer, or empty bundle.
 
+import std.x509_der;
 import std.x509_name;
+
+// The largest bundle x509_load_anchors reads (4 MiB; a system bundle is about
+// 220 KiB).
+pub fn x509_max_bundle_len() -> i64 {
+    4194304
+}
 
 fn x509_b64_val(c: i64) -> i64 {
     if c >= 65 && c <= 90 {
@@ -184,20 +198,62 @@ fn x509_bundle_skip_ws(buf: i64, p: i64, len: i64) -> i64 {
     q
 }
 
+// The first index at or after p that is not inside a blank or comment gap
+// between PEM blocks (len when the rest is gap). `bol` is 1 when p is at the
+// start of a line: '#' opens a comment only there (after spaces or tabs), so
+// text after an END marker on the same line is never skipped.
+fn x509_bundle_skip_gap(buf: i64, p: i64, len: i64, bol: i64) -> i64 {
+    let mut q: i64 = p;
+    let mut at_bol: i64 = bol;
+    let mut going: i64 = 1;
+    while going == 1 && q < len {
+        let ch: i64 = __mind_load_i8(buf + q) & 255;
+        if ch == 10 {
+            at_bol = 1;
+            q = q + 1;
+        } else {
+            if ch == 32 || ch == 13 || ch == 9 {
+                q = q + 1;
+            } else {
+                if ch == 35 && at_bol == 1 {
+                    let mut eol: i64 = 0;
+                    while eol == 0 && q < len {
+                        if (__mind_load_i8(buf + q) & 255) == 10 {
+                            eol = 1;
+                        } else {
+                            q = q + 1;
+                        }
+                    }
+                } else {
+                    going = 0;
+                }
+            }
+        }
+    }
+    q
+}
+
 pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
-    if bundle_len < 4 {
+    if bundle_len < 4 || bundle_len > x509_max_bundle_len() {
         return -1;
     }
-    // Find first non-whitespace byte to detect PEM vs DER
-    let mut p: i64 = x509_bundle_skip_ws(bundle, 0, bundle_len);
+    // Find the first byte outside blank and comment lines to detect PEM vs DER
+    let mut p: i64 = x509_bundle_skip_gap(bundle, 0, bundle_len, 1);
     if p >= bundle_len {
         return -1;
     }
     let first: i64 = __mind_load_i8(bundle + p) & 255;
+    if first == 48 {
+        // A DER bundle carries no comments: its first byte is the first tag.
+        p = x509_bundle_skip_ws(bundle, 0, bundle_len);
+    }
 
-    let cert_ptrs: i64 = __mind_alloc(256);
-    let cert_lens: i64 = __mind_alloc(256);
+    let cert_ptrs: i64 = __mind_alloc(x509_max_anchors() * 8);
+    let cert_lens: i64 = __mind_alloc(x509_max_anchors() * 8);
     let mut count: i64 = 0;
+    // Every decoded certificate shares one buffer: base64 never grows.
+    let der_all: i64 = __mind_alloc(bundle_len);
+    let mut der_used: i64 = 0;
 
     if first == 45 {
         // PEM bundle
@@ -206,7 +262,7 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
                 return -1;
             }
             p = p + 27;
-            if count >= 32 {
+            if count >= x509_max_anchors() {
                 return -1;
             }
             if p < bundle_len && (__mind_load_i8(bundle + p) & 255) == 13 {
@@ -217,7 +273,7 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
             }
             p = p + 1;
             // Decode base64 until END
-            let der_buf: i64 = __mind_alloc(bundle_len);
+            let der_buf: i64 = der_all + der_used;
             let mut der_len: i64 = 0;
             let mut b64_quad: i64 = 0;
             let mut b64_count: i64 = 0;
@@ -286,15 +342,17 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
             }
             __mind_store_i64(cert_ptrs + count * 8, der_buf);
             __mind_store_i64(cert_lens + count * 8, der_len);
+            der_used = der_used + der_len;
             count = count + 1;
-            // Skip whitespace before next BEGIN
-            p = x509_bundle_skip_ws(bundle, p, bundle_len);
+            // Skip blank and comment lines before the next BEGIN; the END
+            // marker's own line is not a line start.
+            p = x509_bundle_skip_gap(bundle, p, bundle_len, 0);
         }
     } else {
         if first == 48 {
             // DER bundle
             while p < bundle_len {
-                if count >= 32 {
+                if count >= x509_max_anchors() {
                     return -1;
                 }
                 let tag: i64 = __mind_load_i8(bundle + p) & 255;
