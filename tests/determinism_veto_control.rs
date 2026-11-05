@@ -296,52 +296,62 @@ fn mindc_in(dir: &Path, args: &[&str]) -> (bool, String) {
     (out.status.success(), text)
 }
 
-/// `(tag, project files besides main.mind, callee the refusal names, the
-/// project function whose body calls it)`. Each world read sits one or more
-/// calls away from the entry: in `w.g`, behind a private helper of `w`, or in a
-/// third module `v` that `w` imports.
+/// One project whose world read sits one or more calls away from the entry:
+/// in `w.g`, behind a private helper of `w`, or in a third module `v` that `w`
+/// imports.
 #[cfg(feature = "cross-module-imports")]
-const SIBLING_WORLD: &[(&str, &[(&str, &str)], &str, &str)] = &[
-    (
-        "entropy",
-        &[(
+struct SiblingCase {
+    tag: &'static str,
+    /// Project files besides `main.mind`: `(file name, source)`.
+    files: &'static [(&'static str, &'static str)],
+    /// The callee the refusal names.
+    offender: &'static str,
+    /// The tail of the project function whose body calls it.
+    via: &'static str,
+}
+
+#[cfg(feature = "cross-module-imports")]
+const SIBLING_WORLD: &[SiblingCase] = &[
+    SiblingCase {
+        tag: "entropy",
+        files: &[(
             "w.mind",
             "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n",
         )],
-        "entropy_fill",
-        "::g`",
-    ),
-    (
-        "dns",
-        &[(
+        offender: "entropy_fill",
+        via: "::g`",
+    },
+    SiblingCase {
+        tag: "dns",
+        files: &[(
             "w.mind",
             "import std.dns;\n\npub fn g(p: i64) -> i64 {\n    dns.dns_resolve(p, 9)\n}\n",
         )],
-        "dns_resolve",
-        "::g`",
-    ),
-    (
-        "now_ns",
-        &[(
+        offender: "dns_resolve",
+        via: "::g`",
+    },
+    SiblingCase {
+        tag: "now_ns",
+        files: &[(
             "w.mind",
             "import std.time;\n\npub fn g(p: i64) -> i64 {\n    time.now_ns() + p\n}\n",
         )],
-        "now_ns",
-        "::g`",
-    ),
-    (
-        "helper",
-        &[(
+        offender: "now_ns",
+        via: "::g`",
+    },
+    SiblingCase {
+        tag: "helper",
+        files: &[(
             "w.mind",
             "import std.entropy;\n\nfn h(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n\n\
              pub fn g(p: i64) -> i64 {\n    h(p) + 1\n}\n",
         )],
-        "entropy_fill",
-        "::h`",
-    ),
-    (
-        "third_module",
-        &[
+        offender: "entropy_fill",
+        via: "::h`",
+    },
+    SiblingCase {
+        tag: "third_module",
+        files: &[
             (
                 "w.mind",
                 "import v;\n\npub fn g(p: i64) -> i64 {\n    v.k(p) + 1\n}\n",
@@ -351,9 +361,9 @@ const SIBLING_WORLD: &[(&str, &[(&str, &str)], &str, &str)] = &[
                 "import std.dns;\n\npub fn k(p: i64) -> i64 {\n    dns.tcp_connect_host(p, 9, 80)\n}\n",
             ),
         ],
-        "tcp_connect_host",
-        "::k`",
-    ),
+        offender: "tcp_connect_host",
+        via: "::k`",
+    },
 ];
 
 /// A program whose sibling module reads the world is that program: refused
@@ -367,7 +377,13 @@ const SIBLING_WORLD: &[(&str, &[(&str, &str)], &str, &str)] = &[
 #[test]
 fn sibling_module_world_calls_are_refused_and_attested_nondeterministic() {
     let mut ran = 0usize;
-    for (tag, files, offender, via) in SIBLING_WORLD {
+    for SiblingCase {
+        tag,
+        files,
+        offender,
+        via,
+    } in SIBLING_WORLD
+    {
         let dir = sibling_project(tag, files);
         let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
         assert!(
