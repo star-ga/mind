@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1958 | **Est. tokens:** ~3,852,350
-**Generated:** 2026-11-05 00:22 UTC
+**Files:** 1958 | **Est. tokens:** ~3,852,351
+**Generated:** 2026-11-05 00:26 UTC
 
 ## Token Budget Guide
 
@@ -94,7 +94,7 @@
 | `.github/` | 4 | ~931 |
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/scripts/` | 1 | ~1,296 |
+| `.github/scripts/` | 1 | ~1,297 |
 | `.github/workflows/` | 9 | ~17,042 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
@@ -1063,7 +1063,7 @@
 - `required-ci-jobs.tsv` (~773 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/scripts/`
 
-- `pr_review.py` (~1296 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
+- `pr_review.py` (~1297 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~5397 tok, huge) — name: Bench gate
