@@ -78,11 +78,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     budget; DNS-only SNI, caller ALPN, one HelloRetryRequest, fragmented
     handshake reassembly, latched fail-closed refusal, and every chain
     authenticated by `x509_verify_server_chain`. CertificateVerify supports
-    `rsa_pss_rsae_sha256` only, with a leaf key that `x509_rsa_spki` decodes
-    strictly as rsaEncryption (NULL or absent parameters, 0 unused bits,
-    exactly two positive minimal INTEGERs); `x509_parse` and the chain
-    verifier share that decoder, and an ECDSA or other leaf key is refused at
-    CertificateVerify.
+    `rsa_pss_rsae_sha256` only, with an RSA-2048 leaf key that `x509_rsa_spki`
+    decodes strictly as rsaEncryption (NULL or absent parameters, 0 unused
+    bits, exactly two positive minimal INTEGERs); `x509_parse` and the chain
+    verifier share that decoder. Every other leaf key is refused: a non-RSA
+    key (ECDSA included) and RSA-1024 at CertificateVerify (E_CV), RSA-3072
+    and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
+    server key) keeps its known answer at the RSA-PSS verify primitive, not
+    through the client.
+  - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
+    only; issuer signatures inside the chain keep ECDSA P-256/P-384,
+    RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
+    known-answer tests (public CA chains need them, for example an RSA-4096
+    root). Revocation is not implemented.
   - All twelve modules are bundled table rows and substrate members, and none
     is a native seed row: `--backend native` refuses their import at the import.
   - The longest std import chain stays at five modules. The client's top

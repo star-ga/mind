@@ -146,22 +146,31 @@ pub fn tls13ct_replay(f: i64, size: i64, now: i64, wrong_name: i64) -> i64 {
     0
 }
 
-// Direct parser test using published RFC signed content. It does not change
-// the production verifier or admit a connection; it isolates CV verification.
+// The published RFC 8448 server CertificateVerify, whose key is RSA-1024.
+// The RSA-PSS verify primitive accepts the published signature and refuses
+// it with one bit flipped (the known answer); the client accepts RSA-2048
+// CertificateVerify keys only, so it refuses the same valid message with E_CV.
 pub fn tls13ct_cv() -> i64 {
     let state: i64 = __mind_alloc(tls13c_state_size());
     tls13ct_config(state, 0, 1700000000, 0);
     let cert: i64 = __mind_alloc(445);
     tls13ct_rfc_certificate(cert);
     if tls13c_parse_certificate(state, cert, 445) != 0 { return 40; }
+    if tls13c_load_i64(state + 4752) != 128 { return 44; }
     let transcript: i64 = __mind_alloc(2048);
     let tn: i64 = tls13ct_rfc_cv_transcript(transcript);
     if tls13c_transcript_append(state, transcript, tn) != 0 { return 41; }
     let cv: i64 = __mind_alloc(136);
     tls13ct_rfc_cv(cv);
-    if tls13c_parse_and_verify_cv(state, cv, 136) != 0 { return 42; }
+    if tls13c_parse_and_verify_cv(state, cv, 136) != tls13c_err_cv() { return 45; }
+    let th: i64 = __mind_alloc(32);
+    tls13c_transcript_hash_into(state, th);
+    let content: i64 = __mind_alloc(130);
+    tls13_hs_cert_verify_content(th, content);
+    let e: i64 = tls13c_load_i64(state + 4784);
+    if tls13_hs_rsa_pss_verify(state + 4856, 128, e, cv + 8, 128, content, 130, 32) != 1 { return 42; }
     __mind_store_i8(cv + 8, tls13c_u8(cv + 8) ^ 1);
-    if tls13c_parse_and_verify_cv(state, cv, 136) != tls13c_err_cv() { return 43; }
+    if tls13_hs_rsa_pss_verify(state + 4856, 128, e, cv + 8, 128, content, 130, 32) == 1 { return 43; }
     0
 }
 
