@@ -30,7 +30,7 @@ mod std_entropy_dns_support;
 
 use std::path::Path;
 use std::time::Duration;
-use std_entropy_dns_support::{build_exe, gai_shim, run};
+use std_entropy_dns_support::{build_exe, gai_shim, run, shared_object};
 
 // ─── std.entropy ─────────────────────────────────────────────────────────────
 
@@ -131,8 +131,7 @@ fn getrandom_shim(tail_rc: &str) -> String {
 }
 
 fn build_shim(dir: &Path, name: &str, tail_rc: &str) -> std::path::PathBuf {
-    let src = common::scratch_src_in(dir, &format!("{name}.mind"), &getrandom_shim(tail_rc));
-    common::emit_shared_in(dir, name, &src, &format!("{name}.so"), &[])
+    shared_object(dir, name, &getrandom_shim(tail_rc))
 }
 
 #[test]

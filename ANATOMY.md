@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2143 | **Est. tokens:** ~4,042,757
-**Generated:** 2026-11-05 07:28 UTC
+**Files:** 2143 | **Est. tokens:** ~4,042,944
+**Generated:** 2026-11-05 07:35 UTC
 
 ## Token Budget Guide
 
@@ -156,7 +156,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~272,839 |
-| `tests/` | 442 | ~933,649 |
+| `tests/` | 442 | ~933,641 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 5 | ~13,971 |
@@ -227,7 +227,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
-| `tests/std_entropy_dns_support/` | 1 | ~1,400 |
+| `tests/std_entropy_dns_support/` | 1 | ~1,595 |
 | `tests/support/` | 13 | ~33,009 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/x509/` | 1 | ~2,228 |
@@ -1947,7 +1947,7 @@
 - `cross_substrate_receipts.rs` (~2546 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `determinism_veto_control.rs` (~2823 tok, huge) — Copyright 2025 STARGA Inc.
+- `determinism_veto_control.rs` (~2839 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
@@ -2700,10 +2700,10 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8134 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_entropy_dns_run.rs` (~5017 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_entropy_dns_run.rs` (~4993 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/std_entropy_dns_support/`
 
-- `mod.rs` (~1400 tok, large) — Copyright 2026 STARGA Inc.
+- `mod.rs` (~1595 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/`
 
 - `std_https_loopback.rs` (~2773 tok, huge) — Copyright 2026 STARGA Inc.

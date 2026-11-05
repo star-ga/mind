@@ -195,7 +195,8 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
 #[cfg(feature = "cross-module-imports")]
 fn std_caller(dir: &Path, tag: &str, module: &str, call: &str) -> (String, String) {
     let text = format!("import std.{module};\n\npub fn f(p: i64) -> i64 {{\n    {call}\n}}\n");
-    let src = common::scratch_src_in(dir, &format!("{tag}.mind"), &text);
+    let src = dir.join(format!("{tag}.mind"));
+    std::fs::write(&src, &text).unwrap_or_else(|e| panic!("write {}: {e}", src.display()));
     let ev = dir.join(format!("{tag}.ev"));
     (
         src.to_string_lossy().into_owned(),

@@ -159,9 +159,30 @@ pub fn freeaddrinfo(res: i64) -> i64 {
 }
 "#;
 
+/// Write `text` to `dir/<name>.mind` and compile it with `mindc --emit-shared`
+/// to `dir/<name>.so`, quoting mindc's stdout and stderr when it fails.
+pub fn shared_object(dir: &Path, name: &str, text: &str) -> PathBuf {
+    let src = dir.join(format!("{name}.mind"));
+    std::fs::write(&src, text).unwrap_or_else(|e| panic!("write {}: {e}", src.display()));
+    let so = dir.join(format!("{name}.so"));
+    let out = Command::new(crate::common::mindc_bin())
+        .arg(&src)
+        .arg("--emit-shared")
+        .arg(&so)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn mindc --emit-shared for {name}: {e}"));
+    assert!(
+        out.status.success(),
+        "mindc --emit-shared failed for {name}\n  status: {}\n  stdout: {}\n  stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    so
+}
+
 /// Compile [`GAI_SHIM`] in `target`'s scratch directory; returns the `.so`.
 pub fn gai_shim(target: &str) -> PathBuf {
     let dir = crate::common::scratch_dir(target);
-    let src = crate::common::scratch_src_in(&dir, "gai_shim.mind", GAI_SHIM);
-    crate::common::emit_shared_in(&dir, "gai_shim", &src, "gai_shim.so", &[])
+    shared_object(&dir, "gai_shim", GAI_SHIM)
 }
