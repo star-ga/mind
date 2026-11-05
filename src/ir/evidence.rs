@@ -781,6 +781,8 @@ mod tests {
             "stat",
             "getsockname",
             "syscall",
+            "getrandom",
+            "getaddrinfo",
         ] {
             assert_eq!(
                 ir_first_hard_nondeterministic_call(&module_calling(sym)).as_deref(),

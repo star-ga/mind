@@ -39,12 +39,12 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 55
-# TOTAL_COUNT 55
+# BUNDLED_COUNT 57
+# TOTAL_COUNT 57
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
-# 34 modules are not `seed`: the frozen native compiler cannot see them until a
+# 36 modules are not `seed`: the frozen native compiler cannot see them until a
 # reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
@@ -55,7 +55,9 @@ blas	seed	bundled
 chacha20_poly1305	no	bundled
 cli	seed	bundled
 detmath	no	bundled
+dns	no	bundled
 ecdsa_p256	no	bundled
+entropy	no	bundled
 fs	seed	bundled
 hkdf	no	bundled
 hpack	no	bundled
