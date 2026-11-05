@@ -599,9 +599,13 @@ fn grade_returned_value(
 /// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
 /// their module-level `Const` items, so a fn body that reads a module const
 /// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
-/// table, plus their `extern "C"` blocks (inert when evaluated), so the
-/// string-equality pass reads the declared result of a libc call in std code
-/// (std.fs `read(...) -> i64`) as `mindc check` and the build do.
+/// table, plus their `extern "C"` blocks and `struct` declarations (inert
+/// when evaluated), so the string-equality pass reads the declared result of
+/// a libc call in std code (std.fs `read(...) -> i64`) and a std record's
+/// field (`v.cap` in std.vec) as `mindc check` and the build do. A struct the
+/// test module declares itself keeps its own declaration. A function the
+/// evaluator runs as the runtime support library does (`string_eq`, which the
+/// build links) is not taken: a call of it computes what the build computes.
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
 /// worklist, `BTreeSet` visited guard against cycles). An import that is not
@@ -609,6 +613,7 @@ fn grade_returned_value(
 /// unchanged); a bundled module that fails to parse is a fail-loud error.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
+    use crate::eval::extern_c_intrinsics;
     use crate::project::stdlib::STDLIB_MIND_SOURCES;
     use std::collections::VecDeque;
 
@@ -621,6 +626,13 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         None
     }
 
+    let own_structs: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Node::StructDef { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut queue: VecDeque<String> = top_level::refs(&module.items)
@@ -646,7 +658,12 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         })?;
         for item in top_level::refs(&imported.items) {
             match item {
-                Node::FnDef(..) | Node::Const { .. } | Node::ExternBlock { .. } => {
+                Node::FnDef(fd, _) if extern_c_intrinsics::is_runtime_string_fn(&fd.name) => {}
+                Node::StructDef { name, .. } if own_structs.contains(name.as_str()) => {}
+                Node::FnDef(..)
+                | Node::Const { .. }
+                | Node::ExternBlock { .. }
+                | Node::StructDef { .. } => {
                     out.push(item.clone());
                 }
                 Node::Import { .. } => {
@@ -670,6 +687,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
 /// runs itself (the runtime-support emulations) load nothing.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn bare_std_modules(module: &crate::ast::Module) -> Vec<String> {
+    use crate::eval::extern_c_intrinsics;
     use crate::project::stdlib::STDLIB_MIND_SOURCES;
     use std::collections::BTreeSet;
 
@@ -698,7 +716,8 @@ fn bare_std_modules(module: &crate::ast::Module) -> Vec<String> {
         .filter(|name| {
             name.starts_with("string_")
                 && !defined.contains(name)
-                && !crate::eval::extern_c_intrinsics::is_extern_c_intrinsic(name)
+                && !extern_c_intrinsics::is_extern_c_intrinsic(name)
+                && !extern_c_intrinsics::is_runtime_string_fn(name)
         })
         .collect();
     STDLIB_MIND_SOURCES

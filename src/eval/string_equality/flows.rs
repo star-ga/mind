@@ -20,17 +20,18 @@
 //! function with no declared result type that returns a string is recorded
 //! the same way.
 //!
-//! A value that may be a string handed to a callee whose body this module
-//! does not analyse (an imported or std function, an extern, an intrinsic),
-//! through a parameter not declared `string`, may be kept there and given
-//! back as an integer: `vec_push(v, "abc")` and `vec_get(v, 0)`,
-//! `__mind_store_i64(p, s)` and `__mind_load_i64(p)`. Such a store is
-//! recorded by the record types the callee's declaration names (or as a raw
-//! store when it names none), and the integer result of a later call to such
-//! a callee whose declaration names one of those record types (or, after a
-//! raw store, any opaque callee) is maybe a string. Of the intrinsics only
-//! `__mind_store_i64` keeps a handle whole, and only `__mind_load_i64` gives
-//! one back, from raw memory or from a collection's storage (`vec_addr(v)`).
+//! A value that may be a string (one whose type the pass did not establish
+//! included) handed to a callee whose body this module does not analyse (an
+//! imported or std function, an extern, an intrinsic), through a parameter
+//! not declared `string`, may be kept there and given back as an integer:
+//! `vec_push(v, "abc")` and `vec_get(v, 0)`, `__mind_store_i64(p, s)` and
+//! `__mind_load_i64(p)`. Such a store is recorded by the record types the
+//! callee's declaration names (or as a raw store when it names none), and
+//! the integer result of a later call to such a callee whose declaration
+//! names one of those record types (or, after a raw store, any opaque
+//! callee) is maybe a string. Of the intrinsics only `__mind_store_i64`
+//! keeps a handle whole, and only `__mind_load_i64` gives one back, from raw
+//! memory or from a collection's storage (`vec_addr(v)`).
 
 use std::collections::BTreeSet;
 
@@ -38,7 +39,7 @@ use crate::ast::{FnDefData, Node, StructLitField, TypeAnn};
 
 use super::classify::lowered_args;
 use super::facts::{Decls, Env, Fact, Ret, SCALAR_NAMES, join, tail_value};
-use super::slots::{Contradicted, holds_known_str, holds_str, struct_key};
+use super::slots::{Contradicted, holds_str, struct_key};
 
 /// Collection methods that store their last argument as an element.
 const STORE_METHODS: &[&str] = &["push", "set", "insert", "add"];
@@ -301,14 +302,15 @@ impl Decls {
     }
 
     /// Record a call to an opaque callee (see [`Self::is_opaque`]) that is
-    /// handed a value that may be a string through a parameter not declared
-    /// `string`: by the record types its declaration names, or as a raw store
-    /// when it names none. Of the compiler intrinsics only the 64-bit store
-    /// keeps a value whole for a later load to give back.
+    /// handed a value that may be a string ([`holds_str`], so also a value
+    /// whose type the pass did not establish) through a parameter not
+    /// declared `string`: by the record types its declaration names, or as a
+    /// raw store when it names none. Of the compiler intrinsics only the
+    /// 64-bit store keeps a value whole for a later load to give back.
     fn escape_flows(&self, callee: &str, args: &[&Node], env: &Env, out: &mut Contradicted) {
         if callee.starts_with(INTRINSIC_PREFIX) {
             let value = (callee == RAW_STORE).then(|| args.get(1)).flatten();
-            if value.is_some_and(|v| holds_known_str(&self.value_fact(v, env))) {
+            if value.is_some_and(|v| holds_str(&self.value_fact(v, env))) {
                 out.escaped_raw = true;
             }
             return;
@@ -319,7 +321,7 @@ impl Decls {
             // `vec_get(v: Vec, i)`) keeps no handle as an integer.
             let declared = types.and_then(|types| types.get(index));
             let kept = declared.is_none_or(|ty| !self.names_record(ty));
-            kept && holds_known_str(&self.value_fact(arg, env))
+            kept && holds_str(&self.value_fact(arg, env))
         });
         if !escapes {
             return;

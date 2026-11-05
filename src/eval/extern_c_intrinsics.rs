@@ -20,6 +20,16 @@ pub(crate) fn is_extern_c_intrinsic(name: &str) -> bool {
     )
 }
 
+/// Is `name` a runtime support library string function the evaluator runs
+/// itself, as the build links it? `string_trim` (std.string defines none)
+/// and `string_eq`, which compares like `__mind_string_eq`: bytes, with the
+/// null handle `0` equal only to itself. `mindc test` merges no std body of
+/// these names; a MIND definition of the module shadows them.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+pub(crate) fn is_runtime_string_fn(name: &str) -> bool {
+    matches!(name, "string_eq" | "string_trim")
+}
+
 /// Evaluate one extern "C" libc call over the thread-local arena.
 ///
 /// Arguments are i64 scalars (the MIND ABI); pointer arguments are arena
@@ -356,6 +366,14 @@ pub(crate) fn dispatch(
     // Compiler-owned byte-wise `==` on strings: its operands are string values
     // in any interpreter form, not i64 scalars.
     if callee == "__mind_string_eq" {
+        return Some(super::string_record::eval_string_eq(
+            args, env, tensor_env, mode,
+        ));
+    }
+    // The runtime support library's `string_eq`, which the build links for a
+    // `string_eq` call: the same comparison (see `is_runtime_string_fn`).
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    if callee == "string_eq" {
         return Some(super::string_record::eval_string_eq(
             args, env, tensor_env, mode,
         ));

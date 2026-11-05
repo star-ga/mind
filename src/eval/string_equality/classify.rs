@@ -16,6 +16,7 @@ use crate::ast::{Literal, Node, Pattern, TypeAnn};
 
 use super::facts::{Class, Decls, Env, Fact, Ret, fact_class, join, tuple_parts};
 use super::flows::{INTRINSIC_PREFIX, RAW_LOAD};
+use super::slots::{contradicts, is_null};
 
 /// Nesting beyond this depth is not analysed: the value is `Unknown`. The
 /// bound keeps the recursive walk off deep `else if` chains, whose analysis
@@ -61,6 +62,31 @@ impl Decls {
 
     pub(super) fn value_fact(&self, node: &Node, env: &Env) -> Fact {
         self.fact_at(node, env, 0)
+    }
+
+    /// Whether `expr as ty` casts an integer literal other than the null
+    /// handle `0` to `string`: no string record is at that address, so the
+    /// cast is refused.
+    pub(super) fn refused_cast(&self, expr: &Node, ty: &TypeAnn, env: &Env) -> bool {
+        self.typed_fact(ty) == Fact::Str
+            && self.classify(expr, env) == Class::IntLiteral
+            && !is_null(expr)
+    }
+
+    /// The fact of `expr as ty`. A cast to `string` stores its operand in a
+    /// string slot: an operand not proven a string, other than the null
+    /// handle, is no string record there (see `Decls::stores_contradiction`).
+    /// A refused cast keeps its declared fact, so it is reported once.
+    fn cast_fact(&self, expr: &Node, ty: &TypeAnn, env: &Env, depth: usize) -> Fact {
+        let declared = self.typed_fact(ty);
+        if declared != Fact::Str || is_null(expr) || self.refused_cast(expr, ty, env) {
+            return declared;
+        }
+        if contradicts(&declared, &self.fact_at(expr, env, depth)) {
+            Fact::MaybeStr
+        } else {
+            declared
+        }
     }
 
     /// The fact of a `let` binding. An annotation is trusted unless the value
@@ -188,7 +214,7 @@ impl Decls {
             }
             Node::Block { stmts, .. } => self.block_fact(stmts, env, d),
             Node::Region { body, .. } => self.block_fact(body, env, d),
-            Node::As { ty, .. } => self.typed_fact(ty),
+            Node::As { expr, ty, .. } => self.cast_fact(expr, ty, env, d),
             Node::Try { inner, .. } => self.try_fact(inner, env, d),
             Node::Return { .. } | Node::Break { .. } | Node::Continue { .. } => Fact::Never,
             Node::Closure(..)
@@ -404,10 +430,11 @@ impl Decls {
     /// merges the std module that does) and the evaluator does not supply it
     /// itself, so the call stays a method call the evaluator runs as before.
     pub(super) fn string_method(&self, receiver: &Node, method: &str, env: &Env) -> Option<bool> {
+        use crate::eval::extern_c_intrinsics::{is_extern_c_intrinsic, is_runtime_string_fn};
         let function = format!("string_{method}");
         let runs = self.params.contains_key(&function)
-            || function == "string_trim"
-            || crate::eval::extern_c_intrinsics::is_extern_c_intrinsic(&function);
+            || is_runtime_string_fn(&function)
+            || is_extern_c_intrinsic(&function);
         if !runs {
             return None;
         }

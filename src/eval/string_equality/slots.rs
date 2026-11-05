@@ -95,6 +95,7 @@ impl Contradicted {
 
     /// The slots other modules of a project build can declare or read:
     /// every one but the module's own local and module-level bindings.
+    #[cfg(feature = "cross-module-imports")]
     pub(super) fn shared(&self) -> Contradicted {
         Contradicted {
             locals: BTreeMap::new(),
@@ -152,22 +153,6 @@ pub(super) fn holds_str(fact: &Fact) -> bool {
         Fact::Sum(ok, err) => holds_str(ok) || holds_str(err),
         Fact::Tuple(parts) => parts.iter().any(holds_str),
         Fact::Record(_) | Fact::NotStr | Fact::Never => false,
-    }
-}
-
-/// Whether a value with `fact` is known to hold a string on some path (a
-/// string, a maybe-string, a value of a type this module cannot see), at any
-/// depth: what an escape into a callee this module does not analyse records.
-/// A value whose type the pass did not establish is not counted there: std
-/// code merged into a `mindc test` module hands such values to raw memory
-/// throughout, and a string that reaches one is a recorded store already.
-pub(super) fn holds_known_str(fact: &Fact) -> bool {
-    match fact {
-        Fact::Unknown => false,
-        Fact::Elems(part) | Fact::Map(part) => holds_known_str(part),
-        Fact::Sum(ok, err) => holds_known_str(ok) || holds_known_str(err),
-        Fact::Tuple(parts) => parts.iter().any(holds_known_str),
-        fact => holds_str(fact),
     }
 }
 

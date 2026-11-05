@@ -5,7 +5,8 @@
 //! Unit controls for strings that reach an integer slot through a value whose
 //! type the pass did not establish, through raw reads of collection storage,
 //! through another module of a project, or through a string literal `match`
-//! pattern; and for the interpreter's string method calls.
+//! pattern; for casts to `string`; and for the interpreter's string method
+//! calls.
 
 use super::*;
 
@@ -218,6 +219,55 @@ fn the_length_member_of_a_string_is_refused() {
     assert_eq!(refusals(string), vec![RefusedKind::Member]);
     let array = "fn alen(xs: [i64; 2]) -> i64 { return xs.length }";
     assert_eq!(refusals(array), vec![]);
+}
+
+/// A value whose type the pass did not establish (the result of a function
+/// whose result type names no known type) handed to a callee whose body is
+/// not analysed: the callee's integer results may give it back.
+#[test]
+fn unestablished_values_handed_to_unanalysed_callees_may_come_back() {
+    let mk = "fn mk() -> Name { return \"abc\" }\n";
+    let vec = format!(
+        "{mk}fn p() -> i64 {{
+            let v = vec_push(vec_push(vec_new(), mk()), mk())
+            if vec_get(v, 0) == vec_get(v, 1) {{ return 1 }}
+            return 0
+        }}"
+    );
+    assert_eq!(refusals(&vec), vec![UNTYPED]);
+    let raw = format!(
+        "{mk}fn p() -> i64 {{
+            let p = __mind_alloc(16)
+            __mind_store_i64(p, mk())
+            __mind_store_i64(p + 8, mk())
+            if __mind_load_i64(p) == __mind_load_i64(p + 8) {{ return 1 }}
+            return 0
+        }}"
+    );
+    assert_eq!(refusals(&raw), vec![UNTYPED]);
+}
+
+/// A cast to `string` holds a string record only from a string or the null
+/// handle: an integer literal cast is refused, and a cast of a value not
+/// proven a string compares as one that may be.
+#[test]
+fn casts_to_string_hold_a_record_only_from_a_string_or_the_null_handle() {
+    let compare = |operand: &str, param: &str| {
+        refusals(&format!(
+            "fn p({param}) -> i64 {{
+                if ({operand} as string) == \"abc\" {{ return 1 }}
+                return 0
+            }}"
+        ))
+    };
+    assert_eq!(compare("5", ""), vec![RefusedKind::Cast]);
+    assert_eq!(compare("(-1)", ""), vec![RefusedKind::Cast]);
+    assert_eq!(compare("0", ""), vec![]);
+    assert_eq!(compare("s", "s: string"), vec![]);
+    assert_eq!(compare("n", "n: i64"), vec![RefusedKind::Mixed]);
+    // With no comparison in the module, the cast is still refused.
+    let alone = "fn p() -> string { return 5 as string }";
+    assert_eq!(refusals(alone), vec![RefusedKind::Cast]);
 }
 
 /// The `string_*` calls a method on a string becomes for the interpreter,

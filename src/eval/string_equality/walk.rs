@@ -357,6 +357,15 @@ impl<'a> Walk<'a> {
                 });
             }
             Node::FnDef(fd, _) => self.enter_fn(fd),
+            Node::As { expr, ty, span } if self.decls.refused_cast(expr, ty, &env) => {
+                self.refused.push(Refused {
+                    op: BinOp::Eq,
+                    kind: RefusedKind::Cast,
+                    span: *span,
+                    function: scope.owner.map(str::to_string),
+                });
+                self.push_children(node, &env, &scope);
+            }
             Node::FieldAccess {
                 receiver,
                 field,

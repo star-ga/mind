@@ -26,7 +26,9 @@
 //! * a string literal `match` arm on a scrutinee not known to be a string
 //!   (an arm on a string compares bytes on every backend);
 //! * in a project build, a call of a function another module refuses such a
-//!   comparison in (see [`project`]).
+//!   comparison in (see [`project`]);
+//! * a cast to `string` of an integer literal other than the null handle `0`
+//!   (`5 as string`), which no string record is at.
 //!
 //! An operand whose type is known and is not a string makes the comparison an
 //! integer comparison on every backend. A declaration proves what its slot
@@ -35,13 +37,15 @@
 //! or collection element given a value that may be a string where none is
 //! declared, or an integer other than the null handle where a string is
 //! declared, is read as maybe a string. A value whose type the pass did not
-//! establish may be a string, so storing it counts. So is the integer result
-//! of a callee whose body is not analysed here (a std collection, raw memory)
-//! after a string was handed to such a callee; a raw 64-bit load reads any
-//! collection's storage. A value of a type parameter, or the result of an
-//! imported function with no declared result type, may be anything. A
-//! function with no declared result type that still returns a value has an
-//! unknown result. Stores from other modules of a project build count too.
+//! establish may be a string, so storing it counts, also when it is handed
+//! to a callee whose body is not analysed here (a std collection, raw
+//! memory): the integer result of such a callee is then maybe a string; a
+//! raw 64-bit load reads any collection's storage. A cast to `string` of a
+//! value not proven a string, other than the null handle, is maybe a string.
+//! A value of a type parameter, or the result of an imported function with
+//! no declared result type, may be anything. A function with no declared
+//! result type that still returns a value has an unknown result. Stores from
+//! other modules of a project build count too.
 //!
 //! A local binding is a slot like any other: each assignment is read in its
 //! own scope, and the module is walked again until no binding changes (see
@@ -106,6 +110,9 @@ pub(crate) enum RefusedKind {
     /// `s.length` on a string: no string record has that member, and no
     /// backend lowers the read.
     Member,
+    /// `5 as string`: an integer literal other than the null handle `0` cast
+    /// to `string`; no string record is at that address.
+    Cast,
 }
 
 /// A comparison that would compare string handles instead of bytes.
@@ -135,6 +142,12 @@ pub(crate) fn refusal_message(refused: &Refused) -> String {
         RefusedKind::Member => {
             return "`.length` reads a member of a string, which no string record has, and \
                     no backend lowers the read — use `string_len(s)` for the byte length"
+                .to_string();
+        }
+        RefusedKind::Cast => {
+            return "`as string` casts an integer other than the null handle `0`; no string \
+                    record is at that address, and `==` or a std.string function would read \
+                    one through it"
                 .to_string();
         }
         RefusedKind::Callee => {
@@ -184,6 +197,10 @@ pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
         RefusedKind::Member => {
             "call `string_len(s)` from std.string; std.string is a set of free \
              functions, and a string has no `.length` member"
+        }
+        RefusedKind::Cast => {
+            "cast only a string or the null handle `0` to `string`; write text as a \
+             string literal, or build it with the std.string functions"
         }
         RefusedKind::Callee => {
             "declare the compared slots `string` where strings are passed, or \
@@ -279,8 +296,9 @@ fn calls_may_be_refused() -> bool {
 }
 
 /// Whether `module` has a form the walk decides besides `==` / `!=`: a
-/// `match` with a string literal arm, which compares a string too, or a
-/// `.length` member read, which is refused on a string (see `walk`).
+/// `match` with a string literal arm, which compares a string too, a
+/// `.length` member read, which is refused on a string, or a cast to a named
+/// type that may be `string`, refused for an integer literal (see `walk`).
 fn has_other_string_form(module: &Module) -> bool {
     let mut pending: Vec<&Node> = module.items.iter().collect();
     while let Some(node) = pending.pop() {
@@ -294,6 +312,10 @@ fn has_other_string_form(module: &Module) -> bool {
                 }
             }
             Node::FieldAccess { field, .. } if field == "length" => return true,
+            Node::As {
+                ty: crate::ast::TypeAnn::Named(name),
+                ..
+            } if !facts::SCALAR_NAMES.contains(&name.as_str()) => return true,
             _ => {}
         }
         pending.extend(children_ref(node));
@@ -411,11 +433,11 @@ fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
     let project = !desugar_methods;
     let ordinals = equality_ordinals(module);
     let methods_wanted = desugar_methods && !ordinals.methods.is_empty();
-    if ordinals.equalities.is_empty()
-        && !methods_wanted
-        && !(project && calls_may_be_refused())
-        && !has_other_string_form(module)
-    {
+    let decides = !ordinals.equalities.is_empty()
+        || methods_wanted
+        || (project && calls_may_be_refused())
+        || has_other_string_form(module);
+    if !decides {
         return Analysis {
             rewritten: None,
             refused: Vec::new(),
