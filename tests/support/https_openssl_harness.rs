@@ -493,6 +493,9 @@ pub fn run_case(env: &Env, case: &Case) -> Seen {
     let mut stdin = server.0.stdin.take().expect("s_server stdin");
     let exe = env.client.clone();
     let client = thread::spawn(move || run_client(&exe, spec));
+    // With no response expected, s_server's stdin stays open until the client
+    // is done: its EOF would make s_server close the connection mid-handshake.
+    let mut idle_stdin = None;
     let mut writer = None;
     if let Some(response) = case.response.clone() {
         let started = Instant::now();
@@ -516,9 +519,10 @@ pub fn run_case(env: &Env, case: &Case) -> Seen {
             drop(stdin);
         }));
     } else {
-        drop(stdin);
+        idle_stdin = Some(stdin);
     }
     let reply = client.join().expect("client thread");
+    drop(idle_stdin);
     stop.store(true, Ordering::SeqCst);
     if let Some(w) = writer {
         let _ = w.join();

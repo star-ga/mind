@@ -443,5 +443,11 @@ pub fn x509_load_anchors(bundle: i64, bundle_len: i64) -> i64 {
         off = off + clen2;
         i = i + 1;
     }
+    // The blob holds its own copy of every certificate: the decode buffers
+    // are released, so loading a bundle per request does not accumulate.
+    __mind_free(envelope);
+    __mind_free(der_all);
+    __mind_free(cert_ptrs);
+    __mind_free(cert_lens);
     blob
 }

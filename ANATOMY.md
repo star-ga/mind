@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2143 | **Est. tokens:** ~4,042,318
-**Generated:** 2026-11-05 07:13 UTC
+**Files:** 2143 | **Est. tokens:** ~4,042,637
+**Generated:** 2026-11-05 07:22 UTC
 
 ## Token Budget Guide
 
@@ -155,7 +155,7 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 59 | ~272,654 |
+| `std/` | 59 | ~272,719 |
 | `tests/` | 442 | ~933,649 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -205,7 +205,7 @@
 | `tests/fixtures/selfhost_policy/` | 13 | ~315 |
 | `tests/fixtures/selfhost_policy/reject/` | 58 | ~616 |
 | `tests/fixtures/tls13_client/` | 31 | ~36,480 |
-| `tests/https_loopback/` | 17 | ~22,321 |
+| `tests/https_loopback/` | 17 | ~22,519 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -228,7 +228,7 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/std_entropy_dns_support/` | 1 | ~1,400 |
-| `tests/support/` | 13 | ~32,953 |
+| `tests/support/` | 13 | ~33,009 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/x509/` | 1 | ~2,228 |
 | `tests/x509/testdata/` | 86 | ~13,454 |
@@ -1674,7 +1674,7 @@
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
 - `x25519mlkem768.mind` (~1554 tok, huge) — std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
 - `x509_bignum.mind` (~1704 tok, huge) — std/x509_bignum.mind — fixed-width big-integer arithmetic (radix 2^16 limbs,
-- `x509_bundle.mind` (~3715 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
+- `x509_bundle.mind` (~3780 tok, huge) — std/x509_bundle.mind — in-memory DER and PEM trust-anchor bundle loader.
 - `x509_der.mind` (~4655 tok, huge) — std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
 - `x509_ext.mind` (~2786 tok, huge) — std/x509_ext.mind — X.509v3 validity date parsing and extension processing
 - `x509.mind` (~1080 tok, large) — std/x509.mind — X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
@@ -2169,7 +2169,7 @@
 - `leaf_rsa3072.der` (binary, 967 bytes)
 - `leaf_rsa3072_key_test_only.cnf` (~981 tok, large) — # TEST-ONLY RSA-3072 key of leaf_rsa3072.der (tests/https_loopback/README.md).
 - `leaf_wronghost.der` (binary, 843 bytes)
-- `README.md` (~805 tok, large) — std.https loopback fixtures (TEST-ONLY)
+- `README.md` (~1003 tok, large) — std.https loopback fixtures (TEST-ONLY)
 - `request.mind` (~1482 tok, large) — One std.https request for tests/std_https_openssl.rs (TEST-ONLY).
 - `root.der` (binary, 767 bytes)
 - `server_key_test_only.txt` (~293 tok, medium) — # TEST-ONLY RSA-2048 key of tests/https_loopback/leaf_*.der (localhost).
@@ -2785,7 +2785,7 @@
 - `g2_capability_ratchet.rs` (~783 tok, large) — Copyright 2026 STARGA Inc.
 - `g2_compile_result.rs` (~364 tok, medium) — Copyright 2026 STARGA Inc.
 - `g2_policy_rejections.rs` (~755 tok, large) — Copyright 2026 STARGA Inc.
-- `https_openssl_harness.rs` (~4783 tok, huge) — Copyright 2026 STARGA Inc.
+- `https_openssl_harness.rs` (~4839 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_bare_imports.rs` (~3717 tok, huge) — Copyright 2026 STARGA Inc.
 - `pqc_hybrid_cli_support.rs` (~1429 tok, large) — Copyright 2026 STARGA Inc.
 - `tls13_leaf_key_program.rs` (~4103 tok, huge) — Copyright 2026 STARGA Inc.

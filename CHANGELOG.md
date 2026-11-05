@@ -24,8 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
   rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
   is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
-  checked.** The four request functions are classified nondeterministic by
+  checked.** The six request functions are classified nondeterministic by
   name, like `entropy_fill`.
+  - Request headers: `https_get_with_headers(url, headers, ca_path)` and
+    `https_post_with_headers(url, headers, body, content_type, ca_path)` send a
+    caller block of `name: value` CRLF lines (for example `X-API-Key` and
+    `Cookie`) after the client's own headers; `ca_path` 0 is the system bundle.
+    A line that is not `token: value` CRLF, a byte outside HTAB and printable
+    ASCII, a block over 16 KiB, or a header the client writes itself (Host,
+    User-Agent, Accept, Connection, Content-Type, Content-Length) or that
+    changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect) is
+    refused with `https_err_request_headers` (-19) before any connection.
+  - Response headers: `https_header_nth` / `https_header_count` read every
+    header of a name; `https_set_cookie_count`, `https_set_cookie` (the whole
+    value) and `https_set_cookie_pair` (the `name=value` a later request sends
+    back) capture Set-Cookie. `https_free` releases a response record.
+  - Strict framing: a chunk size takes leading zeros and is refused at the
+    digit that passes the 8 MiB body cap (`https_err_body_too_large`), so it
+    cannot overflow; a chunk extension and a response header value holding a
+    control byte (NUL, bare CR or LF, DEL) are refused (`https_err_response`).
   - The TLS 1.3 client's record pump and handshake state machine move from
     `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
     the HTTPS driver: the import chain under the state machine is already five
@@ -35,10 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `std.https_http1` (response record and parser).
   - The client now discards whole post-handshake NewSessionTicket messages
     (any other post-handshake message is refused), holds one full record of
-    decrypted application data (16 KiB, was 2 KiB) and opens no further record
-    until it is read, records the presented leaf key (`tls13c_leaf_key_kind`,
-    `tls13c_leaf_rsa_len`), and reports its inbound space (`tls13c_in_space`).
-    `tls13c_state_size()` is 102400.
+    decrypted application data (16 KiB, was 2 KiB, so a record of the RFC 8446
+    maximum of 2^14 plaintext bytes no longer ends the connection with E_OVF)
+    and opens no further record until it is read, so a body of any size
+    streams through that fixed window. It records the presented leaf key
+    (`tls13c_leaf_key_kind`, `tls13c_leaf_rsa_len`) outside the ranges key
+    erasure clears, so the evidence survives the refusal it names, and
+    reports its inbound space (`tls13c_in_space`). `tls13c_state_size()` is
+    102400 and does not depend on the body size. The per-record scratch
+    buffers (record copy, plaintext, AEAD nonce and inner plaintext, in
+    `std.tls13_record` too) and the chain and anchor tables are released, so
+    memory does not grow with the number of records.
   - CA bundles: `x509_load_anchors` accepts blank lines and `#` comment lines
     between PEM blocks (other text is still refused), decodes into one buffer,
     and holds up to `x509_max_anchors()` (1024) anchors in at most 4 MiB. The
@@ -52,6 +76,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chunked, a multi-record body and an unfollowed 301, and the named refusals;
     an ignored test is the manual release smoke against
     `https://three.arcprize.org/`.
+  - `tests/std_https_openssl.rs`: the client against `openssl s_server` on
+    127.0.0.1 with the same chain, through a TCP proxy that records every
+    server record: a full 16 KiB record, a 5 MiB Content-Length body and a
+    5 MiB chunked body compared byte for byte, X-API-Key, Cookie, Content-Type
+    and the POST body asserted at the server, two Set-Cookie headers captured,
+    and the refusals of malformed chunk sizes (eleven forms), control bytes in
+    a response header, malformed request header blocks (nine forms, before any
+    connection), a body truncated by close_notify, by a missing last chunk and
+    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf.
 - **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.

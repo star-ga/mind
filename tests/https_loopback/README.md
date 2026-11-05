@@ -6,7 +6,10 @@ anchors for real traffic or trust.
 Used by `tests/std_https_loopback.rs`, which builds `server.mind` and
 `client.mind` with `mindc build` (the harness prepends the std imports and
 writes the DER certificates, the server key and the bundle paths as MIND
-stores) and runs them on 127.0.0.1.
+stores) and runs them on 127.0.0.1, and by `tests/std_https_openssl.rs`, which
+builds `request.mind` (one request per run: spec on stdin, result on stdout)
+and runs it against `openssl s_server` presenting the same certificates with
+the keys below.
 
 | File | What |
 |------|------|
@@ -18,6 +21,9 @@ stores) and runs them on 127.0.0.1.
 | `leaf_ec.der` | a P-256 leaf for `localhost` (refused: not RSA-2048) |
 | `leaf_rsa3072.der` | an RSA-3072 leaf for `localhost` (refused: not RSA-2048) |
 | `server_key_test_only.txt` | modulus `n` and private exponent `d` of the RSA-2048 leaf key, hex |
+| `leaf_key_test_only.cnf` | the same RSA-2048 leaf key with its CRT values, as `openssl asn1parse -genconf` input (PKCS#1 DER) |
+| `leaf_rsa3072_key_test_only.cnf` | the RSA-3072 key of `leaf_rsa3072.der`, in the same form |
+| `request.mind` | the one-request client of `tests/std_https_openssl.rs` |
 | `ca_bundle.pem` | 40 P-256 filler roots, then the test root, with `#` comment and blank lines |
 | `ca_other.pem` | an unrelated RSA-2048 root (the unknown-anchor case) |
 | `ca_bad.pem` | a malformed PEM block (refused) |
@@ -48,5 +54,8 @@ openssl req -new -key leaf.key -subj "/CN=localhost" | \
 # filler roots: 40 self-signed P-256 CAs, CN=MIND Test Filler Root <i>, serials 101..140
 openssl x509 -in <cert>.pem -outform DER -out <cert>.der
 openssl pkey -in leaf.key -noout -text   # modulus and privateExponent -> server_key_test_only.txt
+# the same fields with the primes, exponents and coefficient -> leaf_key_test_only.cnf
+# (and the RSA-3072 key -> leaf_rsa3072_key_test_only.cnf); check with
+openssl asn1parse -genconf leaf_key_test_only.cnf -noout -out k.der && openssl pkey -inform DER -in k.der -check -noout
 ```
 The intermediate's and the root's private keys are not kept.
