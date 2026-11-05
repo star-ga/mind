@@ -97,7 +97,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 MAIN_MIND_DEFAULT = os.path.join(HERE, "main.mind")
 RESOLVE_RS = os.path.join(REPO, "src", "type_checker", "resolve.rs")
 PARSER_RS = os.path.join(REPO, "src", "parser", "mod.rs")
-STDLIB_RS = os.path.join(REPO, "src", "project", "stdlib.rs")
+STDLIB_RS = os.path.join(REPO, "src", "project", "stdlib", "load.rs")  # IMPLICIT_STD_MODULES
 STD_DIR = os.path.join(REPO, "std")
 
 MARKER = "@@HOLE@@"
@@ -177,7 +177,7 @@ def stmt_keywords():
 def bundled_modules():
     with open(STDLIB_RS) as f:
         rs = f.read()
-    mods = re.findall(r'\("std\.([a-z0-9_]+)",\s*include_str!', rs)
+    mods = re.findall(r'"std\.([a-z0-9_]+)"', rs.split("IMPLICIT_STD_MODULES: &[&str] = &[", 1)[1].split("];", 1)[0])
     if len(mods) < 20:
         fail_infra(f"extracted only {len(mods)} bundled modules — drifted")
     return mods

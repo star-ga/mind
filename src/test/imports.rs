@@ -32,6 +32,10 @@ pub(super) struct EvalSupport {
     /// snapshot the re-parse cannot see an imported unit variant.
     #[cfg(feature = "cross-module-imports")]
     pub(super) enums: Option<crate::ir::GlobalEnums>,
+    /// `std.<name>` modules the project supplies itself (spec/v1.0/stdlib.md,
+    /// "use std.<name> resolution", rule 2); their imports are not unknown.
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    pub(super) project_std: std::collections::BTreeSet<String>,
 }
 
 pub(super) fn qualify_module_declarations(module: &mut Module, owner: &str, globals: bool) {
@@ -173,7 +177,6 @@ fn bind_bare_imported_calls(
     imports: &[Vec<String>],
     scope: &crate::project::single_file_scope::ProjectScope,
     linked_owners: &std::collections::BTreeSet<String>,
-    std_fn_names: &std::collections::BTreeMap<String, Vec<String>>,
     bindings: &mut EvalBindings,
 ) {
     for import in imports {
@@ -183,8 +186,8 @@ fn bind_bare_imported_calls(
         if target == owner {
             continue;
         }
-        if let Some(names) = std_fn_names.get(target) {
-            for name in names {
+        if let Some(names) = std_exported_fn_names(target) {
+            for name in &names {
                 if scope.resolves_imported_symbol(owner, import, name) {
                     bindings.insert_std_imported_call(owner, target, name);
                 }
@@ -247,24 +250,22 @@ fn bind_bare_imported_values(
     }
 }
 
-/// FnDef names of every bundled `std` module, keyed by module path
-/// (`std.sha256` -> [`"sha256"`, ...]). Built once per `prepare_eval_support`
-/// so the binder above can resolve `std` targets that are absent from
-/// `scope.sources()`.
+/// FnDef names of bundled `std` module `path` (`std.sha256` -> [`"sha256"`,
+/// ...]), or `None` for a path that is not a bundled module, so the binder
+/// above can resolve `std` targets that are absent from `scope.sources()`.
+/// Only the modules a program imports are parsed (once per process).
 #[cfg(feature = "cross-module-imports")]
-fn std_exported_fn_names() -> std::collections::BTreeMap<String, Vec<String>> {
-    let mut out = std::collections::BTreeMap::new();
-    for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
-        let names = super::top_level::refs(&module.items)
+fn std_exported_fn_names(path: &str) -> Option<Vec<String>> {
+    let module = crate::project::stdlib::bundled_module_ast(path)?;
+    Some(
+        super::top_level::refs(&module.items)
             .into_iter()
             .filter_map(|item| match item {
                 Node::FnDef(function, _) => Some(function.name.clone()),
                 _ => None,
             })
-            .collect();
-        out.insert(path, names);
-    }
-    out
+            .collect(),
+    )
 }
 
 /// Capture the same manifest-bounded import closure used by `check` and native
@@ -299,8 +300,6 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
         Discovery::Project(scope) => {
             use std::collections::VecDeque;
 
-            use crate::project::stdlib::STDLIB_MIND_SOURCES;
-
             let _scope_guard = scope.install();
             let entry = scope
                 .entry()
@@ -317,7 +316,6 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
             let mut module_dependencies = BTreeMap::<String, BTreeSet<String>>::new();
             let mut std_queue = VecDeque::<String>::new();
             let mut qualified_refs = std::collections::BTreeMap::new();
-            let std_fn_names = std_exported_fn_names();
 
             for captured in scope.linked_sources() {
                 let parsed = match crate::parser::parse_for_eval(captured.source()) {
@@ -364,7 +362,6 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                     &imports,
                     &scope,
                     &linked_owners,
-                    &std_fn_names,
                     &mut bindings,
                 );
                 bind_bare_imported_values(
@@ -444,10 +441,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                 if !loaded_std.insert(owner.clone()) {
                     continue;
                 }
-                let Some((_, source)) = STDLIB_MIND_SOURCES
-                    .iter()
-                    .find(|(module_path, _)| *module_path == owner)
-                else {
+                let Some(source) = crate::project::stdlib::std_source(&owner) else {
                     return EvalSupport {
                         setup_error: Some(format!("unresolved bundled evaluator module `{owner}`")),
                         ..EvalSupport::default()
@@ -505,14 +499,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                         ..EvalSupport::default()
                     };
                 }
-                bind_bare_imported_calls(
-                    &owner,
-                    &imports,
-                    &scope,
-                    &linked_owners,
-                    &std_fn_names,
-                    &mut bindings,
-                );
+                bind_bare_imported_calls(&owner, &imports, &scope, &linked_owners, &mut bindings);
                 let mut module = parsed.module;
                 qualify_module_declarations(&mut module, &owner, true);
                 linked_modules.insert(owner, module);
@@ -563,12 +550,24 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
                 append_declarations(&linked_modules[&owner].items, &mut imported_items);
             }
 
+            let project_std = scope
+                .sources()
+                .iter()
+                .map(|source| {
+                    source
+                        .module_path()
+                        .trim_start_matches("crate.")
+                        .to_string()
+                })
+                .filter(|path| path.starts_with("std."))
+                .collect();
             EvalSupport {
                 imported_items,
                 bindings,
                 entry_owner,
                 setup_error: None,
                 enums: Some(scope.enums().clone()),
+                project_std,
             }
         }
     }

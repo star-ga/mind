@@ -28,8 +28,6 @@
 //! names the `std.sha256` module even though that module also exports a
 //! `sha256` function.
 
-use std::sync::OnceLock;
-
 use super::{FxSet, Resolver, Unresolved, cse, qvalue};
 use crate::ast::{Literal, Node, Span};
 
@@ -39,25 +37,6 @@ pub(super) fn only_fns(fns: &FxSet, non_fns: &FxSet) -> FxSet {
         .filter(|name| !non_fns.contains(*name))
         .cloned()
         .collect()
-}
-
-/// Std-surface names that are functions and never a const, `let`, type, or
-/// enum variant anywhere in the bundled std sources. Built once, like the
-/// std export-name cache it refines.
-fn stdlib_fn_only_names() -> &'static FxSet {
-    static CACHE: OnceLock<FxSet> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        #[allow(unused_mut)]
-        let (mut fns, mut values) = (FxSet::default(), FxSet::default());
-        #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-        for (_, module) in crate::project::stdlib::parsed_stdlib_modules() {
-            super::collect_non_fn_decl_names(&module, &mut values, &mut fns);
-            let mut enums = super::FxMap::default();
-            super::collect_enum_variants(&module, &mut enums);
-            values.extend(enums.into_values().flatten());
-        }
-        only_fns(&fns, &values)
-    })
 }
 
 /// Does a project enum (any module) declare a variant spelled `name`? Such a
@@ -122,7 +101,10 @@ impl Resolver<'_> {
         {
             return false;
         }
-        let is_fn = self.syms.fns.contains(name) || stdlib_fn_only_names().contains(name);
+        let is_fn = self.syms.fns.contains(name)
+            || self.syms.std_fns.contains(name)
+            || (super::std_names::implicit().fn_only.contains(name)
+                && !self.syms.std_values.contains(name));
         is_fn
             && !qvalue(span, name)
             && (!cse(name) || visible_sibling_fn(name))

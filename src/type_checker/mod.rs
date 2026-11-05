@@ -43,6 +43,8 @@ use type_display::{
 };
 #[cfg(feature = "std-surface")]
 mod slice_abi;
+#[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+mod std_imports;
 #[cfg(feature = "std-surface")]
 mod stdlib_signatures;
 #[cfg(feature = "std-surface")]
@@ -4362,11 +4364,13 @@ pub fn cm_imported_fn_param_types(name: &str) -> Option<Vec<crate::ast::TypeAnn>
 /// define locally) so a cross-module `func.call` emits the callee's DECLARED
 /// scalar ABI — the fix for an f64-returning imported fn defaulting to the
 /// legacy `(i64) -> i64` call shape. A single translation unit has no active
-/// project table, so it receives the bundled std-surface signatures from the
-/// same parsed-declaration metadata route. The `--no-default-features` build
-/// has neither path.
+/// project table, so it receives the signatures of the bundled std modules
+/// `program` loads from the same parsed-declaration metadata route. The
+/// `--no-default-features` build has neither path.
 #[cfg(feature = "cross-module-imports")]
-pub fn cm_all_imported_fn_signatures() -> Vec<(
+pub fn cm_all_imported_fn_signatures(
+    program: &crate::ast::Module,
+) -> Vec<(
     String,
     Vec<crate::ast::TypeAnn>,
     Option<crate::ast::TypeAnn>,
@@ -4383,7 +4387,7 @@ pub fn cm_all_imported_fn_signatures() -> Vec<(
         );
     }
     if !active_present {
-        signatures.extend(bundled_std_fn_signatures().iter().cloned());
+        signatures.extend(bundled_std_fn_signatures(program).cloned());
     }
     signatures
 }
@@ -4502,6 +4506,10 @@ pub fn check_module_types_in_file(
     crate::diagnostics::reset_line_index_cache();
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
+    #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+    std_imports::check_placement(module, src, file, &mut errors);
+    #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+    let _std_scope = resolve::std_names::FileScope::install(module);
     #[cfg(feature = "std-surface")]
     extern_declarations::check(&module.items, src, file, &mut errors);
     #[cfg(feature = "cross-module-imports")]
@@ -4905,6 +4913,8 @@ fn check_module_types_in_file_impl(
             // Default build: byte-identical no-op (the arm compiles to
             // a discarded pattern binding, zero runtime cost).
             Node::Import { path, span, .. } => {
+                #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+                std_imports::check(path, *span, src, file, &mut errs);
                 #[cfg(feature = "cross-module-imports")]
                 cm_inject_imported_symbols(&mut tenv, path);
                 // FAIL LOUD at the import/std-path resolution layer: a

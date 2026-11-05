@@ -23,9 +23,9 @@
 
 use libmind::parser;
 
-/// The `::` path form parses and type-checks with no error-severity diagnostics
-/// (a benign `unused_import` warning is allowed — `mindc check` treats warnings
-/// as non-fatal).
+/// The `::` path form parses and, for a shipped module, type-checks with no
+/// error-severity diagnostics (a benign `unused_import` warning is allowed —
+/// `mindc check` treats warnings as non-fatal).
 ///
 /// Gated to the std-resolving feature configs: a binary built with NO std
 /// surface *correctly* rejects a `use std::…` import with E2007 (fail-loud, by
@@ -40,8 +40,8 @@ fn use_path_form_parses_and_checks() {
     // error under `--no-default-features -D warnings`. One gate, not two.
     use libmind::type_checker;
 
-    let src = "use std::fixed_point::Q16_16;\n\npub fn main() -> i64 {\n    return 0\n}\n";
-    let m = parser::parse(src).expect("`use a::b::C;` must parse");
+    let src = "use std::keccak;\n\npub fn main() -> i64 {\n    return 0\n}\n";
+    let m = parser::parse(src).expect("`use a::b;` must parse");
     let env = type_checker::TypeEnv::default();
     let diags = type_checker::check_module_types(&m, src, &env);
     let errors: Vec<_> = diags
@@ -49,6 +49,18 @@ fn use_path_form_parses_and_checks() {
         .filter(|d| format!("{d:?}").to_lowercase().contains("error"))
         .collect();
     assert!(errors.is_empty(), "unexpected type errors: {errors:?}");
+
+    // The multi-segment `::` form still parses. Its path names no shipped std
+    // module (an import path names a module: spec/v1.0/language.md, "Module-
+    // qualified references"), so checking it reports E2002 at the import
+    // instead of accepting an import that resolves nothing.
+    let unknown = "use std::fixed_point::Q16_16;\n\npub fn main() -> i64 {\n    return 0\n}\n";
+    let m = parser::parse(unknown).expect("`use a::b::C;` must parse");
+    let diags = type_checker::check_module_types(&m, unknown, &env);
+    assert!(
+        diags.iter().any(|d| format!("{d:?}").contains("E2002")),
+        "an import of a std path that does not ship must report E2002: {diags:?}"
+    );
 }
 
 /// The dotted form (the pre-existing spelling) still parses — the `::` support
