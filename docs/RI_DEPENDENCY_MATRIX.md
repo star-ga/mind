@@ -296,7 +296,16 @@ contract, `examples/mindc_mind/testdata/stdlib_manifest.txt`.
 `sha512`. **19 modules resolve on NEITHER path** — the whole TLS 1.3 / crypto surface
 (`aes_gcm`, `chacha20_poly1305`, `ecdsa_p256`, `hkdf`, `hpack`, `http2_frame`,
 `keccak`, `mlkem768`, `rsa_pss`, `tls13_*`, `x25519`, `x25519mlkem768`, `x509`) plus
-`detmath`, `llvm`, `mlir`. `use std.x25519` resolves nowhere today.
+`detmath`, `llvm`, `mlir`. `use std.x25519` resolved nowhere then.
+
+**Update (2026-11-02):** `STDLIB_MIND_SOURCES` now has a row for every `std/*.mind`
+(43 of 43), so `import std.<m>` resolves for every shipped module under `mindc check`,
+`mindc test` and `mindc build`; `tests/std_bundled_module_table.rs` enumerates `std/`
+and fails on a missing row, and an import of a `std` path that names no shipped module
+is refused at the import (E2002). A compile parses only the 24 implicit modules (the
+pre-table set, whose names resolve with no import) plus what it imports. The native
+seed blob is unchanged (21): `--backend native` refuses an import of any other shipped
+module at the import (`scope.std_module_not_in_native_seed`) until a reseed.
 
 **Structural fact this shares with row 12:** the defect was the same one the
 2026-08-21 audit found in `admit_binop` and the tensor-builtin fix found in
@@ -320,8 +329,11 @@ build — cannot land as a quiet one-line edit.
    resolve `use std.<m>`; it unconditionally concatenates all 21 seed modules into
    every compile, whether the program imports them or not. General resolution means
    import-driven selection, which changes the compiled bytes → gated behind a reseed.
-2. **The 19 unreachable modules** must become reachable by *some* path before "the
-   stdlib links" is true in the ordinary sense.
+2. **The 19 formerly unreachable modules** now resolve through the bundled table
+   (2026-11-02) and are members of `substrate_link::SUBSTRATE_MODULES`, so the MLIR
+   build path links them. `std.cli` and `std.io` (bundled before) are still not
+   linked; `std.time` is a member that cannot compile until `__mind_now_ns` is
+   registered.
 3. **`STDLIB_MIND_SOURCES` is still a hand-written list** — now drift-checked against
    the manifest in both directions, but not yet *generated* from it. Making it
    data-driven needs `build.rs` codegen (`include_str!` needs literal paths), which is

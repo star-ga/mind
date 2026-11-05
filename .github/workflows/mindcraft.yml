@@ -84,10 +84,10 @@ jobs:
         # downstream repo with multi-module MIND source would see this
         # reusable workflow report false-positive errors that `mindc build`
         # does not.
-        run: cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc
+        run: cargo build --locked --release --no-default-features --features "std-surface cross-module-imports" --bin mindc
 
       - name: Run mindc check
         run: |
           PATHS="${{ inputs.paths }}"
-          cargo run --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
+          cargo run --locked --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
             check $PATHS

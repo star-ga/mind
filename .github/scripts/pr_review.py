@@ -67,13 +67,18 @@ def ask_model(system: str, user: str) -> str:
     with no tools and one turn; without it, the workload-identity API path is used. Any failure raises (fail closed)."""
     if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         import subprocess
+        # The job also exports the workload-identity ANTHROPIC_* variables; the CLI would prefer them over the token.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}
+        import tempfile
+        # No tools and no checkout: a tool call would use the single allowed turn ("Reached max turns").
         run = subprocess.run(
-            ["claude", "-p", "--model", "claude-sonnet-5-5", "--max-turns", "1", "--output-format", "text",
+            ["claude", "-p", "--model", "claude-sonnet-5-5", "--max-turns", "1", "--tools", "", "--output-format", "text",
              "--append-system-prompt", system],
-            input=user, capture_output=True, text=True, timeout=900, check=False,
+            input=user, capture_output=True, text=True, timeout=900, check=False, env=env, cwd=tempfile.mkdtemp(),
         )
         if run.returncode != 0 or not run.stdout.strip():
-            raise SystemExit(f"review model call failed (rc={run.returncode}): {run.stderr.strip()[:500]}")
+            detail = (run.stderr.strip() or run.stdout.strip())[:500]
+            raise SystemExit(f"review model call failed (rc={run.returncode}): {redact(detail)}")
         return run.stdout.strip()
     import anthropic
     msg = anthropic.Anthropic().messages.create(

@@ -24,7 +24,7 @@ run_tier_cargo() {
     tier_env+=(MIND_BENCH_REQUIRE=1)
   fi
   env "${tier_env[@]}" cargo test --no-default-features --features "$features" \
-    --no-fail-fast
+    --no-fail-fast --locked
 }
 
 # ---------------------------------------------------------------------------

@@ -238,7 +238,7 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
     });
 
     #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
-    for (fname, _params, ret) in crate::type_checker::cm_all_imported_fn_signatures() {
+    for (fname, _params, ret) in crate::type_checker::cm_all_imported_fn_signatures(module) {
         if local_fn_names.contains(&fname) {
             continue;
         }

@@ -166,20 +166,19 @@ impl Registry {
     /// `Ok(Some(key))` when exactly one import exports it and it is an enum,
     /// `Ok(None)` when exactly one exports it as a non-enum type, and
     /// `Err(exporters)` with the number of exporters (0, or 2 and more)
-    /// otherwise.
+    /// otherwise. Each import counts through its direct key or, failing that,
+    /// the terminal-segment fallback, exactly as `bare_visible` and
+    /// `bare_type_is_ambiguous` count it, so all three agree on ambiguity.
     fn imported_enum_key(&self, name: &str, imports: &[String]) -> Result<Option<String>, usize> {
-        let mut owners: BTreeSet<String> = imports
-            .iter()
-            .map(|import| format!("{}.{name}", canonical_module(import)))
-            .filter(|source| self.exported_types.contains(source))
-            .collect();
-        if owners.is_empty() {
-            for import in imports {
-                if let Some(source) =
-                    self.imported_exported_source(import, name, std::slice::from_ref(import))
-                {
-                    owners.insert(source);
-                }
+        let mut owners = BTreeSet::new();
+        for import in imports {
+            let direct = format!("{}.{name}", canonical_module(import));
+            if self.exported_types.contains(&direct) {
+                owners.insert(direct);
+            } else if let Some(source) =
+                self.imported_exported_source(import, name, std::slice::from_ref(import))
+            {
+                owners.insert(source);
             }
         }
         match owners.first() {

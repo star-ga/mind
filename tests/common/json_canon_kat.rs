@@ -84,7 +84,10 @@ pub fn check_properties(f: JsonCanonFn, id: &str) -> i64 {
     );
 
     // Property 2: depth cap refused — a document nested deeper than the
-    // parser/dump cap must not produce a dump.
+    // parser cap must not produce a dump. The parser refuses it before the
+    // dump runs (the driver returns 0 for either refusal), so this pins the
+    // parser cap; tests/std_surface_json_canon.rs pins the dump-side cap with
+    // arrays nested in code.
     let deep = format!("{}{}", "[".repeat(600), "]".repeat(600));
     let hd = unsafe { f(deep.as_ptr() as i64, deep.len() as i64) };
     assert_eq!(
