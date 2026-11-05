@@ -3,7 +3,6 @@
 .mind-build.lock
 **/*.rs.bk
 *.pdb
-Cargo.lock
 
 # IDE
 .vscode/

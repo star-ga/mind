@@ -135,3 +135,32 @@ fn a_short_call_inside_a_while_body_is_refused() {
         3,
     );
 }
+
+#[test]
+fn a_short_call_inside_an_else_if_branch_is_refused() {
+    assert_refused(
+        "short_in_else_if",
+        "fn main() -> i64 {\n    let s = \"ok\\n\";\n    if s.len > 5 {\n        return 1\n    } else if s.len > 0 {\n        __mind_write(1, s.addr, s.len);\n    }\n    return 0\n}\n",
+        3,
+    );
+}
+
+#[test]
+fn a_short_call_in_a_while_condition_is_refused() {
+    assert_refused(
+        "short_in_while_cond",
+        "fn main() -> i64 {\n    let s = \"ok\\n\";\n    let mut i: i64 = 0;\n    while __mind_write(1, s.addr, s.len) > 100 {\n        i = i + 1;\n    }\n    return i\n}\n",
+        3,
+    );
+}
+
+#[test]
+fn a_short_call_nested_as_an_argument_is_refused() {
+    // The type checker reports this shape as well; the build refuses it either
+    // way.
+    assert_refused(
+        "short_as_argument",
+        "fn id(x: i64) -> i64 {\n    return x\n}\n\nfn main() -> i64 {\n    let s = \"ok\\n\";\n    let n = id(__mind_write(1, s.addr, s.len));\n    return n\n}\n",
+        3,
+    );
+}

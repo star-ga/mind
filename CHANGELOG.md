@@ -69,6 +69,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fixture matrix through `--emit-shared`.
 - `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
   instead of carrying an identical copy.
+- **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
+  dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
+  compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
+  therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
+  `release_profile` job builds the exact release.yml command on native x86_64 and aarch64 runners,
+  runs the post-build smoke action, and drives the packaged binary through
+  `tests/evidence_release_smoke.rs`: unsigned bytes equal the committed fixture with the signing
+  features compiled in (release set) or out (std-surface test rows), the public TEST seeds sign, the
+  signature verifies under pinned keys, and stripping either leg is refused. R8 fails when the job's
+  `cargo build` differs from release.yml's in any argument or its signing smoke loses the release
+  feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
+  leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
+  its feature sets never resolve fips204 or fips205.
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the

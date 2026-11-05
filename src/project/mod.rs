@@ -82,6 +82,11 @@ pub use sources::{collect_sources, resolve_sources};
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 pub mod stdlib;
 
+/// Struct schemas as lowering records them, shared by the project registry and
+/// a single translation unit that has none.
+#[cfg(feature = "std-surface")]
+pub(crate) mod std_struct_schema;
+
 /// Native cross-module substrate linking (`std.sha256`, `std.io_canon`, …)
 /// for shared-library emission. Shared by the manifest cdylib path below and
 /// the flat `mindc <file> --emit-shared` path in `src/bin/mindc.rs`.
@@ -1585,9 +1590,8 @@ fn compile_sources(
         } else {
             entry_path.parent().unwrap_or(project_root)
         };
-        // RFC 0005 Phase C — the bundled std modules the project loads
-        // (the implicit set plus what its sources import) come first in the
-        // parsed-modules list, ahead of the project's own src tree. This
+        // RFC 0005 Phase C — the bundled std modules the project loads (implicit set + its imports)
+        // come first in the parsed-modules list, ahead of the project's own src tree. This
         // is what makes `use std.vec` work in a downstream `mind
         // build` without the user vendoring std/*.mind themselves.
         // The bundle is i64-ABI and uses only the seven `__mind_*`
@@ -2115,15 +2119,11 @@ fn collect_global_enum_item(
     // field, e.g. compile.mind's `analyzed.determinism`).
     #[cfg(feature = "std-surface")]
     if let crate::ast::Node::StructDef { name, fields, .. } = item {
-        let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-        let field_types: Vec<crate::ast::TypeAnn> =
-            fields.iter().map(|f| aliases.resolve(&f.ty)).collect();
-        enums
-            .structs
-            .insert(name.clone(), (field_names.clone(), field_types.clone()));
+        let schema = std_struct_schema::struct_schema(fields, aliases);
+        enums.structs.insert(name.clone(), schema.clone());
         enums
             .qualified_structs
-            .insert(format!("{module_path}.{name}"), (field_names, field_types));
+            .insert(format!("{module_path}.{name}"), schema);
     }
     // Every fn → its declared return type, for `let x = f(...)` RHS type
     // inference (`let raw = decorator_arg_string(d); raw.split(…)`).

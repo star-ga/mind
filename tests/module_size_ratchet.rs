@@ -128,7 +128,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/doc/mod.rs", 888),
     ("src/eval/abi_gate.rs", 1036),
     ("src/eval/autodiff.rs", 1643),
-    ("src/eval/lower.rs", 12683),
+    ("src/eval/lower.rs", 12619),
     ("src/eval/mlir_build.rs", 927),
     ("src/eval/mlir_export.rs", 1447),
     ("src/eval/mod.rs", 3918),

@@ -102,13 +102,10 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
         .iter()
         .filter_map(|instr| match instr {
             #[cfg(feature = "std-surface")]
-            Instr::ExternFnDecl { name, .. } => {
-                if module.imported_extern_names.contains(name) {
-                    None
-                } else {
-                    Some(name.as_str())
-                }
-            }
+            Instr::ExternFnDecl { name, .. } => match &module.imported_extern_names {
+                Some(imported) if imported.contains(name) => None,
+                _ => Some(name.as_str()),
+            },
             _ => None,
         })
         .collect();
@@ -119,6 +116,19 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
     // Validate the complete requested set before mutating the output. A bad
     // name after a valid one must not leave a partial MLIR module behind.
     for name in &names {
+        // A module decoded from mic@3 cannot tell its own foreign declarations
+        // from imported ones, so it may export neither.
+        #[cfg(feature = "std-surface")]
+        if module.imported_extern_names.is_none()
+            && foreign_names.contains(name.as_str())
+            && !callable_names.contains(name.as_str())
+        {
+            return Err(format!(
+                "export `{name}` names a foreign declaration in a module decoded from \
+                 mic@3, which does not record whether it is imported; lower the module \
+                 from source to export it"
+            ));
+        }
         if callable_names.contains(name.as_str()) || foreign_names.contains(name.as_str()) {
             if !is_c_symbol_safe(name) {
                 return Err(format!(
@@ -265,7 +275,9 @@ mod tests {
     #[test]
     fn imported_extern_is_not_this_modules_foreign_export() {
         let mut m = module_with(&["open"], &[]);
-        m.imported_extern_names.insert("open".to_string());
+        m.imported_extern_names
+            .get_or_insert_default()
+            .insert("open".to_string());
         m.instrs.push(Instr::ExternFnDecl {
             name: "open".to_string(),
             param_types: vec![
@@ -284,6 +296,29 @@ mod tests {
             err.contains("does not name a lowered function"),
             "an imported extern must not satisfy export {{ open }}: {err}"
         );
+        assert!(out.is_empty(), "refused export must emit no wrapper");
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn a_decoded_module_may_not_export_a_foreign_declaration() {
+        let mut live = module_with(&["echo_i16"], &[]);
+        live.instrs.push(Instr::ExternFnDecl {
+            name: "echo_i16".to_string(),
+            param_types: vec!["i16".to_string()],
+            ret_type: Some("i16".to_string()),
+            is_varargs: false,
+            vararg_hints: Vec::new(),
+            callconv: crate::ast::CallConv::C,
+        });
+        let mut out = String::new();
+        emit_c_export_wrappers(&mut out, &live).expect("the live module exports its own extern");
+        let bytes = crate::ir::compact::emit_mic3(&live);
+        let decoded = crate::ir::compact::parse_mic3(&bytes).expect("mic@3 round trip");
+        assert!(decoded.exports.contains("echo_i16"));
+        let mut out = String::new();
+        let err = emit_c_export_wrappers(&mut out, &decoded).unwrap_err();
+        assert!(err.contains("decoded from"), "{err}");
         assert!(out.is_empty(), "refused export must emit no wrapper");
     }
 
