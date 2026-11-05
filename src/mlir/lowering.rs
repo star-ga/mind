@@ -4091,24 +4091,9 @@ impl LoweringContext {
                     .map(|a| (a.init_id, a.body_name.clone(), a.post_id))
                     .collect();
 
-                // A loop-carried variable is a proven byte offset when its
-                // pre-loop value and every body update are provenance-free
-                // (a constant induction counter, say). Re-assert that fact in
-                // the cond/body sub-contexts after `forget` drops the stale
-                // initializer facts, so an address `base + counter` still
-                // lowers to a byte GEP on `base` rather than an opaque sum.
-                let carried_offsets: Vec<ValueId> = {
-                    let body_offsets = self.memory_addresses.offsets_after(body);
-                    loop_args
-                        .iter()
-                        .filter(|a| {
-                            let init = ValueId(a.init_id);
-                            self.memory_addresses.is_offset(&init)
-                                && body_offsets.contains(&ValueId(a.post_id))
-                        })
-                        .map(|a| ValueId(a.init_id))
-                        .collect()
-                };
+                // Loop-carried proven offsets survive `forget` (see `carried_offsets`).
+                let carried_offsets =
+                    self.carried_offsets(body, loop_args.iter().map(|a| (a.init_id, a.post_id)));
 
                 // Entry branch: carry initial values into the header, each
                 // operand typed by its loop-carried kind (f64/f32/i64).

@@ -79,6 +79,26 @@ impl MemoryAddresses {
 }
 
 impl LoweringContext {
+    /// A loop-carried variable is a proven byte offset when its pre-loop value and every body update
+    /// are provenance-free (a constant induction counter, say). The cond/body sub-contexts re-assert
+    /// that fact after `forget` drops the stale initializer facts, so an address `base + counter`
+    /// still lowers to a byte GEP on `base` rather than an opaque sum. `carried` yields
+    /// `(init_id, post_id)` per loop-carried value.
+    pub(super) fn carried_offsets(
+        &self,
+        body: &[Instr],
+        carried: impl Iterator<Item = (usize, usize)>,
+    ) -> Vec<ValueId> {
+        let body_offsets = self.memory_addresses.offsets_after(body);
+        carried
+            .filter(|&(init, post)| {
+                self.memory_addresses.is_offset(&ValueId(init))
+                    && body_offsets.contains(&ValueId(post))
+            })
+            .map(|(init, _)| ValueId(init))
+            .collect()
+    }
+
     pub(super) fn record_memory_address(&mut self, instr: &Instr) {
         match instr {
             Instr::ConstI64(id, _) => {
