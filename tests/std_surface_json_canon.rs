@@ -164,7 +164,18 @@ mod kat {
                  \x20   json_canon.jv_dump_pretty_py(h)\n\
                  }\n\
                  pub fn smoke_jv_str_addr(r: i64) -> i64 { __mind_load_i64(r + 0) }\n\
-                 pub fn smoke_jv_str_len(r: i64) -> i64 { __mind_load_i64(r + 8) }\n";
+                 pub fn smoke_jv_str_len(r: i64) -> i64 { __mind_load_i64(r + 8) }\n\
+                 pub fn smoke_jv_nested_arrays(levels: i64) -> i64 {\n\
+                 \x20   let mut h: i64 = json.jv_make_array();\n\
+                 \x20   let mut i: i64 = 1;\n\
+                 \x20   while i < levels {\n\
+                 \x20       let outer: i64 = json.jv_make_array();\n\
+                 \x20       let _ = json.jv_arr_push(outer, h);\n\
+                 \x20       h = outer;\n\
+                 \x20       i = i + 1;\n\
+                 \x20   }\n\
+                 \x20   h\n\
+                 }\n";
             let driver_path = out_dir.join("json_canon_kat.mind");
             let so_path = out_dir.join("libjson_canon_kat.so");
             std::fs::write(&driver_path, driver_src).expect("write driver MIND");
@@ -191,6 +202,7 @@ mod kat {
         pretty: unsafe extern "C" fn(i64) -> i64,
         str_addr: unsafe extern "C" fn(i64) -> i64,
         str_len: unsafe extern "C" fn(i64) -> i64,
+        nested_arrays: unsafe extern "C" fn(i64) -> i64,
     }
 
     fn open_ctx(so: &PathBuf) -> Ctx {
@@ -206,6 +218,8 @@ mod kat {
                 *lib.get(b"smoke_jv_str_addr\0").unwrap();
             let str_len: unsafe extern "C" fn(i64) -> i64 =
                 *lib.get(b"smoke_jv_str_len\0").unwrap();
+            let nested_arrays: unsafe extern "C" fn(i64) -> i64 =
+                *lib.get(b"smoke_jv_nested_arrays\0").unwrap();
             Ctx {
                 _lib: lib,
                 parse,
@@ -213,13 +227,16 @@ mod kat {
                 pretty,
                 str_addr,
                 str_len,
+                nested_arrays,
             }
         }
     }
 
     impl Ctx {
         fn parse(&self, src: &str) -> i64 {
-            let b = src.as_bytes();
+            self.parse_bytes(src.as_bytes())
+        }
+        fn parse_bytes(&self, b: &[u8]) -> i64 {
             unsafe { (self.parse)(b.as_ptr() as i64, b.len() as i64) }
         }
         fn record_bytes(&self, rec: i64) -> Vec<u8> {
@@ -342,5 +359,122 @@ mod kat {
                 "jv_dump_pretty_py must refuse non-integral number in {input}"
             );
         }
+    }
+
+    /// Well-formed raw UTF-8 at every encoding boundary is accepted and escaped,
+    /// and raw multi-byte keys sort by UTF-16 code units: the positive control
+    /// for the malformed-input refusal below.
+    #[test]
+    fn raw_utf8_at_every_boundary_is_accepted() {
+        let Some(so) = build_driver() else {
+            return;
+        };
+        let ctx = open_ctx(so);
+        let doc = b"[\"\xc2\x80\",\"\xe0\xa0\x80\",\"\xed\x9f\xbf\",\"\xee\x80\x80\",\
+                    \"\xef\xbf\xbf\",\"\xf0\x90\x80\x80\",\"\xf4\x8f\xbf\xbf\"]";
+        let h = ctx.parse_bytes(doc);
+        assert_ne!(h, 0, "well-formed raw UTF-8 must parse");
+        assert_eq!(
+            ctx.canon_bytes(h).expect("well-formed raw UTF-8 must dump"),
+            br#"["\u0080","\u0800","\ud7ff","\ue000","\uffff","\ud800\udc00","\udbff\udfff"]"#
+        );
+        let a = ctx.parse_bytes(b"{\"\xee\x80\x80\":2,\"\xf0\x9f\x98\x80\":1,\"\xc3\xa9\":3}");
+        let b = ctx.parse_bytes(b"{\"\xc3\xa9\":3,\"\xf0\x9f\x98\x80\":1,\"\xee\x80\x80\":2}");
+        let want: &[u8] = br#"{"\u00e9":3,"\ud83d\ude00":1,"\ue000":2}"#;
+        assert_eq!(ctx.canon_bytes(a).expect("raw keys A must dump"), want);
+        assert_eq!(ctx.canon_bytes(b).expect("raw keys B must dump"), want);
+    }
+
+    /// The parser copies raw string bytes through unchecked, so a key can hold
+    /// bytes that are not UTF-8. Two such keys can decode to the code points of
+    /// another key (an overlong `A`, an encoded lone surrogate next to the
+    /// supplementary character sharing its lead unit); the comparator then
+    /// calls them equal and the dump follows insertion order. Both orders must
+    /// be refused, never dumped differently.
+    #[test]
+    fn malformed_utf8_is_refused() {
+        let Some(so) = build_driver() else {
+            return;
+        };
+        let ctx = open_ctx(so);
+        let tied_keys: [(&[u8], &[u8]); 2] =
+            [(b"A", b"\xc1\x81"), (b"\xed\xa0\x80", b"\xf0\x90\x80\x80")];
+        for (k1, k2) in tied_keys {
+            let doc = |first: &[u8], second: &[u8]| {
+                [&b"{\""[..], first, b"\":1,\"", second, b"\":2}"].concat()
+            };
+            for src in [doc(k1, k2), doc(k2, k1)] {
+                let h = ctx.parse_bytes(&src);
+                assert_ne!(h, 0, "the parser accepts {src:?}");
+                assert_eq!(
+                    ctx.canon_bytes(h),
+                    None,
+                    "jv_dump_canonical must refuse malformed UTF-8 in {src:?}"
+                );
+                assert_eq!(
+                    ctx.pretty_bytes(h),
+                    None,
+                    "jv_dump_pretty_py must refuse malformed UTF-8 in {src:?}"
+                );
+            }
+        }
+        let bad_values: [&[u8]; 7] = [
+            b"\x80",             // stray continuation byte
+            b"\xc0\x80",         // overlong NUL
+            b"\xe0\x9f\xbf",     // overlong U+07FF
+            b"\xed\xbf\xbf",     // encoded trail surrogate
+            b"\xf4\x90\x80\x80", // above U+10FFFF
+            b"\xe2\x82",         // truncated sequence
+            b"\xf8\x88\x80\x80", // five-byte lead
+        ];
+        for bad in bad_values {
+            let src = [&b"{\"k\":\""[..], bad, b"\"}"].concat();
+            let h = ctx.parse_bytes(&src);
+            assert_ne!(h, 0, "the parser accepts {src:?}");
+            assert_eq!(
+                ctx.canon_bytes(h),
+                None,
+                "jv_dump_canonical must refuse malformed UTF-8 in {src:?}"
+            );
+        }
+    }
+
+    /// The dump's own depth cap, reached with a value the parser never builds.
+    /// The parser refuses nesting past 512 itself, so a parsed document cannot
+    /// show the dump-side refusal; arrays nested in code reach it.
+    #[test]
+    fn dump_depth_cap_is_pinned_on_the_dump_side() {
+        let Some(so) = build_driver() else {
+            return;
+        };
+        let ctx = open_ctx(so);
+        let nested = |levels: usize| format!("{}{}", "[".repeat(levels), "]".repeat(levels));
+        let at_cap = ctx.parse(&nested(513));
+        assert_ne!(
+            at_cap, 0,
+            "the parser accepts 513 levels (innermost depth 512)"
+        );
+        assert_eq!(ctx.parse(&nested(514)), 0, "the parser refuses 514 levels");
+        assert_eq!(
+            ctx.canon_bytes(at_cap).expect("513 parsed levels dump"),
+            nested(513).as_bytes()
+        );
+        let built_at_cap = unsafe { (ctx.nested_arrays)(513) };
+        let built_over_cap = unsafe { (ctx.nested_arrays)(514) };
+        assert_eq!(
+            ctx.canon_bytes(built_at_cap)
+                .expect("513 built levels dump"),
+            nested(513).as_bytes()
+        );
+        assert_eq!(
+            ctx.canon_bytes(built_over_cap),
+            None,
+            "jv_dump_canonical must refuse 514 levels (innermost depth 513)"
+        );
+        assert_eq!(
+            ctx.pretty_bytes(built_over_cap),
+            None,
+            "jv_dump_pretty_py must refuse 514 levels (innermost depth 513)"
+        );
     }
 }

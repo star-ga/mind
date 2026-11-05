@@ -167,7 +167,7 @@ jobs:
           # here and leave a truncated/empty bench.out for the gate to read --
           # the step named "Run criterion bench" asserting that it ran at all.
           set -eo pipefail
-          cargo bench --bench compiler --no-default-features -- \
+          cargo bench --bench compiler --locked --no-default-features -- \
             --warm-up-time 3 \
             --measurement-time 8 \
             --output-format bencher \
@@ -331,10 +331,11 @@ jobs:
 
       - name: Build the base and candidate mindc (release, same toolchain)
         # Both arms are `cargo build --release` with the same features in this job,
-        # so the same rustc and LLVM 20 build them. Cargo.lock is not committed in
-        # this repository (so `--locked` cannot apply): the base is built against
-        # the candidate's freshly resolved lockfile, so both arms share dependency
-        # versions wherever their manifests agree. Not the bench-profile mindc
+        # so the same rustc and LLVM 20 build them. The candidate builds against its
+        # committed Cargo.lock with `--locked`. The base is built against a copy of
+        # that same lockfile, so both arms share dependency versions wherever their
+        # manifests agree; it cannot pass `--locked`, because an older base manifest
+        # may need the copied lock adjusted (or predate the lockfile). Not the bench-profile mindc
         # `cargo bench` builds for itself (dev-dependency feature unification makes
         # that a different binary), so both are copied out before the bench.
         # A base that does not build is exit 4: a wiring defect, never a pass.
@@ -343,9 +344,10 @@ jobs:
         run: |
           set -o pipefail
           features="mlir-build std-surface cross-module-imports"
-          cargo build --release --features "$features" --bin mindc
+          cargo build --release --features "$features" --bin mindc --locked
           git worktree add --detach "$RUNNER_TEMP/e2e-base" "$BASE_SHA" || { echo "::error::cannot check out the base $BASE_SHA"; exit 4; }
           cp Cargo.lock "$RUNNER_TEMP/e2e-base/Cargo.lock"
+          # lockfile-exempt: the base is an older commit built against the candidate's copied lockfile, which its manifest may not match
           if ! (cd "$RUNNER_TEMP/e2e-base" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/e2e-base-target" \
                 cargo build --release --features "$features" --bin mindc); then
             echo "::error::the base $BASE_SHA does not build: no paired verdict is possible (wiring defect, not a pass)"
@@ -374,7 +376,7 @@ jobs:
             # `|| brc=$?` keeps the step's `bash -e` from exiting with cargo's own
             # code; pipefail makes it cargo's status, not tee's.
             brc=0
-            cargo bench --bench compiler \
+            cargo bench --bench compiler --locked \
               --features "mlir-build std-surface cross-module-imports" -- e2e_ \
               | tee bench-e2e.out || brc=$?
             if [ "$brc" -ne 0 ]; then

@@ -163,7 +163,7 @@ jobs:
 
       - name: Build mindc (MLIR backend)
         run: |
-          cargo build --release --no-default-features \
+          cargo build --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" --bin mindc
 
       - name: Run all crypto/TLS RFC vector drivers
