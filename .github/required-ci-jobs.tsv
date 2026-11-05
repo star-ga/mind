@@ -36,6 +36,7 @@
 #     or: <workflow file>:<job id> TAB <check-run name prefix>
 pqc_hybrid_signing	PQC hybrid signing controls
 pqc_hybrid_cli	PQC hybrid signing CLI
+release_profile	Release profile pre-tag smoke (
 build_test	Build & Test
 cross_substrate_identity	Cross-substrate bit-identity (
 mindfuzz_cross_runner_identity	Fuzzer cross-runner mic@3 identity (avx2 == neon) (LLVM 
