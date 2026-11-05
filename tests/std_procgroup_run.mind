@@ -59,12 +59,19 @@ fn set_case(c: i64) -> i64 {
     0
 }
 
+// Every digit of PG_CASE counts: reading only the first sent case 13's child
+// to case 1, so the grandchild never ran. Unset reads as 0.
 fn case_of_env() -> i64 {
     let rec: i64 = proc_getenv(cstr("PG_CASE"));
-    if __mind_load_i64(rec + 8) == 0 {
-        return 0;
+    let a: i64 = __mind_load_i64(rec + 0);
+    let n: i64 = __mind_load_i64(rec + 8);
+    let mut v: i64 = 0;
+    let mut k: i64 = 0;
+    while k < n {
+        v = v * 10 + (__mind_load_i8(a + k) - 48);
+        k = k + 1;
     }
-    __mind_load_i8(__mind_load_i64(rec + 0)) - 48
+    v
 }
 
 // Write `n` bytes of 'a' to stdout.
