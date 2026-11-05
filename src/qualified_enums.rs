@@ -18,6 +18,17 @@ use std::collections::BTreeSet;
 use crate::ast::TypeAnn;
 
 #[cfg(feature = "cross-module-imports")]
+mod alias_closure;
+#[cfg(feature = "cross-module-imports")]
+mod canonical_types;
+#[cfg(feature = "cross-module-imports")]
+use alias_closure::resolve_qualified_alias_target;
+#[cfg(feature = "cross-module-imports")]
+pub(crate) use canonical_types::{
+    canonical_type_from, canonical_type_here, imported_const_declared_types,
+};
+
+#[cfg(feature = "cross-module-imports")]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Registry {
     /// `crate.path.Enum` -> collision-safe internal enum key.
@@ -28,6 +39,10 @@ pub(crate) struct Registry {
     exported_types: BTreeSet<String>,
     /// Canonical source alias key -> target resolved within that source owner.
     alias_targets: BTreeMap<String, TypeAnn>,
+    /// Module path -> its resolved import paths, for reading a type in its owner's scope.
+    module_imports: BTreeMap<String, Vec<String>>,
+    /// `owner.NAME` -> the declared type of that module-level constant.
+    const_types: BTreeMap<String, TypeAnn>,
     pub(crate) variant_tags: BTreeMap<String, i64>,
     pub(crate) payload_types: BTreeMap<String, Vec<TypeAnn>>,
     pub(crate) slots: BTreeMap<String, usize>,
@@ -278,19 +293,32 @@ impl Registry {
             && (current == Some(owner.as_str()) || self.exported_types.contains(&source_key))
     }
 
+    /// `owner.Name` for a visible qualified type spelling `qualifier.Name`,
+    /// with the sources-list owner rule of `resolve_type_in` (`crate.src.defs`).
+    fn type_source_in(
+        &self,
+        spelling: &str,
+        imports: &[String],
+        current: Option<&str>,
+    ) -> Option<String> {
+        let (qualifier, name) = spelling.rsplit_once('.')?;
+        if let Some(owner) = self.owner_for(qualifier, imports, current) {
+            let source_key = format!("{owner}.{name}");
+            if current == Some(owner.as_str()) || self.exported_types.contains(&source_key) {
+                return Some(source_key);
+            }
+        }
+        self.imported_exported_source(qualifier, name, imports)
+    }
+
     fn resolve_alias_in(
         &self,
         spelling: &str,
         imports: &[String],
         current: Option<&str>,
     ) -> Option<TypeAnn> {
-        let (qualifier, alias_name) = spelling.rsplit_once('.')?;
-        let owner = self.owner_for(qualifier, imports, current)?;
-        let source_key = format!("{owner}.{alias_name}");
-        if current != Some(owner.as_str()) && !self.exported_types.contains(&source_key) {
-            return None;
-        }
-        self.alias_targets.get(&source_key).cloned()
+        let source = self.type_source_in(spelling, imports, current)?;
+        self.alias_targets.get(&source).cloned()
     }
 
     pub(crate) fn is_canonical_variant(&self, name: &str) -> bool {
@@ -439,48 +467,6 @@ fn qualifier_matches(qualifier: &str, canonical: &str) -> bool {
         || canonical
             .rsplit_once('.')
             .is_some_and(|(_, terminal)| qualifier == terminal)
-}
-
-#[cfg(feature = "cross-module-imports")]
-fn resolve_qualified_alias_target(
-    target: &TypeAnn,
-    owner: &str,
-    raw: &BTreeMap<String, TypeAnn>,
-    imports: &BTreeMap<String, Vec<String>>,
-    exported: &BTreeSet<String>,
-    resolving: &mut BTreeSet<String>,
-) -> Option<TypeAnn> {
-    let TypeAnn::Named(name) = target else {
-        return Some(target.clone());
-    };
-    let Some((qualifier, alias_name)) = name.rsplit_once('.') else {
-        return Some(target.clone());
-    };
-    let mut owners = BTreeSet::new();
-    if qualifier_matches(qualifier, owner) {
-        owners.insert(owner.to_string());
-    }
-    for import in imports.get(owner).into_iter().flatten() {
-        let imported_owner = canonical_module(import);
-        if qualifier_matches(qualifier, &imported_owner) {
-            owners.insert(imported_owner);
-        }
-    }
-    let resolved_owner = (owners.len() == 1)
-        .then(|| owners.into_iter().next())
-        .flatten()?;
-    let source_key = format!("{resolved_owner}.{alias_name}");
-    if resolved_owner != owner && !exported.contains(&source_key) {
-        return Some(target.clone());
-    }
-    let nested = raw.get(&source_key)?;
-    if !resolving.insert(source_key.clone()) {
-        return None;
-    }
-    let result =
-        resolve_qualified_alias_target(nested, &resolved_owner, raw, imports, exported, resolving);
-    resolving.remove(&source_key);
-    result
 }
 
 #[derive(Clone, Default)]
@@ -643,6 +629,7 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
     let mut declared = BTreeSet::new();
     let mut raw_alias_targets = BTreeMap::new();
     let mut alias_imports = BTreeMap::new();
+    let mut const_types = BTreeMap::new();
     for (path, module) in parsed {
         let _module_guard = ModuleGuard::install(path.clone());
         let exports = collect_module_exports(path, module);
@@ -668,6 +655,11 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
                     if !explicit_exports || exports.exported.iter().any(|item| item == name) {
                         exported.insert(source_key);
                     }
+                }
+                crate::ast::Node::Const {
+                    name, ty: Some(ty), ..
+                } => {
+                    const_types.insert(format!("{path}.{name}"), ty.clone());
                 }
                 crate::ast::Node::EnumDef { name, .. }
                 | crate::ast::Node::StructDef { name, .. } => {
@@ -717,6 +709,8 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
     enums.qualified.declared_types = declared;
     enums.qualified.exported_types = exported;
     enums.qualified.alias_targets = alias_targets;
+    enums.qualified.module_imports = alias_imports;
+    enums.qualified.const_types = const_types;
 
     for (enum_name, owners) in by_name {
         enums.names.push(enum_name.clone());

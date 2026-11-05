@@ -32,6 +32,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Slice arguments with alias elements and private helpers**: the slice-call
+  check compares element types after type-alias resolution (local aliases and
+  aliases exported by an imported module), so `array<Q>` with `type Q = i32`
+  passes to `&[Q]` and `&[i32]`; a float element reached through an alias is now
+  refused like a direct one. An imported alias now resolves in a project whose
+  manifest lists `[targets.cpu].sources`, by the same owner rule as imported
+  types. Calls inside a `module m { ... }` block resolve module-private sibling
+  functions, so a slice argument to a non-exported helper is admitted and
+  checked instead of reported as passed to an unresolved function. A type read
+  from an imported signature or an imported struct field is read in its owner
+  module's scope, so `let b: defs.Bank = defs.make_bank()` meets a `make_bank`
+  declared `-> Bank` inside `defs`. An array-literal element that names a module
+  constant (local, or imported such as `defs.ONE`), or an arithmetic expression
+  over such constants, is classified by the constant's value. A slice or
+  collection type named through an alias (`type V = array<i32>`,
+  `type SL = &[i32]`) is refused at the slice boundary with `E2032` (and a slice
+  alias as a struct field with `E2033`), because lowering does not resolve such an
+  annotation: before, a read of an `SL` parameter failed to build or emitted an
+  artifact with an undefined symbol.
+  (`src/type_checker/slice_abi/aliases.rs`, `src/type_checker/mod.rs`,
+  `src/qualified_enums.rs`, `src/qualified_enums/canonical_types.rs`)
 - **Project source walk**: The project-root tests/ directory is now left out of
   the walked source set (nested tests/ directories stay in). Source sets and
   cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
