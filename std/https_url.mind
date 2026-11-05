@@ -8,6 +8,11 @@
 // Pure byte work: no socket, clock or file. std.https feeds it the decrypted
 // application bytes of one TLS connection.
 //
+// Request headers: a caller block of `name: value` CRLF lines (for example
+// X-API-Key and Cookie) is sent after the client's own headers; a malformed
+// line or a header the client writes itself or that changes the framing is
+// refused (hx_headers_ok).
+//
 // URL: `https://host[:port][/path][?query]`. The scheme is `https` (any case);
 // the host is a DNS name (letters, digits, '-', '.'; labels 1..63 bytes,
 // 1..253 in all); userinfo, an IP literal, an empty port and a byte outside
@@ -115,6 +120,15 @@ pub fn https_err_header_too_large() -> i64 {
     -18
 }
 
+// The request header block is refused: a line that is not `token: value`
+// CRLF, a byte outside HTAB / printable ASCII, more than
+// https_max_request_headers() bytes, or a header the client writes itself
+// (Host, User-Agent, Accept, Connection, Content-Type, Content-Length) or
+// that changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect).
+pub fn https_err_request_headers() -> i64 {
+    -19
+}
+
 // ---------------------------------------------------------------------------
 // Bounds
 // ---------------------------------------------------------------------------
@@ -138,6 +152,11 @@ pub fn https_max_request_body() -> i64 {
 
 pub fn https_max_content_type_len() -> i64 {
     256
+}
+
+// Caller request header block, CRLFs included.
+pub fn https_max_request_headers() -> i64 {
+    16384
 }
 
 pub fn https_default_port() -> i64 {
@@ -232,6 +251,131 @@ pub fn hx_ci_word(a: i64, n: i64, w: i64) -> i64 {
         i = i + 1;
     }
     same
+}
+
+// 1 iff the n bytes at a are the `len`-byte ASCII name packed in w0 (bytes
+// 0..7), w1 (8..15) and w2 (16..23), case-insensitively.
+pub fn hx_ci_name(a: i64, n: i64, len: i64, w0: i64, w1: i64, w2: i64) -> i64 {
+    if n != len {
+        return 0;
+    }
+    let mut n0: i64 = len;
+    if n0 > 8 {
+        n0 = 8;
+    }
+    if hx_ci_word(a, n0, w0) == 0 {
+        return 0;
+    }
+    if len > 8 {
+        let mut n1: i64 = len - 8;
+        if n1 > 8 {
+            n1 = 8;
+        }
+        if hx_ci_word(a + 8, n1, w1) == 0 {
+            return 0;
+        }
+    }
+    if len > 16 {
+        if hx_ci_word(a + 16, len - 16, w2) == 0 {
+            return 0;
+        }
+    }
+    1
+}
+
+// 1 iff c is an RFC 9110 tchar.
+fn hx_tchar(c: i64) -> i64 {
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) {
+        return 1;
+    }
+    // ! # $ % & ' * + - . ^ _ ` | ~
+    if c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 {
+        return 1;
+    }
+    if c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff the header name [a, a+n) is one the client writes itself or one that
+// changes the message framing.
+fn hx_reserved_name(a: i64, n: i64) -> i64 {
+    let mut hit: i64 = 0;
+    hit = hit + hx_ci_name(a, n, 4, 1953722216, 0, 0);
+    hit = hit + hx_ci_name(a, n, 10, 7306915768252593013, 29806, 0);
+    hit = hit + hx_ci_name(a, n, 6, 128026086171489, 0, 0);
+    hit = hit + hx_ci_name(a, n, 10, 7598807758576447331, 28271, 0);
+    hit = hit + hx_ci_name(a, n, 12, 3275364211029340003, 1701869940, 0);
+    hit = hit + hx_ci_name(a, n, 14, 3275364211029340003, 114849160783212, 0);
+    hit = hit + hx_ci_name(a, n, 17, 8243107338930713204, 7956000646299018541, 103);
+    hit = hit + hx_ci_name(a, n, 2, 25972, 0, 0);
+    hit = hit + hx_ci_name(a, n, 7, 32199663643882100, 0, 0);
+    hit = hit + hx_ci_name(a, n, 7, 28539342341763189, 0, 0);
+    hit = hit + hx_ci_name(a, n, 6, 127970252453989, 0, 0);
+    if hit > 0 {
+        return 1;
+    }
+    0
+}
+
+// hx_headers_ok — 1 iff [h, h+n) is zero or more request header lines
+// `name: value` CRLF: name an RFC 9110 token of 1..64 bytes that
+// hx_reserved_name does not refuse, value bytes HTAB, SP or printable ASCII,
+// the block at most https_max_request_headers() bytes. No CR, LF or NUL can
+// enter a value, so a caller value cannot add a header or end the head.
+pub fn hx_headers_ok(h: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 1;
+    }
+    if n < 0 || n > https_max_request_headers() || h <= 0 {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let mut pos: i64 = 0;
+    while ok == 1 && pos < n {
+        let mut i: i64 = pos;
+        let mut scanning: i64 = 1;
+        while scanning == 1 && i < n {
+            if hx_tchar(hx_b(h + i)) == 1 {
+                i = i + 1;
+            } else {
+                scanning = 0;
+            }
+        }
+        let nlen: i64 = i - pos;
+        if nlen < 1 || nlen > 64 || i >= n {
+            ok = 0;
+        } else {
+            if hx_b(h + i) != 58 || hx_reserved_name(h + pos, nlen) == 1 {
+                ok = 0;
+            }
+        }
+        let mut j: i64 = i + 1;
+        let mut in_value: i64 = 1;
+        while ok == 1 && in_value == 1 && j < n {
+            let c: i64 = hx_b(h + j);
+            if c == 13 {
+                in_value = 0;
+            } else {
+                if c != 9 && (c < 32 || c > 126) {
+                    ok = 0;
+                }
+                j = j + 1;
+            }
+        }
+        if ok == 1 {
+            if j + 1 >= n {
+                ok = 0;
+            } else {
+                if hx_b(h + j + 1) != 10 {
+                    ok = 0;
+                }
+                pos = j + 2;
+            }
+        }
+    }
+    ok
 }
 
 // ---------------------------------------------------------------------------
@@ -409,11 +553,12 @@ pub fn hx_url_parse(url: i64, len: i64, u: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 // The byte count hx_build_request writes, or a negative code.
-fn hx_request_size(u: i64, is_post: i64, body_len: i64, ct_len: i64) -> i64 {
-    // method + target + version, Host, User-Agent, Accept, Connection, end.
+fn hx_request_size(u: i64, is_post: i64, hdr_len: i64, body_len: i64, ct_len: i64) -> i64 {
+    // method + target + version, Host, User-Agent, Accept, Connection, the
+    // caller headers, end.
     let mut n: i64 = 5 + 1 + __mind_load_i64(u + 32) + 11;
     n = n + 6 + __mind_load_i64(u + 8) + 6 + 2;
-    n = n + 28 + 13 + 19 + 2;
+    n = n + 28 + 13 + 19 + hdr_len + 2;
     if is_post == 1 {
         n = n + 14 + ct_len + 2 + 16 + 20 + 2 + body_len;
     }
@@ -442,9 +587,13 @@ fn hx_ct_ok(ct: i64, n: i64) -> i64 {
 }
 
 // hx_build_request — serialize a GET (is_post 0) or POST (is_post 1) for the
-// parsed URL into a fresh buffer. Returns a 16-byte record {addr, len}, or a
-// negative code (https_err_request()).
-pub fn hx_build_request(is_post: i64, url: i64, u: i64, body: i64, body_len: i64, ct: i64, ct_len: i64) -> i64 {
+// parsed URL, with the caller header block [hdr, hdr+hdr_len) (hx_headers_ok),
+// into a fresh buffer. Returns a 16-byte record {addr, len}, or a negative
+// code (https_err_request_headers(), https_err_request()).
+pub fn hx_build_request(is_post: i64, url: i64, u: i64, hdr: i64, hdr_len: i64, body: i64, body_len: i64, ct: i64, ct_len: i64) -> i64 {
+    if hx_headers_ok(hdr, hdr_len) == 0 {
+        return https_err_request_headers();
+    }
     if is_post == 1 {
         if body_len < 0 || body_len > https_max_request_body() {
             return https_err_request();
@@ -456,7 +605,7 @@ pub fn hx_build_request(is_post: i64, url: i64, u: i64, body: i64, body_len: i64
             return https_err_request();
         }
     }
-    let cap: i64 = hx_request_size(u, is_post, body_len, ct_len);
+    let cap: i64 = hx_request_size(u, is_post, hdr_len, body_len, ct_len);
     let out: i64 = __mind_alloc(cap);
     let mut p: i64 = 0;
     if is_post == 1 {
@@ -497,6 +646,7 @@ pub fn hx_build_request(is_post: i64, url: i64, u: i64, body: i64, body_len: i64
     p = p + hx_put_word(out + p, 7598807758576447299, 8);
     p = p + hx_put_word(out + p, 8317986209774857839, 8);
     p = p + hx_put_word(out + p, 658789, 3);
+    p = p + hx_copy(out + p, hdr, hdr_len);
     if is_post == 1 {
         if ct_len > 0 {
             // "Content-Type: "

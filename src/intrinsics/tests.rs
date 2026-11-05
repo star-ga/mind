@@ -267,7 +267,8 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 8,
-        "dns_resolve, tcp_connect_host(_timeout), entropy_fill, https_get(_ca), https_post(_ca)"
+        named, 10,
+        "dns_resolve, tcp_connect_host(_timeout), entropy_fill, https_get(_ca), https_post(_ca), \
+         https_get_with_headers, https_post_with_headers"
     );
 }

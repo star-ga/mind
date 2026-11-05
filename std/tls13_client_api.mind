@@ -78,10 +78,12 @@ pub fn tls13c_write_app(state: i64, data_addr: i64, data_len: i64) -> i64 {
     let rec: i64 = __mind_alloc(tls13ci_max_record());
     let rlen: i64 = tls13ci_record_seal(suite, state + 4320, state + 81952, seq, data_addr, data_len, tls13ci_ct_app_data(), rec);
     if rlen < 0 {
+        __mind_free(rec);
         return tls13c_fail(state, rlen);
     }
     tls13c_store_i64(state + 136, seq + 1);
     let orc: i64 = tls13c_out_append(state, rec, rlen);
+    __mind_free(rec);
     if orc != 0 {
         return tls13c_fail(state, orc);
     }
@@ -376,13 +378,13 @@ pub fn tls13c_app_pending(s: i64) -> i64 {
 // decoded as rsaEncryption, 0 otherwise (no Certificate yet, ECDSA or any
 // other key type).
 pub fn tls13c_leaf_key_kind(s: i64) -> i64 {
-    tls13c_load_i64(s + 4760)
+    tls13c_load_i64(s + 63096)
 }
 
 // The presented RSA modulus length in bytes (256 for RSA-2048), 0 when the
 // leaf key is not RSA.
 pub fn tls13c_leaf_rsa_len(s: i64) -> i64 {
-    tls13c_load_i64(s + 4768)
+    tls13c_load_i64(s + 63104)
 }
 
 pub fn tls13c_set_alpn(state: i64, alpn_addr: i64, alpn_len: i64) -> i64 {
@@ -644,12 +646,14 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
             // only for a leaf whose SPKI x509_parse decoded strictly as
             // rsaEncryption. Any other key type (ECDSA included) leaves it 0,
             // and tls13c_parse_and_verify_cv refuses that leaf with E_CV.
-            // Leaf key evidence (4760 kind: 0 none or not RSA, 1 RSA; 4768 the
-            // presented modulus length) is recorded before any size check, so
-            // a caller can name the refusal of a key it does not support.
+            // Leaf key evidence (63096 kind: 0 none or not RSA, 1 RSA; 63104
+            // the presented modulus length) is recorded before any size
+            // check, outside the ranges key erasure clears, so a caller can
+            // name the refusal of a key it does not support after the
+            // failure latched.
             tls13c_store_i64(state + 4752, 0);
-            tls13c_store_i64(state + 4760, 0);
-            tls13c_store_i64(state + 4768, 0);
+            tls13c_store_i64(state + 63096, 0);
+            tls13c_store_i64(state + 63104, 0);
             tls13c_store_i64(state + 56, 0);
             let f: i64 = state + 4576;
             if x509_parse(cert_addr, clen, f) != 0 {
@@ -660,8 +664,8 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
             let e_off: i64 = tls13c_load_i64(f + 112);
             let e_len: i64 = tls13c_load_i64(f + 120);
             if n_len > 0 {
-                tls13c_store_i64(state + 4760, 1);
-                tls13c_store_i64(state + 4768, n_len);
+                tls13c_store_i64(state + 63096, 1);
+                tls13c_store_i64(state + 63104, n_len);
                 if n_len > 256 {
                     return tls13ci_err_ovf();
                 }

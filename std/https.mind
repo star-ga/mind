@@ -116,6 +116,7 @@ pub fn tls13c_pump(state: i64) -> i64 {
         }
         tls13c_store_i64(state + 160, rem);
         rc = tls13c_handle_record(state, rec, rec_len);
+        __mind_free(rec);
         if rc != 0 {
             return rc;
         }
@@ -327,6 +328,9 @@ pub fn tls13c_consume_hs_messages(state: i64, data_addr: i64, data_len: i64) -> 
                     let anchors_addr: i64 = tls13c_x509_blob(tls13c_load_i64(state + 88), tls13c_load_i64(state + 96));
                     let now_unix: i64 = tls13c_load_i64(state + 32);
                     let chain_verdict: i64 = x509_verify_server_chain(chain_addr, anchors_addr, state + 83204, now_unix);
+                    // The verifier keeps no pointer into either table.
+                    __mind_free(chain_addr);
+                    __mind_free(anchors_addr);
                     tls13c_store_i64(state + 240, chain_verdict);
                     if chain_verdict != 0 {
                         return tls13c_fail(state, tls13ci_err_chain());
@@ -485,72 +489,85 @@ pub fn tls13c_handle_record(state: i64, rec_addr: i64, rec_len: i64) -> i64 {
         if rtype != tls13ci_ct_app_data() {
             return tls13c_fail(state, tls13ci_err_record());
         }
-        let suite: i64 = tls13c_load_i64(state + 40);
-        let use_app: i64 = 0;
-        if st == tls13ci_st_connected() {
-            use_app = 1;
-        }
-        let key: i64 = state + 4192;
-        let iv: i64 = state + 81940;
-        let seq: i64 = tls13c_load_i64(state + 144);
-        if use_app == 1 {
-            key = state + 4352;
-            iv = state + 81964;
-            seq = tls13c_load_i64(state + 152);
-        }
+        // One plaintext scratch per record, released before the next.
         let plain: i64 = __mind_alloc(tls13ci_max_record());
-        let prc: i64 = tls13ci_record_open(suite, key, iv, seq, rec_addr, rec_len, plain);
-        if prc < 0 {
-            return tls13c_fail(state, tls13ci_err_record());
+        let orc: i64 = tls13c_open_protected(state, rec_addr, rec_len, st, plain);
+        __mind_free(plain);
+        if orc != 0 {
+            return orc;
         }
-        let plen: i64 = prc >> 8;
-        if plen > 16384 {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        let ptype: i64 = prc & 255;
-        if use_app == 0 {
-            tls13c_store_i64(state + 144, seq + 1)
-        } else {
-            tls13c_store_i64(state + 152, seq + 1)
-        }
-        if ptype == tls13ci_ct_alert() {
-            if plen == 2 && use_app == 1 {
-                if tls13c_u8(plain + 1) == 0 {
-                    tls13c_zero_keys(state);
-                    tls13c_set_status(state, tls13ci_st_closed());
-                    return 0;
-                }
-            }
-            return tls13c_fail(state, tls13ci_err_alert());
-        }
-        if ptype == tls13ci_ct_handshake() {
-            if use_app == 1 {
-                // Post-handshake: only whole NewSessionTicket messages, which
-                // are discarded (no resumption is offered).
-                let trc: i64 = tls13c_skip_tickets(plain, plen);
-                if trc != 0 {
-                    return tls13c_fail(state, trc);
-                }
+    }
+    0
+}
+
+// A protected record (status after ServerHello): open it with the handshake
+// or application keys and act on its inner content type. `plain` is a
+// tls13ci_max_record() scratch the caller owns. Returns 0 or the latched error.
+fn tls13c_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plain: i64) -> i64 {
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let use_app: i64 = 0;
+    if st == tls13ci_st_connected() {
+        use_app = 1;
+    }
+    let key: i64 = state + 4192;
+    let iv: i64 = state + 81940;
+    let seq: i64 = tls13c_load_i64(state + 144);
+    if use_app == 1 {
+        key = state + 4352;
+        iv = state + 81964;
+        seq = tls13c_load_i64(state + 152);
+    }
+    let prc: i64 = tls13ci_record_open(suite, key, iv, seq, rec_addr, rec_len, plain);
+    if prc < 0 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    let plen: i64 = prc >> 8;
+    if plen > 16384 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    let ptype: i64 = prc & 255;
+    if use_app == 0 {
+        tls13c_store_i64(state + 144, seq + 1)
+    } else {
+        tls13c_store_i64(state + 152, seq + 1)
+    }
+    if ptype == tls13ci_ct_alert() {
+        if plen == 2 && use_app == 1 {
+            if tls13c_u8(plain + 1) == 0 {
+                tls13c_zero_keys(state);
+                tls13c_set_status(state, tls13ci_st_closed());
                 return 0;
             }
-            let hrc: i64 = tls13c_consume_hs_payload(state, plain, plen);
-            if hrc != 0 {
-                return tls13c_fail(state, hrc);
+        }
+        return tls13c_fail(state, tls13ci_err_alert());
+    }
+    if ptype == tls13ci_ct_handshake() {
+        if use_app == 1 {
+            // Post-handshake: only whole NewSessionTicket messages, which
+            // are discarded (no resumption is offered).
+            let trc: i64 = tls13c_skip_tickets(plain, plen);
+            if trc != 0 {
+                return tls13c_fail(state, trc);
             }
+            return 0;
+        }
+        let hrc: i64 = tls13c_consume_hs_payload(state, plain, plen);
+        if hrc != 0 {
+            return tls13c_fail(state, hrc);
+        }
+    } else {
+        if ptype == tls13ci_ct_app_data() {
+            if use_app != 1 {
+                return tls13c_fail(state, tls13ci_err_app());
+            }
+            let arx: i64 = tls13c_load_i64(state + 192);
+            if arx + plen > tls13ci_app_rx_cap() {
+                return tls13c_fail(state, tls13ci_err_ovf());
+            }
+            tls13c_copy(state + tls13ci_app_rx_off() + arx, plain, plen);
+            tls13c_store_i64(state + 192, arx + plen)
         } else {
-            if ptype == tls13ci_ct_app_data() {
-                if use_app != 1 {
-                    return tls13c_fail(state, tls13ci_err_app());
-                }
-                let arx: i64 = tls13c_load_i64(state + 192);
-                if arx + plen > tls13ci_app_rx_cap() {
-                    return tls13c_fail(state, tls13ci_err_ovf());
-                }
-                tls13c_copy(state + tls13ci_app_rx_off() + arx, plain, plen);
-                tls13c_store_i64(state + 192, arx + plen)
-            } else {
-                return tls13c_fail(state, tls13ci_err_record());
-            }
+            return tls13c_fail(state, tls13ci_err_record());
         }
     }
     0
@@ -853,20 +870,33 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
     result
 }
 
-// One request: GET (is_post 0) or POST (is_post 1) against the bundle at the
-// NUL-terminated `ca_path`. Always returns a response record.
-fn https_request(is_post: i64, url: i64, url_len: i64, body: i64, body_len: i64, ct: i64, ct_len: i64, ca_path: i64) -> i64 {
+// One request: GET (is_post 0) or POST (is_post 1) with the caller header
+// block [hdr, hdr+hdr_len) against the bundle at the NUL-terminated
+// `ca_path` (0: https_default_ca_path()). Always returns a response record.
+fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, body: i64, body_len: i64, ct: i64, ct_len: i64, ca_path: i64) -> i64 {
     let resp: i64 = hx_resp_new();
     let u: i64 = hx_url_new();
     if hx_url_parse(url, url_len, u) != 0 {
+        __mind_free(u);
         return hx_fail(resp, https_err_url());
     }
-    let req: i64 = hx_build_request(is_post, url, u, body, body_len, ct, ct_len);
+    let req: i64 = hx_build_request(is_post, url, u, hdr, hdr_len, body, body_len, ct, ct_len);
     if req < 0 {
-        return hx_fail(resp, https_err_request());
+        __mind_free(u);
+        return hx_fail(resp, req);
     }
-    let blob: i64 = https_read_ca(ca_path);
+    let mut ca: i64 = ca_path;
+    if ca_path == 0 {
+        ca = https_default_ca_path();
+    }
+    let blob: i64 = https_read_ca(ca);
+    if ca_path == 0 {
+        __mind_free(ca);
+    }
     if blob < 0 {
+        __mind_free(u);
+        __mind_free(__mind_load_i64(req));
+        __mind_free(req);
         return hx_fail(resp, https_err_ca_bundle());
     }
     let wire: i64 = https_anchor_wire(blob);
@@ -877,7 +907,9 @@ fn https_request(is_post: i64, url: i64, url_len: i64, body: i64, body_len: i64,
     }
     let host: i64 = url + hx_url_host_off(u);
     let hlen: i64 = hx_url_host_len(u);
-    let conn: i64 = tcp_connect_host(host, hlen, hx_url_port(u));
+    let port: i64 = hx_url_port(u);
+    __mind_free(u);
+    let conn: i64 = tcp_connect_host(host, hlen, port);
     if conn == 0 {
         return hx_fail(resp, https_err_connect());
     }
@@ -929,27 +961,45 @@ fn https_request(is_post: i64, url: i64, url_len: i64, body: i64, body_len: i64,
 
 // https_get — GET `url` (https only), authenticated against the system CA
 // bundle (https_default_ca_path()). Returns a response record: check
-// https_error(r) == 0 before https_status / https_body_addr / https_body_len.
+// https_error(r) == 0 before https_status / https_body_addr / https_body_len;
+// release it with https_free.
 #[protection]
 pub fn https_get(url: i64, url_len: i64) -> i64 {
-    https_request(0, url, url_len, 0, 0, 0, 0, https_default_ca_path())
+    https_request(0, url, url_len, 0, 0, 0, 0, 0, 0, 0)
 }
 
 // https_post — POST `body` with the given content type (0..256 printable
 // bytes; 0 sends no Content-Type) to `url`, against the system CA bundle.
 #[protection]
 pub fn https_post(url: i64, url_len: i64, body: i64, body_len: i64, content_type: i64, content_type_len: i64) -> i64 {
-    https_request(1, url, url_len, body, body_len, content_type, content_type_len, https_default_ca_path())
+    https_request(1, url, url_len, 0, 0, body, body_len, content_type, content_type_len, 0)
 }
 
 // https_get_ca — https_get against the CA bundle at the NUL-terminated path.
 #[protection]
 pub fn https_get_ca(url: i64, url_len: i64, ca_path: i64) -> i64 {
-    https_request(0, url, url_len, 0, 0, 0, 0, ca_path)
+    https_request(0, url, url_len, 0, 0, 0, 0, 0, 0, ca_path)
 }
 
 // https_post_ca — https_post against the CA bundle at the NUL-terminated path.
 #[protection]
 pub fn https_post_ca(url: i64, url_len: i64, body: i64, body_len: i64, content_type: i64, content_type_len: i64, ca_path: i64) -> i64 {
-    https_request(1, url, url_len, body, body_len, content_type, content_type_len, ca_path)
+    https_request(1, url, url_len, 0, 0, body, body_len, content_type, content_type_len, ca_path)
+}
+
+// https_get_with_headers — https_get that also sends the request header block
+// [headers, headers+headers_len): `name: value` CRLF lines such as
+// "X-API-Key: <key>\r\nCookie: <name=value; ...>\r\n" (hx_headers_ok; a
+// refused block is https_err_request_headers() before any connection).
+// `ca_path` is a NUL-terminated CA bundle path, or 0 for the system bundle.
+#[protection]
+pub fn https_get_with_headers(url: i64, url_len: i64, headers: i64, headers_len: i64, ca_path: i64) -> i64 {
+    https_request(0, url, url_len, headers, headers_len, 0, 0, 0, 0, ca_path)
+}
+
+// https_post_with_headers — https_post with a request header block, as
+// https_get_with_headers.
+#[protection]
+pub fn https_post_with_headers(url: i64, url_len: i64, headers: i64, headers_len: i64, body: i64, body_len: i64, content_type: i64, content_type_len: i64, ca_path: i64) -> i64 {
+    https_request(1, url, url_len, headers, headers_len, body, body_len, content_type, content_type_len, ca_path)
 }

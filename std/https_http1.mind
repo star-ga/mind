@@ -98,16 +98,19 @@ pub fn hx_complete(r: i64) -> i64 {
     __mind_load_i64(r + 112)
 }
 
-// https_header — the value of the first header named [name, name+n)
-// (case-insensitive), with surrounding spaces and tabs removed, as a 16-byte
-// record {addr, len}; 0 when there is none or the response has no headers.
-pub fn https_header(r: i64, name: i64, n: i64) -> i64 {
+// The value of the k-th (0-based) header named [name, name+n)
+// (case-insensitive), with surrounding spaces and tabs removed, as a fresh
+// 16-byte record {addr, len} the caller may __mind_free; 0 when there is no
+// such header or the response has no headers. With k < 0 it returns the
+// number of headers so named instead.
+fn hx_header_scan(r: i64, name: i64, n: i64, k: i64) -> i64 {
     if __mind_load_i64(r + 8) == 0 || n < 1 {
         return 0;
     }
     let base: i64 = __mind_load_i64(r + 160);
     let hlen: i64 = __mind_load_i64(r + 168);
     let mut pos: i64 = 0;
+    let mut seen: i64 = 0;
     let mut found: i64 = 0;
     while found == 0 && pos < hlen {
         let eol: i64 = hx_find_crlf(base, pos, hlen);
@@ -116,22 +119,128 @@ pub fn https_header(r: i64, name: i64, n: i64) -> i64 {
             line_end = hlen;
         }
         if line_end - pos > n && hx_b(base + pos + n) == 58 && hx_ci_eq(base + pos, name, n) == 1 {
-            let mut vs: i64 = pos + n + 1;
-            let mut ve: i64 = line_end;
-            while vs < ve && (hx_b(base + vs) == 32 || hx_b(base + vs) == 9) {
-                vs = vs + 1;
+            if seen == k {
+                let mut vs: i64 = pos + n + 1;
+                let mut ve: i64 = line_end;
+                while vs < ve && (hx_b(base + vs) == 32 || hx_b(base + vs) == 9) {
+                    vs = vs + 1;
+                }
+                while ve > vs && (hx_b(base + ve - 1) == 32 || hx_b(base + ve - 1) == 9) {
+                    ve = ve - 1;
+                }
+                let rec: i64 = __mind_alloc(16);
+                __mind_store_i64(rec, base + vs);
+                __mind_store_i64(rec + 8, ve - vs);
+                found = rec;
             }
-            while ve > vs && (hx_b(base + ve - 1) == 32 || hx_b(base + ve - 1) == 9) {
-                ve = ve - 1;
-            }
-            let rec: i64 = __mind_alloc(16);
-            __mind_store_i64(rec, base + vs);
-            __mind_store_i64(rec + 8, ve - vs);
-            found = rec;
+            seen = seen + 1;
         }
         pos = line_end + 2;
     }
+    if k < 0 {
+        return seen;
+    }
     found
+}
+
+// https_header — the value of the first header named [name, name+n)
+// (case-insensitive), with surrounding spaces and tabs removed, as a fresh
+// 16-byte record {addr, len}; 0 when there is none or the response has no
+// headers.
+pub fn https_header(r: i64, name: i64, n: i64) -> i64 {
+    hx_header_scan(r, name, n, 0)
+}
+
+// https_header_nth — as https_header, for the k-th (0-based) header so named.
+pub fn https_header_nth(r: i64, name: i64, n: i64, k: i64) -> i64 {
+    if k < 0 {
+        return 0;
+    }
+    hx_header_scan(r, name, n, k)
+}
+
+// https_header_count — how many headers are named [name, name+n).
+pub fn https_header_count(r: i64, name: i64, n: i64) -> i64 {
+    hx_header_scan(r, name, n, 0 - 1)
+}
+
+// "set-cookie" as a fresh 10-byte buffer.
+fn hx_set_cookie_name() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 7741528756228220275);
+    __mind_store_i8(p + 8, 105);
+    __mind_store_i8(p + 9, 101);
+    p
+}
+
+// https_set_cookie_count — the number of Set-Cookie headers in the response.
+pub fn https_set_cookie_count(r: i64) -> i64 {
+    let nm: i64 = hx_set_cookie_name();
+    let c: i64 = hx_header_scan(r, nm, 10, 0 - 1);
+    __mind_free(nm);
+    c
+}
+
+// https_set_cookie — the whole value of the k-th Set-Cookie header (name=value
+// and its attributes) as a 16-byte record {addr, len}, or 0.
+pub fn https_set_cookie(r: i64, k: i64) -> i64 {
+    if k < 0 {
+        return 0;
+    }
+    let nm: i64 = hx_set_cookie_name();
+    let h: i64 = hx_header_scan(r, nm, 10, k);
+    __mind_free(nm);
+    h
+}
+
+// https_set_cookie_pair — the cookie-pair of the k-th Set-Cookie header (the
+// bytes before the first ';', trailing spaces removed: what a later request
+// sends back in its Cookie header) as a 16-byte record {addr, len}, or 0 when
+// there is no such header or it does not start with name=.
+pub fn https_set_cookie_pair(r: i64, k: i64) -> i64 {
+    let h: i64 = https_set_cookie(r, k);
+    if h == 0 {
+        return 0;
+    }
+    let a: i64 = __mind_load_i64(h);
+    let n: i64 = __mind_load_i64(h + 8);
+    let mut end: i64 = 0;
+    let mut eq: i64 = 0 - 1;
+    let mut scanning: i64 = 1;
+    while scanning == 1 && end < n {
+        let c: i64 = hx_b(a + end);
+        if c == 59 {
+            scanning = 0;
+        } else {
+            if c == 61 && eq < 0 {
+                eq = end;
+            }
+            end = end + 1;
+        }
+    }
+    while end > 0 && (hx_b(a + end - 1) == 32 || hx_b(a + end - 1) == 9) {
+        end = end - 1;
+    }
+    if eq < 1 || eq >= end {
+        __mind_free(h);
+        return 0;
+    }
+    __mind_store_i64(h + 8, end);
+    h
+}
+
+// https_free — release a response record and its buffer. The status line,
+// body and header records point into that buffer and are invalid afterwards.
+pub fn https_free(r: i64) -> i64 {
+    if r <= 0 {
+        return 0;
+    }
+    let raw: i64 = __mind_load_i64(r + 32);
+    if raw != 0 {
+        __mind_free(raw);
+    }
+    __mind_free(r);
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +365,16 @@ fn hx_parse_headers(r: i64, base: i64, hlen: i64) -> i64 {
                 }
                 while ve > vs && (hx_b(base + ve - 1) == 32 || hx_b(base + ve - 1) == 9) {
                     ve = ve - 1;
+                }
+                // A field value is HTAB, SP, visible ASCII or obs-text: a bare
+                // CR or LF, NUL or another control byte is refused.
+                let mut q: i64 = colon + 1;
+                while rc == 0 && q < line_end {
+                    let c: i64 = hx_b(base + q);
+                    if (c < 32 && c != 9) || c == 127 {
+                        rc = https_err_response();
+                    }
+                    q = q + 1;
                 }
                 let nlen: i64 = colon - pos;
                 // "content-length" (14 bytes) in two words.
@@ -402,6 +521,9 @@ fn hx_step_chunked(r: i64) -> i64 {
                 }
                 more = 0;
             } else {
+                // chunk-size = 1*HEXDIG. Leading zeros are allowed; a size
+                // above https_max_body() is refused at the digit that
+                // exceeds it, so the value can never overflow.
                 let mut size: i64 = 0;
                 let mut nd: i64 = 0;
                 let mut k: i64 = cpos;
@@ -413,8 +535,8 @@ fn hx_step_chunked(r: i64) -> i64 {
                     } else {
                         size = size * 16 + h;
                         nd = nd + 1;
-                        if nd > 8 {
-                            rc = https_err_response();
+                        if size > https_max_body() {
+                            rc = https_err_body_too_large();
                             in_digits = 0;
                         }
                         k = k + 1;
@@ -424,12 +546,20 @@ fn hx_step_chunked(r: i64) -> i64 {
                     rc = https_err_response();
                 }
                 // After the digits: optional spaces/tabs, then ';' and an
-                // extension that is ignored, or the end of the line.
+                // extension that is ignored, or the end of the line. The
+                // extension holds no control byte other than HTAB.
                 while rc == 0 && k < eol && (hx_b(raw + k) == 32 || hx_b(raw + k) == 9) {
                     k = k + 1;
                 }
                 if rc == 0 && k < eol && hx_b(raw + k) != 59 {
                     rc = https_err_response();
+                }
+                while rc == 0 && k < eol {
+                    let c: i64 = hx_b(raw + k);
+                    if (c < 32 && c != 9) || c == 127 {
+                        rc = https_err_response();
+                    }
+                    k = k + 1;
                 }
                 if rc == 0 {
                     cpos = eol + 2;

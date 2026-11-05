@@ -13,13 +13,13 @@
 // scratch 4384:192, x509 fields 4576:176, RSA len 4752:8, exponent 4784:8,
 // modulus 4856:256, finished 5112/5144:32, hashes 5176/5208:32,
 // transcript 5240:16384, handshake reassembly 21624:8192,
-// inbound 29816:16640, outbound 46456:16640, (unused 63096:2048),
+// inbound 29816:16640, outbound 46456:16640, leaf key kind 63096:8 and
+// presented RSA modulus length 63104:8 (evidence), (unused 63112:2032),
 // chain length 65144:8, cookie length 65280:8, cookie 65288:254,
 // chain evidence 65672:16000, selected ALPN 81672:255,
 // c/s hs IVs 81928/81940:12, c/s app IVs 81952/81964:12,
 // ALPN offer 82176:1024, length-prefixed identity 83200:257,
-// app receive 86016:16384 (one full record), leaf key kind 4760:8 and
-// presented RSA modulus length 4768:8.
+// app receive 86016:16384 (one full record).
 // Total 102400. Evidence and configuration survive key erasure.
 
 import std.sha256;
@@ -663,6 +663,8 @@ pub fn tls13ci_record_seal(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, co
         let nonce: i64 = __mind_alloc(12);
         tls13_record_nonce(iv_addr, seq, nonce);
         chacha20_poly1305_encrypt(key_addr, nonce, inner, inner_len, out_record_addr, 5, out_record_addr + 5, out_record_addr + 5 + inner_len);
+        __mind_free(nonce);
+        __mind_free(inner);
         5 + enc_len
     } else {
         tls13ci_err_suite()
@@ -704,7 +706,9 @@ pub fn tls13ci_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, re
         tls13_record_nonce(iv_addr, seq, nonce);
         let inner: i64 = __mind_alloc(ct_len);
         let rc: i64 = chacha20_poly1305_decrypt(key_addr, nonce, record_addr + 5, ct_len, record_addr, 5, record_addr + 5 + ct_len, inner);
+        __mind_free(nonce);
         if rc != 0 {
+            __mind_free(inner);
             return 0 - 2;
         }
         let mut idx: i64 = ct_len - 1;
@@ -721,11 +725,13 @@ pub fn tls13ci_record_open(suite: i64, key_addr: i64, iv_addr: i64, seq: i64, re
             }
         }
         if idx < 0 {
+            __mind_free(inner);
             return 0 - 1;
         }
         let inner_type: i64 = tls13c_u8(inner + idx);
         let content_len: i64 = idx;
         tls13c_copy(out_content_addr, inner, content_len);
+        __mind_free(inner);
         (content_len << 8) | inner_type
     } else {
         0 - 1

@@ -170,6 +170,16 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "https.https_post_ca(p, 9, p, 1, p, 1, p)",
         "https_post_ca",
     ),
+    (
+        "https",
+        "https.https_get_with_headers(p, 9, p, 1, p)",
+        "https_get_with_headers",
+    ),
+    (
+        "https",
+        "https.https_post_with_headers(p, 9, p, 1, p, 1, p, 1, p)",
+        "https_post_with_headers",
+    ),
 ];
 
 /// Pure functions of the same modules: the positive control.
