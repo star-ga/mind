@@ -87,7 +87,6 @@ extern "C" {
     unsafe fn readdir(dirp: *mut u8) -> *mut u8;
     unsafe fn closedir(dirp: *mut u8) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
-    unsafe fn is_dir_fd(fd: i64) -> i64;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +232,7 @@ pub fn dir_vec_get(v: i64, i: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 // read_to_string — read entire file into a heap string record [addr, len, cap].
-// Returns len=0 string on error.  A directory is refused by file type
-// (fstat S_ISDIR via is_dir_fd), not by size: filesystems disagree on the
-// size lseek reports for a directory (ext4 returns a non-zero block count;
-// others return 0), so size is not a reliable signal.  The zero record
-// (ptr 0, len 0, cap 0) is the only correct answer for a directory on
-// every filesystem.
+// Returns len=0 string on error.
 pub fn read_to_string(path_addr: i64) -> i64 {
     let rec: i64 = __mind_alloc(24);
     __mind_store_i64(rec + 0, 0);
@@ -246,10 +240,6 @@ pub fn read_to_string(path_addr: i64) -> i64 {
     __mind_store_i64(rec + 16, 0);
     let fd: i64 = open(path_addr as *const u8, o_rdonly() as i32, 0) as i64;
     if fd < 0 {
-        return rec;
-    }
-    if is_dir_fd(fd) == 1 {
-        let _ = close(fd as i32);
         return rec;
     }
     let file_sz: i64 = lseek(fd as i32, 0, seek_end() as i32);
