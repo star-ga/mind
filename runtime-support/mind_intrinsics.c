@@ -44,6 +44,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -409,6 +410,15 @@ MIND_EXPORT int64_t __mind_open(int64_t path_addr) {
     const char *path = (const char *)(uintptr_t)path_addr;
     int fd = MIND_OPEN_RDONLY(path);
     return (int64_t)fd;
+}
+
+// is_dir_fd(fd) — 1 if the descriptor refers to a directory, else 0.
+// Uses fstat S_ISDIR so every filesystem agrees: a directory is refused by
+// file type, never by the size lseek happens to report for it.
+MIND_EXPORT int64_t is_dir_fd(int64_t fd) {
+    struct stat st;
+    if (fstat((int)fd, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
 }
 
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
@@ -910,6 +920,17 @@ MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
     const char *path = (const char *)(uintptr_t)path_addr;
     int fd = MIND_OPEN_RDONLY(path);
     if (fd < 0) return rec;
+
+    // A directory is refused by file type (fstat S_ISDIR), not by size:
+    // filesystems disagree on the size lseek reports for a directory (ext4
+    // returns a non-zero block count; others return 0), so size is not a
+    // reliable signal.  The zero record (ptr 0, len 0, cap 0) is the only
+    // correct answer for a directory on every filesystem.
+    struct stat st;
+    if (fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) {
+        MIND_CLOSE(fd);
+        return rec;
+    }
 
     int64_t file_sz = MIND_LSEEK(fd, 0, SEEK_END);
     if (file_sz < 0 || file_sz == INT64_MAX) {
