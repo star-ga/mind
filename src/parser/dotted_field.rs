@@ -5,8 +5,10 @@
 //! The `.name` postfix that is not a call and not `.T`.
 //!
 //! An imported `mod.CONST` collapses to the bare member. A following
-//! `Enum.Variant` collapses to the `Enum::Variant` ident when that unit
-//! variant is in the project registry. Anything else stays a field access.
+//! `Enum.Variant` collapses to the `Enum::Variant` ident when the enum is
+//! visible from this module and that unit variant is in the project registry.
+//! Anything else stays a field access, so a local named like an enum that this
+//! module does not import keeps its field.
 
 use super::P;
 use super::eval_imports::EvalImportRefKind;
@@ -29,7 +31,9 @@ impl P<'_> {
                 self.record_qualifier(span, &recv_name);
                 return Node::Lit(Literal::Ident(method), span);
             }
-            if let Some(key) = self.enum_scope.unit_variant_key(&recv_name, &method) {
+            if self.is_enum_name(&recv_name)
+                && let Some(key) = self.enum_scope.unit_variant_key(&recv_name, &method)
+            {
                 let span = Span::new(node.span_start(), self.pos);
                 return Node::Lit(Literal::Ident(key), span);
             }

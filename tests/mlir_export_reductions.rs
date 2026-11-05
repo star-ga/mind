@@ -15,6 +15,18 @@
 use libmind::eval;
 use libmind::parser;
 
+/// Both over-cap tests set or clear `MIND_FLOAT_REDUCE_FAST`, and libtest runs
+/// them on parallel threads: without this lock the integer test's
+/// `remove_var` could land between the float test's `set_var` and its read,
+/// refusing the opt-in tier the float test had just enabled.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 // Static f32/f64 reductions under the element cap take the STRICT pinned
 // canonical-order fold (a fixed left-to-right `arith.addf` chain rebuilt with
 // `tensor.from_elements`, NO `tensor.reduce` / `vector.reduction` / fastmath),
@@ -88,9 +100,8 @@ fn reduce_all_axes_when_axes_empty_yields_scalar() {
 /// case with `MlirLowerError::UnsupportedOp`. Only the explicit
 /// `MIND_FLOAT_REDUCE_FAST=1` opt-in unlocks the non-deterministic tree tier.
 ///
-/// Both behaviours live in ONE test so the env-var mutation stays serial (the
-/// other tests in this file use small static tensors that take the pinned fold
-/// and never read the env var, so there is no cross-test race).
+/// Both behaviours live in ONE test so the env-var mutation stays serial; the
+/// integer over-cap test also clears the variable, so both hold `env_lock()`.
 #[test]
 fn over_cap_float_reduction_gates_on_fast_optin() {
     let src = r#"
@@ -103,8 +114,9 @@ fn over_cap_float_reduction_gates_on_fast_optin() {
     // Default (no opt-in): the non-deterministic float tree path is REFUSED.
     // This is the interp analogue of native's UnsupportedOp — both back ends
     // agree by failing loud rather than silently returning a tolerance number.
-    // SAFETY: env mutation is confined to this single (serial) test; no other
-    // test in this binary reads MIND_FLOAT_REDUCE_FAST.
+    // SAFETY: every test in this binary that touches MIND_FLOAT_REDUCE_FAST
+    // holds `env_lock()` for its whole body, so no other thread mutates it here.
+    let _env = env_lock();
     unsafe { std::env::remove_var("MIND_FLOAT_REDUCE_FAST") };
     let strict =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eval::to_mlir(&ir, "main")));
@@ -135,7 +147,8 @@ fn over_cap_float_reduction_gates_on_fast_optin() {
 /// unconditionally, no opt-in required.
 #[test]
 fn over_cap_integer_reduction_stays_treeshaped_ungated() {
-    // SAFETY: single serial test; no concurrent reader of this env var.
+    // SAFETY: held for the whole test; see `env_lock`.
+    let _env = env_lock();
     unsafe { std::env::remove_var("MIND_FLOAT_REDUCE_FAST") };
     let src = r#"
         let x: Tensor[i32,(100,100)] = 1;

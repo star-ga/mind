@@ -126,7 +126,7 @@ surface_tolerance = 25
 note              = 'floor over tests/**/*.rs (378 in the composed native-module bridge source tree); the README floor may lag the tree by at most 25 files before the gate demands a refresh.'
 
 [counts.rust_test_fns]
-declared          = 3319
+declared          = 3332
 mode              = "floor"
 floor_tolerance   = 200
 kind              = "regex_count"
@@ -168,9 +168,9 @@ surface   = "STATUS.md"
 # deferred: no `surface_regex`. STATUS.md's "13 stdlib modules
 # (vec/string/map/io/blas/toml/json/regex/net/fs/process/mlir/llvm)" is a
 # HISTORICAL v0.7.0 release marker naming the modules that shipped in that
-# release, not a live count of std/ (43 today) — raising it to the derived
+# release, not a live count of std/ (45 today) — raising it to the derived
 # figure would falsify the release history. Upgrade path: split the sentence
 # into the historical milestone and a live "std/ ships N+ modules" claim, then
 # give the live one a surface_regex. check_claims.py prints a NOTE for this
 # entry on every run so the gap stays visible.
-note      = "floor over std/**/*.mind (43 today); the surface claim '13 stdlib modules' is the v0.7.0 release marker, not this count."
+note      = "floor over std/**/*.mind (45 today); the surface claim '13 stdlib modules' is the v0.7.0 release marker, not this count."

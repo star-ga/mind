@@ -520,7 +520,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     // table is scoped to that eval and is torn down when it returns.
     let mut synthetic_items: Vec<Node> = Vec::new();
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-    synthetic_items.extend(resolve_std_import_fns(&module)?);
+    synthetic_items.extend(resolve_std_import_fns(
+        &module,
+        support.map(|s| &s.project_std),
+    )?);
     if let Some(support) = support {
         synthetic_items.extend(support.imported_items.iter().cloned());
     }
@@ -544,6 +547,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     let _bindings = support.map(|support| {
         eval::EvalBindingsGuard::install(support.bindings.clone(), support.entry_owner.clone())
     });
+    // `==` on enum values is evaluated only for an enum whose declaration has
+    // no payload variant, the one case the compiled program also compares by
+    // value (`eval::enum_cmp`).
+    let _enum_defs = eval::enum_cmp::install_enum_defs(&synthetic_module.items);
     let mut env = std::collections::HashMap::new();
     let outcome =
         eval::eval_module_value_with_env_mode(&synthetic_module, &mut env, None, ExecMode::Preview);
@@ -602,34 +609,55 @@ fn grade_returned_value(
 /// table.
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
-/// worklist, `BTreeSet` visited guard against cycles). An import that is not
-/// a bundled `std.*` module contributes nothing (existing behavior for it is
-/// unchanged); a bundled module that fails to parse is a fail-loud error.
+/// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
+/// contributes nothing here, nor does a `std.<name>` the project supplies
+/// (`project_std`); any other `std` import that names no shipped module is
+/// refused at the import, as `mindc check` refuses it, and so is a `std`
+/// import inside a body (not a module item); a bundled module that fails to
+/// parse is a fail-loud error.
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
-    use crate::project::stdlib::STDLIB_MIND_SOURCES;
+fn resolve_std_import_fns(
+    module: &crate::ast::Module,
+    project_std: Option<&std::collections::BTreeSet<String>>,
+) -> Result<Vec<Node>, String> {
     use std::collections::VecDeque;
 
-    fn import_key(item: &Node) -> Option<String> {
+    let import_key = |item: &Node| -> Result<Option<String>, String> {
         if let Node::Import { path, .. } = item {
+            if project_std.is_some_and(|own| own.contains(&path.join("."))) {
+                return Ok(None);
+            }
+            if let Some(refusal) = crate::project::stdlib::unknown_std_import(path) {
+                return Err(format!("error[type-check][E2002]: {refusal}"));
+            }
             if path.len() == 2 && path[0] == "std" {
-                return Some(path.join("."));
+                return Ok(Some(path.join(".")));
             }
         }
-        None
+        Ok(None)
+    };
+
+    // A `std` import inside a body binds nothing; `mindc check` refuses it at
+    // the import, and so does this runner, before any test body runs.
+    if let Some((path, _)) = crate::project::stdlib::misplaced_std_imports(module).first() {
+        let supplied = project_std.is_some_and(|own| own.contains(&path.join(".")));
+        let refusal = crate::project::stdlib::unknown_std_import(path)
+            .filter(|_| !supplied)
+            .unwrap_or_else(|| crate::project::stdlib::misplaced_std_import(path));
+        return Err(format!("error[type-check][E2002]: {refusal}"));
     }
 
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: VecDeque<String> = top_level::refs(&module.items)
-        .into_iter()
-        .filter_map(import_key)
-        .collect();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    for item in top_level::refs(&module.items) {
+        queue.extend(import_key(item)?);
+    }
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
             continue;
         }
-        let Some((_, src)) = STDLIB_MIND_SOURCES.iter().find(|(k, _)| *k == key) else {
+        let Some(src) = crate::project::stdlib::std_source(&key) else {
             continue;
         };
         let imported = parser::parse(src).map_err(|errs| {
@@ -644,11 +672,7 @@ fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, Stri
         for item in top_level::refs(&imported.items) {
             match item {
                 Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
-                Node::Import { .. } => {
-                    if let Some(k) = import_key(item) {
-                        queue.push_back(k);
-                    }
-                }
+                Node::Import { .. } => queue.extend(import_key(item)?),
                 _ => {}
             }
         }
