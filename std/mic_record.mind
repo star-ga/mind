@@ -72,12 +72,13 @@ pub fn mrec_max_key_bytes() -> i64 {
     256
 }
 
-// The fewest bytes one encoded entry can occupy: a one-byte key length, a
-// one-byte key, a tag byte and a one-byte value. Every accepted entry is at
-// least this long, so a count whose entries could not fit in the bytes left is
-// impossible and is refused before any allocation.
+// The fewest bytes one encoded entry can occupy before it is checked: a one-byte
+// key length, a tag byte and a one-byte value (an empty key is still read, then
+// refused as empty). This matches the compiler's MAP decoder (MIN_ENTRY_BYTES = 3),
+// so a count whose entries could not fit in the bytes left is refused before any
+// allocation without changing which error a malformed entry reports.
 pub fn mrec_min_entry_bytes() -> i64 {
-    4
+    3
 }
 
 pub fn mrec_tag_str() -> i64 {
