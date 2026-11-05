@@ -548,6 +548,7 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "https_post_ca",            // std.https: DNS, network, entropy, clock, CA file
     "https_get_with_headers",   // std.https: DNS, network, entropy, clock, CA file
     "https_post_with_headers",  // std.https: DNS, network, entropy, clock, CA file
+    "https_probe",              // std.https_probe: DNS, network
 ];
 
 /// The determinism classification of an intrinsic, or `None` when the name is

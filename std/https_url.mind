@@ -130,6 +130,34 @@ pub fn https_err_request_headers() -> i64 {
 }
 
 // ---------------------------------------------------------------------------
+// Error classes (https_error_class): where a failure happened relative to the
+// request bytes. A failure is never a success: its record has no status or body.
+// ---------------------------------------------------------------------------
+
+// No failure: https_error is 0 and the response is complete.
+pub fn https_class_none() -> i64 {
+    0
+}
+
+// The request failed BEFORE any request byte was written: a refused URL,
+// header block, body or CA bundle, name resolution, the TCP connect
+// (refused, unreachable, timed out), entropy, the clock, or the TLS handshake
+// (a certificate or key refusal, an alert, a handshake timeout). The server
+// cannot have seen the request: the same request is safe to retry.
+pub fn https_class_before_send() -> i64 {
+    1
+}
+
+// The request failed AFTER the client began to write the request: a write
+// failed, or the response is missing, truncated, malformed, too large, ended
+// by an alert other than close_notify, or past the deadline. The server may
+// have acted on the request: the outcome is unknown. The caller must pause and
+// must not count it as a result.
+pub fn https_class_after_send() -> i64 {
+    2
+}
+
+// ---------------------------------------------------------------------------
 // Bounds
 // ---------------------------------------------------------------------------
 

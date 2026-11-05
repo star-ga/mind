@@ -73,6 +73,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.http2_frame", include_str!("../../std/http2_frame.mind")),
     ("std.https", include_str!("../../std/https.mind")),
     ("std.https_http1", include_str!("../../std/https_http1.mind")),
+    ("std.https_probe", include_str!("../../std/https_probe.mind")),
     ("std.https_url", include_str!("../../std/https_url.mind")),
     ("std.io", include_str!("../../std/io.mind")),
     ("std.io_canon", include_str!("../../std/io_canon.mind")),

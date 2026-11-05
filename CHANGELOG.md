@@ -43,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     digit that passes the 8 MiB body cap (`https_err_body_too_large`), so it
     cannot overflow; a chunk extension and a response header value holding a
     control byte (NUL, bare CR or LF, DEL) are refused (`https_err_response`).
+  - Error classes: `https_error_class(r)` is `https_class_none()` (0) for a
+    complete response, `https_class_before_send()` (1) when the call failed
+    before any request byte was written (a refused URL, header block, body or
+    CA bundle, name resolution, the TCP connect, the TLS handshake), so the
+    same request is safe to retry, and `https_class_after_send()` (2) when the
+    client had begun to write the request and the response is missing,
+    partial or garbled, so the server may have acted and the caller must pause
+    and never count it as a result. A failure is never a success: it carries
+    no status or body.
+  - `std.https_probe`: `https_probe(url, url_len, timeout_ms)` resolves the
+    URL's host and opens and closes one TCP connection to its port, sending
+    nothing, with a distinct code per failure: `https_probe_err_url`,
+    `_dns_again` (EAI_AGAIN: the resolver or network is down), `_dns`,
+    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. It is
+    classified nondeterministic by name.
   - The TLS 1.3 client's record pump and handshake state machine move from
     `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
     the HTTPS driver: the import chain under the state machine is already five
@@ -84,7 +99,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the refusals of malformed chunk sizes (eleven forms), control bytes in
     a response header, malformed request header blocks (nine forms, before any
     connection), a body truncated by close_notify, by a missing last chunk and
-    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf.
+    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf;
+    and the framing guards, each beside an accepted control: a repeated
+    Content-Length, a transfer coding other than chunked, a Content-Length
+    over 18 digits (one that would wrap i64), and CR, LF, SP and other control
+    bytes in the URL request target (refused before any connection). Every
+    refusal is checked with its error class.
+  - `tests/std_https_network_safe.rs`: the loopback server in MIND and a step
+    client under a preloaded resolver: a DNS outage between two requests (the
+    probe reports it, the request fails before-send, and after the outage the
+    same request returns the exact body), a refused port and a full accept
+    queue (probe codes), a TLS refusal before the request and a cut after it,
+    and a body framed by the connection, which is complete only on
+    close_notify: a fatal alert, a warning alert and a TCP close are refused
+    after-send.
 - **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.

@@ -16,7 +16,17 @@
 // Set-Cookie included; https_free releases it): the error is 0 or a named
 // https_err_* code, and a refusal never carries a status or a body. The body
 // streams through the client's one-record plaintext window into the record,
-// up to https_max_body(). Fail closed:
+// up to https_max_body().
+// Error classes (https_error_class(r), std/https_url.mind): 0
+// https_class_none, a complete response; 1 https_class_before_send, the call
+// failed before any request byte was written (URL, headers, body or CA bundle
+// refused, name resolution, TCP connect refused or timed out, TLS handshake),
+// so the server never saw it and the same request is safe to retry; 2
+// https_class_after_send, the client had begun to write the request and the
+// response is missing, partial or garbled, so the server may have acted: the
+// caller must pause and never count it as a result. std.https_probe
+// https_probe(url, url_len, timeout_ms) resolves the host and opens and
+// closes one TCP connection, with a distinct code per failure. Fail closed:
 //   - the server profile is TLS 1.3, X25519, AES-128-GCM or ChaCha20-Poly1305,
 //     and an RSA-2048 leaf with an rsa_pss_rsae_sha256 CertificateVerify; an
 //     ECDSA, RSA-3072+ or other leaf key is refused (https_err_unsupported_key);
@@ -826,7 +836,7 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
                         result = https_flush(state, conn, buf);
                     }
                 }
-                __mind_free(ch2);
+                __mind_free(ch2)
             } else {
                 if st == tls13c_st_connected() && sent == 0 {
                     // The measured server profile: an RSA-2048 leaf.
@@ -834,6 +844,8 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
                         result = https_err_unsupported_key();
                     } else {
                         sent = 1;
+                        // From here a failure is after-send (https_error_class).
+                        hx_mark_sent(resp);
                         result = https_send_request(state, conn, req, buf);
                     }
                 } else {
@@ -898,7 +910,7 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
     }
     let blob: i64 = https_read_ca(ca);
     if ca_path == 0 {
-        __mind_free(ca);
+        __mind_free(ca)
     }
     if blob < 0 {
         __mind_free(u);
@@ -944,7 +956,7 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
                 result = https_err_tls();
             }
         }
-        __mind_free(ch);
+        __mind_free(ch)
     }
     if result == 0 {
         result = https_session(state, conn, ent, need, req, resp, unix_s + https_deadline_s());

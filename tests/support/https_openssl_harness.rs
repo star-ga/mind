@@ -318,6 +318,8 @@ pub fn put_field(out: &mut Vec<u8>, bytes: &[u8]) {
 pub struct Reply {
     pub exit: i32,
     pub error: i64,
+    /// `https_error_class`: 0 none, 1 before send, 2 after send.
+    pub class: i64,
     pub status: i64,
     pub verdict: i64,
     pub cookies: Vec<(Vec<u8>, Vec<u8>)>,
@@ -352,6 +354,7 @@ pub fn take_blob(s: &mut &[u8], tag: u8) -> Vec<u8> {
 pub fn parse_reply(exit: i32, out: &[u8]) -> Reply {
     let mut s = out;
     let error = take_line(&mut s, b'E');
+    let class = take_line(&mut s, b'L');
     let status = take_line(&mut s, b'S');
     let verdict = take_line(&mut s, b'V');
     let count = take_line(&mut s, b'C');
@@ -366,6 +369,7 @@ pub fn parse_reply(exit: i32, out: &[u8]) -> Reply {
     Reply {
         exit,
         error,
+        class,
         status,
         verdict,
         cookies,
@@ -592,12 +596,24 @@ pub fn chunked(body: &[u8]) -> Vec<u8> {
 pub fn assert_ok_body(tag: &str, seen: &Seen, want: &[u8]) {
     let r = &seen.reply;
     assert_eq!(
-        (r.error, r.status, r.verdict),
-        (0, 200, 0),
-        "{tag}: error / status / chain verdict"
+        (r.error, r.class, r.status, r.verdict),
+        (0, CLASS_NONE, 200, 0),
+        "{tag}: error / class / status / chain verdict"
     );
     assert_eq!(r.body.len(), want.len(), "{tag}: body length");
     assert!(r.body == want, "{tag}: body bytes differ");
+}
+
+/// `https_error_class` values (std/https_url.mind).
+pub const CLASS_NONE: i64 = 0;
+pub const CLASS_BEFORE_SEND: i64 = 1;
+pub const CLASS_AFTER_SEND: i64 = 2;
+
+/// A refusal with its code and the class that says whether the server can
+/// have seen the request.
+pub fn assert_refused_class(tag: &str, seen: &Seen, code: i64, class: i64) {
+    assert_refused(tag, seen, code);
+    assert_eq!(seen.reply.class, class, "{tag}: error class");
 }
 
 pub fn assert_refused(tag: &str, seen: &Seen, code: i64) {

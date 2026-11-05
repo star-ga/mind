@@ -98,6 +98,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.http2_frame",
     "std.https",
     "std.https_http1",
+    "std.https_probe",
     "std.https_url",
     "std.io_canon",
     "std.iouring",

@@ -1,7 +1,11 @@
-// Loopback TLS 1.3 server for tests/std_https_loopback.rs (TEST-ONLY).
+// Loopback TLS 1.3 server for tests/std_https_loopback.rs and
+// tests/std_https_network_safe.rs (TEST-ONLY).
 //
-// One process serves hl_case_count() connections on 127.0.0.1, one per case,
-// in the order the client program makes them; it prints "PORT <n>\n" first.
+// One process serves one connection per case on 127.0.0.1, in the order the
+// client program makes them; it prints "PORT <n>\n" first. The cases are
+// 0..hl_case_count(), or the comma-separated ids in MIND_HTTPS_SERVER_CASES.
+// A connection that closes before its first record (a std.https_probe
+// connection) uses no case.
 // Every case is a full TLS 1.3 handshake (X25519, TLS_AES_128_GCM_SHA256,
 // rsa_pss_rsae_sha256 signed here with the test-only RSA-2048 key) built from
 // the std primitives the client also uses; the case decides the certificate,
@@ -13,6 +17,10 @@
 // another host, 6 an expired leaf, 7 the good chain (the client holds another
 // anchor), 8 a corrupted CertificateVerify, 9 half of a record then EOF,
 // 10 an oversized Content-Length, 11 an ECDSA leaf, 12 an RSA-3072 leaf.
+// Ids from hl_case_count() up are canned: the good chain, the response bytes
+// hl_canned(id) and the end hl_canned_end(id) (0 close_notify, 1 a fatal
+// internal_error alert, 2 a user_canceled warning alert, 3 a TCP close with no
+// alert); the harness writes hl_canned, hl_canned_end and hl_env_cases.
 
 fn hl_case_count() -> i64 {
     13
@@ -186,7 +194,7 @@ fn hl_mont_mul(a: i64, b: i64, n: i64, k: i64, n0p: i64, t: i64, out: i64) -> i6
     // t < 2n: subtract n once when t >= n (t[k] is the carry limb; n has k).
     if hl_ld(t, k) != 0 || hl_bn_ge(t, n, k) == 1 {
         let borrow: i64 = hl_bn_sub(t, n, k);
-        hl_st(t, k, hl_ld(t, k) - borrow);
+        hl_st(t, k, hl_ld(t, k) - borrow)
     }
     let mut q: i64 = 0;
     while q < k {
@@ -219,7 +227,7 @@ fn hl_r2(n: i64, k: i64, out: i64) -> i64 {
             i = i + 1;
         }
         if hl_bn_ge(r, n1, k + 1) == 1 {
-            hl_bn_sub(r, n1, k + 1);
+            hl_bn_sub(r, n1, k + 1)
         }
         step = step + 1;
     }
@@ -257,7 +265,7 @@ fn hl_rsa_private(em: i64, d: i64, nb: i64, sig: i64) -> i64 {
         while bit >= 0 {
             hl_mont_mul(x, x, n, k, n0p, t, tmp);
             if ((v >> bit) & 1) == 1 {
-                hl_mont_mul(tmp, bm, n, k, n0p, t, x);
+                hl_mont_mul(tmp, bm, n, k, n0p, t, x)
             } else {
                 let mut q: i64 = 0;
                 while q < k {
@@ -507,6 +515,9 @@ fn hl_req_header(buf: i64, head: i64, w: i64, nlen: i64, out: i64) -> i64 {
 // The HTTP response for a case that reaches the request, at dst; returns its
 // length (the body follows the headers).
 fn hl_response(cid: i64, req: i64, rlen: i64, head: i64, dst: i64) -> i64 {
+    if cid >= hl_case_count() {
+        return hl_canned(cid, dst);
+    }
     let mut p: i64 = 0;
     if cid == 4 {
         p = p + hl_put(dst + p, 3543824036068086856, 8);
@@ -631,6 +642,10 @@ fn hl_read_request(s: i64, ckeys: i64, req: i64, rec: i64, plain: i64, head_out:
 fn hl_serve(s: i64, cid: i64) -> i64 {
     let rec: i64 = __mind_alloc(16700);
     let n: i64 = hl_read_record(s, rec);
+    if n < 0 {
+        // Closed before any record: a probe, not a case.
+        return 1;
+    }
     if n < 9 || tls13c_u8(rec) != 22 || tls13c_u8(rec + 5) != 1 {
         return 0 - 1;
     }
@@ -750,12 +765,12 @@ fn hl_serve(s: i64, cid: i64) -> i64 {
         tls13c_put_be16(cv + 4, 2052);
         tls13c_put_be16(cv + 6, 256);
         if cid == 12 {
-            tls13c_zero(cv + 8, 256);
+            tls13c_zero(cv + 8, 256)
         } else {
-            hl_pss_sign(content, 130, cv + 8);
+            hl_pss_sign(content, 130, cv + 8)
         }
         if cid == 8 {
-            __mind_store_i8(cv + 8 + 10, tls13c_u8(cv + 8 + 10) ^ 1);
+            __mind_store_i8(cv + 8 + 10, tls13c_u8(cv + 8 + 10) ^ 1)
         }
         f = f + 264;
     }
@@ -808,7 +823,7 @@ fn hl_serve(s: i64, cid: i64) -> i64 {
         tls13c_put_be16(nst + 4, 1);
         __mind_store_i8(nst + 12, 1);
         tls13c_put_be16(nst + 14, 16);
-        hl_send_sealed(s, sakeys, nst, 34, 22, 0);
+        hl_send_sealed(s, sakeys, nst, 34, 22, 0)
     }
     let req: i64 = __mind_alloc(65536);
     let head: i64 = __mind_alloc(8);
@@ -827,13 +842,28 @@ fn hl_serve(s: i64, cid: i64) -> i64 {
         // Headers and body in separate records.
         let hb: i64 = hl_head_end(resp, respn);
         hl_send_sealed(s, sakeys, resp, hb, 23, 0);
-        hl_send_sealed(s, sakeys, resp + hb, respn - hb, 23, 0);
+        hl_send_sealed(s, sakeys, resp + hb, respn - hb, 23, 0)
     } else {
-        hl_send_sealed(s, sakeys, resp, respn, 23, 0);
+        hl_send_sealed(s, sakeys, resp, respn, 23, 0)
     }
+    let mut end: i64 = 0;
+    if cid >= hl_case_count() {
+        end = hl_canned_end(cid);
+    }
+    if end == 3 {
+        return 0;
+    }
+    // close_notify (1, 0); internal_error (2, 80); user_canceled (1, 90).
     let alert: i64 = __mind_alloc(2);
     __mind_store_i8(alert, 1);
     __mind_store_i8(alert + 1, 0);
+    if end == 1 {
+        __mind_store_i8(alert, 2);
+        __mind_store_i8(alert + 1, 80)
+    }
+    if end == 2 {
+        __mind_store_i8(alert + 1, 90)
+    }
     hl_send_sealed(s, sakeys, alert, 2, 21, 0);
     0
 }
@@ -855,19 +885,61 @@ fn main() -> i64 {
     __mind_store_i8(line + n, 10);
     n = n + 1;
     __mind_write(1, line, n, 0 - 1);
+    let cases: i64 = hl_case_list();
     let mut failures: i64 = 0;
-    let mut cid: i64 = 0;
-    while cid < hl_case_count() {
+    let mut k: i64 = 0;
+    while k < __mind_load_i64(cases) {
         let s: i64 = tcp_accept(l);
         if s == 0 {
             return 2;
         }
-        if hl_serve(s, cid) != 0 {
-            failures = failures + 1;
+        let rc: i64 = hl_serve(s, __mind_load_i64(cases + 8 + k * 8));
+        if rc != 1 {
+            if rc != 0 {
+                failures = failures + 1;
+            }
+            k = k + 1;
         }
-        tcp_close(s);
-        cid = cid + 1;
+        tcp_close(s)
     }
     tcp_listener_close(l);
     failures
+}
+
+// The case ids to serve as {count, id...}: MIND_HTTPS_SERVER_CASES (decimal
+// ids separated by ','), or 0..hl_case_count() when it is unset or empty.
+fn hl_case_list() -> i64 {
+    let list: i64 = __mind_alloc(8 + 64 * 8);
+    let name: i64 = __mind_alloc(64);
+    let nlen: i64 = hl_env_cases(name);
+    __mind_store_i8(name + nlen, 0);
+    let rec: i64 = proc_getenv(name);
+    let a: i64 = __mind_load_i64(rec);
+    let n: i64 = __mind_load_i64(rec + 8);
+    let mut count: i64 = 0;
+    if a == 0 || n < 1 {
+        while count < hl_case_count() {
+            __mind_store_i64(list + 8 + count * 8, count);
+            count = count + 1;
+        }
+    } else {
+        let mut v: i64 = 0;
+        let mut i: i64 = 0;
+        while i <= n && count < 64 {
+            let mut c: i64 = 44;
+            if i < n {
+                c = __mind_load_i8(a + i) & 255;
+            }
+            if c == 44 {
+                __mind_store_i64(list + 8 + count * 8, v);
+                count = count + 1;
+                v = 0;
+            } else {
+                v = v * 10 + c - 48;
+            }
+            i = i + 1;
+        }
+    }
+    __mind_store_i64(list, count);
+    list
 }

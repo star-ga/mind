@@ -180,6 +180,11 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "https.https_post_with_headers(p, 9, p, 1, p, 1, p, 1, p)",
         "https_post_with_headers",
     ),
+    (
+        "https_probe",
+        "https_probe.https_probe(p, 9, 100)",
+        "https_probe",
+    ),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -188,6 +193,8 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
     ("entropy", "entropy.entropy_max_len()"),
     ("dns", "dns.dns_status(p)"),
     ("https", "https.https_deadline_s()"),
+    ("https_http1", "https_http1.https_error_class(p)"),
+    ("https_probe", "https_probe.https_probe_ok()"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

@@ -19,7 +19,7 @@
 import std.https_url;
 
 // ---------------------------------------------------------------------------
-// Response record (176 bytes; slot k at r + 8*k)
+// Response record (184 bytes; slot k at r + 8*k)
 //   0 error (0 or a negative https_err_* code)   1 status (0 until parsed)
 //   2 body_addr   3 body_len   4 raw_addr   5 raw_len   6 raw_cap
 //   7 header end (index of CRLFCRLF, -1 until found)   8 framing
@@ -29,15 +29,15 @@ import std.https_url;
 //   13 chunk bytes remaining   14 complete (1)   15 status-line length
 //   16 header search position   17 TLS chain verdict (evidence)
 //   18 trailer bytes   19 status-line address   20 header block address
-//   21 header block length
+//   21 header block length   22 request write started (1; https_error_class)
 // The raw buffer holds the header block and the body (a chunked body is
 // decoded in place behind the read position).
 // ---------------------------------------------------------------------------
 
 pub fn hx_resp_new() -> i64 {
-    let r: i64 = __mind_alloc(176);
+    let r: i64 = __mind_alloc(184);
     let mut i: i64 = 0;
-    while i < 22 {
+    while i < 23 {
         __mind_store_i64(r + i * 8, 0);
         i = i + 1;
     }
@@ -49,13 +49,33 @@ pub fn hx_resp_new() -> i64 {
 // Record a refusal: the response keeps its error and no status or body.
 pub fn hx_fail(r: i64, code: i64) -> i64 {
     if __mind_load_i64(r) == 0 {
-        __mind_store_i64(r, code);
+        __mind_store_i64(r, code)
     }
     __mind_store_i64(r + 8, 0);
     __mind_store_i64(r + 16, 0);
     __mind_store_i64(r + 24, 0);
     __mind_store_i64(r + 112, 0);
     r
+}
+
+// std.https calls this before it writes the first request byte.
+pub fn hx_mark_sent(r: i64) -> i64 {
+    __mind_store_i64(r + 176, 1);
+    0
+}
+
+// https_error_class — where the failure of this response happened:
+// https_class_none() when https_error(r) is 0, https_class_before_send() when
+// no request byte had been written, https_class_after_send() otherwise
+// (std/https_url.mind documents the classes).
+pub fn https_error_class(r: i64) -> i64 {
+    if __mind_load_i64(r) == 0 {
+        return https_class_none();
+    }
+    if __mind_load_i64(r + 176) == 0 {
+        return https_class_before_send();
+    }
+    https_class_after_send()
 }
 
 pub fn hx_set_verdict(r: i64, v: i64) -> i64 {
@@ -237,7 +257,7 @@ pub fn https_free(r: i64) -> i64 {
     }
     let raw: i64 = __mind_load_i64(r + 32);
     if raw != 0 {
-        __mind_free(raw);
+        __mind_free(raw)
     }
     __mind_free(r);
     0
@@ -645,7 +665,7 @@ fn hx_step_chunked(r: i64) -> i64 {
     __mind_store_i64(r + 104, rem);
     __mind_store_i64(r + 24, wpos - body_start);
     if rc == 0 && cst == 4 {
-        __mind_store_i64(r + 112, 1);
+        __mind_store_i64(r + 112, 1)
     }
     rc
 }
@@ -673,9 +693,9 @@ fn hx_step(r: i64) -> i64 {
         let cl: i64 = __mind_load_i64(r + 72);
         if have >= cl {
             __mind_store_i64(r + 24, cl);
-            __mind_store_i64(r + 112, 1);
+            __mind_store_i64(r + 112, 1)
         } else {
-            __mind_store_i64(r + 24, have);
+            __mind_store_i64(r + 24, have)
         }
         return 0;
     }
@@ -703,14 +723,14 @@ pub fn hx_feed(r: i64, data: i64, n: i64) -> i64 {
         // Header block + body + room for one decrypted record of slack.
         let cap: i64 = https_max_header_bytes() + https_max_body() + 33280;
         __mind_store_i64(r + 32, __mind_alloc(cap));
-        __mind_store_i64(r + 48, cap);
+        __mind_store_i64(r + 48, cap)
     }
     let rlen: i64 = __mind_load_i64(r + 40);
     if rlen + n > __mind_load_i64(r + 48) {
         if __mind_load_i64(r + 56) < 0 {
-            hx_fail(r, https_err_header_too_large());
+            hx_fail(r, https_err_header_too_large())
         } else {
-            hx_fail(r, https_err_body_too_large());
+            hx_fail(r, https_err_body_too_large())
         }
         return __mind_load_i64(r);
     }

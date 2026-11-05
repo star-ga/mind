@@ -22,7 +22,13 @@
 //! byte in a response header and a malformed request header block refused;
 //! a body truncated by close_notify, by a missing last chunk and by a TCP
 //! cut refused; a wrong hostname, an untrusted chain and an RSA-3072 leaf
-//! refused, each with its own `https_err_*` code.
+//! refused, each with its own `https_err_*` code. The framing guards: a
+//! repeated Content-Length, a transfer coding other than chunked, and a
+//! Content-Length over 18 digits (one that would wrap i64) are refused, with
+//! accepted positive controls beside each; CR, LF, SP and other control bytes
+//! in the URL request target are refused before any connection. Each refusal
+//! also has its error class: before-send for the handshake and request
+//! refusals, after-send for a refused or cut response.
 
 #![cfg(all(
     target_os = "linux",
@@ -39,6 +45,7 @@ mod harness;
 use harness::*;
 
 // std.https error codes (std/https_url.mind).
+const E_URL: i64 = -1;
 const E_HOSTNAME: i64 = -6;
 const E_UNKNOWN_ANCHOR: i64 = -8;
 const E_UNSUPPORTED_KEY: i64 = -11;
@@ -187,7 +194,7 @@ fn malformed_chunk_sizes_are_refused() {
     ];
     for (tag, tail, code) in cases {
         let seen = run_case(env, &Case::get(tag, format!("{head}{tail}").into_bytes()));
-        assert_refused(tag, &seen, *code);
+        assert_refused_class(tag, &seen, *code, CLASS_AFTER_SEND);
     }
 }
 
@@ -235,7 +242,7 @@ fn a_truncated_body_is_refused() {
     let mut case = Case::get("trunc_tcp", content_length_response(&body, ""));
     case.cut = Some(100_000);
     let seen = run_case(env, &case);
-    assert_refused("trunc_tcp", &seen, E_TRUNCATED);
+    assert_refused_class("trunc_tcp", &seen, E_TRUNCATED, CLASS_AFTER_SEND);
 }
 
 #[test]
@@ -256,7 +263,7 @@ fn a_malformed_request_header_block_is_refused_before_connecting() {
         case.response = None;
         case.headers = block.to_vec();
         let seen = run_case(env, &case);
-        assert_refused(tag, &seen, E_REQUEST_HEADERS);
+        assert_refused_class(tag, &seen, E_REQUEST_HEADERS, CLASS_BEFORE_SEND);
         assert!(seen.records.is_none(), "{tag}: the client connected");
     }
 }
@@ -268,7 +275,7 @@ fn a_wrong_hostname_is_refused() {
     case.leaf = WRONG_HOST;
     case.response = None;
     let seen = run_case(env, &case);
-    assert_refused("wronghost", &seen, E_HOSTNAME);
+    assert_refused_class("wronghost", &seen, E_HOSTNAME, CLASS_BEFORE_SEND);
 }
 
 #[test]
@@ -278,7 +285,7 @@ fn an_untrusted_chain_is_refused() {
     case.ca = "ca_other.pem";
     case.response = None;
     let seen = run_case(env, &case);
-    assert_refused("untrusted", &seen, E_UNKNOWN_ANCHOR);
+    assert_refused_class("untrusted", &seen, E_UNKNOWN_ANCHOR, CLASS_BEFORE_SEND);
 }
 
 #[test]
@@ -288,5 +295,131 @@ fn an_rsa_3072_leaf_is_refused_as_unsupported() {
     case.leaf = RSA3072;
     case.response = None;
     let seen = run_case(env, &case);
-    assert_refused("rsa3072", &seen, E_UNSUPPORTED_KEY);
+    assert_refused_class("rsa3072", &seen, E_UNSUPPORTED_KEY, CLASS_BEFORE_SEND);
+}
+
+/// `head` + CRLF + `body`, as one response.
+fn response(head: &str, body: &[u8]) -> Vec<u8> {
+    let mut r = format!("HTTP/1.1 200 OK\r\n{head}\r\n").into_bytes();
+    r.extend_from_slice(body);
+    r
+}
+
+#[test]
+fn a_repeated_content_length_is_refused() {
+    let Some(env) = env() else { return };
+    for (tag, head) in [
+        (
+            "cl_twice_diff",
+            "Content-Length: 5\r\nContent-Length: 2\r\n",
+        ),
+        (
+            "cl_twice_same",
+            "Content-Length: 5\r\nContent-Length: 5\r\n",
+        ),
+        (
+            "cl_twice_case",
+            "content-length: 2\r\nCONTENT-LENGTH: 5\r\n",
+        ),
+        (
+            "cl_apart",
+            "Content-Length: 5\r\nX-A: b\r\nContent-Length: 4\r\n",
+        ),
+    ] {
+        let seen = run_case(env, &Case::get(tag, response(head, b"hello")));
+        assert_refused_class(tag, &seen, E_RESPONSE, CLASS_AFTER_SEND);
+    }
+    // The positive control: one Content-Length.
+    let seen = run_case(
+        env,
+        &Case::get("cl_once", response("Content-Length: 5\r\n", b"hello")),
+    );
+    assert_ok_body("cl_once", &seen, b"hello");
+}
+
+#[test]
+fn a_transfer_coding_other_than_chunked_is_refused() {
+    let Some(env) = env() else { return };
+    let framed = b"5\r\nhello\r\n0\r\n\r\n";
+    for (tag, head, body) in [
+        (
+            "te_gzip_chunked",
+            "Transfer-Encoding: gzip, chunked\r\n",
+            &framed[..],
+        ),
+        (
+            "te_chunked_twice",
+            "Transfer-Encoding: chunked, chunked\r\n",
+            framed,
+        ),
+        ("te_gzip", "Transfer-Encoding: gzip\r\n", b"hello"),
+        ("te_identity", "Transfer-Encoding: identity\r\n", b"hello"),
+        ("te_empty", "Transfer-Encoding: \r\n", b"hello"),
+    ] {
+        let seen = run_case(env, &Case::get(tag, response(head, body)));
+        assert_refused_class(tag, &seen, E_RESPONSE, CLASS_AFTER_SEND);
+    }
+    // The positive controls: chunked, in any case.
+    for (tag, head) in [
+        ("te_chunked", "Transfer-Encoding: chunked\r\n"),
+        ("te_chunked_upper", "Transfer-Encoding: CHUNKED\r\n"),
+    ] {
+        let seen = run_case(env, &Case::get(tag, response(head, framed)));
+        assert_ok_body(tag, &seen, b"hello");
+    }
+}
+
+#[test]
+fn a_content_length_over_18_digits_is_refused() {
+    let Some(env) = env() else { return };
+    for (tag, value) in [
+        ("cl_19_digits", "0000000000000000005"),
+        ("cl_i64_wrap", "9223372036854775813"),
+        ("cl_u64_wrap", "18446744073709551621"),
+    ] {
+        let head = format!("Content-Length: {value}\r\n");
+        let seen = run_case(env, &Case::get(tag, response(&head, b"hello")));
+        assert_refused_class(tag, &seen, E_RESPONSE, CLASS_AFTER_SEND);
+    }
+    // The positive control: 18 digits are read.
+    let seen = run_case(
+        env,
+        &Case::get(
+            "cl_18_digits",
+            response("Content-Length: 000000000000000005\r\n", b"hello"),
+        ),
+    );
+    assert_ok_body("cl_18_digits", &seen, b"hello");
+}
+
+#[test]
+fn control_bytes_in_the_url_target_are_refused_before_connecting() {
+    let Some(env) = env() else { return };
+    for (tag, path) in [
+        ("url_crlf", "/a\r\nX-Injected: 1"),
+        ("url_lf", "/a\nb"),
+        ("url_cr", "/a\rb"),
+        ("url_sp", "/a b"),
+        ("url_sp_query", "/?q=a b"),
+        ("url_tab", "/a\tb"),
+        ("url_nul", "/a\0b"),
+        ("url_del", "/a\x7fb"),
+    ] {
+        let mut case = Case::get(tag, Vec::new());
+        case.response = None;
+        case.path = path;
+        let seen = run_case(env, &case);
+        assert_refused_class(tag, &seen, E_URL, CLASS_BEFORE_SEND);
+        assert!(seen.records.is_none(), "{tag}: the client connected");
+    }
+    // The positive control: the same bytes percent-encoded reach the server.
+    let mut case = Case::get("url_encoded", response("Content-Length: 2\r\n", b"ok"));
+    case.path = "/a%20b?q=%0D%0A";
+    let seen = run_case(env, &case);
+    assert_ok_body("url_encoded", &seen, b"ok");
+    let req = String::from_utf8_lossy(&seen.request).into_owned();
+    assert!(
+        req.starts_with("GET /a%20b?q=%0D%0A HTTP/1.1\r\n"),
+        "request line: {req}"
+    );
 }

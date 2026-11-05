@@ -6,8 +6,8 @@
 // NUL-terminated CA bundle path (empty: the system bundle). The program calls
 // https_get_with_headers or https_post_with_headers once and writes the result
 // on stdout:
-//   E <error> / S <status> / V <chain verdict> / C <Set-Cookie count>, one
-//   line each; then per Set-Cookie header "K <len>" and its value, "P <len>"
+//   E <error> / L <error class> / S <status> / V <chain verdict> /
+//   C <Set-Cookie count>, one line each; then per Set-Cookie header "K <len>" and its value, "P <len>"
 //   and its cookie-pair (each followed by a newline); then "B <len>" and the
 //   body bytes. The exit status is 0 when stdin held a well-formed request.
 
@@ -54,7 +54,7 @@ fn rq_field(buf: i64, len: i64, idx: i64, out: i64) -> i64 {
             } else {
                 if i == idx {
                     __mind_store_i64(out, buf + pos + 8);
-                    __mind_store_i64(out + 8, n);
+                    __mind_store_i64(out + 8, n)
                 }
                 pos = pos + 8 + padded;
             }
@@ -168,6 +168,7 @@ fn main() -> i64 {
     let out: i64 = __mind_alloc(https_body_len(r) + 262144);
     let mut p: i64 = 0;
     p = p + rq_line(out + p, 69, https_error(r));
+    p = p + rq_line(out + p, 76, https_error_class(r));
     p = p + rq_line(out + p, 83, https_status(r));
     p = p + rq_line(out + p, 86, https_tls_verdict(r));
     p = p + rq_line(out + p, 67, cookies);
@@ -181,7 +182,7 @@ fn main() -> i64 {
             p = p + rq_blob(out + p, 80, 0, 0);
         } else {
             p = p + rq_blob(out + p, 80, __mind_load_i64(pr), __mind_load_i64(pr + 8));
-            __mind_free(pr);
+            __mind_free(pr)
         }
         c = c + 1;
     }
