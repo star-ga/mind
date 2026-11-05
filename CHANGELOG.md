@@ -5,22 +5,26 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.3] - 2026-11-07 — PQC hybrid evidence signing compiled into release builds (signed, opt-in) with the classical schemes retired, release build hardening (committed lockfile, `--locked` everywhere, a required pre-tag release job), the whole-program mic@3 String fix, the `__mind_open` wiring, and the canonical JSON dump
 
 ### Added
-- **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
-  dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
-  compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
-  therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
-  `release_profile` job builds the exact release.yml command on native x86_64 and aarch64 runners,
-  runs the post-build smoke action, and drives the packaged binary through
-  `tests/evidence_release_smoke.rs`: unsigned bytes equal the committed fixture with the signing
-  features compiled in (release set) or out (std-surface test rows), the public TEST seeds sign, the
-  signature verifies under pinned keys, and stripping either leg is refused. R8 fails when the job's
-  `cargo build` differs from release.yml's in any argument or its signing smoke loses the release
-  feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
-  leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
-  its feature sets never resolve fips204 or fips205.
+
+- **`__mind_open` wired on the Rust/MLIR backend (`be7f945c`).** `mindc build`'s
+  default backends could now emit `__mind_open`, so `std/fs.mind`'s path-based
+  file I/O is reachable from the shipped compile path and not only from the
+  native-ELF self-host emitter. Previously the intrinsic was classified but
+  absent from `STD_SURFACE_INTRINSICS` and the C runtime had `__mind_read` /
+  `__mind_write` but no `open`, so `std/fs.mind` failed with
+  `E2024: __mind_open is not registered in mindc's Rust/MLIR intrinsic table`.
+  Both halves are now present: a C definition (including its Windows branch) and
+  the registry row (arity 1, `Det::Pure`). The exec-tier quarantine is empty.
+  Determinism classification is unchanged (`Det::Pure`, same name-level verdict
+  as `__mind_read`, refined call-site-sensitively). Callers observe only a
+  sign test on the descriptor (`if fd < 0`), so the libc `-1`/`errno` and raw
+  syscall `-errno` conventions are both accepted; no program output depends on
+  which backend ran. `std_surface_net_fs_process` 18 passed / 0 failed (was
+  13/4); a mutation forcing `-1` turns it 17/1. keystone 7/7 byte-identical;
+  cross-substrate 26/26; self-host loop PRIMARY + ORACLE both pass.
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
@@ -30,13 +34,458 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `examples/dottie_collapse.mind` (`N >= 11` pairs after warmup), and fails closed via a
   one-sided exact binomial sign test (`alpha = 0.01`, `MAX_RATIO = 1.15`, `DEADBAND_NS = 5_000_000`)
   if the candidate is consistently slower or if any stage time or artifact is missing.
+- **`std/json_canon` — canonical JSON dump as a non-seed std module (`#327`,
+  `c49503e0`).** Deterministic canonical JSON serialization for evidence and
+  receipts; the module is non-seed so its addition does not move the frozen
+  self-host seed set.
+- **Registry-backed intrinsic contracts.** Canonical intrinsic declarations now use one exact registry contract under
+  the reserved owner `__mind_intrinsic`. The first-cut logical/physical rows
+  are:
+
+  | Logical | Physical | Wire signature | Native result-use | Effect | Profiles |
+  |---|---|---|---|---|---|
+  | `argc` | `__mind_argc` | `() -> i64` | value | argument count | FrozenNative |
+  | `argv` | `__mind_argv` | `(i64) -> i64` | value | argument vector | FrozenNative |
+  | `alloc` | `__mind_alloc` | `(i64) -> i64` | value | arena allocation | FrozenNative + RustMlir |
+  | `load_i64` | `__mind_load_i64` | `(i64) -> i64` | value | 8-byte memory read | FrozenNative + RustMlir |
+  | `load8` | `__mind_load_i8` | `(i64) -> i64` | value | 1-byte memory read | FrozenNative + RustMlir |
+  | `open` | `__mind_open` | `(i64) -> i64` | value | read-only open | FrozenNative + RustMlir |
+  | `read` | `__mind_read` | `(i64,i64,i64,i64) -> i64` | value | file-descriptor read; fourth offset is `-1` and ignored | FrozenNative + RustMlir |
+  | `store_i64` | `__mind_store_i64` | `(i64,i64) -> i64` | discard-only in FrozenNative | 8-byte memory write | FrozenNative + RustMlir |
+  | `store8` | `__mind_store_i8` | `(i64,i64) -> i64` | discard-only in FrozenNative | 1-byte memory write | FrozenNative + RustMlir |
+  | `write` | `__mind_write` | `(i64,i64,i64,i64) -> i64` | value | file-descriptor write; fourth offset is `-1` and ignored | FrozenNative + RustMlir |
+
+  `DiscardOnly` is a native result-use policy; stores retain their historical
+  i64 wire return. This registry validates canonical declarations and exposes
+  a profile check. It does **not** by itself admit source calls, prove memory
+  provenance or destination liveness, consume a whole native image, or claim
+  pure-MIND/native execution parity. Those remain separate admission work.
+- **Checked source ownership for canonical IR.** The opt-in `compile_source_to_canonical_ir` library API binds source to a
+  captured project scope and retains resolved function owners, signatures,
+  call targets, and checked scalar types through lowering.
+  Canonical verification checks every return against its defining function,
+  including returns inside control flow. Unknown required producer types,
+  changed source snapshots, and unsupported source forms are refused.
+  Ordinary functions without a return annotation retain their existing return
+  behavior. This API is a bounded Rust frontend stage; native consumption,
+  aggregate lowering, and the standalone pure-MIND driver remain unfinished.
+- **Draft canonical MIC3 `0x04` core codec.** Checked binary emission and loading preserve owner-qualified schema and
+  function registries, resolved callees, and semantic values in their module or
+  function scope. The initial codec supports scalar instructions and metadata
+  descriptors for records and arrays; aggregate and tensor instructions remain
+  outside this stage.
+  Strings, identities, explicit wire tags, and compatibility-section counts have
+  one layout across build profiles. Unsupported content, inconsistent metadata,
+  noncanonical encodings, and inputs exceeding resource limits are refused.
+  Legacy `0x02`/`0x03` output is retained. The new revision remains a draft:
+  full resolver/lowering population, pure-MIND codec parity, native consumption, and
+  protocol release are separate unfinished steps. See
+  [the draft scope](docs/mic3-v04-draft.md).
+- **Native project entry and import composition.** Native executable builds discover the manifest entry, capture and validate the
+  local module closure once, and enforce the resolver's export boundaries before
+  emission. An imported sibling cannot supply a missing entry `main`.
+  Supported scalar and control-flow imports execute through the pure-MIND ELF
+  emitter. Pinned single-file artifacts retain their bytes. Duplicate bare
+  definitions, unsupported emit kinds, and unresolved imports fail before
+  artifact publication.
+  Imported aliases, structs, and enums are temporarily refused, including private
+  or unused declarations. This prevents merged lowering from replacing one
+  module's type with another's and silently narrowing a result. Removing this
+  restriction requires preserving source owners through lowering; this change
+  does not enable native aggregate or full-language execution.
+- **Opt-in native `mic@3 → mic@3` optimizer (roadmap C6, default OFF).** A canonical-IR optimizer (`src/opt/native_opt.rs`) sitting **upstream of emitter
+  divergence**, so both the Rust `--emit-mic3` oracle and the self-host emitter consume
+  identical optimized bytes (each pass written once, oracle-parity-safe by construction).
+  **Default OFF** (`MIND_NATIVE_OPT` unset) is a strict no-op — every emitted byte is
+  byte-identical to the un-optimized IR, so keystone / cross-substrate canaries / frozen
+  self-host seeds are untouched; enabling a level (`=basic`) changes bytes and is a
+  whole-corpus reseed event. Every pass is a pure function with a pinned schedule (fixed
+  order + fixed iteration count, never "loop until quiet"), so the optimized `mic@3` — what
+  `trace_hash` anchors — stays a deterministic function of the input IR across hosts.
+  Slices landed under `basic`: **SCCP-lite const-condition `If`-pruning** (dead-arm removal
+  with a complete operand remap), **integer `mul`-by-zero folding**, **exact integer
+  algebraic-identity elimination** (`x+0`, `x-0`, `x*1`, `x/1`, `x|0`, `x^0`, `x<<0`,
+  `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**. All integer-exact and
+  structurally never touching the Q16.16 or float tiers.
+  - **Status correction.** As first landed the optimizer was **not reachable from any
+    artifact-emitting path**, so the "upstream of emitter divergence" sentence above did not
+    hold and `MIND_NATIVE_OPT=basic` changed zero bytes of `--emit-mic3`. That is fixed below;
+    the description above is accurate as of the fix. `basic` remains a **developer flag, not a
+    shipping profile** — one of its four passes has a known defect (next bullet).
+  - **Known defect under `=basic`: `fold_algebraic_identities` can emit a dangling SSA use.**
+    Its operand remap does not descend into `If`/`While`/`FnDef` bodies, relying on every
+    enclosing value a region reads being threaded through `If.merges` / `While.init_ids`; that
+    does not hold for every lowered shape. Measured over the 300 corpus sources that compile
+    with the optimizer OFF, **2 fail with it ON** (`examples/geometric_collapse.mind`,
+    `std/toml.mind`), both isolating to this pass alone. **Not a silent miscompile** — the
+    re-verify in `ir::prepare_ir_for_backend` rejects it as `E3001` at compile time. Tracked by
+    a `deferred:` marker on the pass; enabling `basic` by default stays gated on a clean 300/300
+    sweep plus a whole-corpus reseed.
+- **Self-host native-ELF construct coverage (Rust-Independence).**
+  **Nested while-in-while**, and an **outer `let mut` assigned inside a statement-`if`**,
+  now emit a correct, byte-identical native-ELF mic@3 note (previously fail-closed).
+  Gated by oracle-parity, per-fixture byte-identity smoke, the zero-Rust bootstrap loop
+  (`stage1 == stage2 == stage3 == frozen`), and keystone 7/7.
+- **Native `mic@3 → mic@3` optimizer roadmap (C6).**
+  `docs/INDEPENDENCE_ROADMAP.md` §C6 now specifies the opt-in native middle-end
+  (SCCP-lite → strength-reduction → region-scoped CSE/GVN → LICM-on-`While` →
+  linear-scan RA), the load-bearing invariant *"optimizer = canonical `mic@3 → mic@3`
+  transform upstream of emitter divergence"* (so both emitters consume identical
+  optimized bytes), and the offline-mine / in-compiler-`egglog`-apply evolvability loop
+  gated by the byte-invariance + cross-substrate oracle.
+- **Fixed `[f64; N]` / `[f32; N]` aggregate surface on the executable MLIR path (RH_REQUIRED_F64_AGGREGATE_SURFACE).**
+  **Local floating-point fixed arrays now compile and run correctly on the `mindc build`
+  (LLVM/MLIR) path.** A `let mut a: [f64; N] = [lit, ...]` (or `[f32; N]`) now lowers to a
+  TYPED `ConstDenseTensor` carrying the exact per-element IEEE-754 bits instead of falling
+  through to the i64-only `ConstArray` path — which coerced float literals to 0 and left the
+  base untyped, so a following `a[i]` load failed `MLIR lowering: missing type information
+  … array load base`. With the typed base, the existing dtype-generic `ArrayLoad` /
+  `ArrayStore` emitters (tensor.extract / tensor.insert, both already f64-ready) and the
+  `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
+  `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
+  `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
+  no fast-math / reassociation — strict IEEE-754). (`src/eval/lower.rs`:
+  `lower_fixed_dense_array_binding` + the fn-body `Let` arm.)
+  - **Read-only fixed-array function parameter (aggregate call ABI, minimum).** A fixed array
+    passed by value to a user fn — `fn f(a: [f64; N])`, called `f(a)` — no longer trips the
+    `non-i64 argument to call` reject: the call-site accepts a `Tensor` arg and forwards it as
+    `func.call @f(%a) : (tensor<NxT>) -> ret`, matching the callee's `tensor<NxT>` param type
+    (from `fn_signatures`), and mlir-opt's function-boundary bufferization lowers the internal
+    tensor call. A shape/dtype mismatch stays loud at mlir-opt. Array *returns* remain out of
+    subset. (`src/mlir/lowering.rs`: `Tensor` arm in the call-arg gate.)
+  - **`i64`/`i32` fixed arrays are byte-identical** — the new f64/f32 routing returns `None`
+    for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
+    self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
+    unchanged).
+  - **Audit hardening:** the f64/f32 `[T; N]` routing now covers **all six**
+    `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
+    so a float fixed array declared inside a branch body now compiles instead of hitting the
+    i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
+    now **fails closed on a non-const element** — `let a: [f64; 2] = [x, 1.0]` (a runtime
+    element) previously baked `x` → `0.0` silently; it now falls back to the ordinary path
+    (never a silent zero). Known remaining limit: a float fixed array *declared fresh inside a
+    `while` body* still fails closed (a deeper loop-carry `substitute_ids` value-kind
+    propagation case) — fn-top declaration + in-loop mutation (the common shape) works.
+  - **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
+    performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
+    factor are exactly representable in binary64, returning the bit-exact `37`;
+    `rh_f64_aggregate_canary_smoke.py` (wired into the `mindcraft_self_host` CI job) requires
+    that on the MLIR path and asserts the pure-MIND `--backend native` leg fails CLOSED — the
+    native fixed-array **store** (`a[i]=v`) and by-value array **parameter** are NOT yet ported
+    to the self-host emitter / mic@3 wire format (no `OP_ARRAY_STORE` opcode); load / accumulate
+    / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
+- **Fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE).**
+  **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
+  branch body** — the last fail-closed position. With this, the store works in EVERY statement
+  position: straight-line, loop (`for`/`while`/nested), and branch. Nothing is fail-closed for a
+  fixed-aggregate `a[i]=v` any more.
+  - **Same Option A+ value-semantic design, applied to the `Instr::If` merge machinery.** New
+    `IndexAssign` arms in both the then- and else-branch statement loops (`src/eval/lower.rs`) emit
+    `Instr::ArrayStore`, rebind the receiver root in the branch env, and record it as a merge write
+    (`record_then_write`/`record_else_write`) — so the aggregate is threaded as a value-semantic
+    `tensor<NxT>` `^if_after` merge block-arg. The then/else edge carries the stored incarnation; the
+    untouched edge carries the pre-if tensor (from the outer env), so a post-if read sees the taken
+    branch's write and the not-taken path preserves the original. The MLIR emitter already types the
+    merge block-arg via `mlir_type` of the unified `Tensor` kind — no change needed there. (The
+    assignment statement's if-VALUE stays unit-i64, so the tensor flows only through `a`'s own merge
+    column, never the i64 if-value column.)
+  - **Wedge intact — no per-branch copy.** The If-merge rides the exact same
+    `cf`-block-arg machinery the loop already proved, so one-shot-bufferize sees no read-after-write
+    conflict and inserts no defensive copy. Verified across a 4-case matrix (`if c {a[i]=v}`, `if/else`,
+    if-inside-loop, `a` read after the if) that the **post-bufferization MLIR `memref.alloc` /
+    `memref.copy` / `alloc_tensor` counts are identical to the CI-green loop baseline** (one-time buffer
+    materialisation, zero per-branch copy), and the LLVM IR confirms an in-place `store` in the taken
+    block. So x86 avx2 == ARM neon by construction.
+  - Verified by COMPILE+RUN (`tests/array_store_run.rs`): `if T {a[0]=9} return a[0]`→9, untouched
+    sibling→2, `if F {a[0]=9}`→1 (original preserved), `if/else` same-index→taken edge (1/2),
+    `if/else` different-index→per-element (5). Gates: `array_store_run` 3/3 (all positions) · keystone
+    7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · fmt/clippy · all local green.
+  - **Additive / byte-neutral:** a branch-body `a[i]=v` on a fixed aggregate previously failed to
+    compile; `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host / cross-substrate
+    are untouched.
+- **Fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading).**
+  **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
+  loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
+  prior increment left fail-closed. The design-reviewed **Option A+ (value-semantic typed tensor
+  block-arg)**: the mutated aggregate is threaded through the loop as a first-class `tensor<NxT>`
+  loop iter-arg. A new `IndexAssign` arm in the `While`-body lowering (`src/eval/lower.rs`) emits
+  `Instr::ArrayStore` and records the fresh post-store id as loop-carried (`record_loop_mut`), so the
+  back-edge threads the new incarnation and every post-loop read resolves against the `^while_after`
+  exit id. In the MLIR emitter (`src/mlir/lowering.rs`) a new `loop_carry_mlir_type` helper types
+  every loop-carried block-arg (header / body / `^while_after`) and every `cf.br`/`cf.cond_br`
+  operand by its real `ValueKind` — `tensor<NxT>` for an aggregate carry instead of the default i64 —
+  and each exit id is registered with the carried kind so the post-loop `ArrayLoad` type-resolves.
+  Verified by COMPILE+RUN (`tests/array_store_run.rs`): `for k in 0..3 { a[k]=k*10 } → a[2]`→20,
+  `while k<3 { a[k]=7 } → a[0]`→7, for-loop fill sum→6, nested for-in-for→6.
+  - **Wedge intact — no per-iteration copy:** the post-bufferization LLVM IR for a loop-mutating
+    `[i64;N]` fixture was inspected — the `one-shot-bufferize` output threads the tensor iter-arg as a
+    self-cycling memref-descriptor phi with an **in-place `store` in the loop body and NO `malloc` /
+    `memcpy` per iteration** (the one-time buffer materialisation is hoisted to the entry block), so the
+    loop is byte-identical across x86 avx2 / ARM neon by construction. A dedicated cross-substrate
+    canary `tests/cross_substrate_identity/array-store-loop/` (avx2 == neon, RFC 0015 §3.1) locks this,
+    cross-checked against a Rust oracle in-run. Gates: `array_store_run` (loop RUNS correct) ·
+    `cross_substrate_identity` 25/25 · keystone 7/7 byte-identical · mic3_flip
+    whole-module byte-identical (621052 B) · fmt/clippy — all locally green.
+  - **Additive / byte-neutral for every existing program:** a loop-body `a[i]=v` on a fixed aggregate
+    previously failed to compile, so this only turns a compile-error into correct codegen; every scalar
+    (i64/f64/f32) loop emits the exact same MLIR as before (`loop_carry_mlir_type` returns the identical
+    type string), and `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host /
+    cross-substrate are untouched.
+- **Fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D).**
+  **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
+  store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers
+  to `Instr::ArrayStore` (MLIR `tensor.insert` yielding a FRESH aggregate SSA value with the same
+  `{i64,i32,f32,f64}` element type, same `DETERMINISTIC_BOUNDS_TRAP` as `ArrayLoad`), and the fn-body
+  statement dispatch rebinds the receiver root name to that fresh id — so a later `a[j]` read observes
+  the write. Verified by COMPILE+RUN (`tests/array_store_run.rs`): `a[0]=9;return a[0]`→9, two-write
+  sum→90, `tensor<i64[3]>` literal store→9, untouched-sibling read→2. Reference-semantic `array<T>`
+  (`vec_set`) / `bytes[N]` (`__mind_store_i8`) and all reads are unchanged.
+  - **Byte-identity neutral / wedge intact:** `main.mind` + all of `std` emit zero surface `a[i]=v`
+    (raw `__mind_store_i64` ABI), so `ArrayStore` is inert during self-compile. Gates: `array_store_run`
+    · keystone 7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · oracle-parity
+    30/30 · fmt/clippy/rustdoc — all locally green; the cross_substrate canary set is byte-identical
+    and is re-verified by the CI dual-arch (avx2 + neon) matrix.
+- **mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation).**
+  **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
+  value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:
+  it yields a FRESH aggregate SSA value (the post-store incarnation) so a later `arr[j]` read
+  observes the write, unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
+  (`__mind_store_i8`) paths which keep the name bound to the same base. This is the intended FIRST
+  population target of the #320 Step D canonical aggregate-type invariant (the `value_types` table,
+  landed-but-dormant until now). The opcode is a pure additive append in previously-unused wire space
+  (`0x2A` = `OP_CONST_DENSE_TENSOR` was the prior max), so there is **no `MIC3_VERSION` bump**: every
+  existing byte stream stays byte-identical, PROVEN (not asserted) by keystone 7/7 + all
+  cross_substrate canaries unchanged. Decode is a fixed 4×`read_vid` (no untrusted count → no
+  alloc-amplification surface). Wired through `Instr` (`instr_dst`), `verify` (define-before-use on
+  base/index/value), `print`, `evidence`, `ir_canonical` (`for_each_operand` reads base/index/value),
+  and the mic@3 `emit`/`parse`. Gates: new `tests/mic3_array_store_roundtrip.rs` (emit→parse→emit
+  fixed point + 0x2B byte present) · keystone 7/7 byte-identical · mic3_flip whole-module
+  byte-identical (621052 B) · cross_substrate 24/24 canaries unchanged · fmt/clippy/rustdoc clean.
+- **Phase 17 numerical research surface (f64 completeness).**
+  - **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
+    indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
+    a `Tensor{i64}` and `ArrayLoad` recovers the element type + `index_cast`s the
+    subscript so the enclosing binop resolves. The element type is *derived* from the
+    declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
+    definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
+    `tests/const_array_run.rs`.
+  - **Array-parameter lowering to `cdylib` (17.6).** A function taking a fixed array
+    parameter — `fn dot(a: [i64; N], b: [i64; N]) -> i64 { … a[i] … }` — now compiles to
+    a shared library. `type_ann_to_abi_mlir` + `type_ann_to_value_kind` gained a
+    `TypeAnn::Array` arm, so a `[T; N]` param maps to the same `tensor<NxT>` MLIR
+    boundary a `Tensor` annotation uses (bufferize-function-boundaries → memref C-ABI,
+    the proven tensor-param path) instead of falling to the scalar-`i64` default, where
+    `ArrayLoad` on the param had failed with *"missing type information … array load
+    base"*. Rank-1, scalar element. Additive — array-param programs previously errored,
+    so no working program (including self-host `main.mind`) changes bytes (keystone 7/7
+    byte-identical). Unblocks the head-to-head performance shape (`axpy`/`dot`/`gemv`)
+    against C.
+  - **Determinism-with-speed evidence.** The deterministic int8 GEMM kernel runs
+    **~2.02× a single-core OpenBLAS f32 reference, byte-exact** (`bench/RESULTS-int8-2026-06-08.md`);
+    and — vs a *naïve* `clang -O3 -march=x86-64-v3` loop (what `-O3` gives without
+    hand-blocking) — byte-identical output at a large margin, with a `memcmp` correctness
+    gate *before* any timing (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, reproducible
+    driver `bench/beat_clang_igemm_driver.c`). No `-ffast-math` claim (determinism forbids
+    float reassociation).
+  - **Scalar `f64` `sqrt` (17.5)** lowers to the IEEE correctly-rounded `llvm.intr.sqrt`.
+    `sqrt` is now a **reserved builtin name (E2031)** — a user `fn sqrt` is rejected at
+    check-time (one name, one meaning; removes a silent-shadow / duplicate-symbol class).
+  - **`f64` bit-cast intrinsics (17.3):** `__mind_bits_to_f64` / `__mind_f64_to_bits` /
+    `__mind_conv_f64`.
+  - **`std/detmath.mind` (17.6):** deterministic pure-`f64` minimax `exp`/`log`/`sin`/
+    `cos`/`pow` with a pinned fold order, `det_sqrt` (intrinsic + a pinned canonical
+    qNaN `0x7FF8000000000000` for out-of-domain inputs so negatives stay cross-substrate
+    byte-identical), and a value-oracle KAT.
+  - **Cross-module `f64` signatures (17.1).** An imported `pub fn` with a non-`i64` scalar
+    signature is now typed from the callee's DECLARED param/return ABI at both the
+    `func.call` site and the `func.func private` extern forward-declaration (imported
+    signatures are registered into `IRModule::fn_signatures`), so `f64`/`f32`/`i32`/`bool`
+    cross-module calls no longer default to `(i64) -> i64` — previously a hard `mlir-opt`
+    type error (e.g. an imported `f64 scale`). Empty on the single-file / default-feature
+    path → byte-identical. **Proven on the actual `mindc run` consumer path** (a
+    cross-module `f64` project builds and runs), not only `--emit-shared`.
+  - **Self-host `f64` MLIR emit (17.1 self-host mirror, #298 step 1).** The pure-MIND
+    self-host MLIR emitter (`examples/mindc_mind/main.mind` `selftest_emit_mlir`) now lowers
+    scalar `f64` — `f64` params (`%N: f64`), `f64` returns (`-> f64` / `return %k : f64`), the
+    four `arith.{addf,subf,mulf,divf}` binops, and canonicalized `f64` constants (`2.50`→`2.5`,
+    `5.0`→`5.0`: a pure string canonicalization of the source span that matches the Rust
+    `ConstF64` shortest-round-trip Display for in-precision decimals) —
+    byte-identical to `mindc --emit-mlir`. Dtype is derived per-AST-node (no threaded state), so
+    the 17 pre-existing i64 cases stay byte-inert. Gated by `self_host_mlir_smoke.py` (now a CI
+    step): 25/25 cases (17 i64 + 8 f64). Out-of-step-1 `f64` cross-fn ABI (`func.call`) / `f64`
+    control-flow stay **fail-closed** (the byte-identity gate catches the i64-typed emit). The
+    main.mind growth re-freezes the RI-E1 self-host loop seed (`testdata/selfhost_loop/stage1.elf`
+    042bfea3 → 11df237d, expected Rule-1b source-growth drift; candidate fixed point
+    stage1==stage2==stage3 proven before the refreeze — full PRE/POST evidence in
+    `examples/mindc_mind/testdata/selfhost_loop/PROVENANCE_298_f64_selfhost_mlir.md`).
+    Advances the self-host toward 100% Rust-independence.
+    - **Fail-closed f64 call-ABI negative control** (`tests/f64_abi_negative_control.rs`):
+      a typed `i64` variable passed to an `f64` parameter is rejected at the MLIR-lowering
+      ABI boundary (`expects different type … 'f64' vs 'i64'`) — not silently miscompiled,
+      not a parse error, not a link error; a byte-identical `f64`-argument positive control
+      compiles. Machine-checked; a vacuous `exit != 0` is explicitly rejected.
+  - **Known / deferred (#298 follow-ups, filed — not silently skipped):**
+    - The pure-MIND self-test surface `selftest_emit_mlir` SEGFAULTs when fed a *cross-fn*
+      f64 construct (an `f64` `func.call` or `f64` value-`if`) — **pre-existing** (the
+      unchanged `7b696f09` baseline `.so` crashes identically), latent (no shipped gate feeds
+      it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope. To be
+      hardened to fail-closed alongside the cross-fn f64 self-host emit (step 2).
+    - `mindc check` fail-opens on a typed-`i64`→`f64` call-argument / return (passes `check`,
+      then fails `build` at MLIR lowering). The build gate already fail-closes (above), so
+      this is a belt-and-suspenders early-diagnostic gap to close at check-phase (RFC 0011
+      scalar-class extension), tracked separately to keep this change main.mind-only.
+  - **`f64` parameter-init inference (17.2).** A loop-carried `let mut v: f64 = <ident>`
+    seeded from an `f64` param now materialises its own `f64`-typed value up front, so the
+    loop-carry keeps `arith.addf` instead of degrading to `arith.addi` (the old int
+    alias-break was an `mlir-opt` `i64 vs f64` error). Fires only for the bare-identifier
+    alias case → every other binding is byte-identical.
+  - **Artifact-embedded evidence over a resolved project + parent chaining (17.7).**
+    `mindc --emit-evidence <PATH>` resolves a multi-module project before emit, and
+    `--evidence-parent <HASH|PATH>` records a parent artifact's `trace_hash` as
+    `evidence_chain.parent` (in the MAP epilogue, outside the `trace_hash` preimage, so it
+    never perturbs the child's own anchor / byte-identity). Chaining to a body-tampered
+    parent is refused fail-closed. `--emit-evidence` → `mindc verify` round-trips.
+  - **Application-namespace evidence attributes (17.8).** `--evidence-attr KEY=VALUE`
+    (repeatable) attaches dotted, non-reserved provenance keys to the mic@3 MAP epilogue:
+    byte-additive (byte-identical when unused; older readers skip unknown keys), lexically
+    sorted, validated fail-closed (reserved-prefix / un-namespaced / duplicate / empty
+    rejected) at BOTH the CLI and the library emit boundary, and folded into the signature
+    preimage so signed app metadata is non-strippable.
+  - **Edges (17.8):** `lib` / `main` / `mod` are diagnosed as reserved crate-root stems — a
+    non-entry `src/lib.mind` errors clearly (rename hint) instead of a cryptic downstream
+    `E2003` (behaviour change: a project that relied on such a sibling collapsing to `crate`
+    and reaching its exports by bare name now gets the diagnostic — an intended honesty
+    improvement, since both files already collapsed to `crate`); `--emit-ir` renders `f64`
+    constants as `const.f64`; `mindc test` exits non-zero on a failing OR empty run (was a
+    false green at exit 0).
+- **`mindc test` runs test bodies in parallel and reports results in discovery
+  order.** Parallel execution and ordered result reporting are separated, and
+  results are emitted in the order tests were discovered regardless of completion
+  order — a worker-boundary control forces out-of-order arrival and the report
+  still comes out ordered. This is the supporting harness for the std parallel-run
+  and mic@3 results modules listed under Pending for this release.
+
+### Changed
+
+- **PQC hybrid evidence signing is compiled into release builds; signing is opt-in via the key-seed environment variables.** The release build matrix compiles
+  the `evidence-mldsa` + `evidence-slhdsa` features, so the supported post-quantum
+  hybrid scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s` (ML-DSA-87 + SLH-DSA-SHAKE-256s,
+  both legs required) is present in released `mindc` binaries. Signing does not run
+  unless an operator supplies a key seed out-of-band via the environment variables
+  (`MIND_EVIDENCE_MLDSA87_KEY`, `MIND_EVIDENCE_SLHDSA_KEY`): **signed (opt-in)**.
+  Unsigned artifacts stay byte-identical; no key material is built into or published
+  with the release. Artifacts are not signed by default and release notes must not
+  claim that releases are signed. Production key custody and signed-release
+  publication remain pending. (Scheme details under Security.)
+- **Classical evidence signing retired.** Ed25519 and the historical Ed25519 + ML-DSA-65 hybrid now refuse at the
+  checked signing APIs and at trust verification. Historical artifacts remain
+  inspectable, with an explicit retired-scheme result.
+  The supported release profile requires both ML-DSA-87 and
+  SLH-DSA-SHAKE-256s. CLI controls check both signer keys, tampering,
+  malformed seed input, and refusal of a missing signature leg.
+- **`mlir-opt` and `mlir-translate` run concurrently.**
+  The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
+  `mlir-opt`'s output into it, so the translator's process startup overlaps the
+  optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
+  bench programs got 58-76 ms faster (paired median per program, warm
+  runtime-object cache, two runs of 40 interleaved builds each).
+  Output is unchanged: the translator receives exactly the text that becomes the
+  optimized MLIR, and the build falls back to a serial translate if the forwarded
+  bytes ever differ. Emitted `.so` and `.o` files are byte-identical to the
+  ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
+  reported as `mlir-opt`.
+- **Runtime-support object off the `--emit-shared` critical path.**
+  `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
+  object on a separate thread while mlir-opt and mlir-translate run, and joins it
+  before the shared link. Output bytes are unchanged; a clang failure in that compile
+  still fails the build with the same `subprocess clang failed` error.
+  `MINDC_RUNTIME_OBJ_CACHE=0` bypasses the runtime-support object cache (no read, no
+  write). It is a cold-path measurement knob and does not change output bytes
+  (`docs/benchmarking.md`).
+- **15–20% fewer instructions per compile (`83ed6a11`).** Frontend compile work
+  (parse + typecheck + IR + verify) spent about a quarter of its instructions in
+  malloc/free for a few-line program. Measured instruction counts per compile on
+  the three frozen pipeline fixtures: `small_matmul` 28,123 → 24,026 (−14.6%),
+  `medium_mlp` 55,828 → 45,861 (−17.9%), `large_network` 140,389 → 112,663
+  (−19.7%); wall-clock medians improve in the same direction on the bench gate
+  binaries. No emitted byte depends on these measurements; keystone and
+  cross-substrate canaries unchanged.
 
 ### Fixed
-- **Project source walk**: The project-root tests/ directory is now left out of
+
+- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`).**
+  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
+  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
+  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
+  verify negative returns on null, missing, and non-directory paths in debug and release builds.
+- **Intrinsic calls with the wrong argument count are refused (`#338`, `67cfb5db`).**
+  `mindc check` and `mindc build` reject an intrinsic invocation whose arity does
+  not match the registry contract before lowering, instead of failing late or
+  mis-lowering (`src/ir/verify_calls.rs`, `tests/intrinsic_call_arity.rs`,
+  `tests/intrinsic_call_arity_build.rs`).
+- **The intrinsic-arity check runs in every feature build (`#355`, `4bf4f2c9`).**
+  With `--no-default-features` the IR verifier accepted an intrinsic call with the
+  wrong number of arguments, so `--emit-ir` and `--emit-mic` printed it; the arity
+  check now runs in every feature build, with build-level tests for the else-if
+  branch, the while condition and a call nested as an argument.
+- **`--emit object` writes a relocatable object (`#339`, `615d375c`).**
+  The object emitted by `--emit object` is relocatable and safe to feed to a
+  separate link step; previously the emit path produced an object that could not
+  be relocated (`src/project/link.rs`, `tests/emit_object_relocatable.rs`).
+- **Narrow imported extern C argument and return widths preserved (`#333`,
+  `e9a8f3b2`).** An imported extern `C` declaration with narrow (`i8`/`i16`/`i32`)
+  parameter or return widths keeps its declared width through the call boundary
+  instead of being widened/narrowed to `i64` and silently changing the value.
+- **A foreign export from a mic@3-decoded module is refused (`#356`,
+  `c36deb0d`).** A module decoded from mic@3 lost its import provenance, so the C
+  export pass accepted a re-exported import that the live module refuses; the
+  decoded module now carries the imported extern names and the export pass refuses
+  the same programs on both paths.
+- **Qualified enum variants resolve and an inherited write waits (`#334`,
+  `844e65a2`).** A qualified enum variant (`Enum::Variant`) resolves against its
+  owning enum instead of panicking or binding the wrong tag, and a write
+  inherited across a scope edge waits for the enclosing definition instead of
+  racing it.
+- **Imported enum variants evaluate under `mindc test` (`#335`, `47b671ba`).**
+  `mindc test` evaluates an enum variant imported from a sibling module, matching
+  `mindc build` / `mindc run`.
+- **Bare enum heads and enum equality settle the way the build does (`#354`,
+  `a5cb17a3`).** A bare `T::Y` resolved through one direct and one fallback import
+  is now refused as ambiguous (`E2002`), as when both imports are direct;
+  `X.Variant` is no longer rewritten to an enum variant when `X` is a local and
+  the enum is not visible in the module; and equality of boxed enum values (payload
+  variants, NaN payloads) — which gave different answers under `mindc test` and in
+  the built program — is refused.
+- **Lowering helpers aligned with feature gates (`#337`, `c09c720d`).** Shared
+  lowering helpers honour the same feature gates as their callers, so a
+  reduced-feature build no longer reaches an unguarded helper and fails.
+- **Project source walk.** The project-root tests/ directory is now left out of
   the walked source set (nested tests/ directories stay in). Source sets and
   cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
 - The C read_to_string record uses cap = size + 1, retries EINTR and returns the
   empty record on a read error, matching std/fs.mind.
+- **The canonical JSON dump refuses malformed UTF-8 (`#347`, `676bd2fa`).**
+  `dump_value` validates every string and every object key as RFC 3629 UTF-8
+  (shortest form, no surrogate code points, nothing above U+10FFFF, no stray or
+  truncated byte) and refuses the dump otherwise — the same contract as a
+  non-integral number. Overlong encodings and encoded lone surrogates previously
+  made the ordering comparator call distinct keys equal, so two spellings of one
+  document could dump to different bytes. Well-formed input is unchanged and the
+  json-canon reference hash is untouched; a new KAT pins the dump-side depth cap
+  next to the parser-side one.
+- **Every shipped std module resolves through the bundled table (`#341`,
+  `027cc216`).** The bundled stdlib table now carries one row per `std/*.mind`
+  module (43, previously 24) — an `import std.keccak;` was accepted, resolved
+  nothing, and every call was then refused. A `std` import that names neither a
+  bundled module nor one of the spec's builtin modules now fails at the import:
+  `E2002` from the type checker on the check/build paths, a refusal in
+  `mindc test` before anything evaluates, and `scope.unknown_std_module` on the
+  native source-admission path; a project-supplied `std.<name>` keeps its spec
+  exemption. One loader parses the implicit modules plus exactly the modules a
+  compile imports, so bundling the rest costs no compile time (paired A/B against
+  the base: 0.976-0.988 on the three end-to-end programs); `std.keccak` now links
+  in a native build; and a `MIND_STDLIB_PATH` override applies to check, test and
+  the linked substrate objects together.
 - **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
   `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
   compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
@@ -64,172 +513,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
   writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
   instead of trapping silently.
-- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`)**:
-  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
-  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
-  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
-  verify negative returns on null, missing, and non-directory paths in debug and release builds.
-
-### Changed — `mlir-opt` and `mlir-translate` run concurrently
-- The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
-  `mlir-opt`'s output into it, so the translator's process startup overlaps the
-  optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
-  bench programs got 58-76 ms faster (paired median per program, warm
-  runtime-object cache, two runs of 40 interleaved builds each).
-- Output is unchanged: the translator receives exactly the text that becomes the
-  optimized MLIR, and the build falls back to a serial translate if the forwarded
-  bytes ever differ. Emitted `.so` and `.o` files are byte-identical to the
-  ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
-  reported as `mlir-opt`.
-
-### Performance — runtime-support object off the `--emit-shared` critical path
-- `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
-  object on a separate thread while mlir-opt and mlir-translate run, and joins it
-  before the shared link. Output bytes are unchanged; a clang failure in that compile
-  still fails the build with the same `subprocess clang failed` error.
-- `MINDC_RUNTIME_OBJ_CACHE=0` bypasses the runtime-support object cache (no read, no
-  write). It is a cold-path measurement knob and does not change output bytes
-  (`docs/benchmarking.md`).
-
-### Fixed — whole-array binary operators on the native backend (#287)
-- Whole-array binary operators on the native backend built a binary that returned
+- **Whole-array binary operators on the native backend (`#287`).**
+  Whole-array binary operators on the native backend built a binary that returned
   wrong values. The miscompile existed on main after #110 and before #287 and was
   never in a tagged release. They are now refused with a named construct
   (`binop.array_operand`). Element reads are unaffected.
-
-### Fixed — native f64 comparisons are IEEE-ordered for NaN
-- The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
+- **Native f64 comparisons are IEEE-ordered for NaN.**
+  The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven
   native == MLIR == an independent IEEE oracle over NaN, +-0.0 and +-inf rows.
-- The frozen native profile now admits comparisons in modules carrying float literals
+  The frozen native profile now admits comparisons in modules carrying float literals
   (formerly `binop.compare_in_float_module`). Division, remainder and shifts stay refused.
-- The frozen profile's first fence refuses any scalar `f32`, `f16` or `bf16` type in the
+  The frozen profile's first fence refuses any scalar `f32`, `f16` or `bf16` type in the
   source as `type.non_f64_float`. The IR lowers a declared-f32 literal to the same
   `ConstF64` as f64, so the IR predicate alone admitted `let x: f32 = ..; if x < y`, and
   only the pure-MIND compiler refused it, without naming the construct.
-
-### Changed — retire classical evidence signing
-- Ed25519 and the historical Ed25519 + ML-DSA-65 hybrid now refuse at the
-  checked signing APIs and at trust verification. Historical artifacts remain
-  inspectable, with an explicit retired-scheme result.
-- The supported release profile requires both ML-DSA-87 and
-  SLH-DSA-SHAKE-256s. CLI controls check both signer keys, tampering,
-  malformed seed input, and refusal of a missing signature leg.
-- Signing remains opt-in. Production key custody and signed-release
-  publication remain pending.
-
-### Added — registry-backed intrinsic contracts
-- Canonical intrinsic declarations now use one exact registry contract under
-  the reserved owner `__mind_intrinsic`. The first-cut logical/physical rows
-  are:
-
-  | Logical | Physical | Wire signature | Native result-use | Effect | Profiles |
-  |---|---|---|---|---|---|
-  | `argc` | `__mind_argc` | `() -> i64` | value | argument count | FrozenNative |
-  | `argv` | `__mind_argv` | `(i64) -> i64` | value | argument vector | FrozenNative |
-  | `alloc` | `__mind_alloc` | `(i64) -> i64` | value | arena allocation | FrozenNative + RustMlir |
-  | `load_i64` | `__mind_load_i64` | `(i64) -> i64` | value | 8-byte memory read | FrozenNative + RustMlir |
-  | `load8` | `__mind_load_i8` | `(i64) -> i64` | value | 1-byte memory read | FrozenNative + RustMlir |
-  | `open` | `__mind_open` | `(i64) -> i64` | value | read-only open | FrozenNative + RustMlir |
-  | `read` | `__mind_read` | `(i64,i64,i64,i64) -> i64` | value | file-descriptor read; fourth offset is `-1` and ignored | FrozenNative + RustMlir |
-  | `store_i64` | `__mind_store_i64` | `(i64,i64) -> i64` | discard-only in FrozenNative | 8-byte memory write | FrozenNative + RustMlir |
-  | `store8` | `__mind_store_i8` | `(i64,i64) -> i64` | discard-only in FrozenNative | 1-byte memory write | FrozenNative + RustMlir |
-  | `write` | `__mind_write` | `(i64,i64,i64,i64) -> i64` | value | file-descriptor write; fourth offset is `-1` and ignored | FrozenNative + RustMlir |
-
-- `DiscardOnly` is a native result-use policy; stores retain their historical
-  i64 wire return. This registry validates canonical declarations and exposes
-  a profile check. It does **not** by itself admit source calls, prove memory
-  provenance or destination liveness, consume a whole native image, or claim
-  pure-MIND/native execution parity. Those remain separate admission work.
-
-### Added — checked source ownership for canonical IR
-- The opt-in `compile_source_to_canonical_ir` library API binds source to a
-  captured project scope and retains resolved function owners, signatures,
-  call targets, and checked scalar types through lowering.
-- Canonical verification checks every return against its defining function,
-  including returns inside control flow. Unknown required producer types,
-  changed source snapshots, and unsupported source forms are refused.
-- Ordinary functions without a return annotation retain their existing return
-  behavior. This API is a bounded Rust frontend stage; native consumption,
-  aggregate lowering, and the standalone pure-MIND driver remain unfinished.
-
-### Added — draft canonical MIC3 `0x04` core codec
-- Checked binary emission and loading preserve owner-qualified schema and
-  function registries, resolved callees, and semantic values in their module or
-  function scope. The initial codec supports scalar instructions and metadata
-  descriptors for records and arrays; aggregate and tensor instructions remain
-  outside this stage.
-- Strings, identities, explicit wire tags, and compatibility-section counts have
-  one layout across build profiles. Unsupported content, inconsistent metadata,
-  noncanonical encodings, and inputs exceeding resource limits are refused.
-- Legacy `0x02`/`0x03` output is retained. The new revision remains a draft:
-  full resolver/lowering population, pure-MIND codec parity, native consumption, and
-  protocol release are separate unfinished steps. See
-  [the draft scope](docs/mic3-v04-draft.md).
-
-### Added — native project entry and import composition
-- Native executable builds discover the manifest entry, capture and validate the
-  local module closure once, and enforce the resolver's export boundaries before
-  emission. An imported sibling cannot supply a missing entry `main`.
-- Supported scalar and control-flow imports execute through the pure-MIND ELF
-  emitter. Pinned single-file artifacts retain their bytes. Duplicate bare
-  definitions, unsupported emit kinds, and unresolved imports fail before
-  artifact publication.
-- Imported aliases, structs, and enums are temporarily refused, including private
-  or unused declarations. This prevents merged lowering from replacing one
-  module's type with another's and silently narrowing a result. Removing this
-  restriction requires preserving source owners through lowering; this change
-  does not enable native aggregate or full-language execution.
-
-### Fixed — canonical semantic metadata cannot disappear at serialization boundaries
-- The reference IR carries owner-qualified aggregate schemas, function identities,
+- **Canonical semantic metadata cannot disappear at serialization boundaries.**
+  The reference IR carries owner-qualified aggregate schemas, function identities,
   and semantic types scoped to their defining function or module. Resolved calls
   are checked against that registry before emission.
-- Checked serialization, trace hashing, and evidence emission refuse metadata the
+  Checked serialization, trace hashing, and evidence emission refuse metadata the
   current wire format cannot represent. Binary loading validates the consumed
   body and MAP envelope, including trailing data; bare readers refuse version
   `0x03` aggregate tables they cannot retain.
-- These changes preserve existing wire layouts. A new semantic wire revision,
+  These changes preserve existing wire layouts. A new semantic wire revision,
   cross-profile semantic round trips, and native aggregate execution remain in
   development.
-
-### Fixed — project imports and lexical scope in `mindc test`
-- Tests inside transparent module blocks are discovered in source order.
+- **Project imports and lexical scope in `mindc test`.**
+  Tests inside transparent module blocks are discovered in source order.
   Duplicate module-level test names are refused, and function-local test
   declarations do not enter the test inventory.
-- Imported functions and constants use the exact module selected by project
+  Imported functions and constants use the exact module selected by project
   discovery, including qualified types and explicit export boundaries.
   Dependency imports of bundled standard-library modules execute with their
   defining module identity; regression tests compare the complete SHA-256
   empty-message digest through a project dependency.
-- Functions read initialized globals from their defining module without
+  Functions read initialized globals from their defining module without
   capturing caller-local variables. Module-level loop updates remain visible
   to called helpers, and scalar parameters clear stale tensor metadata.
-- Indexed assignments preserve supported array writes in statement contexts.
+  Indexed assignments preserve supported array writes in statement contexts.
   Unsupported receivers produce errors instead of being discarded by the test
   evaluator.
-
-### Fixed — aggregate constants preserve struct values (#247)
-- Struct-valued constants and supported fixed arrays of structs now lower their
+- **Aggregate constants preserve struct values (`#247`).**
+  Struct-valued constants and supported fixed arrays of structs now lower their
   real record handles instead of substituting zero. Runnable struct fields are
   currently limited to fixed arrays of `i64` or `f64`. A nested
   `[Struct; N]` element-field receiver such as `items[i].field`, and narrow
   aggregate shapes outside the inline scalar-cell ABI, are refused before
   artifact publication.
-- Dynamic fixed arrays use ordered value-semantic `ArrayStore` construction,
+  Dynamic fixed arrays use ordered value-semantic `ArrayStore` construction,
   including fixed-array call arguments. Unresolved field reads and writes fail
   closed instead of producing or discarding a zero placeholder.
-- Standalone shared-library compilation now resolves returned-struct fields
+  Standalone shared-library compilation now resolves returned-struct fields
   inside assertions, parenthesized fixed-array receivers, and array aliases;
   scalar shadows clear stale aggregate type information.
-
-### Fixed — public CPU executable linking
-- Native CPU projects link against bundled runtime support without an installed commercial runtime. Accelerator backends retain their installed-runtime requirements.
-- Unresolved symbols and non-native source modules fail the build and remove stale executable output; CPU link failures cannot leave a runtime launcher in place of a native binary.
-- Linux execution tests verify clean-build byte identity, absence of private runtime dependencies, and refusal of invalid modules and unresolved symbols.
-
-### Fixed — `mindc test` evaluates a body once, in order, and a body that errors cannot pass (#240, #241, #243)
-- The runner evaluated the test body through the interpreter, discarded the result, then
+- **Public CPU executable linking.**
+  Native CPU projects link against bundled runtime support without an installed commercial runtime. Accelerator backends retain their installed-runtime requirements.
+  Unresolved symbols and non-native source modules fail the build and remove stale executable output; CPU link failures cannot leave a runtime launcher in place of a native binary.
+  Linux execution tests verify clean-build byte identity, absence of private runtime dependencies, and refusal of invalid modules and unresolved symbols.
+- **`mindc test` evaluates a body once, in order, and a body that errors cannot pass (`#240`, `#241`, `#243`).**
+  The runner evaluated the test body through the interpreter, discarded the result, then
   walked the AST a second time evaluating only `assert` nodes against its own env. One design,
   three reported false verdicts: an out-of-bounds read inside a callee was dropped by the
   second walk's `if let Ok(..)` and a later unrelated `assert n == 1` graded the test `ok`
@@ -238,7 +581,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the store was skipped, and `assert __mind_load_i8(x) == 1` read `0` (#241, BOTH issue
   fixtures failed); and `assert(cond, "msg")` — a 2-tuple condition — read as "truthy" and
   passed whatever `cond` was (#240's message form).
-- Now: the evaluator gives `Node::Assert` a real arm under a private, thread-local
+  Now: the evaluator gives `Node::Assert` a real arm under a private, thread-local
   assertion-checking guard. With the guard off — every consumer except the test runner —
   `assert` retains its prior no-op behavior. `src/test/mod.rs` builds the
   synthetic module from the file's items plus ONE `Node::Call` of the test fn, so the body
@@ -249,44 +592,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition is refused with a message naming the value class — and for the tuple form, the
   spelling that works (`assert cond, "msg"`). The grammar of the parenthesised comma form
   is reported separately; it no longer passes vacuously.
-- Asserts inside `for`/`while` bodies, `match` arms, `region` blocks and CALLED helper fns
+  Asserts inside `for`/`while` bodies, `match` arms, `region` blocks and CALLED helper fns
   are now executed (per iteration, in the live arm) rather than refused; the retired
   walker's "assertion inside a loop body" refusal is gone with it. A declared `-> bool`
   test returning `false` still fails with `test returned false (0)`; a returned
   `Result::Err(..)` fails with its payload (RFC 0008 §5.1).
-- Regression gate `tests/mindc_test_evaluator_issues.rs`: the three issues' own repros
+  Regression gate `tests/mindc_test_evaluator_issues.rs`: the three issues' own repros
   verbatim, each negative shape beside a positive control in the same file, plus the
   helper/loop/`-> bool`/root-cause shapes. `docs/ENGINE_CONSUMER_LIST.md` §6's "wire
   `Node::Assert`, retire `eval_asserts_in_stmts`" disposition is now the shipped state.
-
-### Fixed — capability and materialization diagnostics use distinct stable codes
-- Backend unavailability is a host-capability cause and now emits the Core v1
+- **Capability and materialization diagnostics use distinct stable codes.**
+  Backend unavailability is a host-capability cause and now emits the Core v1
   catalog assignment `E6002`. The capability classifier recognizes this stable
   catalog exception alongside its reserved `E50xx` implementation-cause namespace.
-- Compiler-side materialization refusal now emits the fresh additive assignment
+  Compiler-side materialization refusal now emits the fresh additive assignment
   `E6009`. This includes deterministic resource-limit refusal and aggregate shapes
   that cannot be represented by the runnable lowering ABI. Refusal is nonzero and
   leaves no partial artifact.
-- `InvalidManifestExport` remains an ordinary user error outside the capability
+  `InvalidManifestExport` remains an ordinary user error outside the capability
   namespace and now uses additive code `E6010`; Core v1 `E6001` remains the
   out-of-bounds index code. Source scans retain exclusive ownership of `E50xx`,
   and focused tests pin the three E6xxx meanings at their compiler boundaries.
-
-
-### Fixed — the release workflow could publish binaries from a commit CI had never checked
-- `.github/workflows/release.yml` gated publication on `needs: build` alone, and that build
+- **The release workflow could publish binaries from a commit CI had never checked.**
+  `.github/workflows/release.yml` gated publication on `needs: build` alone, and that build
   job's entire step list was Checkout / Install Rust / Cache / Install cross / Build /
   Package / Upload — **no test, no keystone, no cross-substrate identity**. Every real gate
   lives in `ci.yml`, a separate workflow with no `tags:` trigger, so a tag push started no CI
   run for that ref at all. Two of the last three released tags demonstrate the consequence:
   `v0.10.1` (`48923595`) and `v0.10.0` (`742546dd`) have **zero** `ci.yml` runs against their
   commits.
-- The `workflow_dispatch` path additionally minted its own ref: it took a free-text `version`
+  The `workflow_dispatch` path additionally minted its own ref: it took a free-text `version`
   and ran `git tag -a v$version && git push origin v$version` with a workflow-level
   `contents: write` token, so a dispatch on any branch created a tag at that branch's tip and
   published a non-draft, five-platform release from it. No repository ruleset or tag
   protection existed to stop that.
-- Now: a `gate` job resolves the tag (which must already exist — the workflow creates no
+  Now: a `gate` job resolves the tag (which must already exist — the workflow creates no
   refs) to its commit and refuses to proceed unless a completed, successful `ci.yml` run
   exists for **that exact SHA**, from this repository, on a `push`/`workflow_dispatch` event
   (a `pull_request` run tests a merge commit, not the tagged tree), containing every gate
@@ -294,49 +634,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is red on that commit. Absence of a CI run is a block, not a pass. `build` and `release`
   both depend on the gate and check out the verified SHA; `contents: write` is scoped to the
   publishing job alone.
-- `scripts/check_release_gating.py` (wired into the Docs Claims job) asserts these properties
+  `scripts/check_release_gating.py` (wired into the Docs Claims job) asserts these properties
   statically so they cannot silently reopen: no self-minted tags, publish and build both
   behind the gate, dispatch takes an existing tag, write scoped to the publisher, and
   `required-ci-jobs.tsv` in agreement with `ci.yml` in both directions — deleting a gate from
   CI is now a build error rather than a quiet weakening of what a release is verified against.
-- **Not closed:** the two remaining controls are repository *settings*, not workflow code —
+  **Not closed:** the two remaining controls are repository *settings*, not workflow code —
   a tag-protection ruleset on `v*` and required reviewers on the `release` environment. Until
   the first exists, the guarantee is "the released commit is CI-green and the ref pre-existed",
   not "the ref was created by an authorized human". Recorded as a `deferred:` marker at the
   top of `release.yml`.
-
-### Added — opt-in native `mic@3 → mic@3` optimizer (roadmap C6, default OFF)
-- A canonical-IR optimizer (`src/opt/native_opt.rs`) sitting **upstream of emitter
-  divergence**, so both the Rust `--emit-mic3` oracle and the self-host emitter consume
-  identical optimized bytes (each pass written once, oracle-parity-safe by construction).
-  **Default OFF** (`MIND_NATIVE_OPT` unset) is a strict no-op — every emitted byte is
-  byte-identical to the un-optimized IR, so keystone / cross-substrate canaries / frozen
-  self-host seeds are untouched; enabling a level (`=basic`) changes bytes and is a
-  whole-corpus reseed event. Every pass is a pure function with a pinned schedule (fixed
-  order + fixed iteration count, never "loop until quiet"), so the optimized `mic@3` — what
-  `trace_hash` anchors — stays a deterministic function of the input IR across hosts.
-  Slices landed under `basic`: **SCCP-lite const-condition `If`-pruning** (dead-arm removal
-  with a complete operand remap), **integer `mul`-by-zero folding**, **exact integer
-  algebraic-identity elimination** (`x+0`, `x-0`, `x*1`, `x/1`, `x|0`, `x^0`, `x<<0`,
-  `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**. All integer-exact and
-  structurally never touching the Q16.16 or float tiers.
-- **Status correction.** As first landed the optimizer was **not reachable from any
-  artifact-emitting path**, so the "upstream of emitter divergence" sentence above did not
-  hold and `MIND_NATIVE_OPT=basic` changed zero bytes of `--emit-mic3`. That is fixed below;
-  the description above is accurate as of the fix. `basic` remains a **developer flag, not a
-  shipping profile** — one of its four passes has a known defect (next bullet).
-- **Known defect under `=basic`: `fold_algebraic_identities` can emit a dangling SSA use.**
-  Its operand remap does not descend into `If`/`While`/`FnDef` bodies, relying on every
-  enclosing value a region reads being threaded through `If.merges` / `While.init_ids`; that
-  does not hold for every lowered shape. Measured over the 300 corpus sources that compile
-  with the optimizer OFF, **2 fail with it ON** (`examples/geometric_collapse.mind`,
-  `std/toml.mind`), both isolating to this pass alone. **Not a silent miscompile** — the
-  re-verify in `ir::prepare_ir_for_backend` rejects it as `E3001` at compile time. Tracked by
-  a `deferred:` marker on the pass; enabling `basic` by default stays gated on a clean 300/300
-  sweep plus a whole-corpus reseed.
-
-### Fixed — the C6 native optimizer was wired to no artifact-emitting path
-- `optimize_mic3` had a single caller (`ir::prepare_ir_for_backend`) whose only production
+- **The C6 native optimizer was wired to no artifact-emitting path.**
+  `optimize_mic3` had a single caller (`ir::prepare_ir_for_backend`) whose only production
   caller was `project::try_emit_mic` — the **failed-compile** embedded-JIT fallback. The
   successful-compile pipeline inlined its own copy of backend-prep
   (`verify → canonicalize → verify`) that **omitted the optimizer call**, so the pass was
@@ -346,221 +655,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend-prep choke point. **Byte-identical by default:** verified over the 300 corpus
   sources that compile, the pre-fix and post-fix binaries emit identical mic@3 with
   `MIND_NATIVE_OPT` unset (300/300, zero drift).
-- No gate covered this: nothing in `tests/`, `examples/` or `scripts/` set `MIND_NATIVE_OPT`,
+  No gate covered this: nothing in `tests/`, `examples/` or `scripts/` set `MIND_NATIVE_OPT`,
   so the recorded "keystone 7/7" was **vacuously** green — with the pass unreachable the
   keystone passes for both env states. New gate `tests/native_opt_wiring.rs` pins both halves
   of the contract: `basic` must change the emitted artifact (wiring, fails closed if the
   pipeline regrows a private backend-prep copy), and unset — plus any unrecognised value —
   must be byte-identical (so the canaries and frozen self-host seeds cannot move by accident).
-
-### Added — self-host native-ELF construct coverage (Rust-Independence)
-- **Nested while-in-while**, and an **outer `let mut` assigned inside a statement-`if`**,
-  now emit a correct, byte-identical native-ELF mic@3 note (previously fail-closed).
-  Gated by oracle-parity, per-fixture byte-identity smoke, the zero-Rust bootstrap loop
-  (`stage1 == stage2 == stage3 == frozen`), and keystone 7/7.
-
-### Fixed — self-host emitter correctness (mic@3)
-- **Aliasing fall-through then/else-value.** A fall-through `if`-branch whose last
+- **Self-host emitter correctness (mic@3): aliasing fall-through then/else-value.**
+  A fall-through `if`-branch whose last
   statement is `let x = <outer var>` (an alias) emitted the branch value at the previous
   base position instead of the aliased value id — diverging from the Rust `--emit-mic3`
   oracle. Corrected in three emitters (`emit_if_let_seq_then_instr_lv`,
   `emit_if_else_fallthrough_lv` both branches, `emit_if_fallthrough_lv`); byte-neutral
   for non-aliasing lets. A differential fuzzer over the supported construct space
   (`examples/mindc_mind/mindfuzz_self_host.py`) surfaced the class.
-
-### Fixed — `mindc verify` honesty + bench-gate fail-closed
-- **Two-tier verify verdict.** `verify` no longer prints "evidence chain is intact
-  (untampered)" for an unsigned artifact: `trace_hash` covers only the IR body, so the
-  provenance MAP fields (`substrate`/`toolchain`/`parent`) can be edited without changing
-  it. Output now separates tier-1 (IR body attested / tamper-evident) from tier-2
-  (provenance NOT authenticated unless signed), and `--json` gains
-  `provenance_authenticated`.
-- **`--require-signed`** gate — fail closed (exit 1) unless the artifact carries a valid
-  signature (any signer); weaker than `--signer-pubkey`'s pinned-trust requirement.
-- **RFC 0017 reconciled** with the shipped CLI: removed the documented-but-nonexistent
-  `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain`, and corrected
-  the exit-code table (all verification failures → 1; I/O / CLI → 2).
-- **`verify --json` emits ONE stable schema on every arm.** `run_verify` hand-rolled a
-  separate JSON literal at each exit, so `--json` produced five different stdout shapes:
-  a 15-key object on the attested arm, a 4-key `{artifact, ssa_valid, ssa_reason, attested}`
-  on the SSA-fault and — on an exit-**0** success path — the unattested arm, a 4-key
-  `{artifact, canonical, canonical_reason, attested}` on the non-canonical arm, and
-  **nothing at all on stdout** for the three malformed-evidence-chain arms. A consumer
-  written to the documented contract got a `KeyError` on a passing verification and a
-  JSON-decode error on the silent arms. Every `--json` exit now emits one receipt with the
-  same twenty keys; a property that could not be established is an explicit `null` /
-  `false`, never an absent key. New keys: `attested` (now present on every arm — the
-  discriminator), `canonical` / `canonical_reason`, and `verify_result`
-  (`"pass"` / `"fail"`, mirroring the exit code) / `verify_error`. The receipt is emitted
-  AFTER every fail-closed gate, so it can no longer print a verdict the process then
-  contradicts with a different exit code, and a broken evidence chain can no longer be
-  read as a benign unattested artifact. A MAP-less artifact is also now labelled
-  `"signature":"absent"` rather than the `Err`-derived `"malformed"` (reporting only —
-  the fail-closed `sig_status` that gates the attested path is unchanged).
-  RFC 0017 §4.6 documented a draft schema sharing zero keys with any shipped arm; it now
-  describes what ships. Gated by a key-set test and a structural source gate asserting
-  `run_verify` contains no hand-rolled JSON literal (`src/bin/mindc.rs`).
-- **bench-gate fail-closed** (`tools/bench_gate.py`): an empty / truncated / partial
-  `bench.out`, or a missing baseline, now exits 4 (was a vacuous PASS); the hardcoded
-  default-baseline fallback is removed. Contract test `tools/test_bench_gate.py`.
-
-### Added — native `mic@3 → mic@3` optimizer roadmap (C6)
-- `docs/INDEPENDENCE_ROADMAP.md` §C6 now specifies the opt-in native middle-end
-  (SCCP-lite → strength-reduction → region-scoped CSE/GVN → LICM-on-`While` →
-  linear-scan RA), the load-bearing invariant *"optimizer = canonical `mic@3 → mic@3`
-  transform upstream of emitter divergence"* (so both emitters consume identical
-  optimized bytes), and the offline-mine / in-compiler-`egglog`-apply evolvability loop
-  gated by the byte-invariance + cross-substrate oracle.
-### Added — fixed `[f64; N]` / `[f32; N]` aggregate surface on the executable MLIR path (RH_REQUIRED_F64_AGGREGATE_SURFACE)
-- **Local floating-point fixed arrays now compile and run correctly on the `mindc build`
-  (LLVM/MLIR) path.** A `let mut a: [f64; N] = [lit, ...]` (or `[f32; N]`) now lowers to a
-  TYPED `ConstDenseTensor` carrying the exact per-element IEEE-754 bits instead of falling
-  through to the i64-only `ConstArray` path — which coerced float literals to 0 and left the
-  base untyped, so a following `a[i]` load failed `MLIR lowering: missing type information
-  … array load base`. With the typed base, the existing dtype-generic `ArrayLoad` /
-  `ArrayStore` emitters (tensor.extract / tensor.insert, both already f64-ready) and the
-  `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
-  `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
-  `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
-  no fast-math / reassociation — strict IEEE-754). (`src/eval/lower.rs`:
-  `lower_fixed_dense_array_binding` + the fn-body `Let` arm.)
-- **Read-only fixed-array function parameter (aggregate call ABI, minimum).** A fixed array
-  passed by value to a user fn — `fn f(a: [f64; N])`, called `f(a)` — no longer trips the
-  `non-i64 argument to call` reject: the call-site accepts a `Tensor` arg and forwards it as
-  `func.call @f(%a) : (tensor<NxT>) -> ret`, matching the callee's `tensor<NxT>` param type
-  (from `fn_signatures`), and mlir-opt's function-boundary bufferization lowers the internal
-  tensor call. A shape/dtype mismatch stays loud at mlir-opt. Array *returns* remain out of
-  subset. (`src/mlir/lowering.rs`: `Tensor` arm in the call-arg gate.)
-- **`i64`/`i32` fixed arrays are byte-identical** — the new f64/f32 routing returns `None`
-  for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
-  self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
-  unchanged).
-- **Audit hardening (cross-model review):** the f64/f32 `[T; N]` routing now covers **all six**
-  `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
-  so a float fixed array declared inside a branch body now compiles instead of hitting the
-  i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
-  now **fails closed on a non-const element** — `let a: [f64; 2] = [x, 1.0]` (a runtime
-  element) previously baked `x` → `0.0` silently; it now falls back to the ordinary path
-  (never a silent zero). Known remaining limit: a float fixed array *declared fresh inside a
-  `while` body* still fails closed (a deeper loop-carry `substitute_ids` value-kind
-  propagation case) — fn-top declaration + in-loop mutation (the common shape) works.
-- **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
-  performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
-  factor are exactly representable in binary64, returning the bit-exact `37`;
-  `rh_f64_aggregate_canary_smoke.py` (wired into the `mindcraft_self_host` CI job) requires
-  that on the MLIR path and asserts the pure-MIND `--backend native` leg fails CLOSED — the
-  native fixed-array **store** (`a[i]=v`) and by-value array **parameter** are NOT yet ported
-  to the self-host emitter / mic@3 wire format (no `OP_ARRAY_STORE` opcode); load / accumulate
-  / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
-
-### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE)
-- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
-  branch body** — the last fail-closed position. With this, the store works in EVERY statement
-  position: straight-line, loop (`for`/`while`/nested), and branch. Nothing is fail-closed for a
-  fixed-aggregate `a[i]=v` any more.
-- **Same Option A+ value-semantic design, applied to the `Instr::If` merge machinery.** New
-  `IndexAssign` arms in both the then- and else-branch statement loops (`src/eval/lower.rs`) emit
-  `Instr::ArrayStore`, rebind the receiver root in the branch env, and record it as a merge write
-  (`record_then_write`/`record_else_write`) — so the aggregate is threaded as a value-semantic
-  `tensor<NxT>` `^if_after` merge block-arg. The then/else edge carries the stored incarnation; the
-  untouched edge carries the pre-if tensor (from the outer env), so a post-if read sees the taken
-  branch's write and the not-taken path preserves the original. The MLIR emitter already types the
-  merge block-arg via `mlir_type` of the unified `Tensor` kind — no change needed there. (The
-  assignment statement's if-VALUE stays unit-i64, so the tensor flows only through `a`'s own merge
-  column, never the i64 if-value column.)
-- **Wedge intact — no per-branch copy.** Design-reviewed GO: the If-merge rides the exact same
-  `cf`-block-arg machinery the loop already proved, so one-shot-bufferize sees no read-after-write
-  conflict and inserts no defensive copy. Verified across a 4-case matrix (`if c {a[i]=v}`, `if/else`,
-  if-inside-loop, `a` read after the if) that the **post-bufferization MLIR `memref.alloc` /
-  `memref.copy` / `alloc_tensor` counts are identical to the CI-green loop baseline** (one-time buffer
-  materialisation, zero per-branch copy), and the LLVM IR confirms an in-place `store` in the taken
-  block. So x86 avx2 == ARM neon by construction.
-- Verified by COMPILE+RUN (`tests/array_store_run.rs`): `if T {a[0]=9} return a[0]`→9, untouched
-  sibling→2, `if F {a[0]=9}`→1 (original preserved), `if/else` same-index→taken edge (1/2),
-  `if/else` different-index→per-element (5). Gates: `array_store_run` 3/3 (all positions) · keystone
-  7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · fmt/clippy · all local green.
-- **Additive / byte-neutral:** a branch-body `a[i]=v` on a fixed aggregate previously failed to
-  compile; `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host / cross-substrate
-  are untouched.
-
-### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading)
-- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
-  loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
-  prior increment left fail-closed. The design-reviewed **Option A+ (value-semantic typed tensor
-  block-arg)**: the mutated aggregate is threaded through the loop as a first-class `tensor<NxT>`
-  loop iter-arg. A new `IndexAssign` arm in the `While`-body lowering (`src/eval/lower.rs`) emits
-  `Instr::ArrayStore` and records the fresh post-store id as loop-carried (`record_loop_mut`), so the
-  back-edge threads the new incarnation and every post-loop read resolves against the `^while_after`
-  exit id. In the MLIR emitter (`src/mlir/lowering.rs`) a new `loop_carry_mlir_type` helper types
-  every loop-carried block-arg (header / body / `^while_after`) and every `cf.br`/`cf.cond_br`
-  operand by its real `ValueKind` — `tensor<NxT>` for an aggregate carry instead of the default i64 —
-  and each exit id is registered with the carried kind so the post-loop `ArrayLoad` type-resolves.
-  Verified by COMPILE+RUN (`tests/array_store_run.rs`): `for k in 0..3 { a[k]=k*10 } → a[2]`→20,
-  `while k<3 { a[k]=7 } → a[0]`→7, for-loop fill sum→6, nested for-in-for→6.
-- **Wedge intact — no per-iteration copy:** the post-bufferization LLVM IR for a loop-mutating
-  `[i64;N]` fixture was inspected — the `one-shot-bufferize` output threads the tensor iter-arg as a
-  self-cycling memref-descriptor phi with an **in-place `store` in the loop body and NO `malloc` /
-  `memcpy` per iteration** (the one-time buffer materialisation is hoisted to the entry block), so the
-  loop is byte-identical across x86 avx2 / ARM neon by construction. A dedicated cross-substrate
-  canary `tests/cross_substrate_identity/array-store-loop/` (avx2 == neon, RFC 0015 §3.1) locks this,
-  cross-checked against a Rust oracle in-run. Gates: `array_store_run` (loop RUNS correct; branch
-  fail-closed) · `cross_substrate_identity` 25/25 · keystone 7/7 byte-identical · mic3_flip
-  whole-module byte-identical (621052 B) · fmt/clippy — all locally green.
-- **Additive / byte-neutral for every existing program:** a loop-body `a[i]=v` on a fixed aggregate
-  previously failed to compile, so this only turns a compile-error into correct codegen; every scalar
-  (i64/f64/f32) loop emits the exact same MLIR as before (`loop_carry_mlir_type` returns the identical
-  type string), and `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host /
-  cross-substrate are untouched.
-- **Still fail-closed (tracked follow-on):** `a[i]=v` inside a BRANCH body (`if`) or in expression
-  position — the branch-region exit rebind is the distinct next step; until then the compiler rejects
-  it (loud), never a silent store-drop.
-
-### Added — fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D)
-- **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
-  store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers
-  to `Instr::ArrayStore` (MLIR `tensor.insert` yielding a FRESH aggregate SSA value with the same
-  `{i64,i32,f32,f64}` element type, same DETERMINISTIC_BOUNDS_TRAP as `ArrayLoad`), and the fn-body
-  statement dispatch rebinds the receiver root name to that fresh id — so a later `a[j]` read observes
-  the write. Verified by COMPILE+RUN (`tests/array_store_run.rs`): `a[0]=9;return a[0]`→9, two-write
-  sum→90, `tensor<i64[3]>` literal store→9, untouched-sibling read→2. Reference-semantic `array<T>`
-  (`vec_set`) / `bytes[N]` (`__mind_store_i8`) and all reads are unchanged.
-- **Inside a LOOP / BRANCH body (or in expression position), `a[i]=v` FAILS CLOSED (loud)** rather
-  than silently dropping the write: the fresh incarnation's rebind is not yet threaded through the
-  F2 region-exit machinery, so a store there would read back the pre-region value (verified — it did,
-  returning 0). The compiler rejects it deterministically; the F2-region-threaded loop/branch store
-  is the tracked follow-on. **Net: the silent store-drop is eliminated in every case** — straight-line
-  stores correctly, loop/branch fails closed, never a silent-wrong.
-- **Byte-identity neutral / wedge intact:** `main.mind` + all of `std` emit zero surface `a[i]=v`
-  (raw `__mind_store_i64` ABI), so `ArrayStore` is inert during self-compile. Gates: `array_store_run`
-  (straight-line RUNS; loop/while fail-closed) · keystone 7/7 byte-identical · mic3_flip whole-module
-  byte-identical (621052 B) · oracle-parity 30/30 · fmt/clippy/rustdoc — all locally green; the
-  cross_substrate canary set is byte-identical (the aggregate-store path does not touch the GEMM /
-  reduction kernels; it was 24/24 on the 0x2B wire foundation) and is re-verified by the CI dual-arch
-  (avx2 + neon) matrix on this push.
-
-### Added — mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation)
-- **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
-  value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:
-  it yields a FRESH aggregate SSA value (the post-store incarnation) so a later `arr[j]` read
-  observes the write, unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
-  (`__mind_store_i8`) paths which keep the name bound to the same base. This is the intended FIRST
-  population target of the #320 Step D canonical aggregate-type invariant (the `value_types` table,
-  landed-but-dormant until now). **Inert in this increment** — no lowering emits `ArrayStore` yet
-  (the MLIR `tensor.insert` lowering + the SSA env-rebind at the `IndexAssign` site are the
-  immediate follow-on), so behaviour is unchanged: `arr[idx] = value` on a fixed aggregate still
-  fails-closed (the interim from the prior entry) until the lowering lands. The opcode is a pure
-  additive append in previously-unused wire space (`0x2A` = `OP_CONST_DENSE_TENSOR` was the prior
-  max), so there is **no `MIC3_VERSION` bump**: every existing byte stream stays byte-identical,
-  PROVEN (not asserted) by keystone 7/7 + all cross_substrate canaries unchanged. Decode is a fixed
-  4×`read_vid` (no untrusted count → no alloc-amplification surface). Wired through `Instr`
-  (`instr_dst`), `verify` (define-before-use on base/index/value), `print`, `evidence`,
-  `ir_canonical` (`for_each_operand` reads base/index/value), and the mic@3 `emit`/`parse`. Gates:
-  new `tests/mic3_array_store_roundtrip.rs` (emit→parse→emit fixed point + 0x2B byte present) ·
-  keystone 7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · cross_substrate
-  24/24 canaries unchanged · fmt/clippy/rustdoc clean.
-
-### Fixed — silent aggregate index-write miscompile → fail-closed (MLIR/std-surface backend)
-- **`a[i] = v` on a const-literal-initialized aggregate (a plain fixed `[T; N]`, or a
+- **`mindc verify` honesty + bench-gate fail-closed.**
+  - **Two-tier verify verdict.** `verify` no longer prints "evidence chain is intact
+    (untampered)" for an unsigned artifact: `trace_hash` covers only the IR body, so the
+    provenance MAP fields (`substrate`/`toolchain`/`parent`) can be edited without changing
+    it. Output now separates tier-1 (IR body attested / tamper-evident) from tier-2
+    (provenance NOT authenticated unless signed), and `--json` gains
+    `provenance_authenticated`.
+  - **`--require-signed`** gate — fail closed (exit 1) unless the artifact carries a valid
+    signature (any signer); weaker than `--signer-pubkey`'s pinned-trust requirement.
+  - **RFC 0017 reconciled** with the shipped CLI: removed the documented-but-nonexistent
+    `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain`, and corrected
+    the exit-code table (all verification failures → 1; I/O / CLI → 2).
+  - **`verify --json` emits ONE stable schema on every arm.** `run_verify` hand-rolled a
+    separate JSON literal at each exit, so `--json` produced five different stdout shapes:
+    a 15-key object on the attested arm, a 4-key `{artifact, ssa_valid, ssa_reason, attested}`
+    on the SSA-fault and — on an exit-**0** success path — the unattested arm, a 4-key
+    `{artifact, canonical, canonical_reason, attested}` on the non-canonical arm, and
+    **nothing at all on stdout** for the three malformed-evidence-chain arms. A consumer
+    written to the documented contract got a `KeyError` on a passing verification and a
+    JSON-decode error on the silent arms. Every `--json` exit now emits one receipt with the
+    same twenty keys; a property that could not be established is an explicit `null` /
+    `false`, never an absent key. New keys: `attested` (now present on every arm — the
+    discriminator), `canonical` / `canonical_reason`, and `verify_result`
+    (`"pass"` / `"fail"`, mirroring the exit code) / `verify_error`. The receipt is emitted
+    AFTER every fail-closed gate, so it can no longer print a verdict the process then
+    contradicts with a different exit code, and a broken evidence chain can no longer be
+    read as a benign unattested artifact. A MAP-less artifact is also now labelled
+    `"signature":"absent"` rather than the `Err`-derived `"malformed"` (reporting only —
+    the fail-closed `sig_status` that gates the attested path is unchanged).
+    RFC 0017 §4.6 documented a draft schema sharing zero keys with any shipped arm; it now
+    describes what ships. Gated by a key-set test and a structural source gate asserting
+    `run_verify` contains no hand-rolled JSON literal (`src/bin/mindc.rs`).
+  - **bench-gate fail-closed** (`tools/bench_gate.py`): an empty / truncated / partial
+    `bench.out`, or a missing baseline, now exits 4 (was a vacuous PASS); the hardcoded
+    default-baseline fallback is removed. Contract test `tools/test_bench_gate.py`.
+- **Silent aggregate index-write miscompile → fail-closed (MLIR/std-surface backend).**
+  **`a[i] = v` on a const-literal-initialized aggregate (a plain fixed `[T; N]`, or a
   `tensor<T[N]> = [..]` literal) no longer silently drops the store on the default MLIR
   backend.** The `IndexAssign` lowering (`src/eval/lower.rs`) routes real stores only for the
   growable `array<T>` receiver (→ `vec_set`) and the fixed `bytes[N]` buffer (→
@@ -575,37 +720,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receivers (`array<T>`, `bytes[N]`) and all array reads are untouched. **Byte-identity
   neutral:** `main.mind` + all of `std` emit zero surface fixed-aggregate writes (they use the
   raw `__mind_store_i64` ABI), so the changed arm is dead during self-compile. The real typed
-  store path (`Instr::ArrayStore` + env rebind, or a memref-backed mutable aggregate) is the
-  tracked follow-on (Q19 CANONICAL_DECISION + the Step D aggregate-type invariant); a clean
-  `error[E…]` check-phase diagnostic in place of the build-time panic is a queued UX polish.
+  store path (`Instr::ArrayStore` + env rebind, or a memref-backed mutable aggregate) landed
+  in this release (see Added); a clean `error[E…]` check-phase diagnostic in place of the
+  build-time panic is a queued UX polish.
   Gates: functional probe (aggregate writes fail-closed; reads / scalar-reassign / `array<T>`
   / `bytes[N]` writes green) · mic3_flip whole-module byte-identical (621052 B) · keystone 7/7
   · oracle-parity · cross_substrate · cargo fmt/clippy/doc.
-
-### Fixed — self-host mic@3 emitter: if-block branch-local-`let` scope (keystone)
-- **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
+- **Self-host mic@3 emitter: if-block branch-local-`let` scope (keystone).**
+  **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
   branch-local `let` declarations** (corr2/#287-F2 self-host completion). #287-F2 fixed the Rust
   `--emit-mic3` oracle and five whole-module self-host arms so a block-scoped `let` inside an
   if-branch emits no merge record — but the test-harness if-block arm (`selftest_mic3_if_block_fn`)
   was not ported: it unioned every branch let-env name into the merge set, diverging from the
-  oracle and reddening the keystone `mic3_primitives_smoke.py` gate (main keystone CI red since
-  ~2026-08-17). A new `drop_branch_local_lets` filters the merged-name set by `name_is_prefix_let`
+  oracle and reddening the keystone `mic3_primitives_smoke.py` gate. A new `drop_branch_local_lets`
+  filters the merged-name set by `name_is_prefix_let`
   (shadow-safe — a `let a` shadowing param `a` is dropped; outer-name assigns still merge),
   matching the oracle byte-for-byte. The four stale `mic3_primitives_smoke.py` goldens (g/f/h/k)
   are re-captured and the RI-E1 self-host bootstrap seed re-blessed. Gates: mic3_primitives 122/122,
   mic3_flip whole-module byte-identical, oracle-parity 30/30, keystone 7/7, cross_substrate,
   self-host loop stage1==stage2==stage3==frozen.
-
-### Fixed — self-host E2024 intrinsic allowlist parity (keystone)
-- **`tc_is_std_surface_intrinsic` (the pure-MIND self-host E2024 rule) synced to the Rust
+- **Self-host E2024 intrinsic allowlist parity (keystone).**
+  **`tc_is_std_surface_intrinsic` (the pure-MIND self-host E2024 rule) synced to the Rust
   `STD_SURFACE_INTRINSICS` table (36 → 55 entries).** The pure-MIND allowlist in
   `examples/mindc_mind/main.mind` had fallen 19 intrinsics behind the Rust oracle — the
   `__mind_nerve_*` runtime/BLAS/LUT C-ABI surface plus `__mind_blas_gemv_q16_mt` — so its
   `self_host_only_call` (E2024) predicate flagged them as compiler-internal (`got=1`) while
   the Rust oracle and shipped `mindc check` (which register them as user-callable std-surface
   intrinsics) returned `0`. This reddened the keystone additive-selftest gate
-  (`self_host_tc_self_host_only_call_smoke.py`: 19/173 divergences, main keystone CI red).
-  The 19 packed-word allowlist entries are added (first-32-bytes-little-endian words + true
+  (`self_host_tc_self_host_only_call_smoke.py`: 19/173 divergences). The 19 packed-word
+  allowlist entries are added (first-32-bytes-little-endian words + true
   length, matched via `tc_shoc_eq`), driving all 173 cases to `got==rule==live`. The table is
   reached only through `selftest_tc_self_host_only_call`, never `mindc_compile`, so the change
   is byte-identity neutral (Rust `mod.rs` is the authoritative side; E2024 is an advisory
@@ -613,130 +756,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fn-value-call 56/56 (shared table, zero regression) · oracle-parity 30/30 · mic3_flip
   whole-module byte-identical · keystone 7/7 · tc-differential-fuzz 0 divergences ·
   self-host loop stage1==stage2==stage3==frozen.
-
-### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
-- **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
-  signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
-  lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based) — BOTH legs must verify
-  (AND-combiner). The verifier is **non-degradable**: stripping or tampering either leg,
-  or rewriting the `signature.scheme` tag to a weaker single-leg scheme, fails closed
-  (`Malformed`/`Invalid`) — the hybrid can never collapse to a single-scheme signature.
-  Both legs sign RNG-free (deterministic-from-seed), so a signed artifact stays
-  byte-identical across substrates. Gated behind the `evidence-mldsa` + `evidence-slhdsa`
-  cargo features (OFF by default): the keystone byte-identity gate never compiles a PQC
-  crate and the determinism wedge is untouched.
-- **mic@3 MAP epilogue parser hardening (anti-malleability).** `parse_map_epilogue` now
-  rejects **duplicate keys** and **trailing bytes** after the last entry, both fail-closed
-  (`ParseMapError::DuplicateKey` / `TrailingBytes`). The canonical MAP is a set with
-  nothing after the final entry and the emit path never produces either, so this is
-  byte-neutral on emit and accepts every artifact any emitter version ever produced; it
-  closes a byte-malleability vector where a redundant copy of a signed key, or trailing
-  garbage, could ride inside an otherwise-`Valid` artifact outside the signed preimage.
-  The entry-count allocation guard is tightened to `remaining / MIN_ENTRY_BYTES`, capping a
-  crafted `count` from pre-sizing a several-hundred-megabyte `Vec`.
-- **`mindc verify` surfaces both PQC pubkeys.** The verify report (JSON and human) now
-  emits `signature_mldsa87_pubkey` / `signature_slhdsa_pubkey` so scripted consumers can
-  out-of-band-pin the hybrid key material, matching the existing ed25519 / ml-dsa-65 fields.
-
-### Added — Phase 17 numerical research surface (f64 completeness)
-- **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
-  indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
-  a `Tensor{i64}` and `ArrayLoad` recovers the element type + `index_cast`s the
-  subscript so the enclosing binop resolves. The element type is *derived* from the
-  declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
-  definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
-  `tests/const_array_run.rs`.
-- **Array-parameter lowering to `cdylib` (17.6).** A function taking a fixed array
-  parameter — `fn dot(a: [i64; N], b: [i64; N]) -> i64 { … a[i] … }` — now compiles to
-  a shared library. `type_ann_to_abi_mlir` + `type_ann_to_value_kind` gained a
-  `TypeAnn::Array` arm, so a `[T; N]` param maps to the same `tensor<NxT>` MLIR
-  boundary a `Tensor` annotation uses (bufferize-function-boundaries → memref C-ABI,
-  the proven tensor-param path) instead of falling to the scalar-`i64` default, where
-  `ArrayLoad` on the param had failed with *"missing type information … array load
-  base"*. Rank-1, scalar element. Additive — array-param programs previously errored,
-  so no working program (including self-host `main.mind`) changes bytes (keystone 7/7
-  byte-identical). Unblocks the head-to-head performance shape (`axpy`/`dot`/`gemv`)
-  against C.
-- **Determinism-with-speed evidence.** The deterministic int8 GEMM kernel runs
-  **~2.02× a single-core OpenBLAS f32 reference, byte-exact** (`bench/RESULTS-int8-2026-06-08.md`);
-  and — vs a *naïve* `clang -O3 -march=x86-64-v3` loop (what `-O3` gives without
-  hand-blocking) — byte-identical output at a large margin, with a `memcmp` correctness
-  gate *before* any timing (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, reproducible
-  driver `bench/beat_clang_igemm_driver.c`). No `-ffast-math` claim (determinism forbids
-  float reassociation).
-- **Scalar `f64` `sqrt` (17.5)** lowers to the IEEE correctly-rounded `llvm.intr.sqrt`.
-  `sqrt` is now a **reserved builtin name (E2031)** — a user `fn sqrt` is rejected at
-  check-time (one name, one meaning; removes a silent-shadow / duplicate-symbol class).
-- **`f64` bit-cast intrinsics (17.3):** `__mind_bits_to_f64` / `__mind_f64_to_bits` /
-  `__mind_conv_f64`.
-- **`std/detmath.mind` (17.6):** deterministic pure-`f64` minimax `exp`/`log`/`sin`/
-  `cos`/`pow` with a pinned fold order, `det_sqrt` (intrinsic + a pinned canonical
-  qNaN `0x7FF8000000000000` for out-of-domain inputs so negatives stay cross-substrate
-  byte-identical), and a value-oracle KAT.
-- **Cross-module `f64` signatures (17.1).** An imported `pub fn` with a non-`i64` scalar
-  signature is now typed from the callee's DECLARED param/return ABI at both the
-  `func.call` site and the `func.func private` extern forward-declaration (imported
-  signatures are registered into `IRModule::fn_signatures`), so `f64`/`f32`/`i32`/`bool`
-  cross-module calls no longer default to `(i64) -> i64` — previously a hard `mlir-opt`
-  type error (e.g. an imported `f64 scale`). Empty on the single-file / default-feature
-  path → byte-identical. **Proven on the actual `mindc run` consumer path** (a
-  cross-module `f64` project builds and runs), not only `--emit-shared`.
-- **Self-host `f64` MLIR emit (17.1 self-host mirror, #298 step 1).** The pure-MIND
-  self-host MLIR emitter (`examples/mindc_mind/main.mind` `selftest_emit_mlir`) now lowers
-  scalar `f64` — `f64` params (`%N: f64`), `f64` returns (`-> f64` / `return %k : f64`), the
-  four `arith.{addf,subf,mulf,divf}` binops, and canonicalized `f64` constants (`2.50`→`2.5`,
-  `5.0`→`5.0`: a pure string canonicalization of the source span that matches the Rust
-  `ConstF64` shortest-round-trip Display for in-precision decimals — no Ryū in MIND) —
-  byte-identical to `mindc --emit-mlir`. Dtype is derived per-AST-node (no threaded state), so
-  the 17 pre-existing i64 cases stay byte-inert. Gated by `self_host_mlir_smoke.py` (now a CI
-  step): 25/25 cases (17 i64 + 8 f64). Out-of-step-1 `f64` cross-fn ABI (`func.call`) / `f64`
-  control-flow stay **fail-closed** (the byte-identity gate catches the i64-typed emit). The
-  main.mind growth re-freezes the RI-E1 self-host loop seed (`testdata/selfhost_loop/stage1.elf`
-  042bfea3 → 11df237d, expected Rule-1b source-growth drift; candidate fixed point
-  stage1==stage2==stage3 proven before the refreeze — full PRE/POST evidence in
-  `examples/mindc_mind/testdata/selfhost_loop/PROVENANCE_298_f64_selfhost_mlir.md`).
-  Advances the self-host toward 100% Rust-independence.
-  - **Fail-closed f64 call-ABI negative control** (`tests/f64_abi_negative_control.rs`):
-    a typed `i64` variable passed to an `f64` parameter is rejected at the MLIR-lowering
-    ABI boundary (`expects different type … 'f64' vs 'i64'`) — not silently miscompiled,
-    not a parse error, not a link error; a byte-identical `f64`-argument positive control
-    compiles. Machine-checked; a vacuous `exit != 0` is explicitly rejected.
-- **Known / deferred (#298 follow-ups, filed — not silently skipped):**
-  - The pure-MIND self-test surface `selftest_emit_mlir` SEGFAULTs when fed a *cross-fn*
-    f64 construct (an `f64` `func.call` or `f64` value-`if`) — **pre-existing** (the
-    unchanged `7b696f09` baseline `.so` crashes identically), latent (no shipped gate feeds
-    it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope. To be
-    hardened to fail-closed alongside the cross-fn f64 self-host emit (step 2).
-  - `mindc check` fail-opens on a typed-`i64`→`f64` call-argument / return (passes `check`,
-    then fails `build` at MLIR lowering). The build gate already fail-closes (above), so
-    this is a belt-and-suspenders early-diagnostic gap to close at check-phase (RFC 0011
-    scalar-class extension), tracked separately to keep this change main.mind-only.
-- **`f64` parameter-init inference (17.2).** A loop-carried `let mut v: f64 = <ident>`
-  seeded from an `f64` param now materialises its own `f64`-typed value up front, so the
-  loop-carry keeps `arith.addf` instead of degrading to `arith.addi` (the old int
-  alias-break was an `mlir-opt` `i64 vs f64` error). Fires only for the bare-identifier
-  alias case → every other binding is byte-identical.
-- **Artifact-embedded evidence over a resolved project + parent chaining (17.7).**
-  `mindc --emit-evidence <PATH>` resolves a multi-module project before emit, and
-  `--evidence-parent <HASH|PATH>` records a parent artifact's `trace_hash` as
-  `evidence_chain.parent` (in the MAP epilogue, outside the `trace_hash` preimage, so it
-  never perturbs the child's own anchor / byte-identity). Chaining to a body-tampered
-  parent is refused fail-closed. `--emit-evidence` → `mindc verify` round-trips.
-- **Application-namespace evidence attributes (17.8).** `--evidence-attr KEY=VALUE`
-  (repeatable) attaches dotted, non-reserved provenance keys to the mic@3 MAP epilogue:
-  byte-additive (byte-identical when unused; older readers skip unknown keys), lexically
-  sorted, validated fail-closed (reserved-prefix / un-namespaced / duplicate / empty
-  rejected) at BOTH the CLI and the library emit boundary, and folded into the signature
-  preimage so signed app metadata is non-strippable.
-- **Edges (17.8):** `lib` / `main` / `mod` are diagnosed as reserved crate-root stems — a
-  non-entry `src/lib.mind` errors clearly (rename hint) instead of a cryptic downstream
-  `E2003` (behaviour change: a project that relied on such a sibling collapsing to `crate`
-  and reaching its exports by bare name now gets the diagnostic — an intended honesty
-  improvement, since both files already collapsed to `crate`); `--emit-ir` renders `f64`
-  constants as `const.f64`; `mindc test` exits non-zero on a failing OR empty run (was a
-  false green at exit 0).
-
-### Fixed
 - **Tuple-destructure arity mismatch (corr2 BUG2 → E2620) and const-index array out-of-bounds
   (corr2 BUG1 → E2621) built and read past the allocation.** `let t = (11,22); let (a,b,c) = t; c`
   built and returned an adjacent stack slot (garbage); `let a: array<i64> = [11,22]; a[2]` built and
@@ -869,7 +888,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch's bindings (full sequential scan to the tail): an annotated scalar `let` inserts its
   class, and every `LetTuple` / non-scalar / unannotated `let` DROPS the name (→ class `None`,
   so a tuple-rebound `let (n, w) = mkpair()` never keeps a stale class). Zero over-coverage
-  preserved; check-phase only; self-host fixed point unchanged. (audit-reviewed: GO.)
+  preserved; check-phase only; self-host fixed point unchanged.
 - **RFC 0011 scalar-class checks now reach match arms and the implicit trailing-return that
   precedes a binding (GitHub #233).** The confidence-gated int↔float class pass never entered a
   `match` arm (a `Node::Match` fell through to the walker's terminal `_ => {}`), so E2027
@@ -906,7 +925,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose `f()` returned bits `0x0000000000000000` instead of `0x3c9cd2b297d889bc`). Fixed
   **structurally** with an exact integer-valued test — `n.is_finite() && n.fract() == 0.0`:
   an integer-valued finite f64 still prints with a decimal point (`5.0`), and every other
-  value — sub-EPSILON magnitudes and subnormals included — uses Rust's shortest-round-trip
+  value — sub-EPSILON magnitudes and subnormals included — uses shortest-round-trip
   Display, which reproduces the exact IEEE-754 bits; the `is_finite()` guard also keeps
   ±inf/NaN out of the integer branch. Permanent end-to-end regression
   `tests/f64_literal_envelope.rs` compiles each envelope literal, dlopen-calls `f()`, and
@@ -937,6 +956,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ArrayLoad` hardening (audit follow-up):** OOB runtime index now clamps
   deterministically (was substrate-divergent UB); unsupported element types (q16/f16/
   bf16) fail closed instead of emitting invalid IR / i64-width miscompiles.
+
+- **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`).**
+  A single-file compile (`mindc <file>.mind --emit-mic3` / `--emit-evidence` /
+  `--emit-ir`) has no whole-project registry, so the std `String` schema never
+  reached lowering: `name.len` on a `String` parameter failed with `E6009` even
+  though `mindc check` accepted the file and a project build of the same source
+  lowered it — whole-program evidence could not be emitted for any program that
+  reads a string field. A field access whose translation unit lacks the schema now
+  registers the bundled `std/string.mind` declaration and resolves against it,
+  built by the same function the project registry uses (a unit test compares every
+  bundled std struct across both paths so they cannot drift). The classification
+  looks through borrows and parentheses (`&String`, `&mut String` parameters,
+  `let r = &s;`, parenthesised receivers, `String { .. }` literals) wherever a
+  declared type is classified; a literal is laid out in the bundled field order a
+  project build uses; and a program's own `String` keeps priority — the bundled
+  schema is used only when the module declares no `String` of its own. On the
+  project path, zero-arg `.len()` / `.addr()` / `.cap()` on a borrowed,
+  parenthesised or literal `String` receiver now call `string_len` /
+  `string_addr` / `string_cap`. Twenty-seven receiver shapes lower to the same
+  function bodies in a single-file compile and in a `Mind.toml` project build
+  (`tests/flat_string_field_schema.rs`, 13 tests, four of which fail on the
+  previous head). Byte identity: all 483 tracked `.mind` files under
+  `examples/`, `tests/` and `std/` compile-and-compare between the base and this
+  head — the 405 the base compiles give byte-identical mic@3, the other 78 are
+  refused by both; keystone, cross-substrate identity and the whole-module mic@3
+  self-host flip pass.
+- **The automated pull-request review job runs to completion (`#348`, `#352`,
+  `#361`).** It reviews on a subscription token when one is set, without the
+  workload-identity variables that overrode the token; it runs from an empty
+  directory so its single allowed turn is spent on the review itself; and it is
+  given no tools, so the one turn always completes regardless of diff size.
+
+### Security
+
+- **PQC hybrid evidence signing compiled into release builds; signed (opt-in).**
+  The release build matrix compiles the `evidence-mldsa` + `evidence-slhdsa`
+  features, so released `mindc` binaries carry the supported post-quantum hybrid
+  scheme **`pqc-hybrid-ml-dsa-87-slh-dsa-256s`** — **ML-DSA-87** (FIPS-204,
+  lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based), BOTH legs must
+  verify (AND-combiner). Signing runs only when an operator supplies a key seed
+  out-of-band through the key-seed environment variables
+  (`MIND_EVIDENCE_MLDSA87_KEY`, `MIND_EVIDENCE_SLHDSA_KEY`): **signed
+  (opt-in)**, never signed-by-default. No key secret is present in the release
+  workflow or the published assets. Artifacts may be signed opt-in; this does
+  **not** mean releases are signed. Production key custody and signed-release
+  publication remain pending. Unsigned artifacts stay byte-identical; the
+  keystone byte-identity gate never compiles a PQC crate on its path and the
+  determinism wedge is untouched.
+- **PQC-hybrid scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s` (RFC 0016 Phase C).** The verifier is **non-degradable**: stripping or tampering either leg,
+  or rewriting the `signature.scheme` tag to a weaker single-leg scheme, fails closed
+  (`Malformed`/`Invalid`) — the hybrid can never collapse to a single-scheme signature.
+  Both legs sign RNG-free (deterministic-from-seed), so a signed artifact stays
+  byte-identical across substrates. CLI controls check both signer keys, tampering,
+  malformed seed input, and refusal of a missing signature leg.
+- **mic@3 MAP epilogue parser hardening (anti-malleability).** `parse_map_epilogue` now
+  rejects **duplicate keys** and **trailing bytes** after the last entry, both fail-closed
+  (`ParseMapError::DuplicateKey` / `TrailingBytes`). The canonical MAP is a set with
+  nothing after the final entry and the emit path never produces either, so this is
+  byte-neutral on emit and accepts every artifact any emitter version ever produced; it
+  closes a byte-malleability vector where a redundant copy of a signed key, or trailing
+  garbage, could ride inside an otherwise-`Valid` artifact outside the signed preimage.
+  The entry-count allocation guard is tightened to `remaining / MIN_ENTRY_BYTES`, capping a
+  crafted `count` from pre-sizing a several-hundred-megabyte `Vec`.
+- **`mindc verify` surfaces both PQC pubkeys.** The verify report (JSON and human) now
+  emits `signature_mldsa87_pubkey` / `signature_slhdsa_pubkey` so scripted consumers can
+  out-of-band-pin the hybrid key material, matching the existing fields for the retired
+  schemes.
+- **Dependency advisories closed.**
+  - `pyo3` 0.24 → 0.29 (`7fc3716b`): fixes GHSA-36hh-v3qg-5jq4 (HIGH, out-of-bounds
+    read) and GHSA-chgr-c6px-7xpp (missing `Sync`). The `python-bindings` feature is
+    optional and not in the default or keystone build; the bindings compile clean under
+    0.29 with no source change.
+  - `vitest` / `@vitest/coverage-v8` → 4.1.12 in `sdk/ts/mic-map` (`#296`, `7f944d27`):
+    resolves the two moderate `@vitest/mocker` advisories (GHSA-qxg6-89mg-rqv8,
+    GHSA-xp26-3454-mjgp). Dev dependencies only — `@mind/mic-map` has no runtime
+    dependencies. vitest 5 is left for a separate change (it raises the Node floor).
+  - `vite` 8.2.2 → 8.3.5 in `sdk/ts/mic-map` (`#283`, `21cb256f`). Dev dependency.
+
+- **Release build hardening (`#344`, `36b384a7`).** `Cargo.lock` is committed and
+  every workflow cargo call that resolves dependencies (`cargo deny` included)
+  passes `--locked`, except the bench-gate base-arm build, which compiles an older
+  commit and is the one declared `# lockfile-exempt:` line. Release binaries
+  therefore link the crypto crates CI tested (`scripts/check_release_gating.py`
+  R7). The required `release_profile` job builds the exact release.yml command on
+  native x86_64 and aarch64 runners, runs the post-build smoke action, and drives
+  the packaged binary through `tests/evidence_release_smoke.rs`: unsigned bytes
+  equal the committed fixture with the signing features compiled in (release set)
+  or out (std-surface test rows) — the PQC-OFF twin that makes "compiling signing
+  in does not move unsigned output" a CI property — the public TEST seeds sign,
+  the signature verifies under pinned keys, and stripping either leg is refused.
+  R8 fails when the job's `cargo build` differs from release.yml's in any argument
+  or its signing smoke loses the release feature selection. linux-arm64 releases
+  build natively instead of with `cross`, and every release leg verifies its
+  `.sha256` and checks `mindc --version` against the tag before upload. The
+  keystone job asserts with `cargo tree` that its feature sets never resolve
+  fips204 or fips205.
+
+### Pending for this release
+
+Open PRs still expected before the tag; the final refresh moves each line into
+the section above as it lands:
+
+- `#340` — fix(check): admit alias-element literals and private helpers as slice arguments
+- `#342` — fix(eval): evaluate float conditions, zeroed arrays, break and for-each like native
+- `#343` — fix(strings): compare strings by bytes on every backend or refuse at check time
+- `#346` — feat(std): TLS 1.3 client and X.509 path validation — the base of the `std.https` surface; revocation (CRL/OCSP) is not in scope for 0.10.3
+- `#349` — feat(std): getrandom entropy and getaddrinfo name resolution
+- `#350` — feat(std): write and read results as mic@3 records — the mic@3 results module on top of the landed parallel test-runner harness
+- `#351` — feat(std): run many child tasks and wait for all of them — the std parallel-run module
+- `#358` — perf(mlir): lower load/store addresses as base plus offset
+- `std.https` — the HTTPS client module on the TLS 1.3 + DNS legs
 
 ## [0.10.2] - 2026-08-07 — runtime-free `mindc test` over real memory/struct/cross-module MIND, verifier break/continue if-merge fix, compile-speed (small-object allocator + boxed AST), and the `--backend` opt-in seam
 

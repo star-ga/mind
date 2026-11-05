@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1958 | **Est. tokens:** ~3,852,351
-**Generated:** 2026-11-05 07:39 UTC
+**Files:** 1958 | **Est. tokens:** ~3,852,359
+**Generated:** 2026-11-05 07:53 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~114,007 |
+| `docs/` | 40 | ~114,015 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -563,7 +563,7 @@
 - `type-system.md` (~1520 tok, huge) — Type System
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
-- `version-matrix.md` (~1828 tok, huge) — MIND Ecosystem — Version Matrix
+- `version-matrix.md` (~1836 tok, huge) — MIND Ecosystem — Version Matrix
 - `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 

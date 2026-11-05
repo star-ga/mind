@@ -1840,6 +1840,17 @@ workload shipped in spite of all of them, so none is a blocker — each is a sha
 forced a workaround, and each workaround is recorded so the fix can be validated against a
 real consumer rather than a synthetic test.
 
+### Status (2026-11-05) — shipped in 0.10.3
+
+The Phase 17 numerical surface recorded below ships in release **0.10.3**: every
+item marked landed (17.1–17.8, the reserved-name `sqrt` rule, the partial-domain
+canonical-qNaN policy, and the `f64 !=` miscompile fix) landed on `main` after the
+v0.10.2 tag (2026-08-07) and is part of this release. One honest follow-up below
+advanced inside the same release: the self-host MLIR emitter now lowers scalar
+`f64` (single-function step; cross-function `f64` self-host emit stays
+fail-closed). The remaining follow-ups (deterministic stdout printers, the
+callee-signature cache key, `use std.io::…` run-path linking) are still open.
+
 ### Status (2026-08-12)
 
 Landed on the `--emit-shared` compile path (proven by build-and-run tests, not IR-shape
@@ -3390,6 +3401,15 @@ library measurably needs: C ABI, streaming output and resource refusal.
 > criterion gate.
 
 Fixed in draft PRs (listed for traceability):
+
+> **0.10.3 note (2026-11-05):** the first two bullets below shipped in release
+> **0.10.3** (`#297` — bare imported calls under `mindc test`, `#298` — the
+> native `assert` span/message diagnostic). The `std.fs` `append_string` bullet
+> is still a draft PR and did not ship. MG-04's file-reading leg is partially
+> closed in 0.10.3: `mindc test` now reads project files read-only
+> (open/read/lseek/close) with results matching native; the `--backend
+> native|mlir` test selection and the remaining evaluator surfaces stay open.
+> MG-01/02/03/05/06/07 are unchanged by this release.
 
 - `mindc test` now resolves a bare call to an exported function of an imported
   project module (`import util; util_add(1, 2)`), as `check` and native builds
