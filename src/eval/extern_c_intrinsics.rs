@@ -16,7 +16,14 @@ use super::interp_mem;
 pub(crate) fn is_extern_c_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "open" | "lseek" | "read" | "close" | "read_to_string" | "string_push_byte" | "vec_zeroed"
+        "open"
+            | "lseek"
+            | "read"
+            | "close"
+            | "read_to_string"
+            | "string_push_byte"
+            | "vec_zeroed"
+            | "is_dir_fd"
     )
 }
 
@@ -33,6 +40,7 @@ pub(crate) fn eval_extern_c_intrinsic(name: &str, args: &[i64]) -> Result<i64, S
         ("read_to_string", [path_addr]) => read_to_string(*path_addr),
         ("string_push_byte", [s, b]) => string_push_byte(*s, *b),
         ("vec_zeroed", [n]) => interp_mem::eval_intrinsic("__mind_vec_zeroed", &[*n]),
+        ("is_dir_fd", [fd]) => Ok(if fake_fd_is_dir(*fd) { 1 } else { 0 }),
         _ => Err(format!(
             "{name}: wrong argument count for runtime-support intrinsic"
         )),
@@ -103,6 +111,20 @@ fn slot_is_open(index: usize) -> bool {
             .get(index)
             .and_then(|slot| slot.as_ref())
             .is_some()
+    })
+}
+
+/// fstat S_ISDIR equivalent for a fake descriptor.
+fn fake_fd_is_dir(fd: i64) -> bool {
+    let Some(index) = fd_index(fd) else {
+        return false;
+    };
+    FAKE_FDS.with(|fds| {
+        fds.borrow()
+            .get(index)
+            .and_then(|slot| slot.as_ref())
+            .map(|f| f.file.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .unwrap_or(false)
     })
 }
 
@@ -235,6 +257,15 @@ fn read_to_string(path_addr: i64) -> Result<i64, String> {
     if fd < 0 {
         return Ok(rec);
     }
+    // A directory is refused by file type (fstat S_ISDIR), not by size:
+    // filesystems disagree on the size lseek reports for a directory (ext4
+    // returns a non-zero block count; others return 0), so size is not a
+    // reliable signal.  The zero record (ptr 0, len 0, cap 0) is the only
+    // correct answer for a directory on every filesystem.
+    if fake_fd_is_dir(fd) {
+        let _ = close_fake_fd(fd);
+        return Ok(rec);
+    }
     let file_sz = lseek_fake_fd(fd, 0, 2)?;
     if file_sz < 0 {
         let _ = close_fake_fd(fd);
@@ -244,8 +275,6 @@ fn read_to_string(path_addr: i64) -> Result<i64, String> {
         let _ = close_fake_fd(fd);
         return Ok(rec);
     }
-    // A directory seek can report the maximum offset. That size cannot grow
-    // by the trailing NUL, so the record stays empty, same as a failed size.
     let Some(cap) = file_sz.checked_add(1) else {
         let _ = close_fake_fd(fd);
         return Ok(rec);
@@ -462,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_file_and_directory_yield_no_bytes() {
+    fn missing_file_and_directory_return_the_empty_record() {
         interp_mem::reset();
         let missing = put_bytes(b"/no/such/mind-file-331");
         let rec = call("read_to_string", &[missing]).unwrap();
@@ -474,16 +503,7 @@ mod tests {
             &[put_bytes(dir.path().to_str().unwrap().as_bytes())],
         )
         .unwrap();
-        // A directory never yields bytes. Which record carries that depends on
-        // the filesystem: one that reports a directory size fails the directory
-        // read and yields the zero record; one that reports an empty directory
-        // as size 0 yields its zero-length record, cap file_sz + 1 == 1. The
-        // native reader makes the same choice on the same filesystem.
-        assert_eq!(field(rec, 8), 0);
-        assert!(
-            (field(rec, 0), field(rec, 16)) == (0, 0)
-                || (field(rec, 0) != 0 && field(rec, 16) == 1)
-        );
+        assert_eq!((field(rec, 0), field(rec, 8), field(rec, 16)), (0, 0, 0));
     }
 
     #[test]

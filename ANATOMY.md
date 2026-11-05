@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1976 | **Est. tokens:** ~3,909,798
-**Generated:** 2026-11-05 10:59 UTC
+**Files:** 1976 | **Est. tokens:** ~3,910,977
+**Generated:** 2026-11-05 12:01 UTC
 
 ## Token Budget Guide
 
@@ -97,7 +97,7 @@
 | `.github/scripts/` | 1 | ~1,297 |
 | `.github/workflows/` | 9 | ~17,042 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~22,857 |
+| `runtime-support/` | 1 | ~23,074 |
 | `scripts/` | 33 | ~128,792 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -122,7 +122,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 51 | ~173,175 |
+| `src/eval/` | 51 | ~173,269 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -156,7 +156,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 45 | ~216,403 |
-| `tests/` | 441 | ~928,346 |
+| `tests/` | 441 | ~929,214 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1084,7 +1084,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~22857 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~23074 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
@@ -1305,7 +1305,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~1907 tok, huge) — Copyright 2026 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5356 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5450 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1974,7 +1974,7 @@
 - `fail_closed_cli_run.rs` (~1568 tok, huge) — Regression tests for the two fail-closed CLI guards that shipped WITHOUT one.
 - `fail_open_skip_site_ratchet.rs` (~8472 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
-- `file_read_under_test.rs` (~3605 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `file_read_under_test.rs` (~4473 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `fixed_array_binding_lengths.rs` (~462 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_narrow_assignment_types.rs` (~376 tok, medium) — Copyright 2026 STARGA Inc.
 - `fixed_array_return_lengths.rs` (~3080 tok, huge) — Copyright 2026 STARGA Inc.

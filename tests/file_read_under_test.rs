@@ -418,3 +418,107 @@ fn c_and_std_read_records_match() {
         "record fields differ:\nstd:\n{std_text}\nc:\n{c_text}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Directory-read parity: a directory is refused with the zero record (ptr 0,
+// len 0, cap 0) in BOTH engines — the mindc test evaluator (extern_c_intrinsics)
+// and the native runtime (runtime-support/mind_intrinsics.c).  The check is by
+// file type (fstat S_ISDIR), not by size: filesystems disagree on the size
+// lseek reports for a directory (ext4 returns a non-zero block count; others
+// return 0), so size is not a reliable signal.
+// ---------------------------------------------------------------------------
+
+const DIR_READER_STD: &str = r#"import std.fs;
+
+fn dir_path() -> i64 {
+    // NUL-terminated "." — the current directory is always a directory.
+    let b: i64 = __mind_alloc(2);
+    __mind_store_i8(b + 0, 46);
+    __mind_store_i8(b + 1, 0);
+    return b;
+}
+
+fn main() -> i64 {
+    let rec: i64 = read_to_string(dir_path());
+    let ptr: i64 = __mind_load_i64(rec + 0);
+    let len: i64 = __mind_load_i64(rec + 8);
+    let cap: i64 = __mind_load_i64(rec + 16);
+    // A directory must yield the zero record on every filesystem.
+    if ptr != 0 {
+        return 1;
+    }
+    if len != 0 {
+        return 2;
+    }
+    if cap != 0 {
+        return 3;
+    }
+    return 0;
+}
+"#;
+
+const DIR_TEST_STD: &str = r#"import std.fs;
+
+fn dir_path() -> i64 {
+    let b: i64 = __mind_alloc(2);
+    __mind_store_i8(b + 0, 46);
+    __mind_store_i8(b + 1, 0);
+    return b;
+}
+
+#[test]
+fn directory_returns_the_zero_record() {
+    let rec: i64 = read_to_string(dir_path());
+    let ptr: i64 = __mind_load_i64(rec + 0);
+    let len: i64 = __mind_load_i64(rec + 8);
+    let cap: i64 = __mind_load_i64(rec + 16);
+    assert ptr == 0, "dir ptr must be 0";
+    assert len == 0, "dir len must be 0";
+    assert cap == 0, "dir cap must be 0";
+}
+"#;
+
+fn dir_parity_project(name: &str) -> PathBuf {
+    let root = isolated_dir(name);
+    fs::create_dir_all(root.join("tests")).expect("create tests dir");
+    fs::create_dir_all(root.join(".git")).expect("create project boundary");
+    fs::write(
+        root.join("Mind.toml"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n"
+        ),
+    )
+    .expect("manifest");
+    fs::write(root.join("main.mind"), DIR_READER_STD).expect("entry");
+    fs::write(root.join("tests/dir_parity.mind"), DIR_TEST_STD).expect("test");
+    root
+}
+
+#[test]
+fn directory_read_is_the_zero_record_in_both_engines() {
+    // mindc test evaluator (src/eval/extern_c_intrinsics.rs read_to_string)
+    let root = dir_parity_project("dir_parity_test");
+    let (code, text) = run(&root, &["test", "tests/dir_parity.mind"]);
+    assert_eq!(
+        code, 0,
+        "mindc test evaluator must refuse a directory with the zero record:\n{text}"
+    );
+    assert!(
+        text.contains("ok") || text.contains("passed"),
+        "expected a passing test line:\n{text}"
+    );
+
+    // native runtime (runtime-support/mind_intrinsics.c read_to_string)
+    let root2 = dir_parity_project("dir_parity_run");
+    let out = run_out(&root2, &["run"]);
+    if !common::gate::compiled("file_read_under_test::dir_parity", &out) {
+        // Legal capability skip (no native backend / no MLIR toolchain).
+        return;
+    }
+    let text2 = text_of(&out);
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "native runtime must refuse a directory with the zero record:\n{text2}"
+    );
+}
