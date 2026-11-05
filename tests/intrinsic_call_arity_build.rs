@@ -164,3 +164,117 @@ fn a_short_call_nested_as_an_argument_is_refused() {
         3,
     );
 }
+
+// ── `mindc check` reports E2005 in every body shape ─────────────────────
+//
+// `mindc build` above refuses every shape eventually (the IR verifier is the
+// backstop), but `mindc check` runs the type checker alone, and that checker
+// used to report E2005 only where its `infer_expr` walk reached the call:
+// `while` bodies and conditions (RFC 0005 Gap 1), `else if` branches, and a
+// call nested as an argument of a call whose checker never re-infers its
+// arguments all passed `check`. These drive the `check` subcommand over each
+// shape so the refusal and the build agree.
+
+/// `mindc check` on `body` written as `main.mind` in a fresh scratch dir.
+fn check(name: &str, body: &str) -> Output {
+    let dir = common::scratch_dir(TARGET).join("check").join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create check dir");
+    std::fs::write(dir.join("main.mind"), body).expect("write main.mind");
+    Command::new(common::mindc_bin())
+        .arg("check")
+        .arg("--no-fmt")
+        .arg(dir.join("main.mind"))
+        .output()
+        .expect("spawn mindc check")
+}
+
+fn check_text(out: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// `mindc check` must refuse `body` with the E2005 intrinsic-arity message.
+fn assert_check_refused(name: &str, body: &str) {
+    let out = check(name, body);
+    let text = check_text(&out);
+    assert!(
+        !out.status.success(),
+        "{name}: mindc check accepted a wrong-arity intrinsic call: {text}"
+    );
+    assert!(
+        text.contains(ARITY_MESSAGE) && text.contains("got 3") && text.contains("E2005"),
+        "{name}: the refusal must be the E2005 intrinsic arity rule: {text}"
+    );
+}
+
+#[test]
+fn check_reports_e2005_in_a_while_body() {
+    assert_check_refused(
+        "check_short_in_while",
+        "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while i < 1 {\n        __mind_write(1, 0, 0);\n        i = i + 1;\n    }\n    return 0\n}\n",
+    );
+}
+
+#[test]
+fn check_reports_e2005_in_a_while_condition() {
+    assert_check_refused(
+        "check_short_in_while_cond",
+        "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while __mind_write(1, 0, 0) > 100 {\n        i = i + 1;\n    }\n    return i\n}\n",
+    );
+}
+
+#[test]
+fn check_reports_e2005_in_an_else_if_branch() {
+    assert_check_refused(
+        "check_short_in_else_if",
+        "fn main() -> i64 {\n    if 1 > 5 {\n        return 1\n    } else if 1 > 0 {\n        __mind_write(1, 0, 0);\n    }\n    return 0\n}\n",
+    );
+}
+
+#[test]
+fn check_reports_e2005_for_a_call_nested_as_an_argument() {
+    // `export { main }` keeps `id` off the project module table, so the call
+    // resolves as an intra-module one — the path whose arguments the checker
+    // never re-infers (`check_intra_fn_call`). The call is nested as an
+    // argument exactly as `a_short_call_nested_as_an_argument_is_refused`
+    // pins through the build.
+    assert_check_refused(
+        "check_short_as_argument",
+        "export { main };\n\nfn id(x: i64) -> i64 {\n    return x\n}\n\nfn main() -> i64 {\n    let n = id(__mind_write(1, 0, 0));\n    return n\n}\n",
+    );
+}
+
+#[test]
+fn check_accepts_the_declared_arity_in_every_body_shape() {
+    // Positive control: the same shapes with the declared four-argument call
+    // are clean, so the refusals above come from the arity rule alone.
+    for (name, body) in [
+        (
+            "check_ok_in_while",
+            "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while i < 1 {\n        __mind_write(1, 0, 0, 0 - 1);\n        i = i + 1;\n    }\n    return 0\n}\n",
+        ),
+        (
+            "check_ok_in_while_cond",
+            "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while __mind_write(1, 0, 0, 0 - 1) > 100 {\n        i = i + 1;\n    }\n    return i\n}\n",
+        ),
+        (
+            "check_ok_in_else_if",
+            "fn main() -> i64 {\n    if 1 > 5 {\n        return 1\n    } else if 1 > 0 {\n        __mind_write(1, 0, 0, 0 - 1);\n    }\n    return 0\n}\n",
+        ),
+        (
+            "check_ok_as_argument",
+            "export { main };\n\nfn id(x: i64) -> i64 {\n    return x\n}\n\nfn main() -> i64 {\n    let n = id(__mind_write(1, 0, 0, 0 - 1));\n    return n\n}\n",
+        ),
+    ] {
+        let out = check(name, body);
+        let text = check_text(&out);
+        assert!(
+            out.status.success(),
+            "{name}: the declared arity must pass mindc check: {text}"
+        );
+    }
+}

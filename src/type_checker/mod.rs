@@ -24,6 +24,8 @@ mod duplicate_structs;
 #[cfg(feature = "std-surface")]
 pub(crate) mod extern_declarations;
 #[cfg(feature = "std-surface")]
+mod intrinsic_call_arity;
+#[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
 pub mod nerve_lint;
 pub(crate) mod nerve_walk;
@@ -2250,13 +2252,11 @@ fn check_std_surface_intrinsic(
         span,
     })?;
     if args.len() != arity {
-        return Err(TypeErrSpan {
-            msg: format!(
-                "intrinsic `{callee}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
-                args.len()
-            ),
-            span,
-        });
+        // The arity rule is `intrinsic_call_arity`'s (E2005 at EVERY expression
+        // position); this function only runs where `infer_expr` reaches the
+        // call. Type the call as its i64 result and let that pass refuse it —
+        // one source for one rule.
+        return Ok((ValueType::ScalarI64, span));
     }
     for (i, a) in args.iter().enumerate() {
         let (ty, _) = infer_expr(a, env)?;
@@ -4517,6 +4517,14 @@ pub fn check_module_types_in_file(
     let _slice_aliases = slice_abi::AliasScope::install(&module.items);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
+    // The E2005 intrinsic-arity rule, at every expression position (while
+    // bodies and conditions, `else if` branches, calls nested as arguments,
+    // fn/`for` bodies, match arms, `let` initializers, return expressions, …).
+    // Runs here — once per file, on the whole tree — rather than inside the
+    // fn-body recursion below, so a call in a body is seen exactly once and
+    // without the body pass's diagnostic whitelist.
+    #[cfg(feature = "std-surface")]
+    intrinsic_call_arity::check(module, src, file, &mut errors);
     #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
     std_imports::check_placement(module, src, file, &mut errors);
     #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]

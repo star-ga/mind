@@ -234,3 +234,104 @@ fn the_declared_arity_verifies_at_every_depth() {
         verify_module(&m).unwrap_or_else(|e| panic!("a 4-argument call {where_} verifies: {e}"));
     }
 }
+
+// ── The type checker reports E2005 in every expression position ─────────
+//
+// The IR verifier above refuses a wrong-arity call at any depth, but it only
+// runs on the lowering paths; `mindc check` runs the type checker alone. The
+// checker used to report the rule (E2005) only where its `infer_expr` walk
+// reached the call, so `while` bodies and conditions (RFC 0005 Gap 1), `else
+// if` branches, and a call nested as an argument of a call whose checker never
+// re-infers its arguments all passed `check`. These tests drive the checker
+// entry point `mindc check` runs (`check_module_types`) through every one of
+// those shapes.
+
+use libmind::type_checker::{TypeEnv, check_module_types};
+
+/// Type-check `src` and return the diagnostics, exactly as `mindc check` does.
+fn check_src(src: &str) -> Vec<libmind::diagnostics::Diagnostic> {
+    let module = libmind::parser::parse(src).expect("the fixture must parse");
+    check_module_types(&module, src, &TypeEnv::default())
+}
+
+fn has_intrinsic_arity_e2005(diags: &[libmind::diagnostics::Diagnostic]) -> bool {
+    diags.iter().any(|d| {
+        d.code == "E2005"
+            && d.message
+                .contains("intrinsic `__mind_write` expects 4 i64 argument(s)")
+            && d.message.contains("got 3")
+    })
+}
+
+fn assert_e2005(where_: &str, src: &str) {
+    let diags = check_src(src);
+    assert!(
+        has_intrinsic_arity_e2005(&diags),
+        "a 3-argument __mind_write {where_} must report E2005; got {diags:?}"
+    );
+}
+
+fn assert_no_e2005(where_: &str, src: &str) {
+    let diags = check_src(src);
+    assert!(
+        !has_intrinsic_arity_e2005(&diags),
+        "a 4-argument __mind_write {where_} must not report the arity rule; got {diags:?}"
+    );
+}
+
+/// The wrong-arity call of each shape, and its four-argument twin.
+fn shape_fixtures(short: &str, ok: &str) -> Vec<(&'static str, String, String)> {
+    vec![
+        (
+            "in a while body",
+            format!(
+                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while i < 1 {{\n        {short};\n        i = i + 1;\n    }}\n    return 0\n}}\n"
+            ),
+            format!(
+                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while i < 1 {{\n        {ok};\n        i = i + 1;\n    }}\n    return 0\n}}\n"
+            ),
+        ),
+        (
+            "in a while condition",
+            format!(
+                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while {short} > 100 {{\n        i = i + 1;\n    }}\n    return i\n}}\n"
+            ),
+            format!(
+                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while {ok} > 100 {{\n        i = i + 1;\n    }}\n    return i\n}}\n"
+            ),
+        ),
+        (
+            "in an else if branch",
+            format!(
+                "fn main() -> i64 {{\n    if 1 > 5 {{\n        return 1\n    }} else if 1 > 0 {{\n        {short};\n    }}\n    return 0\n}}\n"
+            ),
+            format!(
+                "fn main() -> i64 {{\n    if 1 > 5 {{\n        return 1\n    }} else if 1 > 0 {{\n        {ok};\n    }}\n    return 0\n}}\n"
+            ),
+        ),
+        (
+            "nested as an argument",
+            format!(
+                "fn id(x: i64) -> i64 {{\n    return x\n}}\n\nfn main() -> i64 {{\n    let n = id({short});\n    return n\n}}\n"
+            ),
+            format!(
+                "fn id(x: i64) -> i64 {{\n    return x\n}}\n\nfn main() -> i64 {{\n    let n = id({ok});\n    return n\n}}\n"
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn a_wrong_arity_call_reports_e2005_at_every_body_shape() {
+    for (where_, src, _) in shape_fixtures("__mind_write(1, 0, 0)", "__mind_write(1, 0, 0, 0 - 1)")
+    {
+        assert_e2005(where_, &src);
+    }
+}
+
+#[test]
+fn the_declared_arity_passes_the_type_checker_at_every_body_shape() {
+    for (where_, _, ok) in shape_fixtures("__mind_write(1, 0, 0)", "__mind_write(1, 0, 0, 0 - 1)") {
+        assert_no_e2005(where_, &ok);
+    }
+}

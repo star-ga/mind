@@ -8,16 +8,18 @@
 //! declared arity, at any nesting depth. The C runtime reads that many
 //! arguments, so a short call hands it an undefined trailing argument.
 //!
-//! The type checker reports the same rule as E2005 where its body pass visits
-//! the call (function and `for` bodies, match arms, `let` initializers, return
-//! expressions). It does not visit every shape: `while` bodies and conditions
-//! (RFC 0005 Gap 1) and `else if` branches are skipped
-//! (`tests/intrinsic_call_arity_build.rs` pins each through the build, where
-//! only this verifier refuses them). This verifier runs on
+//! The type checker reports the same rule as E2005 for a wrong-arity intrinsic
+//! call in EVERY expression position — a `while` body or condition (RFC 0005
+//! Gap 1), an `else if` branch, a call nested as an argument, a function or
+//! `for` body, a match arm, a `let` initializer, a return expression, and every
+//! other position the expression grammar reaches
+//! (`src/type_checker/intrinsic_call_arity.rs` walks the whole AST). This
+//! verifier runs on
 //! every `mindc` path that lowers through MLIR (`build`, `run`, and the
 //! `--emit-ir`, `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj`
 //! flags) and refuses the call at any depth (E3001), so no wrong-arity call
-//! builds. Two paths do not reach this verifier and are fenced
+//! builds even when a caller reaches lowering without the type checker. Two
+//! paths do not reach this verifier and are fenced
 //! elsewhere: `--backend native` refuses every intrinsic call at closure
 //! admission, and `mind eval` emits from unverified lowered IR (its own deferred
 //! marker in `src/main.rs`) but no intrinsic call reaches its output today: a
