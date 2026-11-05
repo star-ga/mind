@@ -28,8 +28,7 @@ pub(crate) mod fp_mode;
 pub mod frozen_profile;
 pub mod native_closure;
 mod print;
-mod project_consts;
-pub use project_consts::project_const_value;
+pub mod project_consts;
 mod verify;
 mod verify_calls;
 
@@ -1493,8 +1492,7 @@ impl fmt::Display for IRModule {
     }
 }
 
-/// Run verification and canonicalization on the module before handing it to a
-/// backend.
+/// Run verification and canonicalization on the module before handing it to a backend.
 pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError> {
     verify_calls::verify_module(module)?;
     crate::opt::ir_canonical::canonicalize_module(module);

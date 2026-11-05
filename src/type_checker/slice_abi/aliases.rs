@@ -351,7 +351,7 @@ fn const_value_width(value: &Node, depth: usize) -> Option<u32> {
 /// owner's scope.
 #[cfg(feature = "cross-module-imports")]
 fn imported_const(name: &str) -> Option<(Vec<TypeAnn>, Node)> {
-    let value = crate::ir::project_const_value(name)?;
+    let value = crate::ir::project_consts::project_const_value(name)?;
     let declared = crate::qualified_enums::imported_const_declared_types(name)
         .into_iter()
         .map(|(owner, ty)| canonical_in_owner(&ty, &owner))
