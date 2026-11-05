@@ -811,11 +811,36 @@ fn mindc_main() {
     let produces_artifact = cli.compile.emit_obj.is_some()
         || cli.compile.emit_shared.is_some()
         || cli.compile.emit_evidence.is_some();
+    // The project modules the entry calls are part of the program too: their
+    // calls are followed, transitively, with the same classifier.
+    #[cfg(feature = "cross-module-imports")]
+    let (project_hard, project_nondeterministic) = match single_file_scope.as_ref() {
+        Some(scope) if produces_artifact => {
+            let reach = libmind::project::single_file_scope::world_reach::sibling_world_reach(
+                scope,
+                &products.ir,
+                opts.target,
+            );
+            (
+                reach.hard.map(|r| (r.offender, r.via)),
+                reach.taint.is_some(),
+            )
+        }
+        _ => (None, false),
+    };
+    #[cfg(not(feature = "cross-module-imports"))]
+    let (project_hard, project_nondeterministic): (Option<(String, String)>, bool) = (None, false);
     if produces_artifact && !cli.compile.allow_nondeterministic {
         // HARD-only: an unclassified `extern "C"` callee is UNKNOWN, not nondeterministic.
         // Attestation stays conservative via ir_first_nondeterministic_call.
-        if let Some(offender) = libmind::ir::ir_first_hard_nondeterministic_call(&products.ir) {
+        let offender = libmind::ir::ir_first_hard_nondeterministic_call(&products.ir)
+            .map(|offender| (offender, None))
+            .or_else(|| project_hard.map(|(offender, via)| (offender, Some(via))));
+        if let Some((offender, via)) = offender {
             eprintln!("error[determinism]: `{offender}()` introduces unseeded nondeterminism");
+            if let Some(via) = via {
+                eprintln!("  called by `{via}`, in a project module this program calls");
+            }
             eprintln!();
             eprintln!("MIND programs are deterministic by default. Use a seeded generator such as");
             eprintln!("`Random(seed = 42)`, or rebuild with `--allow-nondeterministic`.");
@@ -842,7 +867,7 @@ fn mindc_main() {
     }
 
     mic3_output::emit_mic3_if_requested(&cli.compile, &products);
-    emit_evidence_if_requested(&cli.compile, &products);
+    emit_evidence_if_requested(&cli.compile, &products, project_nondeterministic);
 
     #[cfg(feature = "autodiff")]
     if cli.compile.autodiff && cli.compile.emit_grad_ir {
@@ -1553,7 +1578,11 @@ fn emit_mlir_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::Comp
     }
 }
 
-fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
+fn emit_evidence_if_requested(
+    cli: &CompileArgs,
+    products: &libmind::pipeline::CompileProducts,
+    project_nondeterministic: bool,
+) {
     let path = match &cli.emit_evidence {
         Some(p) => p,
         None => return,
@@ -1569,11 +1598,14 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
     // (Phase 2 — determinism-by-default with an explicit `#[nondeterministic]`
     // opt-in that REJECTS hidden non-determinism — is tracked as the RFC 0012
     // follow-up, superseding the old TODO(#289).)
-    let determinism = if libmind::ir::ir_declares_deterministic(&products.ir) {
-        libmind::ir::compact::Determinism::Deterministic
-    } else {
-        libmind::ir::compact::Determinism::Nondeterministic
-    };
+    // A project module the entry calls counts too (`world_reach`); the body
+    // alone cannot show it, so `mindc verify` keeps this stricter label.
+    let determinism =
+        if libmind::ir::ir_declares_deterministic(&products.ir) && !project_nondeterministic {
+            libmind::ir::compact::Determinism::Deterministic
+        } else {
+            libmind::ir::compact::Determinism::Nondeterministic
+        };
     let toolchain = env!("CARGO_PKG_VERSION");
 
     // Optional crypto-agile signing (RFC 0021 §6), opt-in via env-supplied seeds
@@ -2299,10 +2331,14 @@ fn run_verify(
     // recomputing `ir_declares_deterministic` from the same body the trace_hash
     // authenticates — exactly as `fp_mode` is re-derived — the true mode is
     // authenticated, and a stored MAP field that disagrees is a tamper indicator.
+    // Whether the body calls a function it does not hold (`ir::reach`): only
+    // then can a stored `nondeterministic` be stricter than the body shows.
+    let mut body_calls_outside = false;
     let (ssa_valid, ssa_reason, rederived_deterministic): (bool, Option<String>, Option<bool>) =
         match parse_mic3_envelope(&bytes) {
             Ok(module) => {
                 let det = libmind::ir::ir_declares_deterministic(&module);
+                body_calls_outside = libmind::ir::reach::calls_outside_body(&module);
                 match check_ssa_well_formed(&module) {
                     Ok(()) => {
                         // check_ssa_well_formed covers single-assignment +
@@ -2412,7 +2448,13 @@ fn run_verify(
             // `Some`. `stored_deterministic` is kept only to detect a tampered MAP
             // field below.
             let stored_deterministic = matches!(report.determinism, Determinism::Deterministic);
-            let effective_deterministic = rederived_deterministic.unwrap_or(stored_deterministic);
+            // A stored `nondeterministic` over a body that calls code it does not
+            // hold is the producer's classification of that code, and stands.
+            let effective_deterministic = libmind::ir::reach::reported_determinism(
+                stored_deterministic,
+                rederived_deterministic,
+                body_calls_outside,
+            );
             let determinism = if effective_deterministic {
                 "deterministic"
             } else {
@@ -2656,8 +2698,13 @@ fn run_verify(
                         _ => {}
                     }
                     if !effective_deterministic {
+                        let why = if rederived_deterministic == Some(true) {
+                            "labelled so for code this body calls but does not hold"
+                        } else {
+                            "calls a PRNG / wall-clock / stdin builtin"
+                        };
                         eprintln!(
-                            "note: artifact is nondeterministic (calls a PRNG / wall-clock / stdin builtin); trace_hash matches but reproducibility is not asserted"
+                            "note: artifact is nondeterministic ({why}); trace_hash matches but reproducibility is not asserted"
                         );
                     }
                 }

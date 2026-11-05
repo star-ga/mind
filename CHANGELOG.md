@@ -56,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Determinism through project modules**: a single-file build (`--emit-evidence`,
+  `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
+  the project modules it imports, transitively and function by function, and classifies
+  each body it reaches with the evidence classifier. A sibling that calls
+  `entropy.entropy_fill`, a `std.dns` resolver or `time.now_ns` used to pass the veto and
+  be attested `deterministic`; it is now refused without `--allow-nondeterministic`
+  (naming the callee and the project function that calls it) and, with it, attested
+  `nondeterministic`. A pure sibling function stays `deterministic`, even beside a
+  world-reading function the program does not call. `mindc verify` keeps a stored
+  `nondeterministic` label when the hashed body calls a function it does not hold; a
+  stored label that a self-contained body contradicts, and a stored `deterministic` the
+  body contradicts, are still refused as tampered. (`src/project/single_file_scope/
+  world_reach.rs`, `src/ir/evidence/reach.rs`, `tests/determinism_veto_control.rs`)
 - **Slice arguments with alias elements and private helpers**: the slice-call
   check compares element types after type-alias resolution (local aliases and
   aliases exported by an imported module), so `array<Q>` with `type Q = i32`

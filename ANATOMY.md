@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1974 | **Est. tokens:** ~3,905,069
-**Generated:** 2026-11-05 09:57 UTC
+**Files:** 1976 | **Est. tokens:** ~3,908,870
+**Generated:** 2026-11-05 10:07 UTC
 
 ## Token Budget Guide
 
@@ -135,6 +135,7 @@
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,669 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
+| `src/ir/evidence/` | 1 | ~2,129 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
 | `src/mlir/` | 5 | ~13,577 |
@@ -144,7 +145,7 @@
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 23 | ~77,680 |
-| `src/project/single_file_scope/` | 1 | ~1,409 |
+| `src/project/single_file_scope/` | 2 | ~3,081 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/qualified_enums/` | 2 | ~2,363 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -1422,6 +1423,9 @@
 
 - `v04_tests.rs` (~5843 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `v04_test_support.rs` (~1571 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/ir/evidence/`
+
+- `reach.rs` (~2129 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~13404 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1520,6 +1524,7 @@
 ### `src/project/single_file_scope/`
 
 - `tests.rs` (~1409 tok, large) — Copyright 2026 STARGA Inc.
+- `world_reach.rs` (~1672 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.

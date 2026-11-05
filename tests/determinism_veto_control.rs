@@ -24,7 +24,9 @@
 //! (`std.entropy`, `std.dns`): their bodies are compiled into a separate
 //! object, so the caller's IR holds only the call, and the classifier must know
 //! the function by name. That case resolves a std import, so it needs
-//! `cross-module-imports`.
+//! `cross-module-imports`. So does the last case: a program whose OWN project
+//! modules make such a call, one or more calls away from the entry, which the
+//! veto and the evidence label reach by following the calls across modules.
 //!
 //! The check under test runs on the lowered IR before any emission backend is
 //! consulted, so this gate needs neither the `mlir-build` feature nor an MLIR
@@ -247,4 +249,179 @@ fn callers_of_std_world_functions_are_refused_and_attested_nondeterministic() {
         STD_WORLD_CALLERS.len() + STD_PURE_CALLERS.len(),
         "vacuous run: ran={ran}"
     );
+}
+
+/// A project (`.git` boundary, `Mind.toml`, `main.mind` and `files`) in a fresh
+/// scratch directory; returns that directory. `main.mind` imports `w` and only
+/// calls `w.g`, so whatever the program does beyond that, it does in `w` (and
+/// in the modules `w` imports).
+#[cfg(feature = "cross-module-imports")]
+fn sibling_project(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = common::scratch_dir(&format!("determinism_sibling_{tag}"));
+    std::fs::create_dir_all(dir.join(".git")).expect("create project boundary");
+    let sources = std::iter::once("main.mind")
+        .chain(files.iter().map(|(name, _)| *name))
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let manifest = format!(
+        "[package]\nname = \"pw\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\
+         output = \"pw\"\ntarget = \"cpu\"\n\n[targets.cpu]\nbackend = \"cpu\"\nsources = [{sources}]\n"
+    );
+    common::scratch_src_in(&dir, "Mind.toml", &manifest);
+    common::scratch_src_in(
+        &dir,
+        "main.mind",
+        "import w;\n\npub fn f(p: i64) -> i64 {\n    w.g(p)\n}\n",
+    );
+    for (name, text) in files {
+        common::scratch_src_in(&dir, name, text);
+    }
+    dir
+}
+
+/// `mindc <args>` run in `dir`: `(success, stdout + stderr)`.
+#[cfg(feature = "cross-module-imports")]
+fn mindc_in(dir: &Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(common::mindc_bin())
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("spawn mindc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+/// `(tag, project files besides main.mind, callee the refusal names, the
+/// project function whose body calls it)`. Each world read sits one or more
+/// calls away from the entry: in `w.g`, behind a private helper of `w`, or in a
+/// third module `v` that `w` imports.
+#[cfg(feature = "cross-module-imports")]
+const SIBLING_WORLD: &[(&str, &[(&str, &str)], &str, &str)] = &[
+    (
+        "entropy",
+        &[(
+            "w.mind",
+            "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n",
+        )],
+        "entropy_fill",
+        "::g`",
+    ),
+    (
+        "dns",
+        &[(
+            "w.mind",
+            "import std.dns;\n\npub fn g(p: i64) -> i64 {\n    dns.dns_resolve(p, 9)\n}\n",
+        )],
+        "dns_resolve",
+        "::g`",
+    ),
+    (
+        "now_ns",
+        &[(
+            "w.mind",
+            "import std.time;\n\npub fn g(p: i64) -> i64 {\n    time.now_ns() + p\n}\n",
+        )],
+        "now_ns",
+        "::g`",
+    ),
+    (
+        "helper",
+        &[(
+            "w.mind",
+            "import std.entropy;\n\nfn h(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n\n\
+             pub fn g(p: i64) -> i64 {\n    h(p) + 1\n}\n",
+        )],
+        "entropy_fill",
+        "::h`",
+    ),
+    (
+        "third_module",
+        &[
+            (
+                "w.mind",
+                "import v;\n\npub fn g(p: i64) -> i64 {\n    v.k(p) + 1\n}\n",
+            ),
+            (
+                "v.mind",
+                "import std.dns;\n\npub fn k(p: i64) -> i64 {\n    dns.tcp_connect_host(p, 9, 80)\n}\n",
+            ),
+        ],
+        "tcp_connect_host",
+        "::k`",
+    ),
+];
+
+/// A program whose sibling module reads the world is that program: refused
+/// without `--allow-nondeterministic`, naming the callee and the project
+/// function that makes the call; with it, attested `nondeterministic`, which
+/// `mindc verify --require-deterministic` rejects while plain `verify` accepts
+/// the label (the body alone cannot show the sibling, and the stricter label
+/// is not a tamper). Before the calls were followed, every case here emitted,
+/// attested `deterministic` and passed `--require-deterministic`.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn sibling_module_world_calls_are_refused_and_attested_nondeterministic() {
+    let mut ran = 0usize;
+    for (tag, files, offender, via) in SIBLING_WORLD {
+        let dir = sibling_project(tag, files);
+        let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
+        assert!(
+            !ok && text.contains("error[determinism]") && text.contains(&format!("`{offender}()`")),
+            "{tag}: a program whose sibling calls `{offender}` was not refused naming it\n{text}"
+        );
+        assert!(
+            text.contains("called by `") && text.contains(via),
+            "{tag}: the refusal does not name the project function `{via}`\n{text}"
+        );
+        let (ok, text) = mindc_in(
+            &dir,
+            &[
+                "main.mind",
+                "--emit-evidence",
+                "x.ev",
+                "--allow-nondeterministic",
+            ],
+        );
+        assert!(ok, "{tag}: --allow-nondeterministic did not emit\n{text}");
+        let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "x.ev"]);
+        assert!(
+            !ok && text.contains("determinism:      nondeterministic"),
+            "{tag}: the evidence passed --require-deterministic\n{text}"
+        );
+        let (ok, text) = mindc_in(&dir, &["verify", "x.ev"]);
+        assert!(
+            ok && !text.contains("TAMPERED") && text.contains("determinism:      nondeterministic"),
+            "{tag}: plain verify did not accept the nondeterministic label\n{text}"
+        );
+        ran += 1;
+    }
+    println!("determinism_veto_control(sibling world): ran={ran} fail=0");
+    assert_eq!(ran, SIBLING_WORLD.len(), "vacuous run: ran={ran}");
+}
+
+/// The control: a sibling whose called function is pure stays `deterministic`,
+/// even though the same module holds a world-reading function the program never
+/// calls, so a refusal for any other reason cannot pass as the veto.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn a_pure_sibling_call_is_still_attested_deterministic() {
+    let w = "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    entropy.entropy_max_len() + p\n}\n\n\
+             pub fn unused(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n";
+    let dir = sibling_project("pure", &[("w.mind", w)]);
+    let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
+    assert!(
+        ok,
+        "a program calling only a pure sibling function was refused\n{text}"
+    );
+    let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "x.ev"]);
+    assert!(
+        ok && text.contains("determinism:      deterministic"),
+        "the evidence of a pure sibling call is not deterministic\n{text}"
+    );
+    println!("determinism_veto_control(sibling pure): ran=1 fail=0");
 }
