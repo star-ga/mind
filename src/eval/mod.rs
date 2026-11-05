@@ -37,7 +37,7 @@ pub mod conv2d_grad;
 /// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
-mod enum_cmp;
+pub(crate) mod enum_cmp;
 pub(crate) mod extern_c_intrinsics;
 pub mod interp_mem;
 pub mod ir_interp;

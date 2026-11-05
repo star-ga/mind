@@ -39,55 +39,56 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 25
+# BUNDLED_COUNT 44
 # TOTAL_COUNT 44
 #
-# 19 modules are `no`/`no`: on disk, reachable by NEITHER consumer. That is not an
-# oversight recorded here to be forgotten — it is the measured gap behind RI matrix
-# row 14 STDLIB_LINKING staying PARTIAL. See docs/RI_DEPENDENCY_MATRIX.md row 14.
+# Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
+# and tests/std_bundled_module_table.rs fails when a shipped module has no row.
+# 23 modules are not `seed`: the frozen native compiler cannot see them until a
+# reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
-aes_gcm	no	no
+aes_gcm	no	bundled
 arena	seed	bundled
 async	seed	bundled
 blas	seed	bundled
-chacha20_poly1305	no	no
+chacha20_poly1305	no	bundled
 cli	seed	bundled
-detmath	no	no
-ecdsa_p256	no	no
+detmath	no	bundled
+ecdsa_p256	no	bundled
 fs	seed	bundled
-hkdf	no	no
-hpack	no	no
+hkdf	no	bundled
+hpack	no	bundled
 http	no	bundled
-http2_frame	no	no
+http2_frame	no	bundled
 io	seed	bundled
 io_canon	seed	bundled
 iouring	seed	bundled
 json	seed	bundled
 json_canon	no	bundled
-keccak	no	no
-llvm	no	no
+keccak	no	bundled
+llvm	no	bundled
 map	seed	bundled
-mlir	no	no
-mlkem768	no	no
+mlir	no	bundled
+mlkem768	no	bundled
 net	seed	bundled
 process	seed	bundled
 procgroup	no	bundled
 reactor	seed	bundled
 regex	seed	bundled
 ring	seed	bundled
-rsa_pss	no	no
+rsa_pss	no	bundled
 sha256	seed	bundled
 sha512	no	bundled
 string	seed	bundled
 time	seed	bundled
-tls13_finished	no	no
-tls13_handshake	no	no
-tls13_keyschedule	no	no
-tls13_record	no	no
+tls13_finished	no	bundled
+tls13_handshake	no	bundled
+tls13_keyschedule	no	bundled
+tls13_record	no	bundled
 toml	seed	bundled
 tui	seed	bundled
 vec	seed	bundled
-x25519	no	no
-x25519mlkem768	no	no
-x509	no	no
+x25519	no	bundled
+x25519mlkem768	no	bundled
+x509	no	bundled
