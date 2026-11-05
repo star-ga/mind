@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1976 | **Est. tokens:** ~3,908,870
-**Generated:** 2026-11-05 10:07 UTC
+**Files:** 1977 | **Est. tokens:** ~3,911,098
+**Generated:** 2026-11-05 10:11 UTC
 
 ## Token Budget Guide
 
@@ -158,7 +158,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 47 | ~221,830 |
-| `tests/` | 439 | ~926,081 |
+| `tests/` | 440 | ~928,309 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -2646,6 +2646,7 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8134 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_dns_layout_run.rs` (~2228 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_entropy_dns_run.rs` (~5017 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/std_entropy_dns_support/`
 

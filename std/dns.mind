@@ -26,12 +26,27 @@
 // Determinism: `getaddrinfo` and `connect` are World externs, and dns_resolve,
 // tcp_connect_host and tcp_connect_host_timeout are classified by name beside
 // them (src/intrinsics.rs), because a caller's IR holds only the call. A
-// program that calls one is refused by the determinism veto without
-// `--allow-nondeterministic` and, with it, attested `nondeterministic`.
+// program that calls one, in its entry or in a project module the entry calls,
+// is refused by the determinism veto without `--allow-nondeterministic` and,
+// with it, attested `nondeterministic`.
 //
-// Linux only (glibc or musl): the `struct addrinfo` offsets, AF_INET6 = 10 and
-// SO_SNDTIMEO = 21 below are the Linux values, as in std.net. On another
-// layout the family / address-length checks refuse every entry.
+// Host layouts. The C library's `struct addrinfo` and `struct sockaddr` differ
+// by host, and nothing at compile time names the host, so dns_resolve asks
+// uname(2) for the system name on every call and reads the layout it names:
+//   - "Linux" (glibc or musl): ai_addr at +24, ai_canonname at +32; the
+//     sockaddr family is a u16 at +0; AF_INET6 = 10;
+//   - "Darwin" (macOS): ai_canonname at +24, ai_addr at +32; the sockaddr holds
+//     sa_len in byte 0 (it must equal ai_addrlen) and sa_family in byte 1;
+//     AF_INET6 = 30.
+// On any other system name, or when uname fails, dns_resolve returns
+// dns_err_platform() with count 0 and never calls getaddrinfo. Other systems,
+// the BSDs included, are not implemented: their AF_INET6 values differ, and on
+// some so does the field order.
+//
+// tcp_connect_host and tcp_connect_host_timeout are Linux only: they use the
+// Linux socket constants (AF_INET6 = 10, SOL_SOCKET = 1, SO_SNDTIMEO = 21), as
+// std.net does, and rely on SO_SNDTIMEO bounding a blocking connect(2). On any
+// other host they return 0 without resolving or opening a socket.
 //
 // This is a self-contained substrate module (it imports nothing), so its object
 // is compiled and linked on demand by `mindc build`.
@@ -44,6 +59,7 @@ extern "C" {
     unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
     unsafe fn close(fd: i32) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+    unsafe fn uname(buf: *mut u8) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +154,12 @@ pub fn dns_err_service() -> i64 {
 // EAI_OVERFLOW: a resolver buffer overflowed.
 pub fn dns_err_overflow() -> i64 {
     0 - 17
+}
+
+// The host's system name is not one whose addrinfo layout this module reads
+// (see "Host layouts" above), or uname failed.
+pub fn dns_err_platform() -> i64 {
+    0 - 18
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +286,63 @@ fn dns_name_ok(name_addr: i64, name_len: i64) -> i64 {
     1
 }
 
+// 1 when the NUL-terminated system name at `u` is the `n` bytes packed
+// little-endian in `word`.
+fn dns_sysname_is(u: i64, word: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        if __mind_load_i8(u + k) != ((word >> (8 * k)) & 255) {
+            return 0;
+        }
+        k = k + 1;
+    }
+    if __mind_load_i8(u + n) != 0 {
+        return 0;
+    }
+    1
+}
+
+// The host layout from uname(2): dns_layout_linux(), dns_layout_darwin(), or 0
+// for any other system name or a failed call.
+fn dns_layout() -> i64 {
+    // struct utsname: Linux 6 fields of 65 bytes, Darwin 5 of 256; sysname is
+    // the first field on both.
+    let u: i64 = __mind_alloc(1280);
+    dns_zero(u, 1280);
+    if uname(u as *mut u8) as i64 != 0 {
+        return 0;
+    }
+    // "Linux"
+    if dns_sysname_is(u, 517366245708, 5) == 1 {
+        return dns_layout_linux();
+    }
+    // "Darwin"
+    if dns_sysname_is(u, 121399254606148, 6) == 1 {
+        return dns_layout_darwin();
+    }
+    0
+}
+
+fn dns_layout_linux() -> i64 {
+    1
+}
+
+fn dns_layout_darwin() -> i64 {
+    2
+}
+
+// The address family a sockaddr holds, or -1 when its Darwin sa_len disagrees
+// with ai_addrlen `alen`.
+fn dns_sa_family(sa: i64, alen: i64, layout: i64) -> i64 {
+    if layout == dns_layout_darwin() {
+        if __mind_load_i8(sa) != alen {
+            return 0 - 1;
+        }
+        return __mind_load_i8(sa + 1);
+    }
+    __mind_load_i16(sa)
+}
+
 // getaddrinfo return code -> dns_err_*, one code each (glibc and musl share
 // these values).
 fn dns_map_gai(rc: i64) -> i64 {
@@ -306,19 +385,27 @@ fn dns_map_gai(rc: i64) -> i64 {
     dns_err_unknown()
 }
 
-// Copy one addrinfo node into entry `i` of `r`. Returns dns_ok() or dns_err_entry().
-//   struct addrinfo (LP64 Linux): ai_family +4, ai_addrlen +16, ai_addr +24, ai_next +40
-//   sockaddr_in:  family u16 +0, addr +4 (4 bytes)              -- 16 bytes
-//   sockaddr_in6: family u16 +0, addr +8 (16 bytes), scope +24  -- 28 bytes
+// Copy one addrinfo node into entry `i` of `r`, read in host layout `layout`.
+// Returns dns_ok() or dns_err_entry().
+//   struct addrinfo (LP64): ai_family +4, ai_addrlen +16, ai_next +40, and
+//     ai_addr +24 (Linux) or +32 (Darwin)
+//   sockaddr_in:  family, addr +4 (4 bytes)              -- 16 bytes
+//   sockaddr_in6: family, addr +8 (16 bytes), scope +24  -- 28 bytes
+//   (family: dns_sa_family; AF_INET = 2, AF_INET6 = 10 Linux, 30 Darwin)
 #[protection]
-fn dns_take(r: i64, i: i64, node: i64) -> i64 {
+fn dns_take(r: i64, i: i64, node: i64, layout: i64) -> i64 {
     let fam: i64 = __mind_load_i32(node + 4);
     let alen: i64 = __mind_load_i32(node + 16);
-    let sa: i64 = __mind_load_i64(node + 24);
+    let mut sa: i64 = __mind_load_i64(node + 24);
+    let mut inet6: i64 = 10;
+    if layout == dns_layout_darwin() {
+        sa = __mind_load_i64(node + 32);
+        inet6 = 30;
+    }
     if sa == 0 {
         return dns_err_entry();
     }
-    if __mind_load_i16(sa) != fam {
+    if dns_sa_family(sa, alen, layout) != fam {
         return dns_err_entry();
     }
     let e: i64 = dns_entry(r, i);
@@ -334,7 +421,7 @@ fn dns_take(r: i64, i: i64, node: i64) -> i64 {
         }
         return dns_ok();
     }
-    if fam == 10 {
+    if fam == inet6 {
         if alen != 28 {
             return dns_err_entry();
         }
@@ -360,6 +447,10 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
     let r: i64 = dns_new_record();
     if dns_name_ok(name_addr, name_len) == 0 {
         return dns_fail(r, dns_err_name());
+    }
+    let layout: i64 = dns_layout();
+    if layout == 0 {
+        return dns_fail(r, dns_err_platform());
     }
     // NUL-terminated copy for the C call.
     let node: i64 = __mind_alloc(name_len + 1);
@@ -391,7 +482,7 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
             st = dns_err_too_many();
             cur = 0;
         } else {
-            st = dns_take(r, n, cur);
+            st = dns_take(r, n, cur, layout);
             if st != dns_ok() {
                 cur = 0;
             } else {
@@ -494,6 +585,10 @@ pub fn tcp_connect_host_timeout(name_addr: i64, name_len: i64, port: i64, timeou
         return 0;
     }
     if timeout_ms > dns_max_timeout_ms() {
+        return 0;
+    }
+    // The socket constants below are Linux values (see "Host layouts").
+    if dns_layout() != dns_layout_linux() {
         return 0;
     }
     let r: i64 = dns_resolve(name_addr, name_len);

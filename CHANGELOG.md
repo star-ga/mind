@@ -8,21 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`std.entropy` and `std.dns` for `mindc build` executables (Linux)**: `entropy_fill`
+- **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
   `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
   bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
   bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
-  is `dns_err_unknown`), and a failed call returns no entries.
+  is `dns_err_unknown`), and a failed call returns no entries. It reads `struct addrinfo`
+  in the layout of the host uname(2) names: Linux (`ai_addr` at +24, AF_INET6 = 10) or
+  Darwin (`ai_addr` at +32, `sa_len` / `sa_family` bytes, AF_INET6 = 30); on any other
+  host, or when uname fails, it returns `dns_err_platform` without calling getaddrinfo.
   `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
-  a per-connect timeout and return a std.net TcpStream handle. `getrandom` and
-  `getaddrinfo` are classified as world reads, and so are `entropy_fill`, `dns_resolve`,
-  `tcp_connect_host` and `tcp_connect_host_timeout`, because a caller's IR holds only the
-  call: a program that calls one is refused by the determinism veto without
-  `--allow-nondeterministic` and, with it, attested `nondeterministic`.
+  a per-connect timeout and return a std.net TcpStream handle; they use Linux socket
+  constants and return 0 on any other host. `getrandom` and `getaddrinfo` are classified
+  as world reads, and so are `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
+  `tcp_connect_host_timeout`, because a caller's IR holds only the call: a program that
+  calls one is refused by the determinism veto without `--allow-nondeterministic` and,
+  with it, attested `nondeterministic`.
   (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
-  `tests/determinism_veto_control.rs`)
+  `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
 - **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
   writes and reads its results (per-game and per-level actions, a score as a
   numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the

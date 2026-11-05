@@ -2,7 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Shared harness for `tests/std_entropy_dns_run.rs`: build a one-file project
+//! Shared harness for `tests/std_entropy_dns_run.rs` and
+//! `tests/std_dns_layout_run.rs`: build a one-file project
 //! with `mindc build`, run the executable with an optional `LD_PRELOAD`, and
 //! the preloaded resolver shim. Split out so the test file stays under the
 //! 800-line ceiling `tests/module_size_ratchet.rs` pins. This is a
@@ -69,6 +70,7 @@ pub fn run(exe: &Path, preload: Option<&Path>, limit: Duration) -> (i32, Duratio
 /// sockaddr family that disagrees with ai_family, `x` one good node then a bad one,
 /// `m` the loopback list 127.0.0.2, 127.0.0.4, 127.0.0.1 in that order, `p`
 /// the list 127.0.0.4, 127.0.0.1.
+#[allow(dead_code)]
 pub const GAI_SHIM: &str = r#"fn sh_zero(p: i64, n: i64) {
     let mut i: i64 = 0;
     while i < n {
@@ -160,6 +162,7 @@ pub fn freeaddrinfo(res: i64) -> i64 {
 "#;
 
 /// Compile [`GAI_SHIM`] in `target`'s scratch directory; returns the `.so`.
+#[allow(dead_code)]
 pub fn gai_shim(target: &str) -> PathBuf {
     let dir = crate::common::scratch_dir(target);
     let src = crate::common::scratch_src_in(&dir, "gai_shim.mind", GAI_SHIM);
