@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
   allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
   records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
-- mindc test can read project files read-only (open/read/lseek/close); results match native.
+- `mindc test` can read project files read-only (open/read/lseek/close); results match
+  native (`#331`, `57888d70`).
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
   blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
@@ -116,8 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Slices landed under `basic`: **SCCP-lite const-condition `If`-pruning** (dead-arm removal
   with a complete operand remap), **integer `mul`-by-zero folding**, **exact integer
   algebraic-identity elimination** (`x+0`, `x-0`, `x*1`, `x/1`, `x|0`, `x^0`, `x<<0`,
-  `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**. All integer-exact and
-  structurally never touching the Q16.16 or float tiers.
+  `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**, finished by one bounded
+  canonical cleanup run (prune dead, reorder, constant fold, prune dead; `a998c725`). All
+  integer-exact and structurally never touching the Q16.16 or float tiers.
   - **Status correction.** As first landed the optimizer was **not reachable from any
     artifact-emitting path**, so the "upstream of emitter divergence" sentence above did not
     hold and `MIND_NATIVE_OPT=basic` changed zero bytes of `--emit-mic3`. That is fixed below;
@@ -155,8 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
   `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
   `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
-  no fast-math / reassociation — strict IEEE-754). (`src/eval/lower.rs`:
-  `lower_fixed_dense_array_binding` + the fn-body `Let` arm.)
+  no fast-math / reassociation — strict IEEE-754). (`src/eval/fixed_array.rs`:
+  `lower_dense` + the fn-body `Let` arm.)
   - **Read-only fixed-array function parameter (aggregate call ABI, minimum).** A fixed array
     passed by value to a user fn — `fn f(a: [f64; N])`, called `f(a)` — no longer trips the
     `non-i64 argument to call` reject: the call-site accepts a `Tensor` arg and forwards it as
@@ -171,19 +173,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Audit hardening:** the f64/f32 `[T; N]` routing now covers **all six**
     `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
     so a float fixed array declared inside a branch body now compiles instead of hitting the
-    i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
+    i64 `ConstArray` "missing type information" path. And the dense binding lowering
     now **fails closed on a non-const element** — `let a: [f64; 2] = [x, 1.0]` (a runtime
     element) previously baked `x` → `0.0` silently; it now falls back to the ordinary path
     (never a silent zero). Known remaining limit: a float fixed array *declared fresh inside a
     `while` body* still fails closed (a deeper loop-carry `substitute_ids` value-kind
     propagation case) — fn-top declaration + in-loop mutation (the common shape) works.
-  - **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
+  - **Deterministic canary + fail-closed gate.** `examples/mindc_mind/testdata/rh_f64_aggregate_canary.mind`
     performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
     factor are exactly representable in binary64, returning the bit-exact `37`;
     `rh_f64_aggregate_canary_smoke.py` (wired into the `mindcraft_self_host` CI job) requires
-    that on the MLIR path and asserts the pure-MIND `--backend native` leg fails CLOSED — the
-    native fixed-array **store** (`a[i]=v`) and by-value array **parameter** are NOT yet ported
-    to the self-host emitter / mic@3 wire format (no `OP_ARRAY_STORE` opcode); load / accumulate
+    that on the MLIR path and accepts the pure-MIND `--backend native` leg only as the exact
+    value 37 or a clean refusal with no artifact — the native fixed-array **store** (`a[i]=v`)
+    and by-value array **parameter** are NOT yet ported to the self-host native emitter (the
+    Rust mic@3 path carries `OP_ARRAY_STORE`, 0x2B, below); load / accumulate
     / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
 - **Fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE).**
   **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
@@ -277,8 +280,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
     a `Tensor{i64}` and `ArrayLoad` recovers the element type + `index_cast`s the
     subscript so the enclosing binop resolves. The element type is *derived* from the
-    declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
-    definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
+    declaration (no IR-node field, no mic@3 wire change). `f64` `const` arrays take the
+    typed dense path (`3dd11ce8`, under Added). Build-and-run gate
     `tests/const_array_run.rs`.
   - **Array-parameter lowering to `cdylib` (17.6).** A function taking a fixed array
     parameter — `fn dot(a: [i64; N], b: [i64; N]) -> i64 { … a[i] … }` — now compiles to
@@ -331,20 +334,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `examples/mindc_mind/testdata/selfhost_loop/PROVENANCE_298_f64_selfhost_mlir.md`).
     Advances the self-host toward 100% Rust-independence.
     - **Fail-closed f64 call-ABI negative control** (`tests/f64_abi_negative_control.rs`):
-      a typed `i64` variable passed to an `f64` parameter is rejected at the MLIR-lowering
-      ABI boundary (`expects different type … 'f64' vs 'i64'`) — not silently miscompiled,
+      a typed `i64` variable passed to an `f64` parameter is rejected at check time with
+      `E2027` (no implicit int↔float conversion; `#230`) — not silently miscompiled,
       not a parse error, not a link error; a byte-identical `f64`-argument positive control
       compiles. Machine-checked; a vacuous `exit != 0` is explicitly rejected.
   - **Known / deferred (#298 follow-ups, filed — not silently skipped):**
     - The pure-MIND self-test surface `selftest_emit_mlir` SEGFAULTs when fed a *cross-fn*
       f64 construct (an `f64` `func.call` or `f64` value-`if`) — **pre-existing** (the
       unchanged `7b696f09` baseline `.so` crashes identically), latent (no shipped gate feeds
-      it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope. To be
-      hardened to fail-closed alongside the cross-fn f64 self-host emit (step 2).
+      it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope.
+      Resolved: the emit now fails closed on a cross-function f64 construct (`#229`,
+      `145274ef`).
     - `mindc check` fail-opens on a typed-`i64`→`f64` call-argument / return (passes `check`,
       then fails `build` at MLIR lowering). The build gate already fail-closes (above), so
       this is a belt-and-suspenders early-diagnostic gap to close at check-phase (RFC 0011
-      scalar-class extension), tracked separately to keep this change main.mind-only.
+      scalar-class extension). Resolved: `mindc check` refuses it with `E2027` (`#230`,
+      `e20d5be9`; see Fixed).
   - **`f64` parameter-init inference (17.2).** A loop-carried `let mut v: f64 = <ident>`
     seeded from an `f64` param now materialises its own `f64`-typed value up front, so the
     loop-carry keeps `arith.addf` instead of degrading to `arith.addi` (the old int
@@ -369,12 +374,172 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     improvement, since both files already collapsed to `crate`); `--emit-ir` renders `f64`
     constants as `const.f64`; `mindc test` exits non-zero on a failing OR empty run (was a
     false green at exit 0).
-- **`mindc test` runs test bodies in parallel and reports results in discovery
-  order.** Parallel execution and ordered result reporting are separated, and
-  results are emitted in the order tests were discovered regardless of completion
-  order — a worker-boundary control forces out-of-order arrival and the report
-  still comes out ordered. This is the supporting harness for the std parallel-run
-  and mic@3 results modules listed under Pending for this release.
+- **`mindc test` reports parallel results in discovery order (`3d7131f7`).** Test
+  bodies already ran in parallel; execution and ordered result reporting are now
+  separated, and results are emitted in the order tests were discovered regardless
+  of completion order — a worker-boundary control forces out-of-order arrival and
+  the report still comes out ordered. This is the supporting harness for the std
+  parallel-run and mic@3 results modules (`std.procgroup`, `std.mic_results`).
+
+- **TLS 1.3 client and X.509 path validation in std (`#346`).** `import std.x509;`
+  and the TLS 1.3 client modules check, link and run in `mindc build` executables
+  and under `mindc test`, and `x509_peer_auth_supported()` returns 1.
+  `x509_verify_server_chain(chain, anchors, host, now_unix)` validates a chain
+  from the leaf through the intermediates to an anchor set the caller supplies:
+  RSA PKCS#1 v1.5 (2048, 3072 or 4096 bits), RSA-PSS (SHA-256 with
+  MGF1-SHA-256) and ECDSA P-256 / P-384 signatures; validity, CA and pathLen,
+  keyUsage, the serverAuth EKU, and DNS and IP name constraints; the RFC 6125
+  hostname (a wildcard only as the complete left-most label, an IP literal only
+  against an IP SAN); and the inner signature AlgorithmIdentifier equal to the
+  outer one. SHA-1 is refused. Anchors load from DER or PEM in memory
+  (`x509_load_anchors`). The TLS 1.3 client is bounded and sans-IO (the caller
+  owns I/O, entropy, time and the tick budget), with SNI for DNS names,
+  caller-supplied ALPN, one HelloRetryRequest, reassembly of fragmented
+  handshake messages and a refusal that latches and fails closed. Every chain
+  goes through `x509_verify_server_chain`; CertificateVerify accepts
+  `rsa_pss_rsae_sha256` with an RSA-2048 leaf key only, and every other leaf key
+  is refused. Limits: no revocation checking (CRL/OCSP), at most 8 certificates
+  and 32 anchors, the issuer matched by exact DER; anything unsupported fails
+  closed. The modules are bundled substrate rows, not native seed rows, so the
+  seed blob hash is unchanged; `--backend native` refuses the import.
+  (`std/x509*.mind`, `std/tls13_*.mind`, `tests/std_tls_x509_import.rs`,
+  `tests/x509_chain_smoke.rs`) <!-- pending: #346 -->
+- **Kernel entropy and name resolution: `std.entropy` and `std.dns` (`#349`).**
+  `entropy_fill(buf, len)` reads the kernel CSPRNG with `getrandom(2)`, at most
+  256 bytes per call. An error returns `entropy_err_os` and a short read
+  `entropy_err_short`, with all `len` bytes zeroed in both cases; it never falls
+  back to the clock, the pid or a PRNG, and it refuses a null buffer, a negative
+  length and a request over 1 MiB. `dns_resolve(name_addr, name_len)` resolves a
+  host name or a numeric IPv4/IPv6 literal with `getaddrinfo(3)` into a record of
+  at most 32 addresses (family, 16 address bytes, IPv6 scope id). The name is
+  checked first (1..253 printable ASCII bytes); each `getaddrinfo` error from -1
+  to -12 has its own `dns_err_*` code; a failed call returns 0 entries, never part
+  of a list. `tcp_connect_host` and `tcp_connect_host_timeout` try the addresses
+  in resolver order, bound each connect with `SO_SNDTIMEO` (10 s by default,
+  1..120000 ms accepted) and return a `std.net` TcpStream handle. The Linux and
+  Darwin `addrinfo` layouts are read; any other system returns
+  `dns_err_platform` without calling the resolver, and the connect functions run
+  on Linux only. Both modules are bundled substrate rows; the native seed set and
+  its pin are unchanged. (`std/entropy.mind`, `std/dns.mind`,
+  `tests/std_entropy_dns_run.rs`) <!-- pending: #349 -->
+- **`std.https`: authenticated HTTPS GET and POST (`#363`).** `https_get(url)`,
+  `https_post(url, body, content_type)`, `https_get_ca` / `https_post_ca` (a CA
+  bundle path) and `https_get_with_headers` / `https_post_with_headers` (a caller
+  block of `name: value` request header lines) resolve the host with `std.dns`,
+  draw the TLS randoms and key share from `std.entropy`, authenticate the server
+  against the system CA bundle (or the one given) at the system clock, and speak
+  HTTP/1.1, for `mindc build` executables on Linux. Each call returns a response
+  record (status, headers, Set-Cookie values, body, TLS verdict; `https_free`
+  releases it). Every failure is a named `https_err_*` code and a refusal carries
+  no status or body. `https_error_class` sorts a failure for retry:
+  `https_class_before_send` means no request byte was written, so the same
+  request is safe to retry; `https_class_after_send` means the server may have
+  acted, so the caller must not count the call as a result. `https_probe`
+  resolves a host and opens and closes one TCP connection, with a distinct code
+  per failure. Server profile: TLS 1.3, X25519, AES-128-GCM or
+  ChaCha20-Poly1305, and an RSA-2048 leaf with an `rsa_pss_rsae_sha256`
+  CertificateVerify (any other leaf key is `https_err_unsupported_key`). The
+  chain must reach a bundle anchor and name the host; revocation is not checked;
+  redirects are returned, not followed. HTTP/1.1 framing is strict
+  (Content-Length or chunked, a chunk size refused at the digit that passes the
+  8 MiB body cap, control bytes in header values and chunk extensions refused, a
+  malformed or reserved request header block refused before any connection, a
+  body shorter than its framing at close_notify or TCP EOF is
+  `https_err_truncated`). The TLS client holds one full record of plaintext
+  (2^14 bytes) and opens no further record until it is read, so a body of any
+  size streams through a fixed-size state; post-handshake NewSessionTicket
+  messages are discarded and per-record buffers are released. The client's
+  record pump and handshake state machine move into `std.https` (the
+  `std.tls13_client` module of `#346` is folded in to keep the import chain five
+  modules deep). The six request functions are classified nondeterministic by
+  name. Known limit: the X.509 path search allocates per verification without
+  freeing, so a long-running client making many requests grows slowly.
+  (`std/https*.mind`, `tests/std_https_openssl.rs`, `tests/std_https_loopback.rs`)
+  <!-- pending: #363 -->
+- **`std.procgroup`: run many child processes and wait for all of them
+  (`#351`).** `procgroup_new(capacity)`, `procgroup_spawn(g, prog, argv, argc)`
+  and `procgroup_wait_all(g, timeout_ms)` start child processes (typically the
+  program itself, `procgroup_self_exe()`), capture each child's stdout through
+  its own pipe read with `poll()` while the children run (at most 16 MiB kept per
+  child, the rest read, dropped and flagged), and wait for all of them with one
+  bounded call. Every slot ends in exactly one state (ok, non-zero exit with 127
+  for a failed exec, signal, timed out, spawn failed, lost); results are indexed
+  by spawn order; `procgroup_wait_all` returns the number of slots that are not
+  ok. With a deadline, a child still running gets `SIGKILL`, is reaped and is
+  reported timed out (monotonic clock). Each child reads its index with
+  `procgroup_task_index()` (`MIND_PROCGROUP_TASK`), gets `/dev/null` as stdin and
+  closes the sibling pipe ends it inherited. `procgroup_spawn`,
+  `procgroup_wait_all` and `procgroup_task_index` are world readers by name, so
+  the flat `mindc <file>` path (`--emit-shared`, `--emit-obj`, `--emit-evidence`)
+  refuses a program that calls them without `--allow-nondeterministic` and
+  attests it `nondeterministic` with the flag; `mindc build` does not apply the
+  refusal. POSIX only; `procgroup_self_exe()` reads `/proc/self/exe` (Linux).
+  The module is a bundled substrate row; the native seed blob is unchanged.
+  (`std/procgroup.mind`, `docs/std-procgroup.md`, `tests/std_procgroup_run.rs`)
+  <!-- pending: #351 -->
+- **Build target selection (`373504bc`, `46b8fad8`, `0bd3a6d3`, `7da67607`).** A
+  manifest target block can name its LLVM triple with
+  `[targets.<name>].target = "<triple>"`. An unknown triple is an error, and a
+  triple other than the host's is refused as not yet wired instead of quietly
+  producing a host binary; a missing or host-valued triple builds exactly as
+  before. Triples are parsed by exact tokens: non-glibc Linux environments
+  (musl, android, uclibc, gnux32) and ABI-distinct architecture tokens
+  (`aarch64_be`, `arm64e`, `arm64ec`, `x86_64_v2`, `x86_64h`) are refused
+  instead of being coerced to the host target. `mindc build --target NAME` looks
+  up the declared `[targets.NAME]` blocks first, then the backend classes; an
+  undeclared name exits 2 and lists what is declared. The default host triple is
+  built from the host architecture and OS instead of one fixed triple per OS.
+  (`src/target.rs`, `src/project/host_triple.rs`)
+- **Native C sources and the `__mind_nerve_*` intrinsics (`6f56414b`,
+  `57b5c63e`, `b91538f3`).** `[targets.*].native_sources` lists C sources that
+  are compiled deterministically and linked statically into the executable. The
+  `__mind_nerve_*` Q16.16 BLAS/LUT intrinsics and the `__mind_nerve_rt_*` host
+  intrinsics (including `__mind_nerve_rt_getenv`, arity 4) are registered
+  std-surface intrinsics, so the MLIR backend emits an arity-checked call for
+  them instead of an `E2024` advisory and a runtime-JIT fallback.
+- **Deterministic multi-threaded Q16.16 GEMV (`4820e46c`).**
+  `__mind_blas_gemv_q16_mt` runs on a persistent worker pool
+  (`__mind_blas_mt_dispatch`) instead of spawning threads per band, and its
+  output is byte-identical to the scalar dot oracle. On Windows MSVC the pool
+  falls back to sequential execution with the same bytes (`f068c45e`).
+- **`MINDC_BUILD_TOOL_TIMEOUT_SECS` (`45f180a1`).** Overrides the 60 s
+  wall-clock limit on each `clang`, `mlir-opt` and `mlir-translate` run.
+- **Q16.16 reduction-order lint (`976be301`).** An opt-in type-check pass
+  enforces the reduction-order contract as `E_NERVE_001`..`E_NERVE_005`: a
+  missing determinism annotation under a `#[determinism(BitIdentical)]` root, a
+  fold without `#[reduction_strategy]`, a hand-written Q16.16 multiply, IEEE-754
+  use under `#[invariant(no_float_ops)]`, and a call to a reduction whose order
+  the backend defines. It runs only where those attributes are present.
+  (`src/type_checker/nerve_lint.rs`)
+- **Named `const [f64; N]` arrays (`3dd11ce8`).** `const W: [f64; N] = [...]`
+  lowers to a typed dense constant carrying each element's exact IEEE-754 bits
+  (including `-0.0`) and supports dynamic-index reads; before, it failed
+  closed. `i64` constant and local arrays are byte-identical.
+  (`tests/const_f64_array_run.rs`)
+- **Slice parameters take arrays (`a2365778`).** With `std-surface`, a compatible
+  `array<T>` value or array literal can be passed to a `&[T]` or `&mut [T]`
+  parameter. A `&[T]` parameter supports index, `get` and length; `&mut [T]` adds
+  indexed assignment and `set`. Incompatible arguments are refused with `E2032`
+  and `E2033`. (`src/type_checker/slice_abi.rs`, `docs/type-system.md`)
+- **Fixed-array and record-array returns (`a12578ef`, `47755a78`, `8f16a986`,
+  `f1389c77`).** A function returning a fixed array built from computed elements
+  (`-> [i64; 4]`, also through aliases and parentheses) lowers through the typed
+  fixed-array constructor and runs. A declared `[Item; N]` record-array return
+  can be indexed through the call and read by field on the Rust/MLIR path
+  (before: refused with `E6009`); struct-owned record arrays are still refused.
+  An imported function's return type, including an aliased record-array type, is
+  resolved in its defining module, so a consumer's same-named alias cannot turn an
+  imported `[Item; N]` return into `[i64; N]`.
+- **Experimental pure-MIND mirror of the draft mic@3 0x04 codec (`1da1f7e7`,
+  `70434b42`, `8c4b83be`, `335bbf9c`, `1eefe191`, `50f8c123`, `94cacfb3`,
+  `5c04641d`, `86b72913`, `8fd5f27d`, `e96cde52`, `e85e0b5f`, `3923608a`).** A
+  native-ELF MIND program decodes, validates and canonically re-emits the 0x04
+  header, string table, schemas, function declarations, exports and the scalar
+  core body, checks intrinsic declarations against the contract registry, and
+  refuses what the Rust reference refuses (duplicate function identities,
+  non-local or authority-less bodies, scope and parameter mismatches, element
+  budgets). It is a parity gate for the draft, not the production decoder.
+  (`examples/mind_mirror_v04/`, `docs/mic3-v04-draft.md`)
 
 ### Changed
 
@@ -394,7 +559,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The supported release profile requires both ML-DSA-87 and
   SLH-DSA-SHAKE-256s. CLI controls check both signer keys, tampering,
   malformed seed input, and refusal of a missing signature leg.
-- **`mlir-opt` and `mlir-translate` run concurrently.**
+- **`mlir-opt` and `mlir-translate` run concurrently (`#310`, `deeffbb0`).**
   The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
   `mlir-opt`'s output into it, so the translator's process startup overlaps the
   optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
@@ -405,7 +570,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes ever differ. Emitted `.so` and `.o` files are byte-identical to the
   ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
   reported as `mlir-opt`.
-- **Runtime-support object off the `--emit-shared` critical path.**
+- **Runtime-support object off the `--emit-shared` critical path (`#309`, `bde76beb`).**
   `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
   object on a separate thread while mlir-opt and mlir-translate run, and joins it
   before the shared link. Output bytes are unchanged; a clang failure in that compile
@@ -421,6 +586,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (−19.7%); wall-clock medians improve in the same direction on the bench gate
   binaries. No emitted byte depends on these measurements; keystone and
   cross-substrate canaries unchanged.
+
+- **Load and store addresses lower as base plus offset (`#358`, `7c667dc8`).** On
+  the MLIR path an integer load or store keeps its base as a pointer and emits
+  byte `getelementptr`s through the offset additions, for every load/store width,
+  with unaligned access and the existing value conversions unchanged. The rewrite
+  forms only when one addend is a proven provenance-free byte offset (a constant,
+  integer arithmetic of offsets, or a comparison); otherwise the sum stays an
+  opaque integer address. A loop-carried value counts as an offset only when its
+  initializer and every straight-line update are provenance-free, so
+  base-plus-counter addressing lowers to a GEP. Measured on one pinned core, an
+  add-loop workload went from 0.061 s to 0.015 s median CPU (−76%) and its inner
+  loop vectorises. (`src/mlir/memory_address.rs`, `tests/mlir_memory_addresses.rs`)
+- **The determinism veto names world-reading std functions and follows project
+  calls (`#349`).** `getrandom` and `getaddrinfo` are world reads, and
+  `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
+  `tcp_connect_host_timeout` are classified as world reads by name (as `now_ns`
+  is), because an imported std body is compiled into a separate substrate object
+  and the caller's IR holds only the call. A program that calls one of them,
+  directly or through another module of the project, is refused by the veto
+  without `--allow-nondeterministic`; with the flag its evidence says
+  `nondeterministic` and `mindc verify --require-deterministic` refuses it. A
+  sibling call that reaches only pure functions stays `deterministic`. The
+  world-reading functions of `std.net`, `std.fs`, `std.process` and `std.iouring`
+  are not yet classified by name, so their callers' evidence still says
+  `deterministic`; that gap predates this release and is marked `deferred:` in
+  `src/intrinsics.rs`. <!-- pending: #349 -->
+- **Determinism classes for externs and intrinsics (`038f7010`, `91f1bc33`,
+  `1b85d4e6`).** Every `__mind_*` intrinsic carries a determinism class in its
+  registry row. An extern with no class makes the attestation label
+  `nondeterministic` but no longer blocks artifact emission, so programs calling
+  pure libc functions such as `strlen` and `memset` (and `std/net.mind`) emit
+  again. The world-reading libc externs std declares (`clock_gettime`, `getenv`,
+  `read`, `recv`, `stat`/`lstat`, `getsockname`, `syscall`) are classified as
+  world reads, so a program that calls them needs `--allow-nondeterministic` to
+  emit. (`src/intrinsics.rs`, `docs/determinism.md`)
+- **A runtime out-of-bounds array index traps instead of clamping (`80cb1f73`).**
+  On the MLIR path a runtime index goes through `__mind_oob_check` before the
+  load, and an out-of-range index (negative or `>= len`) exits through
+  `__mind_oob_trap` with the pinned out-of-bounds code, the same contract as the
+  native backend; the tree evaluator raises a bounds trap. A constant index proven
+  in range skips the check; a constant index proven out of range is still refused
+  at check time (`E2621`). (`docs/ARRAY_SEMANTICS.md`, `tests/array_oob_trap_run.rs`)
+- **The `[mind]` table in `Mind.toml` is enforced (`f4ec0c63`).**
+  `mindc-min` / `mindc-max` form a half-open version window and the build
+  refuses outside it; `ir-format` must be `mic@1` or `mic@3`; an unknown key in
+  `[mind]` is an error. An unknown top-level table produces a note, not a
+  refusal. Before, the whole table was ignored. (`src/project/toolchain_pin.rs`,
+  `tests/manifest_pin_enforcement.rs`)
+- **Build refusals carry a cause code (`120711db`, `ccc79ba9`).** A capability
+  refusal names its cause: `E5002` (the runtime library is absent), `E5003` (no
+  native backend in this binary), `E5004` (no native toolchain on PATH), `E5005`
+  (the module did not compile). The prose is unchanged, and a source failure is
+  no longer reported as a host-capability refusal. (`src/diagnostics/capability.rs`)
+- **Toolchain diagnostics name LLVM/MLIR 20 (`3f9b80df`).** A build with
+  `mlir-opt` missing from PATH names the missing tool and any installed copy under
+  `/usr/lib/llvm-<N>/bin`; an MLIR 18 bufferization failure carries a note naming
+  the version requirement. README and `docs/install.md` state LLVM/MLIR 20
+  (before: 17+). (`src/diagnostics/toolchain.rs`)
+- **`mindc check` reports the formatting drift `mindc fmt --check` reports
+  (`6f9ac5eb`).** The formatter parses without cross-module resolution, so its
+  output no longer depends on the project state, and a file it still cannot
+  format is reported as a `fmt::unformattable` warning instead of being skipped.
+- **Build cache and project builds (`042c9050`, `ed318428`, `37fac3ba`,
+  `e6625924`, `fa7c305e`, `d7e798db`, `c7de0c7f`).** The incremental cache key
+  covers every participating source module (path and SHA-256, in order) and the
+  manifest inputs (explicit entry, exports, native C sources), so editing a
+  sibling module or the export list no longer restores a stale artifact; a cache
+  entry carries a versioned record of its input inventory and the compiler's
+  identity and is used only when both match. The build compiles the same source
+  snapshot it keys on. A project without an explicit `sources` list compiles its
+  modules in sorted path order instead of filesystem order, so artifacts do not
+  depend on the machine. Concurrent builds of one project are serialized by a
+  per-project lock outside `target/`, and temporary manifest edits are restored
+  byte for byte on error or panic. The default artifact name has one resolver
+  (`[targets.<n>] output`, then `[build] output`, then `package.name`), so a
+  declared `[build] output` is honoured and a refused build no longer leaves a
+  file named `app`. `mindc build --verbose` prints the full path of the runtime
+  library it links.
+- **`--backend native` refuses out-of-profile programs with a diagnostic
+  (`91273e8c`, `b88bdc30`, `12d14776`).** The frozen-profile allowlist is checked
+  before compiling, call admission is keyed by callee (default deny), and the std
+  seed set is read from the committed manifest. An unsupported construct prints
+  `error[backend-native]: tensor type unsupported`, `trait/impl unsupported` or
+  `unsupported construct` and exits non-zero (before: exit 0 with a generic
+  message), and a parse failure prints the full parser diagnostic
+  (`error[parse][E1001]` with file, line and caret).
+- **mic@3 wire version 0x03 with scoped value-type tables (`650ff758`).** The
+  parser reads versions 0x01, 0x02 and 0x03 with hostile-input checks. A module
+  with a non-empty per-function or per-module `value_types` table emits 0x03;
+  every other module emits the 0x02 layout byte for byte. No lowering populates
+  the tables yet, so emitted bytes are unchanged.
+- **`mindc conformance` fails instead of passing vacuously (`d376047b`,
+  `46e4c7d4`, `80ad6baa`).** A requested profile with zero cases fails
+  (`NO_CPU_CASES` / `NO_GPU_CASES`); before, `--profile gpu` on a build without
+  the `mlir-gpu` feature printed "passed". The value oracle executes the program
+  through the shipped execution engine instead of the partial IR preview
+  evaluator, and the run fails with `NO_VALUE_CASES` when it computed no value or
+  `NO_AUTODIFF_CASES` when autodiff is compiled in and no autodiff case ran. The
+  pass line prints the per-leg counts and names the engine that produced the
+  values (`ran=N (cpu=N, gpu=N, value=N via <engine>, autodiff=...)`).
+- **The IR verifier no longer builds a definition set per straight-line
+  instruction (`62150e6f`).** Compile-time only; emitted bytes are unchanged.
 
 ### Fixed
 
@@ -439,6 +706,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong number of arguments, so `--emit-ir` and `--emit-mic` printed it; the arity
   check now runs in every feature build, with build-level tests for the else-if
   branch, the while condition and a call nested as an argument.
+- **A wrong-arity intrinsic call is reported as `E2005` in every body shape.**
+  `mindc check` reported a wrong-argument-count `__mind_*` call only where the
+  type checker's expression pass reached it; a call in a `while` body or
+  condition, in a non-final statement of an `if` then-branch or `for` body, or in
+  the arguments of an intra-module call passed `mindc check` and was refused only
+  at build time by the IR verifier (`E3001`). A dedicated pass walks every node,
+  including closure and impl-method bodies, and reports `E2005` once per
+  wrong-arity call site in a `std-surface` build.
+  (`src/type_checker/intrinsic_call_arity.rs`, `tests/intrinsic_call_arity.rs`,
+  `tests/intrinsic_call_arity_build.rs`) <!-- pending: fix/e2005-every-body-shape -->
 - **`--emit object` writes a relocatable object (`#339`, `615d375c`).**
   The object emitted by `--emit object` is relocatable and safe to feed to a
   separate link step; previously the emit path produced an object that could not
@@ -453,10 +730,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded module now carries the imported extern names and the export pass refuses
   the same programs on both paths.
 - **Qualified enum variants resolve and an inherited write waits (`#334`,
-  `844e65a2`).** A qualified enum variant (`Enum::Variant`) resolves against its
-  owning enum instead of panicking or binding the wrong tag, and a write
-  inherited across a scope edge waits for the enclosing definition instead of
-  racing it.
+  `844e65a2`).** A qualified enum variant (`config.Enum.Variant`) resolves when
+  `Mind.toml` lists explicit sources (the module is recorded as
+  `crate.src.config` and the qualifier still names that owner); one exported match
+  resolves and two stay unresolved. Publishing a build artifact now waits until a
+  writable descriptor inherited by a concurrently forked process closes, so a
+  later exec no longer fails with "Text file busy" (`src/build/atomic_publish.rs`,
+  `tests/qualified_enum_explicit_sources.rs`).
 - **Imported enum variants evaluate under `mindc test` (`#335`, `47b671ba`).**
   `mindc test` evaluates an enum variant imported from a sibling module, matching
   `mindc build` / `mindc run`.
@@ -467,9 +747,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the enum is not visible in the module; and equality of boxed enum values (payload
   variants, NaN payloads) — which gave different answers under `mindc test` and in
   the built program — is refused.
-- **Lowering helpers aligned with feature gates (`#337`, `c09c720d`).** Shared
-  lowering helpers honour the same feature gates as their callers, so a
-  reduced-feature build no longer reaches an unguarded helper and fails.
+- **Lowering helpers aligned with feature gates (`#337`, `c09c720d`).** MLIR
+  lowering built without `std-surface` compiled three helpers and one temporary
+  whose uses require that feature, which raised five strict Clippy diagnostics;
+  those definitions now carry the same feature gate. Lowering with `std-surface`
+  keeps the same code.
 - **Slice arguments with alias elements and private helpers (`#340`, `4d081451`)**: the slice-call
   check compares element types after type-alias resolution (local aliases and
   aliases exported by an imported module), so `array<Q>` with `type Q = i32`
@@ -494,8 +776,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project source walk.** The project-root tests/ directory is now left out of
   the walked source set (nested tests/ directories stay in). Source sets and
   cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
-- The C read_to_string record uses cap = size + 1, retries EINTR and returns the
-  empty record on a read error, matching std/fs.mind.
+- The C read_to_string record uses cap = size + 1 and returns the empty record on
+  a read error, matching std/fs.mind; the C reader also retries EINTR.
 - **The canonical JSON dump refuses malformed UTF-8 (`#347`, `676bd2fa`).**
   `dump_value` validates every string and every object key as RFC 3629 UTF-8
   (shortest form, no surrogate code points, nothing above U+10FFFF, no stray or
@@ -530,21 +812,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   When `mindc test` merges an imported sibling module whose source declares
   `import std.<submod>;`, exported functions from `std/<submod>.mind` are now registered
   as non-clobbering fallback bindings (`insert_std_imported_call` in
-  `src/eval/module_bindings.rs` and `merge_imported_modules` in `src/test/imports.rs`)
+  `src/eval/module_bindings.rs` and `bind_bare_imported_calls` in `src/test/imports.rs`)
   so bare `std` calls inside imported module bodies execute instead of failing as
   unknown functions, without overriding local definitions or sibling project exports.
 - **Bare imported calls execute under `mindc test` (`#297`, `37cf0f4f`)**: `mindc test`
   (`--features cross-module-imports`) now merges parsed `FnDef` and `ConstDef` items from
   imported sibling modules into the test module before IR lowering and scopes bare-import
-  call bindings (`src/eval/module_bindings.rs`) per lowering pass via `ModuleBindingsGuard`.
+  call bindings (`src/eval/module_bindings.rs`) per lowering pass via `BindingsGuard`.
   Ambiguous bare calls across two imported modules are refused at the call site unless
   shadowed by a local `fn` or disambiguated as `m.f(...)`.
 - **Native `assert` reports source span and message before abort (`#298`, `ab26bd50`)**:
-  On a false `assert` in a native CPU build (`src/mlir/lowering.rs`,
-  `runtime-support/mind_intrinsics.c`), the lowered failure block now calls
-  `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
-  writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
-  instead of trapping silently.
+  On a false `assert` in a native CPU build (`src/eval/assert_trap.rs`,
+  `runtime-support/mind_intrinsics.c`), the failing branch now calls
+  `__mind_assert_fail(msg, span_start, span_end)` (the message as a String record, or 0
+  when the assert has none), which writes
+  `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr and then
+  calls `abort()`, instead of trapping silently.
 - **Whole-array binary operators on the native backend (`#287`).**
   Whole-array binary operators on the native backend built a binary that returned
   wrong values. The miscompile existed on main after #110 and before #287 and was
@@ -602,6 +885,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Public CPU executable linking.**
   Native CPU projects link against bundled runtime support without an installed commercial runtime. Accelerator backends retain their installed-runtime requirements.
   Unresolved symbols and non-native source modules fail the build and remove stale executable output; CPU link failures cannot leave a runtime launcher in place of a native binary.
+  `mindc build` exits non-zero when the entry module did not compile natively; before, a source that `mindc check` rejects produced a launcher executable and exit 0 (`#244`, `a8b2eb1d`).
   Linux execution tests verify clean-build byte identity, absence of private runtime dependencies, and refusal of invalid modules and unresolved symbols.
 - **`mindc test` evaluates a body once, in order, and a body that errors cannot pass (`#240`, `#241`, `#243`).**
   The runner evaluated the test body through the interpreter, discarded the result, then
@@ -621,9 +905,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real memory effects and `return` caught at the call boundary. ANY evaluation error fails
   the test with the interpreter's own diagnostic (`unknown variable: X`, `memory access out
   of bounds: [a, a+n) outside requested allocation extent [..]`). A non-boolean assert
-  condition is refused with a message naming the value class — and for the tuple form, the
-  spelling that works (`assert cond, "msg"`). The grammar of the parenthesised comma form
-  is reported separately; it no longer passes vacuously.
+  condition is refused with a message naming the value class. The parenthesised
+  `assert(cond, "msg")` form asserts `cond` with its message (`487dd5c7`, below).
   Asserts inside `for`/`while` bodies, `match` arms, `region` blocks and CALLED helper fns
   are now executed (per iteration, in the live arm) rather than refused; the retired
   walker's "assertion inside a loop body" refusal is gone with it. A declared `-> bool`
@@ -933,7 +1216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zero over-coverage preserved), and the tail-return check scans backward past trailing binders to
   the true implicit-return expression. Additive `check`-phase diagnostics only (build already
   fail-closes these); self-host fixed point unchanged. (Method-call arguments and inner-scope
-  annotated tails were adversarially found to risk false positives and are deferred — see #233.)
+  annotated tails were deferred here for false-positive risk; both are checked later in this
+  release — see the `E2027` method-call and tail-return entries above.)
 - **`mindc check` fail-opened on a typed int↔float scalar mismatch at the call-argument and
   implicit-return positions (GitHub #230).** A confident-`i64` value passed to an `f64`
   parameter — or returned as a function's implicit trailing expression — passed `check`
@@ -985,9 +1269,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mindc run` failed silently (exit 0, empty log) when the entry — or any linked —
   module fell back to the runtime JIT.** `run_project` now exits non-zero and names the
   modules; a silent green is worse than a wrong answer.
-- **`ArrayLoad` hardening (audit follow-up):** OOB runtime index now clamps
-  deterministically (was substrate-divergent UB); unsupported element types (q16/f16/
-  bf16) fail closed instead of emitting invalid IR / i64-width miscompiles.
+- **`ArrayLoad` hardening (audit follow-up):** an out-of-bounds runtime index is no
+  longer substrate-divergent UB (it traps with the pinned code; see the out-of-bounds
+  entry under Changed, `80cb1f73`); unsupported element types (q16/f16/bf16) fail
+  closed instead of emitting invalid IR / i64-width miscompiles.
 
 - **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`).**
   A single-file compile (`mindc <file>.mind --emit-mic3` / `--emit-evidence` /
@@ -1019,6 +1304,214 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workload-identity variables that overrode the token; it runs from an empty
   directory so its single allowed turn is spent on the review itself; and it is
   given no tools, so the one turn always completes regardless of diff size.
+
+- **`mindc test` evaluates float conditions, field stores, `break`/`continue`
+  and for-each like the build (`#342`, `67439663`).** A float comparison returns
+  the same integer truth value as an integer comparison (IEEE 754 ordered), so
+  `&&`, `||`, `!`, `if` and `while` read it as the build does. `r.f = v` stores
+  into a shared record, so the store reaches every reference to it (a second
+  binding, a `&mut` parameter, an array element); `r.f[i] = v` on a fixed-array
+  field changes that field, and `b.xs[i] = v` on an `array<T>` field is seen
+  through every alias. `break` and `continue` are caught by the innermost loop and
+  fenced at a function body. `for x in coll` runs over an array and reads the
+  collection's current element on every iteration, also for a field-path
+  collection and at module level; a body that rebinds the collection variable is
+  refused. A struct `const` is materialised fresh at every use. `std.string`,
+  `std.vec` and `std.map` functions are available without an import, limited to
+  what the runtime support links. (`src/eval/float_ops.rs`, `src/eval/loops.rs`,
+  `src/eval/record_store.rs`, `tests/mindc_test_eval_parity.rs`,
+  `tests/mindc_test_eval_blockers_parity.rs`)
+- **An explicit std import admits the modules it compiles under `mindc test`
+  (`#365`, `d25e07da`).** `mindc test` treated every module reached from an
+  explicit `import std.X` as ambient and kept only the names the runtime support
+  links, so a helper the build compiles from source was refused with
+  `unsupported operation`. An explicit import now admits that module and every
+  module it imports; a module that is only ambient stays limited to the
+  runtime-support exports.
+- **`mindc test` admits exactly what the build links.** Admission comes from the
+  build's own substrate closure (minus the project-supplied modules) plus the
+  runtime-support names, so `import std.toml` plus a call to `vec_free`, which
+  `mindc build` cannot link, is refused under `mindc test` as well. Std
+  definitions are installed under module-owned names, so a std module's calls
+  reach its own helpers and a file function of the same name (`ch`, `sha256`) no
+  longer replaces them; a bare name that two linked modules define is not
+  admitted. (`src/test/std_import_fns.rs`, `tests/std_import_admission_parity.rs`)
+  <!-- pending: fix/test-admission-build-parity -->
+- **Strings compare by bytes on every backend, or the comparison is refused at
+  check time (`#343`).** An `==` / `!=` (and a string literal `match` arm) is an
+  integer comparison only when neither operand can hold a string. Two strings
+  compare by bytes (`__mind_string_eq`) on the MLIR build and under `mindc
+  test`; every other comparison is refused with `E2038`, whose message names
+  `string_eq`. Before, the MLIR build compared handles whenever an operand was not
+  a literal or a literal-bound local (`same("abc", "abc")` returned 0), and
+  `mindc test` refused the comparisons the build computed. Operand facts come
+  from declarations for every expression form, and a declared slot is trusted
+  only while no string is stored into it (through arguments, results, fields,
+  collections, payloads, raw `__mind_store_i64`, callees whose bodies are not
+  analysed, and other modules of the project). An explicit `as i64` cast of a
+  string compares the handle by request; `0` is the defined null string handle,
+  equal only to itself; a cast of an integer literal other than `0` to `string`
+  is refused. A string literal `match` arm tests `__mind_string_eq` instead of an
+  inline record decode, which crashed the build on an integer scrutinee. `mindc
+  test` runs string methods as the build lowers them (`.len()` → `string_len`,
+  `.slice(a, b)`, `.trim()`), `.length` on a string is refused at check time with
+  `E6009`, and `--backend native` reports `E2038` (exit 3) instead of panicking.
+  (`src/eval/string_equality/`, `src/eval/string_record.rs`,
+  `tests/string_flows_backend_parity.rs`, `tests/string_edges_backend_parity.rs`)
+  <!-- pending: #343 -->
+- **Imported names resolve through their owning module (`d5bfe2b6`, `2197a91e`,
+  `52dd3d21`, `a47f8712`, `1def5dde`, `57b5c63e`, `8958887e`).** In a project
+  build a bare cross-module name resolves only against the current module's own
+  imports: a name exported by several imported modules is refused (`E2003` for a
+  call, `E2002` for a type), an unimported sibling can no longer supply a
+  signature, and unsupported local/imported symbol collisions are refused before
+  an artifact is written. Qualified `module.name` references keep their owner.
+  Module-qualified enum constructors, annotations and match patterns work across
+  modules, same-named types in different modules keep their owner, and an
+  unknown qualified path is refused with `E2002` (`#239`). A bare
+  `Enum::Variant` naming an imported enum resolves to that module's tag instead
+  of panicking in lowering; a function used as a value is refused with the new
+  code `E2037`. An undefined identifier in a project build is an `E2002` error
+  instead of a runtime-JIT embed followed by a lowering panic, and a `pub const`
+  defined with the same value in two modules no longer reports a false `E2002`
+  (different values still fail closed).
+- **Module path syntax and single-file builds inside a project (`cd150ae7`,
+  `953d7233`, `6a590851`, `6adb27dc`, `58ca97c6`, `6ca95068`).** `m::f(x)` and
+  `m::K` on an imported module resolve like `m.f(x)` (before, `m::f` reached MLIR
+  as an invalid symbol), also under `mindc test`, and the formatter prints the
+  `::` spelling back. A single-file `check`, `build` or `--emit-shared` inside a
+  project resolves `import` against the enclosing manifest, links the imported
+  bodies, and links modules with the same base name as distinct objects
+  (`#235`). `--emit-mlir`, `--emit-shared` and the manifest cdylib path resolve a
+  sibling module's constant (before: exit 101). A single-file `--emit-shared`
+  links the objects of the self-contained std modules it imports, and native
+  executable, cdylib and `--emit-shared` builds link all bundled std substrate
+  modules from one list packed into a static archive (before, seven were linked
+  and other std imports failed with undefined references).
+- **Same-named private functions and tests link (`a7ffedbb`, `4fe3f61a`,
+  `831307e6`).** Two modules that each define a non-`pub` function of the same
+  name link, because colliding module-private functions get internal linkage when
+  no other module references the name; `#[test]` functions with the same name in
+  two modules no longer fail with "multiple definition". With `ffi-c-user`, C-ABI
+  wrappers are generated only for callable exports, so types, aliases and
+  constants in an `export` block no longer produce colliding
+  `mind_fn_*_v1_invoke` symbols.
+- **Project sources are confined to the project root (`8987c712`, `2139d2b2`,
+  `a0e99c29`, `514ec3e0`, `f74f46b0`).** A manifest entry that escapes through
+  `..` or a symlink is refused by `check` and `build`; a broken or escaping link
+  is an error instead of being omitted; relative imports keep working; the first
+  reported escape no longer depends on filesystem order. Symlinked and canonical
+  paths to one project build the same artifact and resolve the same imports.
+  Identity and discovery errors ("cannot resolve explicit entry", "cannot
+  discover project root") are reported instead of swallowed. In a source tree
+  with no `.git`, a `Mind.toml` in the invocation directory governs a nested
+  entry whose canonical path stays under that directory.
+- **Silent wrong results fixed in lowering (`302ed2cf`, `94e3136d`, `605ae47d`,
+  `028a4d11`, `fe9854ec`, `90b2611e`, `3643191d`).** A `u64` local keeps its
+  unsigned tag through reassignment, and if/else merges join signedness
+  independent of arm order, so `>>`, `/`, `%` and `<` no longer switch between
+  signed and unsigned. A `let` that shadows a name in one `if` branch no longer
+  leaks onto the merge edge. A value assigned through a narrow-integer alias
+  (`type Byte = i8`) is masked to the alias width at value-`if` initializers and
+  branch-local `let`s. A statement `xs.set(i, v)` no longer rebinds the
+  collection to the call's status and zeroes the array handle (present in 0.10.2),
+  and a fixed-array argument is accepted only where the parameter is declared as
+  a tensor. A range `for` whose body redeclares the loop variable terminates
+  (before: an endless loop). A `return`, `break` or `continue` followed by more
+  code in the same block builds (before: `mlir-opt` rejected ops after the
+  terminator). A function whose tensor parameter is unused selects the tensor
+  pipeline, so `--emit-shared` builds it.
+- **Check-time refusals for programs the build cannot honour (`4fd65cfb`,
+  `6af92874`, `d451b215`, `ff52a116`, `fa07c998`, `24897697`, `56a8e26c`,
+  `bc153dc5`).** Integer types wider than 64 bits (`i128`, `u128`, `i256`) are
+  refused instead of lowering as `i64`. `E2034` refuses replacing a collection
+  field or slot with a status, scalar or different collection type, `E2035`
+  refuses duplicate struct declarations in one module, and a fixed-array return
+  or `[T; N]` binding whose literal has a different length or element type is
+  refused (`E2001` for the binding, at every depth). A parameter or return type
+  written with a module-local alias resolves to its target in the function ABI,
+  and an unresolvable alias is refused. A collection mutator call in an
+  expression position (nested, an argument, a condition, a match scrutinee, arm or
+  guard) is refused by check and build; `mindc check` runs the trait and closure
+  desugars, so impl-method and closure bodies are checked; string `==`/`!=` uses a
+  compiler-owned `__mind_string_eq` that user code cannot replace. An inferred
+  struct binding keeps its identity across a same-type rebind, and a scalar cannot
+  replace it. Without `std-surface`, bitwise operators give `E1001` instead of a
+  panic. `name!` macro syntax is refused ("MIND has no macros"), so `mindc fmt`
+  no longer rewrites `format!(...)` into other statements.
+- **String values on the MLIR path (`c088dc16`, `05837233`).** Bundled std
+  signatures are registered on single-file compiles, so string-returning
+  functions and shadowed string bindings lower and run; string methods on a
+  for-each element or on `let x = arr[i]` from an array of strings (for example
+  `part.trim()` after a split) lower instead of receiving an unresolved zero.
+- **`mindc test` matches the built artifact on narrow integers and fails on
+  unparsable files (`97c0d273`, `74004786`, `2575c1e9`, `a7f9520a`, `a1eda2da`).**
+  The evaluator narrows `i32`/`u32` results (returns, parameters, locals,
+  reassignment), struct fields including `[u8; N]`, intermediate 8/16-bit
+  arithmetic and shift counts to their declared or inferred width, and treats a
+  wide `as i64` cast as wide, so overflow gives the artifact's value. A test file
+  that fails to parse fails the run (exit 1) instead of printing a warning.
+- **`assert(cond, "msg")` asserts `cond` (`487dd5c7`).** The parenthesised form
+  parsed as one tuple, which is truthy, so a native build passed it whatever
+  `cond` was and `mindc test` refused it. The parser splits the condition and the
+  message, as `assert cond, "msg"` spells them; any other tuple condition, such as
+  `assert(cond, 9)`, is refused. Formatted files are unchanged.
+- **Host libm names and LLVM version differences (`9c231f50`, `809c3ed7`,
+  `5fda1251`, `96c4af2e`).** Every MIND function definition is marked
+  `nobuiltin`, so LLVM no longer folds a MIND function named `pow`, `sin`, `exp`,
+  `log` or `cos` to host libm values; on MLIR 23 the attribute is also written as
+  `llvm.passthrough`, so a MIND `pow` is not rewritten to an unlinked `sqrt`.
+  Leftover `ub.poison` is lowered through `convert-ub-to-llvm`. The AVX-512 VNNI
+  intrinsic `llvm.x86.avx512.vpdpbusd.512` takes `vector<64xi8>` byte operands on
+  LLVM 21 and newer (`vector<16xi32>` on LLVM 20), matched to the
+  `mlir-translate` the build resolved. `docs/determinism.md` states that
+  cross-substrate byte identity holds within one toolchain version.
+  `--emit-mlir` output is unchanged.
+- **`mindc fmt` keeps source (`f2fc890d`, `eb872eaf`).** In module-wrapped files
+  `mindc fmt` keeps `true`/`false`, `module NAME {}`, `use X as Y` (whose alias
+  also works as an import qualifier), qualified `q.fn` / `q.CONST`,
+  `export struct` and attributes on module blocks, and it refuses to write
+  (`LossyFormat`) when the output would drop an identifier present in the input,
+  leaving the file unchanged.
+- **CLI exit codes and diagnostics (`fbb08821`, `11bdd07f`, `0097647d`,
+  `fd481c97`, `abe9d74a`, `4aef2dea`).** `mindc check --reporter json|lsp`
+  prints a diagnostic on stdout for an early failure (unresolved path, unreadable
+  file, project scope not installed). With `cross-module-imports`, `mindc check`
+  reports call-arity errors (`E2005`) inside function bodies instead of exiting
+  0. `mindc bench --filter` that matches nothing exits 1, `mindc bench` and
+  `mindc test` refuse when the manifest entry swap did not apply, and a benchmark
+  that falls back to the runtime JIT fails ("entry module was not natively
+  compiled") instead of exiting 0 after running nothing. On Windows the refusal
+  before the Unix-only runtime-JIT wrapper keeps the cause found during
+  compilation. mindc builds from source on the declared Rust 1.85 minimum and in
+  MLIR-free feature profiles again.
+- **Self-host compiler (`--backend native`, `examples/mindc_mind/main.mind`)
+  correctness and coverage.** Each change is gated by oracle parity against the
+  Rust `--emit-mic3` output and re-blesses the bootstrap seed where its bytes move.
+  Silent wrong results fixed: a branch-local shadowing `let` no longer replaces
+  the outer binding at the `if` join (`cde983ce`, `#318`); a dead statement after
+  an unconditional `continue`, `break` or `return` is cut, so such a loop
+  terminates and keeps the loop variable's value (`56aa8971`, `6371e7e0`); the
+  8-byte literal encoders no longer turn `-0.0` into a NaN pattern (`593abbc7`); a
+  call nested under parentheses is interned in the string table instead of being
+  emitted with an invalid name index (`c6f88817`); `for` loops whose binder
+  shadows an outer binding or the bound, consecutive loops, loops with tab or
+  newline trivia, and an enum payload bound in the final match arm emit the
+  oracle's bytes (`c6a0c0b5`). Three parser gaps that dropped whole items are
+  closed (multi-token parameter types, item-level attributes, `export { .. }`
+  blocks), and a poisoned item refuses on the mic/MLIR path (`5413c3ad`,
+  `8738ec62`); a `let` without a single-token annotation no longer crashes the
+  type checker (`9ec7514f`). Newly emitted byte-identical: narrow unsigned `let`
+  initializers masked to width (`82cf8e87`), `EXPR as i64` and typed scalar casts
+  as `__mind_conv_*` (`c877df67`, `65d67290`, `6012a685`), type-alias
+  environments (`65d67290`), a struct-literal tail expression (`c9fcbf01`), and
+  fixed `[i64; N]` / `[u8; N]` record fields with bounds-checked loads
+  (`c4c7b034`, `9b23e3fe`, `390af54b`); a fixed-array record on the canonical
+  record-field path fails closed instead of emitting wrong bytes (`f7bba8c6`,
+  `a80b67ea`). The IR-text entry reports refusal with an explicit sentinel
+  (`fe912396`); the `E2024` intrinsic check compares the full callee name and
+  `E2003` matches the compiler under declared local imports (`7a4e2043`); the
+  SHA-256 scratch is allocated once per hash (`e4510f49`).
 
 ### Security
 
@@ -1084,21 +1577,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.sha256` and checks `mindc --version` against the tag before upload. The
   keystone job asserts with `cargo tree` that its feature sets never resolve
   fips204 or fips205.
-
-### Pending for this release
-
-Open PRs still expected before the tag; the final refresh moves each line into
-the section above as it lands:
-
-- `#340` — fix(check): admit alias-element literals and private helpers as slice arguments
-- `#342` — fix(eval): evaluate float conditions, zeroed arrays, break and for-each like native
-- `#343` — fix(strings): compare strings by bytes on every backend or refuse at check time
-- `#346` — feat(std): TLS 1.3 client and X.509 path validation — the base of the `std.https` surface; revocation (CRL/OCSP) is not in scope for 0.10.3
-- `#349` — feat(std): getrandom entropy and getaddrinfo name resolution
-- `#350` — feat(std): write and read results as mic@3 records — the mic@3 results module on top of the landed parallel test-runner harness
-- `#351` — feat(std): run many child tasks and wait for all of them — the std parallel-run module
-- `#358` — perf(mlir): lower load/store addresses as base plus offset
-- `std.https` — the HTTPS client module on the TLS 1.3 + DNS legs
+- **`mindc verify` checks byte canonicality, and `--require-signed` refuses an
+  unsigned artifact (`b2d5d97f`).** Neither `trace_hash` nor the signature
+  preimage covers the literal file bytes, so a signed artifact altered in a way
+  the decoder normalises (bytes appended after the MAP epilogue, padding, a
+  non-minimal count, a wire-version downgrade inside the accepted window, a
+  normalised body flip) still verified. `mindc verify` now runs the mic@3
+  byte-canonicality check and refuses such a file. `--require-signed` also
+  refuses an artifact with no evidence chain; before, it exited 0.
+  (`tests/verify_canonical_bytes.rs`, `tests/verify_require_signed.rs`)
+- **Unknown evidence keys and oversized evidence are refused (`038f7010`,
+  `347c8eff`).** The MAP epilogue reader accepts only an allowlisted set of
+  `evidence_chain.*` keys on every read path. Checked evidence emission refuses an
+  artifact whose body plus MAP epilogue would exceed the reader's 10 MiB limit
+  (`MAX_MIC3_INPUT`), so the emitter never writes evidence the reader would
+  reject.
 
 ## [0.10.2] - 2026-08-07 — runtime-free `mindc test` over real memory/struct/cross-module MIND, verifier break/continue if-merge fix, compile-speed (small-object allocator + boxed AST), and the `--backend` opt-in seam
 
