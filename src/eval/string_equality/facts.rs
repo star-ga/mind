@@ -580,6 +580,11 @@ impl Decls {
         if matches!(name, "Some" | "None" | "Ok" | "Err") {
             return true;
         }
+        // A colliding enum is stored under its owner (`crate.table::Table::Raw`).
+        // That spelling is still an enum value, not a string.
+        if crate::ir::with_global_enums(|g| g.variant_tags.contains_key(name)) {
+            return true;
+        }
         if let Some((head, _)) = name.rsplit_once("::") {
             let owner = head.rsplit('.').next().unwrap_or(head);
             return owner == "Option" || owner == "Result" || self.knows_enum(owner);
