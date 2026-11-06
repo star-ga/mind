@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2166 | **Est. tokens:** ~4,115,112
-**Generated:** 2026-11-06 20:59 UTC
+**Files:** 2166 | **Est. tokens:** ~4,115,144
+**Generated:** 2026-11-06 21:18 UTC
 
 ## Token Budget Guide
 
@@ -157,7 +157,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 62 | ~285,239 |
-| `tests/` | 450 | ~967,567 |
+| `tests/` | 450 | ~967,599 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -2730,7 +2730,7 @@
 - `mod.rs` (~1595 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/`
 
-- `std_https_loopback.rs` (~1527 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_https_loopback.rs` (~1559 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_https_network_safe.rs` (~5337 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_https_openssl.rs` (~5427 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_import_position.rs` (~2682 tok, huge) — Copyright 2026 STARGA Inc.
