@@ -58,13 +58,15 @@ MIND uses `cargo-deny` (0.20.2, the version CI pins) for dependency auditing:
 
 ```bash
 # RustSec advisories, licenses, bans and sources, over every feature
-cargo deny --all-features check
+cargo deny --all-features --locked check
 ```
 
 `--all-features` matters: the optional dependencies a release build can ship
 (the `evidence-*` signers, `mlir-jit`) are held to the same policy as the
-default graph. The repository tracks no `Cargo.lock`, so CI resolves the newest
-compatible versions on every run and audits exactly that graph.
+default graph. `--locked` audits the committed `Cargo.lock`, the graph that CI
+tests and release builds link, and fails instead of resolving newer versions
+(`scripts/check_release_gating.py` R7 requires `--locked` on every workflow
+cargo call that resolves dependencies).
 
 The `deny.toml` configuration enforces:
 - Every RustSec advisory that matches the resolved graph fails the check; the

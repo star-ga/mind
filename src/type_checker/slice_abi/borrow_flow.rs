@@ -7,9 +7,10 @@
 use crate::ast::{FnDefData, Node, Pattern, Span, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
+use super::aliases::type_needs_collection_flow;
 use super::{
-    Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, check_stmts,
-    compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
+    Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, canonical,
+    check_stmts, compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
     vec_element_uses_i64_abi,
 };
 
@@ -557,7 +558,7 @@ pub(crate) fn check_struct_fields(
     errs: &mut Vec<Diagnostic>,
 ) {
     for field in fields {
-        if type_contains_slice(&field.ty) {
+        if type_contains_slice(&field.ty) || super::slice_through_alias(&field.ty) {
             report(
                 errs,
                 src,
@@ -631,10 +632,6 @@ pub(crate) fn type_contains_collection_owner(ty: &TypeAnn) -> bool {
         }
 }
 
-fn type_needs_collection_flow(ty: &TypeAnn) -> bool {
-    type_contains_collection_owner(ty) || declared_kind(ty).is_some() || type_contains_slice(ty)
-}
-
 /// Skip scalar-only bodies unless a collection boundary or indexed assignment
 /// needs this pass, keeping its fixed-point analysis off unrelated functions.
 fn function_needs_collection_flow(fd: &FnDefData, has_collection_owner_field: bool) -> bool {
@@ -675,8 +672,10 @@ pub(crate) fn check_fn(
         struct_fields: std::rc::Rc::clone(struct_fields),
         ..Env::default()
     };
+    super::aliases::refuse_slice_aliases_in_signature(fd, src, file, errs);
     for param in &fd.params {
-        if !matches!(param.ty, TypeAnn::Slice { .. }) && type_contains_slice(&param.ty) {
+        let param_ty = canonical(&param.ty);
+        if !matches!(param_ty, TypeAnn::Slice { .. }) && type_contains_slice(&param_ty) {
             report(
                 errs,
                 src,
@@ -689,23 +688,23 @@ pub(crate) fn check_fn(
                 SLICE_CAPABILITY_CODE,
             );
         }
-        if let Some(kind) = declared_kind(&param.ty) {
+        if let Some(kind) = declared_kind(&param_ty) {
             if matches!(&kind, HandleKind::Slice { .. }) {
                 env.may_borrow.insert(param.name.clone());
             }
             env.handles.insert(param.name.clone(), kind);
         }
-        if let Some(class) = scalar_class_of_ann(&param.ty) {
+        if let Some(class) = scalar_class_of_ann(&param_ty) {
             env.classes.classes.insert(param.name.clone(), class);
         }
-        env.types.insert(param.name.clone(), param.ty.clone());
-        env.declared.insert(param.name.clone(), param.ty.clone());
+        env.types.insert(param.name.clone(), param_ty.clone());
+        env.declared.insert(param.name.clone(), param_ty);
         env.bindings
             .insert(param.name.clone(), (param.span.start(), param.span.end()));
         sync_current_binding(&mut env, &param.name);
     }
-    if fd
-        .ret_type
+    let ret_type = fd.ret_type.as_ref().map(canonical);
+    if ret_type
         .as_ref()
         .is_some_and(|ty| !matches!(ty, TypeAnn::Slice { .. }) && type_contains_slice(ty))
     {
@@ -725,7 +724,7 @@ pub(crate) fn check_fn(
             SLICE_CAPABILITY_CODE,
         );
     }
-    let expected_return = fd.ret_type.as_ref();
+    let expected_return = ret_type.as_ref();
     check_stmts(&fd.body, &mut env, expected_return, src, file, errs);
     if let Some(target) = expected_return.and_then(declared_kind).as_ref() {
         if !result_paths_proven(&fd.body, target, &env) {

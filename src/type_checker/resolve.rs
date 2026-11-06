@@ -50,12 +50,12 @@
 //! reported even then — imports bring functions/types, never loose variables.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
 
 use super::qualified_imports::{call as qcall, current_symbol as cse, value as qvalue};
 use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
 
 mod fn_values;
+pub(super) mod std_names;
 
 /// Deterministic FxHash-backed tables for the lookup-only symbol sets built
 /// per `resolve_fn_body` call (the type checker's `FxBuild` — the same
@@ -232,6 +232,11 @@ struct ModuleSyms {
     non_fn_decls: FxSet,
     /// Module-level names declared ONLY as functions (see `fn_values`).
     fns: FxSet,
+    /// Function-only names, and value names, of the non-implicit std modules
+    /// this module imports (see `std_names`); a value there hides an implicit
+    /// std function of the same name.
+    std_fns: FxSet,
+    std_values: FxSet,
 }
 
 impl ModuleSyms {
@@ -240,7 +245,7 @@ impl ModuleSyms {
     /// into `names`) so building `ModuleSyms` stays O(module decls), not
     /// O(module decls + whole std surface), on every recursive check call.
     fn name_resolvable(&self, name: &str) -> bool {
-        self.names.contains(name) || stdlib_export_names().contains(name)
+        self.names.contains(name) || std_names::implicit().names.names.contains(name)
     }
 }
 
@@ -371,55 +376,6 @@ fn collect_non_fn_decl_names(module: &Module, out: &mut FxSet, fns: &mut FxSet) 
     }
 }
 
-/// Cached map of std-module path (`"std.vec"`) to the set of top-level names it
-/// exports. Built exactly once from the bundled stdlib registry so the
-/// single-file `mindc check` path resolves std-surface calls (`vec_new`,
-/// `sha256`, ...) PRECISELY — no false positive, and no blanket suppression
-/// that would also hide a genuine typo.
-fn stdlib_exports() -> &'static FxMap<FxSet> {
-    static CACHE: OnceLock<FxMap<FxSet>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        // `project::stdlib` (the bundled std-surface registry) is gated behind
-        // `cross-module-imports`. With the feature off there is no std surface
-        // to resolve, so this map stays empty — keeps `--no-default-features`
-        // compiling while leaving the feature-on behaviour byte-for-byte
-        // unchanged.
-        #[allow(unused_mut)]
-        let mut map = FxMap::default();
-        #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-        for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
-            let mut names = FxSet::default();
-            collect_decl_names_into(&module, &mut names);
-            map.insert(path, names);
-        }
-        map
-    })
-}
-
-/// The flattened set of every std-surface export name, built once.
-///
-/// The std surface is constant across a compile, so its (large) name set must
-/// NOT be copied into every per-module `ModuleSyms::names` — `collect_module_syms`
-/// is run once per `check_module_types_in_file` invocation, and that function
-/// recurses per top-level item / block / fn body, so re-`extend`-ing thousands of
-/// std names into a fresh `BTreeSet` each call was O(items x std_names) — the
-/// dominant cost of `mindc check main.mind`. Instead cache the flat set here and
-/// check membership against it separately (see `ModuleSyms::name_resolvable` and
-/// the `suggest` candidate chain). Diagnostics are unchanged: a name is resolvable
-/// iff it is in the per-module set OR this std set (same union as before), and the
-/// suggestion candidate set is the same (`closest_identifier` tie-breaks
-/// lexicographically, so iteration order never reaches output).
-fn stdlib_export_names() -> &'static FxSet {
-    static CACHE: OnceLock<FxSet> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let mut s = FxSet::default();
-        for exports in stdlib_exports().values() {
-            s.extend(exports.iter().cloned());
-        }
-        s
-    })
-}
-
 /// Collect the module-level resolvable-name set. `injected` carries any symbol
 /// names the cross-module resolver already merged into the type env (so a
 /// populated project table resolves imports precisely). On top of that we
@@ -438,19 +394,19 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     for v in ["Result", "Option", "Ok", "Err", "Some", "None"] {
         names.insert(v.to_string());
     }
-    // The std-surface is the language standard library: its public names are
-    // always resolvable. std modules reference each other WITHOUT explicit
-    // imports (they are compiled as one bundle — e.g. std/io.mind calls
-    // std.string's `string_push_byte` with no import line), and a std-surface
-    // function is never a *genuinely-undefined* reference. So the whole surface
-    // is visible rather than per-import. (Whether a user module should be forced
-    // to `import std.X` before calling it is a separate "missing import" lint,
-    // not the undefined-reference question issue #23 owns.)
+    // The implicit std surface is the language standard library: its public
+    // names are always resolvable. Those std modules reference each other
+    // WITHOUT explicit imports (e.g. std/io.mind calls std.string's
+    // `string_push_byte` with no import line), and such a std-surface function
+    // is never a *genuinely-undefined* reference. (Whether a user module should
+    // be forced to `import std.X` before calling it is a separate "missing
+    // import" lint, not the undefined-reference question issue #23 owns.) Any
+    // other bundled module's names come in through its import (`std_names`).
     //
-    // The std name set is CONSTANT across the compile, so it is NOT copied into
-    // this per-module `names` — that copy was O(items x std_names), the dominant
-    // cost of `mindc check main.mind`. It is checked separately via
-    // `stdlib_export_names()` in `name_resolvable` and the `suggest` chain.
+    // The implicit name set is CONSTANT across the compile, so it is NOT copied
+    // into this per-module `names` — that copy was O(items x std_names), the
+    // dominant cost of `mindc check main.mind`. It is checked separately via
+    // `std_names::implicit()` in `name_resolvable` and the `suggest` chain.
     let mut enums: FxMap<FxSet> = FxMap::default();
     collect_enum_variants(module, &mut enums);
     // Module-level non-function decls, used to reject a call whose callee names a
@@ -462,11 +418,22 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     collect_non_fn_decl_names(module, &mut non_fn_decls, &mut fn_decls);
     let fns = fn_values::only_fns(&fn_decls, &non_fn_decls);
     non_fn_decls.retain(|n| !fn_decls.contains(n));
+    // A non-implicit std module this file imports adds its names here; it
+    // is small, unlike the implicit surface, which is checked in place.
+    let (std_fns, std_values) = match &*std_names::visible(module) {
+        Some(std) => {
+            names.extend(std.names.iter().cloned());
+            std.fns_and_values()
+        }
+        None => Default::default(),
+    };
     ModuleSyms {
         names,
         enums,
         non_fn_decls,
         fns,
+        std_fns,
+        std_values,
     }
 }
 
@@ -615,7 +582,7 @@ fn suggest(name: &str, scopes: &Scopes, syms: &ModuleSyms) -> Option<String> {
         .flat_map(|f| f.iter())
         .map(String::as_str)
         .chain(syms.names.iter().map(String::as_str))
-        .chain(stdlib_export_names().iter().map(String::as_str));
+        .chain(std_names::implicit().names.names.iter().map(String::as_str));
     for known in candidates {
         let d = super::levenshtein(name, known);
         if d == 0 || d > max_dist {

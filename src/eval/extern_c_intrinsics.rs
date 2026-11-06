@@ -495,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_file_and_directory_return_the_empty_record() {
+    fn missing_file_and_directory_yield_no_bytes() {
         interp_mem::reset();
         let missing = put_bytes(b"/no/such/mind-file-331");
         let rec = call("read_to_string", &[missing]).unwrap();
@@ -507,7 +507,16 @@ mod tests {
             &[put_bytes(dir.path().to_str().unwrap().as_bytes())],
         )
         .unwrap();
-        assert_eq!((field(rec, 0), field(rec, 8), field(rec, 16)), (0, 0, 0));
+        // A directory never yields bytes. Which record carries that depends on
+        // the filesystem: one that reports a directory size fails the directory
+        // read and yields the zero record; one that reports an empty directory
+        // as size 0 yields its zero-length record, cap file_sz + 1 == 1. The
+        // native reader makes the same choice on the same filesystem.
+        assert_eq!(field(rec, 8), 0);
+        assert!(
+            (field(rec, 0), field(rec, 16)) == (0, 0)
+                || (field(rec, 0) != 0 && field(rec, 16) == 1)
+        );
     }
 
     #[test]

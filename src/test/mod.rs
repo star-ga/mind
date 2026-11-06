@@ -54,6 +54,8 @@ use crate::parser;
 
 mod imports;
 mod runner;
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+mod std_import_fns;
 mod top_level;
 use imports::{EvalSupport, prepare_eval_support};
 use runner::execute_tests;
@@ -520,7 +522,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     // table is scoped to that eval and is torn down when it returns.
     let mut synthetic_items: Vec<Node> = Vec::new();
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-    synthetic_items.extend(resolve_std_import_fns(&module)?);
+    synthetic_items.extend(std_import_fns::resolve_std_import_fns(
+        &module,
+        support.map(|s| &s.project_std),
+    )?);
     if let Some(support) = support {
         synthetic_items.extend(support.imported_items.iter().cloned());
     }
@@ -544,6 +549,10 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     let _bindings = support.map(|support| {
         eval::EvalBindingsGuard::install(support.bindings.clone(), support.entry_owner.clone())
     });
+    // `==` on enum values is evaluated only for an enum whose declaration has
+    // no payload variant, the one case the compiled program also compares by
+    // value (`eval::enum_cmp`).
+    let _enum_defs = eval::enum_cmp::install_enum_defs(&synthetic_module.items);
     let mut env = std::collections::HashMap::new();
     let outcome =
         eval::eval_module_value_with_env_mode(&synthetic_module, &mut env, None, ExecMode::Preview);
@@ -590,145 +599,6 @@ fn grade_returned_value(
         }
         _ => Ok(()),
     }
-}
-
-/// Resolve `import std.X` / `use std::X` declarations of a test module (and,
-/// transitively, of the modules they import) against the stdlib sources baked
-/// into the binary (RFC 0005 Phase C, `project::stdlib`), returning the
-/// imported modules' `FnDef` items so the interpreter's fn table can dispatch
-/// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
-/// their module-level `Const` items, so a fn body that reads a module const
-/// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
-/// table, plus their `extern "C"` blocks and `struct` declarations (inert
-/// when evaluated), so the string-equality pass reads the declared result of
-/// a libc call in std code (std.fs `read(...) -> i64`) and a std record's
-/// field (`v.cap` in std.vec) as `mindc check` and the build do. A struct the
-/// test module declares itself keeps its own declaration. A function the
-/// evaluator runs as the runtime support library does (`string_eq`, which the
-/// build links) is not taken: a call of it computes what the build computes.
-///
-/// Deterministic: imports are processed in source-encounter order (FIFO
-/// worklist, `BTreeSet` visited guard against cycles). An import that is not
-/// a bundled `std.*` module contributes nothing (existing behavior for it is
-/// unchanged); a bundled module that fails to parse is a fail-loud error.
-#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
-    use crate::eval::extern_c_intrinsics;
-    use crate::project::stdlib::STDLIB_MIND_SOURCES;
-    use std::collections::VecDeque;
-
-    fn import_key(item: &Node) -> Option<String> {
-        if let Node::Import { path, .. } = item {
-            if path.len() == 2 && path[0] == "std" {
-                return Some(path.join("."));
-            }
-        }
-        None
-    }
-
-    let own_structs: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
-        .into_iter()
-        .filter_map(|item| match item {
-            Node::StructDef { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    let mut out: Vec<Node> = Vec::new();
-    let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: VecDeque<String> = top_level::refs(&module.items)
-        .into_iter()
-        .filter_map(import_key)
-        .collect();
-    queue.extend(bare_std_modules(module));
-    while let Some(key) = queue.pop_front() {
-        if !visited.insert(key.clone()) {
-            continue;
-        }
-        let Some((_, src)) = STDLIB_MIND_SOURCES.iter().find(|(k, _)| *k == key) else {
-            continue;
-        };
-        let imported = parser::parse(src).map_err(|errs| {
-            format!(
-                "failed to parse bundled std module '{key}': {}",
-                errs.iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )
-        })?;
-        for item in top_level::refs(&imported.items) {
-            match item {
-                Node::FnDef(fd, _) if extern_c_intrinsics::is_runtime_string_fn(&fd.name) => {}
-                Node::StructDef { name, .. } if own_structs.contains(name.as_str()) => {}
-                Node::FnDef(..)
-                | Node::Const { .. }
-                | Node::ExternBlock { .. }
-                | Node::StructDef { .. } => {
-                    out.push(item.clone());
-                }
-                Node::Import { .. } => {
-                    if let Some(k) = import_key(item) {
-                        queue.push_back(k);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// The bundled std modules that define a std.string function (`string_*`)
-/// `module` calls by its bare name and does not define itself. `mindc check`
-/// and the build see every bundled std declaration with no `import` (the
-/// bundled std signatures), so `mindc test` loads the module that defines
-/// the callee too. A method call on a string names its `string_<method>`
-/// function, which is the call the build makes for it. Callees the evaluator
-/// runs itself (the runtime-support emulations) load nothing.
-#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-fn bare_std_modules(module: &crate::ast::Module) -> Vec<String> {
-    use crate::eval::extern_c_intrinsics;
-    use crate::project::stdlib::STDLIB_MIND_SOURCES;
-    use std::collections::BTreeSet;
-
-    let mut defined = BTreeSet::new();
-    let mut wanted = BTreeSet::new();
-    let mut pending: Vec<&Node> = module.items.iter().collect();
-    while let Some(node) = pending.pop() {
-        match node {
-            Node::FnDef(fd, _) => {
-                defined.insert(fd.name.clone());
-                pending.extend(fd.body.iter());
-                continue;
-            }
-            Node::Call { callee, .. } if !callee.contains('.') && !callee.contains("::") => {
-                wanted.insert(callee.clone());
-            }
-            Node::MethodCall { method, .. } => {
-                wanted.insert(format!("string_{method}"));
-            }
-            _ => {}
-        }
-        pending.extend(crate::eval::closures::node_children_ref(node));
-    }
-    let wanted: Vec<String> = wanted
-        .into_iter()
-        .filter(|name| {
-            name.starts_with("string_")
-                && !defined.contains(name)
-                && !extern_c_intrinsics::is_extern_c_intrinsic(name)
-                && !extern_c_intrinsics::is_runtime_string_fn(name)
-        })
-        .collect();
-    STDLIB_MIND_SOURCES
-        .iter()
-        .filter(|(_, src)| {
-            wanted
-                .iter()
-                .any(|name| src.contains(&format!("fn {name}(")))
-        })
-        .map(|(path, _)| (*path).to_string())
-        .collect()
 }
 
 /// Extract a human-readable string from a panic payload.

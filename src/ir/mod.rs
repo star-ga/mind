@@ -28,6 +28,7 @@ pub(crate) mod fp_mode;
 pub mod frozen_profile;
 pub mod native_closure;
 mod print;
+pub mod project_consts;
 mod verify;
 mod verify_calls;
 
@@ -1178,14 +1179,16 @@ pub(crate) fn canonical_array_type_in(
 /// `FnDef.body`: the version predicate must find a `value_types` table buried
 /// in any function at any nesting depth (a `FnDef` inside a `Region` inside an
 /// `If` still counts), so it crosses `FnDef` boundaries the scope walks stop at.
-#[cfg(feature = "std-surface")]
+/// Without `std-surface` only `FnDef` carries a body.
 pub(crate) fn instr_bodies(instr: &Instr) -> [&[Instr]; 3] {
     const NONE: &[Instr] = &[];
     match instr {
         Instr::FnDef { body, .. } => [body.as_slice(), NONE, NONE],
+        #[cfg(feature = "std-surface")]
         Instr::While {
             cond_instrs, body, ..
         } => [cond_instrs.as_slice(), body.as_slice(), NONE],
+        #[cfg(feature = "std-surface")]
         Instr::If {
             cond_instrs,
             then_instrs,
@@ -1196,6 +1199,7 @@ pub(crate) fn instr_bodies(instr: &Instr) -> [&[Instr]; 3] {
             then_instrs.as_slice(),
             else_instrs.as_slice(),
         ],
+        #[cfg(feature = "std-surface")]
         Instr::Region { body, .. } => [body.as_slice(), NONE, NONE],
         // Every non-body-carrying variant. WARNING to maintainers: if a NEW
         // `Vec<Instr>` body field is ever added to an `Instr` variant, add an arm
@@ -1378,10 +1382,10 @@ pub struct IRModule {
     /// iteration deterministic.
     #[cfg(feature = "std-surface")]
     pub struct_field_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
-    /// Imported extern names. C export must not treat these as this module's
-    /// own foreign symbols. Not serialised.
+    /// Imported extern names (not serialised; `None` after a mic@3 decode). C
+    /// export must not treat these as this module's own foreign symbols.
     #[cfg(feature = "std-surface")]
-    pub imported_extern_names: std::collections::BTreeSet<String>,
+    pub imported_extern_names: Option<std::collections::BTreeSet<String>>,
 }
 
 impl IRModule {
@@ -1416,7 +1420,7 @@ impl IRModule {
             #[cfg(feature = "std-surface")]
             struct_field_types: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
-            imported_extern_names: std::collections::BTreeSet::new(),
+            imported_extern_names: Some(std::collections::BTreeSet::new()),
         }
     }
 
@@ -1491,8 +1495,7 @@ impl fmt::Display for IRModule {
     }
 }
 
-/// Run verification and canonicalization on the module before handing it to a
-/// backend.
+/// Run verification and canonicalization on the module before handing it to a backend.
 pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError> {
     verify_calls::verify_module(module)?;
     crate::opt::ir_canonical::canonicalize_module(module);

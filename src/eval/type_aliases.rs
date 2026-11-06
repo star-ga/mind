@@ -55,18 +55,22 @@ impl LocalTypeAliases {
         resolve_or_original(ty, &self.aliases)
     }
 
-    /// [`Self::resolve`], then resolve a visible owner-qualified imported alias
-    /// from the project registry.
+    /// [`Self::resolve`], then read the result through the project registry:
+    /// every visible project alias, at any nesting depth, becomes its target
+    /// and every other project type its source key, so `array<defs.Q>` and
+    /// `array<i32>` compare equal when `defs` exports `type Q = i32`.
     pub(crate) fn resolve_with_imports(&self, ty: &TypeAnn) -> TypeAnn {
-        let resolved = self.resolve(ty);
-        #[cfg(feature = "cross-module-imports")]
-        if let TypeAnn::Named(name) = &resolved {
-            if let Some(target) = crate::qualified_enums::resolve_alias_target(name, &self.imports)
-            {
-                return target;
-            }
-        }
-        resolved
+        self.read_through_registry(self.resolve(ty))
+    }
+
+    #[cfg(feature = "cross-module-imports")]
+    fn read_through_registry(&self, ty: TypeAnn) -> TypeAnn {
+        crate::qualified_enums::canonical_type_here(&ty, &self.imports)
+    }
+
+    #[cfg(not(feature = "cross-module-imports"))]
+    fn read_through_registry(&self, ty: TypeAnn) -> TypeAnn {
+        ty
     }
 
     /// Make this module's aliases available to recursive lowering helpers.

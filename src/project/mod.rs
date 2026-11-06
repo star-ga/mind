@@ -1590,9 +1590,8 @@ fn compile_sources(
         } else {
             entry_path.parent().unwrap_or(project_root)
         };
-        // RFC 0005 Phase C — seed the parsed-modules list with the
-        // bundled stdlib (`std.vec` / `std.string` / `std.map` /
-        // `std.io`) before walking the project's own src tree. This
+        // RFC 0005 Phase C — the bundled std modules the project loads (implicit set + its imports)
+        // come first in the parsed-modules list, ahead of the project's own src tree. This
         // is what makes `use std.vec` work in a downstream `mind
         // build` without the user vendoring std/*.mind themselves.
         // The bundle is i64-ABI and uses only the seven `__mind_*`
@@ -1601,16 +1600,17 @@ fn compile_sources(
         // the bundled entry via the last-write-wins contract on
         // `ModuleTable::insert` — same behaviour as Rust's
         // user-crate-wins-over-stdlib for `std::` shadowing.
-        let mut parsed: Vec<(String, crate::ast::Module)> =
-            crate::project::stdlib::parsed_stdlib_modules();
+        let mut own: Vec<(String, crate::ast::Module)> = Vec::new();
         for (source, text) in snapshot.iter() {
             if let Ok(m) = crate::parser::parse(text) {
-                parsed.push((
+                own.push((
                     crate::project::module_table::module_path_of(source, src_root),
                     m,
                 ));
             }
         }
+        let mut parsed = stdlib::parsed_stdlib_modules_for(own.iter().map(|o| &o.1));
+        parsed.extend(own);
         let refs: Vec<(String, &crate::ast::Module)> =
             parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
         let mut table = crate::project::module_table::build_module_table(&refs);
@@ -1864,10 +1864,10 @@ fn compile_substrate_objects(
         mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
 
     // Std resolves against std alone, never the project's own names.
-    let _std_scope = substrate_link::std_only_scope();
+    let _std_scope = substrate_link::std_only_scope(closure);
     let mut objs: Vec<PathBuf> = Vec::new();
     for &modname in closure {
-        if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
+        if let Some((_, src)) = crate::project::stdlib::std_sources()
             .iter()
             .find(|(n, _)| *n == modname)
         {

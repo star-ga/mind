@@ -27,7 +27,7 @@ use std::process;
 /// The manifest is exhaustive over `std/*.mind` and its row order is the byte
 /// order of the std blob the frozen `stage1.elf` was minted from; both properties
 /// are gated by `examples/mindc_mind/stdlib_manifest_lint.py`.
-fn frozen_std_seed_modules() -> Vec<&'static str> {
+pub(crate) fn frozen_std_seed_modules() -> Vec<&'static str> {
     const MANIFEST: &str = include_str!("../../examples/mindc_mind/testdata/stdlib_manifest.txt");
     MANIFEST
         .lines()
