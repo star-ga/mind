@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1978 | **Est. tokens:** ~3,913,552
-**Generated:** 2026-11-06 20:37 UTC
+**Files:** 1979 | **Est. tokens:** ~3,917,776
+**Generated:** 2026-11-06 20:47 UTC
 
 ## Token Budget Guide
 
@@ -142,14 +142,14 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 23 | ~77,637 |
+| `src/project/` | 24 | ~80,148 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/qualified_enums/` | 2 | ~2,363 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 5 | ~17,817 |
+| `src/test/` | 5 | ~19,530 |
 | `src/type_checker/` | 20 | ~65,213 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
@@ -1529,6 +1529,7 @@
 ### `src/project/`
 
 - `stdlib.rs` (~4230 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_link_set.rs` (~2511 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
 - `substrate_link.rs` (~4717 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
@@ -1566,9 +1567,9 @@
 ### `src/test/`
 
 - `imports.rs` (~6011 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~6240 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6247 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_import_fns.rs` (~2538 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `std_import_fns.rs` (~4244 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
 
