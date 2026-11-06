@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1994 | **Est. tokens:** ~3,967,700
-**Generated:** 2026-11-06 13:21 UTC
+**Files:** 1995 | **Est. tokens:** ~3,969,329
+**Generated:** 2026-11-06 20:34 UTC
 
 ## Token Budget Guide
 
@@ -157,7 +157,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 45 | ~216,403 |
-| `tests/` | 445 | ~943,935 |
+| `tests/` | 446 | ~945,564 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -2729,6 +2729,7 @@
 - `string_flows_backend_parity.rs` (~4136 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_from_bytes_run.rs` (~664 tok, large) — Copyright 2025 STARGA Inc.
 - `string_ops_backend_parity.rs` (~5537 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_ops_native_r5.rs` (~1629 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `string_runtime_shim_run.rs` (~1027 tok, large) — Copyright 2025 STARGA Inc.
 - `string_slots_backend_parity.rs` (~3295 tok, huge) — Copyright 2026 STARGA Inc.
