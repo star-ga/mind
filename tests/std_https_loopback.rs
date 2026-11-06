@@ -38,7 +38,10 @@
 
 mod common;
 
+// The harness also serves std_https_network_safe.rs: its canned-case `End`
+// variants are never built here.
 #[path = "support/https_loopback_harness.rs"]
+#[allow(dead_code)]
 mod harness;
 
 use harness::IMPORTS;
