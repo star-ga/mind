@@ -164,6 +164,13 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "dns.tcp_connect_host_timeout(p, 9, 80, 100)",
         "tcp_connect_host_timeout",
     ),
+    // The `::` and full-path spellings name the same std function.
+    (
+        "entropy",
+        "std::entropy::entropy_fill(p, 8)",
+        "entropy_fill",
+    ),
+    ("dns", "std.dns.dns_resolve(p, 9)", "dns_resolve"),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -201,6 +208,26 @@ fn mindc(args: &[&str]) -> (bool, String) {
     (out.status.success(), text)
 }
 
+/// Copy the evidence at `src` to `dst` with only its stored determinism label
+/// rewritten from `nondeterministic` to `deterministic` (its length byte too).
+#[cfg(feature = "cross-module-imports")]
+fn forge_deterministic(src: &Path, dst: &Path) {
+    let bytes = std::fs::read(src).expect("read evidence");
+    let marker = b"nondeterministic";
+    let at = bytes
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .expect("stored label");
+    assert!(at > 0 && bytes[at - 1] == marker.len() as u8);
+    let parts: [&[u8]; 4] = [
+        &bytes[..at - 1],
+        &[b"deterministic".len() as u8],
+        b"deterministic",
+        &bytes[at + marker.len()..],
+    ];
+    std::fs::write(dst, parts.concat()).expect("write forged evidence");
+}
+
 /// A program that calls `entropy.entropy_fill` or a `std.dns` resolver must be
 /// treated like one that calls `getrandom` / `getaddrinfo` itself: refused
 /// without `--allow-nondeterministic`, and with it attested `nondeterministic`,
@@ -229,6 +256,13 @@ fn callers_of_std_world_functions_are_refused_and_attested_nondeterministic() {
         assert!(
             !ok && text.contains("determinism:      nondeterministic"),
             "the evidence for a caller of `{call}` passed --require-deterministic\n{text}"
+        );
+        let forged = format!("{ev}.forged");
+        forge_deterministic(Path::new(&ev), Path::new(&forged));
+        let (ok, text) = mindc(&["verify", "--require-deterministic", &forged]);
+        assert!(
+            !ok && text.contains("TAMPERED"),
+            "`{call}` relabelled deterministic was not refused as TAMPERED\n{text}"
         );
         ran += 1;
     }
@@ -490,21 +524,23 @@ fn a_user_function_named_like_a_std_world_fn_is_deterministic() {
     );
     set_main(
         &dir,
-        "import w;\n\n#[deterministic]\npub fn f(a: i64) -> i64 {\n    \
-         w.tcp_connect_host(a, 1, 2)\n}\n",
+        "import w;\n\n#[deterministic]\npub fn f(p: i64) -> i64 {\n    \
+         w.tcp_connect_host(p, 9, 80)\n}\n",
     );
-    let (ok, text) = mindc_in(
-        &dir,
-        &[
-            "main.mind",
-            "--emit-evidence",
-            "x.ev",
-            "--allow-nondeterministic",
-        ],
-    );
+    let legs: [&[&str]; 2] = [&[], &["--allow-nondeterministic"]];
+    for flags in legs {
+        let base: &[&str] = &["main.mind", "--emit-evidence", "x.ev"];
+        let args = [base, flags].concat();
+        let (ok, text) = mindc_in(&dir, &args);
+        assert!(
+            ok && !text.contains("determinism::nondeterministic_in_deterministic"),
+            "#[deterministic] w.tcp_connect_host was refused {flags:?}\n{text}"
+        );
+    }
+    let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "x.ev"]);
     assert!(
-        ok && !text.contains("determinism::nondeterministic_in_deterministic"),
-        "#[deterministic] w.tcp_connect_host was a type error\n{text}"
+        ok && text.contains("determinism:      deterministic"),
+        "#[deterministic] w.tcp_connect_host was not attested deterministic\n{text}"
     );
 
     let dir = common::scratch_dir("determinism_bare_entropy_fill");
@@ -567,9 +603,9 @@ fn an_unlowerable_sibling_world_read_is_refused() {
     );
     let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
     assert!(
-        !ok && text.contains("error[determinism]")
-            && (text.contains("`now_ns()`") || text.contains("`g()`")),
-        "P4b was not refused\n{text}"
+        !ok && text.contains("error[determinism]: `g()`")
+            && text.contains("::g`, in a project module"),
+        "P4b was not refused naming the unclassifiable export\n{text}"
     );
     let (ok, text) = mindc_in(
         &dir,
@@ -592,44 +628,49 @@ fn an_unlowerable_sibling_world_read_is_refused() {
         "P4b plain verify rejected the honest label\n{text}"
     );
 
-    let dir = sibling_project(
-        "p13b",
-        &[
-            (
-                "w.mind",
-                "import ownrng;\n\npub fn g(p: i64) -> i64 {\n    ownrng.k(p)\n}\n",
-            ),
-            (
-                "std/ownrng.mind",
-                "import std.entropy;\n\npub fn k(p: i64) -> i64 {\n    \
-                 entropy.entropy_fill(p, 8)\n}\n",
-            ),
-        ],
-    );
-    let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
-    assert!(
-        !ok && text.contains("error[determinism]") && text.contains("`g()`"),
-        "P13b was not refused naming the unclassifiable export\n{text}"
-    );
-    let (ok, text) = mindc_in(
-        &dir,
-        &[
+    // P13b as the review wrote it (`import std.ownrng`), and the same module
+    // named without its `std.` prefix.
+    let mut ran = 1usize;
+    for (tag, import) in [("p13b", "std.ownrng"), ("p13b_bare", "ownrng")] {
+        let w =
+            format!("import {import};\n\npub fn g(p: i64) -> i64 {{\n    ownrng.k(p) + 1\n}}\n");
+        let dir = sibling_project(
+            tag,
+            &[
+                ("w.mind", w.as_str()),
+                (
+                    "std/ownrng.mind",
+                    "import std.entropy;\n\npub fn k(p: i64) -> i64 {\n    \
+                     entropy.entropy_fill(p, 8)\n}\n",
+                ),
+            ],
+        );
+        let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
+        assert!(
+            !ok && text.contains("error[determinism]: `g()`")
+                && text.contains("::g`, in a project module"),
+            "{tag} was not refused naming the unclassifiable export\n{text}"
+        );
+        let args = [
             "main.mind",
             "--emit-evidence",
             "x.ev",
             "--allow-nondeterministic",
-        ],
-    );
-    assert!(
-        ok,
-        "P13b with --allow-nondeterministic did not emit\n{text}"
-    );
-    let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "x.ev"]);
-    assert!(
-        !ok && text.contains("determinism:      nondeterministic"),
-        "P13b evidence passed --require-deterministic\n{text}"
-    );
-    println!("determinism_veto_control(unlowerable sibling): ran=2 fail=0");
+        ];
+        let (ok, text) = mindc_in(&dir, &args);
+        assert!(
+            ok,
+            "{tag} with --allow-nondeterministic did not emit\n{text}"
+        );
+        let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "x.ev"]);
+        assert!(
+            !ok && text.contains("determinism:      nondeterministic"),
+            "{tag} evidence passed --require-deterministic\n{text}"
+        );
+        ran += 1;
+    }
+    println!("determinism_veto_control(unlowerable sibling): ran={ran} fail=0");
+    assert_eq!(ran, 3, "vacuous run: ran={ran}");
 }
 
 /// Rewriting only the stored determinism label of a sibling world read must
@@ -655,22 +696,10 @@ fn rewriting_the_sibling_label_to_deterministic_fails_verify() {
         ],
     );
     assert!(ok, "sibling now_ns did not emit\n{text}");
-    let bytes = std::fs::read(dir.join("x.ev")).expect("read evidence");
-    let marker = b"nondeterministic";
-    let at = bytes
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .expect("stored label");
-    assert!(at > 0 && bytes[at - 1] == marker.len() as u8);
-    let mut forged = Vec::with_capacity(bytes.len());
-    forged.extend_from_slice(&bytes[..at - 1]);
-    forged.push(b"deterministic".len() as u8);
-    forged.extend_from_slice(b"deterministic");
-    forged.extend_from_slice(&bytes[at + marker.len()..]);
-    std::fs::write(dir.join("y.ev"), &forged).expect("write forged evidence");
+    forge_deterministic(&dir.join("x.ev"), &dir.join("y.ev"));
     let (ok, text) = mindc_in(&dir, &["verify", "--require-deterministic", "y.ev"]);
     assert!(
-        !ok,
+        !ok && text.contains("TAMPERED"),
         "a label rewritten to deterministic passed --require-deterministic\n{text}"
     );
     let (ok, text) = mindc_in(&dir, &["verify", "y.ev"]);

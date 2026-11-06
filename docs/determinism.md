@@ -269,7 +269,8 @@ non-determinism is a **traced, attested opt-in** across three layers:
    that makes it) and labels the artifact `nondeterministic`. A sibling that
    does not lower, or whose export has no body, is refused the same way.
    `std.dns` and `std.entropy` count only when the call's qualifier resolves
-   to that module; a user function of the same bare name stays deterministic.
+   to that module, in any spelling (`dns.f`, `std.dns.f`, `std::dns::f` or an
+   alias); a user function of the same bare name stays deterministic.
 3. **Verify re-derivation (forgery-detected, fail-closed).** The `determinism` field lives in the
    MAP epilogue, outside the `trace_hash` anchor, so on an unsigned artifact it
    would be forgeable. `mindc verify` therefore **re-derives** the mode from the
@@ -280,9 +281,11 @@ non-determinism is a **traced, attested opt-in** across three layers:
    name), it cannot show that function's determinism, so a stored
    `nondeterministic` label stands and is reported. A stored `deterministic` that
    the body contradicts, and any label a self-contained body contradicts, are
-   refused as tampered. When the entry body does not itself contain the world
-   call, the evidence body carries a witness the verifier re-derives, so
-   rewriting only the label cannot make `--require-deterministic` pass.
+   refused as tampered. When the hashed body does not itself show the world
+   read (a sibling call, or a qualified `std.dns` / `std.entropy` call, which
+   lowers to the bare name), the evidence body carries a witness call the
+   verifier re-derives, so rewriting only the label cannot make
+   `--require-deterministic` pass.
    `mindc verify --require-deterministic` fails closed for a
    consumer that requires reproducibility.
 

@@ -9,12 +9,20 @@
 //! `std.dns` or `std.entropy`. A user function of the same bare name is
 //! deterministic. The lowered IR keeps only the bare name (the qualifier lives
 //! on the call span, in `SourceSpelling`), so this module reads the source.
+//!
+//! Every spelling of the qualifier counts: the module name, an alias, the
+//! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
+//! walker of the numerics lint (`type_checker::nerve_walk`), so a call in any
+//! expression position (an array, map or set literal, a field receiver, a
+//! top-level `const`, a closure) is found, and a function-value read of a row
+//! counts as a use.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::ast::{FnDefData, Module, Node, Span};
+use crate::ast::{Literal, Module, Node, Span};
 use crate::ir::{IRModule, Instr};
+use crate::type_checker::nerve_walk;
 
 /// `(module path, public function)` rows. A call matches only both.
 const ROWS: &[(&str, &str)] = &[
@@ -30,51 +38,67 @@ pub fn is_row(module: &str, name: &str) -> bool {
 }
 
 /// Qualifier spellings of one parsed module, and the qualifier recorded for
-/// each desugared call span.
+/// each desugared call or value-read span.
 struct QualMap {
-    /// Qualifier as written (`dns`, an alias, or the dotted path) to the
-    /// module paths it can name. More than one path is fail-closed: a call
-    /// matches when any of them is a world row.
+    /// Qualifier (`dns`, an alias, or the dotted path) to the module paths it
+    /// can name. More than one path is fail-closed: a call matches when any of
+    /// them is a world row.
     by_qual: BTreeMap<String, Vec<String>>,
-    calls: BTreeMap<Span, String>,
+    /// Keyed by span, with `::` written as `.`. Only looked up, never iterated.
+    refs: HashMap<Span, String>,
 }
 
 impl QualMap {
     fn from_module(module: &Module) -> Self {
         let mut by_qual: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut imports = Vec::new();
         for item in &module.items {
-            collect_imports(item, &mut imports);
-        }
-        for node in imports {
-            let Node::Import { path, alias, .. } = node else {
-                continue;
-            };
-            let dotted = path.join(".");
-            let last = path.last().map(String::as_str).unwrap_or("");
-            if let Some(alias) = alias {
-                add_qual(&mut by_qual, alias, &dotted);
+            nerve_walk::walk(item, &mut |node| {
+                let Node::Import { path, alias, .. } = node else {
+                    return;
+                };
+                let dotted = path.join(".");
+                let last = path.last().map(String::as_str).unwrap_or("");
+                if let Some(alias) = alias {
+                    add_qual(&mut by_qual, alias, &dotted);
+                }
                 add_qual(&mut by_qual, last, &dotted);
-            } else {
-                add_qual(&mut by_qual, last, &dotted);
-            }
-            add_qual(&mut by_qual, &dotted, &dotted);
+                add_qual(&mut by_qual, &dotted, &dotted);
+            });
         }
-        let mut calls = BTreeMap::new();
-        for (span, qual) in &module.spelling.call_qualifiers {
-            calls.insert(*span, qual.clone());
-        }
-        Self { by_qual, calls }
+        let refs = module
+            .spelling
+            .call_qualifiers
+            .iter()
+            .map(|(span, qual)| (*span, qual.replace("::", ".")))
+            .collect();
+        Self { by_qual, refs }
     }
 
-    fn call_is_world(&self, span: Span, name: &str) -> bool {
-        let Some(qual) = self.calls.get(&span) else {
+    fn is_world(&self, span: Span, name: &str) -> bool {
+        let Some(qual) = self.refs.get(&span) else {
             return false;
         };
         match self.by_qual.get(qual.as_str()) {
             Some(paths) => paths.iter().any(|path| is_row(path, name)),
             None => is_row(qual, name),
         }
+    }
+
+    /// The first qualified std-world call or function-value read in `node`'s
+    /// subtree, `node` included.
+    fn offender_in(&self, node: &Node) -> Option<String> {
+        let mut found = None;
+        nerve_walk::walk(node, &mut |n| {
+            let (name, span) = match n {
+                Node::Call { callee, span, .. } => (callee, *span),
+                Node::Lit(Literal::Ident(name), span) => (name, *span),
+                _ => return,
+            };
+            if found.is_none() && self.is_world(span, name) {
+                found = Some(name.clone());
+            }
+        });
+        found
     }
 }
 
@@ -88,69 +112,37 @@ fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
     }
 }
 
-fn collect_imports<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
-    if matches!(node, Node::Import { .. }) {
-        out.push(node);
-    }
-    walk(node, true, &mut |child| collect_imports(child, out));
-}
-
-fn collect_fns<'a>(items: &'a [Node], out: &mut Vec<&'a FnDefData>) {
-    for item in items {
-        match item {
-            Node::FnDef(fd, _) => out.push(fd),
-            Node::Block { stmts, .. } => collect_fns(stmts, out),
-            Node::ImplBlock { methods, .. } => collect_fns(methods, out),
-            _ => {}
-        }
-    }
-}
-
-/// The first qualified std-world call in `body`. Nested functions are their
-/// own scan: a caller is not blamed for a callee's body. The project walker
-/// reaches that callee on its own.
-fn note_call(node: &Node, map: &QualMap, found: &mut Option<String>) {
-    if found.is_some() {
-        return;
-    }
-    if let Node::Call { callee, span, .. } = node {
-        if map.call_is_world(*span, callee) {
-            *found = Some(callee.clone());
-        }
-    }
-}
-
-fn body_offender(body: &[Node], map: &QualMap) -> Option<String> {
-    let mut found = None;
-    for stmt in body {
-        // `walk` visits children, not the node it is given.
-        note_call(stmt, map, &mut found);
-        walk(stmt, false, &mut |node| note_call(node, map, &mut found));
-    }
-    found
-}
-
-/// The first qualified std-world call in any function of `source`.
-/// `None` when the source does not parse or holds no such call. Whole-module,
+/// The first qualified std-world use anywhere in `source`: every function at
+/// any depth, impl methods, module blocks and top-level items. Whole-module,
 /// matching the entry IR scan: an uncalled function still refuses the module.
+/// `None` when the source does not parse; the CLI calls this only after the
+/// same parser accepted the entry.
 pub fn module_offender(source: &str) -> Option<String> {
     let module = crate::parser::parse(source).ok()?;
     let map = QualMap::from_module(&module);
-    let mut fns = Vec::new();
-    collect_fns(&module.items, &mut fns);
-    fns.iter().find_map(|fd| body_offender(&fd.body, &map))
+    module.items.iter().find_map(|item| map.offender_in(item))
 }
 
-/// The qualified std-world call made directly by `func` in `source`.
-/// `None` when `func` is absent, the source does not parse, or that function's
-/// own body makes no such call. Other functions of the module do not count.
+/// The qualified std-world use in the body of `func` in `source`, nested
+/// closures and functions included. Every function of that name counts (a
+/// free function and a method alike), so a same-named sibling cannot hide one.
+/// Other functions of the module do not count. `None` when `func` is absent,
+/// the source does not parse, or no such body makes such a use.
 pub fn reached_offender(source: &str, func: &str) -> Option<String> {
     let module = crate::parser::parse(source).ok()?;
     let map = QualMap::from_module(&module);
-    let mut fns = Vec::new();
-    collect_fns(&module.items, &mut fns);
-    let fd = fns.iter().find(|fd| fd.name == func)?;
-    body_offender(&fd.body, &map)
+    let mut found = None;
+    for item in &module.items {
+        nerve_walk::walk(item, &mut |node| {
+            if found.is_none()
+                && let Node::FnDef(fd, _) = node
+                && fd.name == func
+            {
+                found = map.offender_in(node);
+            }
+        });
+    }
+    found
 }
 
 thread_local! {
@@ -182,7 +174,7 @@ pub fn call_is_world(span: Span, name: &str) -> bool {
     INSTALLED.with(|slot| {
         slot.borrow()
             .as_ref()
-            .is_some_and(|map| map.call_is_world(span, name))
+            .is_some_and(|map| map.is_world(span, name))
     })
 }
 
@@ -208,211 +200,143 @@ pub fn stamp_unheld_world(module: &IRModule) -> IRModule {
     cloned
 }
 
-/// `enter_fns` collects imports inside functions. A body scan passes false so
-/// a nested function is classified on its own.
-fn walk<'a>(node: &'a Node, enter_fns: bool, f: &mut impl FnMut(&'a Node)) {
-    let descend_fn = enter_fns;
-    match node {
-        Node::FnDef(fd, _) => {
-            if descend_fn {
-                for stmt in &fd.body {
-                    f(stmt);
-                    walk(stmt, enter_fns, f);
-                }
-            }
-            return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `module_offender` of a fixture that must parse, so a `None` is never a
+    /// parse failure in disguise.
+    fn offender(src: &str) -> Option<String> {
+        assert!(
+            crate::parser::parse(src).is_ok(),
+            "fixture does not parse:\n{src}"
+        );
+        module_offender(src)
+    }
+
+    /// `(import, call, the row it names)`. `std::entropy::` is the `::` form
+    /// a qualifier compared as written did not resolve.
+    const SPELLINGS: &[(&str, &str, &str)] = &[
+        (
+            "import std.entropy;",
+            "entropy.entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.entropy;",
+            "std.entropy.entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.entropy;",
+            "entropy::entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.entropy;",
+            "std::entropy::entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.entropy as e;",
+            "e.entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.entropy as e;",
+            "e::entropy_fill(p, 8)",
+            "entropy_fill",
+        ),
+        (
+            "import std.dns;",
+            "std::dns::dns_resolve(p, 9)",
+            "dns_resolve",
+        ),
+        (
+            "import std.dns;",
+            "dns.tcp_connect_host(p, 9, 80)",
+            "tcp_connect_host",
+        ),
+        (
+            "import std.dns;",
+            "dns::tcp_connect_host_timeout(p, 9, 80, 100)",
+            "tcp_connect_host_timeout",
+        ),
+    ];
+
+    #[test]
+    fn every_qualifier_spelling_is_a_world_use() {
+        for (import, call, row) in SPELLINGS {
+            let src = format!("{import}\n\npub fn f(p: i64) -> i64 {{\n    {call}\n}}\n");
+            assert_eq!(offender(&src).as_deref(), Some(*row), "{call}");
         }
-        Node::ImplBlock { methods, .. } => {
-            if descend_fn {
-                for method in methods {
-                    f(method);
-                    walk(method, enter_fns, f);
-                }
-            }
-            return;
+    }
+
+    /// A same-named user function is not a world use, bare or qualified by a
+    /// project module. The std calls are the positive control, the pure
+    /// `dns_status` the negative one.
+    #[test]
+    fn a_user_function_named_like_a_row_is_not_a_world_use() {
+        let bare = "fn entropy_fill(p: i64, n: i64) -> i64 {\n    p + n\n}\n\n\
+                    pub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(bare), None);
+        let project = "import w;\n\npub fn f(p: i64) -> i64 {\n    \
+                       w.dns_resolve(p, 9) + w.tcp_connect_host(p, 9, 80)\n}\n";
+        assert_eq!(offender(project), None);
+        let std = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(std).as_deref(), Some("dns_resolve"));
+        let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_status(p)\n}\n";
+        assert_eq!(offender(pure), None);
+    }
+
+    /// `Q` is the qualifier. Each position holds a `std.entropy` use (a world
+    /// use) and a project-module use of the same name (not one). The array,
+    /// map, set, field-receiver, top-level `const` and value-read positions
+    /// were outside the hand-written walker this scan replaced.
+    const POSITIONS: &[&str] = &[
+        "pub fn f(p: i64) -> i64 {\n    let a = [Q.entropy_fill(p, 8), 1];\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let m = { 1: Q.entropy_fill(p, 8) };\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let s = { Q.entropy_fill(p, 8), 1 };\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    Q.entropy_fill(p, 8).lo\n}\n",
+        "const K: i64 = Q.entropy_fill(0, 8)\n\npub fn f(p: i64) -> i64 {\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let h = Q.entropy_fill;\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let h = |x: i64| -> i64 { Q.entropy_fill(x, 8) };\n    p\n}\n",
+        "module m {\n    pub fn f(p: i64) -> i64 {\n        Q.entropy_fill(p, 8)\n    }\n}\n",
+    ];
+
+    #[test]
+    fn a_world_use_in_any_position_is_found() {
+        for position in POSITIONS {
+            let body = format!("import std.entropy;\nimport w;\n\n{position}");
+            let world = body.replace("Q.", "entropy.");
+            assert_eq!(offender(&world).as_deref(), Some("entropy_fill"), "{world}");
+            let user = body.replace("Q.", "w.");
+            assert_eq!(offender(&user), None, "{user}");
         }
-        Node::Closure(data, _) => {
-            for stmt in &data.body {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        Node::Call { args, .. } | Node::Print { args, .. } => {
-            for arg in args {
-                f(arg);
-                walk(arg, enter_fns, f);
-            }
-        }
-        Node::MethodCall { receiver, args, .. } => {
-            f(receiver);
-            walk(receiver, enter_fns, f);
-            for arg in args {
-                f(arg);
-                walk(arg, enter_fns, f);
-            }
-        }
-        Node::Binary { left, right, .. } | Node::Logical { left, right, .. } => {
-            f(left);
-            walk(left, enter_fns, f);
-            f(right);
-            walk(right, enter_fns, f);
-        }
-        #[cfg(feature = "std-surface")]
-        Node::Bitwise { left, right, .. } => {
-            f(left);
-            walk(left, enter_fns, f);
-            f(right);
-            walk(right, enter_fns, f);
-        }
-        Node::Paren(inner, _)
-        | Node::Return {
-            value: Some(inner), ..
-        }
-        | Node::As { expr: inner, .. }
-        | Node::Assert { cond: inner, .. }
-        | Node::Try { inner, .. }
-        | Node::Ref { inner, .. }
-        | Node::Neg { operand: inner, .. }
-        | Node::Not { operand: inner, .. }
-        | Node::BitNot { operand: inner, .. } => {
-            f(inner);
-            walk(inner, enter_fns, f);
-        }
-        Node::Tuple { elements, .. } => {
-            for elem in elements {
-                f(elem);
-                walk(elem, enter_fns, f);
-            }
-        }
-        Node::Let { value, .. } | Node::LetTuple { value, .. } | Node::Assign { value, .. } => {
-            f(value);
-            walk(value, enter_fns, f);
-        }
-        Node::If {
-            cond,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            f(cond);
-            walk(cond, enter_fns, f);
-            for stmt in then_branch {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-            if let Some(else_branch) = else_branch {
-                for stmt in else_branch {
-                    f(stmt);
-                    walk(stmt, enter_fns, f);
-                }
-            }
-        }
-        Node::Block { stmts, .. } => {
-            for stmt in stmts {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        Node::For {
-            start, end, body, ..
-        } => {
-            f(start);
-            walk(start, enter_fns, f);
-            f(end);
-            walk(end, enter_fns, f);
-            for stmt in body {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        Node::ForEach {
-            collection, body, ..
-        } => {
-            f(collection);
-            walk(collection, enter_fns, f);
-            for stmt in body {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        #[cfg(feature = "std-surface")]
-        Node::While { cond, body, .. } => {
-            f(cond);
-            walk(cond, enter_fns, f);
-            for stmt in body {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        #[cfg(feature = "std-surface")]
-        Node::Region { body, .. } => {
-            for stmt in body {
-                f(stmt);
-                walk(stmt, enter_fns, f);
-            }
-        }
-        Node::Match {
-            scrutinee, arms, ..
-        } => {
-            f(scrutinee);
-            walk(scrutinee, enter_fns, f);
-            for arm in arms {
-                if let Some(guard) = &arm.guard {
-                    f(guard);
-                    walk(guard, enter_fns, f);
-                }
-                f(&arm.body);
-                walk(&arm.body, enter_fns, f);
-            }
-        }
-        Node::IndexAccess {
-            receiver, index, ..
-        } => {
-            f(receiver);
-            walk(receiver, enter_fns, f);
-            f(index);
-            walk(index, enter_fns, f);
-        }
-        Node::SliceRange {
-            receiver,
-            start,
-            end,
-            ..
-        } => {
-            f(receiver);
-            walk(receiver, enter_fns, f);
-            f(start);
-            walk(start, enter_fns, f);
-            f(end);
-            walk(end, enter_fns, f);
-        }
-        Node::IndexAssign {
-            receiver,
-            index,
-            value,
-            ..
-        } => {
-            f(receiver);
-            walk(receiver, enter_fns, f);
-            f(index);
-            walk(index, enter_fns, f);
-            f(value);
-            walk(value, enter_fns, f);
-        }
-        Node::FieldAssign {
-            receiver, value, ..
-        } => {
-            f(receiver);
-            walk(receiver, enter_fns, f);
-            f(value);
-            walk(value, enter_fns, f);
-        }
-        Node::StructLit { fields, .. } => {
-            for field in fields {
-                f(&field.value);
-                walk(&field.value, enter_fns, f);
-            }
-        }
-        _ => {}
+    }
+
+    /// A sibling function is judged by its own body only, nested uses
+    /// included.
+    #[test]
+    fn reached_offender_reads_only_the_named_function() {
+        let src = "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    p + 1\n}\n\n\
+                   pub fn h(p: i64) -> i64 {\n    let a = [entropy.entropy_fill(p, 8)];\n    p\n}\n";
+        assert_eq!(reached_offender(src, "g"), None);
+        assert_eq!(reached_offender(src, "h").as_deref(), Some("entropy_fill"));
+        assert_eq!(reached_offender(src, "absent"), None);
+    }
+
+    /// The witness turns a deterministic body nondeterministic for the
+    /// classifier `mindc verify` re-derives with, and leaves the input alone.
+    #[test]
+    fn the_stamp_is_a_witness_the_verifier_rederives() {
+        let opts = crate::pipeline::CompileOptions::default();
+        let products =
+            crate::pipeline::compile_source("pub fn f(p: i64) -> i64 {\n    p + 1\n}\n", &opts)
+                .expect("compile");
+        assert!(crate::ir::ir_declares_deterministic(&products.ir));
+        let stamped = stamp_unheld_world(&products.ir);
+        assert!(!crate::ir::ir_declares_deterministic(&stamped));
+        assert!(crate::ir::ir_declares_deterministic(&products.ir));
     }
 }
