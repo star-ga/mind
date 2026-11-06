@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2135 | **Est. tokens:** ~4,037,622
-**Generated:** 2026-11-06 20:43 UTC
+**Files:** 2136 | **Est. tokens:** ~4,039,378
+**Generated:** 2026-11-06 21:44 UTC
 
 ## Token Budget Guide
 
@@ -98,7 +98,7 @@
 | `.github/workflows/` | 9 | ~17,042 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~128,838 |
+| `scripts/` | 34 | ~130,594 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -1098,7 +1098,7 @@
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1752 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
-- `check_gate_wiring.py` (~9412 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9480 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~8502 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -1123,7 +1123,7 @@
 - `operand_visitor_parity_lint.py` (~1198 tok, large) — Fail closed when the two IR operand visitors drift apart.
 - `pqc_hybrid_ci.sh` (~663 tok, large) — Required-CI execution gate for the existing MIC3 two-leg PQC-hybrid controls.
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
-- `preflight.sh` (~9404 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~9490 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2138 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3250 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
@@ -1138,6 +1138,7 @@
 - `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
 - `test_no_ai_attribution.py` (~7235 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
+- `test_stdlib_manifest_lint.py` (~1602 tok, huge) — Regression test: examples/mindc_mind/stdlib_manifest_lint.py must actually
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4926 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
 ### `sdk/ts/mic-map/dist/`

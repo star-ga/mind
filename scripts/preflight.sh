@@ -201,6 +201,11 @@ else
   bad "examples/mindc_mind/stdlib_manifest_lint.py MISSING — CI runs it; preflight cannot verify it"
 fi
 
+# The lint's own mutation proof: a damaged copy of the REAL manifest (duplicated or
+# wrong count header) run through the lint's real entry point must exit non-zero.
+python3 scripts/run_gate.py scripts/test_stdlib_manifest_lint.py \
+  || bad "std manifest lint self-test FAILED — the lint no longer judges the real manifest's count headers"
+
 step "no-AI-attribution FILE gate  [docs-claims.yml — no model/tool credit in TRACKED FILES]"
 # The sibling of the message gate below, and it was MISSING here. .githooks/pre-commit
 # runs it, but a hook is opt-in (core.hooksPath must be set) and preflight is what

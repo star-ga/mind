@@ -116,7 +116,10 @@ GATED_EVENTS = ("push", "pull_request")
 # each to pass once, and requires the final tally, so cfg-out tests cannot report
 # a false zero-pass success. It gates the shipped binary separately from the
 # library gate. Both tracked controls are retained in the ratchet.
-HARNESS_CEILING = 265  # 264 -> 265: .github/scripts/pr_review.py, the PR review and leak checker.
+# 265 -> 266 adds scripts/test_stdlib_manifest_lint.py: it drives the std-manifest lint's REAL
+# entry point against a damaged copy of the real manifest as a subprocess, so it cannot be
+# folded behind a `--self-test` flag in the lint it is meant to mutate.
+HARNESS_CEILING = 266  # 265 -> 266: scripts/test_stdlib_manifest_lint.py, the std-manifest lint's mutation proof.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

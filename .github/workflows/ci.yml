@@ -992,6 +992,17 @@ jobs:
         run: python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py
         working-directory: ${{ github.workspace }}
 
+      - name: std manifest lint must judge the real manifest's count headers
+        # scripts/test_stdlib_manifest_lint.py runs the lint's REAL entry point
+        # against a damaged copy of the real manifest (a duplicated header, a wrong
+        # count) and asserts a non-zero exit with the count-header message. Without
+        # it, deleting the one line in stdlib_manifest_lint.py that feeds the real
+        # manifest to count_header_errors left the gate green: the lint's own
+        # hostile-variant probes call that function directly and never noticed.
+        # Non-vacuity: its first case is an undamaged copy that must stay GREEN.
+        run: python3 scripts/run_gate.py scripts/test_stdlib_manifest_lint.py
+        working-directory: ${{ github.workspace }}
+
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
