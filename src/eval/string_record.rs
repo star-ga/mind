@@ -64,11 +64,11 @@ fn record_fields(rec: i64) -> Result<[i64; 3], EvalError> {
 fn string_struct([addr, len, cap]: [i64; 3]) -> Value {
     Value::Struct {
         name: "String".to_string(),
-        fields: vec![
+        fields: super::value::Record::new(vec![
             ("addr".to_string(), Value::Int(addr)),
             ("len".to_string(), Value::Int(len)),
             ("cap".to_string(), Value::Int(cap)),
-        ],
+        ]),
     }
 }
 
@@ -105,8 +105,8 @@ fn operand_bytes(value: &Value) -> Result<Vec<u8>, EvalError> {
         Value::Str(text) => return Ok(text.as_bytes().to_vec()),
         Value::Int(rec) => (load_i64(*rec)?, load_i64(rec + 8)?),
         Value::Struct { name, fields } if name == "String" => {
-            let field = |wanted: &str| match fields.iter().find(|(f, _)| f == wanted) {
-                Some((_, Value::Int(n))) => Ok(*n),
+            let field = |wanted: &str| match fields.get(wanted) {
+                Some(Value::Int(n)) => Ok(n),
                 _ => Err(EvalError::UnsupportedMsg(format!(
                     "__mind_string_eq: `String` value has no integer field `{wanted}`"
                 ))),

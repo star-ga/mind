@@ -336,9 +336,11 @@ impl Decls {
         // Imported and bundled std callees, after local ones, as lowering
         // registers `IRModule::fn_signatures`: a local definition shadows them.
         #[cfg(feature = "cross-module-imports")]
-        let imported = crate::type_checker::cm_all_imported_fn_signatures();
+        let imported = crate::type_checker::cm_all_imported_fn_signatures(module);
         #[cfg(not(feature = "cross-module-imports"))]
-        let imported = crate::type_checker::bundled_std_fn_signatures().clone();
+        let imported: Vec<_> = crate::type_checker::bundled_std_fn_signatures(module)
+            .cloned()
+            .collect();
         // The bundled std after them, whatever the project's module table
         // makes visible: a project build resolves `string_len` or `vec_push`
         // with no `use`, and `mindc check` of the same file reads the bundled
@@ -346,11 +348,9 @@ impl Decls {
         // declaration with no result type may return anything: its body is
         // not visible here.
         #[cfg(feature = "cross-module-imports")]
-        let imported = imported.into_iter().chain(
-            crate::type_checker::bundled_std_fn_signatures()
-                .iter()
-                .cloned(),
-        );
+        let imported = imported
+            .into_iter()
+            .chain(crate::type_checker::bundled_std_fn_signatures(module).cloned());
         for (name, params, ret) in imported {
             let ret = ret.map_or(Ret::Invisible, |ty| Ret::of(Some(&ty), &[]));
             decls.opaque_params.entry(name.clone()).or_insert(params);
