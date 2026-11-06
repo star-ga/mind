@@ -72,7 +72,7 @@ def ask_model(system: str, user: str) -> str:
         import tempfile
         # No tools and no checkout: a tool call would use the single allowed turn ("Reached max turns").
         run = subprocess.run(
-            ["claude", "-p", "--model", "claude-sonnet-5-5", "--max-turns", "1", "--tools", "", "--output-format", "text",
+            ["claude", "-p", "--model", "claude-haiku-5-5", "--max-turns", "1", "--tools", "", "--output-format", "text",
              "--append-system-prompt", system],
             input=user, capture_output=True, text=True, timeout=900, check=False, env=env, cwd=tempfile.mkdtemp(),
         )
