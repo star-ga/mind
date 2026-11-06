@@ -245,6 +245,7 @@ pub fn rsa_pss_verify_sha256(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig
 // 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
 // ---------------------------------------------------------------------------
 
+#[protection]
 pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
     // Geometry guards: modulus 128 (RSA-1024) or 256 (RSA-2048) octets with
     // the top bit set, so modBits = 8*n_len and emBits = 8*n_len - 1.

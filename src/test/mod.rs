@@ -54,6 +54,8 @@ use crate::parser;
 
 mod imports;
 mod runner;
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+mod std_import_fns;
 mod top_level;
 use imports::{EvalSupport, prepare_eval_support};
 use runner::execute_tests;
@@ -520,7 +522,7 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     // table is scoped to that eval and is torn down when it returns.
     let mut synthetic_items: Vec<Node> = Vec::new();
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-    synthetic_items.extend(resolve_std_import_fns(
+    synthetic_items.extend(std_import_fns::resolve_std_import_fns(
         &module,
         support.map(|s| &s.project_std),
     )?);
@@ -597,87 +599,6 @@ fn grade_returned_value(
         }
         _ => Ok(()),
     }
-}
-
-/// Resolve `import std.X` / `use std::X` declarations of a test module (and,
-/// transitively, of the modules they import) against the stdlib sources baked
-/// into the binary (RFC 0005 Phase C, `project::stdlib`), returning the
-/// imported modules' `FnDef` items so the interpreter's fn table can dispatch
-/// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
-/// their module-level `Const` items, so a fn body that reads a module const
-/// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
-/// table.
-///
-/// Deterministic: imports are processed in source-encounter order (FIFO
-/// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
-/// contributes nothing here, nor does a `std.<name>` the project supplies
-/// (`project_std`); any other `std` import that names no shipped module is
-/// refused at the import, as `mindc check` refuses it, and so is a `std`
-/// import inside a body (not a module item); a bundled module that fails to
-/// parse is a fail-loud error.
-#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
-fn resolve_std_import_fns(
-    module: &crate::ast::Module,
-    project_std: Option<&std::collections::BTreeSet<String>>,
-) -> Result<Vec<Node>, String> {
-    use std::collections::VecDeque;
-
-    let import_key = |item: &Node| -> Result<Option<String>, String> {
-        if let Node::Import { path, .. } = item {
-            if project_std.is_some_and(|own| own.contains(&path.join("."))) {
-                return Ok(None);
-            }
-            if let Some(refusal) = crate::project::stdlib::unknown_std_import(path) {
-                return Err(format!("error[type-check][E2002]: {refusal}"));
-            }
-            if path.len() == 2 && path[0] == "std" {
-                return Ok(Some(path.join(".")));
-            }
-        }
-        Ok(None)
-    };
-
-    // A `std` import inside a body binds nothing; `mindc check` refuses it at
-    // the import, and so does this runner, before any test body runs.
-    if let Some((path, _)) = crate::project::stdlib::misplaced_std_imports(module).first() {
-        let supplied = project_std.is_some_and(|own| own.contains(&path.join(".")));
-        let refusal = crate::project::stdlib::unknown_std_import(path)
-            .filter(|_| !supplied)
-            .unwrap_or_else(|| crate::project::stdlib::misplaced_std_import(path));
-        return Err(format!("error[type-check][E2002]: {refusal}"));
-    }
-
-    let mut out: Vec<Node> = Vec::new();
-    let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: VecDeque<String> = VecDeque::new();
-    for item in top_level::refs(&module.items) {
-        queue.extend(import_key(item)?);
-    }
-    while let Some(key) = queue.pop_front() {
-        if !visited.insert(key.clone()) {
-            continue;
-        }
-        let Some(src) = crate::project::stdlib::std_source(&key) else {
-            continue;
-        };
-        let imported = parser::parse(src).map_err(|errs| {
-            format!(
-                "failed to parse bundled std module '{key}': {}",
-                errs.iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )
-        })?;
-        for item in top_level::refs(&imported.items) {
-            match item {
-                Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
-                Node::Import { .. } => queue.extend(import_key(item)?),
-                _ => {}
-            }
-        }
-    }
-    Ok(out)
 }
 
 /// Extract a human-readable string from a panic payload.

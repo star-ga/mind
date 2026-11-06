@@ -364,6 +364,7 @@ pub fn der_uint_ok(buf: i64, off: i64, len: i64) -> i64 {
 // rsaEncryption (no RSA key), 1 when the SPKI or the RSA key is malformed.
 // out4 is all zero unless the result is 0.
 // ---------------------------------------------------------------------------
+#[protection]
 pub fn x509_rsa_spki(buf: i64, pos: i64, limit: i64, out4: i64) -> i64 {
     __mind_store_i64(out4 + 0, 0);
     __mind_store_i64(out4 + 8, 0);

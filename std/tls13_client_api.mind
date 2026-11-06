@@ -563,6 +563,7 @@ pub fn tls13c_parse_ee(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
     0
 }
 
+#[protection]
 pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 {
     if msg_len < 4 {
         return tls13ci_err_hs();

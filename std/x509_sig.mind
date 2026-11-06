@@ -21,6 +21,7 @@ import std.x509_bignum;
 // PS length = em_len - 3 - 19 - 32 = em_len - 54 bytes.
 // ---------------------------------------------------------------------------
 
+#[protection]
 pub fn pkcs1_v15_check(em: i64, msg: i64, msg_len: i64) -> i64 {
     pkcs1_v15_check_len(em, 256, msg, msg_len)
 }
@@ -423,6 +424,7 @@ pub fn x509_ecdsa_sig_parse48(cert: i64, sig_off: i64, sig_len: i64, out_r: i64,
 // tbsCertificate under the issuer's SPKI.  Returns 0 ok /
 // -2 unsupported algorithm / -3 bad signature / -14 key-type mismatch.
 // ---------------------------------------------------------------------------
+#[protection]
 pub fn x509_verify_cert_sig(crec: i64, prec: i64) -> i64 {
     let cbase: i64 = __mind_load_i64(crec + 0);
     let pbase: i64 = __mind_load_i64(prec + 0);
