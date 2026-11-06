@@ -36,7 +36,7 @@ pub use crate::opt::ir_canonical::canonicalize_module;
 pub use canonical_verify::{CanonicalMetadataError, verify_canonical_metadata};
 pub use evidence::{
     ir_declares_deterministic, ir_first_hard_nondeterministic_call, ir_first_nondeterministic_call,
-    ir_trace_hash,
+    ir_trace_hash, reach,
 };
 pub use fp_mode::{FpMode, fp_contract_mode};
 pub use print::format_ir_module;

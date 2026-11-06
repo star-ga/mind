@@ -6171,12 +6171,15 @@ fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
 /// is consulted BEFORE the `__mind_*` prefix rule below, because that blanket
 /// rule is precisely what admitted the registered `__mind_nerve_rt_monotonic_ns`
 /// / `_os_entropy` / `_read_stdin` / `_getenv` calls as deterministic.
-fn implicit_external_determinism(callee: &str) -> Option<bool> {
+fn implicit_external_determinism(callee: &str, span: AstSpan) -> Option<bool> {
     // A world-reading intrinsic or bare builtin is flagged regardless of any
     // dtype suffix or `__mind_` prefix. Matches the bare name or the last
     // dotted/`::`-qualified path segment, so a qualified call
-    // (`std.rand.random`, `rng::rand_uniform`) is caught too.
-    if crate::intrinsics::callee_is_nondeterministic(callee) {
+    // (`std.rand.random`, `rng::rand_uniform`) is caught too. A `std.dns` /
+    // `std.entropy` world call is flagged from its qualifier, not its bare name.
+    if crate::std_qualified::call_is_world(span, callee)
+        || crate::intrinsics::callee_is_nondeterministic(callee)
+    {
         return Some(false);
     }
     // deferred: this check is NAME-only, so it does not see the CALL-SITE half of
@@ -6247,6 +6250,7 @@ fn check_determinism_annotations(
     file: Option<&str>,
     errs: &mut Vec<Pretty>,
 ) {
+    let _std_world = crate::std_qualified::Guard::install(module);
     // Flatten all FnDefs (top-level + module-block-nested) once.
     let mut fndefs: Vec<&Node> = Vec::new();
     collect_module_fndefs(&module.items, &mut fndefs);
@@ -6416,18 +6420,19 @@ fn check_determinism_annotations(
                         (true, "annotate it `#[deterministic]` or remove the call")
                     }
                     Some(_) => (false, ""),
-                    None => match implicit_external_determinism(&callee) {
+                    None => match implicit_external_determinism(&callee, cspan) {
                         Some(false) => {
                             // PRNG / wall-clock / IO builtins get a precise hint;
                             // float reductions keep the q16-variant guidance.
-                            let hint =
-                                if crate::intrinsics::callee_is_nondeterministic(callee.as_str()) {
-                                    "it is nondeterministic (PRNG / wall-clock / IO) — \
+                            let hint = if crate::std_qualified::call_is_world(cspan, &callee)
+                                || crate::intrinsics::callee_is_nondeterministic(callee.as_str())
+                            {
+                                "it is nondeterministic (PRNG / wall-clock / IO) — \
                                  a `#[deterministic]` fn cannot draw entropy or read the world"
-                                } else {
-                                    "its floating-point reductions are not deterministic — \
+                            } else {
+                                "its floating-point reductions are not deterministic — \
                                  use the q16 variant or remove the call"
-                                };
+                            };
                             (true, hint)
                         }
                         _ => (false, ""),

@@ -91,7 +91,6 @@ const SHARED_TEMP_BACKLOG: &[(&str, usize)] = &[
     ("continue_in_match_arm_run.rs", 1),
     ("cross_module_cdylib_compose.rs", 1),
     ("cross_module_enum_run.rs", 1),
-    ("determinism_veto_control.rs", 1),
     ("digit_separator_run.rs", 1),
     ("dot_enum_variant_run.rs", 1),
     ("enum_match_collision_run.rs", 1),
