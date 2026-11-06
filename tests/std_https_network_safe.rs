@@ -527,11 +527,17 @@ fn record_types(mut bytes: &[u8]) -> Vec<u8> {
     types
 }
 
+/// What the client sent to [`replay_one`]: its ClientHello record and every
+/// byte after it.
+struct Replayed {
+    hello: Vec<u8>,
+    after: Vec<u8>,
+}
+
 /// A one-connection server that reads the client's first record (its
 /// ClientHello), answers with all of `server_bytes` in one write, and then
-/// reads what the client sends until it closes. The handle yields
-/// (ClientHello, the client's bytes after it).
-fn replay_one(server_bytes: Vec<u8>) -> (u16, JoinHandle<(Vec<u8>, Vec<u8>)>) {
+/// reads what the client sends until it closes.
+fn replay_one(server_bytes: Vec<u8>) -> (u16, JoinHandle<Replayed>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind the replayer");
     let port = listener.local_addr().expect("replayer address").port();
     let handle = std::thread::spawn(move || {
@@ -549,7 +555,7 @@ fn replay_one(server_bytes: Vec<u8>) -> (u16, JoinHandle<(Vec<u8>, Vec<u8>)>) {
             .expect("send the recorded server bytes");
         let mut after = Vec::new();
         let _ = client.read_to_end(&mut after);
-        (hello, after)
+        Replayed { hello, after }
     });
     (port, handle)
 }
@@ -572,11 +578,11 @@ fn a_response_before_any_request_byte_is_refused_before_send() {
     // Replay every server byte at once after the same ClientHello: the
     // response now arrives with the server's flight, before the client has
     // written its Finished or any request byte.
-    let (eport, replayer) = replay_one(rec.server.clone());
+    let (eport, replayer) = replay_one(rec.server);
     let got = st.get(&url(eport));
-    let (hello, after) = replayer.join().expect("the replayer");
+    let sent = replayer.join().expect("the replayer");
     assert_eq!(
-        hello,
+        sent.hello,
         first_record(&rec.client),
         "the replayed flight answers the recorded ClientHello only if the \
          client's entropy is fixed"
@@ -588,9 +594,9 @@ fn a_response_before_any_request_byte_is_refused_before_send() {
         BEFORE_SEND,
     );
     assert!(
-        !record_types(&after).contains(&23),
+        !record_types(&sent.after).contains(&23),
         "the client wrote application data (its Finished or the request) \
          after the early response: {:?}",
-        record_types(&after)
+        record_types(&sent.after)
     );
 }
