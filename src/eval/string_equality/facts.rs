@@ -581,8 +581,11 @@ impl Decls {
             return true;
         }
         // A colliding enum is stored under its owner (`crate.table::Table::Raw`).
-        // That spelling is still an enum value, not a string.
-        if crate::ir::with_global_enums(|g| g.variant_tags.contains_key(name)) {
+        // That spelling is still an enum value, not a string. After the
+        // project rebuild the tags live on the qualified registry.
+        if crate::ir::with_global_enums(|g| {
+            g.variant_tags.contains_key(name) || g.qualified.variant_tags.contains_key(name)
+        }) {
             return true;
         }
         if let Some((head, _)) = name.rsplit_once("::") {
