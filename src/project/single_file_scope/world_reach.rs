@@ -21,10 +21,12 @@
 //! Precision: a function is classified by its own body, so a sibling that holds
 //! one world-reading function does not taint a caller of its pure functions.
 //! Conservative where it cannot see: a callee that matches the exports of two
-//! imported modules is followed into both, and a reached module that does not
-//! lower (or holds no body for the export) counts as nondeterministic for the
-//! attestation. The veto keeps its HARD-only scope, as for an unclassified
-//! `extern "C"` callee: an unknown is not refused.
+//! imported modules is followed into both. A qualified call into `std.dns` or
+//! `std.entropy` is read from the sibling source, because the lowered body
+//! holds only the bare name. A reached module that does not lower, or an
+//! export that has no body, is refused and labelled nondeterministic: the
+//! program is not shipped on an unclassified sibling. An unclassified
+//! `extern "C"` callee stays a different path and is still not a hard veto.
 //!
 //! shortcut: a module the project supplies under a `std.` path is not followed
 //! (the capture records local imports only); upgrade when such a module can be
@@ -87,15 +89,41 @@ pub fn sibling_world_reach(
             .entry(owner.clone())
             .or_insert_with(|| lower(scope, &owner, target));
         let via = format!("{owner}::{name}");
+        let ast_offender = scope
+            .sources
+            .iter()
+            .find(|source| source.module_path == owner)
+            .and_then(|source| crate::std_qualified::reached_offender(&source.source, &name));
         let Some(reach) = fns.as_ref().and_then(|fns| fns.get(&name)) else {
-            if out.taint.is_none() {
-                out.taint = Some(SiblingReach {
-                    offender: name.clone(),
-                    via,
+            // No lowered body. Refuse and label, even when the source shows no
+            // qualified std call: an unclassifiable sibling is not shipped.
+            // The two assignments are separate so each one is load-bearing.
+            let offender = ast_offender.unwrap_or_else(|| name.clone());
+            if out.hard.is_none() {
+                out.hard = Some(SiblingReach {
+                    offender: offender.clone(),
+                    via: via.clone(),
                 });
+            }
+            if out.taint.is_none() {
+                out.taint = Some(SiblingReach { offender, via });
             }
             continue;
         };
+        if let Some(offender) = ast_offender {
+            if out.hard.is_none() {
+                out.hard = Some(SiblingReach {
+                    offender: offender.clone(),
+                    via: via.clone(),
+                });
+            }
+            if out.taint.is_none() {
+                out.taint = Some(SiblingReach {
+                    offender,
+                    via: via.clone(),
+                });
+            }
+        }
         let found = |offender: &String| SiblingReach {
             offender: offender.clone(),
             via: via.clone(),

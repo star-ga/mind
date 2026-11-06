@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1984 | **Est. tokens:** ~3,932,463
-**Generated:** 2026-11-06 09:38 UTC
+**Files:** 1985 | **Est. tokens:** ~3,938,260
+**Generated:** 2026-11-06 19:30 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~114,509 |
+| `docs/` | 40 | ~114,620 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -109,8 +109,8 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 12 | ~54,277 |
-| `src/ast/` | 2 | ~12,305 |
+| `src/` | 13 | ~57,391 |
+| `src/ast/` | 2 | ~12,326 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
@@ -129,7 +129,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/intrinsics/` | 1 | ~2,467 |
+| `src/intrinsics/` | 1 | ~2,530 |
 | `src/ir/` | 13 | ~102,497 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -145,7 +145,7 @@
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 23 | ~77,680 |
-| `src/project/single_file_scope/` | 2 | ~3,081 |
+| `src/project/single_file_scope/` | 2 | ~3,400 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/qualified_enums/` | 2 | ~2,363 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -158,7 +158,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 47 | ~221,830 |
-| `tests/` | 443 | ~938,624 |
+| `tests/` | 443 | ~940,793 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -479,7 +479,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~4590 tok, huge) — The Determinism Contract
+- `determinism.md` (~4701 tok, huge) — The Determinism Contract
 - `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
 - `errors.md` (~1338 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
@@ -1217,7 +1217,7 @@
 ### `src/ast/`
 
 - `mod.rs` (~11113 tok, huge) — Copyright 2025 STARGA Inc.
-- `spelling.rs` (~1192 tok, large) — Copyright 2025 STARGA Inc.
+- `spelling.rs` (~1213 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1378,10 +1378,10 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~9819 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9588 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/intrinsics/`
 
-- `tests.rs` (~2467 tok, huge) — Copyright 2025 STARGA Inc.
+- `tests.rs` (~2530 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1444,7 +1444,7 @@
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~1133 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -1528,7 +1528,7 @@
 ### `src/project/single_file_scope/`
 
 - `tests.rs` (~1409 tok, large) — Copyright 2026 STARGA Inc.
-- `world_reach.rs` (~1672 tok, huge) — Copyright 2026 STARGA Inc.
+- `world_reach.rs` (~1991 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -1572,6 +1572,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
+- `std_qualified.rs` (~3339 tok, huge) — Copyright 2026 STARGA Inc.
 - `target.rs` (~5031 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
@@ -1949,7 +1950,7 @@
 - `cross_substrate_receipts.rs` (~2546 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `determinism_veto_control.rs` (~4545 tok, huge) — Copyright 2025 STARGA Inc.
+- `determinism_veto_control.rs` (~6714 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.

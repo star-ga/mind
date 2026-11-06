@@ -157,8 +157,8 @@ fn qualified_paths_resolve_to_the_same_verdict() {
     assert!(!callee_is_nondeterministic("std.blas.dot_q16"));
 }
 
-/// The std modules whose World-reaching public functions are named in
-/// `NONDETERMINISTIC_BUILTINS`, with their embedded sources.
+/// The std modules whose World-reaching public functions are rows of
+/// `std_qualified`, with their embedded sources.
 #[cfg(feature = "std-surface")]
 const NAMED_STD_MODULES: &[(&str, &str)] = &[
     ("std.dns", include_str!("../../std/dns.mind")),
@@ -233,10 +233,10 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
     public.into_iter().partition(|f| world.contains(f))
 }
 
-/// A program reaches these modules only by calling their public functions by
-/// name, so each public function whose body reads the world must be classified
-/// nondeterministic BY NAME, and no other public function may be (an extra row
-/// would refuse a pure accessor such as `dns_status`). Two-sided, so a row
+/// A program reaches these modules only by a qualified call, so each public
+/// function whose body reads the world is a row of `std_qualified` and is NOT
+/// a bare nondeterministic name (a user function of that spelling is
+/// deterministic). No other public function is a row. Two-sided, so a row
 /// dropped and a row too many both fail, and a scan that found nothing on
 /// either side fails rather than passing vacuously.
 #[cfg(feature = "std-surface")]
@@ -251,15 +251,20 @@ fn public_world_reach_of_std_entropy_and_dns_is_named() {
         );
         for f in &reach {
             assert!(
-                callee_is_nondeterministic(f),
-                "{module}: `{f}` reaches a World extern but is not named, so a caller \
-                 of it is attested deterministic"
+                crate::std_qualified::is_row(module, f),
+                "{module}: `{f}` reaches a World extern but is not a qualified row, \
+                 so a caller of it is attested deterministic"
+            );
+            assert!(
+                !callee_is_nondeterministic(f),
+                "{module}: `{f}` is classified by its bare name, so a user function \
+                 of that spelling is refused"
             );
             named += 1;
         }
         for f in &pure {
             assert!(
-                !callee_is_nondeterministic(f),
+                !crate::std_qualified::is_row(module, f) && !callee_is_nondeterministic(f),
                 "{module}: `{f}` reaches no World callee but is classified \
                  nondeterministic"
             );

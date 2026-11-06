@@ -814,7 +814,7 @@ fn mindc_main() {
     // The project modules the entry calls are part of the program too: their
     // calls are followed, transitively, with the same classifier.
     #[cfg(feature = "cross-module-imports")]
-    let (project_hard, project_nondeterministic) = match single_file_scope.as_ref() {
+    let (project_hard, mut project_nondeterministic) = match single_file_scope.as_ref() {
         Some(scope) if produces_artifact => {
             let reach = libmind::project::single_file_scope::world_reach::sibling_world_reach(
                 scope,
@@ -829,12 +829,25 @@ fn mindc_main() {
         _ => (None, false),
     };
     #[cfg(not(feature = "cross-module-imports"))]
-    let (project_hard, project_nondeterministic): (Option<(String, String)>, bool) = (None, false);
+    let (project_hard, mut project_nondeterministic): (Option<(String, String)>, bool) =
+        (None, false);
+    // A qualified std.dns / std.entropy call in the entry is invisible to the
+    // IR classifier: lowering keeps the bare name, and that name is not itself
+    // nondeterministic. The source scan is whole-module, as the IR scan is.
+    let source_world = if produces_artifact {
+        libmind::std_qualified::module_offender(&source)
+    } else {
+        None
+    };
+    if source_world.is_some() {
+        project_nondeterministic = true;
+    }
     if produces_artifact && !cli.compile.allow_nondeterministic {
         // HARD-only: an unclassified `extern "C"` callee is UNKNOWN, not nondeterministic.
         // Attestation stays conservative via ir_first_nondeterministic_call.
         let offender = libmind::ir::ir_first_hard_nondeterministic_call(&products.ir)
             .map(|offender| (offender, None))
+            .or_else(|| source_world.map(|offender| (offender, None)))
             .or_else(|| project_hard.map(|(offender, via)| (offender, Some(via))));
         if let Some((offender, via)) = offender {
             eprintln!("error[determinism]: `{offender}()` introduces unseeded nondeterminism");
@@ -1600,12 +1613,22 @@ fn emit_evidence_if_requested(
     // follow-up, superseding the old TODO(#289).)
     // A project module the entry calls counts too (`world_reach`); the body
     // alone cannot show it, so `mindc verify` keeps this stricter label.
-    let determinism =
-        if libmind::ir::ir_declares_deterministic(&products.ir) && !project_nondeterministic {
-            libmind::ir::compact::Determinism::Deterministic
-        } else {
-            libmind::ir::compact::Determinism::Nondeterministic
-        };
+    // When that body itself looks deterministic, the evidence copy below gains
+    // a witness call the verifier re-derives, so a label rewritten to
+    // `deterministic` disagrees with the hashed body. Object code is unstamped.
+    let entry_looks_deterministic = libmind::ir::ir_declares_deterministic(&products.ir);
+    let determinism = if entry_looks_deterministic && !project_nondeterministic {
+        libmind::ir::compact::Determinism::Deterministic
+    } else {
+        libmind::ir::compact::Determinism::Nondeterministic
+    };
+    let stamp_world = project_nondeterministic && entry_looks_deterministic;
+    let stamped = if stamp_world {
+        Some(libmind::std_qualified::stamp_unheld_world(&products.ir))
+    } else {
+        None
+    };
+    let evidence_ir = stamped.as_ref().unwrap_or(&products.ir);
     let toolchain = env!("CARGO_PKG_VERSION");
 
     // Optional crypto-agile signing (RFC 0021 §6), opt-in via env-supplied seeds
@@ -1720,7 +1743,7 @@ fn emit_evidence_if_requested(
     // the pipeline produced (empty for a source with no constant-folding
     // collapse — then byte-identical to the pre-S4 encoder, trace_hash unchanged).
     let bytes = match libmind::ir::compact::emit_mic3_with_evidence_and_receipts(
-        &products.ir,
+        evidence_ir,
         substrate,
         parent,
         determinism,
