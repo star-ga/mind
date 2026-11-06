@@ -83,6 +83,8 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.mlkem768", include_str!("../../std/mlkem768.mind")),
     ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
+    ("std.procgroup", include_str!("../../std/procgroup.mind")),
+    ("std.procgroup_sys", include_str!("../../std/procgroup_sys.mind")),
     ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
     ("std.ring", include_str!("../../std/ring.mind")),

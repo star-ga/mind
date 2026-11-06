@@ -1,0 +1,796 @@
+// std.procgroup — run many child processes at once and wait for all of them.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// A group starts up to `capacity` children, each with its own stdout pipe
+// (stdin is /dev/null, stderr is inherited). procgroup_wait_all reads every
+// pipe while the children run, reaps every child and returns how many did not
+// exit with code 0. Every slot procgroup_spawn returned ends in one state; a
+// child still running at the deadline is killed (SIGKILL) and reported.
+//
+// To run the SAME program N times, spawn procgroup_self_exe() N times; each
+// child reads its slot index with procgroup_task_index() (the parent reads
+// -1), passed in MIND_PROCGROUP_TASK so builds that cannot read argv get it.
+// Results are indexed by spawn order, never completion order.
+//
+// This module is bookkeeping over primitive results: every OS call (pipe,
+// fork, execvp, waitpid, kill, read, poll, the deadline's monotonic clock, the
+// environment) is a primitive of std.procgroup_sys. Self-spawn uses
+// /proc/self/exe (Linux; elsewhere the child exits 127). A caller that
+// ignores SIGCHLD gets its children reported lost.
+//
+// Handle (24 bytes): [ slots | count | capacity ]. Slot (72 bytes): +0 pid,
+// +8 stdout read fd (-1 once closed), +16 state, +24 exit code (-1 unless it
+// exited), +32 signal, +40/+48/+56 output addr/len/cap, +64 truncated.
+
+import std.procgroup_sys;
+
+// ---- Public constants ----
+// States: ok = exited 0; exit_nonzero = exited non-zero (127: could not exec);
+// signaled = ended by a signal the deadline did not send; timed_out = killed
+// at the deadline; spawn_failed = pipe or fork failed, no child ran; running =
+// not reaped yet; lost = waitpid refused the pid.
+
+pub fn procgroup_state_ok() -> i64 {
+    0
+}
+
+pub fn procgroup_state_exit_nonzero() -> i64 {
+    1
+}
+
+pub fn procgroup_state_signaled() -> i64 {
+    2
+}
+
+pub fn procgroup_state_timed_out() -> i64 {
+    3
+}
+
+pub fn procgroup_state_spawn_failed() -> i64 {
+    4
+}
+
+pub fn procgroup_state_running() -> i64 {
+    5
+}
+
+pub fn procgroup_state_lost() -> i64 {
+    6
+}
+
+// Largest group procgroup_new accepts.
+pub fn procgroup_max_children() -> i64 {
+    4096
+}
+
+// Stdout bytes kept per child; later bytes are read and dropped.
+pub fn procgroup_max_output() -> i64 {
+    16777216
+}
+
+// memcpy copies bytes between memory buffers; it makes no OS call.
+extern "C" {
+    unsafe fn memcpy(dst: *mut u8, src: *const u8, n: i64) -> *mut u8;
+}
+
+// ---- Internal helpers ----
+
+fn pg_slot_size() -> i64 {
+    72
+}
+
+// Bytes per read; longest poll sleep (so a child that closed its stdout is
+// still reaped soon); bound on the drain rounds after the deadline.
+fn pg_read_chunk() -> i64 {
+    65536
+}
+
+fn pg_poll_ms() -> i64 {
+    10
+}
+
+fn pg_drain_rounds() -> i64 {
+    1024
+}
+
+fn pg_slot(g: i64, i: i64) -> i64 {
+    __mind_load_i64(g + 0) + i * pg_slot_size()
+}
+
+// Slot field at `off`, or `missing` when `i` is not a spawned slot of `g`.
+fn pg_field(g: i64, i: i64, off: i64, missing: i64) -> i64 {
+    if g == 0 {
+        return missing;
+    }
+    if i < 0 {
+        return missing;
+    }
+    if i >= __mind_load_i64(g + 8) {
+        return missing;
+    }
+    __mind_load_i64(pg_slot(g, i) + off)
+}
+
+fn pg_cstr_len(addr: i64) -> i64 {
+    let mut i: i64 = 0;
+    while __mind_load_i8(addr + i) != 0 {
+        i = i + 1;
+    }
+    i
+}
+
+// Heap copy of `len` bytes at `addr`, NUL-terminated.
+fn pg_copy_cstr(addr: i64, len: i64) -> i64 {
+    let dst: i64 = __mind_alloc(len + 1);
+    if dst == 0 {
+        return 0;
+    }
+    if len > 0 {
+        let _ = memcpy(dst as *mut u8, addr as *const u8, len);
+    }
+    __mind_store_i8(dst + len, 0);
+    dst
+}
+
+// Store four bytes at p + off.
+fn pg_put4(p: i64, off: i64, b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
+    __mind_store_i8(p + off, b0);
+    __mind_store_i8(p + off + 1, b1);
+    __mind_store_i8(p + off + 2, b2);
+    __mind_store_i8(p + off + 3, b3);
+    0
+}
+
+// "/dev/null" as a heap C string.
+fn pg_dev_null() -> i64 {
+    let p: i64 = __mind_alloc(12);
+    let _ = pg_put4(p, 0, 47, 100, 101, 118);
+    let _ = pg_put4(p, 4, 47, 110, 117, 108);
+    let _ = pg_put4(p, 8, 108, 0, 0, 0);
+    p
+}
+
+// "MIND_PROCGROUP_TASK" as a heap C string.
+fn pg_env_name() -> i64 {
+    let p: i64 = __mind_alloc(20);
+    let _ = pg_put4(p, 0, 77, 73, 78, 68);
+    let _ = pg_put4(p, 4, 95, 80, 82, 79);
+    let _ = pg_put4(p, 8, 67, 71, 82, 79);
+    let _ = pg_put4(p, 12, 85, 80, 95, 84);
+    let _ = pg_put4(p, 16, 65, 83, 75, 0);
+    p
+}
+
+// Decimal C string of a non-negative `n`.
+fn pg_decimal(n: i64) -> i64 {
+    let mut digits: i64 = 1;
+    let mut t: i64 = n;
+    while t >= 10 {
+        t = t / 10;
+        digits = digits + 1;
+    }
+    let p: i64 = __mind_alloc(digits + 1);
+    __mind_store_i8(p + digits, 0);
+    let mut v: i64 = n;
+    let mut k: i64 = digits - 1;
+    while k >= 0 {
+        __mind_store_i8(p + k, 48 + v % 10);
+        v = v / 10;
+        k = k - 1;
+    }
+    p
+}
+
+// Value of a decimal C string of 1..9 digits, or -1.
+fn pg_parse_index(addr: i64) -> i64 {
+    let n: i64 = pg_cstr_len(addr);
+    if n == 0 {
+        return 0 - 1;
+    }
+    if n > 9 {
+        return 0 - 1;
+    }
+    let mut v: i64 = 0;
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < n {
+        let c: i64 = __mind_load_i8(addr + i);
+        if c < 48 {
+            bad = 1;
+        }
+        if c > 57 {
+            bad = 1;
+        }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    if bad == 1 {
+        return 0 - 1;
+    }
+    v
+}
+
+// NULL-terminated argv: argv[0] = prog, then the caller's vector.
+fn pg_build_argv(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
+    let arr: i64 = __mind_alloc((argv_vec_len + 2) * 8);
+    __mind_store_i64(arr, prog_addr);
+    let mut i: i64 = 0;
+    while i < argv_vec_len {
+        __mind_store_i64(arr + (i + 1) * 8, __mind_load_i64(argv_vec_addr + i * 8));
+        i = i + 1;
+    }
+    __mind_store_i64(arr + (argv_vec_len + 1) * 8, 0);
+    arr
+}
+
+// The pipe read ends of slots 0..i-1 (-1 once closed), packed as i64: the
+// descriptors the child of slot i inherits and must close.
+fn pg_sibling_fds(g: i64, i: i64) -> i64 {
+    let fds: i64 = __mind_alloc(i * 8 + 8);
+    let mut j: i64 = 0;
+    while j < i {
+        __mind_store_i64(fds + j * 8, __mind_load_i64(pg_slot(g, j) + 8));
+        j = j + 1;
+    }
+    fds
+}
+
+// Set MIND_PROCGROUP_TASK to `i` for the next fork. Returns what
+// procgroup_sys_env_push saved for pg_env_pop.
+fn pg_env_push(i: i64) -> i64 {
+    let name: i64 = pg_env_name();
+    let val: i64 = pg_decimal(i);
+    let saved: i64 = procgroup_sys_env_push(name, val);
+    let _ = __mind_free(val);
+    let _ = __mind_free(name);
+    saved
+}
+
+// Put back what pg_env_push replaced.
+fn pg_env_pop(saved: i64) -> i64 {
+    let name: i64 = pg_env_name();
+    let _ = procgroup_sys_env_pop(name, saved);
+    let _ = __mind_free(name);
+    0
+}
+
+// Record a waitpid status word. `killed` is 1 when the deadline sent SIGKILL.
+#[protection]
+fn pg_record(s: i64, status: i64, killed: i64) -> i64 {
+    let low: i64 = status & 127;
+    if low == 0 {
+        let code: i64 = (status >> 8) & 255;
+        __mind_store_i64(s + 24, code);
+        __mind_store_i64(s + 32, 0);
+        if code == 0 {
+            __mind_store_i64(s + 16, procgroup_state_ok())
+        } else {
+            __mind_store_i64(s + 16, procgroup_state_exit_nonzero())
+        }
+    } else {
+        __mind_store_i64(s + 24, 0 - 1);
+        __mind_store_i64(s + 32, low);
+        __mind_store_i64(s + 16, procgroup_state_signaled());
+        if killed == 1 {
+            if low == 9 {
+                __mind_store_i64(s + 16, procgroup_state_timed_out())
+            }
+        }
+    }
+    0
+}
+
+// Reap the child of slot `s` (without blocking when `nohang` is 1, blocking
+// when 0). Returns 1 when the slot left the running state.
+fn pg_reap_slot(s: i64, st: i64, nohang: i64, killed: i64) -> i64 {
+    let pid: i64 = __mind_load_i64(s + 0);
+    let r: i64 = procgroup_sys_wait(pid, st, nohang);
+    if r == pid {
+        let _ = pg_record(s, __mind_load_i32(st), killed);
+        return 1;
+    }
+    if r < 0 {
+        __mind_store_i64(s + 16, procgroup_state_lost());
+        return 1;
+    }
+    0
+}
+
+fn pg_reap_all(g: i64, st: i64) -> i64 {
+    let n: i64 = __mind_load_i64(g + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        let s: i64 = pg_slot(g, i);
+        if __mind_load_i64(s + 16) == procgroup_state_running() {
+            let _ = pg_reap_slot(s, st, 1, 0);
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// Append `n` bytes from `buf` to the slot's output, up to procgroup_max_output().
+fn pg_append(s: i64, buf: i64, n: i64) -> i64 {
+    let len: i64 = __mind_load_i64(s + 48);
+    let room: i64 = procgroup_max_output() - len;
+    let mut m: i64 = n;
+    if m > room {
+        m = room;
+        __mind_store_i64(s + 64, 1)
+    }
+    if m <= 0 {
+        return 0;
+    }
+    let cap: i64 = __mind_load_i64(s + 56);
+    if len + m > cap {
+        let mut ncap: i64 = cap * 2;
+        if ncap < 4096 {
+            ncap = 4096;
+        }
+        if ncap < len + m {
+            ncap = len + m;
+        }
+        if ncap > procgroup_max_output() {
+            ncap = procgroup_max_output();
+        }
+        let grown: i64 = __mind_realloc(__mind_load_i64(s + 40), ncap);
+        if grown == 0 {
+            __mind_store_i64(s + 64, 1);
+            return 0;
+        }
+        __mind_store_i64(s + 40, grown);
+        __mind_store_i64(s + 56, ncap)
+    }
+    let _ = memcpy((__mind_load_i64(s + 40) + len) as *mut u8, buf as *const u8, m);
+    __mind_store_i64(s + 48, len + m);
+    m
+}
+
+fn pg_close_fd(s: i64) -> i64 {
+    let fd: i64 = __mind_load_i64(s + 8);
+    if fd >= 0 {
+        let _ = procgroup_sys_close(fd);
+        __mind_store_i64(s + 8, 0 - 1)
+    }
+    0
+}
+
+// Bytes per struct pollfd entry: fd (i32), events (i16), revents (i16).
+fn pg_pollfd_size() -> i64 {
+    8
+}
+
+// Make entry `j` of the pollfd array at `pfds` wait for input on `fd`.
+fn pg_pollfd_set(pfds: i64, j: i64, fd: i64) -> i64 {
+    let e: i64 = pfds + j * pg_pollfd_size();
+    __mind_store_i32(e, fd);
+    __mind_store_i16(e + 4, 1);
+    __mind_store_i16(e + 6, 0);
+    0
+}
+
+// 1 when the last poll marked entry `j` (input, end of file or an error).
+fn pg_pollfd_ready(pfds: i64, j: i64) -> i64 {
+    if __mind_load_i16(pfds + j * pg_pollfd_size() + 6) != 0 {
+        return 1;
+    }
+    0
+}
+
+// What procgroup_sys_poll_until returns once its deadline has passed.
+fn pg_expired() -> i64 {
+    0 - 2
+}
+
+// Fill one pollfd entry per open pipe; `map` gets the slot index of each.
+// Returns the entry count.
+fn pg_fill_pollfds(g: i64, pfds: i64, map: i64) -> i64 {
+    let n: i64 = __mind_load_i64(g + 8);
+    let mut k: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let fd: i64 = __mind_load_i64(pg_slot(g, i) + 8);
+        if fd >= 0 {
+            let _ = pg_pollfd_set(pfds, k, fd);
+            __mind_store_i64(map + k * 8, i);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    k
+}
+
+// One read from every pipe poll marked ready; EOF or an error closes it.
+// Returns the number of pipes handled.
+fn pg_read_ready(g: i64, pfds: i64, map: i64, k: i64, buf: i64) -> i64 {
+    let mut handled: i64 = 0;
+    let mut j: i64 = 0;
+    while j < k {
+        if pg_pollfd_ready(pfds, j) == 1 {
+            let s: i64 = pg_slot(g, __mind_load_i64(map + j * 8));
+            let fd: i64 = __mind_load_i64(s + 8);
+            let got: i64 = procgroup_sys_read(fd, buf, pg_read_chunk());
+            if got > 0 {
+                let _ = pg_append(s, buf, got);
+            } else {
+                let _ = pg_close_fd(s);
+            }
+            handled = handled + 1;
+        }
+        j = j + 1;
+    }
+    handled
+}
+
+// Slots still running or with an open pipe.
+fn pg_active(g: i64) -> i64 {
+    let mut c: i64 = 0;
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(g + 8) {
+        let s: i64 = pg_slot(g, i);
+        if __mind_load_i64(s + 16) == procgroup_state_running() {
+            c = c + 1;
+        } else {
+            if __mind_load_i64(s + 8) >= 0 {
+                c = c + 1;
+            }
+        }
+        i = i + 1;
+    }
+    c
+}
+
+// The deadline passed: SIGKILL every running child, reap it, keep what its
+// pipe still holds (bounded), close every pipe.
+// shortcut: the reap after SIGKILL blocks; a child stuck in uninterruptible
+// sleep delays the return until the kernel lets it die.
+fn pg_expire(g: i64, pfds: i64, map: i64, st: i64, buf: i64) -> i64 {
+    let n: i64 = __mind_load_i64(g + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        let s: i64 = pg_slot(g, i);
+        if __mind_load_i64(s + 16) == procgroup_state_running() {
+            let _ = procgroup_sys_kill(__mind_load_i64(s + 0));
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let s: i64 = pg_slot(g, i);
+        if __mind_load_i64(s + 16) == procgroup_state_running() {
+            let _ = pg_reap_slot(s, st, 0, 1);
+        }
+        i = i + 1;
+    }
+    let mut rounds: i64 = 0;
+    let mut more: i64 = 1;
+    while more > 0 {
+        more = 0;
+        let k: i64 = pg_fill_pollfds(g, pfds, map);
+        if k > 0 {
+            let ready: i64 = procgroup_sys_poll(pfds, k, 0);
+            if ready > 0 {
+                more = pg_read_ready(g, pfds, map, k, buf);
+            }
+        }
+        rounds = rounds + 1;
+        if rounds >= pg_drain_rounds() {
+            more = 0;
+        }
+    }
+    i = 0;
+    while i < n {
+        let _ = pg_close_fd(pg_slot(g, i));
+        i = i + 1;
+    }
+    0
+}
+
+// The forked child: close the inherited descriptors listed at `shut`, wire
+// the pipe and /dev/null, exec. Only async-signal-safe calls run here. The
+// listed descriptors close first and `rd` before the dup2 calls, so a low
+// descriptor (0 or 1 when the parent had closed them) is never clobbered
+// afterwards. The walk is here, one close per descriptor, so std.procgroup_sys
+// stays a straight-line wrapper.
+fn pg_child_exec(shut: i64, nshut: i64, rd: i64, wr: i64, devnull: i64, prog: i64, argv: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < nshut {
+        let fd: i64 = __mind_load_i64(shut + j * 8);
+        if fd >= 0 {
+            let _ = procgroup_sys_close(fd);
+        }
+        j = j + 1;
+    }
+    let _ = procgroup_sys_close(rd);
+    if wr != 1 {
+        let _ = procgroup_sys_dup2(wr, 1);
+        let _ = procgroup_sys_close(wr);
+    }
+    if devnull > 0 {
+        let _ = procgroup_sys_dup2(devnull, 0);
+        let _ = procgroup_sys_close(devnull);
+    }
+    let _ = procgroup_sys_execvp(prog, argv);
+    procgroup_sys_exit(127)
+}
+
+// Fork a child that runs `prog` with the NULL-terminated argv at `argv`.
+// The child's stdout is a new pipe, its stdin /dev/null, its stderr inherited;
+// before the exec it closes the `nshut` descriptors packed as i64 at `shut`
+// (negative entries are skipped). A child that cannot exec exits 127.
+// Returns the child's pid and stores the pipe's read end at `rd_out`.
+// Returns -1, storing nothing and leaving no descriptor open, when the pipe
+// or the fork fails.
+fn pg_spawn_piped(prog: i64, argv: i64, shut: i64, nshut: i64, rd_out: i64) -> i64 {
+    let ends: i64 = __mind_alloc(8);
+    let piped: i64 = procgroup_sys_pipe(ends);
+    if piped != 0 {
+        let _ = __mind_free(ends);
+        return 0 - 1;
+    }
+    let rd: i64 = __mind_load_i32(ends + 0);
+    let wr: i64 = __mind_load_i32(ends + 4);
+    let _ = __mind_free(ends);
+    let null_path: i64 = pg_dev_null();
+    let devnull: i64 = procgroup_sys_open(null_path, 0, 0);
+    let _ = __mind_free(null_path);
+    let pid: i64 = procgroup_sys_fork();
+    if pid == 0 {
+        let _ = pg_child_exec(shut, nshut, rd, wr, devnull, prog, argv);
+    }
+    let _ = procgroup_sys_close(wr);
+    if devnull >= 0 {
+        let _ = procgroup_sys_close(devnull);
+    }
+    if pid < 0 {
+        let _ = procgroup_sys_close(rd);
+        return 0 - 1;
+    }
+    __mind_store_i64(rd_out, rd);
+    pid
+}
+
+// ---- Public: group lifecycle ----
+
+// procgroup_new — an empty group for up to `capacity` children.
+// Returns a handle, or 0 when capacity is not in 1..=procgroup_max_children()
+// or the allocation fails.
+pub fn procgroup_new(capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 0;
+    }
+    if capacity > procgroup_max_children() {
+        return 0;
+    }
+    let slots: i64 = __mind_alloc(capacity * pg_slot_size());
+    if slots == 0 {
+        return 0;
+    }
+    let g: i64 = __mind_alloc(24);
+    if g == 0 {
+        let _ = __mind_free(slots);
+        return 0;
+    }
+    __mind_store_i64(g + 0, slots);
+    __mind_store_i64(g + 8, 0);
+    __mind_store_i64(g + 16, capacity);
+    g
+}
+
+// procgroup_spawn — start `prog_addr` (C string, found through PATH) with the
+// `argv_vec_len` C-string addresses packed at `argv_vec_addr` after argv[0].
+// Returns the slot index; a failed pipe or fork still takes the slot (state
+// spawn_failed) so procgroup_wait_all counts it. Returns -1, starting
+// nothing, when the group is full, g is 0 or argv_vec_len is negative.
+pub fn procgroup_spawn(g: i64, prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
+    if g == 0 {
+        return 0 - 1;
+    }
+    if argv_vec_len < 0 {
+        return 0 - 1;
+    }
+    let i: i64 = __mind_load_i64(g + 8);
+    if i >= __mind_load_i64(g + 16) {
+        return 0 - 1;
+    }
+    let s: i64 = pg_slot(g, i);
+    let mut f: i64 = 0;
+    while f < pg_slot_size() {
+        __mind_store_i64(s + f, 0);
+        f = f + 8;
+    }
+    __mind_store_i64(s + 0, 0 - 1);
+    __mind_store_i64(s + 8, 0 - 1);
+    __mind_store_i64(s + 16, procgroup_state_spawn_failed());
+    __mind_store_i64(s + 24, 0 - 1);
+    __mind_store_i64(g + 8, i + 1);
+    let argv: i64 = pg_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
+    let shut: i64 = pg_sibling_fds(g, i);
+    let saved: i64 = pg_env_push(i);
+    // On success the pipe's read end lands in the slot's fd field (s + 8).
+    let pid: i64 = pg_spawn_piped(prog_addr, argv, shut, i, s + 8);
+    let _ = pg_env_pop(saved);
+    let _ = __mind_free(shut);
+    let _ = __mind_free(argv);
+    if pid < 0 {
+        return i;
+    }
+    __mind_store_i64(s + 0, pid);
+    __mind_store_i64(s + 16, procgroup_state_running());
+    i
+}
+
+// procgroup_wait_all — wait for every child, reading stdout while they run (a
+// full pipe never blocks the group). With timeout_ms > 0, a child running
+// that long after the call is killed, reaped and reported timed_out; its
+// output so far is kept. timeout_ms <= 0 has no deadline (a pipe a grandchild
+// holds open then keeps it waiting). Returns procgroup_failures(g), -1 for g 0.
+pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
+    if g == 0 {
+        return 0 - 1;
+    }
+    let n: i64 = __mind_load_i64(g + 8);
+    let pfds: i64 = __mind_alloc((n + 1) * pg_pollfd_size());
+    let map: i64 = __mind_alloc(n * 8 + 8);
+    let st: i64 = __mind_alloc(8);
+    let buf: i64 = __mind_alloc(pg_read_chunk());
+    let mut deadline: i64 = 0 - 1;
+    if timeout_ms > 0 {
+        deadline = procgroup_sys_deadline(timeout_ms);
+    }
+    let mut active: i64 = pg_active(g);
+    while active > 0 {
+        let k: i64 = pg_fill_pollfds(g, pfds, map);
+        let ready: i64 = procgroup_sys_poll_until(pfds, k, deadline, pg_poll_ms());
+        if ready == pg_expired() {
+            let _ = pg_expire(g, pfds, map, st, buf);
+            active = 0;
+        } else {
+            if ready > 0 {
+                let _ = pg_read_ready(g, pfds, map, k, buf);
+            }
+            let _ = pg_reap_all(g, st);
+            active = pg_active(g);
+        }
+    }
+    let _ = __mind_free(pfds);
+    let _ = __mind_free(map);
+    let _ = __mind_free(st);
+    let _ = __mind_free(buf);
+    procgroup_failures(g)
+}
+
+// procgroup_free — release a group whose children were all reaped.
+// Returns 1, or 0 (freeing nothing) while a child is still running.
+pub fn procgroup_free(g: i64) -> i64 {
+    if g == 0 {
+        return 0;
+    }
+    if pg_count(g, procgroup_state_running(), 1) > 0 {
+        return 0;
+    }
+    let n: i64 = __mind_load_i64(g + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        let s: i64 = pg_slot(g, i);
+        let _ = pg_close_fd(s);
+        if __mind_load_i64(s + 40) != 0 {
+            let _ = __mind_free(__mind_load_i64(s + 40));
+        }
+        i = i + 1;
+    }
+    let _ = __mind_free(__mind_load_i64(g + 0));
+    let _ = __mind_free(g);
+    1
+}
+
+// Results. An `i` that is not a spawned slot reads -1 (0 for an address).
+// procgroup_len: the number of slots procgroup_spawn took.
+pub fn procgroup_len(g: i64) -> i64 {
+    if g == 0 {
+        return 0 - 1;
+    }
+    __mind_load_i64(g + 8)
+}
+
+// Slots whose state is (`want` 1) or is not (`want` 0) `state`.
+fn pg_count(g: i64, state: i64, want: i64) -> i64 {
+    if g == 0 {
+        return 0 - 1;
+    }
+    let mut c: i64 = 0;
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(g + 8) {
+        let mut hit: i64 = 0;
+        if __mind_load_i64(pg_slot(g, i) + 16) == state {
+            hit = 1;
+        }
+        if hit == want {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    c
+}
+
+// Number of slots not in procgroup_state_ok(): every failed child counts.
+#[protection]
+pub fn procgroup_failures(g: i64) -> i64 {
+    pg_count(g, procgroup_state_ok(), 0)
+}
+
+pub fn procgroup_state(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 16, 0 - 1)
+}
+
+pub fn procgroup_pid(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 0, 0 - 1)
+}
+
+pub fn procgroup_exit_code(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 24, 0 - 1)
+}
+
+pub fn procgroup_signal(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 32, 0 - 1)
+}
+
+// Address of the child's captured stdout bytes (0 when it wrote nothing).
+// Owned by the group: valid until procgroup_free.
+pub fn procgroup_stdout_addr(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 40, 0)
+}
+
+pub fn procgroup_stdout_len(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 48, 0 - 1)
+}
+
+// 1 when output past procgroup_max_output() was read and dropped.
+pub fn procgroup_truncated(g: i64, i: i64) -> i64 {
+    pg_field(g, i, 64, 0 - 1)
+}
+
+// procgroup_task_index — this process's slot index when procgroup_spawn
+// started it (or started its parent some other way), else -1.
+pub fn procgroup_task_index() -> i64 {
+    let name: i64 = pg_env_name();
+    let v: i64 = procgroup_sys_env_read(name);
+    let _ = __mind_free(name);
+    if v == 0 {
+        return 0 - 1;
+    }
+    pg_parse_index(v)
+}
+
+// procgroup_self_exe — "/proc/self/exe" as a heap C string: the program
+// path that re-runs the current executable (Linux).
+pub fn procgroup_self_exe() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    let _ = pg_put4(p, 0, 47, 112, 114, 111);
+    let _ = pg_put4(p, 4, 99, 47, 115, 101);
+    let _ = pg_put4(p, 8, 108, 102, 47, 101);
+    let _ = pg_put4(p, 12, 120, 101, 0, 0);
+    p
+}
+
+// procgroup_cstr — NUL-terminated heap copy of `len` bytes at `addr` (for
+// example a String's addr/len), for use as a program or argument. 0 when
+// len is negative.
+pub fn procgroup_cstr(addr: i64, len: i64) -> i64 {
+    if len < 0 {
+        return 0;
+    }
+    pg_copy_cstr(addr, len)
+}
+
+// procgroup_decimal — decimal C string of a non-negative `n` (an argument
+// such as a game id). 0 when n is negative.
+pub fn procgroup_decimal(n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    pg_decimal(n)
+}

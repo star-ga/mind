@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1977 | **Est. tokens:** ~3,910,497
-**Generated:** 2026-11-06 18:41 UTC
+**Files:** 1983 | **Est. tokens:** ~3,931,816
+**Generated:** 2026-11-06 21:44 UTC
 
 ## Token Budget Guide
 
@@ -25,7 +25,7 @@
 | `./` | 35 | ~32,790 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 2 | ~644 |
+| `.arch-mind/` | 2 | ~700 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
@@ -44,11 +44,11 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 40 | ~114,323 |
+| `docs/` | 41 | ~116,098 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
-| `docs/gates/` | 1 | ~4,009 |
+| `docs/gates/` | 1 | ~4,070 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/rfcs/` | 35 | ~173,185 |
 | `docs/specs/` | 2 | ~976 |
@@ -65,7 +65,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 174 | ~451,770 |
-| `examples/mindc_mind/testdata/` | 3 | ~4,210 |
+| `examples/mindc_mind/testdata/` | 3 | ~4,221 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -98,7 +98,7 @@
 | `.github/workflows/` | 9 | ~17,042 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~128,792 |
+| `scripts/` | 33 | ~128,809 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -109,7 +109,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 12 | ~55,424 |
+| `src/` | 13 | ~55,937 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -142,7 +142,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 23 | ~77,637 |
+| `src/project/` | 23 | ~77,684 |
 | `src/project/single_file_scope/` | 1 | ~1,409 |
 | `src/project/stdlib/` | 1 | ~4,048 |
 | `src/qualified_enums/` | 2 | ~2,363 |
@@ -155,8 +155,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 45 | ~216,403 |
-| `tests/` | 441 | ~928,346 |
+| `std/` | 47 | ~224,259 |
+| `tests/` | 443 | ~939,329 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -282,7 +282,7 @@
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `.arch-mind/`
 
-- `rules.mind` (~557 tok, large) — mind (language compiler / runtime root) architectural-governance rules
+- `rules.mind` (~613 tok, large) — mind (language compiler / runtime root) architectural-governance rules
 - `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `assets/logo/`
 
@@ -482,7 +482,7 @@
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
-- `exec-semantics-tiers.md` (~4009 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
+- `exec-semantics-tiers.md` (~4070 tok, huge) — Executable-semantics tier gate — doctrine and measurement history
 ### `docs/`
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -506,7 +506,7 @@
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11775 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
-- `README.md` (~162 tok, small) — MIND Documentation
+- `README.md` (~178 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 - `RESEARCH_ECOSYSTEM_OFFLINE_HYPOTHESES_20261029.md` (~318 tok, medium) — Compiler research consumer of an offline hypothesis service
 ### `docs/rfcs/`
@@ -561,6 +561,7 @@
 - `v1.0.md` (~953 tok, large) — MIND Language Specification v1.0 (Working Draft)
 ### `docs/`
 
+- `std-procgroup.md` (~1759 tok, huge) — `std.procgroup`: run many child processes and wait for all of them
 - `type-system.md` (~1836 tok, huge) — Type System
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
@@ -923,7 +924,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~882 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~893 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
@@ -1100,7 +1101,7 @@
 - `check_release_gating.py` (~8502 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~1073 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10115 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10132 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1375,7 +1376,8 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~10966 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9794 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics_tests.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1528,9 +1530,9 @@
 - `load.rs` (~4048 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~4230 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~4265 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
-- `substrate_link.rs` (~4717 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4729 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -1654,6 +1656,8 @@
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3084 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
+- `procgroup.mind` (~5874 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
+- `procgroup_sys.mind` (~1982 tok, huge) — std.procgroup_sys — the OS calls of std.procgroup, one straight-line wrapper each.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
@@ -2648,6 +2652,8 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_procgroup_run.mind` (~3772 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
+- `std_procgroup_run.rs` (~7211 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.
