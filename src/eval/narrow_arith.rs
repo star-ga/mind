@@ -289,6 +289,7 @@ fn value_kind(v: &Value) -> &'static str {
         Value::Float(_) => "float",
         Value::Str(_) => "string",
         Value::Tuple(_) => "array/tuple",
+        Value::Array(_) => "array",
         Value::Tensor(_) => "tensor",
         Value::GradMap(_) => "gradient map",
         Value::Enum { .. } => "enum variant",

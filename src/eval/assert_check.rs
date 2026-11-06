@@ -92,12 +92,13 @@ pub(super) fn eval(
     }
 }
 
-fn value_kind_name(value: &Value) -> &'static str {
+pub(super) fn value_kind_name(value: &Value) -> &'static str {
     match value {
         Value::Int(_) => "an integer",
         Value::Float(_) => "a float",
         Value::Str(_) => "a string",
         Value::Tuple(_) => "a tuple",
+        Value::Array(_) => "an array",
         Value::Tensor(_) => "a tensor",
         Value::GradMap(_) => "a gradient map",
         Value::Enum { .. } => "an enum value",
