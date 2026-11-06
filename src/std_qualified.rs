@@ -25,6 +25,12 @@ use crate::ir::{IRModule, Instr};
 use crate::type_checker::nerve_walk;
 
 /// `(module path, public function)` rows. A call matches only both.
+///
+/// deferred: would also list the World-reaching functions of std.net, std.fs,
+/// std.process and std.iouring, not done because the veto would then refuse
+/// their existing callers without the flag (a policy change, not a fix) —
+/// upgrade path: add each module to `NAMED_STD_MODULES` in the intrinsics
+/// tests, which derives the rows from the module source.
 const ROWS: &[(&str, &str)] = &[
     ("std.dns", "dns_resolve"),
     ("std.dns", "tcp_connect_host"),
@@ -112,13 +118,18 @@ fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
     }
 }
 
+/// What [`module_offender`] names for a source it cannot parse.
+pub const UNPARSED: &str = "<source that does not parse>";
+
 /// The first qualified std-world use anywhere in `source`: every function at
 /// any depth, impl methods, module blocks and top-level items. Whole-module,
 /// matching the entry IR scan: an uncalled function still refuses the module.
-/// `None` when the source does not parse; the CLI calls this only after the
-/// same parser accepted the entry.
+/// A source that does not parse is [`UNPARSED`], never clean (the CLI calls
+/// this only after the same parser accepted the entry).
 pub fn module_offender(source: &str) -> Option<String> {
-    let module = crate::parser::parse(source).ok()?;
+    let Ok(module) = crate::parser::parse(source) else {
+        return Some(UNPARSED.to_string());
+    };
     let map = QualMap::from_module(&module);
     module.items.iter().find_map(|item| map.offender_in(item))
 }
@@ -127,7 +138,8 @@ pub fn module_offender(source: &str) -> Option<String> {
 /// closures and functions included. Every function of that name counts (a
 /// free function and a method alike), so a same-named sibling cannot hide one.
 /// Other functions of the module do not count. `None` when `func` is absent,
-/// the source does not parse, or no such body makes such a use.
+/// the source does not parse (the caller's lowering of that source then fails,
+/// which refuses it), or no such body makes such a use.
 pub fn reached_offender(source: &str, func: &str) -> Option<String> {
     let module = crate::parser::parse(source).ok()?;
     let map = QualMap::from_module(&module);
@@ -283,8 +295,9 @@ mod tests {
         let project = "import w;\n\npub fn f(p: i64) -> i64 {\n    \
                        w.dns_resolve(p, 9) + w.tcp_connect_host(p, 9, 80)\n}\n";
         assert_eq!(offender(project), None);
-        let std = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_resolve(p, 9)\n}\n";
-        assert_eq!(offender(std).as_deref(), Some("dns_resolve"));
+        let qualified =
+            "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(qualified).as_deref(), Some("dns_resolve"));
         let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_status(p)\n}\n";
         assert_eq!(offender(pure), None);
     }
@@ -324,6 +337,16 @@ mod tests {
         assert_eq!(reached_offender(src, "g"), None);
         assert_eq!(reached_offender(src, "h").as_deref(), Some("entropy_fill"));
         assert_eq!(reached_offender(src, "absent"), None);
+    }
+
+    /// A source the parser rejects is never reported clean.
+    #[test]
+    fn an_unparsed_source_is_not_clean() {
+        assert!(crate::parser::parse("pub fn f(p: i64) -> i64 {\n").is_err());
+        assert_eq!(
+            module_offender("pub fn f(p: i64) -> i64 {\n").as_deref(),
+            Some(UNPARSED)
+        );
     }
 
     /// The witness turns a deterministic body nondeterministic for the
