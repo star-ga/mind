@@ -172,10 +172,10 @@ fn a_short_call_nested_as_an_argument_is_refused() {
 //
 // `mindc check` runs the type checker alone. That checker used to report the
 // rule only where its `infer_expr` walk reached the call, so `while` bodies and
-// conditions (RFC 0005 Gap 1), `else if` branches, a non-final statement of a
-// body, and a call nested as an argument of a call whose arguments it never
-// re-infers all passed `check` and were refused only at build time, by the IR
-// verifier (E3001). These drive the `check` subcommand over every shape the
+// conditions (RFC 0005 Gap 1), `else if` branches, a non-final statement of an
+// `if` or `for` body, and a call nested as an argument of a call whose
+// arguments it never re-infers all passed `check` and were refused only at
+// build time, by the IR verifier (E3001). These drive the `check` subcommand over every shape the
 // build tests above refuse and every shape `tests/intrinsic_call_arity.rs`
 // refuses in IR, so `check` and `build` agree. Closures and impl methods reach
 // the checker as the functions they desugar to, exactly as in the build.

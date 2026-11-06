@@ -7,16 +7,14 @@
 //!
 //! A call to a registered `__mind_*` intrinsic carries exactly the intrinsic's
 //! declared arity — the i64 ABI of RFC 0005. The rule used to be enforced only
-//! inside `check_std_surface_intrinsic`, which runs where `infer_expr` reaches
-//! the call: `let` initializers, `return` values, `assert` conditions, the last
-//! statement of an `if`/`for` body, and the arguments of a call whose checker
-//! re-infers them. Several positions are unreachable there — `while` bodies and
-//! conditions (RFC 0005 Gap 1: `infer_expr` types the loop without visiting
-//! either), `else if` branches, the arguments of an intra-module or loose-ABI
-//! call (deliberately never re-inferred — see `check_intra_fn_call`), and every
-//! non-final statement of a body — so a wrong-arity call sat in one of them
-//! until the IR verifier refused it at build time (E3001) and `mindc check`
-//! passed it.
+//! inside `check_std_surface_intrinsic`, which runs only where `infer_expr`
+//! reaches the call, and `infer_expr` skips whole positions: it types an `if`
+//! by the last statement of its then-branch and a `for` by the last statement
+//! of its body, types a `while` without visiting its condition or body (RFC
+//! 0005 Gap 1), and never re-infers the arguments of an intra-module or
+//! loose-ABI call (see `check_intra_fn_call`). A wrong-arity call in a skipped
+//! position passed `mindc check` and was refused only at build time, by the IR
+//! verifier (E3001).
 //!
 //! This pass owns the rule outright. It walks every node the AST has — the
 //! exhaustive `node_children_ref` classification plus the function, closure and
@@ -24,7 +22,9 @@
 //! each intrinsic call site whose argument count differs from the declared
 //! arity, wherever the call sits. `check_std_surface_intrinsic` still validates
 //! the argument types on the `infer_expr` path; the arity refusal itself has
-//! exactly one source.
+//! exactly one source. `mindc check` desugars closures and impl methods into
+//! functions before this pass runs; the closure and impl arms below serve the
+//! callers that type-check a module as parsed (`build::native_scope`).
 
 use super::CALL_ARITY_CODE;
 use super::diag_from_span;

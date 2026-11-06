@@ -241,9 +241,9 @@ fn the_declared_arity_verifies_at_every_depth() {
 // only on the lowering paths; `mindc check` runs the type checker alone. The
 // checker used to report the rule (E2005) only where its `infer_expr` walk
 // reached the call, so `while` bodies and conditions (RFC 0005 Gap 1), `else
-// if` branches, a non-final statement of a body, and a call nested as an
-// argument of a call whose arguments the checker never re-infers all passed
-// `check`. These tests drive the checker entry point `check_module_types` on
+// if` branches, a non-final statement of an `if` or `for` body, and a call
+// nested as an argument of a call whose arguments the checker never re-infers
+// all passed `check`. These tests drive the checker entry point `check_module_types` on
 // the parsed module (before any desugar, so closure and impl bodies are still
 // nested) over every shape the IR tests above refuse and every body the
 // checker descends into. Each wrong-arity call is reported exactly once: a
