@@ -19,6 +19,12 @@
 //! the aliases) built with `mindc build --emit cdylib`; the value is read
 //! from the built library. The expected results are main's.
 //!
+//! Two string-pass blockers of the same review are pinned here too: a
+//! string stored into the `i64` payload of an imported enum must be refused
+//! in the declaring module as it is in one file, and `mindc test` must keep
+//! the raw-memory escapes of each merged std module apart, as the build
+//! analyses each std module alone.
+//!
 //! Gate: `cargo test --features "mlir-build std-surface cross-module-imports" \
 //!        --test string_ops_native_r5`
 
@@ -165,4 +171,138 @@ fn project_alias_resolution_in_lowering_is_mains() {
             }
         }
     }
+}
+
+/// The module of blocker `cross-module-variant-payload-string-compares-as-handle`:
+/// it declares the enum and compares two `i64` payloads.
+const EVENTS: &str = concat!(
+    "pub enum XmlEvent { Start, Text(i64), End }\n\n",
+    "pub fn same_text(a: XmlEvent, b: XmlEvent) -> i64 {\n",
+    "    let x = match a {\n",
+    "        XmlEvent::Text(n) => n,\n",
+    "        _ => 0,\n",
+    "    }\n",
+    "    let y = match b {\n",
+    "        XmlEvent::Text(n) => n,\n",
+    "        _ => 1,\n",
+    "    }\n",
+    "    if x == y {\n",
+    "        return 1\n",
+    "    }\n",
+    "    return 0\n",
+    "}\n",
+);
+
+/// Stores a string into each payload and compares them through `same_text`.
+const PAYLOAD_PROBE: &str = concat!(
+    "pub fn probe() -> i64 {\n",
+    "    let a = XmlEvent::Text(\"abc\")\n",
+    "    let b = XmlEvent::Text(\"abc\")\n",
+    "    return same_text(a, b)\n",
+    "}\n",
+);
+
+/// A private enum of the same name: the registry keys both by their owner.
+const SHADOW: &str = "export { shadow_code }\n\nenum XmlEvent { Open, Close }\n\n\
+                      fn shadow_code() -> i64 {\n    return 7\n}\n";
+
+/// The test of blocker `mindc-test-refuses-std-code-after-user-string-escape`.
+const STD_ESCAPE: &str = concat!(
+    "use std.vec;\nuse std.ecdsa_p256;\n\n",
+    "fn keep(v: Vec, s: string) -> Vec { return vec_push(v, s) }\n\n",
+    "pub fn probe() -> i64 { return vec_len(keep(vec_new(), \"abc\")) }\n\n",
+    "#[test]\nfn probed() {\n    let v: i64 = probe()\n    assert v != 1, \"value is 1.\"\n}\n",
+);
+
+/// A string the user's own code stores to raw memory, read back by std code.
+const RAW_STRING_READ_BY_STD: &str = concat!(
+    "use std.vec;\n\n",
+    "pub fn probe() -> i64 {\n",
+    "    let v = vec_push(vec_new(), 0)\n",
+    "    __mind_store_i64(vec_addr(v), \"abc\")\n",
+    "    if vec_get(v, 0) == vec_get(v, 0) {\n",
+    "        return 1\n",
+    "    }\n",
+    "    return 0\n",
+    "}\n\n",
+    "#[test]\nfn probed() {\n    let v: i64 = probe()\n    assert v != 1, \"value is 1.\"\n}\n",
+);
+
+/// `mindc <args>` run in `dir`.
+fn mindc_in(dir: &Path, args: &[&str]) -> Output {
+    Command::new(mindc_bin())
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("spawn mindc")
+}
+
+/// `out` is a refusal with `E2038`, not a crash.
+fn assert_refused(case: &str, step: &str, out: &Output) {
+    let log = text(out);
+    assert!(
+        !out.status.success() && log.contains("E2038") && !log.contains("panicked"),
+        "{case}: {step} not refused with E2038:\n{log}"
+    );
+}
+
+/// One module stores a string into the `i64` payload of another module's
+/// enum, and the declaring module compares two such payloads. The same
+/// source in one file is refused with `E2038`; the project must be refused
+/// too, not built to compare the two string handles (`0` for equal text).
+#[test]
+fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
+    let one = scratch_dir("string_ops_native_r5_payload_one_file");
+    std::fs::write(one.join("one.mind"), format!("{EVENTS}\n{PAYLOAD_PROBE}")).expect("write");
+    let check = mindc_in(&one, &["check", "--no-fmt", "one.mind"]);
+    assert_refused("one_file", "check", &check);
+    for (case, shadow) in [
+        ("payload_two_modules", false),
+        ("payload_colliding_enum", true),
+    ] {
+        let dir = scratch_dir(&format!("string_ops_native_r5_{case}"));
+        let mut sources = vec!["main.mind", "events.mind"];
+        let mut imports = String::from("import events\n");
+        if shadow {
+            sources.push("shadow.mind");
+            imports.push_str("import shadow\n");
+            std::fs::write(dir.join("shadow.mind"), SHADOW).expect("write shadow");
+        }
+        let manifest = format!(
+            "[package]\nname = \"xmod\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\
+             emit = \"cdylib\"\n\n[targets.cpu]\nbackend = \"cpu\"\nsources = {sources:?}\n"
+        );
+        std::fs::write(dir.join("Mind.toml"), manifest).expect("write manifest");
+        std::fs::write(dir.join("events.mind"), EVENTS).expect("write events");
+        let main = format!("{imports}\n{PAYLOAD_PROBE}");
+        std::fs::write(dir.join("main.mind"), main).expect("write main");
+        let check = mindc_in(&dir, &["check", "--no-fmt", "main.mind"]);
+        assert_refused(case, "check", &check);
+        let so = dir.join("x.so");
+        let _ = std::fs::remove_file(&so);
+        let build = mindc_in(
+            &dir,
+            &["build", "--emit", "cdylib", "--out", so.to_str().unwrap()],
+        );
+        assert_refused(case, "build", &build);
+        assert!(!so.exists(), "{case}: a refused build left an artifact");
+    }
+}
+
+/// A string handed to `vec_push` escapes to raw memory in std.vec's merged
+/// body; `mindc test` must still run std.ecdsa_p256's integer comparisons of
+/// raw loads, as the build does. A string the user's code stores to raw
+/// memory is still one when std code loads it back.
+#[test]
+fn mindc_test_keeps_the_escapes_of_each_std_module_apart() {
+    let dir = scratch_dir("string_ops_native_r5_std_escapes");
+    std::fs::write(dir.join("escape_test.mind"), STD_ESCAPE).expect("write");
+    let log = text(&mindc_in(&dir, &["test", "escape_test.mind"]));
+    assert!(
+        log.contains("value is 1.") && !log.contains("E2038"),
+        "std_escape: mindc test gave no value 1:\n{log}"
+    );
+    std::fs::write(dir.join("raw_test.mind"), RAW_STRING_READ_BY_STD).expect("write");
+    let raw = mindc_in(&dir, &["test", "raw_test.mind"]);
+    assert_refused("raw_string_read_by_std", "mindc test", &raw);
 }
