@@ -40,7 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
     Limits: no revocation checking, DNS/IP-only name constraints, at most 8
     certificates and 32 anchors, exact-DER issuer matching; unsupported cases
-    fail closed. Anchors are trusted key bindings: their self-signature and
+    fail closed. The path search treats a certificate repeated in the chain
+    (same DER) as one candidate issuer and spends at most 64 signature
+    verifications, anchor and bag issuers alike, failing -13 past that, so a
+    peer's certificate bag cannot multiply the work;
+    `x509_verify_server_chain_budget` takes that budget from the caller.
+    Anchors are trusted key bindings: their self-signature and
     validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
     constraints apply to the path below them.
   - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,

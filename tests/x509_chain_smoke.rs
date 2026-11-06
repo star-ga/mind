@@ -546,3 +546,144 @@ fn x509_trust_anchor_policy() {
     let Some(lib) = Lib::get() else { return };
     check_rows(lib, ANCHOR_POLICY);
 }
+
+// ── Path-search work bound ─────────────────────────────────────────────────
+// The peer controls the certificate bag. A repeated certificate (same DER) is
+// one candidate issuer, and one path search spends at most 64 signature
+// verifications, anchors and bag issuers alike, failing -13 past that.
+
+type BudgetFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
+
+const RSA_HOST: &str = "www.rsa-test.example.com";
+const PATH_HOST: &str = "path.example.com";
+const UNLIMITED: i64 = 1 << 40;
+/// The RSA leaf and seven copies of its self-signed issuer: every copy
+/// verifies every other one, the shape of a bag that cost 13,699 verifications.
+const RSA_COPIES: &[&str] = &[
+    "rsa_leaf", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root",
+];
+const INTER_COPIES: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+];
+/// Two certificates named `path_ec root` with the same DER length.
+const SAME_LEN_ROOTS: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_anchor_wrongkey",
+    "path_ec_root",
+];
+/// 1 + 31 + 1 + 31 = 64 verifications: each of 31 wrong-key anchors is tried
+/// for the intermediate and for the bag root.
+const THREE: &[&str] = &["path_ec_leaf", "path_ec_inter", "path_ec_root"];
+/// THREE plus a wrong-key intermediate the leaf tries last: 65 verifications.
+const FOUR: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_ec_root",
+    "path_wrongkey",
+];
+const WRONG_31: &[&str] = &["path_anchor_wrongkey"; 31];
+const WRONG_32: &[&str] = &["path_anchor_wrongkey"; 32];
+
+/// Validate through `x509_verify_server_chain_budget` with `budget`
+/// verifications allowed; returns (verdict, verifications spent).
+fn run_budget(lib: &Lib, chain: &[&str], anchors: &[&str], host: &str, budget: i64) -> (i64, i64) {
+    let (chain, anchors, host) = (blob(chain), blob(anchors), format!("{host}\0"));
+    let f: Symbol<BudgetFn> = unsafe { lib.0.get(b"x509_verify_server_chain_budget\0").unwrap() };
+    let mut left = budget;
+    let cell = &mut left as *mut i64 as i64;
+    let got = unsafe {
+        f(
+            chain.as_ptr() as i64,
+            anchors.as_ptr() as i64,
+            host.as_ptr() as i64,
+            now_unix(),
+            cell,
+        )
+    };
+    (got, budget - left)
+}
+
+/// Seven copies of one self-signed issuer cost one verification, not one per
+/// copy per path position; the copy kept still completes a valid path, and a
+/// different certificate with the same name and DER length is its own
+/// candidate.
+#[test]
+fn x509_repeated_certificate_is_one_candidate_issuer() {
+    let Some(lib) = Lib::get() else { return };
+    assert_eq!(
+        run_budget(lib, RSA_COPIES, &["ec_root"], RSA_HOST, UNLIMITED),
+        (-7, 1)
+    );
+    assert_eq!(run(lib, RSA_COPIES, &["ec_root"], RSA_HOST, now_unix()), -7);
+    assert_eq!(
+        run_budget(lib, INTER_COPIES, &["path_ec_root"], PATH_HOST, UNLIMITED),
+        (0, 2)
+    );
+    assert_eq!(
+        run(lib, INTER_COPIES, &["path_ec_root"], PATH_HOST, now_unix()),
+        0
+    );
+    assert_eq!(
+        run_budget(lib, SAME_LEN_ROOTS, &["ec_root"], PATH_HOST, UNLIMITED),
+        (-3, 4)
+    );
+}
+
+#[rustfmt::skip]
+const SIG_BUDGET: &[Row] = &[
+    ("budget_64_spent", THREE, WRONG_31, PATH_HOST, 0, -3),
+    ("budget_65th_refused_in_bag", FOUR, WRONG_31, PATH_HOST, 0, -13),
+    ("budget_65th_refused_at_anchor", THREE, WRONG_32, PATH_HOST, 0, -13),
+];
+
+/// The search counts every verification, stops at the caller's budget (the
+/// boundary is exact) and `x509_verify_server_chain` allows exactly 64.
+#[test]
+fn x509_path_search_spends_at_most_64_signature_verifications() {
+    let Some(lib) = Lib::get() else { return };
+    check_rows(lib, SIG_BUDGET);
+    assert_eq!(
+        run_budget(lib, THREE, WRONG_31, PATH_HOST, UNLIMITED),
+        (-3, 64)
+    );
+    assert_eq!(
+        run_budget(lib, FOUR, WRONG_31, PATH_HOST, UNLIMITED),
+        (-3, 65)
+    );
+    assert_eq!(
+        run_budget(lib, THREE, WRONG_32, PATH_HOST, UNLIMITED),
+        (-3, 66)
+    );
+    assert_eq!(run_budget(lib, THREE, WRONG_31, PATH_HOST, 64), (-3, 64));
+    assert_eq!(run_budget(lib, THREE, WRONG_31, PATH_HOST, 63), (-13, 63));
+    assert_eq!(
+        run_budget(lib, THREE, &["path_ec_root"], PATH_HOST, 2),
+        (0, 2)
+    );
+    assert_eq!(
+        run_budget(lib, THREE, &["path_ec_root"], PATH_HOST, 1),
+        (-13, 1)
+    );
+    // A budget cell pointer <= 0 is refused like the other pointers.
+    let f: Symbol<BudgetFn> = unsafe { lib.0.get(b"x509_verify_server_chain_budget\0").unwrap() };
+    let (chain, anchors) = (blob(THREE), blob(&["path_ec_root"]));
+    let host = format!("{PATH_HOST}\0");
+    let got = unsafe {
+        f(
+            chain.as_ptr() as i64,
+            anchors.as_ptr() as i64,
+            host.as_ptr() as i64,
+            now_unix(),
+            0,
+        )
+    };
+    assert_eq!(got, -1, "a null budget cell must be refused");
+}
