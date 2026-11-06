@@ -21,6 +21,8 @@ use crate::eval::type_aliases::LocalTypeAliases;
 use super::slots::{Contradicted, contradicts, holds_str, is_null};
 use super::sums::Variant;
 
+mod std_decls;
+
 /// What the pass knows about one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Fact {
@@ -268,20 +270,27 @@ impl Decls {
     pub(super) fn new(module: &Module, project: bool) -> Self {
         #[cfg(feature = "cross-module-imports")]
         if let Some(project) = super::project::current().filter(|_| project) {
-            let mut decls = Self::seeded(module, project.fns.clone(), project.slots.shared());
+            let mut decls = Self::seeded(module, project.fns.clone(), project.slots.shared(), &[]);
             decls.project_refusing = project.refusing.clone();
             return decls;
         }
-        let _ = project;
-        Self::seeded(module, Default::default(), Contradicted::default())
+        // The std bodies the interpreter merged keep their module's structs
+        // and externs (see `std_decls`); a build analyses no std body here.
+        let std = (!project)
+            .then(|| std_decls::declarations(module))
+            .unwrap_or_default();
+        Self::seeded(module, Default::default(), Contradicted::default(), &std)
     }
 
     /// The declarations of `module`, with `contradicted` already recorded
-    /// and the functions of the other modules of its project build.
+    /// and the functions of the other modules of its project build, then the
+    /// `struct` and `extern "C"` items of `std` for names `module` leaves
+    /// undeclared.
     pub(super) fn seeded(
         module: &Module,
         project_fns: std::sync::Arc<Fns>,
         contradicted: Contradicted,
+        std: &[&Node],
     ) -> Self {
         let mut decls = Self {
             aliases: LocalTypeAliases::new(&module.items),
@@ -333,6 +342,7 @@ impl Decls {
                 _ => {}
             }
         }
+        decls.seed_std(std);
         // Imported and bundled std callees, after local ones, as lowering
         // registers `IRModule::fn_signatures`: a local definition shadows them.
         #[cfg(feature = "cross-module-imports")]

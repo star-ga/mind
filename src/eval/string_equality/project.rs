@@ -141,7 +141,7 @@ fn compute(modules: &[(String, Module)]) -> Summary {
         for (path, module) in modules {
             let _module = crate::qualified_enums::ModuleGuard::install(path.clone());
             let ordinals = super::equality_ordinals(module);
-            let decls = Decls::seeded(module, summary.fns.clone(), summary.slots.shared());
+            let decls = Decls::seeded(module, summary.fns.clone(), summary.slots.shared(), &[]);
             let (_, _, refused, decls) = super::walk::fixpoint(decls, &ordinals, module);
             refusing.extend(refused.into_iter().filter_map(|r| r.function));
             grew |= summary.slots.absorb(decls.contradicted.shared());
