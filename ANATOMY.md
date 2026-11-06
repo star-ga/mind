@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1988 | **Est. tokens:** ~3,947,127
-**Generated:** 2026-11-06 23:17 UTC
+**Files:** 1988 | **Est. tokens:** ~3,947,136
+**Generated:** 2026-11-06 23:56 UTC
 
 ## Token Budget Guide
 
@@ -230,7 +230,7 @@
 | `tests/std_entropy_dns_support/` | 1 | ~1,583 |
 | `tests/support/` | 10 | ~23,124 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tests/xsi_quant/` | 3 | ~11,906 |
+| `tests/xsi_quant/` | 3 | ~11,915 |
 | `tools/` | 4 | ~20,957 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
@@ -2809,7 +2809,7 @@
 
 - `gates.rs` (~4100 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~4375 tok, huge) — Copyright 2025 STARGA Inc.
-- `oracle.rs` (~3431 tok, huge) — Copyright 2025 STARGA Inc.
+- `oracle.rs` (~3440 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
