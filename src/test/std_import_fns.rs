@@ -1,7 +1,8 @@
-// Copyright 2025 STARGA Inc.
+// Copyright 2025-2026 STARGA Inc.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at:
+// You may obtain a copy of the License at
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
@@ -10,17 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Std modules the `mindc test` runner merges into a test module.
+//! Which bundled std functions `mindc test` admits.
 //!
-//! Kept in its own file so the test runner stays inside the source-size
-//! ceiling. An explicit import admits that module's functions, constants,
-//! extern blocks and structs. An ambient module admits only the functions
-//! the runtime support library links, plus the structs and extern blocks
-//! those functions' bodies name. A runtime string function stays with the
-//! evaluator, and a struct the test file declares itself keeps its own
-//! declaration.
-
-use std::collections::VecDeque;
+//! An explicit import admits that module and every module it reaches. An
+//! ambient module, present with no import, admits only the names the
+//! runtime support links. Kept in its own file so the test runner stays
+//! inside the source-size ceiling.
 
 use crate::ast::Node;
 use crate::parser;
@@ -33,10 +29,12 @@ use super::top_level;
 /// themselves call each other this way (std.io builds strings with
 /// `string_push_byte` and no import line). The test evaluator runs the same
 /// definitions from their bundled MIND source.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 const AMBIENT_STD: [&str; 3] = ["std.string", "std.vec", "std.map"];
 
 /// The runtime-support source every artifact links — the authority on which
 /// std names the compiled build can actually call without an import.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 const MIND_RUNTIME_SUPPORT_C: &str = include_str!("../../runtime-support/mind_intrinsics.c");
 
 /// The function names the runtime-support library exports (`MIND_EXPORT` /
@@ -46,6 +44,7 @@ const MIND_RUNTIME_SUPPORT_C: &str = include_str!("../../runtime-support/mind_in
 /// made `mindc test` pass a program whose `mindc build` cannot link —
 /// `vec_free` was callable with no import while the linker answered
 /// `undefined reference to 'vec_free'`.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn runtime_support_exports() -> &'static std::collections::HashSet<&'static str> {
     static EXPORTS: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
         std::sync::OnceLock::new();
@@ -76,13 +75,7 @@ fn runtime_support_exports() -> &'static std::collections::HashSet<&'static str>
 /// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
 /// their module-level `Const` items, so a fn body that reads a module const
 /// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
-/// table, plus their `extern "C"` blocks and `struct` declarations (inert
-/// when evaluated), so the string-equality pass reads the declared result of
-/// a libc call in std code (std.fs `read(...) -> i64`) and a std record's
-/// field (`v.cap` in std.vec) as `mindc check` and the build do. A struct the
-/// test module declares itself keeps its own declaration. A function the
-/// evaluator runs as the runtime support library does (`string_eq`, which the
-/// build links) is not taken: a call of it computes what the build computes.
+/// table.
 ///
 /// Deterministic: imports are processed in source-encounter order (FIFO
 /// worklist, `BTreeSet` visited guard against cycles). A non-`std` import
@@ -90,14 +83,16 @@ fn runtime_support_exports() -> &'static std::collections::HashSet<&'static str>
 /// (`project_std`); any other `std` import that names no shipped module is
 /// refused at the import, as `mindc check` refuses it, and so is a `std`
 /// import inside a body (not a module item); a bundled module that fails to
-/// parse is a fail-loud error. An explicit import admits the module's every
-/// definition; an ambient module admits only the fns its runtime support
-/// links ([`runtime_support_exports`]).
+/// parse is a fail-loud error. An EXPLICIT import admits that module and
+/// every module it imports, in full. An AMBIENT module (present with no
+/// import, and not reached from an explicit one) admits only the fns its
+/// runtime support links ([`runtime_support_exports`]).
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 pub(super) fn resolve_std_import_fns(
     module: &crate::ast::Module,
     project_std: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<Vec<Node>, String> {
-    use crate::eval::extern_c_intrinsics;
+    use std::collections::VecDeque;
 
     let import_key = |item: &Node| -> Result<Option<String>, String> {
         if let Node::Import { path, .. } = item {
@@ -124,20 +119,14 @@ pub(super) fn resolve_std_import_fns(
         return Err(format!("error[type-check][E2002]: {refusal}"));
     }
 
-    let own_structs: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
-        .into_iter()
-        .filter_map(|item| match item {
-            Node::StructDef { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
     let mut out: Vec<Node> = Vec::new();
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     // The file's OWN imports come first, in source-encounter order (the
     // documented FIFO discipline); the ambient modules follow. An explicit
-    // import keeps admitting the module's every definition (that is the
-    // documented cross-module behavior), while an AMBIENT module admits only
-    // the names the compiled build links from its runtime support.
+    // import admits that module's every definition, and every module it
+    // imports: the compiled build compiles that graph from source. Only an
+    // ambient module (no import in the file, and not reached from one) is
+    // limited to the names the runtime support links.
     let mut explicit: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
     for item in top_level::refs(&module.items) {
@@ -147,6 +136,9 @@ pub(super) fn resolve_std_import_fns(
         }
     }
     queue.extend(AMBIENT_STD.iter().map(|key| key.to_string()));
+    // Transitive imports of an explicit module join this set when they are
+    // seen, before they are processed. Ambient modules never add to it.
+    let mut admit_all: std::collections::BTreeSet<String> = explicit.clone();
     // A name the file binds through its own `extern "C"` block calls that
     // symbol, never the ambient std definition of the same name.
     let extern_names: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
@@ -157,7 +149,6 @@ pub(super) fn resolve_std_import_fns(
         })
         .flatten()
         .collect();
-    queue.extend(bare_std_modules(module));
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
             continue;
@@ -174,19 +165,21 @@ pub(super) fn resolve_std_import_fns(
                     .join("; ")
             )
         })?;
-        let ambient = !explicit.contains(&key);
+        let admit_module = admit_all.contains(&key);
         for item in top_level::refs(&imported.items) {
             match item {
                 Node::FnDef(fd, _) if extern_names.contains(fd.name.as_str()) => {}
-                Node::FnDef(fd, _) if extern_c_intrinsics::is_runtime_string_fn(&fd.name) => {}
                 Node::FnDef(fd, _)
-                    if ambient && !runtime_support_exports().contains(fd.name.as_str()) => {}
-                Node::StructDef { name, .. } if own_structs.contains(name.as_str()) => {}
-                Node::FnDef(..)
-                | Node::Const { .. }
-                | Node::ExternBlock { .. }
-                | Node::StructDef { .. } => out.push(item.clone()),
-                Node::Import { .. } => queue.extend(import_key(item)?),
+                    if !admit_module && !runtime_support_exports().contains(fd.name.as_str()) => {}
+                Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
+                Node::Import { .. } => {
+                    if let Some(child) = import_key(item)? {
+                        if admit_module {
+                            admit_all.insert(child.clone());
+                        }
+                        queue.push_back(child);
+                    }
+                }
                 _ => {}
             }
         }
@@ -194,54 +187,28 @@ pub(super) fn resolve_std_import_fns(
     Ok(out)
 }
 
-/// The bundled std modules that define a std.string function (`string_*`)
-/// `module` calls by its bare name and does not define itself. `mindc check`
-/// and the build see every bundled std declaration with no `import` (the
-/// bundled std signatures), so `mindc test` loads the module that defines
-/// the callee too. A method call on a string names its `string_<method>`
-/// function, which is the call the build makes for it. Callees the evaluator
-/// runs itself (the runtime-support emulations) load nothing.
-fn bare_std_modules(module: &crate::ast::Module) -> Vec<String> {
-    use crate::eval::extern_c_intrinsics;
-    use crate::project::stdlib::STDLIB_MIND_SOURCES;
-    use std::collections::BTreeSet;
-
-    let mut defined = BTreeSet::new();
-    let mut wanted = BTreeSet::new();
-    let mut pending: Vec<&Node> = module.items.iter().collect();
-    while let Some(node) = pending.pop() {
-        match node {
-            Node::FnDef(fd, _) => {
-                defined.insert(fd.name.clone());
-                pending.extend(fd.body.iter());
-                continue;
-            }
-            Node::Call { callee, .. } if !callee.contains('.') && !callee.contains("::") => {
-                wanted.insert(callee.clone());
-            }
-            Node::MethodCall { method, .. } => {
-                wanted.insert(format!("string_{method}"));
-            }
-            _ => {}
-        }
-        pending.extend(crate::eval::closures::node_children_ref(node));
-    }
-    let wanted: Vec<String> = wanted
-        .into_iter()
-        .filter(|name| {
-            name.starts_with("string_")
-                && !defined.contains(name)
-                && !extern_c_intrinsics::is_extern_c_intrinsic(name)
-                && !extern_c_intrinsics::is_runtime_string_fn(name)
+/// An explicit `import std.x509` compiles `std.sha256` from source, including
+/// the helpers `sha256` calls. Those helpers are not runtime-support exports.
+/// The ambient `std.vec` name `vec_free` stays refused: nothing imported it.
+#[cfg(all(test, any(feature = "cross-module-imports", feature = "std-surface")))]
+#[test]
+fn explicit_import_admits_the_modules_it_imports() {
+    let src = "import std.x509;\nfn t() -> i64 {\n    return 0;\n}\n";
+    let module = parser::parse(src).expect("parse");
+    let items = resolve_std_import_fns(&module, None).expect("resolve");
+    let names: std::collections::BTreeSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            Node::FnDef(fd, _) => Some(fd.name.as_str()),
+            _ => None,
         })
         .collect();
-    STDLIB_MIND_SOURCES
-        .iter()
-        .filter(|(_, src)| {
-            wanted
-                .iter()
-                .any(|name| src.contains(&format!("fn {name}(")))
-        })
-        .map(|(path, _)| (*path).to_string())
-        .collect()
+    assert!(
+        names.contains("sha256") && names.contains("rotr32"),
+        "std.sha256 and its helpers must be admitted through import std.x509, got {names:?}"
+    );
+    assert!(
+        !names.contains("vec_free"),
+        "ambient vec_free must stay refused"
+    );
 }

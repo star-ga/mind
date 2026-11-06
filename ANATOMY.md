@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1995 | **Est. tokens:** ~3,969,329
-**Generated:** 2026-11-06 20:34 UTC
+**Files:** 1995 | **Est. tokens:** ~3,968,966
+**Generated:** 2026-11-06 20:57 UTC
 
 ## Token Budget Guide
 
@@ -150,7 +150,7 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 5 | ~18,180 |
+| `src/test/` | 5 | ~17,817 |
 | `src/type_checker/` | 21 | ~65,774 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
@@ -1587,7 +1587,7 @@
 - `imports.rs` (~6011 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~6240 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2689 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_import_fns.rs` (~2901 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_import_fns.rs` (~2538 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
 
