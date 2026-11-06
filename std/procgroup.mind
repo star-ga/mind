@@ -144,6 +144,15 @@ fn pg_put4(p: i64, off: i64, b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
     0
 }
 
+// "/dev/null" as a heap C string.
+fn pg_dev_null() -> i64 {
+    let p: i64 = __mind_alloc(12);
+    let _ = pg_put4(p, 0, 47, 100, 101, 118);
+    let _ = pg_put4(p, 4, 47, 110, 117, 108);
+    let _ = pg_put4(p, 8, 108, 0, 0, 0);
+    p
+}
+
 // "MIND_PROCGROUP_TASK" as a heap C string.
 fn pg_env_name() -> i64 {
     let p: i64 = __mind_alloc(20);
@@ -349,6 +358,33 @@ fn pg_close_fd(s: i64) -> i64 {
     0
 }
 
+// Bytes per struct pollfd entry: fd (i32), events (i16), revents (i16).
+fn pg_pollfd_size() -> i64 {
+    8
+}
+
+// Make entry `j` of the pollfd array at `pfds` wait for input on `fd`.
+fn pg_pollfd_set(pfds: i64, j: i64, fd: i64) -> i64 {
+    let e: i64 = pfds + j * pg_pollfd_size();
+    __mind_store_i32(e, fd);
+    __mind_store_i16(e + 4, 1);
+    __mind_store_i16(e + 6, 0);
+    0
+}
+
+// 1 when the last poll marked entry `j` (input, end of file or an error).
+fn pg_pollfd_ready(pfds: i64, j: i64) -> i64 {
+    if __mind_load_i16(pfds + j * pg_pollfd_size() + 6) != 0 {
+        return 1;
+    }
+    0
+}
+
+// What procgroup_sys_poll_until returns once its deadline has passed.
+fn pg_expired() -> i64 {
+    0 - 2
+}
+
 // Fill one pollfd entry per open pipe; `map` gets the slot index of each.
 // Returns the entry count.
 fn pg_fill_pollfds(g: i64, pfds: i64, map: i64) -> i64 {
@@ -358,7 +394,7 @@ fn pg_fill_pollfds(g: i64, pfds: i64, map: i64) -> i64 {
     while i < n {
         let fd: i64 = __mind_load_i64(pg_slot(g, i) + 8);
         if fd >= 0 {
-            let _ = procgroup_sys_pollfd_set(pfds, k, fd);
+            let _ = pg_pollfd_set(pfds, k, fd);
             __mind_store_i64(map + k * 8, i);
             k = k + 1;
         }
@@ -373,7 +409,7 @@ fn pg_read_ready(g: i64, pfds: i64, map: i64, k: i64, buf: i64) -> i64 {
     let mut handled: i64 = 0;
     let mut j: i64 = 0;
     while j < k {
-        if procgroup_sys_pollfd_ready(pfds, j) == 1 {
+        if pg_pollfd_ready(pfds, j) == 1 {
             let s: i64 = pg_slot(g, __mind_load_i64(map + j * 8));
             let fd: i64 = __mind_load_i64(s + 8);
             let got: i64 = procgroup_sys_read(fd, buf, pg_read_chunk());
@@ -453,6 +489,70 @@ fn pg_expire(g: i64, pfds: i64, map: i64, st: i64, buf: i64) -> i64 {
     0
 }
 
+// The forked child: close the inherited descriptors listed at `shut`, wire
+// the pipe and /dev/null, exec. Only async-signal-safe calls run here. The
+// listed descriptors close first and `rd` before the dup2 calls, so a low
+// descriptor (0 or 1 when the parent had closed them) is never clobbered
+// afterwards. The walk is here, one close per descriptor, so std.procgroup_sys
+// stays a straight-line wrapper.
+fn pg_child_exec(shut: i64, nshut: i64, rd: i64, wr: i64, devnull: i64, prog: i64, argv: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < nshut {
+        let fd: i64 = __mind_load_i64(shut + j * 8);
+        if fd >= 0 {
+            let _ = procgroup_sys_close(fd);
+        }
+        j = j + 1;
+    }
+    let _ = procgroup_sys_close(rd);
+    if wr != 1 {
+        let _ = procgroup_sys_dup2(wr, 1);
+        let _ = procgroup_sys_close(wr);
+    }
+    if devnull > 0 {
+        let _ = procgroup_sys_dup2(devnull, 0);
+        let _ = procgroup_sys_close(devnull);
+    }
+    let _ = procgroup_sys_execvp(prog, argv);
+    procgroup_sys_exit(127)
+}
+
+// Fork a child that runs `prog` with the NULL-terminated argv at `argv`.
+// The child's stdout is a new pipe, its stdin /dev/null, its stderr inherited;
+// before the exec it closes the `nshut` descriptors packed as i64 at `shut`
+// (negative entries are skipped). A child that cannot exec exits 127.
+// Returns the child's pid and stores the pipe's read end at `rd_out`.
+// Returns -1, storing nothing and leaving no descriptor open, when the pipe
+// or the fork fails.
+fn pg_spawn_piped(prog: i64, argv: i64, shut: i64, nshut: i64, rd_out: i64) -> i64 {
+    let ends: i64 = __mind_alloc(8);
+    let piped: i64 = procgroup_sys_pipe(ends);
+    if piped != 0 {
+        let _ = __mind_free(ends);
+        return 0 - 1;
+    }
+    let rd: i64 = __mind_load_i32(ends + 0);
+    let wr: i64 = __mind_load_i32(ends + 4);
+    let _ = __mind_free(ends);
+    let null_path: i64 = pg_dev_null();
+    let devnull: i64 = procgroup_sys_open(null_path, 0, 0);
+    let _ = __mind_free(null_path);
+    let pid: i64 = procgroup_sys_fork();
+    if pid == 0 {
+        let _ = pg_child_exec(shut, nshut, rd, wr, devnull, prog, argv);
+    }
+    let _ = procgroup_sys_close(wr);
+    if devnull >= 0 {
+        let _ = procgroup_sys_close(devnull);
+    }
+    if pid < 0 {
+        let _ = procgroup_sys_close(rd);
+        return 0 - 1;
+    }
+    __mind_store_i64(rd_out, rd);
+    pid
+}
+
 // ---- Public: group lifecycle ----
 
 // procgroup_new — an empty group for up to `capacity` children.
@@ -511,7 +611,7 @@ pub fn procgroup_spawn(g: i64, prog_addr: i64, argv_vec_addr: i64, argv_vec_len:
     let shut: i64 = pg_sibling_fds(g, i);
     let saved: i64 = pg_env_push(i);
     // On success the pipe's read end lands in the slot's fd field (s + 8).
-    let pid: i64 = procgroup_sys_spawn_piped(prog_addr, argv, shut, i, s + 8);
+    let pid: i64 = pg_spawn_piped(prog_addr, argv, shut, i, s + 8);
     let _ = pg_env_pop(saved);
     let _ = __mind_free(shut);
     let _ = __mind_free(argv);
@@ -533,7 +633,7 @@ pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
         return 0 - 1;
     }
     let n: i64 = __mind_load_i64(g + 8);
-    let pfds: i64 = __mind_alloc((n + 1) * procgroup_sys_pollfd_size());
+    let pfds: i64 = __mind_alloc((n + 1) * pg_pollfd_size());
     let map: i64 = __mind_alloc(n * 8 + 8);
     let st: i64 = __mind_alloc(8);
     let buf: i64 = __mind_alloc(pg_read_chunk());
@@ -545,7 +645,7 @@ pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
     while active > 0 {
         let k: i64 = pg_fill_pollfds(g, pfds, map);
         let ready: i64 = procgroup_sys_poll_until(pfds, k, deadline, pg_poll_ms());
-        if ready == procgroup_sys_expired() {
+        if ready == pg_expired() {
             let _ = pg_expire(g, pfds, map, st, buf);
             active = 0;
         } else {

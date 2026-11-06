@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1982 | **Est. tokens:** ~3,930,699
-**Generated:** 2026-11-06 12:42 UTC
+**Files:** 1982 | **Est. tokens:** ~3,931,117
+**Generated:** 2026-11-06 18:20 UTC
 
 ## Token Budget Guide
 
@@ -25,7 +25,7 @@
 | `./` | 35 | ~32,790 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 2 | ~644 |
+| `.arch-mind/` | 2 | ~700 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
@@ -109,7 +109,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~55,870 |
+| `src/` | 13 | ~55,937 |
 | `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -155,8 +155,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 47 | ~224,023 |
-| `tests/` | 443 | ~939,270 |
+| `std/` | 47 | ~224,259 |
+| `tests/` | 443 | ~939,329 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -282,7 +282,7 @@
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `.arch-mind/`
 
-- `rules.mind` (~557 tok, large) — mind (language compiler / runtime root) architectural-governance rules
+- `rules.mind` (~613 tok, large) — mind (language compiler / runtime root) architectural-governance rules
 - `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `assets/logo/`
 
@@ -1376,8 +1376,8 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~9778 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics_tests.rs` (~1634 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9794 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics_tests.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1655,8 +1655,8 @@
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3084 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
-- `procgroup.mind` (~5045 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
-- `procgroup_sys.mind` (~2575 tok, huge) — std.procgroup_sys — the OS calls of std.procgroup, one small primitive each.
+- `procgroup.mind` (~5874 tok, huge) — std.procgroup — run many child processes at once and wait for all of them.
+- `procgroup_sys.mind` (~1982 tok, huge) — std.procgroup_sys — the OS calls of std.procgroup, one straight-line wrapper each.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
@@ -2652,7 +2652,7 @@
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_procgroup_run.mind` (~3772 tok, huge) — Program for tests/std_procgroup_run.rs: one executable that is both the
-- `std_procgroup_run.rs` (~7152 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_procgroup_run.rs` (~7211 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.

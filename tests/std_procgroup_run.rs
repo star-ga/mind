@@ -143,7 +143,8 @@ mod bundle {
     /// A program reaching any of the three world-reading functions (fork and
     /// the environment, the clock deadline, the environment) is refused an
     /// artifact without the flag, and the refusal names that function. So is a
-    /// direct call into the effect module `std.procgroup_sys` (its clock read).
+    /// direct call into the effect module `std.procgroup_sys` (its clock read,
+    /// and its fork).
     #[test]
     fn a_world_reading_procgroup_call_needs_allow_nondeterministic() {
         let cases = [
@@ -171,6 +172,11 @@ mod bundle {
                 "sys_deadline",
                 "import std.procgroup_sys;\n\nfn main() -> i64 {\n    return procgroup_sys_deadline(1000);\n}\n".to_string(),
                 "procgroup_sys_deadline",
+            ),
+            (
+                "sys_fork",
+                "import std.procgroup_sys;\n\nfn main() -> i64 {\n    return procgroup_sys_fork();\n}\n".to_string(),
+                "procgroup_sys_fork",
             ),
         ];
         for (tag, src, offender) in &cases {

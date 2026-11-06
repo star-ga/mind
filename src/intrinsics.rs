@@ -533,15 +533,16 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "procgroup_wait_all",
     // `std.procgroup_sys`, the effect module those three reach their OS calls
     // through: each primitive whose body calls a World row above (`fork`,
-    // `waitpid`, `read`, `clock_gettime`, `getenv`). Its other primitives
-    // (close, kill, plain poll, pollfd fields, the environment restore) call
-    // none and stay pure, like `procgroup_new`.
+    // `waitpid`, `read`, `clock_gettime`, `getenv`). The child descriptor
+    // walk and the pollfd records live in `std.procgroup`. close, kill, plain
+    // poll, pipe, dup2, exec and the environment restore call no World row
+    // and stay pure, like `procgroup_new`.
     "procgroup_sys_deadline",
     "procgroup_sys_env_push",
     "procgroup_sys_env_read",
+    "procgroup_sys_fork",
     "procgroup_sys_poll_until",
     "procgroup_sys_read",
-    "procgroup_sys_spawn_piped",
     "procgroup_sys_wait",
     "read_input",
     "read_line",
