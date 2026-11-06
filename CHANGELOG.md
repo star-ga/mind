@@ -5,6 +5,8 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [0.10.3] - 2026-11-07 — PQC hybrid evidence signing compiled into release builds (signed, opt-in) with the classical schemes retired, release build hardening (committed lockfile, `--locked` everywhere, a required pre-tag release job), the whole-program mic@3 String fix, the `__mind_open` wiring, and the canonical JSON dump
 
 ### Added
@@ -25,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which backend ran. `std_surface_net_fs_process` 18 passed / 0 failed (was
   13/4); a mutation forcing `-1` turns it 17/1. keystone 7/7 byte-identical;
   cross-substrate 26/26; self-host loop PRIMARY + ORACLE both pass.
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`) (`#350`, `738b67c2`)**: a MIND program
+  writes and reads its results (per-game and per-level actions, a score as a
+  numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
+  empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
+  keys sorted, so the bytes depend only on the key/value set; the reader accepts only
+  that canonical form and refuses malformed input with a named error, checking every
+  count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
+  allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
+  records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
 - mindc test can read project files read-only (open/read/lseek/close); results match native.
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
@@ -459,6 +470,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lowering helpers aligned with feature gates (`#337`, `c09c720d`).** Shared
   lowering helpers honour the same feature gates as their callers, so a
   reduced-feature build no longer reaches an unguarded helper and fails.
+- **Slice arguments with alias elements and private helpers (`#340`, `4d081451`)**: the slice-call
+  check compares element types after type-alias resolution (local aliases and
+  aliases exported by an imported module), so `array<Q>` with `type Q = i32`
+  passes to `&[Q]` and `&[i32]`; a float element reached through an alias is now
+  refused like a direct one. An imported alias now resolves in a project whose
+  manifest lists `[targets.cpu].sources`, by the same owner rule as imported
+  types. Calls inside a `module m { ... }` block resolve module-private sibling
+  functions, so a slice argument to a non-exported helper is admitted and
+  checked instead of reported as passed to an unresolved function. A type read
+  from an imported signature or an imported struct field is read in its owner
+  module's scope, so `let b: defs.Bank = defs.make_bank()` meets a `make_bank`
+  declared `-> Bank` inside `defs`. An array-literal element that names a module
+  constant (local, or imported such as `defs.ONE`), or an arithmetic expression
+  over such constants, is classified by the constant's value. A slice or
+  collection type named through an alias (`type V = array<i32>`,
+  `type SL = &[i32]`) is refused at the slice boundary with `E2032` (and a slice
+  alias as a struct field with `E2033`), because lowering does not resolve such an
+  annotation: before, a read of an `SL` parameter failed to build or emitted an
+  artifact with an undefined symbol.
+  (`src/type_checker/slice_abi/aliases.rs`, `src/type_checker/mod.rs`,
+  `src/qualified_enums.rs`, `src/qualified_enums/canonical_types.rs`)
 - **Project source walk.** The project-root tests/ directory is now left out of
   the walked source set (nested tests/ directories stay in). Source sets and
   cache keys of projects with a root tests/ change. (`src/project/sources.rs`)

@@ -159,7 +159,7 @@ def main(argv):
 
     # ---- 5. STDLIB_MIND_SOURCES <-> the `bundled` column, BOTH directions ---
     stdlib_src = _STDLIB_RS.read_text(encoding="utf-8")
-    bundled_actual = re.findall(r'\("std\.([a-z0-9_]+)",\s*include_str!', stdlib_src)
+    bundled_actual = re.findall(r'\(\s*"std\.([a-z0-9_]+)",\s*include_str!', stdlib_src)
     if not bundled_actual:
         errors.append(
             f"could not extract STDLIB_MIND_SOURCES from "

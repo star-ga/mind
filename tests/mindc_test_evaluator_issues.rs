@@ -490,11 +490,13 @@ fn message_form_false() {
 }
 
 // ---------------------------------------------------------------------------
-// Struct field assignment — fail closed until interpreter mutation semantics
-// are explicitly defined (the native lowering path is a separate contract).
+// Struct field assignment — the store lands in the record (types.md "Record
+// identity"), directly, in a called helper and in a loop. It used to be
+// refused; before that it returned the RHS and dropped the write, so the
+// old-value control is what proves the store happened.
 // ---------------------------------------------------------------------------
 
-const STRUCT_FIELD_ASSIGNMENT_REFUSAL: &str = r#"
+const STRUCT_FIELD_ASSIGNMENT: &str = r#"
 struct Point {
     x: i64,
 }
@@ -520,45 +522,40 @@ fn struct_read_only_helper_still_passes() {
 }
 
 #[test]
-fn struct_store_direct_refuses() {
+fn struct_store_direct_lands() {
     let got = store_direct();
     assert got == 9, "store must not silently retain the old value"
 }
 
 #[test]
-fn struct_store_called_helper_refuses() {
+fn struct_store_called_helper_lands() {
     let got = store_helper();
     assert got == 9, "store in a called helper must not silently disappear"
 }
 
 #[test]
-fn struct_store_old_value_control_refuses() {
+fn struct_store_old_value_control_fails() {
     let got = store_direct();
-    assert got == 1, "old-value assertion must not pass when the store is unsupported"
+    assert got == 1, "old-value assertion must not pass after the store"
 }
 "#;
 
 #[test]
-fn struct_field_assignment_refuses_in_direct_and_called_helpers() {
-    let (code, out) = run_mindc_test(
-        "struct_field_assignment_refusal",
-        STRUCT_FIELD_ASSIGNMENT_REFUSAL,
-    );
-    assert_ne!(code, 0, "field mutation must not report green:\n{out}");
+fn struct_field_assignment_lands_in_direct_and_called_helpers() {
+    let (code, out) = run_mindc_test("struct_field_assignment", STRUCT_FIELD_ASSIGNMENT);
+    assert_ne!(code, 0, "the old-value control must fail:\n{out}");
     assert_line(&out, "struct_read_only_helper_still_passes ... ok");
-    assert_line(&out, "struct_store_direct_refuses ... FAILED");
-    assert_line(&out, "struct_store_called_helper_refuses ... FAILED");
-    assert_line(&out, "struct_store_old_value_control_refuses ... FAILED");
-    assert_line(
-        &out,
-        "struct field assignment `.x` is unsupported by the interpreter; mutation semantics are not defined",
-    );
-    assert_line(&out, "1 passed; 3 failed");
+    assert_line(&out, "struct_store_direct_lands ... ok");
+    assert_line(&out, "struct_store_called_helper_lands ... ok");
+    assert_line(&out, "struct_store_old_value_control_fails ... FAILED");
+    assert_line(&out, "old-value assertion must not pass after the store");
+    assert_no_line(&out, "unsupported by the interpreter");
+    assert_line(&out, "3 passed; 1 failed");
 }
 
 #[cfg(feature = "std-surface")]
 #[test]
-fn struct_field_assignment_refuses_inside_loop() {
+fn struct_field_assignment_lands_inside_loop() {
     let src = r#"
 struct Point {
     x: i64,
@@ -575,19 +572,22 @@ fn store_loop() -> i64 {
 }
 
 #[test]
-fn struct_store_loop_refuses() {
+fn struct_store_loop_lands() {
     let got = store_loop();
     assert got == 9, "store in a loop must not silently disappear"
 }
+
+#[test]
+fn struct_store_loop_old_value_control_fails() {
+    let got = store_loop();
+    assert got == 1, "loop old-value assertion must not pass after the store"
+}
 "#;
-    let (code, out) = run_mindc_test("struct_field_assignment_loop_refusal", src);
-    assert_ne!(code, 0, "loop field mutation must not report green:\n{out}");
-    assert_line(&out, "struct_store_loop_refuses ... FAILED");
-    assert_line(
-        &out,
-        "struct field assignment `.x` is unsupported by the interpreter; mutation semantics are not defined",
-    );
-    assert_line(&out, "0 passed; 1 failed");
+    let (code, out) = run_mindc_test("struct_field_assignment_loop", src);
+    assert_ne!(code, 0, "the loop old-value control must fail:\n{out}");
+    assert_line(&out, "struct_store_loop_lands ... ok");
+    assert_line(&out, "struct_store_loop_old_value_control_fails ... FAILED");
+    assert_line(&out, "1 passed; 1 failed");
 }
 
 /// `assert(cond, "msg")` — the parenthesised comma form — parsed as a 2-tuple
