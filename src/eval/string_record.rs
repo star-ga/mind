@@ -323,7 +323,7 @@ mod tests {
             else {
                 panic!("a `String` parameter binds the std struct value");
             };
-            assert_eq!(fields[1], ("len".to_string(), Value::Int(3)));
+            assert_eq!(fields.fields()[1], ("len".to_string(), Value::Int(3)));
         }
         let untouched = bind_param(&TypeAnn::ScalarI64, Value::Str("x".into())).unwrap();
         assert_eq!(untouched, Value::Str("x".into()));
