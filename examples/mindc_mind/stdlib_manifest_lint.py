@@ -49,6 +49,14 @@ WHAT IS CHECKED
      three-way merge keeps both sides' count lines; this check refuses that,
      and refuses its own hostile variants of the real header on every run.
 
+`--self-test` is this lint's own mutation proof (python3 scripts/run_gate.py
+examples/mindc_mind/stdlib_manifest_lint.py --self-test). It builds a mini repo from
+the lint's REAL file set, damages a copy of the REAL manifest (duplicated header,
+wrong count), runs the lint's real entry point on it as a subprocess and requires a
+non-zero exit with the count-header message. The in-process probes above call
+`count_header_errors` directly, so deleting the one line in `main()` that feeds the
+real manifest to it left them green; only a run through the entry point sees that.
+
 Check 6 is the bridge to full migration: those fourteen smokes still carry a
 literal, but the literal can no longer drift silently.
 
@@ -65,7 +73,10 @@ literal, but the literal can no longer drift silently.
 import ast
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
@@ -190,7 +201,90 @@ def count_header_probes(text, total, seed, bundled):
     }
 
 
+def _run_on_manifest(manifest_text):
+    """Run a COPY of this lint, as a subprocess, in a mini repo holding `manifest_text`."""
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        mind = root / "examples" / "mindc_mind"
+        (mind / "testdata").mkdir(parents=True)
+        for name in ("stdlib_manifest_lint.py", "_stdlib_manifest.py"):
+            shutil.copyfile(_HERE / name, mind / name)
+        (mind / "testdata" / "stdlib_manifest.txt").write_text(
+            manifest_text, encoding="utf-8")
+        for src in (_BRIDGE_RS, _STDLIB_RS):
+            dst = root / src.relative_to(_REPO)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+        (root / "std").mkdir()
+        for src in sorted(_STD_DIR.glob("*.mind")):
+            shutil.copyfile(src, root / "std" / src.name)
+        p = subprocess.run(
+            [sys.executable, str(mind / "stdlib_manifest_lint.py")],
+            capture_output=True, text=True, cwd=root,
+        )
+        return p.returncode, p.stdout + p.stderr
+
+
+def selftest():
+    """The lint's real entry point must refuse a damaged copy of the real manifest.
+
+    The first case is an UNDAMAGED copy that must pass, so the mini repo is proven
+    one the lint can pass in and each red case is red because of its damage; every
+    damage is proven to change the text (a replace that matched nothing is an
+    error, not a pass).
+    """
+    real = _stdlib_manifest.MANIFEST_PATH.read_text(encoding="utf-8")
+
+    def header(name):
+        hits = re.findall(rf"^# {name} (\d+)$", real, re.M)
+        assert len(hits) == 1, f"real manifest must state {name} exactly once: {hits}"
+        return int(hits[0]), f"# {name} {hits[0]}"
+
+    def damaged(old, new):
+        assert old in real, f"damage anchor not in the real manifest: {old!r}"
+        text = real.replace(old, new, 1)
+        assert text != real, f"damage did not change the manifest: {old!r}"
+        return text
+
+    (seed, seed_line), (bundled, bundled_line), (_, total_line) = (
+        header("SEED_COUNT"), header("BUNDLED_COUNT"), header("TOTAL_COUNT"))
+    cases = [
+        ("control: real manifest copy -> lint passes", real, 0,
+         ["stdlib_manifest_lint: PASS"]),
+        # THE SURVIVING MUTANT: a stale second header, reached only via the real read.
+        ("duplicated BUNDLED_COUNT header (stale value) -> lint fails",
+         damaged(bundled_line, f"{bundled_line}\n# BUNDLED_COUNT {bundled - 12}"), 1,
+         ["stdlib_manifest_lint: FAIL", "manifest states BUNDLED_COUNT 2 times"]),
+        ("duplicated TOTAL_COUNT header (same value) -> lint fails",
+         damaged(total_line, f"{total_line}\n{total_line}"), 1,
+         ["stdlib_manifest_lint: FAIL", "manifest states TOTAL_COUNT 2 times"]),
+        ("wrong SEED_COUNT value -> lint fails",
+         damaged(seed_line, f"# SEED_COUNT {seed + 1}"), 1,
+         ["stdlib_manifest_lint: FAIL",
+          f"SEED_COUNT says {seed + 1} but the rows give {seed}"]),
+    ]
+    failures = 0
+    for label, text, want_rc, want_in_output in cases:
+        rc, out = _run_on_manifest(text)
+        missing = [s for s in want_in_output if s not in out]
+        ok = (rc == 0 if want_rc == 0 else rc != 0) and not missing \
+            and "Traceback" not in out
+        # ONE VERDICT LINE PER CASE (scripts/gate_assert.py counts reported verdicts).
+        print(f"[{'PASS' if ok else 'FAIL'}] {label} (expected "
+              f"{'exit 0' if want_rc == 0 else 'non-zero exit'}, got {rc})")
+        if not ok:
+            failures += 1
+            print(f"    missing={missing}")
+            for line in out.strip().splitlines()[:12]:
+                print(f"    {line}")
+    # The SANCTIONED count-marker shape read by scripts/gate_assert.py.
+    print(f"\nSDLC-GATE stdlib_manifest_lint_selftest ran={len(cases)} fail={failures}")
+    return 1 if failures else 0
+
+
 def main(argv):
+    if "--self-test" in argv or "--selftest" in argv:
+        return selftest()
     if "--print-seed-sha256" in argv:
         print(_stdlib_manifest.actual_seed_sha256())
         return 0

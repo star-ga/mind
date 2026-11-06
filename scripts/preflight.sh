@@ -203,7 +203,7 @@ fi
 
 # The lint's own mutation proof: a damaged copy of the REAL manifest (duplicated or
 # wrong count header) run through the lint's real entry point must exit non-zero.
-python3 scripts/run_gate.py scripts/test_stdlib_manifest_lint.py \
+python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py --self-test \
   || bad "std manifest lint self-test FAILED — the lint no longer judges the real manifest's count headers"
 
 step "no-AI-attribution FILE gate  [docs-claims.yml — no model/tool credit in TRACKED FILES]"
