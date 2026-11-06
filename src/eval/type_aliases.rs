@@ -98,7 +98,19 @@ impl Drop for ActiveAliasesGuard {
 /// visible owner-qualified imported alias from the project registry. Cycles
 /// preserve the original named annotation, matching `LocalTypeAliases`.
 pub(crate) fn resolve_active(ty: &TypeAnn) -> TypeAnn {
-    ACTIVE_ALIASES.with(|active| active.borrow().resolve_with_imports(ty))
+    ACTIVE_ALIASES.with(|active| {
+        let active = active.borrow();
+        let resolved = active.resolve(ty);
+        #[cfg(feature = "cross-module-imports")]
+        if let TypeAnn::Named(name) = &resolved {
+            if let Some(target) =
+                crate::qualified_enums::resolve_alias_target(name, &active.imports)
+            {
+                return target;
+            }
+        }
+        resolved
+    })
 }
 
 #[cfg(feature = "cross-module-imports")]
