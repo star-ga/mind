@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2166 | **Est. tokens:** ~4,115,144
-**Generated:** 2026-11-06 21:18 UTC
+**Files:** 2166 | **Est. tokens:** ~4,115,145
+**Generated:** 2026-11-06 22:29 UTC
 
 ## Token Budget Guide
 
@@ -234,7 +234,7 @@
 | `tests/x509/` | 1 | ~2,228 |
 | `tests/x509/testdata/` | 86 | ~13,454 |
 | `tests/x509/testdata/adv/` | 21 | ~4,088 |
-| `tests/xsi_quant/` | 3 | ~11,906 |
+| `tests/xsi_quant/` | 3 | ~11,907 |
 | `tools/` | 4 | ~20,957 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
@@ -3003,7 +3003,7 @@
 
 - `gates.rs` (~4100 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~4375 tok, huge) — Copyright 2025 STARGA Inc.
-- `oracle.rs` (~3431 tok, huge) — Copyright 2025 STARGA Inc.
+- `oracle.rs` (~3432 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.

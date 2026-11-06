@@ -448,7 +448,7 @@ pub(crate) fn ref_two_asset_vol(w1: f64, w2: f64, s1: f64, s2: f64, rho: f64) ->
     if s1 < 0.0 || s2 < 0.0 {
         return ref_canonical_qnan();
     }
-    if rho < 0.0 - 1.0 || rho > 1.0 {
+    if !(0.0 - 1.0..=1.0).contains(&rho) {
         return ref_canonical_qnan();
     }
     let v: f64 = w1 * w1 * s1 * s1 + w2 * w2 * s2 * s2 + 2.0 * w1 * w2 * rho * s1 * s2;
