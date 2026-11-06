@@ -43,6 +43,11 @@ WHAT IS CHECKED
   5. `STDLIB_MIND_SOURCES` <-> the manifest's `bundled` column, BOTH directions.
   6. every REMAINING hand-copied `_STDLIB_MODULES` / `STD_MODULES` literal in
      `examples/mindc_mind/*.py` equals the manifest seed list exactly.
+  7. every count the manifest's comments state (`SEED_COUNT`, `BUNDLED_COUNT`,
+     `TOTAL_COUNT`, and the `<n> modules are not `seed`` sentence) appears
+     EXACTLY ONCE, in its canonical form, and equals the real row count. A
+     three-way merge keeps both sides' count lines; this check refuses that,
+     and refuses its own hostile variants of the real header on every run.
 
 Check 6 is the bridge to full migration: those fourteen smokes still carry a
 literal, but the literal can no longer drift silently.
@@ -84,6 +89,105 @@ def _both_ways(name_a, set_a, name_b, set_b, errors):
         errors.append(f"{name_a} has '{m}' but {name_b} does not")
     for m in sorted(set_b - set_a):
         errors.append(f"{name_b} has '{m}' but {name_a} does not")
+
+
+# ---- 7. header counts: one canonical line each, equal to the rows ------------
+# Merge 701e90fd kept both sides' count lines (55/55 AND 45/45, and a stale
+# "34 modules are not `seed`") and nothing parsed them. The canonical forms:
+_HEADER_COUNT_RE = re.compile(
+    r"^#\s*(SEED_COUNT|BUNDLED_COUNT|TOTAL_COUNT)\s+(0|[1-9][0-9]*)\s*$"
+)
+_NON_SEED_RE = re.compile(r"^#\s*(0|[1-9][0-9]*) modules are not `seed`:")
+_NON_SEED = "non-seed"
+# Any comment line that LOOKS like a count statement — any case, `_`/`-`/space
+# separators, a misspelt name, or a leading "<n> modules" — must be one of the
+# canonical forms above, so no spelling of a count escapes the check.
+_COUNT_LIKE_RE = re.compile(
+    r"^#\s*(?:[a-z]+(?:[_-][a-z]+)*[_-]count\b"
+    r"|(?:seed|bundled|total|non[\s_-]*seed)\s+count\b"
+    r"|[0-9]+\s+modules?\b)",
+    re.I,
+)
+
+
+def count_header_errors(text, total, seed, bundled):
+    """Every count stated in the manifest's comment lines, judged against the rows.
+
+    The whole file is read, not a header window: a count line a merge left after
+    the rows is still a count line. Empty result = each count appears exactly
+    once, in canonical form, with the real value.
+    """
+    want = {
+        "SEED_COUNT": seed,
+        "BUNDLED_COUNT": bundled,
+        "TOTAL_COUNT": total,
+        _NON_SEED: total - seed,
+    }
+    seen = {name: [] for name in want}
+    errors = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not line.startswith("#"):
+            continue
+        m = _HEADER_COUNT_RE.match(line)
+        if m:
+            seen[m.group(1)].append((lineno, int(m.group(2))))
+            continue
+        m = _NON_SEED_RE.match(line)
+        if m:
+            seen[_NON_SEED].append((lineno, int(m.group(1))))
+            continue
+        if _COUNT_LIKE_RE.match(line):
+            errors.append(
+                f"manifest line {lineno} states a count in a form the lint cannot "
+                f"check: {line!r} (write `# SEED_COUNT <n>`, `# BUNDLED_COUNT <n>`, "
+                f"`# TOTAL_COUNT <n>` or `# <n> modules are not `seed`:`)"
+            )
+    for name, real in want.items():
+        hits = seen[name]
+        if not hits:
+            errors.append(f"manifest header has no {name} count line (rows give {real})")
+        elif len(hits) > 1:
+            lines = ", ".join(str(lineno) for lineno, _ in hits)
+            errors.append(
+                f"manifest states {name} {len(hits)} times (lines {lines}) — exactly "
+                f"one count line per count"
+            )
+        for lineno, n in hits:
+            if n != real:
+                errors.append(
+                    f"manifest line {lineno}: {name} says {n} but the rows give {real}"
+                )
+    return errors
+
+
+def count_header_probes(text, total, seed, bundled):
+    """Hostile variants of the REAL manifest text; the check must refuse each one.
+
+    Built from the real header so the probes track its format: a probe that no
+    longer applies leaves the text unchanged and is then reported as accepted.
+    """
+    t, s, b, ns = total, seed, bundled, total - seed
+    tot, sd, bd = f"# TOTAL_COUNT {t}", f"# SEED_COUNT {s}", f"# BUNDLED_COUNT {b}"
+    nsd = f"# {ns} modules are not `seed`:"
+    body = text.rstrip("\n")
+    return {
+        "duplicated, same value": text.replace(tot, f"{tot}\n{tot}", 1),
+        "duplicated, merge shape": text.replace(bd, f"{bd}\n# BUNDLED_COUNT {b - 12}", 1),
+        "stale value": text.replace(sd, f"# SEED_COUNT {s + 1}", 1),
+        "missing line": text.replace(tot + "\n", "", 1),
+        "stale non-seed": text.replace(nsd, f"# {ns - 2} modules are not `seed`:", 1),
+        "duplicated non-seed": text.replace(nsd, f"{nsd} (copy)\n{nsd}", 1),
+        "missing non-seed": text.replace(nsd, "# Some modules are not `seed`:", 1),
+        "lower-case spelling": text.replace(tot, f"{tot}\n# total_count {t + 1}", 1),
+        "dash spelling": text.replace(tot, f"{tot}\n# TOTAL-COUNT {t + 1}", 1),
+        "space spelling": text.replace(tot, f"{tot}\n# Total count {t + 1}", 1),
+        "misspelt name": text.replace(tot, f"{tot}\n# BUNDELD_COUNT {b}", 1),
+        "trailing junk": text.replace(sd, f"{sd}x", 1),
+        "second number": text.replace(sd, f"{sd} {s + 1}", 1),
+        "leading zero": text.replace(sd, f"# SEED_COUNT 0{s}", 1),
+        "after the rows": f"{body}\n# BUNDLED_COUNT {b - 12}\n",
+        "uncheckable module count": text.replace(tot, f"{tot}\n# {t} modules are bundled", 1),
+    }
 
 
 def main(argv):
@@ -190,6 +294,18 @@ def main(argv):
                     f"{_first_diff(lst, manifest_seed)})"
                 )
 
+    # ---- 7. header counts: exactly one canonical line each, equal to rows ---
+    counts = (len(manifest_all), len(manifest_seed), len(manifest_bundled))
+    manifest_text = _stdlib_manifest.MANIFEST_PATH.read_text(encoding="utf-8")
+    errors.extend(count_header_errors(manifest_text, *counts))
+    probes = count_header_probes(manifest_text, *counts)
+    for name, variant in probes.items():
+        if not count_header_errors(variant, *counts):
+            errors.append(
+                f"header-count check accepted its hostile '{name}' variant of the "
+                f"manifest — a guard in count_header_errors has been lost"
+            )
+
     if errors:
         print("stdlib_manifest_lint: FAIL")
         for e in errors:
@@ -205,7 +321,9 @@ def main(argv):
         f"stdlib_manifest_lint: PASS — {len(manifest_all)} std modules, manifest<->disk "
         f"exact both ways; seed={len(manifest_seed)} (blob sha256 pinned) "
         f"bundled={len(bundled_actual)} unreachable={len(manifest_all) - len(manifest_bundled)}; "
-        f"{n_literals} remaining hand-copied list(s) verified against the manifest"
+        f"{n_literals} remaining hand-copied list(s) verified against the manifest; "
+        f"header counts SEED/BUNDLED/TOTAL/non-seed stated once each and exact, "
+        f"{len(probes)} hostile header variants refused"
     )
     return 0
 
