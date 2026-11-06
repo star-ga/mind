@@ -659,9 +659,10 @@ fn runtime_support_exports() -> &'static std::collections::HashSet<&'static str>
 /// (`project_std`); any other `std` import that names no shipped module is
 /// refused at the import, as `mindc check` refuses it, and so is a `std`
 /// import inside a body (not a module item); a bundled module that fails to
-/// parse is a fail-loud error. An EXPLICIT import admits the module's every
-/// definition; an AMBIENT module admits only the fns its runtime support
-/// links ([`runtime_support_exports`]).
+/// parse is a fail-loud error. An EXPLICIT import admits that module and
+/// every module it imports, in full. An AMBIENT module (present with no
+/// import, and not reached from an explicit one) admits only the fns its
+/// runtime support links ([`runtime_support_exports`]).
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 fn resolve_std_import_fns(
     module: &crate::ast::Module,
@@ -698,9 +699,10 @@ fn resolve_std_import_fns(
     let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     // The file's OWN imports come first, in source-encounter order (the
     // documented FIFO discipline); the ambient modules follow. An explicit
-    // import keeps admitting the module's every definition (that is the
-    // documented cross-module behavior), while an AMBIENT module admits only
-    // the names the compiled build links from its runtime support.
+    // import admits that module's every definition, and every module it
+    // imports: the compiled build compiles that graph from source. Only an
+    // ambient module (no import in the file, and not reached from one) is
+    // limited to the names the runtime support links.
     let mut explicit: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
     for item in top_level::refs(&module.items) {
@@ -710,6 +712,9 @@ fn resolve_std_import_fns(
         }
     }
     queue.extend(AMBIENT_STD.iter().map(|key| key.to_string()));
+    // Transitive imports of an explicit module join this set when they are
+    // seen, before they are processed. Ambient modules never add to it.
+    let mut admit_all: std::collections::BTreeSet<String> = explicit.clone();
     // A name the file binds through its own `extern "C"` block calls that
     // symbol, never the ambient std definition of the same name.
     let extern_names: std::collections::BTreeSet<&str> = top_level::refs(&module.items)
@@ -736,19 +741,52 @@ fn resolve_std_import_fns(
                     .join("; ")
             )
         })?;
-        let ambient = !explicit.contains(&key);
+        let admit_module = admit_all.contains(&key);
         for item in top_level::refs(&imported.items) {
             match item {
                 Node::FnDef(fd, _) if extern_names.contains(fd.name.as_str()) => {}
                 Node::FnDef(fd, _)
-                    if ambient && !runtime_support_exports().contains(fd.name.as_str()) => {}
+                    if !admit_module && !runtime_support_exports().contains(fd.name.as_str()) => {}
                 Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
-                Node::Import { .. } => queue.extend(import_key(item)?),
+                Node::Import { .. } => {
+                    if let Some(child) = import_key(item)? {
+                        if admit_module {
+                            admit_all.insert(child.clone());
+                        }
+                        queue.push_back(child);
+                    }
+                }
                 _ => {}
             }
         }
     }
     Ok(out)
+}
+
+/// An explicit `import std.x509` compiles `std.sha256` from source, including
+/// the helpers `sha256` calls. Those helpers are not runtime-support exports.
+/// The ambient `std.vec` name `vec_free` stays refused: nothing imported it.
+#[cfg(all(test, any(feature = "cross-module-imports", feature = "std-surface")))]
+#[test]
+fn explicit_import_admits_the_modules_it_imports() {
+    let src = "import std.x509;\nfn t() -> i64 {\n    return 0;\n}\n";
+    let module = parser::parse(src).expect("parse");
+    let items = resolve_std_import_fns(&module, None).expect("resolve");
+    let names: std::collections::BTreeSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            Node::FnDef(fd, _) => Some(fd.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        names.contains("sha256") && names.contains("rotr32"),
+        "std.sha256 and its helpers must be admitted through import std.x509, got {names:?}"
+    );
+    assert!(
+        !names.contains("vec_free"),
+        "ambient vec_free must stay refused"
+    );
 }
 
 /// Extract a human-readable string from a panic payload.
