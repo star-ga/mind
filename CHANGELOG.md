@@ -51,7 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     client had begun to write the request and the response is missing,
     partial or garbled, so the server may have acted and the caller must pause
     and never count it as a result. A failure is never a success: it carries
-    no status or body.
+    no status or body. The client marks the request as begun before its first
+    write, so a write that fails partway (a reset during the body) is
+    after-send; application data that arrives before any request byte is
+    written (with the server's handshake flight) answers no request and is
+    refused (`https_err_response`, before-send).
   - `std.https_probe`: `https_probe(url, url_len, timeout_ms)` resolves the
     URL's host and opens and closes one TCP connection to its port, sending
     nothing, with a distinct code per failure: `https_probe_err_url`,
@@ -103,16 +107,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the framing guards, each beside an accepted control: a repeated
     Content-Length, a transfer coding other than chunked, a Content-Length
     over 18 digits (one that would wrap i64), and CR, LF, SP and other control
-    bytes in the URL request target (refused before any connection). Every
-    refusal is checked with its error class.
+    bytes in the URL request target (refused before any connection); an 8 MiB
+    POST body (the request maximum) reaches s_server whole, and the same
+    request is refused after-send when a proxy resets the connection while the
+    body is written. Every refusal is checked with its error class.
   - `tests/std_https_network_safe.rs`: the loopback server in MIND and a step
     client under a preloaded resolver: a DNS outage between two requests (the
     probe reports it, the request fails before-send, and after the outage the
     same request returns the exact body), a refused port and a full accept
     queue (probe codes), a TLS refusal before the request and a cut after it,
-    and a body framed by the connection, which is complete only on
-    close_notify: a fatal alert, a warning alert and a TCP close are refused
-    after-send.
+    a body framed by the connection, which is complete only on close_notify:
+    a fatal alert, a warning alert and a TCP close are refused after-send; and
+    a response that arrives before any request byte is written (a recorded
+    server flight, response and close_notify replayed right after the client's
+    ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
 - **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.

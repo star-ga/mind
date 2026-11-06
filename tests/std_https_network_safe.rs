@@ -467,16 +467,19 @@ struct Recording {
 }
 
 /// Copy `from` to `to` until `from` ends, then end `to`'s write side; the
-/// handle yields every byte copied.
+/// handle yields every byte read from `from`, kept even when `to` has
+/// already closed (a client that stops after a complete response).
 fn copy_and_record(mut from: TcpStream, mut to: TcpStream) -> JoinHandle<Vec<u8>> {
     std::thread::spawn(move || {
         let mut seen = Vec::new();
         let mut buf = vec![0u8; 16640];
+        let mut open = true;
         while let Ok(n) = from.read(&mut buf) {
-            if n == 0 || to.write_all(&buf[..n]).is_err() {
+            if n == 0 {
                 break;
             }
             seen.extend_from_slice(&buf[..n]);
+            open = open && to.write_all(&buf[..n]).is_ok();
         }
         let _ = to.shutdown(Shutdown::Write);
         seen
