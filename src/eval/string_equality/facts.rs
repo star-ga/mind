@@ -574,6 +574,26 @@ impl Decls {
         self.consts.get(name).cloned().flatten()
     }
 
+    /// Whether `name` is a registered owner-qualified variant tag.
+    ///
+    /// The project rebuild keeps those tags on the qualified registry, which
+    /// exists only when cross-module imports are compiled in.
+    fn owner_variant(name: &str) -> bool {
+        crate::ir::with_global_enums(|g| {
+            if g.variant_tags.contains_key(name) {
+                return true;
+            }
+            #[cfg(feature = "cross-module-imports")]
+            {
+                g.qualified.variant_tags.contains_key(name)
+            }
+            #[cfg(not(feature = "cross-module-imports"))]
+            {
+                false
+            }
+        })
+    }
+
     /// Whether `name` names an enum variant (`E::V`, or a bare registered `V`).
     pub(super) fn is_variant(&self, name: &str) -> bool {
         // The built-in `Option` / `Result` prelude.
@@ -581,11 +601,8 @@ impl Decls {
             return true;
         }
         // A colliding enum is stored under its owner (`crate.table::Table::Raw`).
-        // That spelling is still an enum value, not a string. After the
-        // project rebuild the tags live on the qualified registry.
-        if crate::ir::with_global_enums(|g| {
-            g.variant_tags.contains_key(name) || g.qualified.variant_tags.contains_key(name)
-        }) {
+        // That spelling is still an enum value, not a string.
+        if owner_variant(name) {
             return true;
         }
         if let Some((head, _)) = name.rsplit_once("::") {
