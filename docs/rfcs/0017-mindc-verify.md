@@ -16,8 +16,9 @@
 
 `mindc verify` is a first-party subcommand that validates a compiled MIND artifact's
 embedded evidence chain. It recomputes the `trace_hash` over the artifact's IR body,
-compares it to the value embedded in the MAP epilogue, and — on signed release
-artifacts — validates the Ed25519 signature. The subcommand is the human-facing and
+compares it to the value embedded in the MAP epilogue, and — on a signed artifact
+(signing is opt-in) — validates its `pqc-hybrid-ml-dsa-87-slh-dsa-256s` signature, whose
+ML-DSA-87 and SLH-DSA-SHAKE-256s legs must both verify. The subcommand is the human-facing and
 CI-facing discharge surface for the RFC 0016 evidence-chain claim.
 
 ## 2. Motivation
@@ -25,8 +26,8 @@ CI-facing discharge surface for the RFC 0016 evidence-chain claim.
 RFC 0016 defines what a compile-time evidence chain *asserts* and RFC 0021 ships the
 mic@3 container that carries it. Without a first-party verifier, the chain has no
 observable discharge surface: an auditor holding a `.mic` artifact cannot confirm that
-the embedded `trace_hash` is correct, that the substrate matches, or that the
-Ed25519 signature is valid. The claim stays internal.
+the embedded `trace_hash` is correct, that the substrate matches, or that a
+signature the artifact carries is valid. The claim stays internal.
 
 `mindc verify` closes that gap. It turns an embedded evidence chain into a
 verifiable, human- and CI-readable report — the same artifact that a downstream agent
@@ -48,34 +49,44 @@ mindc src/matmul.mind --emit-evidence out/matmul.mic3
 mindc verify out/matmul.mic3
 ```
 
-Expected output on a valid artifact:
+Expected report on stdout for a valid, unsigned artifact (verdict lines go to stderr):
 
 ```
-artifact:   out/matmul.mic3
-format:     mic@3 + evidence MAP
-trace_hash: <64 hex chars>  [OK — matches recomputed]
-substrate:  x86_avx2
-toolchain:  0.7.1
-determinism: deterministic
-parent:     <64 hex chars>  (IR compilation step)
-signature:  unsigned (local build)
-result:     PASS
+artifact:         out/matmul.mic3
+substrate:        <substrate>
+determinism:      deterministic
+toolchain:        <mindc version>
+parent:           (root)
+trace_hash:       <64 hex chars>
+trace_hash_kind:  mic3-bytes
+trace_hash_valid: yes
+fp_mode:          strict
+ssa_valid:        yes
+signature:        absent
 ```
 
-On a tampered artifact the `trace_hash` line reports `[MISMATCH]` and the exit
-code is nonzero.
+On a tampered artifact `trace_hash_valid` reads `NO`, stderr carries
+`error[verify]: trace_hash MISMATCH — artifact has been tampered with`, and the exit
+code is 1.
 
-On a signed release artifact:
-
-```
-mindc verify --check-sig out/matmul.mic3
-```
-
-The output additionally includes:
+On an artifact signed with the PQC hybrid scheme — signed (opt-in): the emitter signs
+only when the key seeds are supplied through `MIND_EVIDENCE_MLDSA87_KEY` and
+`MIND_EVIDENCE_SLHDSA_KEY`, and unsigned is the default — pin both signer keys:
 
 ```
-signature:  Ed25519 [OK] — key-id: <fingerprint>
+mindc verify --signer-pubkey <ml-dsa-87 pubkey hex> --signer-pubkey <slh-dsa pubkey hex> out/matmul.mic3
 ```
+
+The report then names the scheme and both keys:
+
+```
+signature:        pqc-hybrid-ml-dsa-87-slh-dsa-256s
+signature_mldsa87_pubkey: <hex>
+signature_slhdsa_pubkey:  <hex>
+```
+
+Both legs must verify and both keys must be in the pinned set; a stripped leg, a
+rewritten scheme tag or an unpinned key fails closed (exit 1).
 
 ### Verification flags
 
@@ -113,8 +124,9 @@ The verifier executes the RFC 0016 §3.2 self-reference rule:
    binary commits the full `IRModule`; supersedes the original RFC 0016 GAP-1
    mic@1-text rule).
 4. Compare the recomputed hash to the stored value byte-for-byte.
-5. Optionally: validate the Ed25519 signature over MAP-minus-`signature.*` (mic@2.1
-   §6 discipline, reused for mic@3).
+5. When the artifact is signed (opt-in): validate the
+   `pqc-hybrid-ml-dsa-87-slh-dsa-256s` signature; both the ML-DSA-87 and the
+   SLH-DSA-SHAKE-256s legs must verify.
 6. Report `substrate`, `determinism`, `toolchain`, `parent` from the MAP.
 7. Exit 0 on full pass; nonzero (with a diff line indicating first divergence) on
    any mismatch or signature failure.
@@ -124,20 +136,11 @@ This is the **default** and **always-available** mode. It requires only the arti
 
 ### 4.2 Cross-substrate equality check
 
-```
-mindc verify --cross-substrate out/matmul-avx2.mic3 out/matmul-neon.mic3
-```
-
-For a Q16.16 graph, both artifacts must have the same `trace_hash` value
-(RFC 0015 §3.1 inspectable identity). The verifier checks:
-- Both artifacts share the same `parent` hash (same IR source step).
-- The `trace_hash` values are byte-equal.
-- `substrate` fields differ (expected: `x86_avx2` vs `arm_neon`).
-- Both signatures valid (if `--check-sig` supplied).
-
-Exit 0 iff all pass. This is the in-band form of the RFC 0015 cross-substrate
-proof obligation, expressed over two local artifacts without running a second
-toolchain.
+Cross-substrate equality is not a `mindc verify` flag. For a Q16.16 graph, artifacts
+built for different substrates must carry the same `trace_hash` value (RFC 0015 §3.1
+inspectable identity); the `tests/cross_substrate_identity.rs` CI gate enforces this
+against pinned reference hashes. Two local artifacts can be compared by running
+`mindc verify --json` on each and comparing their `trace_hash` and `parent` fields.
 
 ### 4.3 SMT-proven identity (scoped future extension — §7)
 
@@ -151,7 +154,7 @@ SMT-proven cross-substrate identity would demonstrate, via a symbolic model of t
 lowering pipeline, that the Q16.16 lowering function is substrate-independent for
 any IR input in the supported fragment. This is the strongest possible discharge of
 the RFC 0015 claim. It is out of scope for the initial `mindc verify` subcommand
-(§8) but is the logical extension of the `--cross-substrate` gate.
+(§8) but is the logical extension of the cross-substrate gate (§4.2).
 
 The decision point for RFC 0017 is therefore: **ship hash-equality as the primary
 gate; scope SMT-proven identity as a future `--symbolic` mode**.
@@ -184,7 +187,7 @@ receipt.
 | `verify.result` | `string` | `"pass"` or `"fail"`. |
 | `verify.timestamp` | `uint` | Unix seconds of the verification run (informational). |
 | `verify.substrate_a` / `verify.substrate_b` | `string` | Substrates compared (cross-substrate mode). |
-| `verify.signature` | `bytes` | Ed25519 signature over MAP-minus-`signature.*` (mic@2.1 §6). |
+| `verify.signature` | `bytes` | Signature under the evidence signing scheme (`pqc-hybrid-ml-dsa-87-slh-dsa-256s`, opt-in). |
 
 The `verify.*` block is optional in the carrier; its presence signals that the
 artifact has been independently re-verified by a second tool invocation (or CI pass)
@@ -203,6 +206,25 @@ and the result is embedded for downstream auditors.
 > Earlier drafts assigned distinct codes (`2` signature, `3` cross-substrate, `4` parse, `5` `--chain` walk). The shipped CLI collapses every verification failure into `1` and reserves `2` for I/O / CLI errors; the distinct codes are deferred together with their (not-yet-shipped) flags.
 
 ### 4.6 JSON receipt schema
+
+**Shipped** (`mindc verify --json`, one object on stdout):
+
+- An attested artifact prints 17 keys: `artifact`, `substrate`, `determinism`,
+  `toolchain` (strings); `parent` (hex string or `null`); `trace_hash` (hex string);
+  `trace_hash_kind` (`"mic3-bytes"` or `"mic1-text"`); `trace_hash_valid` (bool);
+  `fp_mode` (`"strict"`, `"relaxed"` or `"unknown"`); `ssa_valid` (bool); `ssa_reason`
+  (string or `null`); `signature` (the scheme name, or `"absent"`, `"invalid"`,
+  `"malformed"`, `"unsupported"`, `"retired (<scheme>)"`); `signature_ed25519_pubkey`,
+  `signature_mldsa_pubkey`, `signature_mldsa87_pubkey`, `signature_slhdsa_pubkey` (hex
+  string or `null`); `provenance_authenticated` (bool). It is printed before the
+  signature, strict-FP and determinism gates run, so a later gate can still exit 1.
+- An artifact with no evidence chain, or one whose IR body fails the SSA check, prints
+  4 keys: `artifact` (string), `ssa_valid` (bool), `ssa_reason` (string or `null`),
+  `attested` (`false`).
+- A non-canonical artifact and a malformed evidence chain print nothing on stdout; the
+  diagnostic goes to stderr and the exit code is 1.
+
+**Planned, not shipped** (the original draft; kept as the target schema):
 
 ```json
 {
@@ -277,7 +299,7 @@ a build step; conflating them obscures the audit trail. The correct model is:
 2. **Parent-walk across repos.** If two sibling artifacts live in different repos or
    registries, `--chain` needs a fetch protocol. Deferred; local artifact set is
    sufficient for CI use.
-3. **Key rotation / revocation UX.** `--pubkey` accepts a PEM file; how a verifier
+3. **Key rotation / revocation UX.** `--signer-pubkey` takes hex keys; how a verifier
    discovers the correct key for an artifact produced by an older `mindc` release is
    covered by RFC 0020 §5 (per-version key archive) but not fully specified here.
 
@@ -327,8 +349,9 @@ a build step; conflating them obscures the audit trail. The correct model is:
 `trace_hash` verification (criteria 1, 2, 5, 6, 7) and the **SSA well-formedness
 slice** (criterion 8) are SHIPPED — see `check_ssa_well_formed` in `src/ir/verify.rs`
 and `run_verify` in `src/bin/mindc.rs`, exercised by `tests/verify_ssa.rs`. Full
-SMT-proven verification (`--symbolic`, §4.3 / §9) remains future work; `--check-sig`
-and `--cross-substrate` (criteria 3, 4) remain scoped but unimplemented in this slice.
+SMT-proven verification (`--symbolic`, §4.3 / §9) remains future work. Criteria 3 and 4
+shipped in the forms they now state: `--signer-pubkey` in place of `--check-sig`, and the
+cross-substrate CI gate in place of a `--cross-substrate` flag.
 
 ## 11. References
 

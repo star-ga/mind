@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.3] - 2026-11-07 — PQC hybrid evidence signing compiled into release builds (signed, opt-in) with the classical schemes retired, release build hardening (committed lockfile, `--locked` everywhere, a required pre-tag release job), the whole-program mic@3 String fix, the `__mind_open` wiring, and the canonical JSON dump
+### Planned
+
+Promised in the 0.10.3 draft and not yet in the code (`src/bin/mindc.rs` `run_verify`
+still prints the shapes listed under 0.10.3); kept here verbatim until the code lands:
+
+- **`verify --json` emits ONE stable schema on every arm.** `run_verify` hand-rolled a
+  separate JSON literal at each exit, so `--json` produced five different stdout shapes:
+  a 15-key object on the attested arm, a 4-key `{artifact, ssa_valid, ssa_reason, attested}`
+  on the SSA-fault and — on an exit-**0** success path — the unattested arm, a 4-key
+  `{artifact, canonical, canonical_reason, attested}` on the non-canonical arm, and
+  **nothing at all on stdout** for the three malformed-evidence-chain arms. A consumer
+  written to the documented contract got a `KeyError` on a passing verification and a
+  JSON-decode error on the silent arms. Every `--json` exit now emits one receipt with the
+  same twenty keys; a property that could not be established is an explicit `null` /
+  `false`, never an absent key. New keys: `attested` (now present on every arm — the
+  discriminator), `canonical` / `canonical_reason`, and `verify_result`
+  (`"pass"` / `"fail"`, mirroring the exit code) / `verify_error`. The receipt is emitted
+  AFTER every fail-closed gate, so it can no longer print a verdict the process then
+  contradicts with a different exit code, and a broken evidence chain can no longer be
+  read as a benign unattested artifact. A MAP-less artifact is also now labelled
+  `"signature":"absent"` rather than the `Err`-derived `"malformed"` (reporting only —
+  the fail-closed `sig_status` that gates the attested path is unchanged).
+  RFC 0017 §4.6 documented a draft schema sharing zero keys with any shipped arm; it now
+  describes what ships. Gated by a key-set test and a structural source gate asserting
+  `run_verify` contains no hand-rolled JSON literal (`src/bin/mindc.rs`).
+
+## [0.10.3] - 2026-11-07 — PQC hybrid evidence signing in release builds (signed, opt-in), TLS 1.3 with X.509 path validation, HTTPS, DNS and kernel entropy in std <!-- pending: #346 #349 #363 -->, `std.procgroup` parallel child tasks <!-- pending: #351 -->, mic@3 result records, byte-wise string comparison on every backend <!-- pending: #343 -->, and `mindc test` parity with the build
 
 ### Added
 
@@ -24,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `__mind_read`, refined call-site-sensitively). Callers observe only a
   sign test on the descriptor (`if fd < 0`), so the libc `-1`/`errno` and raw
   syscall `-errno` conventions are both accepted; no program output depends on
-  which backend ran. `std_surface_net_fs_process` 18 passed / 0 failed (was
+  which backend ran. On failure `__mind_open` returns the negative `open()` result
+  (`#290`, `fcb44b97`); `tests/open_error_kat.rs` (`#325`) pins null, missing and
+  non-directory paths. `std_surface_net_fs_process` 18 passed / 0 failed (was
   13/4); a mutation forcing `-1` turns it 17/1. keystone 7/7 byte-identical;
   cross-substrate 26/26; self-host loop PRIMARY + ORACLE both pass.
 - **Results as mic@3 records (`std.mic_record`, `std.mic_results`) (`#350`, `738b67c2`)**: a MIND program
@@ -38,14 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
 - `mindc test` can read project files read-only (open/read/lseek/close); results match
   native (`#331`, `57888d70`).
-- **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
-  `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
-  blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
-  same-runner interleaved paired A/B wall-clock builds of `mindc <src> --emit-shared`
-  against `origin/main` across `examples/collatz.mind`, `examples/cos_dottie.mind`, and
-  `examples/dottie_collapse.mind` (`N >= 11` pairs after warmup), and fails closed via a
-  one-sided exact binomial sign test (`alpha = 0.01`, `MAX_RATIO = 1.15`, `DEADBAND_NS = 5_000_000`)
-  if the candidate is consistently slower or if any stage time or artifact is missing.
+- **End-to-end compile benchmark gate (`#311`, `4ed11262`)**: the `e2e-gate` job in
+  `.github/workflows/bench-gate.yml` builds the base and the candidate `mindc`
+  (release, `mlir-build std-surface cross-module-imports`, LLVM/MLIR 20, one runner) and
+  times them in one run as interleaved ABBA pairs (`benches/e2e/paired.rs`): three warm
+  and three cold source-to-shared-object rows (small, medium, large) with at least 40
+  and 20 pairs per row, and four source-to-native-executable rows (`const_return`,
+  `add`, `local_call`, `while_sum`) with at least 60. `tools/bench_gate.py --pairs`
+  decides per tier with a distribution-free one-sided 95% bound on the median log
+  ratio: FAIL (exit 1) when the candidate is proven at least 3% slower, INCONCLUSIVE
+  (exit 2, re-run once) when the interval is wider than 12%, exit 4 on malformed or
+  missing input or a base that does not build. The base is the merge-base with
+  `origin/main` (on a push, the pushed range's start). No compiler code changed: the
+  release `mindc` and every emitted artifact are byte-identical.
 - **`std/json_canon` — canonical JSON dump as a non-seed std module (`#327`,
   `c49503e0`).** Deterministic canonical JSON serialization for evidence and
   receipts; the module is non-seed so its addition does not move the frozen
@@ -120,11 +153,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**, finished by one bounded
   canonical cleanup run (prune dead, reorder, constant fold, prune dead; `a998c725`). All
   integer-exact and structurally never touching the Q16.16 or float tiers.
-  - **Status correction.** As first landed the optimizer was **not reachable from any
-    artifact-emitting path**, so the "upstream of emitter divergence" sentence above did not
-    hold and `MIND_NATIVE_OPT=basic` changed zero bytes of `--emit-mic3`. That is fixed below;
-    the description above is accurate as of the fix. `basic` remains a **developer flag, not a
-    shipping profile** — one of its four passes has a known defect (next bullet).
+  - **Wiring.** `pipeline::compile_source_with_name` calls `ir::prepare_ir_for_backend`,
+    the single backend-prep point, so the optimizer runs on every artifact path (mic@3,
+    mic@1, IR print, MLIR, evidence chain). `tests/native_opt_wiring.rs` pins both halves:
+    `basic` changes the emitted artifact, and unset (or any unrecognised value) is
+    byte-identical. `basic` remains a **developer flag, not a shipping profile** — one of its
+    four passes has a known defect (next bullet).
   - **Known defect under `=basic`: `fold_algebraic_identities` can emit a dangling SSA use.**
     Its operand remap does not descend into `If`/`While`/`FnDef` bodies, relying on every
     enclosing value a region reads being threaded through `If.merges` / `While.init_ids`; that
@@ -154,7 +188,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   base untyped, so a following `a[i]` load failed `MLIR lowering: missing type information
   … array load base`. With the typed base, the existing dtype-generic `ArrayLoad` /
   `ArrayStore` emitters (tensor.extract / tensor.insert, both already f64-ready) and the
-  `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
+  aggregate-mutation (step D) loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
   `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
   `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
   no fast-math / reassociation — strict IEEE-754). (`src/eval/fixed_array.rs`:
@@ -188,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and by-value array **parameter** are NOT yet ported to the self-host native emitter (the
     Rust mic@3 path carries `OP_ARRAY_STORE`, 0x2B, below); load / accumulate
     / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
-- **Fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE).**
+- **Fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (aggregate-mutation step D — the last position; store now works EVERYWHERE).**
   **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
   branch body** — the last fail-closed position. With this, the store works in EVERY statement
   position: straight-line, loop (`for`/`while`/nested), and branch. Nothing is fail-closed for a
@@ -217,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Additive / byte-neutral:** a branch-body `a[i]=v` on a fixed aggregate previously failed to
     compile; `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host / cross-substrate
     are untouched.
-- **Fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading).**
+- **Fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (aggregate-mutation step D, region-exit threading).**
   **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
   loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
   prior increment left fail-closed. The design-reviewed **Option A+ (value-semantic typed tensor
@@ -245,7 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (i64/f64/f32) loop emits the exact same MLIR as before (`loop_carry_mlir_type` returns the identical
     type string), and `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host /
     cross-substrate are untouched.
-- **Fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D).**
+- **Fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (aggregate-mutation step D).**
   **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
   store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers
   to `Instr::ArrayStore` (MLIR `tensor.insert` yielding a FRESH aggregate SSA value with the same
@@ -259,13 +293,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     · keystone 7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · oracle-parity
     30/30 · fmt/clippy/rustdoc — all locally green; the cross_substrate canary set is byte-identical
     and is re-verified by the CI dual-arch (avx2 + neon) matrix.
-- **mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation).**
+- **mic@3 `ArrayStore` opcode (0x2B) + IR variant (aggregate-mutation step D — wire foundation).**
   **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
   value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:
   it yields a FRESH aggregate SSA value (the post-store incarnation) so a later `arr[j]` read
   observes the write, unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
   (`__mind_store_i8`) paths which keep the name bound to the same base. This is the intended FIRST
-  population target of the #320 Step D canonical aggregate-type invariant (the `value_types` table,
+  population target of the step D canonical aggregate-type invariant (the `value_types` table,
   landed-but-dormant until now). The opcode is a pure additive append in previously-unused wire space
   (`0x2A` = `OP_CONST_DENSE_TENSOR` was the prior max), so there is **no `MIC3_VERSION` bump**: every
   existing byte stream stays byte-identical, PROVEN (not asserted) by keystone 7/7 + all
@@ -294,10 +328,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     so no working program (including self-host `main.mind`) changes bytes (keystone 7/7
     byte-identical). Unblocks the head-to-head performance shape (`axpy`/`dot`/`gemv`)
     against C.
-  - **Determinism-with-speed evidence.** The deterministic int8 GEMM kernel runs
-    **~2.02× a single-core OpenBLAS f32 reference, byte-exact** (`bench/RESULTS-int8-2026-06-08.md`);
-    and — vs a *naïve* `clang -O3 -march=x86-64-v3` loop (what `-O3` gives without
-    hand-blocking) — byte-identical output at a large margin, with a `memcmp` correctness
+  - **Determinism-with-speed evidence.** Against a *naïve* `clang -O3 -march=x86-64-v3`
+    loop (what `-O3` gives without hand-blocking), the deterministic int8 GEMM kernel gives
+    byte-identical output at a large margin, with a `memcmp` correctness
     gate *before* any timing (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, reproducible
     driver `bench/beat_clang_igemm_driver.c`). No `-ffast-math` claim (determinism forbids
     float reassociation).
@@ -318,7 +351,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     type error (e.g. an imported `f64 scale`). Empty on the single-file / default-feature
     path → byte-identical. **Proven on the actual `mindc run` consumer path** (a
     cross-module `f64` project builds and runs), not only `--emit-shared`.
-  - **Self-host `f64` MLIR emit (17.1 self-host mirror, #298 step 1).** The pure-MIND
+  - **Self-host `f64` MLIR emit (17.1 self-host mirror, f64 self-host step 1).** The pure-MIND
     self-host MLIR emitter (`examples/mindc_mind/main.mind` `selftest_emit_mlir`) now lowers
     scalar `f64` — `f64` params (`%N: f64`), `f64` returns (`-> f64` / `return %k : f64`), the
     four `arith.{addf,subf,mulf,divf}` binops, and canonicalized `f64` constants (`2.50`→`2.5`,
@@ -338,13 +371,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       `E2027` (no implicit int↔float conversion; `#230`) — not silently miscompiled,
       not a parse error, not a link error; a byte-identical `f64`-argument positive control
       compiles. Machine-checked; a vacuous `exit != 0` is explicitly rejected.
-  - **Known / deferred (#298 follow-ups, filed — not silently skipped):**
+  - **Known / deferred (f64 self-host follow-ups, filed — not silently skipped):**
     - The pure-MIND self-test surface `selftest_emit_mlir` SEGFAULTs when fed a *cross-fn*
       f64 construct (an `f64` `func.call` or `f64` value-`if`) — **pre-existing** (the
       unchanged `7b696f09` baseline `.so` crashes identically), latent (no shipped gate feeds
       it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope.
-      Resolved: the emit now fails closed on a cross-function f64 construct (`#229`,
-      `145274ef`).
+      Resolved: `emit_mlir_module` returns an empty result instead of mis-typed bytes for a
+      cross-function f64 construct (`#229`, `145274ef`); the crash did not reproduce.
     - `mindc check` fail-opens on a typed-`i64`→`f64` call-argument / return (passes `check`,
       then fails `build` at MLIR lowering). The build gate already fail-closes (above), so
       this is a belt-and-suspenders early-diagnostic gap to close at check-phase (RFC 0011
@@ -360,7 +393,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `--evidence-parent <HASH|PATH>` records a parent artifact's `trace_hash` as
     `evidence_chain.parent` (in the MAP epilogue, outside the `trace_hash` preimage, so it
     never perturbs the child's own anchor / byte-identity). Chaining to a body-tampered
-    parent is refused fail-closed. `--emit-evidence` → `mindc verify` round-trips.
+    parent is refused fail-closed (its stored `trace_hash` must match its canonical mic@3
+    body), and the parent file is size-capped before it is read into memory.
+    `--emit-evidence` → `mindc verify` round-trips.
   - **Application-namespace evidence attributes (17.8).** `--evidence-attr KEY=VALUE`
     (repeatable) attaches dotted, non-reserved provenance keys to the mic@3 MAP epilogue:
     byte-additive (byte-identical when unused; older readers skip unknown keys), lexically
@@ -578,7 +613,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MINDC_RUNTIME_OBJ_CACHE=0` bypasses the runtime-support object cache (no read, no
   write). It is a cold-path measurement knob and does not change output bytes
   (`docs/benchmarking.md`).
-- **15–20% fewer instructions per compile (`83ed6a11`).** Frontend compile work
+- **14.6–19.7% fewer instructions per compile (`83ed6a11`).** Frontend compile work
   (parse + typecheck + IR + verify) spent about a quarter of its instructions in
   malloc/free for a few-line program. Measured instruction counts per compile on
   the three frozen pipeline fixtures: `small_matmul` 28,123 → 24,026 (−14.6%),
@@ -691,16 +726,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`).**
-  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
-  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
-  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
-  verify negative returns on null, missing, and non-directory paths in debug and release builds.
 - **Intrinsic calls with the wrong argument count are refused (`#338`, `67cfb5db`).**
-  `mindc check` and `mindc build` reject an intrinsic invocation whose arity does
-  not match the registry contract before lowering, instead of failing late or
-  mis-lowering (`src/ir/verify_calls.rs`, `tests/intrinsic_call_arity.rs`,
-  `tests/intrinsic_call_arity_build.rs`).
+  `mindc build`, `run` and every `--emit-*` path that lowers through MLIR refuse an
+  intrinsic invocation whose arity does not match the registry contract, at any depth
+  (`E3001`), instead of mis-lowering it. `mindc check` reports it as `E2005` before
+  lowering in function and `for` bodies, match arms, `let` initializers and return
+  expressions, and also in `while` bodies and conditions and `else if` branches
+  <!-- pending: fix/e2005-every-body-shape --> (`src/ir/verify_calls.rs`,
+  `tests/intrinsic_call_arity.rs`, `tests/intrinsic_call_arity_build.rs`).
 - **The intrinsic-arity check runs in every feature build (`#355`, `4bf4f2c9`).**
   With `--no-default-features` the IR verifier accepted an intrinsic call with the
   wrong number of arguments, so `--emit-ir` and `--emit-mic` printed it; the arity
@@ -830,8 +863,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls `abort()`, instead of trapping silently.
 - **Whole-array binary operators on the native backend (`#287`).**
   Whole-array binary operators on the native backend built a binary that returned
-  wrong values. The miscompile existed on main after #110 and before #287 and was
-  never in a tagged release. They are now refused with a named construct
+  wrong values. The miscompile existed on main between the native-backend bridge
+  (`52bd6d3b`) and `#287` and was never in a tagged release. They are now refused with a named construct
   (`binop.array_operand`). Element reads are unaffected.
 - **Native f64 comparisons are IEEE-ordered for NaN.**
   The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
@@ -959,23 +992,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first exists, the guarantee is "the released commit is CI-green and the ref pre-existed",
   not "the ref was created by an authorized human". Recorded as a `deferred:` marker at the
   top of `release.yml`.
-- **The C6 native optimizer was wired to no artifact-emitting path.**
-  `optimize_mic3` had a single caller (`ir::prepare_ir_for_backend`) whose only production
-  caller was `project::try_emit_mic` — the **failed-compile** embedded-JIT fallback. The
-  successful-compile pipeline inlined its own copy of backend-prep
-  (`verify → canonicalize → verify`) that **omitted the optimizer call**, so the pass was
-  unreachable from every artifact path (mic@3, mic@1, IR print, MLIR, evidence chain) and
-  `MIND_NATIVE_OPT=basic` was a no-op on emitted bytes. `pipeline::compile_source_with_name`
-  now calls `ir::prepare_ir_for_backend` instead of duplicating it, restoring the single
-  backend-prep choke point. **Byte-identical by default:** verified over the 300 corpus
-  sources that compile, the pre-fix and post-fix binaries emit identical mic@3 with
-  `MIND_NATIVE_OPT` unset (300/300, zero drift).
-  No gate covered this: nothing in `tests/`, `examples/` or `scripts/` set `MIND_NATIVE_OPT`,
-  so the recorded "keystone 7/7" was **vacuously** green — with the pass unreachable the
-  keystone passes for both env states. New gate `tests/native_opt_wiring.rs` pins both halves
-  of the contract: `basic` must change the emitted artifact (wiring, fails closed if the
-  pipeline regrows a private backend-prep copy), and unset — plus any unrecognised value —
-  must be byte-identical (so the canaries and frozen self-host seeds cannot move by accident).
 - **Self-host emitter correctness (mic@3): aliasing fall-through then/else-value.**
   A fall-through `if`-branch whose last
   statement is `let x = <outer var>` (an alias) emitted the branch value at the previous
@@ -993,29 +1009,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `provenance_authenticated`.
   - **`--require-signed`** gate — fail closed (exit 1) unless the artifact carries a valid
     signature (any signer); weaker than `--signer-pubkey`'s pinned-trust requirement.
-  - **RFC 0017 reconciled** with the shipped CLI: removed the documented-but-nonexistent
-    `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain`, and corrected
-    the exit-code table (all verification failures → 1; I/O / CLI → 2).
-  - **`verify --json` emits ONE stable schema on every arm.** `run_verify` hand-rolled a
-    separate JSON literal at each exit, so `--json` produced five different stdout shapes:
-    a 15-key object on the attested arm, a 4-key `{artifact, ssa_valid, ssa_reason, attested}`
-    on the SSA-fault and — on an exit-**0** success path — the unattested arm, a 4-key
-    `{artifact, canonical, canonical_reason, attested}` on the non-canonical arm, and
-    **nothing at all on stdout** for the three malformed-evidence-chain arms. A consumer
-    written to the documented contract got a `KeyError` on a passing verification and a
-    JSON-decode error on the silent arms. Every `--json` exit now emits one receipt with the
-    same twenty keys; a property that could not be established is an explicit `null` /
-    `false`, never an absent key. New keys: `attested` (now present on every arm — the
-    discriminator), `canonical` / `canonical_reason`, and `verify_result`
-    (`"pass"` / `"fail"`, mirroring the exit code) / `verify_error`. The receipt is emitted
-    AFTER every fail-closed gate, so it can no longer print a verdict the process then
-    contradicts with a different exit code, and a broken evidence chain can no longer be
-    read as a benign unattested artifact. A MAP-less artifact is also now labelled
-    `"signature":"absent"` rather than the `Err`-derived `"malformed"` (reporting only —
-    the fail-closed `sig_status` that gates the attested path is unchanged).
-    RFC 0017 §4.6 documented a draft schema sharing zero keys with any shipped arm; it now
-    describes what ships. Gated by a key-set test and a structural source gate asserting
-    `run_verify` contains no hand-rolled JSON literal (`src/bin/mindc.rs`).
+  - **RFC 0017 reconciled** with the shipped CLI: the documented-but-nonexistent
+    `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain` moved to a
+    "Not shipped" table and out of every example; the signed-artifact example uses
+    `pqc-hybrid-ml-dsa-87-slh-dsa-256s` with both keys pinned through `--signer-pubkey`
+    (signed, opt-in); §4.6 lists the `--json` shapes that ship; and the exit-code table is
+    corrected (all verification failures → 1; I/O / CLI → 2).
+  - **`verify --json` output, as shipped.** An attested artifact prints one object with
+    17 keys: `artifact`, `substrate`, `determinism`, `toolchain` (strings); `parent` (hex
+    string or `null`); `trace_hash` (hex string); `trace_hash_kind` (`"mic3-bytes"` or
+    `"mic1-text"`); `trace_hash_valid` (bool); `fp_mode` (`"strict"`, `"relaxed"` or
+    `"unknown"`); `ssa_valid` (bool); `ssa_reason` (string or `null`); `signature` (the
+    scheme name, or `"absent"`, `"invalid"`, `"malformed"`, `"unsupported"`,
+    `"retired (<scheme>)"`); `signature_ed25519_pubkey`, `signature_mldsa_pubkey`,
+    `signature_mldsa87_pubkey`, `signature_slhdsa_pubkey` (hex string or `null`);
+    `provenance_authenticated` (bool). It is printed before the signature, strict-FP and
+    determinism gates run, so a later gate can still exit 1. An artifact with no evidence
+    chain, or one whose IR body fails the SSA check, prints 4 keys: `artifact` (string),
+    `ssa_valid` (bool), `ssa_reason` (string or `null`), `attested` (`false`). A
+    non-canonical artifact and a malformed evidence chain print nothing on stdout (the
+    diagnostic goes to stderr, exit 1). RFC 0017 §4.6 documents these shapes and keeps
+    the single-schema receipt as planned (see [Unreleased]).
   - **bench-gate fail-closed** (`tools/bench_gate.py`): an empty / truncated / partial
     `bench.out`, or a missing baseline, now exits 4 (was a vacuous PASS); the hardcoded
     default-baseline fallback is removed. Contract test `tools/test_bench_gate.py`.
@@ -1043,7 +1057,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   · oracle-parity · cross_substrate · cargo fmt/clippy/doc.
 - **Self-host mic@3 emitter: if-block branch-local-`let` scope (keystone).**
   **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
-  branch-local `let` declarations** (corr2/#287-F2 self-host completion). #287-F2 fixed the Rust
+  branch-local `let` declarations** (self-host completion of `5853cdb9`). `5853cdb9` fixed the Rust
   `--emit-mic3` oracle and five whole-module self-host arms so a block-scoped `let` inside an
   if-branch emits no merge record — but the test-harness if-block arm (`selftest_mic3_if_block_fn`)
   was not ported: it unioned every branch let-env name into the merge set, diverging from the
@@ -1105,7 +1119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *unannotated* capture has no provable type at desugar time and stays accepted (upgrade path: typed
   capture syntax + per-slot env `DType`).
 - **Ambiguous bare enum-payload patterns silently dispatched on the first enum's tags
-  (corr2/#287-F3 → silent miscompile, fixed).** When a bare (unqualified) variant name in a
+  (`8548c662` → silent miscompile, fixed).** When a bare (unqualified) variant name in a
   `match` arm existed in more than one enum, `resolve_bare` picked the first matching key in a
   `BTreeMap` rather than the scrutinee's enum — so if two enums declared the same variant names
   in different orders, matching dispatched to the WRONG arm: `enum A { Y(i64), X(i64) }
@@ -1123,7 +1137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `main.mind` declare NO MIND enums (i64 tag constants only) so `scrut_enum` is `None`
   throughout — keystone 7/7 + mic3_flip (681235 B) + cross-substrate stay byte-identical; only
   genuinely-ambiguous bare patterns change output. No wire-format change, no reseed.
-- **Closure captures wrongly rewrote inner bindings that shadow a capture (corr2/#287-F4 →
+- **Closure captures wrongly rewrote inner bindings that shadow a capture (`87dc21c8` →
   silent miscompile, fixed).** The pre-IR closure desugarer's `rewrite_captures` was
   lexically scope-blind: it rewrote EVERY identifier whose spelling matched a capture name to
   `env.<capture>`, so an inner `let`/`for`/match-pattern binding that shadows a captured name
@@ -1184,18 +1198,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `struct` (the keystone, every scalar/matmul bench, every canary skip it), so emitted bytes and
   compile-speed on the hot path are unchanged. Type-checker-only (no lowering/emit change); the
   self-host fixed point is unaffected (no reseed).
-- **Self-host `selftest_emit_mlir` silently emitted wrong (`i64`-typed) bytes for cross-function
-  f64 (GitHub #229).** An f64-result value-if or f64-returning intra-call in value position was
-  mis-typed `i64` in the pure-MIND MLIR emit (`mlir_node_is_f64` has no value-if/`Call` arm and
-  the value-if emit hardcodes `: i64`) — a latent silent self-host wrong-bytes path (no shipped
-  gate feeds cross-fn f64; the #298 25-case gate is single-fn only, so nothing shipped wrong).
-  The documented segfault symptom did not reproduce (a harness bug — unset ctypes argtypes).
-  Hardened to **fail-closed**: `emit_mlir_module` now runs an entry-point pre-pass and returns an
-  empty result (0 bytes) when the module contains a cross-fn f64 shape it would mis-type, instead
-  of emitting wrong bytes. `mlir_node_is_f64` and the emit path are untouched, so the 25 supported
-  single-fn f64 cases stay byte-identical; correct cross-fn f64 emit remains #298 'step 2'.
-  Self-host fixed point re-frozen (Rule-1b): stage0 `11df237d` → `4431793f` (main.mind grew;
-  stage1==stage2==stage3 self-consistent, oracle no-drift, keystone 7/7).
 - **RFC 0011 tail-return check mis-classed an inner-scope annotated `let` in an `if`/`else`
   branch (GitHub #233 follow-up).** The branch tail was checked in the OUTER ctx, so
   `if c { let n: f64 = 1.0; n } else { 0.0 }` under an outer `n: i64` saw `n` as i64 and
@@ -1258,11 +1260,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--emit=binary` already resolved cross-module). Import-scoped: an entry that imports no
   sibling links byte-for-byte the historical single-entry path, so the self-host `.so` is
   unchanged (keystone 7/7, self_host_loop 042bfea3).
-- **`--emit-evidence --evidence-parent <path>` accepted a body-tampered parent
-  (defense-in-depth, evidence-chain security review).** `resolve_evidence_parent` now
-  checks `trace_hash_valid` and refuses to chain to a parent whose stored `trace_hash`
-  does not match its canonical mic@3 body; the parent file is size-capped before it is
-  read into memory.
 - **`f64 !=` was lowered `arith.cmpf "one"` (ordered), so `NaN != NaN` was wrongly
   `false` — a silent miscompile.** Fixed to `"une"` (`==` stays `oeq`). Caught by the
   detmath value-oracle. cross_substrate_identity 24/24 with no reference-hash drift.
@@ -1489,7 +1486,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correctness and coverage.** Each change is gated by oracle parity against the
   Rust `--emit-mic3` output and re-blesses the bootstrap seed where its bytes move.
   Silent wrong results fixed: a branch-local shadowing `let` no longer replaces
-  the outer binding at the `if` join (`cde983ce`, `#318`); a dead statement after
+  the outer binding at the `if` join (`cde983ce`); a dead statement after
   an unconditional `continue`, `break` or `return` is cut, so such a loop
   terminates and keeps the loop variable's value (`56aa8971`, `6371e7e0`); the
   8-byte literal encoders no longer turn `-0.0` into a NaN pattern (`593abbc7`); a
@@ -1561,10 +1558,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Release build hardening (`#344`, `36b384a7`).** `Cargo.lock` is committed and
   every workflow cargo call that resolves dependencies (`cargo deny` included)
-  passes `--locked`, except the bench-gate base-arm build, which compiles an older
-  commit and is the one declared `# lockfile-exempt:` line. Release binaries
-  therefore link the crypto crates CI tested (`scripts/check_release_gating.py`
-  R7). The required `release_profile` job builds the exact release.yml command on
+  passes `--locked`, with one exemption: the base-arm `cargo build` of the `e2e-gate`
+  job in `.github/workflows/bench-gate.yml`, which compiles an older commit against the
+  candidate's copied lockfile and is the one line declared `# lockfile-exempt:`.
+  `scripts/check_release_gating.py` R7 fails any unlocked call without that declaration,
+  so release binaries link the crypto crates CI tested. The required `release_profile` job builds the exact release.yml command on
   native x86_64 and aarch64 runners, runs the post-build smoke action, and drives
   the packaged binary through `tests/evidence_release_smoke.rs`: unsigned bytes
   equal the committed fixture with the signing features compiled in (release set)

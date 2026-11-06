@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1977 | **Est. tokens:** ~3,910,505
-**Generated:** 2026-11-06 21:29 UTC
+**Files:** 1977 | **Est. tokens:** ~3,910,993
+**Generated:** 2026-11-06 21:45 UTC
 
 ## Token Budget Guide
 
@@ -50,7 +50,7 @@
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~4,009 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 35 | ~173,185 |
+| `docs/rfcs/` | 35 | ~173,673 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -531,7 +531,7 @@
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5605 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5971 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~6998 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
-- `0017-mindc-verify.md` (~4360 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
+- `0017-mindc-verify.md` (~4848 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~5774 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
