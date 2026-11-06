@@ -26,9 +26,12 @@
 //! repeated Content-Length, a transfer coding other than chunked, and a
 //! Content-Length over 18 digits (one that would wrap i64) are refused, with
 //! accepted positive controls beside each; CR, LF, SP and other control bytes
-//! in the URL request target are refused before any connection. Each refusal
-//! also has its error class: before-send for the handshake and request
-//! refusals, after-send for a refused or cut response.
+//! in the URL request target are refused before any connection. An 8 MiB POST
+//! body (the request maximum) reaches the server whole, and the same request
+//! is refused after-send when a proxy resets the connection while the client
+//! writes the body. Each refusal also has its error class: before-send for the
+//! handshake and request refusals, after-send for a refused or cut response
+//! and for a request whose write failed.
 
 #![cfg(all(
     target_os = "linux",
@@ -43,6 +46,12 @@ mod common;
 mod harness;
 
 use harness::*;
+use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 // std.https error codes (std/https_url.mind).
 const E_URL: i64 = -1;
@@ -52,6 +61,7 @@ const E_UNSUPPORTED_KEY: i64 = -11;
 const E_TRUNCATED: i64 = -12;
 const E_BODY_TOO_LARGE: i64 = -13;
 const E_RESPONSE: i64 = -14;
+const E_IO: i64 = -15;
 const E_REQUEST_HEADERS: i64 = -19;
 
 /// 5 MiB.
@@ -208,7 +218,7 @@ fn a_control_byte_in_a_response_header_is_refused() {
     ] {
         let resp = format!("HTTP/1.1 200 OK\r\n{line}Content-Length: 2\r\n\r\nok");
         let seen = run_case(env, &Case::get(tag, resp.into_bytes()));
-        assert_refused(tag, &seen, E_RESPONSE);
+        assert_refused_class(tag, &seen, E_RESPONSE, CLASS_AFTER_SEND);
     }
     // The positive control: the same response without the byte is accepted.
     let seen = run_case(
@@ -230,14 +240,14 @@ fn a_truncated_body_is_refused() {
         format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
     short.extend_from_slice(&body[..body.len() / 2]);
     let seen = run_case(env, &Case::get("trunc_cl", short));
-    assert_refused("trunc_cl", &seen, E_TRUNCATED);
+    assert_refused_class("trunc_cl", &seen, E_TRUNCATED, CLASS_AFTER_SEND);
     // A chunked body without its last chunk.
     let mut open = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
     open.extend_from_slice(format!("{:x}\r\n", 4096).as_bytes());
     open.extend_from_slice(&body[..4096]);
     open.extend_from_slice(b"\r\n");
     let seen = run_case(env, &Case::get("trunc_chunked", open));
-    assert_refused("trunc_chunked", &seen, E_TRUNCATED);
+    assert_refused_class("trunc_chunked", &seen, E_TRUNCATED, CLASS_AFTER_SEND);
     // The TCP stream cut in the middle of a record of the body.
     let mut case = Case::get("trunc_tcp", content_length_response(&body, ""));
     case.cut = Some(100_000);
@@ -422,4 +432,139 @@ fn control_bytes_in_the_url_target_are_refused_before_connecting() {
         req.starts_with("GET /a%20b?q=%0D%0A HTTP/1.1\r\n"),
         "request line: {req}"
     );
+}
+
+/// https_max_request_body() (std/https_url.mind): 8 MiB.
+const MAX_REQUEST_BODY: usize = 8 * 1024 * 1024;
+
+/// The client bytes the resetting proxy lets through: the handshake and the
+/// first records of the request.
+const RESET_AFTER: usize = 32 * 1024;
+
+/// A one-connection proxy to s_server on `upstream` that forwards everything
+/// the server sends and the first `after` bytes the client sends (the
+/// handshake, then the start of the request), then stops reading and closes
+/// the client's socket while request bytes are still arriving. A close with
+/// unread bytes sends a TCP reset, so the client's next write fails. The
+/// handle yields the client bytes forwarded and whether the client was still
+/// writing, or `None` when no client connected before `stop`.
+fn start_resetting_proxy(
+    upstream: u16,
+    after: usize,
+    stop: Arc<AtomicBool>,
+) -> (u16, thread::JoinHandle<Option<(usize, bool)>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the proxy");
+    let port = listener.local_addr().expect("proxy address").port();
+    let handle = thread::spawn(move || {
+        let mut client = accept_within(&listener, Duration::from_secs(300), &stop)?;
+        let started = Instant::now();
+        let mut server = loop {
+            match TcpStream::connect(("127.0.0.1", upstream)) {
+                Ok(s) => break s,
+                Err(_) if started.elapsed() < Duration::from_secs(20) => {
+                    thread::sleep(Duration::from_millis(20))
+                }
+                Err(e) => panic!("proxy: s_server never listened on {upstream}: {e}"),
+            }
+        };
+        let mut s_in = server.try_clone().expect("clone server");
+        let mut c_out = client.try_clone().expect("clone client");
+        let down = thread::spawn(move || {
+            let mut buf = vec![0u8; 65536];
+            while let Ok(n) = s_in.read(&mut buf) {
+                if n == 0 || c_out.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut forwarded = 0usize;
+        let mut buf = vec![0u8; 65536];
+        while forwarded < after {
+            let want = (after - forwarded).min(buf.len());
+            let n = match client.read(&mut buf[..want]) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            if server.write_all(&buf[..n]).is_err() {
+                break;
+            }
+            forwarded += n;
+        }
+        client
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .expect("proxy read timeout");
+        let writing = matches!(client.peek(&mut buf[..1]), Ok(n) if n > 0);
+        // End s_server's side so the forwarder drops its copy of the client
+        // socket: the close below is the last one, and it resets.
+        let _ = server.shutdown(Shutdown::Both);
+        let _ = down.join();
+        drop(client);
+        Some((forwarded, writing))
+    });
+    (port, handle)
+}
+
+/// POST `body` to s_server through [`start_resetting_proxy`]: the client's
+/// result and what the proxy saw.
+fn post_reset_mid_request(env: &Env, body: &[u8]) -> (Reply, Option<(usize, bool)>) {
+    let s_port = server_port();
+    // s_server's stdin stays open (held in `_server`) until the client is done.
+    let (_server, _log) = start_server(env, GOOD, s_port, "reset_mid_request");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (p_port, proxy) = start_resetting_proxy(s_port, RESET_AFTER, Arc::clone(&stop));
+    let mut ca = fix("ca_bundle.pem").into_os_string().into_encoded_bytes();
+    ca.push(0);
+    let mut spec = Vec::new();
+    put_field(&mut spec, b"P");
+    put_field(
+        &mut spec,
+        format!("https://localhost:{p_port}/upload").as_bytes(),
+    );
+    put_field(&mut spec, b"");
+    put_field(&mut spec, b"application/octet-stream");
+    put_field(&mut spec, body);
+    put_field(&mut spec, &ca);
+    let reply = run_client(&env.client, spec);
+    stop.store(true, Ordering::SeqCst);
+    (reply, proxy.join().expect("proxy thread"))
+}
+
+#[test]
+fn a_reset_while_the_request_is_written_is_after_send() {
+    let Some(env) = env() else { return };
+    let body = pattern(MAX_REQUEST_BODY);
+    // The positive control: the same request, not cut, reaches s_server whole
+    // and is answered.
+    let mut case = Case::get("post_8m", content_length_response(b"stored", ""));
+    case.post = true;
+    case.path = "/upload";
+    case.content_type = b"application/octet-stream".to_vec();
+    case.body = body.clone();
+    let seen = run_case(env, &case);
+    assert_ok_body("post_8m", &seen, b"stored");
+    assert!(
+        seen.request.ends_with(&body),
+        "post_8m: s_server got {} request bytes, not the whole 8 MiB body",
+        seen.request.len()
+    );
+    // The connection is reset after the handshake and the first request
+    // records, while the client still writes the body. The server may have
+    // acted on what it got, so the failure is after-send: never safe to retry.
+    let (reply, cut) = post_reset_mid_request(env, &body);
+    let (forwarded, writing) = cut.expect("reset_mid_request: the client never connected");
+    assert_eq!(
+        forwarded, RESET_AFTER,
+        "reset_mid_request: client bytes that reached s_server"
+    );
+    assert!(
+        writing,
+        "reset_mid_request: the client was no longer writing when the proxy reset the connection"
+    );
+    assert_eq!(reply.exit, 0, "reset_mid_request: client exit status");
+    let seen = Seen {
+        reply,
+        request: Vec::new(),
+        records: None,
+    };
+    assert_refused_class("reset_mid_request", &seen, E_IO, CLASS_AFTER_SEND);
 }

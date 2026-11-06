@@ -20,9 +20,14 @@
 //! request reports before-send, and after the outage the same request returns
 //! the exact body); a refused port and a full accept queue (probe codes, and
 //! before-send for the request); a TLS refusal before the request and a cut
-//! after it; and a body framed by the connection, accepted only on
+//! after it; a body framed by the connection, accepted only on
 //! close_notify: a fatal alert, a warning alert and a TCP close are refused
-//! after-send.
+//! after-send; and a response that arrives before any request byte is written
+//! is refused before-send, never a success. For that case the client also
+//! preloads a `getrandom` that returns fixed bytes, so its second ClientHello
+//! equals its first: a proxy records the server's flight, response and
+//! close_notify on the first connection, and a replayer sends them all at once
+//! after the second ClientHello, before the client has written anything else.
 
 #![cfg(all(
     target_os = "linux",
@@ -40,10 +45,12 @@ mod harness;
 use harness::{End, Reaped};
 use harness::{build_program, fixture_fn, path_bytes, server_source, source, start_server};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, channel};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 // std.https codes (std/https_url.mind).
@@ -51,6 +58,7 @@ const E_CONNECT: i64 = -3;
 const E_TLS: i64 = -5;
 const E_HOSTNAME: i64 = -6;
 const E_TRUNCATED: i64 = -12;
+const E_RESPONSE: i64 = -14;
 // https_error_class values.
 const NONE: i64 = 0;
 const BEFORE_SEND: i64 = 1;
@@ -131,11 +139,47 @@ pub fn freeaddrinfo(res: i64) -> i64 {
 }
 "#;
 
+/// A preloaded `getrandom` that writes the same bytes on every call: every
+/// connection of a client process sends the same ClientHello and holds the
+/// same key share, so a server flight recorded on one connection is valid on
+/// the next. Only the replay test preloads it.
+const FIXED_ENTROPY: &str = r#"pub fn getrandom(buf: i64, len: i64, flags: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(buf + i, (i * 29 + 7) & 255);
+        i = i + 1;
+    }
+    return len;
+}
+"#;
+
 struct Env {
     server: PathBuf,
     steps: PathBuf,
     shim: PathBuf,
+    fixed_entropy: PathBuf,
     dir: PathBuf,
+}
+
+/// `mindc --emit-shared` the MIND source `text` as `<dir>/<name>.so`.
+/// `world`: the source reads the world, so the build allows it.
+fn emit_shared(dir: &Path, name: &str, text: &str, world: bool) -> PathBuf {
+    let src = dir.join(format!("{name}.mind"));
+    std::fs::write(&src, text).expect("write the shim source");
+    let so = dir.join(format!("{name}.so"));
+    let mut cmd = Command::new(common::mindc_bin());
+    cmd.arg(&src).arg("--emit-shared").arg(&so);
+    if world {
+        cmd.arg("--allow-nondeterministic");
+    }
+    let out = cmd.output().expect("spawn mindc --emit-shared");
+    assert!(
+        out.status.success(),
+        "mindc --emit-shared failed for {name}\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    so
 }
 
 /// Build the server, the step client and the shim once per test binary;
@@ -156,31 +200,18 @@ fn env() -> Option<&'static Env> {
         );
         let steps = build_program("ns_steps", &steps_src)?;
         let dir = common::scratch_dir("std_https_network_safe");
-        let src = dir.join("gai_outage.mind");
         let text = format!(
             "{}{SHIM}",
             fixture_fn("sh_env_name", b"MIND_TEST_DNS_OUTAGE\0")
         );
-        std::fs::write(&src, text).expect("write the shim source");
-        let shim = dir.join("gai_outage.so");
-        let out = Command::new(common::mindc_bin())
-            .arg(&src)
-            .arg("--emit-shared")
-            .arg(&shim)
-            // The shim reads the environment and the file system.
-            .arg("--allow-nondeterministic")
-            .output()
-            .expect("spawn mindc --emit-shared");
-        assert!(
-            out.status.success(),
-            "mindc --emit-shared failed for the resolver shim\n{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+        // The resolver shim reads the environment and the file system.
+        let shim = emit_shared(&dir, "gai_outage", &text, true);
+        let fixed_entropy = emit_shared(&dir, "fixed_entropy", FIXED_ENTROPY, false);
         Some(Env {
             server,
             steps,
             shim,
+            fixed_entropy,
             dir,
         })
     })
@@ -220,8 +251,20 @@ fn numbers(line: &str, tag: char, n: usize) -> Vec<i64> {
 
 impl Steps {
     fn start(env: &Env, flag: &Path) -> Self {
+        Self::start_preloaded(env, flag, env.shim.clone().into_os_string())
+    }
+
+    /// The step client with the fixed-entropy `getrandom` preloaded too.
+    fn start_fixed_entropy(env: &Env, flag: &Path) -> Self {
+        let mut preload = env.shim.clone().into_os_string();
+        preload.push(":");
+        preload.push(&env.fixed_entropy);
+        Self::start_preloaded(env, flag, preload)
+    }
+
+    fn start_preloaded(env: &Env, flag: &Path, preload: std::ffi::OsString) -> Self {
         let mut child = Command::new(&env.steps)
-            .env("LD_PRELOAD", &env.shim)
+            .env("LD_PRELOAD", preload)
             .env("MIND_TEST_DNS_OUTAGE", flag)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -414,5 +457,137 @@ fn a_body_framed_by_the_connection_is_complete_only_on_close_notify() {
         st.get(&url),
         E_TRUNCATED,
         AFTER_SEND,
+    );
+}
+
+/// Both directions of one connection, recorded by [`record_one`].
+struct Recording {
+    client: Vec<u8>,
+    server: Vec<u8>,
+}
+
+/// Copy `from` to `to` until `from` ends, then end `to`'s write side; the
+/// handle yields every byte copied.
+fn copy_and_record(mut from: TcpStream, mut to: TcpStream) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        let mut buf = vec![0u8; 16640];
+        while let Ok(n) = from.read(&mut buf) {
+            if n == 0 || to.write_all(&buf[..n]).is_err() {
+                break;
+            }
+            seen.extend_from_slice(&buf[..n]);
+        }
+        let _ = to.shutdown(Shutdown::Write);
+        seen
+    })
+}
+
+/// A one-connection TCP proxy to 127.0.0.1:`upstream` that records both
+/// directions; its port and a handle that yields the recording once both
+/// sides have closed.
+fn record_one(upstream: u16) -> (u16, JoinHandle<Recording>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the recorder");
+    let port = listener.local_addr().expect("recorder address").port();
+    let handle = std::thread::spawn(move || {
+        let (client, _) = listener.accept().expect("accept the client");
+        let server = TcpStream::connect(("127.0.0.1", upstream)).expect("connect the server");
+        let up = copy_and_record(
+            client.try_clone().expect("clone the client"),
+            server.try_clone().expect("clone the server"),
+        );
+        let down = copy_and_record(server, client);
+        Recording {
+            client: up.join().expect("the client copy"),
+            server: down.join().expect("the server copy"),
+        }
+    });
+    (port, handle)
+}
+
+/// The first TLS record of `bytes` (header and payload).
+fn first_record(bytes: &[u8]) -> &[u8] {
+    assert!(bytes.len() >= 5, "no TLS record header in {bytes:?}");
+    let end = 5 + ((usize::from(bytes[3]) << 8) | usize::from(bytes[4]));
+    assert!(bytes.len() >= end, "a cut TLS record in {bytes:?}");
+    &bytes[..end]
+}
+
+/// The content type of every whole TLS record in `bytes`.
+fn record_types(mut bytes: &[u8]) -> Vec<u8> {
+    let mut types = Vec::new();
+    while bytes.len() >= 5 {
+        let rec = first_record(bytes);
+        types.push(rec[0]);
+        bytes = &bytes[rec.len()..];
+    }
+    types
+}
+
+/// A one-connection server that reads the client's first record (its
+/// ClientHello), answers with all of `server_bytes` in one write, and then
+/// reads what the client sends until it closes. The handle yields
+/// (ClientHello, the client's bytes after it).
+fn replay_one(server_bytes: Vec<u8>) -> (u16, JoinHandle<(Vec<u8>, Vec<u8>)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the replayer");
+    let port = listener.local_addr().expect("replayer address").port();
+    let handle = std::thread::spawn(move || {
+        let (mut client, _) = listener.accept().expect("accept the client");
+        client
+            .set_read_timeout(Some(Duration::from_secs(300)))
+            .expect("replayer read timeout");
+        let mut hello = vec![0u8; 5];
+        client.read_exact(&mut hello).expect("a record header");
+        let len = (usize::from(hello[3]) << 8) | usize::from(hello[4]);
+        hello.resize(5 + len, 0);
+        client.read_exact(&mut hello[5..]).expect("the ClientHello");
+        client
+            .write_all(&server_bytes)
+            .expect("send the recorded server bytes");
+        let mut after = Vec::new();
+        let _ = client.read_to_end(&mut after);
+        (hello, after)
+    });
+    (port, handle)
+}
+
+#[test]
+fn a_response_before_any_request_byte_is_refused_before_send() {
+    let Some(env) = env() else { return };
+    let (_server, port) = start_server(&env.server, Some("13"));
+    let mut st = Steps::start_fixed_entropy(env, &flag(env, "early"));
+    let url = |p: u16| format!("https://localhost:{p}/api/cmd/ACTION1?card=c-1");
+    // Record one real exchange: the server's flight, the response and
+    // close_notify. The positive control: the client accepts it.
+    let (rport, recorder) = record_one(port);
+    assert_eq!(
+        st.get(&url(rport)),
+        (0, NONE, 200, API_BODY.to_vec()),
+        "the recorded request"
+    );
+    let rec = recorder.join().expect("the recorder");
+    // Replay every server byte at once after the same ClientHello: the
+    // response now arrives with the server's flight, before the client has
+    // written its Finished or any request byte.
+    let (eport, replayer) = replay_one(rec.server.clone());
+    let got = st.get(&url(eport));
+    let (hello, after) = replayer.join().expect("the replayer");
+    assert_eq!(
+        hello,
+        first_record(&rec.client),
+        "the replayed flight answers the recorded ClientHello only if the \
+         client's entropy is fixed"
+    );
+    refused(
+        "a response before the request",
+        got,
+        E_RESPONSE,
+        BEFORE_SEND,
+    );
+    assert!(
+        !record_types(&after).contains(&23),
+        "the client wrote application data (its Finished or the request) \
+         after the early response: {:?}",
+        record_types(&after)
     );
 }
