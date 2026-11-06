@@ -237,101 +237,165 @@ fn the_declared_arity_verifies_at_every_depth() {
 
 // ── The type checker reports E2005 in every expression position ─────────
 //
-// The IR verifier above refuses a wrong-arity call at any depth, but it only
-// runs on the lowering paths; `mindc check` runs the type checker alone. The
+// The IR verifier above refuses a wrong-arity call at any depth, but it runs
+// only on the lowering paths; `mindc check` runs the type checker alone. The
 // checker used to report the rule (E2005) only where its `infer_expr` walk
 // reached the call, so `while` bodies and conditions (RFC 0005 Gap 1), `else
-// if` branches, and a call nested as an argument of a call whose checker never
-// re-infers its arguments all passed `check`. These tests drive the checker
-// entry point `mindc check` runs (`check_module_types`) through every one of
-// those shapes.
+// if` branches, a non-final statement of a body, and a call nested as an
+// argument of a call whose arguments the checker never re-infers all passed
+// `check`. These tests drive the checker entry point `check_module_types` on
+// the parsed module (before any desugar, so closure and impl bodies are still
+// nested) over every shape the IR tests above refuse and every body the
+// checker descends into. Each wrong-arity call is reported exactly once: a
+// second report would mean two passes own one rule.
 
+use libmind::diagnostics::Diagnostic;
 use libmind::type_checker::{TypeEnv, check_module_types};
 
-/// Type-check `src` and return the diagnostics, exactly as `mindc check` does.
-fn check_src(src: &str) -> Vec<libmind::diagnostics::Diagnostic> {
-    let module = libmind::parser::parse(src).expect("the fixture must parse");
+const SHORT_CALL: &str = "__mind_write(1, 0, 0)";
+const LONG_CALL: &str = "__mind_write(1, 0, 0, 0 - 1, 0)";
+const DECLARED_CALL: &str = "__mind_write(1, 0, 0, 0 - 1)";
+
+/// Every position the checker's walk reaches, as a program with `CALL` where
+/// the intrinsic call goes.
+const BODY_SHAPES: &[(&str, &str)] = &[
+    (
+        "as a statement in a fn body",
+        "fn main() -> i64 {\n    CALL;\n    return 0\n}\n",
+    ),
+    (
+        "in a let initializer",
+        "fn main() -> i64 {\n    let n = CALL;\n    return n\n}\n",
+    ),
+    (
+        "in a return expression",
+        "fn main() -> i64 {\n    return CALL\n}\n",
+    ),
+    (
+        "in an if condition",
+        "fn main() -> i64 {\n    if CALL > 0 {\n        return 1\n    }\n    return 0\n}\n",
+    ),
+    (
+        "in an if then branch",
+        "fn main() -> i64 {\n    if 1 > 0 {\n        CALL;\n    }\n    return 0\n}\n",
+    ),
+    (
+        "before another statement in an if branch",
+        "fn main() -> i64 {\n    let mut t: i64 = 0;\n    if 1 > 0 {\n        CALL;\n        t = 1;\n    }\n    return t\n}\n",
+    ),
+    (
+        "before another statement in a for body",
+        "fn main() -> i64 {\n    let mut t: i64 = 0;\n    for i in 0..2 {\n        CALL;\n        t = t + i;\n    }\n    return t\n}\n",
+    ),
+    (
+        "in an else branch",
+        "fn main() -> i64 {\n    if 1 > 5 {\n        return 1\n    } else {\n        CALL;\n    }\n    return 0\n}\n",
+    ),
+    (
+        "in an else if branch",
+        "fn main() -> i64 {\n    if 1 > 5 {\n        return 1\n    } else if 1 > 0 {\n        CALL;\n    }\n    return 0\n}\n",
+    ),
+    (
+        "in a while body",
+        "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while i < 1 {\n        CALL;\n        i = i + 1;\n    }\n    return 0\n}\n",
+    ),
+    (
+        "in a while condition",
+        "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while CALL > 100 {\n        i = i + 1;\n    }\n    return i\n}\n",
+    ),
+    (
+        "nested as an argument",
+        "fn id(x: i64) -> i64 {\n    return x\n}\n\nfn main() -> i64 {\n    let n = id(CALL);\n    return n\n}\n",
+    ),
+    (
+        "in a for body",
+        "fn main() -> i64 {\n    for i in 0..2 {\n        CALL;\n    }\n    return 0\n}\n",
+    ),
+    (
+        "in a match arm",
+        "fn pick(n: i64) -> i64 {\n    match n { 0 => CALL, _ => 0 }\n}\n\nfn main() -> i64 {\n    return pick(1)\n}\n",
+    ),
+    (
+        "in a region",
+        "fn main() -> i64 {\n    let r = region {\n        let w = CALL\n        0\n    }\n    return r\n}\n",
+    ),
+    (
+        "in a while inside an if inside a region",
+        "fn main() -> i64 {\n    let r = region {\n        let mut i: i64 = 0\n        if i < 1 {\n            while i < 1 {\n                CALL;\n                i = i + 1\n            }\n        }\n        i\n    }\n    return r\n}\n",
+    ),
+    (
+        "in a closure body",
+        "fn main() -> i64 {\n    let k: i64 = 1\n    let f = |k; x: i64| -> i64 {\n        let w = CALL\n        x + k\n    }\n    return f(5)\n}\n",
+    ),
+    (
+        "in an impl method body",
+        "struct Foo { x: i64 }\n\ntrait Speak {\n    fn val(self) -> i64\n}\n\nimpl Speak for Foo {\n    fn val(self) -> i64 {\n        let w = CALL\n        return self.x\n    }\n}\n\nfn main() -> i64 {\n    let foo = Foo { x: 1 }\n    return foo.val()\n}\n",
+    ),
+    (
+        "in a fn inside a module block",
+        "module m {\n    pub fn run() -> i64 {\n        CALL;\n        return 0\n    }\n}\n\nfn main() -> i64 {\n    return 0\n}\n",
+    ),
+];
+
+/// Type-check `src` with the checker entry point and return the diagnostics.
+fn check_src(where_: &str, src: &str) -> Vec<Diagnostic> {
+    let module = libmind::parser::parse(src)
+        .unwrap_or_else(|e| panic!("the fixture {where_} must parse: {e:?}\n{src}"));
     check_module_types(&module, src, &TypeEnv::default())
 }
 
-fn has_intrinsic_arity_e2005(diags: &[libmind::diagnostics::Diagnostic]) -> bool {
-    diags.iter().any(|d| {
-        d.code == "E2005"
-            && d.message
-                .contains("intrinsic `__mind_write` expects 4 i64 argument(s)")
-            && d.message.contains("got 3")
-    })
-}
-
-fn assert_e2005(where_: &str, src: &str) {
-    let diags = check_src(src);
-    assert!(
-        has_intrinsic_arity_e2005(&diags),
-        "a 3-argument __mind_write {where_} must report E2005; got {diags:?}"
-    );
-}
-
-fn assert_no_e2005(where_: &str, src: &str) {
-    let diags = check_src(src);
-    assert!(
-        !has_intrinsic_arity_e2005(&diags),
-        "a 4-argument __mind_write {where_} must not report the arity rule; got {diags:?}"
-    );
-}
-
-/// The wrong-arity call of each shape, and its four-argument twin.
-fn shape_fixtures(short: &str, ok: &str) -> Vec<(&'static str, String, String)> {
-    vec![
-        (
-            "in a while body",
-            format!(
-                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while i < 1 {{\n        {short};\n        i = i + 1;\n    }}\n    return 0\n}}\n"
-            ),
-            format!(
-                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while i < 1 {{\n        {ok};\n        i = i + 1;\n    }}\n    return 0\n}}\n"
-            ),
-        ),
-        (
-            "in a while condition",
-            format!(
-                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while {short} > 100 {{\n        i = i + 1;\n    }}\n    return i\n}}\n"
-            ),
-            format!(
-                "fn main() -> i64 {{\n    let mut i: i64 = 0;\n    while {ok} > 100 {{\n        i = i + 1;\n    }}\n    return i\n}}\n"
-            ),
-        ),
-        (
-            "in an else if branch",
-            format!(
-                "fn main() -> i64 {{\n    if 1 > 5 {{\n        return 1\n    }} else if 1 > 0 {{\n        {short};\n    }}\n    return 0\n}}\n"
-            ),
-            format!(
-                "fn main() -> i64 {{\n    if 1 > 5 {{\n        return 1\n    }} else if 1 > 0 {{\n        {ok};\n    }}\n    return 0\n}}\n"
-            ),
-        ),
-        (
-            "nested as an argument",
-            format!(
-                "fn id(x: i64) -> i64 {{\n    return x\n}}\n\nfn main() -> i64 {{\n    let n = id({short});\n    return n\n}}\n"
-            ),
-            format!(
-                "fn id(x: i64) -> i64 {{\n    return x\n}}\n\nfn main() -> i64 {{\n    let n = id({ok});\n    return n\n}}\n"
-            ),
-        ),
-    ]
+/// The E2005 reports for a `__mind_write` call with `got` arguments.
+fn arity_reports(diags: &[Diagnostic], got: usize) -> usize {
+    let tail = format!("got {got}");
+    diags
+        .iter()
+        .filter(|d| {
+            d.code == "E2005"
+                && d.message
+                    .contains("intrinsic `__mind_write` expects 4 i64 argument(s)")
+                && d.message.ends_with(&tail)
+        })
+        .count()
 }
 
 #[test]
-fn a_wrong_arity_call_reports_e2005_at_every_body_shape() {
-    for (where_, src, _) in shape_fixtures("__mind_write(1, 0, 0)", "__mind_write(1, 0, 0, 0 - 1)")
-    {
-        assert_e2005(where_, &src);
+fn a_wrong_arity_call_reports_e2005_once_in_every_body_shape() {
+    let mut missed = Vec::new();
+    for (call, got) in [(SHORT_CALL, 3), (LONG_CALL, 5)] {
+        for (where_, shape) in BODY_SHAPES {
+            let diags = check_src(where_, &shape.replace("CALL", call));
+            let reports = arity_reports(&diags, got);
+            if reports != 1 {
+                missed.push(format!(
+                    "{got} arguments {where_}: {reports} E2005 report(s); {diags:?}"
+                ));
+            }
+        }
     }
+    assert!(
+        missed.is_empty(),
+        "each wrong-arity __mind_write must report E2005 exactly once:\n{}",
+        missed.join("\n")
+    );
 }
 
 #[test]
-fn the_declared_arity_passes_the_type_checker_at_every_body_shape() {
-    for (where_, _, ok) in shape_fixtures("__mind_write(1, 0, 0)", "__mind_write(1, 0, 0, 0 - 1)") {
-        assert_no_e2005(where_, &ok);
+fn the_declared_arity_reports_no_arity_error_in_any_body_shape() {
+    // Positive control: the same programs with the four-argument call carry no
+    // arity diagnostic, so each report above comes from the argument count.
+    let mut reported = Vec::new();
+    for (where_, shape) in BODY_SHAPES {
+        let diags = check_src(where_, &shape.replace("CALL", DECLARED_CALL));
+        if diags
+            .iter()
+            .any(|d| d.message.contains("intrinsic `__mind_write` expects"))
+        {
+            reported.push(format!("{where_}: {diags:?}"));
+        }
     }
+    assert!(
+        reported.is_empty(),
+        "a four-argument __mind_write must not report the arity rule:\n{}",
+        reported.join("\n")
+    );
 }

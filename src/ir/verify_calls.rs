@@ -8,17 +8,21 @@
 //! declared arity, at any nesting depth. The C runtime reads that many
 //! arguments, so a short call hands it an undefined trailing argument.
 //!
-//! The type checker reports the same rule as E2005 for a wrong-arity intrinsic
-//! call in EVERY expression position — a `while` body or condition (RFC 0005
-//! Gap 1), an `else if` branch, a call nested as an argument, a function or
-//! `for` body, a match arm, a `let` initializer, a return expression, and every
-//! other position the expression grammar reaches
-//! (`src/type_checker/intrinsic_call_arity.rs` walks the whole AST). This
-//! verifier runs on
+//! In a `std-surface` build the type checker reports the same rule as E2005 in
+//! EVERY expression position: a `while` body or condition (RFC 0005 Gap 1), an
+//! `if` condition or branch including `else if`, a call nested as an argument,
+//! a non-final statement of any body, a `for` body, a match arm, a region, a
+//! `let` initializer, a return expression, and a closure or impl-method body.
+//! `src/type_checker/intrinsic_call_arity.rs` walks the whole tree, and
+//! `tests/intrinsic_call_arity.rs` (the checker entry point) and
+//! `tests/intrinsic_call_arity_build.rs` (`mindc check`) pin each shape. That
+//! pass answers for the rows the Rust/MLIR profile selects
+//! (`std_surface_intrinsic_arity`); this verifier checks every row. It runs on
 //! every `mindc` path that lowers through MLIR (`build`, `run`, and the
 //! `--emit-ir`, `--emit-mic`, `--emit-mic3`, `--emit-mlir` and `--emit-obj`
 //! flags) and refuses the call at any depth (E3001), so no wrong-arity call
-//! builds even when a caller reaches lowering without the type checker. Two
+//! builds even when a caller reaches lowering without the type checker, in a
+//! build without `std-surface`, or through a frozen native-only row. Two
 //! paths do not reach this verifier and are fenced
 //! elsewhere: `--backend native` refuses every intrinsic call at closure
 //! admission, and `mind eval` emits from unverified lowered IR (its own deferred
