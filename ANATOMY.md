@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2166 | **Est. tokens:** ~4,111,564
-**Generated:** 2026-11-06 20:02 UTC
+**Files:** 2166 | **Est. tokens:** ~4,115,090
+**Generated:** 2026-11-06 20:51 UTC
 
 ## Token Budget Guide
 
@@ -156,8 +156,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 62 | ~285,068 |
-| `tests/` | 450 | ~964,190 |
+| `std/` | 62 | ~285,239 |
+| `tests/` | 450 | ~967,545 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1653,7 +1653,7 @@
 - `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `https_http1.mind` (~6266 tok, huge) — std/https_http1.mind — the HTTP/1.1 response side of std.https: the
-- `https.mind` (~9918 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
+- `https.mind` (~10089 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
 - `https_probe.mind` (~1830 tok, huge) — std/https_probe.mind — the std.https network probe: resolve the host of an
 - `https_url.mind` (~5267 tok, huge) — std/https_url.mind — the std.https error codes and bounds, URL parsing and
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
@@ -2731,8 +2731,8 @@
 ### `tests/`
 
 - `std_https_loopback.rs` (~1527 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_https_network_safe.rs` (~3507 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_https_openssl.rs` (~3880 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_https_network_safe.rs` (~5315 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_https_openssl.rs` (~5427 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_import_position.rs` (~2682 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_import_standalone_run.rs` (~1102 tok, large) — Copyright 2025 STARGA Inc.
 - `std_json_arc_payloads.rs` (~5995 tok, huge) — Copyright 2025 STARGA Inc.
