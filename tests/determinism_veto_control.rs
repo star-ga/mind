@@ -586,10 +586,10 @@ fn a_user_function_named_like_a_std_world_fn_is_deterministic() {
 
 /// A sibling that does not lower is refused, not merely labelled. P4b's world
 /// read is `time.now_ns` beside a function that does not resolve. P13b's world
-/// read is `entropy.entropy_fill` in a module the entry's sibling names under a
-/// `std/` path the walker does not follow, so the sibling source itself shows
+/// read is `entropy.entropy_fill` in a project module the sibling imports as
+/// `std.ownrng`, which that sibling cannot lower with, and its own source shows
 /// no qualified std call: the refusal and the label both come from the
-/// unclassifiable-export arm.
+/// unclassifiable-export arm. Before, both programs emitted without the flag.
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn an_unlowerable_sibling_world_read_is_refused() {
@@ -628,10 +628,20 @@ fn an_unlowerable_sibling_world_read_is_refused() {
         "P4b plain verify rejected the honest label\n{text}"
     );
 
-    // P13b as the review wrote it (`import std.ownrng`), and the same module
-    // named without its `std.` prefix.
+    // P13b as the review wrote it (`import std.ownrng`): `w` does not lower,
+    // so `g` itself is refused. Named without its `std.` prefix the module
+    // resolves, and the call is followed to the world read in `k`.
     let mut ran = 1usize;
-    for (tag, import) in [("p13b", "std.ownrng"), ("p13b_bare", "ownrng")] {
+    let p13b = [
+        ("p13b", "std.ownrng", "`g()`", "::g`, in a project module"),
+        (
+            "p13b_bare",
+            "ownrng",
+            "`entropy_fill()`",
+            "ownrng::k`, in a project module",
+        ),
+    ];
+    for (tag, import, offender, via) in p13b {
         let w =
             format!("import {import};\n\npub fn g(p: i64) -> i64 {{\n    ownrng.k(p) + 1\n}}\n");
         let dir = sibling_project(
@@ -647,9 +657,8 @@ fn an_unlowerable_sibling_world_read_is_refused() {
         );
         let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);
         assert!(
-            !ok && text.contains("error[determinism]: `g()`")
-                && text.contains("::g`, in a project module"),
-            "{tag} was not refused naming the unclassifiable export\n{text}"
+            !ok && text.contains(&format!("error[determinism]: {offender}")) && text.contains(via),
+            "{tag} was not refused naming {offender} via {via}\n{text}"
         );
         let args = [
             "main.mind",

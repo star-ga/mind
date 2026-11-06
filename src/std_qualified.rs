@@ -190,25 +190,28 @@ pub fn call_is_world(span: Span, name: &str) -> bool {
     })
 }
 
-/// A copy of `module` whose first function body starts with a zero-argument
-/// call the existing classifier already treats as nondeterministic.
+/// A copy of `module` with a zero-argument call the existing classifier
+/// already treats as nondeterministic, first in the top-level stream.
 ///
 /// Used only for the evidence artifact of a program whose nondeterminism sits
 /// in a callee the entry body does not hold. The verifier re-derives from the
 /// hashed body, so a label rewritten to `deterministic` then disagrees with
-/// the body. Object code is never stamped.
+/// the body. Object code is never stamped. The top level is its own SSA
+/// namespace (each function body numbers its values from zero), so the
+/// witness takes an id past every top-level one and cannot collide.
 pub fn stamp_unheld_world(module: &IRModule) -> IRModule {
     let mut cloned = module.clone();
+    let bound = cloned
+        .instrs
+        .iter()
+        .map(crate::opt::ir_canonical::instruction_id_bound)
+        .max()
+        .unwrap_or(0);
+    cloned.next_id = cloned.next_id.max(bound);
     let dst = cloned.fresh();
-    let call = Instr::legacy_call(dst, "__mind_now_ns", Vec::new());
-    if let Some(body) = cloned.instrs.iter_mut().find_map(|instr| match instr {
-        Instr::FnDef { body, .. } => Some(body),
-        _ => None,
-    }) {
-        body.insert(0, call);
-    } else {
-        cloned.instrs.push(call);
-    }
+    cloned
+        .instrs
+        .insert(0, Instr::legacy_call(dst, "__mind_now_ns", Vec::new()));
     cloned
 }
 
@@ -313,7 +316,7 @@ mod tests {
         "pub fn f(p: i64) -> i64 {\n    Q.entropy_fill(p, 8).lo\n}\n",
         "const K: i64 = Q.entropy_fill(0, 8)\n\npub fn f(p: i64) -> i64 {\n    p\n}\n",
         "pub fn f(p: i64) -> i64 {\n    let h = Q.entropy_fill;\n    p\n}\n",
-        "pub fn f(p: i64) -> i64 {\n    let h = |x: i64| -> i64 { Q.entropy_fill(x, 8) };\n    p\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let h = |; x: i64| -> i64 { Q.entropy_fill(x, 8) };\n    p\n}\n",
         "module m {\n    pub fn f(p: i64) -> i64 {\n        Q.entropy_fill(p, 8)\n    }\n}\n",
     ];
 
@@ -361,5 +364,8 @@ mod tests {
         let stamped = stamp_unheld_world(&products.ir);
         assert!(!crate::ir::ir_declares_deterministic(&stamped));
         assert!(crate::ir::ir_declares_deterministic(&products.ir));
+        // `mindc verify` runs both checks before it reads the label.
+        assert_eq!(crate::ir::check_ssa_well_formed(&stamped), Ok(()));
+        assert!(crate::ir::verify_module(&stamped).is_ok());
     }
 }
