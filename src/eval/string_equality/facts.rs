@@ -602,7 +602,7 @@ impl Decls {
         }
         // A colliding enum is stored under its owner (`crate.table::Table::Raw`).
         // That spelling is still an enum value, not a string.
-        if owner_variant(name) {
+        if Self::owner_variant(name) {
             return true;
         }
         if let Some((head, _)) = name.rsplit_once("::") {
