@@ -14,9 +14,12 @@
 //!
 //! * An import of a std module that itself imports `std.vec` / `std.map`
 //!   (`std.toml`, `std.cli`, `std.http`, `std.tui`) does not admit the
-//!   ambient module in full: `vec_free`, `vec_zeroed` and `map_str_key_eq` are
-//!   not in the runtime support the build links, so `mindc test` refuses them
-//!   as the linker does (`undefined reference`).
+//!   ambient module in full: `vec_free` and `map_str_key_eq` are not in the
+//!   runtime support the build links, so `mindc test` refuses them as the
+//!   linker does (`undefined reference`). (`vec_zeroed` is unlinkable too, but
+//!   the evaluator answers a bare `vec_zeroed` through its extern-C runtime
+//!   intrinsic whatever std admits, with or without an import; that path is
+//!   not std admission and is not covered here.)
 //! * The refusal holds in every import order and next to an import whose
 //!   graph is several levels deep: admission is a membership test on the
 //!   build's link set, not the order of a walk.
@@ -251,9 +254,8 @@ fn an_import_reaching_std_vec_does_not_admit_its_unlinkable_fns() {
     assert_parity("toml_vec_len", TOML_VEC_LEN, 5);
 }
 
-/// The other unlinkable ambient names the audit named, through every shipped
-/// std module that imports an ambient one (std.toml, std.cli, std.http,
-/// std.tui).
+/// The unlinkable ambient names the audit named, through every shipped std
+/// module that imports an ambient one (std.toml, std.cli, std.http, std.tui).
 #[test]
 fn every_import_reaching_an_ambient_module_refuses_its_unlinkable_fns() {
     let calls = [
@@ -261,7 +263,6 @@ fn every_import_reaching_an_ambient_module_refuses_its_unlinkable_fns() {
             "vec_free",
             "let v: Vec = vec_new();\n    return vec_free(v) + 5;",
         ),
-        ("vec_zeroed", "return vec_zeroed(2) * 0 + 5;"),
         ("map_str_key_eq", "return map_str_key_eq(0, 0) * 0 + 5;"),
     ];
     for module in ["toml", "cli", "http", "tui"] {

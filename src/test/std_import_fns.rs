@@ -156,7 +156,7 @@ pub(super) fn resolve_std_import_fns(
         out.extend(m.consts.iter().cloned());
     }
     for name in definers.keys() {
-        if let Some(m) = unique(*name).filter(|_| !extern_names.contains(name)) {
+        if let Some(m) = unique(name).filter(|_| !extern_names.contains(name)) {
             out.push(forwarder(
                 name.to_string(),
                 &m.fns[*name],
