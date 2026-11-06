@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1992 | **Est. tokens:** ~3,967,067
-**Generated:** 2026-11-06 12:20 UTC
+**Files:** 1994 | **Est. tokens:** ~3,967,479
+**Generated:** 2026-11-06 12:30 UTC
 
 ## Token Budget Guide
 
@@ -130,7 +130,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/ir/` | 13 | ~102,536 |
+| `src/ir/` | 14 | ~102,722 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,669 |
@@ -151,7 +151,7 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 5 | ~18,180 |
-| `src/type_checker/` | 20 | ~65,548 |
+| `src/type_checker/` | 21 | ~65,774 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
@@ -1444,7 +1444,8 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17753 tok, huge) — Copyright 2025 STARGA Inc.
+- `global_enums.rs` (~789 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17150 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `project_consts.rs` (~127 tok, small) — Copyright 2026 STARGA Inc.
@@ -1592,6 +1593,7 @@
 
 - `array_control_flow.rs` (~1096 tok, large) — Copyright 2026 STARGA Inc.
 - `array_lengths.rs` (~5788 tok, huge) — Copyright 2026 STARGA Inc.
+- `bare_builtins.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `canonical_facts.rs` (~2797 tok, huge) — Copyright 2026 STARGA Inc.
 - `canonical_macro.rs` (~58 tok, small) — Copyright 2026 STARGA Inc.
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1608,7 +1610,7 @@
 - `fn_values.rs` (~1376 tok, large) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~14751 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~14686 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/resolve/`
 
 - `std_names.rs` (~2150 tok, huge) — Copyright 2026 STARGA Inc.

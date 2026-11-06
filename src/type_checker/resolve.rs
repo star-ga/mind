@@ -86,7 +86,7 @@ type FxMap<V> = HashMap<String, V, super::FxBuild>;
 ///
 /// MUST stay sorted ascending — looked up with `binary_search`. A `debug_assert`
 /// in `resolve_fn_body` enforces the ordering so a careless insert fails tests.
-const BARE_BUILTINS: &[&str] = &[
+pub(super) const BARE_BUILTINS: &[&str] = &[
     "abs",
     "argmax",
     "backward",
@@ -122,13 +122,6 @@ const BARE_BUILTINS: &[&str] = &[
     "sqrt",
     "sum",
 ];
-
-/// Whether `name` is one of the bare math / tensor / autodiff builtins
-/// ([`BARE_BUILTINS`]): none of them takes or returns a string.
-#[cfg(feature = "std-surface")]
-pub(crate) fn is_bare_builtin(name: &str) -> bool {
-    BARE_BUILTINS.binary_search(&name).is_ok()
-}
 
 /// Undefined-variable diagnostic code (issue #23). A bare identifier that
 /// resolves to nothing in any scope frame or module-level symbol source.
