@@ -595,7 +595,11 @@ const WRONG_32: &[&str] = &["path_anchor_wrongkey"; 32];
 /// Validate through `x509_verify_server_chain_budget` with `budget`
 /// verifications allowed; returns (verdict, verifications spent).
 fn run_budget(lib: &Lib, chain: &[&str], anchors: &[&str], host: &str, budget: i64) -> (i64, i64) {
-    let (chain, anchors, host) = (blob(chain), blob(anchors), format!("{host}\0"));
+    run_budget_blob(lib, &blob(chain), &blob(anchors), host, budget)
+}
+
+fn run_budget_blob(lib: &Lib, chain: &[u8], anchors: &[u8], host: &str, budget: i64) -> (i64, i64) {
+    let host = format!("{host}\0");
     let f: Symbol<BudgetFn> = unsafe { lib.0.get(b"x509_verify_server_chain_budget\0").unwrap() };
     let mut left = budget;
     let cell = &mut left as *mut i64 as i64;
@@ -635,6 +639,108 @@ fn x509_repeated_certificate_is_one_candidate_issuer() {
         run_budget(lib, SAME_LEN_ROOTS, &["ec_root"], PATH_HOST, UNLIMITED),
         (-3, 4)
     );
+    // The reported shape: a self-signed leaf and seven copies of it. The
+    // leaf's identity is used from the start, so no copy is even tried.
+    let copies = blob_of(&vec![self_issued_ca_leaf(); 8]);
+    let ec_root = blob(&["ec_root"]);
+    assert_eq!(
+        run_budget_blob(lib, &copies, &ec_root, PATH_HOST, UNLIMITED),
+        (-7, 0)
+    );
+    let f: Symbol<ChainFn> = unsafe { lib.0.get(b"x509_verify_server_chain\0").unwrap() };
+    let host = format!("{PATH_HOST}\0");
+    let (c, a, h) = (
+        copies.as_ptr() as i64,
+        ec_root.as_ptr() as i64,
+        host.as_ptr() as i64,
+    );
+    assert_eq!(unsafe { f(c, a, h, now_unix()) }, -7);
+}
+
+/// DER element: tag, minimal definite length, body.
+fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+    let n = body.len();
+    let mut out = match n {
+        0..=127 => vec![tag, n as u8],
+        128..=255 => vec![tag, 0x81, n as u8],
+        _ => vec![tag, 0x82, (n >> 8) as u8, n as u8],
+    };
+    out.extend_from_slice(body);
+    out
+}
+
+/// (header length, total length) of the DER element at `pos`.
+fn der_extent(d: &[u8], pos: usize) -> (usize, usize) {
+    let b = d[pos + 1] as usize;
+    if b < 0x80 {
+        return (2, 2 + b);
+    }
+    let k = b & 0x7f;
+    let n = d[pos + 2..pos + 2 + k]
+        .iter()
+        .fold(0, |a, &x| (a << 8) | x as usize);
+    (2 + k, 2 + k + n)
+}
+
+/// A self-issued CA leaf for path.example.com (cA, serverAuth EKU, SAN, no
+/// keyUsage) with path_ec_leaf's key and a signature that does not verify: a
+/// copy of it is a candidate issuer only if one identity can enter a path
+/// twice, and that try is a counted verification.
+fn self_issued_ca_leaf() -> Vec<u8> {
+    let leaf = read_der("path_ec_leaf");
+    let mut p = der_extent(&leaf, 0).0;
+    p += der_extent(&leaf, p).0;
+    for _ in 0..6 {
+        // version, serial, signature, issuer, validity, subject
+        p += der_extent(&leaf, p).1;
+    }
+    let spki = leaf[p..p + der_extent(&leaf, p).1].to_vec();
+    let ext = |id: u8, critical: bool, value: Vec<u8>| {
+        let flag = if critical {
+            tlv(0x01, &[0xff])
+        } else {
+            Vec::new()
+        };
+        tlv(
+            0x30,
+            &[tlv(0x06, &[0x55, 0x1d, id]), flag, tlv(0x04, &value)].concat(),
+        )
+    };
+    let alg = tlv(
+        0x30,
+        &tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]),
+    );
+    let rdn = [tlv(0x06, &[0x55, 0x04, 0x03]), tlv(0x0c, b"self leaf")].concat();
+    let name = tlv(0x30, &tlv(0x31, &tlv(0x30, &rdn)));
+    let validity = [tlv(0x17, b"260101000000Z"), tlv(0x17, b"290101000000Z")].concat();
+    let exts = [
+        ext(0x13, true, tlv(0x30, &tlv(0x01, &[0xff]))),
+        ext(
+            0x25,
+            false,
+            tlv(0x30, &tlv(0x06, &[0x2b, 6, 1, 5, 5, 7, 3, 1])),
+        ),
+        ext(0x11, false, tlv(0x30, &tlv(0x82, PATH_HOST.as_bytes()))),
+    ];
+    let tbs = [
+        tlv(0xa0, &tlv(0x02, &[2])),
+        tlv(0x02, &[1]),
+        alg.clone(),
+        name.clone(),
+        tlv(0x30, &validity),
+        name,
+        spki,
+        tlv(0xa3, &tlv(0x30, &exts.concat())),
+    ];
+    let sig = [
+        vec![0u8],
+        tlv(0x30, &[tlv(0x02, &[1]), tlv(0x02, &[1])].concat()),
+    ]
+    .concat();
+    tlv(
+        0x30,
+        &[tlv(0x30, &tbs.concat()), alg, tlv(0x03, &sig)].concat(),
+    )
 }
 
 #[rustfmt::skip]
