@@ -23,15 +23,23 @@ type TensorEnv = HashMap<String, TensorEnvEntry>;
 
 /// The bindings `pattern` makes against `value`, or `None` when it does not
 /// match: `_`, a binding name, a literal, an enum variant with its payload
-/// sub-patterns, a tuple, and a struct-variant pattern.
-fn arm_bindings(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)>> {
+/// sub-patterns, a tuple, and a struct-variant pattern. A literal arm compares
+/// as in the expression form: a string literal compares bytes in every form
+/// the interpreter holds a string in (`string_record::literal_matches`).
+fn arm_bindings(
+    pattern: &Pattern,
+    value: &Value,
+) -> Result<Option<Vec<(String, Value)>>, EvalError> {
+    if let Pattern::Literal(lit) = pattern {
+        return Ok(super::string_record::literal_matches(lit, value)?.then(Vec::new));
+    }
     let mut out = Vec::new();
-    super::match_enum_payload(
+    Ok(super::match_enum_payload(
         std::slice::from_ref(pattern),
         std::slice::from_ref(value),
         &mut out,
     )
-    .then_some(out)
+    .then_some(out))
 }
 
 /// Bind `bindings` for the duration of `run`, then restore what each name
@@ -72,7 +80,7 @@ pub(super) fn exec_match(
 ) -> Result<Value, EvalError> {
     let value = eval_value_expr_mode(scrutinee, env, tensor_env, mode.clone())?;
     for arm in arms {
-        let Some(bindings) = arm_bindings(&arm.pattern, &value) else {
+        let Some(bindings) = arm_bindings(&arm.pattern, &value)? else {
             continue;
         };
         let taken = with_bindings(env, bindings, |env| {
