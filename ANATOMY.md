@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `ln-mind-368-ratchet-move-20261107`
-**Files:** 1989 | **Est. tokens:** ~3,951,671
-**Generated:** 2026-11-07 00:43 UTC
+**Files:** 1989 | **Est. tokens:** ~3,952,239
+**Generated:** 2026-11-07 01:14 UTC
 
 ## Token Budget Guide
 
@@ -152,7 +152,7 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 5 | ~19,530 |
-| `src/type_checker/` | 21 | ~66,139 |
+| `src/type_checker/` | 21 | ~66,707 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
@@ -1591,7 +1591,7 @@
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_declarations.rs` (~2262 tok, huge) — Copyright 2026 STARGA Inc.
-- `intrinsic_call_arity.rs` (~926 tok, large) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity.rs` (~1494 tok, large) — Copyright 2026 STARGA Inc.
 - `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.

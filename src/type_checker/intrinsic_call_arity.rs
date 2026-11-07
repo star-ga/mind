@@ -26,11 +26,64 @@
 //! functions before this pass runs; the closure and impl arms below serve the
 //! callers that type-check a module as parsed (`build::native_scope`).
 
+use super::AstSpan;
 use super::CALL_ARITY_CODE;
+use super::TypeEnv;
+use super::TypeErrSpan;
+use super::ValueType;
+use super::describe_value_type;
 use super::diag_from_span;
-use super::std_surface_intrinsic_arity;
+use super::infer_expr;
 use crate::ast::{Module, Node};
 use crate::diagnostics::Diagnostic as Pretty;
+
+// RFC 0005 Phase 1 + 1.5 — pure-MIND standard surface intrinsics.
+//
+// The table itself moved to `crate::intrinsics` so that ONE row carries a
+// primitive's name, its i64 arity, AND whether calling it can make the program's
+// result vary between runs. It used to be split: the arity here, the determinism
+// verdict in two hand-maintained parallel arrays (this module's and
+// `ir::evidence`'s) that drifted identically and let the registered
+// `__mind_nerve_rt_*` clock / entropy / stdin surface be attested
+// `deterministic`. See the `crate::intrinsics` module docs.
+pub(super) fn std_surface_intrinsic_arity(name: &str) -> Option<usize> {
+    crate::intrinsics::std_surface_intrinsic_arity(name)
+}
+
+pub(super) fn check_std_surface_intrinsic(
+    callee: &str,
+    args: &[Node],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    let arity = std_surface_intrinsic_arity(callee).ok_or_else(|| TypeErrSpan {
+        msg: format!("unsupported call to `{callee}`"),
+        span,
+    })?;
+    if args.len() != arity {
+        // The arity rule is `intrinsic_call_arity`'s (E2005 at EVERY expression
+        // position); this function only runs where `infer_expr` reaches the
+        // call. Type the call as its i64 result and let that pass refuse it —
+        // one source for one rule.
+        return Ok((ValueType::ScalarI64, span));
+    }
+    for (i, a) in args.iter().enumerate() {
+        let (ty, _) = infer_expr(a, env)?;
+        // Integer literals come in as `ScalarI32` (line 562) but lower
+        // to `ConstI64` in IR — accept both; reject anything else with
+        // a clear i64-ABI message that points to RFC 0005 phase 2+.
+        if !matches!(ty, ValueType::ScalarI32 | ValueType::ScalarI64) {
+            return Err(TypeErrSpan {
+                msg: format!(
+                    "argument {i} to intrinsic `{callee}` must be i64 (got {}); the std-surface intrinsics use the i64 ABI — aggregate types are RFC 0005 phase 2+",
+                    describe_value_type(&ty)
+                ),
+                span: a.span(),
+            });
+        }
+    }
+    Ok((ValueType::ScalarI64, span))
+}
 
 /// Report E2005 for every wrong-arity registered intrinsic call reachable in
 /// `module`, at any depth and in any expression position.
