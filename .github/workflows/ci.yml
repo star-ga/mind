@@ -2165,7 +2165,7 @@ jobs:
       # run_gate-exempt: tools/rules_engine.py - a `test -s` presence check on the unpacked scanner, not an invocation; the governance gate runs in the next step
       - name: Pull the pinned scanner
         env:
-          IMAGE: ghcr.io/star-ga/arch-mind@sha256:2d4851d202d15e44fa7e67162f85de653c46d579ba6b2bbd1f46abb985fb560b
+          IMAGE: ghcr.io/star-ga/arch-mind@sha256:720ea1092557b1a45efb7eaa114da33d6b5c7ac9ee00e8901b3583cb1a08a3a4
           SCANNER_ROOT: ${{ runner.temp }}/arch-mind-scanner
         run: |
           set -euo pipefail
