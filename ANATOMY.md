@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2157 | **Est. tokens:** ~4,093,823
-**Generated:** 2026-11-07 03:41 UTC
+**Files:** 2162 | **Est. tokens:** ~4,111,161
+**Generated:** 2026-11-07 05:30 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~32,790 |
+| `./` | 35 | ~32,819 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -96,10 +96,10 @@
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~16,556 |
+| `.github/workflows/` | 9 | ~16,679 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~128,929 |
+| `scripts/` | 33 | ~136,753 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -123,7 +123,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 51 | ~173,175 |
+| `src/eval/` | 55 | ~178,541 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -159,7 +159,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~266,161 |
-| `tests/` | 452 | ~973,108 |
+| `tests/` | 453 | ~977,104 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 7 | ~17,332 |
@@ -263,7 +263,7 @@
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
-- `CONTRIBUTING.md` (~2260 tok, huge) — Contributing to MIND
+- `CONTRIBUTING.md` (~2289 tok, huge) — Contributing to MIND
 - `deny.toml` (~131 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
@@ -1081,7 +1081,7 @@
 - `bench-gate.yml` (~5298 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~333 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~1616 tok, huge) — name: Crypto Vectors
-- `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
+- `docs-claims.yml` (~2937 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
 - `pr-review.yml` (~1131 tok, large) — name: pr-review
@@ -1099,8 +1099,8 @@
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
-- `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
-- `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `anatomy-hook.sh` (~2504 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
+- `anatomy.sh` (~3505 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `arch_gate.sh` (~2222 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
@@ -1143,8 +1143,8 @@
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
 - `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
-- `test_no_ai_attribution.py` (~7235 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
-- `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
+- `test_no_ai_attribution.py` (~6945 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
+- `test_smoke_wiring_lint.py` (~8928 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4926 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
 ### `sdk/ts/mic-map/dist/`
@@ -1316,6 +1316,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~1907 tok, huge) — Copyright 2026 STARGA Inc.
+- `enum_payload.rs` (~815 tok, large) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5356 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
@@ -1325,11 +1326,12 @@
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `imported_extern_decls.rs` (~1169 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
+- `interp_mem.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `loops.rs` (~2354 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
+- `match_stmt.rs` (~883 tok, large) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap.rs` (~1140 tok, large) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap_tests.rs` (~832 tok, large) — Copyright 2026 STARGA Inc.
@@ -1347,7 +1349,8 @@
 - `narrow_arith.rs` (~3977 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
-- `record_store.rs` (~2385 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `record_store.rs` (~2457 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `result_variants.rs` (~602 tok, large) — Copyright 2026 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
@@ -1364,7 +1367,8 @@
 - `struct_resolver.rs` (~7173 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
 - `type_aliases.rs` (~2302 tok, huge) — Copyright 2025 STARGA Inc.
-- `value.rs` (~4122 tok, huge) — Copyright 2025 STARGA Inc.
+- `value.rs` (~4142 tok, huge) — Copyright 2025 STARGA Inc.
+- `zeroed_array.rs` (~2912 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/exec/`
 
 - `conv.rs` (~435 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2341,6 +2345,7 @@
 
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_test_eval_arrays_results_parity.rs` (~3996 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_eval_blockers_parity.rs` (~3004 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_eval_parity.rs` (~3505 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6042 tok, huge) — Copyright 2025 STARGA Inc.
