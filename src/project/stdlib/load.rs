@@ -324,7 +324,7 @@ mod tests {
         for module in [
             "std.tls13_handshake",
             "std.hkdf",
-            "std.x509",
+            "std.x509_bignum",
             "std.tls13_keyschedule",
             "std.tls13_finished",
             "std.rsa_pss",

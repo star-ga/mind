@@ -1,0 +1,347 @@
+// std/x509_ext.mind — X.509v3 validity date parsing and extension processing
+// (basicConstraints, keyUsage, extKeyUsage, subjectAltName) per RFC 5280 §4.2.
+
+import std.x509_der;
+
+// ---------------------------------------------------------------------------
+// Validity time parsing (UTCTime 0x17 / GeneralizedTime 0x18, 'Z' only).
+// ---------------------------------------------------------------------------
+
+pub fn x509_digit(buf: i64, at: i64) -> i64 {
+    // returns the digit value 0..9 or -1 for non-digit
+    let c: i64 = xb(buf, at);
+    if c < 48 {
+        return -1;
+    }
+    if c > 57 {
+        return -1;
+    }
+    c - 48
+}
+
+// days from civil date (Howard Hinnant's algorithm), proleptic Gregorian.
+pub fn x509_days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let mut yy: i64 = y;
+    if m <= 2 {
+        yy = yy - 1;
+    }
+    let mut era: i64 = yy / 400;
+    if yy < 0 {
+        era = (yy - 399) / 400;
+    }
+    let yoe: i64 = yy - era * 400;
+    let mut mp: i64 = m + 9;
+    if m > 2 {
+        mp = m - 3;
+    }
+    let doy: i64 = (153 * mp + 2) / 5 + d - 1;
+    let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+// x509_time_unix — parse the Time content (buf+off, len, tag) to Unix
+// seconds, stored into out_unix.  Returns 0 on success, 1 on malformed.
+pub fn x509_time_unix(buf: i64, off: i64, len: i64, tag: i64, out_unix: i64) -> i64 {
+    let mut year: i64 = 0;
+    let mut base: i64 = off;
+    if tag == 23 {
+        // UTCTime: YYMMDDHHMMSSZ  (len 13)
+        if len != 13 {
+            return 1;
+        }
+        let y1: i64 = x509_digit(buf, off);
+        let y2: i64 = x509_digit(buf, off + 1);
+        if y1 < 0 || y2 < 0 {
+            return 1;
+        }
+        year = y1 * 10 + y2;
+        if year < 50 {
+            year = year + 2000;
+        } else {
+            year = year + 1900;
+        }
+        base = off + 2;
+    } else {
+        if tag != 24 {
+            return 1;
+        }
+        // GeneralizedTime: YYYYMMDDHHMMSSZ  (len 15)
+        if len != 15 {
+            return 1;
+        }
+        let mut y: i64 = 0;
+        let mut k: i64 = 0;
+        while k < 4 {
+            let dg: i64 = x509_digit(buf, off + k);
+            if dg < 0 {
+                return 1;
+            }
+            y = y * 10 + dg;
+            k = k + 1;
+        }
+        year = y;
+        base = off + 4;
+    }
+    // MMDDHHMMSSZ from base: 10 digit bytes + 'Z'
+    let vals: i64 = __mind_alloc(80);
+    let mut i: i64 = 0;
+    while i < 10 {
+        let dg: i64 = x509_digit(buf, base + i);
+        if dg < 0 {
+            return 1;
+        }
+        __mind_store_i64(vals + i * 8, dg);
+        i = i + 1;
+    }
+    if xb(buf, base + 10) != 90 {
+        // 'Z' terminator required
+        return 1;
+    }
+    let mo: i64 = __mind_load_i64(vals + 0) * 10 + __mind_load_i64(vals + 8);
+    let dy: i64 = __mind_load_i64(vals + 16) * 10 + __mind_load_i64(vals + 24);
+    let hh: i64 = __mind_load_i64(vals + 32) * 10 + __mind_load_i64(vals + 40);
+    let minutes: i64 = __mind_load_i64(vals + 48) * 10 + __mind_load_i64(vals + 56);
+    let seconds: i64 = __mind_load_i64(vals + 64) * 10 + __mind_load_i64(vals + 72);
+    if mo < 1 || mo > 12 {
+        return 1;
+    }
+    if dy < 1 || dy > 31 {
+        return 1;
+    }
+    if hh > 23 || minutes > 59 || seconds > 60 {
+        return 1;
+    }
+    let days: i64 = x509_days_from_civil(year, mo, dy);
+    __mind_store_i64(out_unix, days * 86400 + hh * 3600 + minutes * 60 + seconds);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Extension value parsers (each receives the extnValue OCTET STRING content,
+// i.e. the DER of the extension-specific structure; `lim` is the absolute
+// bound of that content, so every inner TLV is bounds-checked against it).
+// Return 0 ok / 1 malformed.
+// ---------------------------------------------------------------------------
+
+// basicConstraints (2.5.29.19): SEQUENCE { cA BOOLEAN DEFAULT FALSE,
+// pathLenConstraint INTEGER (0..MAX) OPTIONAL }.
+pub fn x509_ext_basic_constraints(cert: i64, off: i64, lim: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(cert, off, lim, t) != 0 {
+        return 1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        // must be a SEQUENCE
+        return 1;
+    }
+    __mind_store_i64(rec + 168, 1);
+    // has_bc (bc_ca, bc_pathlen keep their defaults 0 / -1)
+    let mut p: i64 = off + __mind_load_i64(t + 8);
+    let end: i64 = p + __mind_load_i64(t + 16);
+    if end > lim {
+        return 1;
+    }
+    while p < end {
+        if der_tlv(cert, p, end, t) != 0 {
+            return 1;
+        }
+        let tag: i64 = __mind_load_i64(t + 0);
+        let clen: i64 = __mind_load_i64(t + 16);
+        if tag == 1 {
+            // BOOLEAN cA
+            if clen != 1 {
+                return 1;
+            }
+            if xb(cert, p + __mind_load_i64(t + 8)) != 0 {
+                __mind_store_i64(rec + 176, 1)
+            }
+        } else {
+            if tag == 2 {
+                // INTEGER pathLenConstraint
+                if clen < 1 || clen > 4 {
+                    return 1;
+                }
+                let v: i64 = bytes_be_to_i64(cert + p + __mind_load_i64(t + 8), clen);
+                __mind_store_i64(rec + 184, v)
+            }
+        }
+        p = p + __mind_load_i64(t + 8) + clen;
+    }
+    0
+}
+
+// keyUsage (2.5.29.15): BIT STRING.  Record the first data byte (ku0);
+// digitalSignature = 0x80, keyCertSign = 0x04.
+pub fn x509_ext_key_usage(cert: i64, off: i64, lim: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(cert, off, lim, t) != 0 {
+        return 1;
+    }
+    if __mind_load_i64(t + 0) != 3 {
+        // BIT STRING
+        return 1;
+    }
+    if __mind_load_i64(t + 16) < 1 {
+        return 1;
+    }
+    let content: i64 = off + __mind_load_i64(t + 8);
+    __mind_store_i64(rec + 192, 1);
+    // has_ku
+    let mut k0: i64 = 0;
+    if __mind_load_i64(t + 16) >= 2 {
+        k0 = xb(cert, content + 1);
+    }
+    __mind_store_i64(rec + 200, k0);
+    0
+}
+
+// extKeyUsage (2.5.29.37): SEQUENCE OF OID.  Set eku_sa if serverAuth
+// (1.3.6.1.5.5.7.3.1) is among them.
+pub fn x509_ext_eku(cert: i64, off: i64, lim: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(cert, off, lim, t) != 0 {
+        return 1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return 1;
+    }
+    __mind_store_i64(rec + 208, 1);
+    // has_eku
+    let mut p: i64 = off + __mind_load_i64(t + 8);
+    let end: i64 = p + __mind_load_i64(t + 16);
+    if end > lim {
+        return 1;
+    }
+    while p < end {
+        if der_tlv(cert, p, end, t) != 0 {
+            return 1;
+        }
+        if __mind_load_i64(t + 0) == 6 {
+            let oo: i64 = p + __mind_load_i64(t + 8);
+            let ol: i64 = __mind_load_i64(t + 16);
+            if oid_is_serverauth(cert, oo, ol) == 1 {
+                __mind_store_i64(rec + 216, 1)
+            }
+        }
+        p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    }
+    0
+}
+
+// subjectAltName (2.5.29.17): GeneralNames ::= SEQUENCE OF GeneralName.
+// Store the SEQUENCE content bounds; matching happens at verify time.
+pub fn x509_ext_san(cert: i64, off: i64, lim: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(cert, off, lim, t) != 0 {
+        return 1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return 1;
+    }
+    __mind_store_i64(rec + 224, 1);
+    // has_san
+    __mind_store_i64(rec + 232, off + __mind_load_i64(t + 8));
+    __mind_store_i64(rec + 240, __mind_load_i64(t + 16));
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Extensions walk.
+// ---------------------------------------------------------------------------
+
+// x509_parse_extensions — walk an Extensions SEQUENCE OF (content at
+// off, bounded by lim) dispatching known OIDs and refusing unknown
+// CRITICAL extensions.  Known: 2.5.29.19 (basicConstraints), 2.5.29.15
+// (keyUsage), 2.5.29.17 (subjectAltName), 2.5.29.37 (extendedKeyUsage).
+// Returns 0 / -1 (malformed) / -12 (unknown critical).
+pub fn x509_parse_extensions(cert: i64, off: i64, lim: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    let mut p: i64 = off;
+    while p < lim {
+        if der_tlv(cert, p, lim, t) != 0 {
+            return -1;
+        }
+        if __mind_load_i64(t + 0) != 48 {
+            // each Extension is a SEQUENCE
+            return -1;
+        }
+        let etotal: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        let ec: i64 = p + __mind_load_i64(t + 8);
+        let elim: i64 = ec + __mind_load_i64(t + 16);
+        // extnID OID
+        if der_tlv(cert, ec, elim, t) != 0 {
+            return -1;
+        }
+        if __mind_load_i64(t + 0) != 6 {
+            return -1;
+        }
+        let oid_off: i64 = ec + __mind_load_i64(t + 8);
+        let oid_len: i64 = __mind_load_i64(t + 16);
+        let mut q: i64 = ec + __mind_load_i64(t + 8) + oid_len;
+        // optional critical BOOLEAN
+        let mut critical: i64 = 0;
+        if q < elim {
+            if der_tlv(cert, q, elim, t) != 0 {
+                return -1;
+            }
+            if __mind_load_i64(t + 0) == 1 {
+                if __mind_load_i64(t + 16) != 1 {
+                    return -1;
+                }
+                if xb(cert, q + __mind_load_i64(t + 8)) != 0 {
+                    critical = 1;
+                }
+                q = q + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+            }
+        }
+        // extnValue OCTET STRING
+        if q >= elim {
+            return -1;
+        }
+        if der_tlv(cert, q, elim, t) != 0 {
+            return -1;
+        }
+        if __mind_load_i64(t + 0) != 4 {
+            return -1;
+        }
+        let v_off: i64 = q + __mind_load_i64(t + 8);
+        let v_lim: i64 = v_off + __mind_load_i64(t + 16);
+        let mut known: i64 = 0;
+        if oid_is_id29(cert, oid_off, oid_len, 19) == 1 {
+            if x509_ext_basic_constraints(cert, v_off, v_lim, rec) != 0 {
+                return -1;
+            }
+            known = 1;
+        }
+        if oid_is_id29(cert, oid_off, oid_len, 15) == 1 {
+            if x509_ext_key_usage(cert, v_off, v_lim, rec) != 0 {
+                return -1;
+            }
+            known = 1;
+        }
+        if oid_is_id29(cert, oid_off, oid_len, 17) == 1 {
+            if x509_ext_san(cert, v_off, v_lim, rec) != 0 {
+                return -1;
+            }
+            known = 1;
+        }
+        if oid_is_id29(cert, oid_off, oid_len, 37) == 1 {
+            if x509_ext_eku(cert, v_off, v_lim, rec) != 0 {
+                return -1;
+            }
+            known = 1;
+        }
+        if oid_is_id29(cert, oid_off, oid_len, 30) == 1 {
+            __mind_store_i64(rec + 248, 1);
+            __mind_store_i64(rec + 256, v_off);
+            __mind_store_i64(rec + 264, v_lim - v_off);
+            known = 1;
+        }
+        if known == 0 && critical == 1 {
+            // unknown CRITICAL extension -> refuse
+            return -12;
+        }
+        p = p + etotal;
+    }
+    0
+}

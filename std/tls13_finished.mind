@@ -16,6 +16,12 @@
 // Ciphersuite TLS_AES_128_GCM_SHA256: Hash = SHA-256, Hash.length = 32, so
 // finished_key, transcript hash and verify_data are all 32 bytes.
 //
+// The handshake helpers of std/tls13_handshake.mind steps (3a), (4) and (5)
+// are defined here, at the end of this file: tls13_hs_cert_verify_content
+// (the RFC 8446 §4.4.3 CertificateVerify signed content),
+// tls13_hs_verify_server_finished and tls13_hs_client_finished.
+// std.tls13_handshake and std.tls13_client both call them.
+//
 // Combined-file build (order matters — deps must precede dependents):
 //   cat std/sha256.mind                                    > /tmp/tls13f.mind
 //   grep -v '^import std.sha256;' std/hkdf.mind           >> /tmp/tls13f.mind
@@ -105,5 +111,133 @@ pub fn tls13_finished_from_secret(base_secret_addr: i64, transcript_hash_addr: i
     let fk: i64 = __mind_alloc(32);
     tls13_finished_key(base_secret_addr, fk);
     hmac_sha256(fk, 32, transcript_hash_addr, 32, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// (3a) CertificateVerify signed content (RFC 8446 §4.4.3), server variant:
+//   content = 0x20 repeated 64 times
+//          || "TLS 1.3, server CertificateVerify"   (33 bytes)
+//          || 0x00                                  (single separator byte)
+//          || Transcript-Hash(Handshake Context, Certificate)   (32 bytes)
+// Writes exactly 130 bytes to out_addr and returns 130 (the content length).
+// Exposed pub so the byte-exact construction is directly testable.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
+    // 64 repetitions of 0x20 (space).
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i8(out_addr + i, 32);
+        i = i + 1;
+    }
+    // Context string "TLS 1.3, server CertificateVerify" (33 bytes, NO NUL —
+    // the 0x00 below is the §4.4.3 separator, not part of the string).
+    __mind_store_i8(out_addr + 64, 84);
+    // 'T'
+    __mind_store_i8(out_addr + 65, 76);
+    // 'L'
+    __mind_store_i8(out_addr + 66, 83);
+    // 'S'
+    __mind_store_i8(out_addr + 67, 32);
+    // ' '
+    __mind_store_i8(out_addr + 68, 49);
+    // '1'
+    __mind_store_i8(out_addr + 69, 46);
+    // '.'
+    __mind_store_i8(out_addr + 70, 51);
+    // '3'
+    __mind_store_i8(out_addr + 71, 44);
+    // ','
+    __mind_store_i8(out_addr + 72, 32);
+    // ' '
+    __mind_store_i8(out_addr + 73, 115);
+    // 's'
+    __mind_store_i8(out_addr + 74, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 75, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 76, 118);
+    // 'v'
+    __mind_store_i8(out_addr + 77, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 78, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 79, 32);
+    // ' '
+    __mind_store_i8(out_addr + 80, 67);
+    // 'C'
+    __mind_store_i8(out_addr + 81, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 82, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 83, 116);
+    // 't'
+    __mind_store_i8(out_addr + 84, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 85, 102);
+    // 'f'
+    __mind_store_i8(out_addr + 86, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 87, 99);
+    // 'c'
+    __mind_store_i8(out_addr + 88, 97);
+    // 'a'
+    __mind_store_i8(out_addr + 89, 116);
+    // 't'
+    __mind_store_i8(out_addr + 90, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 91, 86);
+    // 'V'
+    __mind_store_i8(out_addr + 92, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 93, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 94, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 95, 102);
+    // 'f'
+    __mind_store_i8(out_addr + 96, 121);
+    // 'y'
+    // Single 0x00 separator.
+    __mind_store_i8(out_addr + 97, 0);
+    // 32-byte transcript hash.
+    let mut j: i64 = 0;
+    while j < 32 {
+        __mind_store_i8(out_addr + 98 + j, __mind_load_i8(thash_addr + j));
+        j = j + 1;
+    }
+    130
+}
+
+// ---------------------------------------------------------------------------
+// (4) Server Finished verification (RFC 8446 §4.4.4) — fail-closed.
+//   server_hs_traffic_secret_addr — 32-byte server_handshake_traffic_secret
+//                                   (out+64 of tls13_hs_derive_handshake_secrets);
+//   thash_addr                    — 32-byte Transcript-Hash(CH..CertificateVerify);
+//   received_vd_addr              — the 32-byte verify_data from the server's
+//                                   Finished message.
+// finished_key = HKDF-Expand-Label(shts, "finished", "", 32); expected =
+// HMAC(finished_key, thash); constant-time compare via tls13_finished_check.
+// Returns 1 (match) or 0 (MUST terminate with decrypt_error per §4.4.4).
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_verify_server_finished(server_hs_traffic_secret_addr: i64, thash_addr: i64, received_vd_addr: i64) -> i64 {
+    let fk: i64 = __mind_alloc(32);
+    tls13_finished_key(server_hs_traffic_secret_addr, fk);
+    tls13_finished_check(fk, thash_addr, received_vd_addr)
+}
+
+// ---------------------------------------------------------------------------
+// (5) Client Finished (RFC 8446 §4.4.4) — the client's own verify_data.
+//   client_hs_traffic_secret_addr — 32-byte client_handshake_traffic_secret
+//                                   (out+32 of tls13_hs_derive_handshake_secrets);
+//   thash_addr                    — 32-byte Transcript-Hash(CH..server Finished);
+//   out_vd_addr                   — 32-byte output verify_data.
+// Returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_client_finished(client_hs_traffic_secret_addr: i64, thash_addr: i64, out_vd_addr: i64) -> i64 {
+    tls13_finished_from_secret(client_hs_traffic_secret_addr, thash_addr, out_vd_addr);
     0
 }
