@@ -1,0 +1,171 @@
+name: Install MLIR toolchain
+description: >-
+  Install clang and mlir-tools for LLVM 20 (Ubuntu 24.04) or LLVM 23
+  (apt.llvm.org). Apt retries a stalled download instead of sitting until the
+  job cap, and the .deb archives are cached by the resolved package version so
+  the next job does not pull the same ~150-205 MB from a slow mirror.
+
+inputs:
+  llvm:
+    description: LLVM major to put on PATH. 20 or 23.
+    required: true
+  dual-llvm:
+    description: >-
+      When 1, also install LLVM 20 beside LLVM 23 and leave LLVM 23 on PATH.
+      The caller must pass llvm=23. Used by the avx2 mismatch leg.
+    required: false
+    default: "0"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve LLVM package versions
+      id: ver
+      shell: bash
+      env:
+        LLVM_MAJOR: ${{ inputs.llvm }}
+        DUAL_LLVM: ${{ inputs.dual-llvm }}
+      run: |
+        set -euo pipefail
+        if [ "$LLVM_MAJOR" != "23" ] && [ "$LLVM_MAJOR" != "20" ]; then
+          echo "FAIL: unsupported LLVM major ${LLVM_MAJOR}"
+          exit 1
+        fi
+        if [ "$DUAL_LLVM" = "1" ] && [ "$LLVM_MAJOR" != "23" ]; then
+          echo "FAIL: the dual-toolchain leg keeps LLVM 23 on PATH and installs LLVM 20 beside it"
+          exit 1
+        fi
+        ARCHIVES="${GITHUB_WORKSPACE}/.llvm-apt-cache"
+        mkdir -p "$ARCHIVES"
+        sudo chmod 1777 "$ARCHIVES"
+        # Acquire::Retries and Acquire::http::Timeout bound a stalled socket.
+        # https::Timeout is the same bound for apt.llvm.org (the LLVM 23 mirror
+        # is https, and the http timeout does not apply to it).
+        APT_OPTS=(
+          -o Acquire::Retries=5
+          -o Acquire::http::Timeout=60
+          -o Acquire::https::Timeout=60
+        )
+        apt_get() { sudo apt-get "${APT_OPTS[@]}" "$@"; }
+        san() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
+        candidate() {
+          apt-cache policy "$1" | awk '/Candidate:/ {print $2; exit}'
+        }
+        setup_llvm23_repo() {
+          if ! command -v gpg >/dev/null 2>&1; then
+            apt_get update || true
+            apt_get install -y gnupg
+          fi
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --batch --yes --dearmor \
+            | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null
+          sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+        }
+        ok=0
+        for attempt in 1 2 3 4 5; do
+          if [ "$LLVM_MAJOR" = "23" ]; then
+            if ! setup_llvm23_repo; then
+              echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+              sleep $((attempt * 20))
+              continue
+            fi
+          fi
+          if apt_get update; then
+            ok=1
+            break
+          fi
+          echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
+          sleep $((attempt * 20))
+        done
+        [ "$ok" = 1 ] || { echo "apt update unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+        ver=$(candidate "mlir-${LLVM_MAJOR}-tools")
+        if [ -z "$ver" ] || [ "$ver" = "(none)" ]; then
+          echo "FAIL: no candidate for mlir-${LLVM_MAJOR}-tools"
+          exit 1
+        fi
+        . /etc/os-release
+        arch=$(dpkg --print-architecture)
+        key="llvm-apt-${VERSION_ID}-${arch}-mlir-${LLVM_MAJOR}-tools-$(san "$ver")"
+        if [ "$DUAL_LLVM" = "1" ]; then
+          ver20=$(candidate "mlir-20-tools")
+          if [ -z "$ver20" ] || [ "$ver20" = "(none)" ]; then
+            echo "FAIL: no candidate for mlir-20-tools"
+            exit 1
+          fi
+          key="${key}-mlir-20-tools-$(san "$ver20")"
+        fi
+        echo "cache_key=${key}" >> "$GITHUB_OUTPUT"
+        echo "LLVM package cache key: ${key}"
+
+    - name: Cache LLVM apt archives
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.llvm-apt-cache
+        key: ${{ steps.ver.outputs.cache_key }}
+
+    - name: Install LLVM packages
+      shell: bash
+      env:
+        LLVM_MAJOR: ${{ inputs.llvm }}
+        DUAL_LLVM: ${{ inputs.dual-llvm }}
+      run: |
+        set -euo pipefail
+        ARCHIVES="${GITHUB_WORKSPACE}/.llvm-apt-cache"
+        mkdir -p "$ARCHIVES"
+        sudo chmod 1777 "$ARCHIVES"
+        APT_OPTS=(
+          -o Acquire::Retries=5
+          -o Acquire::http::Timeout=60
+          -o Acquire::https::Timeout=60
+          -o APT::Keep-Downloaded-Packages=true
+          -o "Dir::Cache::archives=${ARCHIVES}"
+        )
+        apt_get() { sudo apt-get "${APT_OPTS[@]}" "$@"; }
+        setup_llvm23_repo() {
+          if ! command -v gpg >/dev/null 2>&1; then
+            apt_get update || true
+            apt_get install -y gnupg
+          fi
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --batch --yes --dearmor \
+            | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null
+          sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
+        }
+        install_major() {
+          local major="$1"
+          local attempt
+          for attempt in 1 2 3 4 5; do
+            if [ "$major" = "23" ]; then
+              if ! setup_llvm23_repo; then
+                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
+                sleep $((attempt * 20))
+                continue
+              fi
+            fi
+            apt_get update || true
+            if apt_get install -y --fix-missing "mlir-${major}-tools" "clang-${major}"; then
+              return 0
+            fi
+            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          echo "MLIR toolchain LLVM ${major} unavailable after 5 attempts (upstream apt mirror outage)"
+          return 1
+        }
+        install_major "$LLVM_MAJOR"
+        if [ "$DUAL_LLVM" = "1" ]; then
+          install_major "20"
+          for t in mlir-opt mlir-translate clang; do
+            test -x "/usr/lib/llvm-20/bin/$t" || { echo "FAIL: /usr/lib/llvm-20/bin/$t missing"; exit 1; }
+            test -x "/usr/lib/llvm-23/bin/$t" || { echo "FAIL: /usr/lib/llvm-23/bin/$t missing"; exit 1; }
+          done
+        fi
+        # The cache upload runs as the runner user. Apt wrote the debs as root.
+        sudo chown -R "$(id -u):$(id -g)" "$ARCHIVES"
+        echo "/usr/lib/llvm-${LLVM_MAJOR}/bin" >> "$GITHUB_PATH"

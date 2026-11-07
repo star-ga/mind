@@ -235,6 +235,9 @@ jobs:
   e2e-gate:
     name: End-to-end compile gate (T2 warm/cold + T2-native, same-run paired A/B)
     runs-on: ubuntu-24.04
+    # Installs peaked at 20s (runs 42311708440, 42301097565, 42301094016); rest of
+    # the job peaked at 1012s. 2*1022s (slowest successful apt of these packages)
+    # + 1012s = 51 min, already inside this cap.
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -256,19 +259,9 @@ jobs:
           key: bench-gate-e2e-${{ hashFiles('Cargo.lock') }}
 
       - name: Install MLIR toolchain (LLVM 20)
-        # The LLVM 20 leg of ci.yml's keystone install: the Ubuntu 24.04 package,
-        # the same 5-attempt backoff for an upstream mirror outage.
-        run: |
-          set -o pipefail
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            sudo apt-get update || true
-            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: "20"
 
       - name: Verify toolchain on PATH
         # Same shape as ci.yml: each tool runs WITHOUT a pipe so `-e` sees its
