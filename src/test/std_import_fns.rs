@@ -60,7 +60,9 @@ struct StdModule {
 /// supplies (`project_std`) contributes nothing here. A bundled module that
 /// fails to parse is a fail-loud error. A bare name two admitted modules
 /// define is left out (the build would hold two global definitions), and so
-/// is a name the file binds through its own `extern "C"` block.
+/// is a name the file binds through its own `extern "C"` block, and a bare
+/// `string_eq` / `string_trim`: the build links the runtime support's, which
+/// the evaluator runs itself (`eval::extern_c_intrinsics`).
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 pub(super) fn resolve_std_import_fns(
     module: &crate::ast::Module,
@@ -156,7 +158,8 @@ pub(super) fn resolve_std_import_fns(
         out.extend(m.consts.iter().cloned());
     }
     for name in definers.keys() {
-        if let Some(m) = unique(name).filter(|_| !extern_names.contains(name)) {
+        let runtime = crate::eval::extern_c_intrinsics::is_runtime_string_fn(name);
+        if let Some(m) = unique(name).filter(|_| !extern_names.contains(name) && !runtime) {
             out.push(forwarder(
                 name.to_string(),
                 &m.fns[*name],
