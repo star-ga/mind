@@ -435,6 +435,7 @@ impl Decls {
         use crate::eval::extern_c_intrinsics::{is_extern_c_intrinsic, is_runtime_string_fn};
         let function = format!("string_{method}");
         let runs = self.params.contains_key(&function)
+            || self.supplied.contains(&function)
             || is_runtime_string_fn(&function)
             || is_extern_c_intrinsic(&function);
         if !runs {

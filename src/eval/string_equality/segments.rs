@@ -27,7 +27,8 @@
 //! entry module.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use crate::ast::{Module, Node};
 use crate::eval::module_bindings::{forwarder_target, symbol_owner};
@@ -114,10 +115,15 @@ pub(super) fn collect_targets(
     module: &Module,
     ordinals: &Ordinals,
 ) -> (Targets, MethodTargets, Vec<Refused>) {
+    let ctx = Ctx {
+        module,
+        ordinals,
+        supplied: Rc::new(supplied_fns(&module.items)),
+    };
     let (mut targets, mut methods, mut refused) =
         (Targets::new(), MethodTargets::new(), Vec::new());
     for segment in partition(module) {
-        let (t, m, r) = analyze_segment(module, ordinals, &segment);
+        let (t, m, r) = ctx.analyze(&segment);
         targets.extend(t);
         methods.extend(m);
         refused.extend(r);
@@ -125,59 +131,79 @@ pub(super) fn collect_targets(
     (targets, methods, refused)
 }
 
-fn analyze_segment(
-    module: &Module,
-    ordinals: &Ordinals,
-    segment: &Segment<'_>,
-) -> (Targets, MethodTargets, Vec<Refused>) {
-    let runs = segment.runs.as_slice();
-    let (targets, methods, refused, _) = match &segment.origin {
-        Origin::Entry => fixpoint(own_decls(module, runs), ordinals, runs),
-        Origin::Project(path) => return project_segment(module, ordinals, path, runs),
-        Origin::Std(name) => match std_decls(name) {
-            Some((decls, _scope)) => fixpoint(decls, ordinals, runs),
-            None => fixpoint(own_decls(module, runs), ordinals, runs),
-        },
-    };
-    (targets, methods, refused)
+/// The source name of every function the merged module defines, forwarders
+/// included: a `string_<method>` call a method desugars to runs if any
+/// module of the merge supplies it.
+fn supplied_fns(items: &[Node]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let mut pending: Vec<&Node> = items.iter().collect();
+    while let Some(item) = pending.pop() {
+        match item {
+            Node::FnDef(fd, _) => {
+                names.insert(super::facts::fn_key(&fd.name).to_string());
+            }
+            Node::Block { stmts, .. } => pending.extend(stmts),
+            _ => {}
+        }
+    }
+    names
 }
 
-/// The declarations of `runs` read as items of `module` itself.
-fn own_decls(module: &Module, runs: &[&[Node]]) -> Decls {
-    let items: Vec<&Node> = runs.iter().flat_map(|run| run.iter()).collect();
-    Decls::new(module, &items)
+/// What every analysis of one merged module shares.
+struct Ctx<'m> {
+    module: &'m Module,
+    ordinals: &'m Ordinals,
+    supplied: Rc<BTreeSet<String>>,
 }
 
-/// A project module's items, decided with its declarations and the project
-/// summary under its module path, as its build decides them.
-#[cfg(feature = "cross-module-imports")]
-fn project_segment(
-    module: &Module,
-    ordinals: &Ordinals,
-    path: &str,
-    runs: &[&[Node]],
-) -> (Targets, MethodTargets, Vec<Refused>) {
-    let _module = crate::qualified_enums::ModuleGuard::install(path);
-    let project = super::project::active_modules();
-    let decls = match project.as_deref().and_then(|p| p.module(path)) {
-        Some(own) => own_decls(own, &[own.items.as_slice()]),
-        // shortcut: without the project registry the module's items are read
-        // as the entry's; every project test installs it.
-        None => own_decls(module, runs),
-    };
-    let (targets, methods, refused, _) = fixpoint(decls, ordinals, runs);
-    (targets, methods, refused)
-}
+impl Ctx<'_> {
+    fn analyze(&self, segment: &Segment<'_>) -> (Targets, MethodTargets, Vec<Refused>) {
+        let runs = segment.runs.as_slice();
+        #[cfg(feature = "cross-module-imports")]
+        let _module = match &segment.origin {
+            Origin::Project(path) => Some(crate::qualified_enums::ModuleGuard::install(path)),
+            _ => None,
+        };
+        let (decls, _scope) = match &segment.origin {
+            Origin::Entry => (self.own_decls(runs), None),
+            Origin::Project(path) => (self.project_decls(path, runs), None),
+            Origin::Std(name) => match std_decls(name) {
+                Some((decls, scope)) => (decls, Some(scope)),
+                None => (self.own_decls(runs), None),
+            },
+        };
+        let mut decls = decls;
+        decls.supplied = self.supplied.clone();
+        let (targets, methods, refused, _) = fixpoint(decls, self.ordinals, runs);
+        (targets, methods, refused)
+    }
 
-#[cfg(not(feature = "cross-module-imports"))]
-fn project_segment(
-    module: &Module,
-    ordinals: &Ordinals,
-    _path: &str,
-    runs: &[&[Node]],
-) -> (Targets, MethodTargets, Vec<Refused>) {
-    let (targets, methods, refused, _) = fixpoint(own_decls(module, runs), ordinals, runs);
-    (targets, methods, refused)
+    /// The declarations of `runs` read as items of the merged module itself.
+    fn own_decls(&self, runs: &[&[Node]]) -> Decls {
+        let items: Vec<&Node> = runs.iter().flat_map(|run| run.iter()).collect();
+        Decls::new(self.module, &items)
+    }
+
+    /// A project module's declarations and the project summary, as its own
+    /// build reads them (its module path is current).
+    #[cfg(feature = "cross-module-imports")]
+    fn project_decls(&self, path: &str, runs: &[&[Node]]) -> Decls {
+        let project = super::project::active_modules();
+        match project.as_deref().and_then(|p| p.module(path)) {
+            Some(own) => {
+                let items: Vec<&Node> = own.items.iter().collect();
+                Decls::new(own, &items)
+            }
+            // shortcut: without the project registry the module's items are
+            // read as the entry's; every project test installs it.
+            None => self.own_decls(runs),
+        }
+    }
+
+    #[cfg(not(feature = "cross-module-imports"))]
+    fn project_decls(&self, _path: &str, runs: &[&[Node]]) -> Decls {
+        self.own_decls(runs)
+    }
 }
 
 /// The declarations a merged std module's items are decided with: its own

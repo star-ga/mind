@@ -236,8 +236,9 @@ const RAW_STRING_READ_BY_STD: &str = concat!(
 /// no `Vec`, so its results stay integers on every backend.
 const RECORD_ESCAPE: &str = concat!(
     "use std.vec;\nuse std.string;\n\n",
+    "fn keep(v: Vec, s: string) -> Vec { return vec_push(v, s) }\n\n",
     "pub fn probe() -> i64 {\n",
-    "    let v = vec_push(vec_new(), \"abc\")\n",
+    "    let v = keep(vec_new(), \"abc\")\n",
     "    if string_len(\"ab\") == string_len(\"ab\") {\n",
     "        return vec_len(v)\n",
     "    }\n",

@@ -262,6 +262,10 @@ pub(super) struct Decls {
     pub(super) project_fns: std::sync::Arc<Fns>,
     /// The project functions whose own module refuses a comparison in them.
     pub(super) project_refusing: std::sync::Arc<BTreeSet<String>>,
+    /// Every function the interpreter's merged module defines, by source
+    /// name (empty for a build): a method on a string desugars to the
+    /// `string_<method>` call only where one runs.
+    pub(super) supplied: Rc<BTreeSet<String>>,
     structs: BTreeMap<String, Option<Vec<(String, TypeAnn)>>>,
     /// Module-local enum name → its variants.
     enums: BTreeMap<String, Vec<EnumVariant>>,
@@ -311,6 +315,7 @@ impl Decls {
             contradicted,
             project_fns,
             project_refusing: Default::default(),
+            supplied: Default::default(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             consts: BTreeMap::new(),
