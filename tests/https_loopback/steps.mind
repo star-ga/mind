@@ -1,0 +1,188 @@
+// Step client for tests/std_https_network_safe.rs (TEST-ONLY): one std.https
+// call per step that the harness writes on stdin, each answered on stdout
+// before the next step is read, so the harness can change the network (a DNS
+// outage, a closed port) between two calls.
+//
+// A step is three little-endian i64 values (op, arg, URL length) and the URL
+// bytes:
+//   op 1: https_get_ca(url) against the test bundle (st_ca_bundle); answers
+//         "G <error> <class> <status> <body length>\n", the body, then "\n"
+//   op 2: https_probe(url, arg ms); answers "P <code>\n"
+//   op 3: https_probe(arg ms) of "https://localhost:<port>/", where <port> is
+//         a listener whose accept queue is full (backlog 0, one connection
+//         queued, nobody accepts); answers "P <code>\n"
+//   op 0, or the end of stdin: exit 0. A malformed step exits 2.
+// The fixture functions st_ca_bundle, st_lit_prefix ("https://localhost:")
+// and st_lit_ip ("127.0.0.1" and a NUL) are written by the harness.
+
+extern "C" {
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+}
+
+// Read exactly n bytes of stdin; returns how many arrived.
+fn st_read_n(buf: i64, n: i64) -> i64 {
+    let mut got: i64 = 0;
+    let mut going: i64 = 1;
+    while going == 1 && got < n {
+        let k: i64 = __mind_read(0, buf + got, n - got, 0 - 1);
+        if k <= 0 {
+            going = 0;
+        } else {
+            got = got + k;
+        }
+    }
+    got
+}
+
+fn st_write(addr: i64, len: i64) -> i64 {
+    let mut off: i64 = 0;
+    let mut going: i64 = 1;
+    while going == 1 && off < len {
+        let n: i64 = __mind_write(1, addr + off, len - off, 0 - 1);
+        if n <= 0 {
+            going = 0;
+        } else {
+            off = off + n;
+        }
+    }
+    off
+}
+
+// Append the decimal digits of v at dst; returns the count.
+fn st_dec(dst: i64, v: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(24);
+    let mut n: i64 = 0;
+    let mut x: i64 = v;
+    let mut p: i64 = 0;
+    if x < 0 {
+        __mind_store_i8(dst, 45);
+        p = 1;
+        x = 0 - x;
+    }
+    if x == 0 {
+        __mind_store_i8(tmp, 48);
+        n = 1;
+    }
+    while x > 0 {
+        __mind_store_i8(tmp + n, 48 + x % 10);
+        x = x / 10;
+        n = n + 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + p + i, __mind_load_i8(tmp + n - 1 - i));
+        i = i + 1;
+    }
+    __mind_free(tmp);
+    p + n
+}
+
+// " <v>" at dst; returns the count.
+fn st_num(dst: i64, v: i64) -> i64 {
+    __mind_store_i8(dst, 32);
+    1 + st_dec(dst + 1, v)
+}
+
+fn st_get(url: i64, n: i64, ca: i64) -> i64 {
+    let r: i64 = https_get_ca(url, n, ca);
+    let blen: i64 = https_body_len(r);
+    let out: i64 = __mind_alloc(blen + 128);
+    __mind_store_i8(out, 71);
+    let mut p: i64 = 1;
+    p = p + st_num(out + p, https_error(r));
+    p = p + st_num(out + p, https_error_class(r));
+    p = p + st_num(out + p, https_status(r));
+    p = p + st_num(out + p, blen);
+    __mind_store_i8(out + p, 10);
+    p = p + 1;
+    let body: i64 = https_body_addr(r);
+    let mut i: i64 = 0;
+    while i < blen {
+        __mind_store_i8(out + p + i, __mind_load_i8(body + i));
+        i = i + 1;
+    }
+    p = p + blen;
+    __mind_store_i8(out + p, 10);
+    st_write(out, p + 1);
+    __mind_free(out);
+    https_free(r);
+    0
+}
+
+fn st_probe_line(code: i64) -> i64 {
+    let out: i64 = __mind_alloc(32);
+    __mind_store_i8(out, 80);
+    let mut p: i64 = 1 + st_num(out + 1, code);
+    __mind_store_i8(out + p, 10);
+    p = p + 1;
+    st_write(out, p);
+    __mind_free(out);
+    0
+}
+
+// Probe a port whose accept queue is full; the probe code, or -100 when the
+// listener could not be set up.
+fn st_full_backlog(ms: i64) -> i64 {
+    let ip: i64 = __mind_alloc(16);
+    st_lit_ip(ip);
+    let l: i64 = tcp_listen(ip, 0);
+    if l == 0 {
+        return 0 - 100;
+    }
+    if listen(tcp_listener_fd(l) as i32, 0) as i64 != 0 {
+        tcp_listener_close(l);
+        return 0 - 100;
+    }
+    let port: i64 = tcp_listen_port(l);
+    let first: i64 = tcp_connect_host_timeout(ip, 9, port, 5000);
+    if first == 0 {
+        tcp_listener_close(l);
+        return 0 - 100;
+    }
+    let url: i64 = __mind_alloc(64);
+    let mut n: i64 = st_lit_prefix(url);
+    n = n + st_dec(url + n, port);
+    __mind_store_i8(url + n, 47);
+    n = n + 1;
+    let rc: i64 = https_probe(url, n, ms);
+    tcp_close(first);
+    tcp_listener_close(l);
+    rc
+}
+
+fn main() -> i64 {
+    let ca: i64 = __mind_alloc(4096);
+    st_ca_bundle(ca);
+    let hdr: i64 = __mind_alloc(24);
+    let url: i64 = __mind_alloc(4096);
+    let mut going: i64 = 1;
+    let mut rc: i64 = 0;
+    while going == 1 {
+        if st_read_n(hdr, 24) != 24 {
+            going = 0;
+        } else {
+            let op: i64 = __mind_load_i64(hdr);
+            let arg: i64 = __mind_load_i64(hdr + 8);
+            let n: i64 = __mind_load_i64(hdr + 16);
+            if op == 0 {
+                going = 0;
+            } else {
+                if n < 0 || n > 4000 || st_read_n(url, n) != n {
+                    rc = 2;
+                    going = 0;
+                } else {
+                    if op == 1 {
+                        st_get(url, n, ca)
+                    }
+                    if op == 2 {
+                        st_probe_line(https_probe(url, n, arg))
+                    }
+                    if op == 3 {
+                        st_probe_line(st_full_backlog(arg))
+                    }
+                }
+            }
+        }
+    }
+    rc
+}

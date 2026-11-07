@@ -420,6 +420,20 @@ pub fn x509_issuer_matches(child: i64, parent: i64) -> i64 {
     xb_eq(__mind_load_i64(child) + __mind_load_i64(child + 32), __mind_load_i64(parent) + __mind_load_i64(parent + 48), ilen)
 }
 
+// 1 iff the anchor record's subject is the issuer of one of the `count`
+// supplied certificate records.
+fn x509_anchor_issues_any(recs: i64, count: i64, anchor: i64) -> i64 {
+    let mut found: i64 = 0;
+    let mut ci: i64 = 0;
+    while found == 0 && ci < count {
+        if x509_issuer_matches(recs + ci * 288, anchor) == 1 {
+            found = 1;
+        }
+        ci = ci + 1;
+    }
+    found
+}
+
 // Bounded depth-first search: leaf first, remaining certificates unordered.
 // Try every matching issuer, retaining path-specific policy and a visited mask.
 #[protection]
@@ -574,17 +588,21 @@ pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now
         return -8;
     }
 
+    // Bounded search over the whole anchor set: every anchor (at most
+    // x509_max_anchors(), else -13) is parsed once, and only an anchor whose
+    // subject is the issuer of some supplied certificate can issue a path
+    // link, so the path search below sees just those.
     let acount: i64 = __mind_load_i64(anchors);
-    if acount < 0 || acount > 32 {
+    if acount < 0 || acount > x509_max_anchors() {
         return -13;
     }
-    let arecs: i64 = __mind_alloc(9216);
+    let arecs: i64 = __mind_alloc(288 * (acount + 1));
     let mut j: i64 = 0;
     let mut valid_anchors: i64 = 0;
     while j < acount {
         let ar: i64 = arecs + valid_anchors * 288;
         let arc: i64 = x509_parse_full(anchors + x509_blob_off(anchors, j), x509_blob_len(anchors, j), ar);
-        if arc == 0 {
+        if arc == 0 && x509_anchor_issues_any(recs, count, ar) == 1 {
             valid_anchors = valid_anchors + 1;
         }
         j = j + 1;

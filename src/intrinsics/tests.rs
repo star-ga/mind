@@ -163,6 +163,11 @@ fn qualified_paths_resolve_to_the_same_verdict() {
 const NAMED_STD_MODULES: &[(&str, &str)] = &[
     ("std.dns", include_str!("../../std/dns.mind")),
     ("std.entropy", include_str!("../../std/entropy.mind")),
+    ("std.https", include_str!("../../std/https.mind")),
+    (
+        "std.https_probe",
+        include_str!("../../std/https_probe.mind"),
+    ),
 ];
 
 /// Every callee named anywhere in `instrs`, through every nested body.
@@ -213,7 +218,12 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
                 if calls.contains_key(c) {
                     world.contains(c)
                 } else {
+                    // A call into another named std module (std.https calls std.dns
+                    // and std.entropy) reaches the world through that module's row.
                     callee_is_nondeterministic(c)
+                        || NAMED_STD_MODULES
+                            .iter()
+                            .any(|(m, _)| crate::std_qualified::is_row(m, c))
                 }
             });
             if reaches {
@@ -241,7 +251,7 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
 /// either side fails rather than passing vacuously.
 #[cfg(feature = "std-surface")]
 #[test]
-fn public_world_reach_of_std_entropy_and_dns_is_named() {
+fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
     let mut named = 0usize;
     for (module, src) in NAMED_STD_MODULES {
         let (reach, pure) = public_world_reach(module, src);
@@ -271,7 +281,8 @@ fn public_world_reach_of_std_entropy_and_dns_is_named() {
         }
     }
     assert_eq!(
-        named, 4,
-        "dns_resolve, tcp_connect_host(_timeout), entropy_fill"
+        named, 11,
+        "dns_resolve, tcp_connect_host(_timeout), entropy_fill, https_get(_ca), https_post(_ca), \
+         https_get_with_headers, https_post_with_headers, https_probe"
     );
 }

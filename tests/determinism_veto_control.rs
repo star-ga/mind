@@ -171,6 +171,29 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "entropy_fill",
     ),
     ("dns", "std.dns.dns_resolve(p, 9)", "dns_resolve"),
+    ("https", "https.https_get(p, 9)", "https_get"),
+    ("https", "https.https_get_ca(p, 9, p)", "https_get_ca"),
+    ("https", "https.https_post(p, 9, p, 1, p, 1)", "https_post"),
+    (
+        "https",
+        "https.https_post_ca(p, 9, p, 1, p, 1, p)",
+        "https_post_ca",
+    ),
+    (
+        "https",
+        "https.https_get_with_headers(p, 9, p, 1, p)",
+        "https_get_with_headers",
+    ),
+    (
+        "https",
+        "https.https_post_with_headers(p, 9, p, 1, p, 1, p, 1, p)",
+        "https_post_with_headers",
+    ),
+    (
+        "https_probe",
+        "https_probe.https_probe(p, 9, 100)",
+        "https_probe",
+    ),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -178,6 +201,9 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
 const STD_PURE_CALLERS: &[(&str, &str)] = &[
     ("entropy", "entropy.entropy_max_len()"),
     ("dns", "dns.dns_status(p)"),
+    ("https", "https.https_deadline_s()"),
+    ("https_http1", "https_http1.https_error_class(p)"),
+    ("https_probe", "https_probe.https_probe_ok()"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

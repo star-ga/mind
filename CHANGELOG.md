@@ -8,6 +8,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
+  (Linux).** `https_get(url)` / `https_post(url, body, content_type)` (and
+  `https_get_ca` / `https_post_ca` with a CA bundle path) resolve the host with
+  `tcp_connect_host`, draw the TLS randoms and key share from `entropy_fill`,
+  run the TLS 1.3 client, authenticate the chain against the system CA bundle
+  (`/etc/ssl/certs/ca-certificates.crt`) at the system clock, and speak
+  HTTP/1.1: Host header, Content-Length and chunked bodies, a body that ends
+  with close_notify, bounded URL / header block (32 KiB) / body (8 MiB) /
+  request body, a 30 s socket timeout and a 120 s deadline on the monotonic
+  clock (every read and write is limited to the time left, so one read cannot
+  run past it). Redirects are not
+  followed: a 3xx is returned. Each call returns a response record whose error
+  is 0 or a named `https_err_*` code (wrong hostname, certificate validity,
+  unknown anchor, other chain refusal, CertificateVerify, unsupported leaf key,
+  truncated, body too large, malformed response, ...); a refusal carries no
+  status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
+  rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
+  is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
+  checked.** A qualified call to one of the
+  six request functions (`https.https_get(...)`) is a world read, like
+  `entropy_fill`: the determinism veto refuses it without
+  `--allow-nondeterministic`.
+  - Request headers: `https_get_with_headers(url, headers, ca_path)` and
+    `https_post_with_headers(url, headers, body, content_type, ca_path)` send a
+    caller block of `name: value` CRLF lines (for example `X-API-Key` and
+    `Cookie`) after the client's own headers; `ca_path` 0 is the system bundle.
+    A line that is not `token: value` CRLF, a byte outside HTAB and printable
+    ASCII, a block over 16 KiB, or a header the client writes itself (Host,
+    User-Agent, Accept, Connection, Content-Type, Content-Length) or that
+    changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect) is
+    refused with `https_err_request_headers` (-19) before any connection.
+  - Response headers: `https_header_nth` / `https_header_count` read every
+    header of a name; `https_set_cookie_count`, `https_set_cookie` (the whole
+    value) and `https_set_cookie_pair` (the `name=value` a later request sends
+    back) capture Set-Cookie. `https_free` releases a response record.
+  - Strict framing: a chunk size takes leading zeros and is refused at the
+    digit that passes the 8 MiB body cap (`https_err_body_too_large`), so it
+    cannot overflow; a chunk extension and a response header value holding a
+    control byte (NUL, bare CR or LF, DEL) are refused (`https_err_response`).
+  - Error classes: `https_error_class(r)` is `https_class_none()` (0) for a
+    complete response, `https_class_before_send()` (1) when the call failed
+    before any request byte was written (a refused URL, header block, body or
+    CA bundle, name resolution, the TCP connect, the TLS handshake), so the
+    same request is safe to retry, and `https_class_after_send()` (2) when the
+    client had begun to write the request and the response is missing,
+    partial or garbled, so the server may have acted and the caller must pause
+    and never count it as a result. A failure is never a success: it carries
+    no status or body. The client marks the request as begun before its first
+    write, so a write that fails partway (a reset during the body) is
+    after-send; application data that arrives before any request byte is
+    written (with the server's handshake flight) answers no request and is
+    refused (`https_err_response`, before-send).
+  - `std.https_probe`: `https_probe(url, url_len, timeout_ms)` resolves the
+    URL's host and opens and closes one TCP connection to its port, sending
+    nothing, with a distinct code per failure: `https_probe_err_url`,
+    `_dns_again` (EAI_AGAIN: the resolver or network is down), `_dns`,
+    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. A qualified
+    call to it is a world read.
+  - The TLS 1.3 client's record pump and handshake state machine move from
+    `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
+    the HTTPS driver: the import chain under the state machine is already five
+    modules deep, the arch-mind DEPTH ceiling. The EncryptedExtensions and
+    Certificate parsers move to `std.tls13_client_api`; every name is kept.
+    New modules `std.https_url` (error codes, bounds, URL, request) and
+    `std.https_http1` (response record and parser).
+  - The client now discards whole post-handshake NewSessionTicket messages
+    (any other post-handshake message is refused), holds one full record of
+    decrypted application data (16 KiB, was 2 KiB, so a record of the RFC 8446
+    maximum of 2^14 plaintext bytes no longer ends the connection with E_OVF)
+    and opens no further record until it is read, so a body of any size
+    streams through that fixed window. It records the presented leaf key
+    (`tls13c_leaf_key_kind`, `tls13c_leaf_rsa_len`) outside the ranges key
+    erasure clears, so the evidence survives the refusal it names, and
+    reports its inbound space (`tls13c_in_space`). `tls13c_state_size()` is
+    102400 and does not depend on the body size. The per-record scratch
+    buffers (record copy, plaintext, AEAD nonce and inner plaintext, in
+    `std.tls13_record` too) and the chain and anchor tables are released, so
+    memory does not grow with the number of records.
+  - CA bundles: `x509_load_anchors` accepts blank lines and `#` comment lines
+    between PEM blocks (other text is still refused), decodes into one buffer,
+    and holds up to `x509_max_anchors()` (1024) anchors in at most 4 MiB. The
+    32-anchor cap in `x509_verify_server_chain` is replaced by a bounded search
+    over the whole set: each anchor is parsed once and only one whose subject
+    issues a supplied certificate enters the path search.
+  - `std.dns`: `tcp_set_io_timeout` (SO_RCVTIMEO and SO_SNDTIMEO) and
+    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream; `dns_free` releases
+    a `dns_resolve` record. `dns_resolve`, `tcp_connect_host(_timeout)` and
+    the host-layout probe release every per-call allocation (the name copy,
+    hints and out-slot, the `uname` buffer, the socket address, the timeout
+    value, the record the connect call resolves) on the success and every
+    error path (`tests/std_dns_free_run.rs`).
+  - `tests/std_https_loopback.rs`: a hermetic loopback TLS 1.3 server in MIND
+    (test-only RSA-2048 chain, `tests/https_loopback/`) proves GET, POST,
+    chunked, a multi-record body and an unfollowed 301, and the named refusals;
+    an ignored test is the manual release smoke against
+    `https://three.arcprize.org/`.
+  - `tests/std_https_openssl.rs`: the client against `openssl s_server` on
+    127.0.0.1 with the same chain, through a TCP proxy that records every
+    server record: a full 16 KiB record, a 5 MiB Content-Length body and a
+    5 MiB chunked body compared byte for byte, X-API-Key, Cookie, Content-Type
+    and the POST body asserted at the server, two Set-Cookie headers captured,
+    and the refusals of malformed chunk sizes (eleven forms), control bytes in
+    a response header, malformed request header blocks (nine forms, before any
+    connection), a body truncated by close_notify, by a missing last chunk and
+    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf;
+    and the framing guards, each beside an accepted control: a repeated
+    Content-Length, a transfer coding other than chunked, a Content-Length
+    over 18 digits (one that would wrap i64), and CR, LF, SP and other control
+    bytes in the URL request target (refused before any connection); an 8 MiB
+    POST body (the request maximum) reaches s_server whole, and the same
+    request is refused after-send when a proxy resets the connection while the
+    body is written. Every refusal is checked with its error class.
+  - `tests/std_https_network_safe.rs`: the loopback server in MIND and a step
+    client under a preloaded resolver: a DNS outage between two requests (the
+    probe reports it, the request fails before-send, and after the outage the
+    same request returns the exact body), a refused port and a full accept
+    queue (probe codes), a TLS refusal before the request and a cut after it,
+    a body framed by the connection, which is complete only on close_notify:
+    a fatal alert, a warning alert and a TCP close are refused after-send; and
+    a response that arrives before any request byte is written (a recorded
+    server flight, response and close_notify replayed right after the client's
+    ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
 - **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
@@ -39,7 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     identifiers equal, SHA-1 refused, and in-memory DER/PEM trust
     anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
     Limits: no revocation checking, DNS/IP-only name constraints, at most 8
-    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
+    certificates in the presented chain (`x509_path`: a count over 8 is
+    refused) and `x509_max_anchors()` (1024) anchors, exact-DER issuer
+    matching; unsupported cases
     fail closed. Anchors are trusted key bindings: their self-signature and
     validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
     constraints apply to the path below them.

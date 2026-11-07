@@ -54,7 +54,9 @@ certificate is the leaf; the remaining certificates are unordered candidates.
 The caller must provide valid blob storage and offsets: this pointer-only ABI
 has no total buffer-length argument. The DNS/IP argument is NUL-terminated.
 
-Path search is bounded to eight supplied certificates and 32 anchors, retries
+Path search is bounded to eight supplied certificates and x509_max_anchors()
+(1024) anchors, of which only those whose subject issues a supplied
+certificate enter the search; it retries
 alternative issuers, and enforces signatures, validity, CA/pathLen, KU, EKU,
 and SAN identity. A leaf must carry an EKU that lists serverAuth (-11), an IP
 literal host matches only an iPAddress SAN (-8), and a certificate whose
@@ -89,7 +91,9 @@ left-most label `*.` followed by non-empty labels (`*.`, `*..example.com` and
 bundle to an owned blob (positive address), or returns a negative error. It
 checks encoding/envelope structure; the chain verifier parses anchor certificates
 and applies policy. The caller owns the returned blob. No implicit trust store.
-The loader accepts at most 32 anchors. The crypto/parser implementation uses
+The loader accepts at most x509_max_anchors() (1024) anchors in at most
+x509_max_bundle_len() (4 MiB), and blank lines and '#' comment lines between
+PEM blocks. The crypto/parser implementation uses
 heap scratch allocations and is not yet qualified for long-running connection
 loads; these tests establish functional correctness, not an allocation bound.
 

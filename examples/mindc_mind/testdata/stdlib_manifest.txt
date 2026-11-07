@@ -39,15 +39,12 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 59
-# TOTAL_COUNT 59
+# BUNDLED_COUNT 62
+# TOTAL_COUNT 62
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
-# 38 modules are not `seed`: the frozen native compiler cannot see them until a
-#
-# Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
-# and tests/std_bundled_module_table.rs fails when a shipped module has no row.
+# 41 modules are not `seed`: the frozen native compiler cannot see them until a
 # reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
@@ -66,6 +63,10 @@ hkdf	no	bundled
 hpack	no	bundled
 http	no	bundled
 http2_frame	no	bundled
+https	no	bundled
+https_http1	no	bundled
+https_probe	no	bundled
+https_url	no	bundled
 io	seed	bundled
 io_canon	seed	bundled
 iouring	seed	bundled
@@ -88,7 +89,6 @@ sha256	seed	bundled
 sha512	no	bundled
 string	seed	bundled
 time	seed	bundled
-tls13_client	no	bundled
 tls13_client_api	no	bundled
 tls13_client_core	no	bundled
 tls13_client_hello	no	bundled

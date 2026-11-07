@@ -123,6 +123,8 @@ pub fn tls13_record_seal(key_addr: i64, iv_addr: i64, seq: i64, content_addr: i6
 
     // AEAD seal: ciphertext at out+5, tag right after the ciphertext.
     aes128_gcm_encrypt(key_addr, nonce, inner, inner_len, out_record_addr, 5, out_record_addr + 5, out_record_addr + 5 + inner_len);
+    __mind_free(nonce);
+    __mind_free(inner);
     5 + enc_len
 }
 
@@ -167,7 +169,9 @@ pub fn tls13_record_open(key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64
     // 1 on mismatch — no unauthenticated plaintext ever reaches out_content.
     let inner: i64 = __mind_alloc(ct_len);
     let rc: i64 = aes128_gcm_decrypt(key_addr, nonce, record_addr + 5, ct_len, record_addr, 5, record_addr + 5 + ct_len, inner);
+    __mind_free(nonce);
     if rc != 0 {
+        __mind_free(inner);
         return 0 - 2;
     }
 
@@ -188,11 +192,15 @@ pub fn tls13_record_open(key_addr: i64, iv_addr: i64, seq: i64, record_addr: i64
     if idx < 0 {
         // All-zero inner plaintext: no content type — illegal (§5.4:
         // "unexpected_message" alert territory).  Malformed, not released.
+        __mind_free(inner);
         return 0 - 1;
     }
 
     let inner_type: i64 = __mind_load_i8(inner + idx);
     let content_len: i64 = idx;
     tls13_rec_copy(out_content_addr, inner, content_len);
+    // The scratch buffers are released per record, so a long stream of
+    // records holds no more memory than one record.
+    __mind_free(inner);
     (content_len << 8) | inner_type
 }

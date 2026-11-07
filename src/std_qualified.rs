@@ -4,9 +4,10 @@
 
 //! Qualified calls into the world-reading std modules.
 //!
-//! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout` and
-//! `entropy_fill` read the world only when the call's qualifier resolves to
-//! `std.dns` or `std.entropy`. A user function of the same bare name is
+//! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
+//! `entropy_fill` and the `https_*` entry points read the world only when the
+//! call's qualifier resolves to `std.dns`, `std.entropy`, `std.https` or
+//! `std.https_probe`. A user function of the same bare name is
 //! deterministic. The lowered IR keeps only the bare name (the qualifier lives
 //! on the call span, in `SourceSpelling`), so this module reads the source.
 //!
@@ -36,6 +37,14 @@ const ROWS: &[(&str, &str)] = &[
     ("std.dns", "tcp_connect_host"),
     ("std.dns", "tcp_connect_host_timeout"),
     ("std.entropy", "entropy_fill"),
+    // std.https reaches DNS, the network, entropy, the clock and the CA file.
+    ("std.https", "https_get"),
+    ("std.https", "https_get_ca"),
+    ("std.https", "https_post"),
+    ("std.https", "https_post_ca"),
+    ("std.https", "https_get_with_headers"),
+    ("std.https", "https_post_with_headers"),
+    ("std.https_probe", "https_probe"),
 ];
 
 /// Whether `name` is a world-reading public function of `module`.

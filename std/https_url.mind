@@ -1,0 +1,700 @@
+// std/https_url.mind — the std.https error codes and bounds, URL parsing and
+// HTTP/1.1 request serialization. The response parser is std/https_http1.mind.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Pure byte work: no socket, clock or file. std.https feeds it the decrypted
+// application bytes of one TLS connection.
+//
+// Request headers: a caller block of `name: value` CRLF lines (for example
+// X-API-Key and Cookie) is sent after the client's own headers; a malformed
+// line or a header the client writes itself or that changes the framing is
+// refused (hx_headers_ok).
+//
+// URL: `https://host[:port][/path][?query]`. The scheme is `https` (any case);
+// the host is a DNS name (letters, digits, '-', '.'; labels 1..63 bytes,
+// 1..253 in all); userinfo, an IP literal, an empty port and a byte outside
+// printable ASCII in the path are refused; a `#fragment` is not sent.
+//
+// This module imports nothing.
+
+// ---------------------------------------------------------------------------
+// Error codes (std.https)
+// ---------------------------------------------------------------------------
+
+pub fn https_ok() -> i64 {
+    0
+}
+
+// The URL is not an https URL this client accepts.
+pub fn https_err_url() -> i64 {
+    -1
+}
+
+// The CA bundle file could not be read, or is not a well-formed PEM/DER bundle.
+pub fn https_err_ca_bundle() -> i64 {
+    -2
+}
+
+// The host did not resolve, or no address accepted the TCP connection.
+pub fn https_err_connect() -> i64 {
+    -3
+}
+
+// The kernel entropy source failed.
+pub fn https_err_entropy() -> i64 {
+    -4
+}
+
+// A TLS protocol failure not named below (alert, malformed message, record).
+pub fn https_err_tls() -> i64 {
+    -5
+}
+
+// The server certificate does not name the host (RFC 6125), or has no SAN.
+pub fn https_err_hostname() -> i64 {
+    -6
+}
+
+// A certificate in the path is expired or not yet valid at the system clock.
+pub fn https_err_cert_validity() -> i64 {
+    -7
+}
+
+// No path from the server's certificates to an anchor in the CA bundle.
+pub fn https_err_unknown_anchor() -> i64 {
+    -8
+}
+
+// Another chain refusal: CA flag, key usage, EKU, path length, name
+// constraints, a certificate signature that does not verify.
+pub fn https_err_chain() -> i64 {
+    -9
+}
+
+// The TLS 1.3 CertificateVerify signature does not verify with the leaf key.
+pub fn https_err_cert_verify() -> i64 {
+    -10
+}
+
+// The leaf key is not RSA-2048 (ECDSA, RSA-3072+, any other type): this
+// release verifies rsa_pss_rsae_sha256 with an RSA-2048 leaf only.
+pub fn https_err_unsupported_key() -> i64 {
+    -11
+}
+
+// The connection ended before the TLS record or the HTTP response was complete.
+pub fn https_err_truncated() -> i64 {
+    -12
+}
+
+// The response body is larger than https_max_body().
+pub fn https_err_body_too_large() -> i64 {
+    -13
+}
+
+// The HTTP response is malformed or uses a framing this client refuses.
+pub fn https_err_response() -> i64 {
+    -14
+}
+
+// A socket read or write failed (a receive timeout included).
+pub fn https_err_io() -> i64 {
+    -15
+}
+
+// The request did not finish within https_deadline_s() seconds.
+pub fn https_err_timeout() -> i64 {
+    -16
+}
+
+// The request body or content type is refused (size, bytes).
+pub fn https_err_request() -> i64 {
+    -17
+}
+
+// The response header block is larger than https_max_header_bytes().
+pub fn https_err_header_too_large() -> i64 {
+    -18
+}
+
+// The request header block is refused: a line that is not `token: value`
+// CRLF, a byte outside HTAB / printable ASCII, more than
+// https_max_request_headers() bytes, or a header the client writes itself
+// (Host, User-Agent, Accept, Connection, Content-Type, Content-Length) or
+// that changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect).
+pub fn https_err_request_headers() -> i64 {
+    -19
+}
+
+// ---------------------------------------------------------------------------
+// Error classes (https_error_class): where a failure happened relative to the
+// request bytes. A failure is never a success: its record has no status or body.
+// ---------------------------------------------------------------------------
+
+// No failure: https_error is 0 and the response is complete.
+pub fn https_class_none() -> i64 {
+    0
+}
+
+// The request failed BEFORE any request byte was written: a refused URL,
+// header block, body or CA bundle, name resolution, the TCP connect
+// (refused, unreachable, timed out), entropy, the clock, or the TLS handshake
+// (a certificate or key refusal, an alert, a handshake timeout). The server
+// cannot have seen the request: the same request is safe to retry.
+pub fn https_class_before_send() -> i64 {
+    1
+}
+
+// The request failed AFTER the client began to write the request: a write
+// failed, or the response is missing, truncated, malformed, too large, ended
+// by an alert other than close_notify, or past the deadline. The server may
+// have acted on the request: the outcome is unknown. The caller must pause and
+// must not count it as a result.
+pub fn https_class_after_send() -> i64 {
+    2
+}
+
+// ---------------------------------------------------------------------------
+// Bounds
+// ---------------------------------------------------------------------------
+
+pub fn https_max_url_len() -> i64 {
+    2048
+}
+
+pub fn https_max_header_bytes() -> i64 {
+    32768
+}
+
+// 8 MiB.
+pub fn https_max_body() -> i64 {
+    8388608
+}
+
+pub fn https_max_request_body() -> i64 {
+    8388608
+}
+
+pub fn https_max_content_type_len() -> i64 {
+    256
+}
+
+// Caller request header block, CRLFs included.
+pub fn https_max_request_headers() -> i64 {
+    16384
+}
+
+pub fn https_default_port() -> i64 {
+    443
+}
+
+// ---------------------------------------------------------------------------
+// Byte helpers
+// ---------------------------------------------------------------------------
+
+pub fn hx_b(p: i64) -> i64 {
+    __mind_load_i8(p) & 255
+}
+
+pub fn hx_lower(c: i64) -> i64 {
+    if c >= 65 && c <= 90 {
+        return c + 32;
+    }
+    c
+}
+
+pub fn hx_copy(dst: i64, src: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    n
+}
+
+// Store the low `n` bytes of `v`, little-endian (a packed ASCII literal).
+fn hx_put_word(dst: i64, v: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        __mind_store_i8(dst + k, (v >> (8 * k)) & 255);
+        k = k + 1;
+    }
+    n
+}
+
+fn hx_put_crlf(dst: i64) -> i64 {
+    __mind_store_i8(dst, 13);
+    __mind_store_i8(dst + 1, 10);
+    2
+}
+
+// Decimal digits of v >= 0 at dst; returns the count.
+fn hx_put_dec(dst: i64, v: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(24);
+    let mut n: i64 = 0;
+    let mut x: i64 = v;
+    if x == 0 {
+        __mind_store_i8(tmp, 48);
+        n = 1;
+    }
+    while x > 0 {
+        __mind_store_i8(tmp + n, 48 + x % 10);
+        x = x / 10;
+        n = n + 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(tmp + n - 1 - i));
+        i = i + 1;
+    }
+    __mind_free(tmp);
+    n
+}
+
+// 1 iff the n bytes at a equal the n bytes at b, ASCII case-insensitively.
+pub fn hx_ci_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while same == 1 && i < n {
+        if hx_lower(hx_b(a + i)) != hx_lower(hx_b(b + i)) {
+            same = 0;
+        }
+        i = i + 1;
+    }
+    same
+}
+
+// 1 iff the n bytes at a equal the ASCII literal packed in w (n <= 8),
+// case-insensitively.
+pub fn hx_ci_word(a: i64, n: i64, w: i64) -> i64 {
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while same == 1 && i < n {
+        if hx_lower(hx_b(a + i)) != hx_lower((w >> (8 * i)) & 255) {
+            same = 0;
+        }
+        i = i + 1;
+    }
+    same
+}
+
+// 1 iff the n bytes at a are the `len`-byte ASCII name packed in w0 (bytes
+// 0..7), w1 (8..15) and w2 (16..23), case-insensitively.
+pub fn hx_ci_name(a: i64, n: i64, len: i64, w0: i64, w1: i64, w2: i64) -> i64 {
+    if n != len {
+        return 0;
+    }
+    let mut n0: i64 = len;
+    if n0 > 8 {
+        n0 = 8;
+    }
+    if hx_ci_word(a, n0, w0) == 0 {
+        return 0;
+    }
+    if len > 8 {
+        let mut n1: i64 = len - 8;
+        if n1 > 8 {
+            n1 = 8;
+        }
+        if hx_ci_word(a + 8, n1, w1) == 0 {
+            return 0;
+        }
+    }
+    if len > 16 {
+        if hx_ci_word(a + 16, len - 16, w2) == 0 {
+            return 0;
+        }
+    }
+    1
+}
+
+// 1 iff c is an RFC 9110 tchar.
+fn hx_tchar(c: i64) -> i64 {
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) {
+        return 1;
+    }
+    // ! # $ % & ' * + - . ^ _ ` | ~
+    if c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 {
+        return 1;
+    }
+    if c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff the header name [a, a+n) is one the client writes itself or one that
+// changes the message framing.
+fn hx_reserved_name(a: i64, n: i64) -> i64 {
+    let mut hit: i64 = 0;
+    hit = hit + hx_ci_name(a, n, 4, 1953722216, 0, 0);
+    hit = hit + hx_ci_name(a, n, 10, 7306915768252593013, 29806, 0);
+    hit = hit + hx_ci_name(a, n, 6, 128026086171489, 0, 0);
+    hit = hit + hx_ci_name(a, n, 10, 7598807758576447331, 28271, 0);
+    hit = hit + hx_ci_name(a, n, 12, 3275364211029340003, 1701869940, 0);
+    hit = hit + hx_ci_name(a, n, 14, 3275364211029340003, 114849160783212, 0);
+    hit = hit + hx_ci_name(a, n, 17, 8243107338930713204, 7956000646299018541, 103);
+    hit = hit + hx_ci_name(a, n, 2, 25972, 0, 0);
+    hit = hit + hx_ci_name(a, n, 7, 32199663643882100, 0, 0);
+    hit = hit + hx_ci_name(a, n, 7, 28539342341763189, 0, 0);
+    hit = hit + hx_ci_name(a, n, 6, 127970252453989, 0, 0);
+    if hit > 0 {
+        return 1;
+    }
+    0
+}
+
+// hx_headers_ok — 1 iff [h, h+n) is zero or more request header lines
+// `name: value` CRLF: name an RFC 9110 token of 1..64 bytes that
+// hx_reserved_name does not refuse, value bytes HTAB, SP or printable ASCII,
+// the block at most https_max_request_headers() bytes. No CR, LF or NUL can
+// enter a value, so a caller value cannot add a header or end the head.
+pub fn hx_headers_ok(h: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 1;
+    }
+    if n < 0 || n > https_max_request_headers() || h <= 0 {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let mut pos: i64 = 0;
+    while ok == 1 && pos < n {
+        let mut i: i64 = pos;
+        let mut scanning: i64 = 1;
+        while scanning == 1 && i < n {
+            if hx_tchar(hx_b(h + i)) == 1 {
+                i = i + 1;
+            } else {
+                scanning = 0;
+            }
+        }
+        let nlen: i64 = i - pos;
+        if nlen < 1 || nlen > 64 || i >= n {
+            ok = 0;
+        } else {
+            if hx_b(h + i) != 58 || hx_reserved_name(h + pos, nlen) == 1 {
+                ok = 0;
+            }
+        }
+        let mut j: i64 = i + 1;
+        let mut in_value: i64 = 1;
+        while ok == 1 && in_value == 1 && j < n {
+            let c: i64 = hx_b(h + j);
+            if c == 13 {
+                in_value = 0;
+            } else {
+                if c != 9 && (c < 32 || c > 126) {
+                    ok = 0;
+                }
+                j = j + 1;
+            }
+        }
+        if ok == 1 {
+            if j + 1 >= n {
+                ok = 0;
+            } else {
+                if hx_b(h + j + 1) != 10 {
+                    ok = 0;
+                }
+                pos = j + 2;
+            }
+        }
+    }
+    ok
+}
+
+// ---------------------------------------------------------------------------
+// URL parsing
+//
+// The URL record (48 bytes): host_off 0, host_len 8, port 16, target_off 24,
+// target_len 32, explicit_port 40. Offsets are relative to the URL address.
+// target_len 0 means "/". A target that starts with '?' is sent as "/?...".
+// ---------------------------------------------------------------------------
+
+pub fn hx_url_new() -> i64 {
+    let u: i64 = __mind_alloc(48);
+    let mut i: i64 = 0;
+    while i < 6 {
+        __mind_store_i64(u + i * 8, 0);
+        i = i + 1;
+    }
+    u
+}
+
+pub fn hx_url_host_off(u: i64) -> i64 {
+    __mind_load_i64(u)
+}
+
+pub fn hx_url_host_len(u: i64) -> i64 {
+    __mind_load_i64(u + 8)
+}
+
+pub fn hx_url_port(u: i64) -> i64 {
+    __mind_load_i64(u + 16)
+}
+
+// 1 iff [a, a+n) is a DNS host name this client sends as SNI: labels of
+// letters, digits and '-' (no leading or trailing '-'), 1..63 bytes each,
+// separated by single dots, 1..253 bytes in all, and a last label that is not
+// all digits (an IPv4 literal is not a DNS name).
+fn hx_host_ok(a: i64, n: i64) -> i64 {
+    if n < 1 || n > 253 {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let mut label: i64 = 0;
+    let mut digits_only: i64 = 1;
+    let mut prev: i64 = 46;
+    let mut i: i64 = 0;
+    while ok == 1 && i < n {
+        let c: i64 = hx_b(a + i);
+        if c == 46 {
+            if label == 0 || prev == 45 {
+                ok = 0;
+            }
+            label = 0;
+            digits_only = 1;
+        } else {
+            let mut is_digit: i64 = 0;
+            if c >= 48 && c <= 57 {
+                is_digit = 1;
+            }
+            let mut is_alpha: i64 = 0;
+            if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) {
+                is_alpha = 1;
+            }
+            if is_digit == 0 && is_alpha == 0 && c != 45 {
+                ok = 0;
+            }
+            if c == 45 && label == 0 {
+                ok = 0;
+            }
+            if is_digit == 0 {
+                digits_only = 0;
+            }
+            label = label + 1;
+            if label > 63 {
+                ok = 0;
+            }
+        }
+        prev = c;
+        i = i + 1;
+    }
+    if label == 0 || prev == 45 || digits_only == 1 {
+        ok = 0;
+    }
+    ok
+}
+
+// hx_url_parse — fill the URL record `u` from [url, url+len). Returns 0, or
+// https_err_url().
+pub fn hx_url_parse(url: i64, len: i64, u: i64) -> i64 {
+    if url <= 0 || len < 9 || len > https_max_url_len() {
+        return https_err_url();
+    }
+    // "https://" (68 74 74 70 73 3a 2f 2f), scheme case-insensitive.
+    if hx_ci_word(url, 8, 3400000511170344040) == 0 {
+        return https_err_url();
+    }
+    let start: i64 = 8;
+    let mut end: i64 = start;
+    let mut scanning: i64 = 1;
+    while scanning == 1 && end < len {
+        let c: i64 = hx_b(url + end);
+        if c == 47 || c == 63 || c == 35 {
+            scanning = 0;
+        } else {
+            end = end + 1;
+        }
+    }
+    // Authority [start, end): host[:port]; no userinfo, no IP-literal brackets.
+    let mut colon: i64 = -1;
+    let mut i: i64 = start;
+    while i < end {
+        let c: i64 = hx_b(url + i);
+        if c == 64 || c == 91 || c == 93 {
+            return https_err_url();
+        }
+        if c == 58 {
+            if colon >= 0 {
+                return https_err_url();
+            }
+            colon = i;
+        }
+        i = i + 1;
+    }
+    let mut host_end: i64 = end;
+    let mut port: i64 = https_default_port();
+    let mut explicit_port: i64 = 0;
+    if colon >= 0 {
+        host_end = colon;
+        let digits: i64 = end - colon - 1;
+        if digits < 1 || digits > 5 {
+            return https_err_url();
+        }
+        port = 0;
+        let mut k: i64 = colon + 1;
+        while k < end {
+            let d: i64 = hx_b(url + k);
+            if d < 48 || d > 57 {
+                return https_err_url();
+            }
+            port = port * 10 + d - 48;
+            k = k + 1;
+        }
+        if port < 1 || port > 65535 {
+            return https_err_url();
+        }
+        explicit_port = 1;
+    }
+    if hx_host_ok(url + start, host_end - start) == 0 {
+        return https_err_url();
+    }
+    // Request target [end, frag): printable ASCII, '#' ends it.
+    let mut frag: i64 = end;
+    let mut in_target: i64 = 1;
+    while in_target == 1 && frag < len {
+        let c: i64 = hx_b(url + frag);
+        if c == 35 {
+            in_target = 0;
+        } else {
+            if c < 33 || c > 126 {
+                return https_err_url();
+            }
+            frag = frag + 1;
+        }
+    }
+    __mind_store_i64(u, start);
+    __mind_store_i64(u + 8, host_end - start);
+    __mind_store_i64(u + 16, port);
+    __mind_store_i64(u + 24, end);
+    __mind_store_i64(u + 32, frag - end);
+    __mind_store_i64(u + 40, explicit_port);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Request serialization
+// ---------------------------------------------------------------------------
+
+// The byte count hx_build_request writes, or a negative code.
+fn hx_request_size(u: i64, is_post: i64, hdr_len: i64, body_len: i64, ct_len: i64) -> i64 {
+    // method + target + version, Host, User-Agent, Accept, Connection, the
+    // caller headers, end.
+    let mut n: i64 = 5 + 1 + __mind_load_i64(u + 32) + 11;
+    n = n + 6 + __mind_load_i64(u + 8) + 6 + 2;
+    n = n + 28 + 13 + 19 + hdr_len + 2;
+    if is_post == 1 {
+        n = n + 14 + ct_len + 2 + 16 + 20 + 2 + body_len;
+    }
+    n
+}
+
+// 1 iff the content type is printable ASCII (space allowed, no CR/LF) and at
+// most https_max_content_type_len() bytes.
+fn hx_ct_ok(ct: i64, n: i64) -> i64 {
+    if n < 0 || n > https_max_content_type_len() {
+        return 0;
+    }
+    if n > 0 && ct <= 0 {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while ok == 1 && i < n {
+        let c: i64 = hx_b(ct + i);
+        if c < 32 || c > 126 {
+            ok = 0;
+        }
+        i = i + 1;
+    }
+    ok
+}
+
+// hx_build_request — serialize a GET (is_post 0) or POST (is_post 1) for the
+// parsed URL, with the caller header block [hdr, hdr+hdr_len) (hx_headers_ok),
+// into a fresh buffer. Returns a 16-byte record {addr, len}, or a negative
+// code (https_err_request_headers(), https_err_request()).
+pub fn hx_build_request(is_post: i64, url: i64, u: i64, hdr: i64, hdr_len: i64, body: i64, body_len: i64, ct: i64, ct_len: i64) -> i64 {
+    if hx_headers_ok(hdr, hdr_len) == 0 {
+        return https_err_request_headers();
+    }
+    if is_post == 1 {
+        if body_len < 0 || body_len > https_max_request_body() {
+            return https_err_request();
+        }
+        if body_len > 0 && body <= 0 {
+            return https_err_request();
+        }
+        if hx_ct_ok(ct, ct_len) == 0 {
+            return https_err_request();
+        }
+    }
+    let cap: i64 = hx_request_size(u, is_post, hdr_len, body_len, ct_len);
+    let out: i64 = __mind_alloc(cap);
+    let mut p: i64 = 0;
+    if is_post == 1 {
+        // "POST "
+        p = p + hx_put_word(out + p, 138853699408, 5);
+    } else {
+        // "GET "
+        p = p + hx_put_word(out + p, 542393671, 4);
+    }
+    let toff: i64 = __mind_load_i64(u + 24);
+    let tlen: i64 = __mind_load_i64(u + 32);
+    if tlen == 0 || hx_b(url + toff) == 63 {
+        __mind_store_i8(out + p, 47);
+        p = p + 1;
+    }
+    p = p + hx_copy(out + p, url + toff, tlen);
+    // " HTTP/1.1\r\n"
+    p = p + hx_put_word(out + p, 3328493621662205984, 8);
+    p = p + hx_put_word(out + p, 658737, 3);
+    // "Host: " host [":" port]
+    p = p + hx_put_word(out + p, 35435433914184, 6);
+    p = p + hx_copy(out + p, url + __mind_load_i64(u), __mind_load_i64(u + 8));
+    if __mind_load_i64(u + 40) == 1 && __mind_load_i64(u + 16) != https_default_port() {
+        __mind_store_i8(out + p, 58);
+        p = p + 1;
+        p = p + hx_put_dec(out + p, __mind_load_i64(u + 16));
+    }
+    p = p + hx_put_crlf(out + p);
+    // "User-Agent: mind-std-https\r\n"
+    p = p + hx_put_word(out + p, 7306880583880504149, 8);
+    p = p + hx_put_word(out + p, 7236837568644019310, 8);
+    p = p + hx_put_word(out + p, 8391446549866246957, 8);
+    p = p + hx_put_word(out + p, 168653680, 4);
+    // "Accept: */*\r\n"
+    p = p + hx_put_word(out + p, 2322296583949083457, 8);
+    p = p + hx_put_word(out + p, 43170541354, 5);
+    // "Connection: close\r\n"
+    p = p + hx_put_word(out + p, 7598807758576447299, 8);
+    p = p + hx_put_word(out + p, 8317986209774857839, 8);
+    p = p + hx_put_word(out + p, 658789, 3);
+    p = p + hx_copy(out + p, hdr, hdr_len);
+    if is_post == 1 {
+        if ct_len > 0 {
+            // "Content-Type: "
+            p = p + hx_put_word(out + p, 3275364211029339971, 8);
+            p = p + hx_put_word(out + p, 35435182061908, 6);
+            p = p + hx_copy(out + p, ct, ct_len);
+            p = p + hx_put_crlf(out + p);
+        }
+        // "Content-Length: "
+        p = p + hx_put_word(out + p, 3275364211029339971, 8);
+        p = p + hx_put_word(out + p, 2322283407023695180, 8);
+        p = p + hx_put_dec(out + p, body_len);
+        p = p + hx_put_crlf(out + p);
+    }
+    p = p + hx_put_crlf(out + p);
+    if is_post == 1 {
+        p = p + hx_copy(out + p, body, body_len);
+    }
+    let rec: i64 = __mind_alloc(16);
+    __mind_store_i64(rec, out);
+    __mind_store_i64(rec + 8, p);
+    rec
+}
