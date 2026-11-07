@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2154 | **Est. tokens:** ~4,095,798
-**Generated:** 2026-11-07 03:32 UTC
+**Files:** 2174 | **Est. tokens:** ~4,171,619
+**Generated:** 2026-11-07 05:17 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~32,790 |
+| `./` | 35 | ~32,819 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -96,10 +96,10 @@
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~16,556 |
+| `.github/workflows/` | 9 | ~16,679 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~128,929 |
+| `runtime-support/` | 1 | ~22,870 |
+| `scripts/` | 33 | ~136,753 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -110,12 +110,12 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~58,790 |
+| `src/` | 13 | ~58,796 |
 | `src/ast/` | 2 | ~12,326 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 14 | ~49,631 |
+| `src/build/` | 14 | ~49,826 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
@@ -123,15 +123,17 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 55 | ~178,541 |
+| `src/eval/` | 56 | ~182,467 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
+| `src/eval/string_equality/` | 12 | ~42,197 |
+| `src/eval/string_equality/facts/` | 1 | ~1,401 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~27,177 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~2,539 |
-| `src/ir/` | 13 | ~102,613 |
+| `src/ir/` | 14 | ~102,856 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,669 |
@@ -152,14 +154,14 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 5 | ~19,695 |
-| `src/type_checker/` | 21 | ~66,707 |
+| `src/test/` | 5 | ~19,882 |
+| `src/type_checker/` | 21 | ~66,977 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 451 | ~974,128 |
+| `tests/` | 456 | ~993,535 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -263,7 +265,7 @@
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
-- `CONTRIBUTING.md` (~2260 tok, huge) — Contributing to MIND
+- `CONTRIBUTING.md` (~2289 tok, huge) — Contributing to MIND
 - `deny.toml` (~131 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
@@ -1081,7 +1083,7 @@
 - `bench-gate.yml` (~5298 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~333 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~1616 tok, huge) — name: Crypto Vectors
-- `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
+- `docs-claims.yml` (~2937 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
 - `pr-review.yml` (~1131 tok, large) — name: pr-review
@@ -1095,12 +1097,12 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~22857 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~22870 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
-- `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
-- `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `anatomy-hook.sh` (~2504 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
+- `anatomy.sh` (~3505 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `arch_gate.sh` (~2222 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
@@ -1143,8 +1145,8 @@
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
 - `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
-- `test_no_ai_attribution.py` (~7235 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
-- `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
+- `test_no_ai_attribution.py` (~6945 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
+- `test_smoke_wiring_lint.py` (~8928 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4926 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
 ### `sdk/ts/mic-map/dist/`
@@ -1252,7 +1254,7 @@
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~9616 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge.rs` (~5299 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~5494 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_image.rs` (~2018 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~7073 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -1317,7 +1319,7 @@
 - `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~1907 tok, huge) — Copyright 2026 STARGA Inc.
 - `enum_payload.rs` (~815 tok, large) — Copyright 2026 STARGA Inc.
-- `extern_c_intrinsics.rs` (~5356 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `extern_c_intrinsics.rs` (~5748 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1344,7 +1346,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `module_bindings.rs` (~4423 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `module_bindings.rs` (~4651 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3977 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
@@ -1356,9 +1358,33 @@
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
 - `tensor.rs` (~8408 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/eval/string_equality/`
+
+- `classify.rs` (~5812 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/eval/string_equality/facts/`
+
+- `payloads.rs` (~1401 tok, large) — Copyright 2026 STARGA Inc.
+### `src/eval/string_equality/`
+
+- `facts.rs` (~7663 tok, huge) — Copyright 2026 STARGA Inc.
+- `flows.rs` (~4174 tok, huge) — Copyright 2026 STARGA Inc.
+- `flow_tests.rs` (~3654 tok, huge) — Copyright 2026 STARGA Inc.
+- `project.rs` (~1796 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/`
 
-- `string_equality.rs` (~5380 tok, huge) — Copyright 2025 STARGA Inc.
+- `string_equality.rs` (~5022 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/eval/string_equality/`
+
+- `segments.rs` (~2877 tok, huge) — Copyright 2026 STARGA Inc.
+- `segment_tests.rs` (~2700 tok, huge) — Copyright 2026 STARGA Inc.
+- `slots.rs` (~2103 tok, huge) — Copyright 2026 STARGA Inc.
+- `slot_tests.rs` (~2413 tok, huge) — Copyright 2026 STARGA Inc.
+- `sums.rs` (~772 tok, large) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~4214 tok, huge) — Copyright 2025 STARGA Inc.
+- `walk.rs` (~4019 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/eval/`
+
+- `string_record.rs` (~3664 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/eval/struct_resolver/`
 
 - `inference.rs` (~2555 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1447,7 +1473,8 @@
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `frozen_profile.rs` (~6482 tok, huge) — Copyright 2025 STARGA Inc.
 - `frozen_profile_tests.rs` (~4873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17697 tok, huge) — Copyright 2025 STARGA Inc.
+- `global_enums.rs` (~789 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17151 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `project_consts.rs` (~127 tok, small) — Copyright 2026 STARGA Inc.
@@ -1564,7 +1591,7 @@
 - `canonical_types.rs` (~1929 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/`
 
-- `qualified_enums.rs` (~7389 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~7395 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
@@ -1592,7 +1619,7 @@
 - `imports.rs` (~6011 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~6247 tok, huge) — Copyright 2025 STARGA Inc.
 - `runner.rs` (~2854 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_import_fns.rs` (~4244 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `std_import_fns.rs` (~4431 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `top_level.rs` (~339 tok, medium) — Copyright 2025-2026 STARGA Inc.
 ### `src/type_checker/`
 
@@ -1604,7 +1631,7 @@
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_declarations.rs` (~2262 tok, huge) — Copyright 2026 STARGA Inc.
 - `intrinsic_call_arity.rs` (~1494 tok, large) — Copyright 2026 STARGA Inc.
-- `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
+- `lowering_refusals.rs` (~7037 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_walk.rs` (~2232 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1615,7 +1642,7 @@
 - `fn_values.rs` (~1376 tok, large) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~14683 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~14686 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/resolve/`
 
 - `std_names.rs` (~2150 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2784,13 +2811,18 @@
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~244 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_edges_backend_parity.rs` (~2621 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_eq_len_run.rs` (~2598 tok, huge) — Copyright 2025 STARGA Inc.
 - `string_escape_decode_run.rs` (~1159 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_fail_closed.rs` (~959 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_flows_backend_parity.rs` (~4136 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_from_bytes_run.rs` (~664 tok, large) — Copyright 2025 STARGA Inc.
+- `string_ops_backend_parity.rs` (~5537 tok, huge) — Copyright 2026 STARGA Inc.
+- `string_ops_native_r5.rs` (~3818 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `string_runtime_shim_run.rs` (~1027 tok, large) — Copyright 2025 STARGA Inc.
+- `string_slots_backend_parity.rs` (~3295 tok, huge) — Copyright 2026 STARGA Inc.
 - `string_split_run.rs` (~1826 tok, huge) — Copyright 2025 STARGA Inc.
 - `struct_array_field_run.rs` (~802 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_field_collection_run.rs` (~808 tok, large) — Copyright 2025 STARGA Inc.
