@@ -21,6 +21,7 @@ use crate::eval::type_aliases::LocalTypeAliases;
 use super::slots::{Contradicted, contradicts, holds_str, is_null};
 use super::sums::Variant;
 
+mod payloads;
 mod std_decls;
 
 /// What the pass knows about one value.
@@ -623,69 +624,18 @@ impl Decls {
         }
         let suffix = format!("::{name}");
         self.enums.values().flatten().any(|v| v.name == name)
-            || crate::ir::with_global_enums(|g| g.variant_tags.keys().any(|k| k.ends_with(&suffix)))
-    }
-
-    /// The variant a constructor or pattern names (`Enum::Variant`), with its
-    /// declared payload types and the field names of a struct variant. `None`
-    /// when the variant is unknown or a bare name is ambiguous.
-    pub(super) fn variant_payload(&self, path: &str) -> Option<Payload> {
-        let of = |owner: &str, v: &EnumVariant| Payload {
-            key: format!("{owner}::{}", v.name),
-            types: v.payload.clone(),
-            names: v.field_names.clone(),
-        };
-        let Some((head, variant)) = path.rsplit_once("::") else {
-            let mut local = self.enums.iter().flat_map(|(owner, variants)| {
-                variants
-                    .iter()
-                    .filter(|v| v.name == path)
-                    .map(move |v| (owner, v))
-            });
-            return match (local.next(), local.next()) {
-                (Some((owner, v)), None) => Some(of(owner, v)),
-                (Some(_), Some(_)) => None,
-                (None, _) => {
-                    self.global_payload(|key| key.rsplit_once("::").is_some_and(|(_, v)| v == path))
+            || crate::ir::with_global_enums(|g| {
+                // A project build registers its variants in the qualified registry.
+                #[cfg(feature = "cross-module-imports")]
+                if g.qualified
+                    .variant_tags
+                    .keys()
+                    .any(|k| k.ends_with(&suffix))
+                {
+                    return true;
                 }
-            };
-        };
-        let owner = head.rsplit('.').next().unwrap_or(head);
-        if let Some(variants) = self.enums.get(owner) {
-            return variants
-                .iter()
-                .find(|v| v.name == variant)
-                .map(|v| of(owner, v));
-        }
-        let key = format!("{owner}::{variant}");
-        self.global_payload(|k| k == key)
-    }
-
-    /// The payload of the one registered variant whose key satisfies `wanted`.
-    fn global_payload(&self, wanted: impl Fn(&str) -> bool) -> Option<Payload> {
-        crate::ir::with_global_enums(|g| {
-            let mut keys = g.payload_types.keys().filter(|k| wanted(k.as_str()));
-            let (Some(key), None) = (keys.next(), keys.next()) else {
-                return None;
-            };
-            let names = g.struct_field_names.get(key).cloned().unwrap_or_default();
-            Some(Payload {
-                key: key.clone(),
-                types: g.payload_types[key].clone(),
-                names,
+                g.variant_tags.keys().any(|k| k.ends_with(&suffix))
             })
-        })
-    }
-
-    /// The fact of position `index` of `payload`: its declared type, unless a
-    /// constructor stores a string there.
-    pub(super) fn payload_fact(&self, payload: &Payload, index: usize) -> Fact {
-        let stored = self.contradicted.payloads.get(&payload.key);
-        match payload.types.get(index) {
-            Some(_) if stored.is_some_and(|at| at.contains(&index)) => Fact::MaybeStr,
-            Some(ty) => self.typed_fact(ty),
-            None => Fact::Unknown,
-        }
     }
 
     /// Bind `name` as `bound`. Every binding is recorded, so a name with no
