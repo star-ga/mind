@@ -121,6 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **String comparison is the same on every backend (#343)**: `mindc test` analyses each
+  std and project module it merges into a test against that module's own declarations,
+  as `mindc build` compiles each module alone, so a string a test hands to `vec_push` no
+  longer makes integer comparisons in an unrelated std module refused with `E2038`. The
+  payload types of an imported enum variant come from the project registry, so a string
+  one module stores into another module's `i64` payload is refused with `E2038` in a
+  project build as it is in one file, also when a third module declares a private enum
+  of the same name.
 - **Determinism through project modules**: a single-file build (`--emit-evidence`,
   `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
   the project modules it imports, transitively and function by function, and classifies

@@ -949,9 +949,8 @@ MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
 }
 
 static int64_t mind_string_eq_impl(int64_t a, int64_t b) {
-    // The null handle 0 is no string record: it equals only itself, and no
-    // record is read through it.
-    if (a == 0 || b == 0) return a == b ? 1 : 0;
+    // The null handle 0 is no string record: it equals only itself.
+    if (a == 0 || b == 0) return a == b;
     int64_t alen = __mind_load_i64(a + 8);
     int64_t blen = __mind_load_i64(b + 8);
     if (alen != blen) return 0;
@@ -959,10 +958,7 @@ static int64_t mind_string_eq_impl(int64_t a, int64_t b) {
     int64_t baddr = __mind_load_i64(b);
     if (alen <= 0) return 1;
     return memcmp((const void *)(uintptr_t)aaddr,
-                  (const void *)(uintptr_t)baddr,
-                  (size_t)alen) == 0
-               ? 1
-               : 0;
+                  (const void *)(uintptr_t)baddr, (size_t)alen) == 0;
 }
 
 // Compiler-owned string equality. Unlike the public weak compatibility name,

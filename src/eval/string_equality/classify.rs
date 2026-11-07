@@ -384,7 +384,9 @@ impl Decls {
         // record.
         if callee.starts_with("__mind_")
             || callee.starts_with("tensor.")
-            || crate::type_checker::is_bare_builtin(callee)
+            || crate::type_checker::resolve::BARE_BUILTINS
+                .binary_search(&callee)
+                .is_ok()
             || self.is_variant(callee)
         {
             return Fact::NotStr;
