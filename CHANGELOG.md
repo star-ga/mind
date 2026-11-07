@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     verifications, anchor and bag issuers alike, failing -13 past that, so a
     peer's certificate bag cannot multiply the work;
     `x509_verify_server_chain_budget` takes that budget from the caller.
+    The RSA-PSS salt-length bound comes from the issuer's modulus
+    (`n_len - 34` for SHA-256: 222, 350 and 478 for RSA-2048, 3072 and 4096), so
+    long-salt signatures under larger keys verify and one past the key's bound
+    is refused as an unsupported parameter (-2).
     Anchors are trusted key bindings: their self-signature and
     validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
     constraints apply to the path below them.
@@ -66,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
     server key) keeps its known answer at the RSA-PSS verify primitive, not
     through the client.
+    The 2048-byte application receive buffer reclaims bytes the reader has
+    already consumed before its bound check, so a long stream of small records
+    is read in full; a record that does not fit the unread bytes still fails
+    closed (E_OVF).
   - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
     only; issuer signatures inside the chain keep ECDSA P-256/P-384,
     RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
