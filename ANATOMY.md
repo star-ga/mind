@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2149 | **Est. tokens:** ~4,086,436
-**Generated:** 2026-11-07 03:14 UTC
+**Files:** 2154 | **Est. tokens:** ~4,095,798
+**Generated:** 2026-11-07 03:32 UTC
 
 ## Token Budget Guide
 
@@ -123,7 +123,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 51 | ~173,175 |
+| `src/eval/` | 55 | ~178,541 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -159,7 +159,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 450 | ~970,132 |
+| `tests/` | 451 | ~974,128 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1316,6 +1316,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8267 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_cmp.rs` (~1907 tok, huge) — Copyright 2026 STARGA Inc.
+- `enum_payload.rs` (~815 tok, large) — Copyright 2026 STARGA Inc.
 - `extern_c_intrinsics.rs` (~5356 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `field_access.rs` (~6663 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~695 tok, large) — The store must land in the record: a later read sees it. (The evaluator
@@ -1325,11 +1326,12 @@
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `imported_extern_decls.rs` (~1169 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `interp_mem.rs` (~5577 tok, huge) — Copyright 2025 STARGA Inc.
+- `interp_mem.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `loops.rs` (~2354 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
+- `match_stmt.rs` (~883 tok, large) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap.rs` (~1140 tok, large) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap_tests.rs` (~832 tok, large) — Copyright 2026 STARGA Inc.
@@ -1347,7 +1349,8 @@
 - `narrow_arith.rs` (~3977 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
-- `record_store.rs` (~2385 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `record_store.rs` (~2457 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `result_variants.rs` (~602 tok, large) — Copyright 2026 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
@@ -1364,7 +1367,8 @@
 - `struct_resolver.rs` (~7173 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
 - `type_aliases.rs` (~2302 tok, huge) — Copyright 2025 STARGA Inc.
-- `value.rs` (~4122 tok, huge) — Copyright 2025 STARGA Inc.
+- `value.rs` (~4142 tok, huge) — Copyright 2025 STARGA Inc.
+- `zeroed_array.rs` (~2912 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/exec/`
 
 - `conv.rs` (~435 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2340,6 +2344,7 @@
 
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_test_eval_arrays_results_parity.rs` (~3996 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_eval_blockers_parity.rs` (~3004 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_eval_parity.rs` (~3505 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6042 tok, huge) — Copyright 2025 STARGA Inc.

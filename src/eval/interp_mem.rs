@@ -69,6 +69,7 @@ pub fn reset() {
     MEM.with(|m| m.borrow_mut().clear());
     ALLOCS.with(|a| a.borrow_mut().clear());
     STR_RECORDS.with(|s| s.borrow_mut().clear());
+    super::zeroed_array::reset();
     // The file-descriptor table lives beside the arena. A worker thread is
     // reused across tests, so a descriptor left open must not change the
     // next test's descriptor numbers.
@@ -260,12 +261,16 @@ fn load_bytes_dynamic(addr: i64, size: usize) -> Result<Vec<u8>, String> {
 /// `n` allocates nothing and returns 0.
 fn vec_zeroed(n: i64) -> Result<i64, String> {
     if n <= 0 {
+        super::zeroed_array::register(0, 0);
         return Ok(0);
     }
     let bytes = n
         .checked_mul(8)
         .ok_or_else(|| "__mind_vec_zeroed: size overflow".to_string())?;
-    alloc(bytes)
+    let base = alloc(bytes)?;
+    // An `array<T>` slot that takes this buffer needs its length.
+    super::zeroed_array::register(base, usize::try_from(n).unwrap_or(0));
+    Ok(base)
 }
 
 /// Bounds-checked read of `N` bytes at `addr`. Fail-closed on any
