@@ -168,6 +168,7 @@ const NAMED_STD_MODULES: &[(&str, &str)] = &[
         "std.https_probe",
         include_str!("../../std/https_probe.mind"),
     ),
+    ("std.https_io", include_str!("../../std/https_io.mind")),
 ];
 
 /// Every callee named anywhere in `instrs`, through every nested body.
@@ -281,8 +282,9 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 11,
+        named, 16,
         "dns_resolve, tcp_connect_host(_timeout), entropy_fill, https_get(_ca), https_post(_ca), \
-         https_get_with_headers, https_post_with_headers, https_probe"
+         https_get_with_headers, https_post_with_headers, https_probe, hio_now_unix, \
+         hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure"
     );
 }

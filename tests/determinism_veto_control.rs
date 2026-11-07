@@ -194,6 +194,8 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "https_probe.https_probe(p, 9, 100)",
         "https_probe",
     ),
+    ("https_io", "https_io.hio_now_unix()", "hio_now_unix"),
+    ("https_io", "https_io.hio_now_mono_ms()", "hio_now_mono_ms"),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -204,6 +206,8 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
     ("https", "https.https_deadline_s()"),
     ("https_http1", "https_http1.https_error_class(p)"),
     ("https_probe", "https_probe.https_probe_ok()"),
+    ("https_io", "https_io.hio_deadline_s()"),
+    ("https_record", "https_record.tls13rl_pend_ready(p)"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

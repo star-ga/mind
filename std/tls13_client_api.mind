@@ -1,7 +1,28 @@
 // Public constants, accessors and sans-IO calls of the TLS 1.3 client: input
 // (feed, tick, EOF), application data, close, the record helpers and the
 // EncryptedExtensions / Certificate parsers. The record pump and the handshake
-// state machine are in std/https.mind.
+// state machine are in std/https.mind; the record layer is in
+// std/https_record.mind.
+//
+// Contract: sans-IO, no socket, clock, system trust store or verifier
+// override. The caller owns I/O, entropy, time and the trust-anchor buffer
+// (immutable for the connection).
+// x509_verify_server_chain is mandatory for every chain. Evidence stays
+// available after a refusal: version, suite, group, ALPN, the presented DER
+// chain and the verifier verdict (1 = unchecked, 0 = accept, <0 refusal).
+// Flags: bit0 enables hybrid; bit3 sends an empty initial key_share for HRR.
+// HRR parks status 10: call build_client_hello2 then seal_client_hello2 once;
+// the retry keeps CH1's entropy, random, session id, identity and ALPN offer.
+// Initial entropy: random[32], session id[32], x25519 scalar[32], optionally
+// hybrid entropy[96]; the retry needs the same length. Only an RSA-2048
+// rsaEncryption leaf with an RSA-PSS SHA256 CertificateVerify is implemented:
+// any other leaf key type and RSA-1024 are refused at CV, RSA-3072 and above
+// at Certificate (E_OVF). Caps: Certificate/handshake message 8192, transcript
+// 16384, cookie 254, ALPN offer 1024. After the handshake whole
+// NewSessionTicket messages are discarded and any other message is refused.
+// Decrypted application data is held one record at a time (up to 2^14 bytes):
+// the pump opens no further record until it is read, so the state stays
+// fixed-size however long the stream.
 
 import std.tls13_client_core;
 import std.x509_der;
@@ -692,4 +713,25 @@ pub fn tls13c_parse_certificate(state: i64, msg_addr: i64, msg_len: i64) -> i64 
     __mind_store_i8(chain_scratch + 3, ncert & 255);
     tls13c_store_i64(state + 65144, cpos);
     0
+}
+
+// Convert the already validated u32be serialized evidence/anchor buffer to
+// the x509_verify_server_chain i64 count + (relative offset, length) table ABI.
+pub fn tls13c_x509_blob(src: i64, size: i64) -> i64 {
+    let count: i64 = (tls13c_be16(src) << 16) | tls13c_be16(src + 2);
+    let dst: i64 = __mind_alloc(8 + count * 16 + size);
+    __mind_store_i64(dst, count);
+    let mut rp: i64 = 4;
+    let mut wp: i64 = 8 + count * 16;
+    let mut i: i64 = 0;
+    while i < count {
+        let n: i64 = (tls13c_be16(src + rp) << 16) | tls13c_be16(src + rp + 2);
+        __mind_store_i64(dst + 8 + i * 16, wp);
+        __mind_store_i64(dst + 16 + i * 16, n);
+        tls13c_copy(dst + wp, src + rp + 4, n);
+        rp = rp + 4 + n;
+        wp = wp + n;
+        i = i + 1;
+    }
+    dst
 }

@@ -73,6 +73,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Certificate parsers move to `std.tls13_client_api`; every name is kept.
     New modules `std.https_url` (error codes, bounds, URL, request) and
     `std.https_http1` (response record and parser).
+  - `std/https.mind` is split along its seams so no file passes the size
+    ceiling: `std.https_record` (the record layer: validate and open one
+    record, act on its content type; handshake content is returned in a
+    pending record that `tls13c_handle_record` parses) and `std.https_io` (the
+    clocks, the request deadline, the socket time budget and the CA bundle
+    file; `hio_now_unix`, `hio_now_mono_ms`, `hio_remaining_ms`, `hio_arm` and
+    `hio_io_failure` are qualified world reads). `std.https` keeps every public name and the handshake state
+    machine with the driver: each caller of the hello, finished, X.509 path and
+    client API modules stays in the top module so the import chain stays at
+    five. `tls13c_x509_blob` moves to `std.tls13_client_api`. The loopback test
+    server is split into five fixture files the harness appends in order.
   - The client now discards whole post-handshake NewSessionTicket messages
     (any other post-handshake message is refused), holds one full record of
     decrypted application data (16 KiB, was 2 KiB, so a record of the RFC 8446

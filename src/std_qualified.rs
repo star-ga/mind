@@ -6,9 +6,9 @@
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
 //! `entropy_fill` and the `https_*` entry points read the world only when the
-//! call's qualifier resolves to `std.dns`, `std.entropy`, `std.https` or
-//! `std.https_probe`. A user function of the same bare name is
-//! deterministic. The lowered IR keeps only the bare name (the qualifier lives
+//! call's qualifier resolves to `std.dns`, `std.entropy`, `std.https`,
+//! `std.https_probe` or `std.https_io`. A user function of the same bare name
+//! is deterministic. The lowered IR keeps only the bare name (the qualifier lives
 //! on the call span, in `SourceSpelling`), so this module reads the source.
 //!
 //! Every spelling of the qualifier counts: the module name, an alias, the
@@ -45,6 +45,13 @@ const ROWS: &[(&str, &str)] = &[
     ("std.https", "https_get_with_headers"),
     ("std.https", "https_post_with_headers"),
     ("std.https_probe", "https_probe"),
+    // std.https_io reads the clocks (hio_arm and hio_io_failure through the
+    // deadline). Its CA bundle file read is a declared input, not a row.
+    ("std.https_io", "hio_now_unix"),
+    ("std.https_io", "hio_now_mono_ms"),
+    ("std.https_io", "hio_remaining_ms"),
+    ("std.https_io", "hio_arm"),
+    ("std.https_io", "hio_io_failure"),
 ];
 
 /// Whether `name` is a world-reading public function of `module`.

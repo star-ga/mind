@@ -1,0 +1,198 @@
+// std.https_io — what the std.https driver reads from the world around one
+// request: the system and monotonic clocks, the request deadline, the time one
+// socket read or write may block, and the CA bundle file.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Split out of std/https.mind with the same bodies: std.https keeps the public
+// https_io_timeout_s / https_deadline_s / https_default_ca_path /
+// https_io_budget_ms and calls these. hio_now_unix, hio_now_mono_ms,
+// hio_remaining_ms, hio_arm and hio_io_failure read the clocks, so they are
+// nondeterministic qualified rows (src/std_qualified.rs); the file read
+// (hio_read_ca, hio_load_anchors) is a declared input; the three limits and
+// hio_io_budget_ms are pure.
+
+import std.https_url;
+import std.dns;
+import std.net;
+import std.x509_bundle;
+
+// The system clock for certificate validity (CLOCK_REALTIME, id 0) and the
+// monotonic clock for the request deadline (CLOCK_MONOTONIC, id 1 on Linux: a
+// wall-clock step, NTP or an operator setting the date cannot stretch or cut
+// the deadline). Socket calls go through std.net and std.dns, so this module
+// declares nothing they declare.
+extern "C" {
+    unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
+}
+
+// Seconds one socket read or write may block.
+pub fn hio_io_timeout_s() -> i64 {
+    30
+}
+
+// Seconds one request may take, from the TCP connect to the end of the response.
+pub fn hio_deadline_s() -> i64 {
+    120
+}
+
+// The default trust store, "/etc/ssl/certs/ca-certificates.crt" (Debian,
+// Ubuntu, Alpine), as a fresh NUL-terminated string.
+pub fn hio_default_ca_path() -> i64 {
+    let p: i64 = __mind_alloc(40);
+    __mind_store_i64(p, 7814716425787172143);
+    __mind_store_i64(p + 8, 7147058077632914223);
+    __mind_store_i64(p + 16, 7379557499099360609);
+    __mind_store_i64(p + 24, 7146776538264986473);
+    __mind_store_i8(p + 32, 114);
+    __mind_store_i8(p + 33, 116);
+    __mind_store_i8(p + 34, 0);
+    p
+}
+
+// Unix seconds from the system clock, or -1.
+pub fn hio_now_unix() -> i64 {
+    let ts: i64 = __mind_alloc(16);
+    __mind_store_i64(ts, 0);
+    __mind_store_i64(ts + 8, 0);
+    let rc: i64 = clock_gettime(0, ts as *mut u8) as i64;
+    let sec: i64 = __mind_load_i64(ts);
+    __mind_free(ts);
+    if rc != 0 || sec <= 0 {
+        return 0 - 1;
+    }
+    sec
+}
+
+// Milliseconds on the monotonic clock, or -1.
+pub fn hio_now_mono_ms() -> i64 {
+    let ts: i64 = __mind_alloc(16);
+    __mind_store_i64(ts, 0);
+    __mind_store_i64(ts + 8, 0);
+    let rc: i64 = clock_gettime(1, ts as *mut u8) as i64;
+    let sec: i64 = __mind_load_i64(ts);
+    let nsec: i64 = __mind_load_i64(ts + 8);
+    __mind_free(ts);
+    if rc != 0 || sec < 0 || nsec < 0 {
+        return 0 - 1;
+    }
+    sec * 1000 + nsec / 1000000
+}
+
+// Milliseconds one socket read or write may block with `remaining_ms` left of
+// the deadline: 0 once it has passed, else the smaller of the remaining time
+// and the per-operation limit hio_io_timeout_s().
+pub fn hio_io_budget_ms(remaining_ms: i64) -> i64 {
+    if remaining_ms <= 0 {
+        return 0;
+    }
+    let cap: i64 = hio_io_timeout_s() * 1000;
+    if remaining_ms < cap {
+        return remaining_ms;
+    }
+    cap
+}
+
+// Milliseconds left until the monotonic `deadline` (a https_now_mono_ms value).
+// A clock failure is 0: no time left, so the request fails closed.
+pub fn hio_remaining_ms(deadline: i64) -> i64 {
+    let now: i64 = hio_now_mono_ms();
+    if now < 0 {
+        return 0;
+    }
+    deadline - now
+}
+
+// Limit the next blocking read or write on `conn` to the time left. 0, or the
+// timeout class once the deadline has passed, or the I/O class if the socket
+// option cannot be set. A single read then cannot run past the deadline.
+pub fn hio_arm(conn: i64, deadline: i64) -> i64 {
+    let budget: i64 = hio_io_budget_ms(hio_remaining_ms(deadline));
+    if budget < 1 {
+        return https_err_timeout();
+    }
+    if tcp_set_io_timeout(conn, budget) != 0 {
+        return https_err_io();
+    }
+    0
+}
+
+// The class of a failed socket read or write: a timeout once the deadline has
+// passed (the armed limit is what stopped it), else a plain I/O error.
+pub fn hio_io_failure(deadline: i64) -> i64 {
+    if hio_remaining_ms(deadline) <= 0 {
+        return https_err_timeout();
+    }
+    https_err_io()
+}
+
+// std.net's tcp_close closes the descriptor held in a handle record; the
+// bundle file uses it, so this module declares no libc close of its own.
+fn hio_close_fd(fd: i64) -> i64 {
+    let h: i64 = __mind_alloc(8);
+    __mind_store_i64(h, fd);
+    tcp_close(h);
+    __mind_free(h);
+    0
+}
+
+// The trust-anchor blob (x509_load_anchors) of the bundle file at the
+// NUL-terminated `path`, or -1: unreadable, larger than x509_max_bundle_len(),
+// malformed PEM/DER, or no certificate.
+pub fn hio_read_ca(path: i64) -> i64 {
+    if path <= 0 {
+        return 0 - 1;
+    }
+    let fd: i64 = __mind_open(path);
+    if fd < 0 {
+        return 0 - 1;
+    }
+    let cap: i64 = x509_max_bundle_len() + 1;
+    let buf: i64 = __mind_alloc(cap);
+    let mut got: i64 = 0;
+    let mut rc: i64 = 0;
+    let mut going: i64 = 1;
+    while going == 1 {
+        let n: i64 = __mind_read(fd, buf + got, cap - got, 0 - 1);
+        if n == 0 {
+            going = 0;
+        } else {
+            if n < 0 {
+                rc = 0 - 1;
+                going = 0;
+            } else {
+                got = got + n;
+                if got >= cap {
+                    rc = 0 - 1;
+                    going = 0;
+                }
+            }
+        }
+    }
+    hio_close_fd(fd);
+    let mut blob: i64 = 0 - 1;
+    if rc == 0 {
+        blob = x509_load_anchors(buf, got);
+        if blob <= 0 {
+            blob = 0 - 1;
+        }
+    }
+    __mind_free(buf);
+    blob
+}
+
+// The trust-anchor blob of the bundle at the NUL-terminated `ca_path`, or of
+// the default store (hio_default_ca_path) when `ca_path` is 0; -1 as hio_read_ca.
+pub fn hio_load_anchors(ca_path: i64) -> i64 {
+    let mut ca: i64 = ca_path;
+    if ca_path == 0 {
+        ca = hio_default_ca_path();
+    }
+    let blob: i64 = hio_read_ca(ca);
+    if ca_path == 0 {
+        __mind_free(ca)
+    }
+    blob
+}

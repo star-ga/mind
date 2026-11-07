@@ -1,0 +1,115 @@
+// Loopback TLS 1.3 server, part: handshake helpers (TEST-ONLY). The harness appends
+// the parts after server.mind (SERVER_PARTS in
+// tests/support/https_loopback_harness.rs).
+
+// ---------------------------------------------------------------------------
+// Handshake
+// ---------------------------------------------------------------------------
+
+fn hl_leaf(cid: i64, dst: i64) -> i64 {
+    if cid == 5 {
+        return hl_leaf_wronghost(dst);
+    }
+    if cid == 6 {
+        return hl_leaf_expired(dst);
+    }
+    if cid == 11 {
+        return hl_leaf_ec(dst);
+    }
+    if cid == 12 {
+        return hl_leaf_rsa3072(dst);
+    }
+    hl_leaf_good(dst)
+}
+
+// The x25519 key share of the ClientHello message at ch, or 0.
+fn hl_client_share(ch: i64, chlen: i64) -> i64 {
+    let body: i64 = ch + 4;
+    let sid: i64 = tls13c_u8(body + 34);
+    let mut p: i64 = 35 + sid;
+    let cs: i64 = tls13c_be16(body + p);
+    let mut aes: i64 = 0;
+    let mut c: i64 = 0;
+    while c < cs {
+        if tls13c_be16(body + p + 2 + c) == 4865 {
+            aes = 1;
+        }
+        c = c + 2;
+    }
+    if aes == 0 {
+        return 0;
+    }
+    p = p + 2 + cs;
+    p = p + 1 + tls13c_u8(body + p);
+    let ext_end: i64 = p + 2 + tls13c_be16(body + p);
+    p = p + 2;
+    let mut share: i64 = 0;
+    while share == 0 && p + 4 <= ext_end && p + 4 <= chlen - 4 {
+        let typ: i64 = tls13c_be16(body + p);
+        let len: i64 = tls13c_be16(body + p + 2);
+        if typ == 51 {
+            let mut q: i64 = p + 6;
+            let end: i64 = p + 4 + len;
+            while share == 0 && q + 4 <= end {
+                if tls13c_be16(body + q) == 29 && tls13c_be16(body + q + 2) == 32 {
+                    share = body + q + 4;
+                }
+                q = q + 4 + tls13c_be16(body + q + 2);
+            }
+        }
+        p = p + 4 + len;
+    }
+    share
+}
+
+// Seal content (inner type ty) into records of at most 16384 bytes and send.
+// keys: key at +0, iv at +16, sequence at +32. limit > 0 sends only that
+// many bytes of the first record and stops (the truncation cid).
+fn hl_send_sealed(s: i64, keys: i64, data: i64, n: i64, ty: i64, limit: i64) -> i64 {
+    let rec: i64 = __mind_alloc(16640);
+    let mut off: i64 = 0;
+    let mut rc: i64 = 0;
+    while rc == 0 && off < n {
+        let mut part: i64 = n - off;
+        if part > 16384 {
+            part = 16384;
+        }
+        let seq: i64 = __mind_load_i64(keys + 32);
+        let rn: i64 = tls13c_record_seal(4865, keys, keys + 16, seq, data + off, part, ty, rec);
+        __mind_store_i64(keys + 32, seq + 1);
+        if rn < 0 {
+            rc = 0 - 1;
+        } else {
+            if limit > 0 {
+                hl_send(s, rec, limit);
+                rc = 1;
+            } else {
+                if hl_send(s, rec, rn) != rn {
+                    rc = 0 - 1;
+                }
+            }
+        }
+        off = off + part;
+    }
+    __mind_free(rec);
+    rc
+}
+
+fn hl_traffic_keys(secret: i64, keys: i64) -> i64 {
+    tls13c_derive_key_n(secret, 16, keys);
+    tls13_derive_iv(secret, keys + 16);
+    __mind_store_i64(keys + 32, 0);
+    0
+}
+
+// Append n bytes to the transcript (length at tr + 0, bytes from tr + 8).
+fn hl_tr_add(tr: i64, msg: i64, n: i64) -> i64 {
+    let used: i64 = __mind_load_i64(tr);
+    tls13c_copy(tr + 8 + used, msg, n);
+    __mind_store_i64(tr, used + n);
+    0
+}
+
+fn hl_tr_hash(tr: i64, out: i64) -> i64 {
+    sha256(tr + 8, __mind_load_i64(tr), out)
+}

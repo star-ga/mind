@@ -1,0 +1,228 @@
+// std.https_record — the TLS 1.3 client's record layer: validate one inbound
+// record, open it with the handshake or application keys, and act on its inner
+// content type (alerts, change_cipher_spec, post-handshake tickets, application
+// data into the receive window).
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Handshake messages are NOT parsed here: they need the hello, finished and
+// X.509 path modules, and the std import chain stays at five modules, so the
+// handshake state machine lives in std.https, above this module. A record
+// that carries handshake content leaves its payload address and length in a
+// 32-byte `pend` record ({addr, len, scratch to free, ready}); std.https
+// tls13c_handle_record hands it to tls13c_consume_hs_payload and then calls
+// tls13rl_pend_release. Same checks, same order and same error codes as the
+// single function this was cut from.
+
+import std.tls13_client_core;
+
+// A fresh zeroed pending-payload record.
+pub fn tls13rl_pend_new() -> i64 {
+    let p: i64 = __mind_alloc(32);
+    __mind_store_i64(p, 0);
+    __mind_store_i64(p + 8, 0);
+    __mind_store_i64(p + 16, 0);
+    __mind_store_i64(p + 24, 0);
+    p
+}
+
+// Record that the payload [addr, addr+len) is handshake content for the caller.
+pub fn tls13rl_pend_set(pend: i64, addr: i64, len: i64) -> i64 {
+    __mind_store_i64(pend, addr);
+    __mind_store_i64(pend + 8, len);
+    __mind_store_i64(pend + 24, 1);
+    0
+}
+
+// 1 when a handshake payload waits in `pend`, else 0.
+pub fn tls13rl_pend_ready(pend: i64) -> i64 {
+    __mind_load_i64(pend + 24)
+}
+
+pub fn tls13rl_pend_addr(pend: i64) -> i64 {
+    __mind_load_i64(pend)
+}
+
+pub fn tls13rl_pend_len(pend: i64) -> i64 {
+    __mind_load_i64(pend + 8)
+}
+
+// Free the record's plaintext scratch (when one was taken) and the record.
+pub fn tls13rl_pend_release(pend: i64) -> i64 {
+    let plain: i64 = __mind_load_i64(pend + 16);
+    if plain != 0 {
+        __mind_free(plain);
+    }
+    __mind_free(pend);
+    0
+}
+
+// Post-handshake handshake content (RFC 8446 §4.6): every message must be a
+// whole NewSessionTicket (type 4) inside this record. KeyUpdate, a request for
+// a client certificate, or a message split across records is refused.
+fn tls13rl_skip_tickets(msg: i64, len: i64) -> i64 {
+    if len < 4 {
+        return tls13ci_err_hs();
+    }
+    let mut off: i64 = 0;
+    let mut rc: i64 = 0;
+    while rc == 0 && off < len {
+        if off + 4 > len {
+            rc = tls13ci_err_hs();
+        } else {
+            let mlen: i64 = tls13c_be24(msg + off + 1);
+            if tls13c_u8(msg + off) != 4 || off + 4 + mlen > len {
+                rc = tls13ci_err_hs();
+            } else {
+                off = off + 4 + mlen;
+            }
+        }
+    }
+    rc
+}
+
+pub fn tls13rl_handle_record(state: i64, rec_addr: i64, rec_len: i64, pend: i64) -> i64 {
+    if rec_len < 5 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    let rtype: i64 = tls13c_u8(rec_addr + 0);
+    let ver_hi: i64 = tls13c_u8(rec_addr + 1);
+    let ver_lo: i64 = tls13c_u8(rec_addr + 2);
+    let rlen: i64 = tls13c_be16(rec_addr + 3);
+    if rlen + 5 != rec_len {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    if ver_hi != 3 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    if ver_lo != 3 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    if rtype == tls13ci_ct_handshake() && rlen > 16384 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    if rlen > tls13ci_max_record() {
+        return tls13c_fail(state, tls13ci_err_ovf());
+    }
+
+    let st: i64 = tls13ci_status(state);
+
+    if rtype == tls13ci_ct_change_cipher_spec() {
+        if st == tls13ci_st_init() || st == tls13ci_st_connected() || st == tls13ci_st_closed() {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        if rlen != 1 {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        if tls13c_u8(rec_addr + 5) != 1 {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        return 0;
+    }
+    if st == tls13ci_st_hrr() {
+        return tls13c_fail(state, tls13ci_err_hs());
+    }
+    if st == tls13ci_st_ch_sent() || st == tls13ci_st_wait_sh() {
+        if rtype == tls13ci_ct_change_cipher_spec() {
+            return 0;
+        }
+        if rtype == tls13ci_ct_alert() {
+            return tls13c_fail(state, tls13ci_err_alert());
+        }
+        if rtype != tls13ci_ct_handshake() {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        tls13rl_pend_set(pend, rec_addr + 5, rlen);
+    } else {
+        if rtype == tls13ci_ct_change_cipher_spec() {
+            return 0;
+        }
+        if st == tls13ci_st_closed() {
+            return tls13ci_err_closed();
+        }
+        if rtype != tls13ci_ct_app_data() {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+        // One plaintext scratch per record, released by tls13rl_pend_release.
+        let plain: i64 = __mind_alloc(tls13ci_max_record());
+        __mind_store_i64(pend + 16, plain);
+        let orc: i64 = tls13rl_open_protected(state, rec_addr, rec_len, st, plain, pend);
+        if orc != 0 {
+            return orc;
+        }
+    }
+    0
+}
+
+// A protected record (status after ServerHello): open it with the handshake
+// or application keys and act on its inner content type. `plain` is a
+// tls13ci_max_record() scratch the caller owns. Handshake content is left in
+// `pend` for the caller. Returns 0 or the latched error.
+fn tls13rl_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plain: i64, pend: i64) -> i64 {
+    let suite: i64 = tls13c_load_i64(state + 40);
+    let use_app: i64 = 0;
+    if st == tls13ci_st_connected() {
+        use_app = 1;
+    }
+    let key: i64 = state + 4192;
+    let iv: i64 = state + 81940;
+    let seq: i64 = tls13c_load_i64(state + 144);
+    if use_app == 1 {
+        key = state + 4352;
+        iv = state + 81964;
+        seq = tls13c_load_i64(state + 152);
+    }
+    let prc: i64 = tls13ci_record_open(suite, key, iv, seq, rec_addr, rec_len, plain);
+    if prc < 0 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    let plen: i64 = prc >> 8;
+    if plen > 16384 {
+        return tls13c_fail(state, tls13ci_err_record());
+    }
+    let ptype: i64 = prc & 255;
+    if use_app == 0 {
+        tls13c_store_i64(state + 144, seq + 1)
+    } else {
+        tls13c_store_i64(state + 152, seq + 1)
+    }
+    if ptype == tls13ci_ct_alert() {
+        if plen == 2 && use_app == 1 {
+            if tls13c_u8(plain + 1) == 0 {
+                tls13c_zero_keys(state);
+                tls13c_set_status(state, tls13ci_st_closed());
+                return 0;
+            }
+        }
+        return tls13c_fail(state, tls13ci_err_alert());
+    }
+    if ptype == tls13ci_ct_handshake() {
+        if use_app == 1 {
+            // Post-handshake: only whole NewSessionTicket messages, which
+            // are discarded (no resumption is offered).
+            let trc: i64 = tls13rl_skip_tickets(plain, plen);
+            if trc != 0 {
+                return tls13c_fail(state, trc);
+            }
+            return 0;
+        }
+        tls13rl_pend_set(pend, plain, plen);
+    } else {
+        if ptype == tls13ci_ct_app_data() {
+            if use_app != 1 {
+                return tls13c_fail(state, tls13ci_err_app());
+            }
+            let arx: i64 = tls13c_load_i64(state + 192);
+            if arx + plen > tls13ci_app_rx_cap() {
+                return tls13c_fail(state, tls13ci_err_ovf());
+            }
+            tls13c_copy(state + tls13ci_app_rx_off() + arx, plain, plen);
+            tls13c_store_i64(state + 192, arx + plen)
+        } else {
+            return tls13c_fail(state, tls13ci_err_record());
+        }
+    }
+    0
+}

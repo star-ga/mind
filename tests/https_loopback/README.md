@@ -3,10 +3,11 @@
 Everything here is test-only and public by design. NEVER use these keys or
 anchors for real traffic or trust.
 
-Used by `tests/std_https_loopback.rs`, which builds `server.mind` and
-`client.mind` with `mindc build` (the harness prepends the std imports and
-writes the DER certificates, the server key and the bundle paths as MIND
-stores) and runs them on 127.0.0.1, and by `tests/std_https_openssl.rs`, which
+Used by `tests/std_https_loopback.rs`, which builds the server (`server.mind`
+and its parts `server_rsa.mind`, `server_tls.mind`, `server_http.mind`,
+`server_conn.mind`) and `client.mind` with `mindc build` (the harness prepends
+the std imports and writes the DER certificates, the server key and the bundle
+paths as MIND stores) and runs them on 127.0.0.1, and by `tests/std_https_openssl.rs`, which
 builds `request.mind` (one request per run: spec on stdin, result on stdout)
 and runs it against `openssl s_server` presenting the same certificates with
 the keys below.

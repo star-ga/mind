@@ -1,0 +1,256 @@
+// Loopback TLS 1.3 server, part: the RSA-2048 signer (TEST-ONLY). The harness appends
+// the parts after server.mind (SERVER_PARTS in
+// tests/support/https_loopback_harness.rs).
+
+// ---------------------------------------------------------------------------
+// RSA-2048 private-key operation: Montgomery multiplication over 16-bit limbs
+// (128 limbs, stored as i64 at an 8-byte stride, least significant first).
+// ---------------------------------------------------------------------------
+
+fn hl_ld(a: i64, i: i64) -> i64 {
+    __mind_load_i64(a + i * 8)
+}
+
+fn hl_st(a: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(a + i * 8, v);
+    0
+}
+
+fn hl_bn_zero(a: i64, k: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < k {
+        hl_st(a, i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// Big-endian bytes -> limbs (k limbs).
+fn hl_bn_from_be(src: i64, len: i64, out: i64, k: i64) -> i64 {
+    hl_bn_zero(out, k);
+    let mut i: i64 = 0;
+    while i < len {
+        let b: i64 = tls13c_u8(src + len - 1 - i);
+        let li: i64 = i / 2;
+        hl_st(out, li, hl_ld(out, li) | (b << (8 * (i % 2))));
+        i = i + 1;
+    }
+    0
+}
+
+fn hl_bn_to_be(a: i64, out: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(out + len - 1 - i, (hl_ld(a, i / 2) >> (8 * (i % 2))) & 255);
+        i = i + 1;
+    }
+    0
+}
+
+// 1 iff a (k limbs) >= n (k limbs).
+fn hl_bn_ge(a: i64, n: i64, k: i64) -> i64 {
+    let mut i: i64 = k - 1;
+    let mut verdict: i64 = 1;
+    let mut decided: i64 = 0;
+    while decided == 0 && i >= 0 {
+        let x: i64 = hl_ld(a, i);
+        let y: i64 = hl_ld(n, i);
+        if x > y {
+            decided = 1;
+        } else {
+            if x < y {
+                verdict = 0;
+                decided = 1;
+            }
+        }
+        i = i - 1;
+    }
+    verdict
+}
+
+// a -= n over k limbs; returns the borrow out of the top limb.
+fn hl_bn_sub(a: i64, n: i64, k: i64) -> i64 {
+    let mut borrow: i64 = 0;
+    let mut i: i64 = 0;
+    while i < k {
+        let mut x: i64 = hl_ld(a, i) - hl_ld(n, i) - borrow;
+        borrow = 0;
+        if x < 0 {
+            x = x + 65536;
+            borrow = 1;
+        }
+        hl_st(a, i, x);
+        i = i + 1;
+    }
+    borrow
+}
+
+// -n0^-1 mod 2^16 (n0 odd), by Newton iteration.
+fn hl_n0p(n0: i64) -> i64 {
+    let mut x: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 5 {
+        x = (x * (2 - ((n0 * x) & 65535))) & 65535;
+        i = i + 1;
+    }
+    (65536 - x) & 65535
+}
+
+// out = a * b * R^-1 mod n (R = 2^(16k)); t is a scratch of k + 2 limbs.
+fn hl_mont_mul(a: i64, b: i64, n: i64, k: i64, n0p: i64, t: i64, out: i64) -> i64 {
+    hl_bn_zero(t, k + 2);
+    let mut i: i64 = 0;
+    while i < k {
+        let bi: i64 = hl_ld(b, i);
+        let mut c: i64 = 0;
+        let mut j: i64 = 0;
+        while j < k {
+            let x: i64 = hl_ld(t, j) + hl_ld(a, j) * bi + c;
+            hl_st(t, j, x & 65535);
+            c = x >> 16;
+            j = j + 1;
+        }
+        let x1: i64 = hl_ld(t, k) + c;
+        hl_st(t, k, x1 & 65535);
+        hl_st(t, k + 1, hl_ld(t, k + 1) + (x1 >> 16));
+        let m: i64 = (hl_ld(t, 0) * n0p) & 65535;
+        let x2: i64 = hl_ld(t, 0) + m * hl_ld(n, 0);
+        c = x2 >> 16;
+        j = 1;
+        while j < k {
+            let x: i64 = hl_ld(t, j) + m * hl_ld(n, j) + c;
+            hl_st(t, j - 1, x & 65535);
+            c = x >> 16;
+            j = j + 1;
+        }
+        let x3: i64 = hl_ld(t, k) + c;
+        hl_st(t, k - 1, x3 & 65535);
+        hl_st(t, k, hl_ld(t, k + 1) + (x3 >> 16));
+        hl_st(t, k + 1, 0);
+        i = i + 1;
+    }
+    // t < 2n: subtract n once when t >= n (t[k] is the carry limb; n has k).
+    if hl_ld(t, k) != 0 || hl_bn_ge(t, n, k) == 1 {
+        let borrow: i64 = hl_bn_sub(t, n, k);
+        hl_st(t, k, hl_ld(t, k) - borrow)
+    }
+    let mut q: i64 = 0;
+    while q < k {
+        hl_st(out, q, hl_ld(t, q));
+        q = q + 1;
+    }
+    0
+}
+
+// R^2 mod n, by doubling 1 a total of 2 * 16k times.
+fn hl_r2(n: i64, k: i64, out: i64) -> i64 {
+    let r: i64 = __mind_alloc((k + 1) * 8);
+    let n1: i64 = __mind_alloc((k + 1) * 8);
+    hl_bn_zero(r, k + 1);
+    hl_bn_zero(n1, k + 1);
+    let mut q: i64 = 0;
+    while q < k {
+        hl_st(n1, q, hl_ld(n, q));
+        q = q + 1;
+    }
+    hl_st(r, 0, 1);
+    let mut step: i64 = 0;
+    while step < 32 * k {
+        let mut carry: i64 = 0;
+        let mut i: i64 = 0;
+        while i < k + 1 {
+            let x: i64 = (hl_ld(r, i) << 1) | carry;
+            hl_st(r, i, x & 65535);
+            carry = x >> 16;
+            i = i + 1;
+        }
+        if hl_bn_ge(r, n1, k + 1) == 1 {
+            hl_bn_sub(r, n1, k + 1)
+        }
+        step = step + 1;
+    }
+    q = 0;
+    while q < k {
+        hl_st(out, q, hl_ld(r, q));
+        q = q + 1;
+    }
+    0
+}
+
+// sig = em^d mod n for the 256-byte big-endian em, d and n.
+fn hl_rsa_private(em: i64, d: i64, nb: i64, sig: i64) -> i64 {
+    let k: i64 = 128;
+    let n: i64 = __mind_alloc(k * 8);
+    let b: i64 = __mind_alloc(k * 8);
+    let r2: i64 = __mind_alloc(k * 8);
+    let one: i64 = __mind_alloc(k * 8);
+    let x: i64 = __mind_alloc(k * 8);
+    let bm: i64 = __mind_alloc(k * 8);
+    let tmp: i64 = __mind_alloc(k * 8);
+    let t: i64 = __mind_alloc((k + 2) * 8);
+    hl_bn_from_be(nb, 256, n, k);
+    hl_bn_from_be(em, 256, b, k);
+    hl_bn_zero(one, k);
+    hl_st(one, 0, 1);
+    let n0p: i64 = hl_n0p(hl_ld(n, 0));
+    hl_r2(n, k, r2);
+    hl_mont_mul(b, r2, n, k, n0p, t, bm);
+    hl_mont_mul(one, r2, n, k, n0p, t, x);
+    let mut byte: i64 = 0;
+    while byte < 256 {
+        let v: i64 = tls13c_u8(d + byte);
+        let mut bit: i64 = 7;
+        while bit >= 0 {
+            hl_mont_mul(x, x, n, k, n0p, t, tmp);
+            if ((v >> bit) & 1) == 1 {
+                hl_mont_mul(tmp, bm, n, k, n0p, t, x)
+            } else {
+                let mut q: i64 = 0;
+                while q < k {
+                    hl_st(x, q, hl_ld(tmp, q));
+                    q = q + 1;
+                }
+            }
+            bit = bit - 1;
+        }
+        byte = byte + 1;
+    }
+    hl_mont_mul(x, one, n, k, n0p, t, tmp);
+    hl_bn_to_be(tmp, sig, 256);
+    0
+}
+
+// RSASSA-PSS sign (RFC 8017 §9.1.1; SHA-256, MGF1-SHA-256, 32-byte salt).
+fn hl_pss_sign(msg: i64, mlen: i64, sig: i64) -> i64 {
+    let nb: i64 = __mind_alloc(256);
+    let dkey: i64 = __mind_alloc(256);
+    hl_key_n(nb);
+    hl_key_d(dkey);
+    let mhash: i64 = __mind_alloc(32);
+    sha256(msg, mlen, mhash);
+    let mp: i64 = __mind_alloc(72);
+    tls13c_zero(mp, 8);
+    tls13c_copy(mp + 8, mhash, 32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(mp + 40 + i, (90 + 3 * i) & 255);
+        i = i + 1;
+    }
+    let h: i64 = __mind_alloc(32);
+    sha256(mp, 72, h);
+    let em: i64 = __mind_alloc(256);
+    tls13c_zero(em, 256);
+    __mind_store_i8(em + 190, 1);
+    tls13c_copy(em + 191, mp + 40, 32);
+    let mask: i64 = __mind_alloc(223);
+    mgf1_sha256(h, 32, mask, 223);
+    i = 0;
+    while i < 223 {
+        __mind_store_i8(em + i, tls13c_u8(em + i) ^ tls13c_u8(mask + i));
+        i = i + 1;
+    }
+    __mind_store_i8(em, tls13c_u8(em) & 127);
+    tls13c_copy(em + 223, h, 32);
+    __mind_store_i8(em + 255, 188);
+    hl_rsa_private(em, dkey, nb, sig)
+}

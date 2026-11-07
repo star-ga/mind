@@ -17,16 +17,10 @@
 // https_err_* code, and a refusal never carries a status or a body. The body
 // streams through the client's one-record plaintext window into the record,
 // up to https_max_body().
-// Error classes (https_error_class(r), std/https_url.mind): 0
-// https_class_none, a complete response; 1 https_class_before_send, the call
-// failed before any request byte was written (URL, headers, body or CA bundle
-// refused, name resolution, TCP connect refused or timed out, TLS handshake,
-// or application data that arrived before the request: https_err_response,
-// never a success), so the server never saw it and the same request is safe
-// to retry; 2 https_class_after_send, the client had begun to write the
-// request (a write that fails partway included) and the response is missing,
-// partial or garbled, so the server may have acted: the caller must pause and
-// never count it as a result. std.https_probe
+// Error classes (https_error_class(r), std/https_url.mind): 0 none, 1
+// before_send (no request byte was written: safe to retry), 2 after_send (the
+// client began to write the request: the server may have acted, so the caller
+// must pause and never count it as a result). std.https_probe
 // https_probe(url, url_len, timeout_ms) resolves the host and opens and
 // closes one TCP connection, with a distinct code per failure. Fail closed:
 //   - the server profile is TLS 1.3, X25519, AES-128-GCM or ChaCha20-Poly1305,
@@ -41,38 +35,24 @@
 // The six request functions read the world (DNS, network, kernel entropy,
 // clock, the bundle file) and are classified nondeterministic by name.
 //
-// TLS 1.3 client (sans-IO; the functions above are its I/O driver):
-// No socket, clock, system trust store, or verifier override. Caller owns I/O,
-// entropy, time and the trust-anchor buffer (immutable for the connection).
-// x509_verify_server_chain (std/x509 path validation) is mandatory for every chain.
-// Evidence remains available after refusal: version/suite/group, selected ALPN,
-// presented DER chain and verifier verdict (1 = unchecked, 0 = accept, <0 refusal).
-// Flags: bit0 enables hybrid; bit3 sends an empty initial key_share for HRR.
-// HRR parks status 10. Call build_client_hello2 then seal_client_hello2 once;
-// the retry keeps CH1 entropy, random, session id, identity and offered ALPN.
-// Initial entropy: random[32], session id[32], x25519 scalar[32], optionally
-// hybrid entropy[96]. Build requires the same entropy length on the retry.
-// Only RSA-PSS SHA256 CertificateVerify with an RSA-2048 rsaEncryption leaf
-// key is implemented: any other leaf key type and RSA-1024 are refused at CV,
-// RSA-3072 and above at Certificate (E_OVF). Certificate/handshake
-// message cap 8192, transcript cap 16384, cookie cap 254, ALPN offer cap 1024.
-// After the handshake, whole NewSessionTicket messages are discarded; any
-// other post-handshake message is refused. Decrypted application data is held
-// one record at a time (up to the RFC 8446 maximum of 2^14 bytes): the pump
-// opens no further record until it is read, so the state stays fixed-size
-// however long the stream.
+// TLS 1.3 client (sans-IO; the functions above are its I/O driver): the
+// contract (flags, entropy, HelloRetryRequest, key and size limits) is in
+// std/tls13_client_api.mind.
 // Tests: tests/std_tls_x509_import.rs (mindc test and the mindc build
 // executable), tests/std_https_loopback.rs (a loopback TLS 1.3 server in
 // MIND) and tests/std_https_openssl.rs (openssl s_server).
 // Modules: tls13_client_core (state layout, transcript, record protection),
 // tls13_client_hello (hellos, HelloRetryRequest, traffic keys),
-// tls13_client_api (public constants, accessors, application data, the
-// EncryptedExtensions and Certificate parsers) and this module (the record
-// pump, the handshake state machine, which calls the chain verifier, and the
-// HTTPS driver). The client and the driver share one module because the
-// import chain under the state machine is already five modules deep.
-// x509_bundle is imported for callers: x509_load_anchors builds the
-// trust-anchor buffer.
+// tls13_client_api (constants, accessors, application data, the
+// EncryptedExtensions and Certificate parsers), https_record (open one record,
+// act on its content type), https_io (clocks, request deadline, socket time
+// budget, CA bundle file) and this module: the record pump, the handshake
+// state machine (which calls the chain verifier) and the HTTPS driver. The
+// state machine and the driver share one module because every caller of the
+// hello, finished, X.509 path and client API modules sits at the top of the
+// import chain, which stays at five modules; what needs none of them is in
+// the two modules below. x509_bundle is imported for callers:
+// x509_load_anchors builds the trust-anchor buffer.
 
 import std.tls13_client_core;
 import std.tls13_client_hello;
@@ -84,18 +64,11 @@ import std.tls13_finished;
 import std.rsa_pss;
 import std.https_url;
 import std.https_http1;
+import std.https_record;
+import std.https_io;
 import std.dns;
 import std.net;
 import std.entropy;
-
-// The system clock for certificate validity (CLOCK_REALTIME, id 0) and the
-// monotonic clock for the request deadline (CLOCK_MONOTONIC, id 1 on Linux: a
-// wall-clock step, NTP or an operator setting the date cannot stretch or cut
-// the deadline). Socket calls go through std.net and std.dns, so this module
-// declares nothing they declare.
-extern "C" {
-    unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
-}
 
 pub fn tls13c_pump(state: i64) -> i64 {
     let st: i64 = tls13ci_status(state);
@@ -262,27 +235,6 @@ pub fn tls13c_consume_hs_payload(state: i64, data_addr: i64, data_len: i64) -> i
     0
 }
 
-// Convert the already validated u32be serialized evidence/anchor buffer to
-// the x509_verify_server_chain i64 count + (relative offset, length) table ABI.
-fn tls13c_x509_blob(src: i64, size: i64) -> i64 {
-    let count: i64 = (tls13c_be16(src) << 16) | tls13c_be16(src + 2);
-    let dst: i64 = __mind_alloc(8 + count * 16 + size);
-    __mind_store_i64(dst, count);
-    let mut rp: i64 = 4;
-    let mut wp: i64 = 8 + count * 16;
-    let mut i: i64 = 0;
-    while i < count {
-        let n: i64 = (tls13c_be16(src + rp) << 16) | tls13c_be16(src + rp + 2);
-        __mind_store_i64(dst + 8 + i * 16, wp);
-        __mind_store_i64(dst + 16 + i * 16, n);
-        tls13c_copy(dst + wp, src + rp + 4, n);
-        rp = rp + 4 + n;
-        wp = wp + n;
-        i = i + 1;
-    }
-    dst
-}
-
 pub fn tls13c_consume_hs_messages(state: i64, data_addr: i64, data_len: i64) -> i64 {
     let mut off: i64 = 0;
     while off < data_len {
@@ -423,177 +375,21 @@ pub fn tls13c_consume_hs_messages(state: i64, data_addr: i64, data_len: i64) -> 
     0
 }
 
-// Post-handshake handshake content (RFC 8446 §4.6): every message must be a
-// whole NewSessionTicket (type 4) inside this record. KeyUpdate, a request for
-// a client certificate, or a message split across records is refused.
-fn tls13c_skip_tickets(msg: i64, len: i64) -> i64 {
-    if len < 4 {
-        return tls13ci_err_hs();
-    }
-    let mut off: i64 = 0;
-    let mut rc: i64 = 0;
-    while rc == 0 && off < len {
-        if off + 4 > len {
-            rc = tls13ci_err_hs();
-        } else {
-            let mlen: i64 = tls13c_be24(msg + off + 1);
-            if tls13c_u8(msg + off) != 4 || off + 4 + mlen > len {
-                rc = tls13ci_err_hs();
-            } else {
-                off = off + 4 + mlen;
-            }
-        }
-    }
-    rc
-}
-
+// One inbound record. The record layer (std/https_record.mind) validates and
+// opens it; handshake content comes back in a pending record and is parsed here,
+// above the modules the state machine needs. Latched errors are the same as
+// when this was one function.
 pub fn tls13c_handle_record(state: i64, rec_addr: i64, rec_len: i64) -> i64 {
-    if rec_len < 5 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    let rtype: i64 = tls13c_u8(rec_addr + 0);
-    let ver_hi: i64 = tls13c_u8(rec_addr + 1);
-    let ver_lo: i64 = tls13c_u8(rec_addr + 2);
-    let rlen: i64 = tls13c_be16(rec_addr + 3);
-    if rlen + 5 != rec_len {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    if ver_hi != 3 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    if ver_lo != 3 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    if rtype == tls13ci_ct_handshake() && rlen > 16384 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    if rlen > tls13ci_max_record() {
-        return tls13c_fail(state, tls13ci_err_ovf());
-    }
-
-    let st: i64 = tls13ci_status(state);
-
-    if rtype == tls13ci_ct_change_cipher_spec() {
-        if st == tls13ci_st_init() || st == tls13ci_st_connected() || st == tls13ci_st_closed() {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        if rlen != 1 {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        if tls13c_u8(rec_addr + 5) != 1 {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        return 0;
-    }
-    if st == tls13ci_st_hrr() {
-        return tls13c_fail(state, tls13ci_err_hs());
-    }
-    if st == tls13ci_st_ch_sent() || st == tls13ci_st_wait_sh() {
-        if rtype == tls13ci_ct_change_cipher_spec() {
-            return 0;
-        }
-        if rtype == tls13ci_ct_alert() {
-            return tls13c_fail(state, tls13ci_err_alert());
-        }
-        if rtype != tls13ci_ct_handshake() {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        let hrc: i64 = tls13c_consume_hs_payload(state, rec_addr + 5, rlen);
+    let pend: i64 = tls13rl_pend_new();
+    let mut rc: i64 = tls13rl_handle_record(state, rec_addr, rec_len, pend);
+    if rc == 0 && tls13rl_pend_ready(pend) == 1 {
+        let hrc: i64 = tls13c_consume_hs_payload(state, tls13rl_pend_addr(pend), tls13rl_pend_len(pend));
         if hrc != 0 {
-            return tls13c_fail(state, hrc);
-        }
-    } else {
-        if rtype == tls13ci_ct_change_cipher_spec() {
-            return 0;
-        }
-        if st == tls13ci_st_closed() {
-            return tls13ci_err_closed();
-        }
-        if rtype != tls13ci_ct_app_data() {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-        // One plaintext scratch per record, released before the next.
-        let plain: i64 = __mind_alloc(tls13ci_max_record());
-        let orc: i64 = tls13c_open_protected(state, rec_addr, rec_len, st, plain);
-        __mind_free(plain);
-        if orc != 0 {
-            return orc;
+            rc = tls13c_fail(state, hrc);
         }
     }
-    0
-}
-
-// A protected record (status after ServerHello): open it with the handshake
-// or application keys and act on its inner content type. `plain` is a
-// tls13ci_max_record() scratch the caller owns. Returns 0 or the latched error.
-fn tls13c_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plain: i64) -> i64 {
-    let suite: i64 = tls13c_load_i64(state + 40);
-    let use_app: i64 = 0;
-    if st == tls13ci_st_connected() {
-        use_app = 1;
-    }
-    let key: i64 = state + 4192;
-    let iv: i64 = state + 81940;
-    let seq: i64 = tls13c_load_i64(state + 144);
-    if use_app == 1 {
-        key = state + 4352;
-        iv = state + 81964;
-        seq = tls13c_load_i64(state + 152);
-    }
-    let prc: i64 = tls13ci_record_open(suite, key, iv, seq, rec_addr, rec_len, plain);
-    if prc < 0 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    let plen: i64 = prc >> 8;
-    if plen > 16384 {
-        return tls13c_fail(state, tls13ci_err_record());
-    }
-    let ptype: i64 = prc & 255;
-    if use_app == 0 {
-        tls13c_store_i64(state + 144, seq + 1)
-    } else {
-        tls13c_store_i64(state + 152, seq + 1)
-    }
-    if ptype == tls13ci_ct_alert() {
-        if plen == 2 && use_app == 1 {
-            if tls13c_u8(plain + 1) == 0 {
-                tls13c_zero_keys(state);
-                tls13c_set_status(state, tls13ci_st_closed());
-                return 0;
-            }
-        }
-        return tls13c_fail(state, tls13ci_err_alert());
-    }
-    if ptype == tls13ci_ct_handshake() {
-        if use_app == 1 {
-            // Post-handshake: only whole NewSessionTicket messages, which
-            // are discarded (no resumption is offered).
-            let trc: i64 = tls13c_skip_tickets(plain, plen);
-            if trc != 0 {
-                return tls13c_fail(state, trc);
-            }
-            return 0;
-        }
-        let hrc: i64 = tls13c_consume_hs_payload(state, plain, plen);
-        if hrc != 0 {
-            return tls13c_fail(state, hrc);
-        }
-    } else {
-        if ptype == tls13ci_ct_app_data() {
-            if use_app != 1 {
-                return tls13c_fail(state, tls13ci_err_app());
-            }
-            let arx: i64 = tls13c_load_i64(state + 192);
-            if arx + plen > tls13ci_app_rx_cap() {
-                return tls13c_fail(state, tls13ci_err_ovf());
-            }
-            tls13c_copy(state + tls13ci_app_rx_off() + arx, plain, plen);
-            tls13c_store_i64(state + 192, arx + plen)
-        } else {
-            return tls13c_fail(state, tls13ci_err_record());
-        }
-    }
-    0
+    tls13rl_pend_release(pend);
+    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -602,157 +398,25 @@ fn tls13c_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plain
 
 // Seconds one socket read or write may block.
 pub fn https_io_timeout_s() -> i64 {
-    30
+    hio_io_timeout_s()
 }
 
 // Seconds one request may take, from the TCP connect to the end of the response.
 pub fn https_deadline_s() -> i64 {
-    120
+    hio_deadline_s()
 }
 
 // The default trust store, "/etc/ssl/certs/ca-certificates.crt" (Debian,
 // Ubuntu, Alpine), as a fresh NUL-terminated string.
 pub fn https_default_ca_path() -> i64 {
-    let p: i64 = __mind_alloc(40);
-    __mind_store_i64(p, 7814716425787172143);
-    __mind_store_i64(p + 8, 7147058077632914223);
-    __mind_store_i64(p + 16, 7379557499099360609);
-    __mind_store_i64(p + 24, 7146776538264986473);
-    __mind_store_i8(p + 32, 114);
-    __mind_store_i8(p + 33, 116);
-    __mind_store_i8(p + 34, 0);
-    p
-}
-
-// Unix seconds from the system clock, or -1.
-fn https_now_unix() -> i64 {
-    let ts: i64 = __mind_alloc(16);
-    __mind_store_i64(ts, 0);
-    __mind_store_i64(ts + 8, 0);
-    let rc: i64 = clock_gettime(0, ts as *mut u8) as i64;
-    let sec: i64 = __mind_load_i64(ts);
-    __mind_free(ts);
-    if rc != 0 || sec <= 0 {
-        return 0 - 1;
-    }
-    sec
-}
-
-// Milliseconds on the monotonic clock, or -1.
-fn https_now_mono_ms() -> i64 {
-    let ts: i64 = __mind_alloc(16);
-    __mind_store_i64(ts, 0);
-    __mind_store_i64(ts + 8, 0);
-    let rc: i64 = clock_gettime(1, ts as *mut u8) as i64;
-    let sec: i64 = __mind_load_i64(ts);
-    let nsec: i64 = __mind_load_i64(ts + 8);
-    __mind_free(ts);
-    if rc != 0 || sec < 0 || nsec < 0 {
-        return 0 - 1;
-    }
-    sec * 1000 + nsec / 1000000
+    hio_default_ca_path()
 }
 
 // Milliseconds one socket read or write may block with `remaining_ms` left of
 // the deadline: 0 once it has passed, else the smaller of the remaining time
 // and the per-operation limit https_io_timeout_s().
 pub fn https_io_budget_ms(remaining_ms: i64) -> i64 {
-    if remaining_ms <= 0 {
-        return 0;
-    }
-    let cap: i64 = https_io_timeout_s() * 1000;
-    if remaining_ms < cap {
-        return remaining_ms;
-    }
-    cap
-}
-
-// Milliseconds left until the monotonic `deadline` (a https_now_mono_ms value).
-// A clock failure is 0: no time left, so the request fails closed.
-fn https_remaining_ms(deadline: i64) -> i64 {
-    let now: i64 = https_now_mono_ms();
-    if now < 0 {
-        return 0;
-    }
-    deadline - now
-}
-
-// Limit the next blocking read or write on `conn` to the time left. 0, or the
-// timeout class once the deadline has passed, or the I/O class if the socket
-// option cannot be set. A single read then cannot run past the deadline.
-fn https_arm(conn: i64, deadline: i64) -> i64 {
-    let budget: i64 = https_io_budget_ms(https_remaining_ms(deadline));
-    if budget < 1 {
-        return https_err_timeout();
-    }
-    if tcp_set_io_timeout(conn, budget) != 0 {
-        return https_err_io();
-    }
-    0
-}
-
-// The class of a failed socket read or write: a timeout once the deadline has
-// passed (the armed limit is what stopped it), else a plain I/O error.
-fn https_io_failure(deadline: i64) -> i64 {
-    if https_remaining_ms(deadline) <= 0 {
-        return https_err_timeout();
-    }
-    https_err_io()
-}
-
-// std.net's tcp_close closes the descriptor held in a handle record; the
-// bundle file uses it, so this module declares no libc close of its own.
-fn https_close_fd(fd: i64) -> i64 {
-    let h: i64 = __mind_alloc(8);
-    __mind_store_i64(h, fd);
-    tcp_close(h);
-    __mind_free(h);
-    0
-}
-
-// The trust-anchor blob (x509_load_anchors) of the bundle file at the
-// NUL-terminated `path`, or -1: unreadable, larger than x509_max_bundle_len(),
-// malformed PEM/DER, or no certificate.
-fn https_read_ca(path: i64) -> i64 {
-    if path <= 0 {
-        return 0 - 1;
-    }
-    let fd: i64 = __mind_open(path);
-    if fd < 0 {
-        return 0 - 1;
-    }
-    let cap: i64 = x509_max_bundle_len() + 1;
-    let buf: i64 = __mind_alloc(cap);
-    let mut got: i64 = 0;
-    let mut rc: i64 = 0;
-    let mut going: i64 = 1;
-    while going == 1 {
-        let n: i64 = __mind_read(fd, buf + got, cap - got, 0 - 1);
-        if n == 0 {
-            going = 0;
-        } else {
-            if n < 0 {
-                rc = 0 - 1;
-                going = 0;
-            } else {
-                got = got + n;
-                if got >= cap {
-                    rc = 0 - 1;
-                    going = 0;
-                }
-            }
-        }
-    }
-    https_close_fd(fd);
-    let mut blob: i64 = 0 - 1;
-    if rc == 0 {
-        blob = x509_load_anchors(buf, got);
-        if blob <= 0 {
-            blob = 0 - 1;
-        }
-    }
-    __mind_free(buf);
-    blob
+    hio_io_budget_ms(remaining_ms)
 }
 
 // The u32be anchor buffer tls13c_init takes (count, then length and DER per
@@ -824,10 +488,10 @@ fn https_flush(state: i64, conn: i64, buf: i64, deadline: i64) -> i64 {
         if n <= 0 {
             rc = https_err_tls();
         } else {
-            rc = https_arm(conn, deadline);
+            rc = hio_arm(conn, deadline);
             if rc == 0 {
                 if tcp_write_all(conn, buf, n) != n {
-                    rc = https_io_failure(deadline);
+                    rc = hio_io_failure(deadline);
                 }
             }
         }
@@ -895,7 +559,7 @@ fn https_drain(state: i64, resp: i64, app: i64, sent: i64) -> i64 {
 // then fed to the client and drained into the response. 1 (complete response),
 // 0 (go on) or a negative code.
 fn https_read_step(state: i64, conn: i64, buf: i64, want: i64, resp: i64, app: i64, sent: i64, deadline: i64) -> i64 {
-    let armed: i64 = https_arm(conn, deadline);
+    let armed: i64 = hio_arm(conn, deadline);
     if armed != 0 {
         return armed;
     }
@@ -907,7 +571,7 @@ fn https_read_step(state: i64, conn: i64, buf: i64, want: i64, resp: i64, app: i
         return https_err_truncated();
     }
     if n < 0 {
-        return https_io_failure(deadline);
+        return hio_io_failure(deadline);
     }
     let frc: i64 = tls13c_feed(state, buf, n);
     if frc != 0 {
@@ -925,7 +589,7 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
     let mut result: i64 = https_flush(state, conn, buf, deadline);
     while result == 0 {
         let st: i64 = tls13c_status(state);
-        if https_remaining_ms(deadline) <= 0 {
+        if hio_remaining_ms(deadline) <= 0 {
             result = https_err_timeout();
         } else {
             if st == tls13c_st_hrr() {
@@ -992,14 +656,7 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
         __mind_free(u);
         return hx_fail(resp, req);
     }
-    let mut ca: i64 = ca_path;
-    if ca_path == 0 {
-        ca = https_default_ca_path();
-    }
-    let blob: i64 = https_read_ca(ca);
-    if ca_path == 0 {
-        __mind_free(ca)
-    }
+    let blob: i64 = hio_load_anchors(ca_path);
     if blob < 0 {
         __mind_free(u);
         __mind_free(__mind_load_i64(req));
@@ -1008,7 +665,7 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
     }
     let wire: i64 = https_anchor_wire(blob);
     __mind_free(blob);
-    let unix_s: i64 = https_now_unix();
+    let unix_s: i64 = hio_now_unix();
     if unix_s < 0 {
         return hx_fail(resp, https_err_io());
     }
@@ -1016,16 +673,16 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
     let hlen: i64 = hx_url_host_len(u);
     let port: i64 = hx_url_port(u);
     __mind_free(u);
-    let started: i64 = https_now_mono_ms();
+    let started: i64 = hio_now_mono_ms();
     if started < 0 {
         return hx_fail(resp, https_err_io());
     }
-    let deadline: i64 = started + https_deadline_s() * 1000;
+    let deadline: i64 = started + hio_deadline_s() * 1000;
     let conn: i64 = tcp_connect_host(host, hlen, port);
     if conn == 0 {
         return hx_fail(resp, https_err_connect());
     }
-    if tcp_set_io_timeout(conn, https_io_timeout_s() * 1000) != 0 {
+    if tcp_set_io_timeout(conn, hio_io_timeout_s() * 1000) != 0 {
         tcp_close(conn);
         return hx_fail(resp, https_err_io());
     }

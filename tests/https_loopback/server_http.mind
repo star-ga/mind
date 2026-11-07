@@ -1,0 +1,212 @@
+// Loopback TLS 1.3 server, part: request routing and responses (TEST-ONLY). The harness appends
+// the parts after server.mind (SERVER_PARTS in
+// tests/support/https_loopback_harness.rs).
+
+// ---------------------------------------------------------------------------
+// HTTP side
+// ---------------------------------------------------------------------------
+
+fn hl_put(dst: i64, v: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        __mind_store_i8(dst + k, (v >> (8 * k)) & 255);
+        k = k + 1;
+    }
+    n
+}
+
+fn hl_put_dec(dst: i64, v: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(24);
+    let mut n: i64 = 0;
+    let mut x: i64 = v;
+    if x == 0 {
+        __mind_store_i8(tmp, 48);
+        n = 1;
+    }
+    while x > 0 {
+        __mind_store_i8(tmp + n, 48 + x % 10);
+        x = x / 10;
+        n = n + 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(tmp + n - 1 - i));
+        i = i + 1;
+    }
+    n
+}
+
+// Index just past "\r\n\r\n" in [buf, buf+n), or -1.
+fn hl_head_end(buf: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut at: i64 = 0 - 1;
+    while at < 0 && i + 3 < n {
+        if tls13c_u8(buf + i) == 13 && tls13c_u8(buf + i + 1) == 10 && tls13c_u8(buf + i + 2) == 13 && tls13c_u8(buf + i + 3) == 10 {
+            at = i + 4;
+        }
+        i = i + 1;
+    }
+    at
+}
+
+// Value of the request header whose lower-cased name starts with the 8-byte
+// word w and is `nlen` long; writes {addr, len} at out, returns 1 or 0.
+fn hl_req_header(buf: i64, head: i64, w: i64, nlen: i64, out: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut found: i64 = 0;
+    while found == 0 && i + nlen < head {
+        let mut match8: i64 = 1;
+        let mut k: i64 = 0;
+        while k < 8 {
+            let mut c: i64 = tls13c_u8(buf + i + k);
+            if c >= 65 && c <= 90 {
+                c = c + 32;
+            }
+            if c != ((w >> (8 * k)) & 255) {
+                match8 = 0;
+            }
+            k = k + 1;
+        }
+        if match8 == 1 && tls13c_u8(buf + i + nlen) == 58 && (i == 0 || tls13c_u8(buf + i - 1) == 10) {
+            let mut vs: i64 = i + nlen + 1;
+            while tls13c_u8(buf + vs) == 32 {
+                vs = vs + 1;
+            }
+            let mut ve: i64 = vs;
+            while tls13c_u8(buf + ve) != 13 {
+                ve = ve + 1;
+            }
+            __mind_store_i64(out, buf + vs);
+            __mind_store_i64(out + 8, ve - vs);
+            found = 1;
+        }
+        i = i + 1;
+    }
+    found
+}
+
+// The HTTP response for a case that reaches the request, at dst; returns its
+// length (the body follows the headers).
+fn hl_response(cid: i64, req: i64, rlen: i64, head: i64, dst: i64) -> i64 {
+    if cid >= hl_case_count() {
+        return hl_canned(cid, dst);
+    }
+    let mut p: i64 = 0;
+    if cid == 4 {
+        p = p + hl_put(dst + p, 3543824036068086856, 8);
+        p = p + hl_put(dst + p, 8534124619549913888, 8);
+        p = p + hl_put(dst + p, 7020393173602034789, 8);
+        p = p + hl_put(dst + p, 724368621793338734, 8);
+        p = p + hl_put(dst + p, 7957695015157985100, 8);
+        p = p + hl_put(dst + p, 4211833721993044026, 8);
+        p = p + hl_put(dst + p, 7524496157128273711, 8);
+        p = p + hl_put(dst + p, 7310305801996104559, 8);
+        p = p + hl_put(dst + p, 4830688279670384759, 8);
+        p = p + hl_put(dst + p, 5489171538331856495, 8);
+        p = p + hl_put(dst + p, 3467835933379227237, 8);
+        p = p + hl_put(dst + p, 168626701, 4);
+        return p;
+    }
+    p = p + hl_put(dst + p, 3543824036068086856, 8);
+    p = p + hl_put(dst + p, 957946345412375072, 8);
+    p = p + hl_put(dst + p, 10, 1);
+    if cid == 2 {
+        p = p + hl_put(dst + p, 8243107338930713172, 8);
+        p = p + hl_put(dst + p, 7956000646299010349, 8);
+        p = p + hl_put(dst + p, 7741253900696566375, 8);
+        p = p + hl_put(dst + p, 951677947378230373, 8);
+        p = p + hl_put(dst + p, 724357626542254090, 8);
+        p = p + hl_put(dst + p, 950608566797286200, 8);
+        p = p + hl_put(dst + p, 2406169500004133898, 8);
+        p = p + hl_put(dst + p, 3267372581414112522, 8);
+        p = p + hl_put(dst + p, 4211540117843702356, 8);
+        p = p + hl_put(dst + p, 11051119489312, 6);
+        return p;
+    }
+    p = p + hl_put(dst + p, 3275364211029339971, 8);
+    p = p + hl_put(dst + p, 2322283407023695180, 8);
+    if cid == 10 {
+        p = p + hl_put_dec(dst + p, 99999999999);
+        p = p + hl_put(dst + p, 168626701, 4);
+        return p;
+    }
+    if cid == 1 {
+        let rec: i64 = __mind_alloc(16);
+        let blen: i64 = rlen - head;
+        p = p + hl_put_dec(dst + p, blen);
+        p = p + hl_put(dst + p, 2573, 2);
+        if hl_req_header(req, head, 3275364211029340003, 12, rec) == 1 {
+            p = p + hl_put(dst + p, 6065626767270686040, 8);
+            p = p + hl_put(dst + p, 138418679929, 5);
+            tls13c_copy(dst + p, __mind_load_i64(rec), __mind_load_i64(rec + 8));
+            p = p + __mind_load_i64(rec + 8);
+            p = p + hl_put(dst + p, 2573, 2);
+        }
+        p = p + hl_put(dst + p, 2573, 2);
+        tls13c_copy(dst + p, req + head, blen);
+        return p + blen;
+    }
+    if cid == 3 {
+        p = p + hl_put_dec(dst + p, 40000);
+        p = p + hl_put(dst + p, 168626701, 4);
+        let mut i: i64 = 0;
+        while i < 40000 {
+            __mind_store_i8(dst + p + i, (i * 7 + 3) & 255);
+            i = i + 1;
+        }
+        return p + 40000;
+    }
+    p = p + hl_put_dec(dst + p, 13);
+    p = p + hl_put(dst + p, 7812730951100598797, 8);
+    p = p + hl_put(dst + p, 2406169500004133999, 8);
+    p = p + hl_put(dst + p, 10, 1);
+    p
+}
+
+// Read application records until a whole request is in (headers, and a body
+// of the request's Content-Length). Returns the request length or -1.
+fn hl_read_request(s: i64, ckeys: i64, req: i64, rec: i64, plain: i64, head_out: i64) -> i64 {
+    let mut have: i64 = 0;
+    let mut need: i64 = 0 - 1;
+    let mut rc: i64 = 0;
+    while rc == 0 && (need < 0 || have < need) {
+        let n: i64 = hl_read_record(s, rec);
+        if n < 0 {
+            rc = 0 - 1;
+        } else {
+            if tls13c_u8(rec) == 23 {
+                let seq: i64 = __mind_load_i64(ckeys + 32);
+                let prc: i64 = tls13c_record_open(4865, ckeys, ckeys + 16, seq, rec, n, plain);
+                __mind_store_i64(ckeys + 32, seq + 1);
+                if prc < 0 || (prc & 255) != 23 {
+                    rc = 0 - 1;
+                } else {
+                    tls13c_copy(req + have, plain, prc >> 8);
+                    have = have + (prc >> 8);
+                    if need < 0 {
+                        let head: i64 = hl_head_end(req, have);
+                        if head > 0 {
+                            __mind_store_i64(head_out, head);
+                            let v: i64 = __mind_alloc(16);
+                            need = head;
+                            // "content-length" starts "content-".
+                            if hl_req_header(req, head, 3275364211029340003, 14, v) == 1 {
+                                let mut cl: i64 = 0;
+                                let mut k: i64 = 0;
+                                while k < __mind_load_i64(v + 8) {
+                                    cl = cl * 10 + tls13c_u8(__mind_load_i64(v) + k) - 48;
+                                    k = k + 1;
+                                }
+                                need = head + cl;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if rc < 0 {
+        return 0 - 1;
+    }
+    have
+}

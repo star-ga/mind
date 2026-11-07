@@ -87,9 +87,30 @@ pub fn path_bytes(file: &str) -> Vec<u8> {
     b
 }
 
+/// The loopback server, as fixture files appended in this order: the listener
+/// and case list, the RSA-2048 signer, the handshake helpers, request routing
+/// and responses, and one connection.
+const SERVER_PARTS: &[&str] = &[
+    "server.mind",
+    "server_rsa.mind",
+    "server_tls.mind",
+    "server_http.mind",
+    "server_conn.mind",
+];
+
 /// [`IMPORTS`] and `more` imports, the fixture functions, any extra source,
 /// then the fixture file `own`.
 pub fn source(own: &str, more: &[&str], fixtures: &[(&str, Vec<u8>)], extra: &str) -> String {
+    source_parts(&[own], more, fixtures, extra)
+}
+
+/// [`source`] with the fixture files `parts` appended in order.
+fn source_parts(
+    parts: &[&str],
+    more: &[&str],
+    fixtures: &[(&str, Vec<u8>)],
+    extra: &str,
+) -> String {
     let mut src: String = IMPORTS
         .iter()
         .chain(more)
@@ -100,9 +121,11 @@ pub fn source(own: &str, more: &[&str], fixtures: &[(&str, Vec<u8>)], extra: &st
         src.push_str(&fixture_fn(name, bytes));
     }
     src.push_str(extra);
-    let body = std::fs::read_to_string(format!("{FIX}/{own}"))
-        .unwrap_or_else(|e| panic!("read {own}: {e}"));
-    src.push_str(&body);
+    for own in parts {
+        let body = std::fs::read_to_string(format!("{FIX}/{own}"))
+            .unwrap_or_else(|e| panic!("read {own}: {e}"));
+        src.push_str(&body);
+    }
     src
 }
 
@@ -153,7 +176,7 @@ pub fn server_source(canned: &[(Vec<u8>, End)]) -> String {
     }
     dispatch.push_str("    return 0;\n}\n\n");
     ends.push_str("    return 0;\n}\n\n");
-    source("server.mind", &[], &fixtures, &format!("{dispatch}{ends}"))
+    source_parts(SERVER_PARTS, &[], &fixtures, &format!("{dispatch}{ends}"))
 }
 
 /// `mindc build` a one-file project named `case`; the executable, or `None`
