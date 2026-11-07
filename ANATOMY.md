@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2147 | **Est. tokens:** ~4,077,897
-**Generated:** 2026-11-07 02:50 UTC
+**Files:** 2147 | **Est. tokens:** ~4,078,138
+**Generated:** 2026-11-07 03:26 UTC
 
 ## Token Budget Guide
 
@@ -158,7 +158,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 450 | ~967,108 |
+| `tests/` | 450 | ~967,349 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -2335,7 +2335,7 @@
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_eval_blockers_parity.rs` (~3004 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mindc_test_eval_float_compare_parity.rs` (~2183 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `mindc_test_eval_float_compare_parity.rs` (~2424 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_eval_parity.rs` (~3505 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6042 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_imports.rs` (~6333 tok, huge) — Copyright 2025-2026 STARGA Inc.
