@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # arch_gate.sh - architectural-governance gate (arch-mind).
 #
-# Re-scans the tree with arch-mind's MIND reflection at pinned commit fea599ec
-# (fea599ec4d3695cb39754d0fd5dcc1f1fb101dab) and enforces .arch-mind/rules.mind.
+# Re-scans the tree with arch-mind's MIND reflection at pinned commit c12d08b3
+# (c12d08b31a166b774abb775a4b1974dbe2b8b6e0) and enforces .arch-mind/rules.mind.
 # Fails closed when:
 #   1. the arch-mind binary is missing or does not match the pinned tool hashes,
 #   2. .arch-mind/rules.mind is missing or empty,
@@ -14,10 +14,10 @@
 # Prints asserted=<rules enforced>.
 set -uo pipefail
 
-ARCH_MIND_PIN="fea599ec4d3695cb39754d0fd5dcc1f1fb101dab"
-CLI_SHA256="dee77ff9b2263a395d01fecc44f177276cf64c01efd608af0ce5652d011cc8d1"
-REFLECT_SHA256="3d128ee4b72e23db0a7ab0d10f0aeaecfbbf0e04f9756d9ebeede9b5ba97b026"
-ENGINE_SHA256="60956668517452a5cf13d5ac85cd19023d0d508b8ab8350cc3d048a60f27a50b"
+ARCH_MIND_PIN="c12d08b31a166b774abb775a4b1974dbe2b8b6e0"
+CLI_SHA256="bffd3bc841817978de80ac24e81c04c7a119ab823a3c1e31bae618a0c1579660"
+REFLECT_SHA256="980ad5c540067c7f98c7ef7e2b519b39836125d7e5d1b2f4c63159bc2cadbf79"
+ENGINE_SHA256="910ed02c361d08d774c50168722ee0f121121939e83626701607cce01e2ad153"
 
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
