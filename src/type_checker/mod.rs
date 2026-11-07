@@ -6136,7 +6136,7 @@ fn implicit_external_determinism(callee: &str, span: AstSpan) -> Option<bool> {
     // dtype suffix or `__mind_` prefix. Matches the bare name or the last
     // dotted/`::`-qualified path segment, so a qualified call
     // (`std.rand.random`, `rng::rand_uniform`) is caught too. A `std.dns` /
-    // `std.entropy` world call is flagged from its qualifier, not its bare name.
+    // `std.entropy` world call is flagged by `std_qualified` (qualifier, or bare by import).
     if crate::std_qualified::call_is_world(span, callee)
         || crate::intrinsics::callee_is_nondeterministic(callee)
     {

@@ -21,7 +21,7 @@
 //! Precision: a function is classified by its own body, so a sibling that holds
 //! one world-reading function does not taint a caller of its pure functions.
 //! Conservative where it cannot see: a callee that matches the exports of two
-//! imported modules is followed into both. A qualified call into `std.dns` or
+//! imported modules is followed into both. A call (qualified or bare) into `std.dns` or
 //! `std.entropy` is read from the sibling source, because the lowered body
 //! holds only the bare name. A reached module that does not lower, or an
 //! export that has no body, is refused and labelled nondeterministic: the

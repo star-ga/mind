@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2148 | **Est. tokens:** ~4,083,991
-**Generated:** 2026-11-07 02:54 UTC
+**Files:** 2149 | **Est. tokens:** ~4,086,436
+**Generated:** 2026-11-07 03:05 UTC
 
 ## Token Budget Guide
 
@@ -110,7 +110,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~57,704 |
+| `src/` | 13 | ~58,790 |
 | `src/ast/` | 2 | ~12,326 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -130,7 +130,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~27,177 |
 | `src/fmt/printer/` | 1 | ~1,878 |
-| `src/intrinsics/` | 1 | ~2,530 |
+| `src/intrinsics/` | 1 | ~2,539 |
 | `src/ir/` | 13 | ~102,613 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -146,7 +146,7 @@
 | `src/parser/` | 9 | ~30,254 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 24 | ~80,470 |
-| `src/project/single_file_scope/` | 2 | ~3,400 |
+| `src/project/single_file_scope/` | 2 | ~3,403 |
 | `src/project/stdlib/` | 1 | ~4,049 |
 | `src/qualified_enums/` | 2 | ~2,363 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -159,7 +159,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 449 | ~968,785 |
+| `tests/` | 450 | ~970,132 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1386,10 +1386,10 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~9588 tok, huge) — Copyright 2025 STARGA Inc.
+- `intrinsics.rs` (~9609 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/intrinsics/`
 
-- `tests.rs` (~2530 tok, huge) — Copyright 2025 STARGA Inc.
+- `tests.rs` (~2539 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1536,7 +1536,7 @@
 ### `src/project/single_file_scope/`
 
 - `tests.rs` (~1409 tok, large) — Copyright 2026 STARGA Inc.
-- `world_reach.rs` (~1991 tok, huge) — Copyright 2026 STARGA Inc.
+- `world_reach.rs` (~1994 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -1581,7 +1581,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `std_qualified.rs` (~3652 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_qualified.rs` (~4717 tok, huge) — Copyright 2026 STARGA Inc.
 - `target.rs` (~5031 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
@@ -1973,7 +1973,8 @@
 - `cross_substrate_receipts.rs` (~2546 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `determinism_veto_control.rs` (~7207 tok, huge) — Copyright 2025 STARGA Inc.
+- `determinism_veto_bare_std.rs` (~955 tok, large) — Copyright 2026 STARGA Inc.
+- `determinism_veto_control.rs` (~7599 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
