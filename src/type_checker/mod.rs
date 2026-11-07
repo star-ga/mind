@@ -24,6 +24,10 @@ mod duplicate_structs;
 #[cfg(feature = "std-surface")]
 pub(crate) mod extern_declarations;
 #[cfg(feature = "std-surface")]
+mod intrinsic_call_arity;
+#[cfg(feature = "std-surface")]
+use intrinsic_call_arity::std_surface_intrinsic_arity;
+#[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
 pub mod nerve_lint;
 pub(crate) mod nerve_walk;
@@ -2224,58 +2228,6 @@ fn infer_grad(
     Ok((ValueType::GradMap(entries), span))
 }
 
-// RFC 0005 Phase 1 + 1.5 — pure-MIND standard surface intrinsics.
-//
-// The table itself moved to `crate::intrinsics` so that ONE row carries a
-// primitive's name, its i64 arity, AND whether calling it can make the program's
-// result vary between runs. It used to be split: the arity here, the determinism
-// verdict in two hand-maintained parallel arrays (this module's and
-// `ir::evidence`'s) that drifted identically and let the registered
-// `__mind_nerve_rt_*` clock / entropy / stdin surface be attested
-// `deterministic`. See the `crate::intrinsics` module docs.
-#[cfg(feature = "std-surface")]
-fn std_surface_intrinsic_arity(name: &str) -> Option<usize> {
-    crate::intrinsics::std_surface_intrinsic_arity(name)
-}
-
-#[cfg(feature = "std-surface")]
-fn check_std_surface_intrinsic(
-    callee: &str,
-    args: &[Node],
-    span: AstSpan,
-    env: &TypeEnv,
-) -> Result<(ValueType, AstSpan), TypeErrSpan> {
-    let arity = std_surface_intrinsic_arity(callee).ok_or_else(|| TypeErrSpan {
-        msg: format!("unsupported call to `{callee}`"),
-        span,
-    })?;
-    if args.len() != arity {
-        return Err(TypeErrSpan {
-            msg: format!(
-                "intrinsic `{callee}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
-                args.len()
-            ),
-            span,
-        });
-    }
-    for (i, a) in args.iter().enumerate() {
-        let (ty, _) = infer_expr(a, env)?;
-        // Integer literals come in as `ScalarI32` (line 562) but lower
-        // to `ConstI64` in IR — accept both; reject anything else with
-        // a clear i64-ABI message that points to RFC 0005 phase 2+.
-        if !matches!(ty, ValueType::ScalarI32 | ValueType::ScalarI64) {
-            return Err(TypeErrSpan {
-                msg: format!(
-                    "argument {i} to intrinsic `{callee}` must be i64 (got {}); the std-surface intrinsics use the i64 ABI — aggregate types are RFC 0005 phase 2+",
-                    describe_value_type(&ty)
-                ),
-                span: a.span(),
-            });
-        }
-    }
-    Ok((ValueType::ScalarI64, span))
-}
-
 /// Bug #38 — true when `ann` is a fixed-size buffer type `bytes[N]`
 /// (parser renders it `Named("bytes[N]")`), distinct from the growable
 /// `Named("bytes")` vec record. The `[` suffix is the sole discriminator.
@@ -2561,7 +2513,7 @@ fn infer_call(
             }
             #[cfg(feature = "std-surface")]
             {
-                check_std_surface_intrinsic(callee, args, span, env)
+                intrinsic_call_arity::check_std_surface_intrinsic(callee, args, span, env)
             }
             #[cfg(not(feature = "std-surface"))]
             {
@@ -4517,6 +4469,14 @@ pub fn check_module_types_in_file(
     let _slice_aliases = slice_abi::AliasScope::install(&module.items);
     let mut errors = qualified_enums::validate(module, src, file);
     duplicate_structs::check(&module.items, src, file, &mut errors);
+    // The E2005 intrinsic-arity rule, at every expression position (while
+    // bodies and conditions, `else if` branches, calls nested as arguments,
+    // fn/`for` bodies, match arms, `let` initializers, return expressions, …).
+    // Runs here — once per file, on the whole tree — rather than inside the
+    // fn-body recursion below, so a call in a body is seen exactly once and
+    // without the body pass's diagnostic whitelist.
+    #[cfg(feature = "std-surface")]
+    intrinsic_call_arity::check(module, src, file, &mut errors);
     #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
     std_imports::check_placement(module, src, file, &mut errors);
     #[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
@@ -6176,7 +6136,7 @@ fn implicit_external_determinism(callee: &str, span: AstSpan) -> Option<bool> {
     // dtype suffix or `__mind_` prefix. Matches the bare name or the last
     // dotted/`::`-qualified path segment, so a qualified call
     // (`std.rand.random`, `rng::rand_uniform`) is caught too. A `std.dns` /
-    // `std.entropy` world call is flagged from its qualifier, not its bare name.
+    // `std.entropy` world call is flagged by `std_qualified` (qualifier, or bare by import).
     if crate::std_qualified::call_is_world(span, callee)
         || crate::intrinsics::callee_is_nondeterministic(callee)
     {
