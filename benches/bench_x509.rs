@@ -28,12 +28,11 @@
 //!
 //! ## Ground truth / build recipe (mirrors `tests/x509_vectors_driver.py`)
 //!
-//! `std/x509.mind` does `import std.sha256;`, which the standalone
-//! `--emit-shared` path leaves undefined. The driver combines the two sources
-//! into one translation unit — `cat std/sha256.mind` first, then `std/x509.mind`
-//! with its `import std.sha256;` line stripped — and compiles that. This bench
-//! reproduces exactly that combine chain (`build_x509_so`) before `--emit-shared`.
-//! `std/sha256.mind` itself imports nothing, so the combined unit is closed.
+//! `std/x509.mind` imports the chain validator's module set. The bench combines
+//! that set into one translation unit with the import lines stripped, in the
+//! order of `X509_SET` in `scripts/run_crypto_vectors.sh` (`build_x509_so`),
+//! and compiles it with `--emit-shared`. `std/sha256.mind` comes first and
+//! imports nothing, so the combined unit is closed.
 //!
 //! ## Sample vector
 //!
@@ -139,7 +138,7 @@ fn decode_hex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Compile the combined `std/sha256.mind` + `std/x509.mind` (import-stripped)
+/// Compile the combined, import-stripped x509 module set
 /// translation unit to a temp `.so` once. Returns `None` (self-skip) if the MLIR
 /// toolchain is shadowed, `mindc` is not built, the sources are unreadable, or
 /// the compile fails — same fail-safe contract as the other kernel benches.
@@ -160,33 +159,25 @@ fn build_x509_so() -> Option<&'static PathBuf> {
             return None;
         };
 
-        // Combine chain, byte-for-byte the driver's `cat sha256 > c; grep -v
-        // '^import std.sha256;' x509 >> c`: sha256 first (it imports nothing),
-        // then x509 with its `import std.sha256;` line dropped.
+        // Combine the module set, sha256 first, each with its import lines
+        // stripped (X509_SET in scripts/run_crypto_vectors.sh).
         let std_dir = manifest_dir().join("std");
-        let sha = match std::fs::read_to_string(std_dir.join("sha256.mind")) {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("bench_x509: cannot read std/sha256.mind; skipping");
+        let mut combined = String::new();
+        for m in [
+            "sha256", "sha512", "ecdsa_p256", "x509_p384", "x509_bignum", "rsa_pss",
+            "x509_bundle", "x509_der", "x509_ext", "x509_name", "x509_sig", "x509_path",
+            "x509",
+        ] {
+            let Ok(src) = std::fs::read_to_string(std_dir.join(format!("{m}.mind"))) else {
+                eprintln!("bench_x509: cannot read std/{m}.mind; skipping");
                 return None;
+            };
+            for line in src.lines() {
+                if !line.trim_start().starts_with("import ") {
+                    combined.push_str(line);
+                    combined.push('\n');
+                }
             }
-        };
-        let x509 = match std::fs::read_to_string(std_dir.join("x509.mind")) {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("bench_x509: cannot read std/x509.mind; skipping");
-                return None;
-            }
-        };
-        let mut combined = String::with_capacity(sha.len() + x509.len() + 2);
-        combined.push_str(&sha);
-        combined.push('\n');
-        for line in x509.lines() {
-            if line.trim_start().starts_with("import std.sha256") {
-                continue;
-            }
-            combined.push_str(line);
-            combined.push('\n');
         }
 
         let dir = std::env::temp_dir();
