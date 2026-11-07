@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`/etc/ssl/certs/ca-certificates.crt`) at the system clock, and speak
   HTTP/1.1: Host header, Content-Length and chunked bodies, a body that ends
   with close_notify, bounded URL / header block (32 KiB) / body (8 MiB) /
-  request body, a 30 s socket timeout and a 120 s deadline. Redirects are not
+  request body, a 30 s socket timeout and a 120 s deadline on the monotonic
+  clock (every read and write is limited to the time left, so one read cannot
+  run past it). Redirects are not
   followed: a 3xx is returned. Each call returns a response record whose error
   is 0 or a named `https_err_*` code (wrong hostname, certificate validity,
   unknown anchor, other chain refusal, CertificateVerify, unsupported leaf key,
@@ -91,7 +93,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     over the whole set: each anchor is parsed once and only one whose subject
     issues a supplied certificate enters the path search.
   - `std.dns`: `tcp_set_io_timeout` (SO_RCVTIMEO and SO_SNDTIMEO) and
-    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream.
+    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream; `dns_free` releases
+    a `dns_resolve` record. `dns_resolve`, `tcp_connect_host(_timeout)` and
+    the host-layout probe release every per-call allocation (the name copy,
+    hints and out-slot, the `uname` buffer, the socket address, the timeout
+    value, the record the connect call resolves) on the success and every
+    error path (`tests/std_dns_free_run.rs`).
   - `tests/std_https_loopback.rs`: a hermetic loopback TLS 1.3 server in MIND
     (test-only RSA-2048 chain, `tests/https_loopback/`) proves GET, POST,
     chunked, a multi-record body and an unfollowed 301, and the named refusals;
@@ -154,7 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     identifiers equal, SHA-1 refused, and in-memory DER/PEM trust
     anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
     Limits: no revocation checking, DNS/IP-only name constraints, at most 8
-    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
+    certificates in the presented chain (`x509_path`: a count over 8 is
+    refused) and `x509_max_anchors()` (1024) anchors, exact-DER issuer
+    matching; unsupported cases
     fail closed. Anchors are trusted key bindings: their self-signature and
     validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
     constraints apply to the path below them.

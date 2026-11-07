@@ -256,6 +256,12 @@ fn dns_new_record() -> i64 {
     r
 }
 
+// dns_free — release a record returned by dns_resolve (success or failure).
+// The record must not be read afterwards.
+pub fn dns_free(r: i64) {
+    __mind_free(r);
+}
+
 fn dns_fail(r: i64, code: i64) -> i64 {
     dns_zero(r, 16 + dns_max_addrs() * 32);
     __mind_store_i64(r + 0, code);
@@ -311,18 +317,19 @@ fn dns_layout() -> i64 {
     // the first field on both.
     let u: i64 = __mind_alloc(1280);
     dns_zero(u, 1280);
-    if uname(u as *mut u8) as i64 != 0 {
-        return 0;
+    let mut layout: i64 = 0;
+    if uname(u as *mut u8) as i64 == 0 {
+        // "Linux"
+        if dns_sysname_is(u, 517366245708, 5) == 1 {
+            layout = dns_layout_linux();
+        }
+        // "Darwin"
+        if dns_sysname_is(u, 121399254606148, 6) == 1 {
+            layout = dns_layout_darwin();
+        }
     }
-    // "Linux"
-    if dns_sysname_is(u, 517366245708, 5) == 1 {
-        return dns_layout_linux();
-    }
-    // "Darwin"
-    if dns_sysname_is(u, 121399254606148, 6) == 1 {
-        return dns_layout_darwin();
-    }
-    0
+    __mind_free(u);
+    layout
 }
 
 fn dns_layout_linux() -> i64 {
@@ -470,6 +477,10 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
     __mind_store_i64(slot, 0);
     let rc: i64 = getaddrinfo(node as *const u8, 0 as *const u8, hints as *const u8, slot as *mut u8) as i64;
     let head: i64 = __mind_load_i64(slot);
+    // The call is done with its inputs and out-slot on every path below.
+    __mind_free(node);
+    __mind_free(hints);
+    __mind_free(slot);
     if rc != 0 {
         if head != 0 {
             freeaddrinfo(head as *mut u8)
@@ -539,7 +550,9 @@ fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
     let tv: i64 = __mind_alloc(16);
     __mind_store_i64(tv + 0, ms / 1000);
     __mind_store_i64(tv + 8, (ms % 1000) * 1000);
-    setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64
+    let rc: i64 = setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64;
+    __mind_free(tv);
+    rc
 }
 
 // Connect to entry `i`; returns the connected fd, or -1.
@@ -559,6 +572,7 @@ fn dns_connect_one(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
     let sa: i64 = __mind_alloc(28);
     let salen: i64 = dns_sockaddr(r, i, port, sa);
     let c: i64 = connect(fd as i32, sa as *const u8, salen as i32) as i64;
+    __mind_free(sa);
     if c != 0 {
         let _ = close(fd as i32);
         return 0 - 1;
@@ -595,20 +609,24 @@ pub fn tcp_connect_host_timeout(name_addr: i64, name_len: i64, port: i64, timeou
     }
     let r: i64 = dns_resolve(name_addr, name_len);
     if dns_status(r) != dns_ok() {
+        dns_free(r);
         return 0;
     }
     let n: i64 = dns_count(r);
     let mut i: i64 = 0;
+    let mut h: i64 = 0;
     while i < n {
         let fd: i64 = dns_connect_one(r, i, port, timeout_ms);
         if fd >= 0 {
-            let h: i64 = __mind_alloc(8);
+            h = __mind_alloc(8);
             __mind_store_i64(h, fd);
-            return h;
+            i = n;
+        } else {
+            i = i + 1;
         }
-        i = i + 1;
     }
-    0
+    dns_free(r);
+    h
 }
 
 // tcp_connect_host — tcp_connect_host_timeout with dns_connect_timeout_ms().

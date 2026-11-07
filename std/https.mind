@@ -88,8 +88,11 @@ import std.dns;
 import std.net;
 import std.entropy;
 
-// The system clock for certificate validity (CLOCK_REALTIME). Socket calls go
-// through std.net and std.dns, so this module declares nothing they declare.
+// The system clock for certificate validity (CLOCK_REALTIME, id 0) and the
+// monotonic clock for the request deadline (CLOCK_MONOTONIC, id 1 on Linux: a
+// wall-clock step, NTP or an operator setting the date cannot stretch or cut
+// the deadline). Socket calls go through std.net and std.dns, so this module
+// declares nothing they declare.
 extern "C" {
     unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
 }
@@ -635,6 +638,68 @@ fn https_now_unix() -> i64 {
     sec
 }
 
+// Milliseconds on the monotonic clock, or -1.
+fn https_now_mono_ms() -> i64 {
+    let ts: i64 = __mind_alloc(16);
+    __mind_store_i64(ts, 0);
+    __mind_store_i64(ts + 8, 0);
+    let rc: i64 = clock_gettime(1, ts as *mut u8) as i64;
+    let sec: i64 = __mind_load_i64(ts);
+    let nsec: i64 = __mind_load_i64(ts + 8);
+    __mind_free(ts);
+    if rc != 0 || sec < 0 || nsec < 0 {
+        return 0 - 1;
+    }
+    sec * 1000 + nsec / 1000000
+}
+
+// Milliseconds one socket read or write may block with `remaining_ms` left of
+// the deadline: 0 once it has passed, else the smaller of the remaining time
+// and the per-operation limit https_io_timeout_s().
+pub fn https_io_budget_ms(remaining_ms: i64) -> i64 {
+    if remaining_ms <= 0 {
+        return 0;
+    }
+    let cap: i64 = https_io_timeout_s() * 1000;
+    if remaining_ms < cap {
+        return remaining_ms;
+    }
+    cap
+}
+
+// Milliseconds left until the monotonic `deadline` (a https_now_mono_ms value).
+// A clock failure is 0: no time left, so the request fails closed.
+fn https_remaining_ms(deadline: i64) -> i64 {
+    let now: i64 = https_now_mono_ms();
+    if now < 0 {
+        return 0;
+    }
+    deadline - now
+}
+
+// Limit the next blocking read or write on `conn` to the time left. 0, or the
+// timeout class once the deadline has passed, or the I/O class if the socket
+// option cannot be set. A single read then cannot run past the deadline.
+fn https_arm(conn: i64, deadline: i64) -> i64 {
+    let budget: i64 = https_io_budget_ms(https_remaining_ms(deadline));
+    if budget < 1 {
+        return https_err_timeout();
+    }
+    if tcp_set_io_timeout(conn, budget) != 0 {
+        return https_err_io();
+    }
+    0
+}
+
+// The class of a failed socket read or write: a timeout once the deadline has
+// passed (the armed limit is what stopped it), else a plain I/O error.
+fn https_io_failure(deadline: i64) -> i64 {
+    if https_remaining_ms(deadline) <= 0 {
+        return https_err_timeout();
+    }
+    https_err_io()
+}
+
 // std.net's tcp_close closes the descriptor held in a handle record; the
 // bundle file uses it, so this module declares no libc close of its own.
 fn https_close_fd(fd: i64) -> i64 {
@@ -752,15 +817,18 @@ fn https_tls_error(state: i64, rc: i64) -> i64 {
 }
 
 // Send every pending TLS record. Returns 0 or a negative code.
-fn https_flush(state: i64, conn: i64, buf: i64) -> i64 {
+fn https_flush(state: i64, conn: i64, buf: i64, deadline: i64) -> i64 {
     let mut rc: i64 = 0;
     while rc == 0 && tls13c_out_pending(state) > 0 {
         let n: i64 = tls13c_read_out(state, buf, 16640);
         if n <= 0 {
             rc = https_err_tls();
         } else {
-            if tcp_write_all(conn, buf, n) != n {
-                rc = https_err_io();
+            rc = https_arm(conn, deadline);
+            if rc == 0 {
+                if tcp_write_all(conn, buf, n) != n {
+                    rc = https_io_failure(deadline);
+                }
             }
         }
     }
@@ -768,7 +836,7 @@ fn https_flush(state: i64, conn: i64, buf: i64) -> i64 {
 }
 
 // Seal and send the request, one record of at most 16384 bytes at a time.
-fn https_send_request(state: i64, conn: i64, req: i64, buf: i64) -> i64 {
+fn https_send_request(state: i64, conn: i64, req: i64, buf: i64, deadline: i64) -> i64 {
     let addr: i64 = __mind_load_i64(req);
     let len: i64 = __mind_load_i64(req + 8);
     let mut off: i64 = 0;
@@ -783,7 +851,7 @@ fn https_send_request(state: i64, conn: i64, req: i64, buf: i64) -> i64 {
             rc = https_tls_error(state, w);
         } else {
             off = off + n;
-            rc = https_flush(state, conn, buf);
+            rc = https_flush(state, conn, buf, deadline);
         }
     }
     rc
@@ -822,16 +890,42 @@ fn https_drain(state: i64, resp: i64, app: i64, sent: i64) -> i64 {
     result
 }
 
+// One read of the connection into `buf` (at most `want` bytes), armed with the
+// time left so it cannot run past the deadline however slowly the peer sends,
+// then fed to the client and drained into the response. 1 (complete response),
+// 0 (go on) or a negative code.
+fn https_read_step(state: i64, conn: i64, buf: i64, want: i64, resp: i64, app: i64, sent: i64, deadline: i64) -> i64 {
+    let armed: i64 = https_arm(conn, deadline);
+    if armed != 0 {
+        return armed;
+    }
+    let n: i64 = tcp_read(conn, buf, want);
+    if n == 0 {
+        if hx_complete(resp) == 1 {
+            return 1;
+        }
+        return https_err_truncated();
+    }
+    if n < 0 {
+        return https_io_failure(deadline);
+    }
+    let frc: i64 = tls13c_feed(state, buf, n);
+    if frc != 0 {
+        return https_tls_error(state, frc);
+    }
+    https_drain(state, resp, app, sent)
+}
+
 // The connection loop after ClientHello is queued. Returns 1 (complete
 // response) or a negative code.
 fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: i64, deadline: i64) -> i64 {
     let buf: i64 = __mind_alloc(16640);
     let app: i64 = __mind_alloc(16384);
     let mut sent: i64 = 0;
-    let mut result: i64 = https_flush(state, conn, buf);
+    let mut result: i64 = https_flush(state, conn, buf, deadline);
     while result == 0 {
         let st: i64 = tls13c_status(state);
-        if https_now_unix() > deadline {
+        if https_remaining_ms(deadline) <= 0 {
             result = https_err_timeout();
         } else {
             if st == tls13c_st_hrr() {
@@ -843,7 +937,7 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
                     if tls13c_seal_client_hello2(state, ch2, n2) != 0 {
                         result = https_err_tls();
                     } else {
-                        result = https_flush(state, conn, buf);
+                        result = https_flush(state, conn, buf, deadline);
                     }
                 }
                 __mind_free(ch2)
@@ -858,7 +952,7 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
                         // marked before the first write, so a write that fails
                         // partway (a reset during the body) is after-send too.
                         hx_mark_sent(resp);
-                        result = https_send_request(state, conn, req, buf);
+                        result = https_send_request(state, conn, req, buf, deadline);
                     }
                 } else {
                     if st == tls13c_st_closed() {
@@ -871,25 +965,7 @@ fn https_session(state: i64, conn: i64, ent: i64, ent_len: i64, req: i64, resp: 
                         if want < 1 {
                             result = https_err_tls();
                         } else {
-                            let n: i64 = tcp_read(conn, buf, want);
-                            if n == 0 {
-                                if hx_complete(resp) == 1 {
-                                    result = 1;
-                                } else {
-                                    result = https_err_truncated();
-                                }
-                            } else {
-                                if n < 0 {
-                                    result = https_err_io();
-                                } else {
-                                    let frc: i64 = tls13c_feed(state, buf, n);
-                                    if frc != 0 {
-                                        result = https_tls_error(state, frc);
-                                    } else {
-                                        result = https_drain(state, resp, app, sent);
-                                    }
-                                }
-                            }
+                            result = https_read_step(state, conn, buf, want, resp, app, sent, deadline);
                         }
                     }
                 }
@@ -940,6 +1016,11 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
     let hlen: i64 = hx_url_host_len(u);
     let port: i64 = hx_url_port(u);
     __mind_free(u);
+    let started: i64 = https_now_mono_ms();
+    if started < 0 {
+        return hx_fail(resp, https_err_io());
+    }
+    let deadline: i64 = started + https_deadline_s() * 1000;
     let conn: i64 = tcp_connect_host(host, hlen, port);
     if conn == 0 {
         return hx_fail(resp, https_err_connect());
@@ -971,7 +1052,7 @@ fn https_request(is_post: i64, url: i64, url_len: i64, hdr: i64, hdr_len: i64, b
         __mind_free(ch)
     }
     if result == 0 {
-        result = https_session(state, conn, ent, need, req, resp, unix_s + https_deadline_s());
+        result = https_session(state, conn, ent, need, req, resp, deadline);
     }
     hx_set_verdict(resp, tls13c_verdict(state));
     tls13c_close(state);

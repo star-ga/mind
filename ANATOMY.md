@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2172 | **Est. tokens:** ~4,140,680
-**Generated:** 2026-11-07 00:56 UTC
+**Files:** 2174 | **Est. tokens:** ~4,142,885
+**Generated:** 2026-11-07 01:13 UTC
 
 ## Token Budget Guide
 
@@ -157,8 +157,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 62 | ~286,024 |
-| `tests/` | 452 | ~977,447 |
+| `std/` | 62 | ~286,786 |
+| `tests/` | 454 | ~978,890 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1651,7 +1651,7 @@
 - `chacha20_poly1305.mind` (~3972 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `detmath.mind` (~4059 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
-- `dns.mind` (~5056 tok, huge) — std/dns.mind — host name resolution, connect-by-name, and the stream options
+- `dns.mind` (~5187 tok, huge) — std/dns.mind — host name resolution, connect-by-name, and the stream options
 - `ecdsa_p256.mind` (~7346 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `entropy.mind` (~858 tok, large) — std/entropy.mind — operating-system randomness (keys, nonces, TLS randoms).
 - `fs.mind` (~5043 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
@@ -1660,7 +1660,7 @@
 - `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `https_http1.mind` (~6266 tok, huge) — std/https_http1.mind — the HTTP/1.1 response side of std.https: the
-- `https.mind` (~10089 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
+- `https.mind` (~10720 tok, huge) — std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
 - `https_probe.mind` (~1830 tok, huge) — std/https_probe.mind — the std.https network probe: resolve the host of an
 - `https_url.mind` (~5267 tok, huge) — std/https_url.mind — the std.https error codes and bounds, URL parsing and
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
@@ -2731,6 +2731,7 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8134 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_dns_free_run.rs` (~800 tok, large) — Copyright 2026 STARGA Inc.
 - `std_dns_layout_run.rs` (~2220 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_entropy_dns_run.rs` (~5013 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/std_entropy_dns_support/`
@@ -2738,6 +2739,7 @@
 - `mod.rs` (~1583 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/`
 
+- `std_https_deadline.rs` (~643 tok, large) — Copyright 2026 STARGA Inc.
 - `std_https_loopback.rs` (~1559 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_https_network_safe.rs` (~5337 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_https_openssl.rs` (~5427 tok, huge) — Copyright 2026 STARGA Inc.
