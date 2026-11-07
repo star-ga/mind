@@ -23,13 +23,13 @@
 //! compiled store evaluates it.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::ast::{Node, TypeAnn};
 
 use super::autodiff::TensorEnvEntry;
 use super::value::{ArrayBuf, Record};
-use super::{EvalError, ExecMode, Value, declared_width, eval_value_expr_mode};
+use super::{EvalError, ExecMode, Value, declared_width, eval_value_expr_mode, zeroed_array};
 
 type Env = HashMap<String, Value>;
 type TensorEnv = HashMap<String, TensorEnvEntry>;
@@ -46,16 +46,17 @@ type TensorEnv = HashMap<String, TensorEnvEntry>;
 // struct contributes nothing.
 
 thread_local! {
-    /// `struct name -> fields declared array<T>`. Restored on scope exit by
-    /// [`DynamicArrayFieldsGuard`] so a nested module eval neither sees nor
-    /// leaks the caller's schema.
-    static DYNAMIC_ARRAY_FIELDS: RefCell<HashMap<String, HashSet<String>>> =
+    /// `struct name -> fields declared array<T>`, each with whether its
+    /// elements are floats (the zero a `vec_zeroed` buffer holds). Restored on
+    /// scope exit by [`DynamicArrayFieldsGuard`] so a nested module eval neither
+    /// sees nor leaks the caller's schema.
+    static DYNAMIC_ARRAY_FIELDS: RefCell<HashMap<String, HashMap<String, bool>>> =
         RefCell::new(HashMap::new());
 }
 
 /// Restores the enclosing eval's dynamic-array-field schema on every exit
 /// path.
-pub(crate) struct DynamicArrayFieldsGuard(HashMap<String, HashSet<String>>);
+pub(crate) struct DynamicArrayFieldsGuard(HashMap<String, HashMap<String, bool>>);
 
 impl Drop for DynamicArrayFieldsGuard {
     fn drop(&mut self) {
@@ -68,19 +69,16 @@ impl Drop for DynamicArrayFieldsGuard {
 /// previous one. Last definition wins, matching the fn table and the
 /// narrow-field schema.
 pub(crate) fn install_dynamic_array_fields(items: &[Node]) -> DynamicArrayFieldsGuard {
-    let mut schema: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut schema: HashMap<String, HashMap<String, bool>> = HashMap::new();
     for item in items {
         if let Node::StructDef { name, fields, .. } = item {
-            let dynamic: BTreeSet<&str> = fields
+            let dynamic: HashMap<String, bool> = fields
                 .iter()
                 .filter(|f| is_dynamic_array_ann(&f.ty))
-                .map(|f| f.name.as_str())
+                .map(|f| (f.name.clone(), zeroed_array::has_float_elements(&f.ty)))
                 .collect();
             if !dynamic.is_empty() {
-                schema
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(dynamic.into_iter().map(str::to_string));
+                schema.entry(name.clone()).or_default().extend(dynamic);
             }
         }
     }
@@ -97,28 +95,34 @@ fn is_dynamic_array_ann(ty: &TypeAnn) -> bool {
     matches!(ty, TypeAnn::Generic { name, .. } if name == "array")
 }
 
-/// Is `struct_name.field` declared `array<T>` in the active schema?
-fn field_is_dynamic_array(struct_name: &str, field: &str) -> bool {
+/// Is `struct_name.field` declared `array<T>` in the active schema? `Some`
+/// carries whether its elements are floats.
+fn dynamic_array_field(struct_name: &str, field: &str) -> Option<bool> {
     DYNAMIC_ARRAY_FIELDS.with(|m| {
         m.borrow()
             .get(struct_name)
-            .is_some_and(|fields| fields.contains(field))
+            .and_then(|fields| fields.get(field).copied())
     })
 }
 
 /// Materialise the shared run for one store of a dynamic-array field's value:
 /// a plain array value becomes a FRESH run (a new literal allocates a new
 /// backing, natively), and a value that already shares a run keeps sharing it
-/// (a handle copy aliases). Every other field — fixed array, scalar, struct,
+/// (a handle copy aliases). A `vec_zeroed` buffer becomes its run
+/// ([`zeroed_array`]). Every other field — fixed array, scalar, struct,
 /// unregistered — passes through untouched.
-pub(crate) fn wrap_struct_field(struct_name: &str, field: &str, value: Value) -> Value {
-    if !field_is_dynamic_array(struct_name, field) {
-        return value;
-    }
+pub(crate) fn wrap_struct_field(
+    struct_name: &str,
+    field: &str,
+    value: Value,
+) -> Result<Value, EvalError> {
+    let Some(float_elements) = dynamic_array_field(struct_name, field) else {
+        return Ok(value);
+    };
     match value {
-        Value::Array(_) => value,
-        Value::Tuple(items) => Value::Array(ArrayBuf::new(items)),
-        other => other,
+        Value::Array(_) => Ok(value),
+        Value::Tuple(items) => Ok(Value::Array(ArrayBuf::new(items))),
+        other => zeroed_array::adopt_field(other, float_elements),
     }
 }
 
@@ -147,7 +151,7 @@ fn store(name: &str, record: &Record, field: &str, value: Value) -> Result<Value
     // becomes a FRESH run (a new literal allocates a new backing natively) or
     // keeps the run it already shares (a handle copy aliases). Aliases of the
     // old field keep the old run, exactly as they keep the old handle.
-    let value = wrap_struct_field(name, field, value);
+    let value = wrap_struct_field(name, field, value)?;
     if record.set(field, value.clone()) {
         Ok(value)
     } else {

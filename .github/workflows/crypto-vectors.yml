@@ -47,7 +47,11 @@ jobs:
       matrix:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Own installs peaked at 27s (runs 42311708468, 42310768122, 42301093806).
+    # The shared apt step also took 1022s on a successful LLVM 20 fetch
+    # (148 MB in 16min 49s, run 42273645377). Rest of this job peaked at 214s.
+    # 2*1022+214 = 2258s.
+    timeout-minutes: 39
 
     # Fail-closed, exactly like the executable-miscompile and keystone gates:
     #   1. MIND_BENCH_REQUIRE=1 is set for parity with the exec-gate/keystone
@@ -98,43 +102,9 @@ jobs:
           python3 -m pip install cryptography hyperframe hpack kyber-py
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
-        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
-        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
-        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
-        # is an upstream failure, and the gate assertions below are unchanged.
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: ${{ matrix.llvm }}
 
       - name: Verify toolchain on PATH
         # Fail-closed guard: if the MLIR toolchain is absent this errors here,

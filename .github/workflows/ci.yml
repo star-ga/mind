@@ -518,7 +518,14 @@ jobs:
             substrate: neon
             dual_llvm: "0"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30  # build mindc + run the ELF byte-identity gate; bound stalls
+    # Successful avx2 LLVM 23 installs were 25s, 38s and 39s (runs 42310768179,
+    # 42273645377, 42015873391); the rest of that job peaked at 166s, so
+    # 2*39s+166s is 4 min. The same mlir-20 apt fetch took 16min 49s on a
+    # successful executable-semantics run, and a canceled avx2 LLVM 23 leg was
+    # still inside apt at the old 30 min cap with llvm-20-dev (50.7 MB of 148 MB)
+    # unfinished (~71 KB/s, about 12 min left, then the 166s of build and tests).
+    # 45 min covers that fetch plus the measured rest.
+    timeout-minutes: 45
 
     env:
       http_proxy: ""
@@ -549,67 +556,12 @@ jobs:
             ${{ matrix.runner }}-xsi-
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
-        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
-        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
-        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
-        # is an upstream failure, and the gate assertions below are unchanged.
-        # The avx2 LLVM 23 leg also installs LLVM 20 off PATH for the mismatch test.
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          if [ "${{ matrix.dual_llvm }}" = "1" ]; then
-            if [ "${{ matrix.llvm }}" != "23" ]; then
-              echo "FAIL: the dual-toolchain leg keeps LLVM 23 on PATH and installs LLVM 20 beside it"
-              exit 1
-            fi
-            # LLVM 20 stays off PATH. The mismatch test sets MLIR_TRANSLATE
-            # and CLANG to one major while PATH holds the other.
-            ok_other=0
-            for attempt in 1 2 3 4 5; do
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then
-                ok_other=1
-                break
-              fi
-              echo "apt attempt $attempt failed installing LLVM 20; retry in $((attempt * 20))s"
-              sleep $((attempt * 20))
-            done
-            [ "$ok_other" = 1 ] || { echo "LLVM 20 unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-            for t in mlir-opt mlir-translate clang; do
-              test -x "/usr/lib/llvm-20/bin/$t" || { echo "FAIL: /usr/lib/llvm-20/bin/$t missing"; exit 1; }
-              test -x "/usr/lib/llvm-23/bin/$t" || { echo "FAIL: /usr/lib/llvm-23/bin/$t missing"; exit 1; }
-            done
-          fi
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
+        # Shared with every other LLVM apt install. The avx2 LLVM 23 leg sets
+        # dual-llvm so LLVM 20 is installed beside LLVM 23 and stays off PATH.
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: ${{ matrix.llvm }}
+          dual-llvm: ${{ matrix.dual_llvm }}
 
       - name: Verify toolchain on PATH
         run: |
@@ -892,7 +844,10 @@ jobs:
       matrix:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Own installs peaked at 109s. The shared apt step also took 1022s on a
+    # successful LLVM 20 fetch (148 MB in 16min 49s, run 42273645377). Rest of
+    # this job peaked at 1093s. 2*1022+1093 = 3137s.
+    timeout-minutes: 53
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -1030,43 +985,9 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
-        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
-        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
-        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
-        # is an upstream failure, and the gate assertions below are unchanged.
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: ${{ matrix.llvm }}
 
       - name: Verify toolchain on PATH
         run: |
@@ -1692,7 +1613,10 @@ jobs:
       matrix:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Own installs peaked at 23s. Budget uses the slow successful apt of these
+    # same packages (1022s, run 42273645377) times two, plus this job's measured
+    # rest of 206s: 2*1022+206 = 2250s.
+    timeout-minutes: 38
 
     # Compile a tiny deterministic MIND kernel to a cdylib, dlopen it, call it,
     # and ASSERT the one true integer result. The byte-identity keystone proves
@@ -1727,43 +1651,9 @@ jobs:
             ${{ runner.os }}-exec-gate-
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
-        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
-        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
-        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
-        # is an upstream failure, and the gate assertions below are unchanged.
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: ${{ matrix.llvm }}
 
       - name: Verify toolchain on PATH
         run: |
@@ -1808,7 +1698,10 @@ jobs:
       matrix:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45  # build ~317 test harnesses + run ~1913 tests; bound stalls
+    # Install step max 1022s (LLVM 20, run 42273645377: Fetched 148 MB in 16min 49s)
+    # across runs 42310768179, 42273645377 and 42015873391. Rest of the job max
+    # 1291s. 2*1022+1291 = 3335s. Still builds ~317 harnesses and runs ~1913 tests.
+    timeout-minutes: 56
 
     # THE TIER THAT RAN NOWHERE. Measured at f2a2d87d: 123 integration-test files /
     # 262 test functions were reachable by NO `cargo test` invocation in this
@@ -1904,48 +1797,14 @@ jobs:
             ${{ runner.os }}-exec-sem-
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
-        # LLVM 23 (latest) comes from the signed apt.llvm.org suite
-        # llvm-toolchain-noble-23, which publishes amd64 and arm64.
-        # LLVM 20 (oldest supported) keeps the Ubuntu 24.04 package install
-        # unchanged. The retry is the same 5-attempt backoff: a mirror outage
-        # is an upstream failure, and the gate assertions below are unchanged.
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.llvm }}" != "23" ] && [ "${{ matrix.llvm }}" != "20" ]; then
-            echo "FAIL: unsupported LLVM major ${{ matrix.llvm }}"
-            exit 1
-          fi
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if [ "${{ matrix.llvm }}" = "23" ]; then
-              if ! command -v gpg >/dev/null 2>&1; then
-                sudo apt-get update || true
-                sudo apt-get install -y gnupg
-              fi
-              sudo install -d -m 0755 /etc/apt/keyrings
-              if ! curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --yes --dearmor | sudo tee /etc/apt/keyrings/apt.llvm.org.gpg >/dev/null; then
-                echo "apt attempt $attempt failed (key download); retry in $((attempt * 20))s"
-                sleep $((attempt * 20))
-                continue
-              fi
-              sudo chmod 0644 /etc/apt/keyrings/apt.llvm.org.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-23.list >/dev/null
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-23-tools clang-23; then ok=1; break; fi
-            else
-              sudo apt-get update || true
-              if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
-            fi
-            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
-          echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: ${{ matrix.llvm }}
 
       - name: Verify toolchain on PATH
         # Fail-closed guard: MIND_BENCH_REQUIRE=1 (set by the gate script) turns a
         # missing MLIR toolchain into a hard failure inside the harnesses, and this
-        # step catches it before the 45-minute build even starts.
+        # step catches it before the tier build even starts.
         run: |
           # `tool --version | head -1` is NOT a verification: without pipefail the
           # pipeline's status is head's, so an ABSENT or broken tool exits 0 and

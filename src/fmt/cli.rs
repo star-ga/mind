@@ -355,55 +355,17 @@ fn build_unified_hunks(old: &[&str], new: &[&str], edits: &[Edit], context: usiz
         }
     }
 
-    // Group into hunks: sequences of changed lines padded with `context` lines.
+    // Group into hunks: runs of changed lines padded with `context` lines.
     let mut out = String::new();
     let n = lines.len();
-    let mut i = 0;
+    let changed: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.edit != Edit::Keep)
+        .map(|(k, _)| k)
+        .collect();
 
-    while i < n {
-        // Find next changed line.
-        if lines[i].edit == Edit::Keep {
-            i += 1;
-            continue;
-        }
-
-        // Hunk starts `context` lines before the change (clamped to 0).
-        let hunk_start = i.saturating_sub(context);
-        // Extend hunk end to include all changes plus context after.
-        let mut hunk_end = i;
-        loop {
-            // Advance to include this change's trailing context.
-            hunk_end = (hunk_end + context + 1).min(n);
-            // Include any change that falls within this window.
-            let next_change = lines[hunk_end.min(n - 1)..]
-                .iter()
-                .take(1)
-                .enumerate()
-                .find(|(_, l)| l.edit != Edit::Keep)
-                .map(|(_, l)| l);
-            let inner_next = lines[i..hunk_end]
-                .iter()
-                .rposition(|l| l.edit != Edit::Keep)
-                .map(|p| i + p + 1);
-
-            let last_change_in_window = inner_next.unwrap_or(i + 1);
-            hunk_end = (last_change_in_window + context).min(n);
-
-            // Check if there is another change within 2*context of hunk_end.
-            let next_change_pos = lines[hunk_end.min(n)..]
-                .iter()
-                .position(|l| l.edit != Edit::Keep);
-            match next_change_pos {
-                Some(p) if p < 2 * context => {
-                    // Merge: advance i past the new change.
-                    i = hunk_end + p + 1;
-                }
-                _ => break,
-            }
-            let _ = next_change;
-        }
-        hunk_end = hunk_end.min(n);
-
+    for (hunk_start, hunk_end) in hunk_ranges(&changed, n, context) {
         // Compute hunk header @@ -old_start,old_count +new_start,new_count @@
         let old_start = lines[hunk_start].old_no.max(1);
         let new_start = lines[hunk_start].new_no.max(1);
@@ -445,11 +407,36 @@ fn build_unified_hunks(old: &[&str], new: &[&str], edits: &[Edit], context: usiz
             out.push_str(text);
             out.push('\n');
         }
-
-        i = hunk_end;
     }
 
     out
+}
+
+/// Split the changed-line indices into hunk ranges `[start, end)` over `n` lines.
+///
+/// `changed` is strictly increasing with every index below `n`.  Changes
+/// separated by at most `2 * context` unchanged lines share one hunk, because
+/// their context windows touch or overlap.  Each hunk is padded with `context`
+/// lines on both sides and clamped to `[0, n)`, so `start < end <= n` always
+/// holds and consecutive hunks never overlap.
+fn hunk_ranges(changed: &[usize], n: usize, context: usize) -> Vec<(usize, usize)> {
+    let max_gap = context.saturating_mul(2);
+    let mut ranges = Vec::new();
+    let mut k = 0;
+    while k < changed.len() {
+        let first = changed[k];
+        let mut last = first;
+        k += 1;
+        while k < changed.len() && changed[k].saturating_sub(last + 1) <= max_gap {
+            last = changed[k];
+            k += 1;
+        }
+        ranges.push((
+            first.saturating_sub(context),
+            last.saturating_add(1).saturating_add(context).min(n),
+        ));
+    }
+    ranges
 }
 
 #[cfg(test)]
@@ -491,5 +478,291 @@ mod tests {
         let result = unified_diff_str("hello\n", "world\n", 3);
         assert!(result.contains("-hello"), "expected -hello:\n{result}");
         assert!(result.contains("+world"), "expected +world:\n{result}");
+    }
+
+    // -- hunk grouping -----------------------------------------------------
+    //
+    // Expected outputs below are what `diff -U3` prints for the same two files.
+
+    /// `n` lines `l1..ln`, with each 1-based line in `replaced` spelled `L<k>`.
+    fn numbered(n: usize, replaced: &[usize]) -> String {
+        (1..=n)
+            .map(|k| {
+                if replaced.contains(&k) {
+                    format!("L{k}\n")
+                } else {
+                    format!("l{k}\n")
+                }
+            })
+            .collect()
+    }
+
+    fn diff_of(n: usize, replaced: &[usize]) -> String {
+        unified_diff_str(&numbered(n, &[]), &numbered(n, replaced), 3)
+    }
+
+    #[test]
+    fn diff_changes_seven_lines_apart_make_two_hunks() {
+        // Seven unchanged lines between the changes: the panic input.
+        let want = "\
+@@ -1,5 +1,5 @@
+ l1
+-l2
++L2
+ l3
+ l4
+ l5
+@@ -7,7 +7,7 @@
+ l7
+ l8
+ l9
+-l10
++L10
+ l11
+ l12
+ l13
+";
+        assert_eq!(diff_of(20, &[2, 10]), want);
+    }
+
+    #[test]
+    fn diff_changes_eight_lines_apart_make_two_hunks() {
+        let want = "\
+@@ -1,5 +1,5 @@
+ l1
+-l2
++L2
+ l3
+ l4
+ l5
+@@ -8,7 +8,7 @@
+ l8
+ l9
+ l10
+-l11
++L11
+ l12
+ l13
+ l14
+";
+        assert_eq!(diff_of(20, &[2, 11]), want);
+    }
+
+    #[test]
+    fn diff_changes_six_lines_apart_share_one_hunk() {
+        // Six unchanged lines is exactly 2 * context: the windows touch, so the
+        // changes merge; one more line (seven, above) splits them.
+        let want = "\
+@@ -1,12 +1,12 @@
+ l1
+-l2
++L2
+ l3
+ l4
+ l5
+ l6
+ l7
+ l8
+-l9
++L9
+ l10
+ l11
+ l12
+";
+        assert_eq!(diff_of(20, &[2, 9]), want);
+    }
+
+    #[test]
+    fn diff_overlapping_changes_chain_into_one_hunk_then_split() {
+        let chained = "\
+@@ -1,17 +1,17 @@
+ l1
+-l2
++L2
+ l3
+ l4
+ l5
+ l6
+ l7
+-l8
++L8
+ l9
+ l10
+ l11
+ l12
+ l13
+-l14
++L14
+ l15
+ l16
+ l17
+";
+        assert_eq!(diff_of(20, &[2, 8, 14]), chained);
+
+        let tail = "\
+@@ -19,6 +19,6 @@
+ l19
+ l20
+ l21
+-l22
++L22
+ l23
+ l24
+";
+        assert_eq!(diff_of(24, &[2, 8, 14, 22]), format!("{chained}{tail}"));
+    }
+
+    #[test]
+    fn diff_first_and_last_line_changed() {
+        let want = "\
+@@ -1,4 +1,4 @@
+-l1
++L1
+ l2
+ l3
+ l4
+@@ -9,4 +9,4 @@
+ l9
+ l10
+ l11
+-l12
++L12
+";
+        assert_eq!(diff_of(12, &[1, 12]), want);
+    }
+
+    #[test]
+    fn diff_change_near_end_clamps_hunk_end() {
+        // Only one line of trailing context exists; the hunk must stop at the end.
+        let want = "\
+@@ -6,5 +6,5 @@
+ l6
+ l7
+ l8
+-l9
++L9
+ l10
+";
+        assert_eq!(diff_of(10, &[9]), want);
+    }
+
+    #[test]
+    fn diff_clustered_changes_keep_full_trailing_context() {
+        let want = "\
+@@ -1,6 +1,6 @@
+-l1
++L1
+ l2
+-l3
++L3
+ l4
+ l5
+ l6
+";
+        assert_eq!(diff_of(12, &[1, 3]), want);
+    }
+
+    #[test]
+    fn diff_unchanged_inputs_emit_nothing() {
+        assert_eq!(diff_of(25, &[]), "");
+        assert_eq!(unified_diff_str("", "", 3), "");
+        assert_eq!(unified_diff_str("a\nb", "a\nb", 3), "");
+    }
+
+    #[test]
+    fn hunk_ranges_stay_in_bounds_for_every_change_pattern() {
+        for context in 0..=4usize {
+            for n in 0..=12usize {
+                for mask in 0u32..(1 << n) {
+                    let changed: Vec<usize> = (0..n).filter(|k| (mask >> *k) & 1 == 1).collect();
+                    let ranges = hunk_ranges(&changed, n, context);
+                    let tag = format!("n={n} context={context} changed={changed:?} -> {ranges:?}");
+
+                    assert_eq!(ranges.is_empty(), changed.is_empty(), "{tag}");
+                    let mut covered = Vec::new();
+                    for &(start, end) in &ranges {
+                        assert!(start < end && end <= n, "out of bounds: {tag}");
+                        let inside: Vec<usize> = changed
+                            .iter()
+                            .copied()
+                            .filter(|k| (start..end).contains(k))
+                            .collect();
+                        let (first, last) = (inside[0], inside[inside.len() - 1]);
+                        assert_eq!(start, first.saturating_sub(context), "start: {tag}");
+                        assert_eq!(end, (last + 1 + context).min(n), "end: {tag}");
+                        covered.extend(inside);
+                    }
+                    assert_eq!(covered, changed, "every change in exactly one hunk: {tag}");
+                    for pair in ranges.windows(2) {
+                        assert!(pair[0].1 < pair[1].0, "hunks touch or overlap: {tag}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply a unified diff (no file header) to `old`, checking every context
+    /// and deleted line against it and that hunks are ordered and disjoint.
+    fn apply_unified(old: &str, diff: &str) -> String {
+        let old_lines: Vec<&str> = old.lines().collect();
+        let mut out: Vec<&str> = Vec::new();
+        let mut pos = 0usize;
+        for line in diff.lines() {
+            if let Some(header) = line.strip_prefix("@@ -") {
+                let start: usize = header
+                    .split([',', ' '])
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .expect("hunk header start");
+                assert!(start > pos, "hunks overlap or are out of order:\n{diff}");
+                out.extend(&old_lines[pos..start - 1]);
+                pos = start - 1;
+            } else if let Some(text) = line.strip_prefix('+') {
+                out.push(text);
+            } else {
+                let text = &line[1..];
+                assert_eq!(old_lines[pos], text, "context/delete mismatch:\n{diff}");
+                if line.starts_with(' ') {
+                    out.push(text);
+                }
+                pos += 1;
+            }
+        }
+        out.extend(&old_lines[pos..]);
+        out.iter().map(|l| format!("{l}\n")).collect()
+    }
+
+    #[test]
+    fn diff_applies_back_to_the_new_text_for_scattered_edits() {
+        // Deterministic pseudo-random edits at several densities, every context.
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % 100
+        };
+        for density in [3u64, 8, 20, 45, 80] {
+            for round in 0..40 {
+                let old: Vec<String> = (0..40).map(|k| format!("o{k}")).collect();
+                let mut new: Vec<String> = Vec::new();
+                for (k, line) in old.iter().enumerate() {
+                    let r = next();
+                    if r >= density {
+                        new.push(line.clone());
+                    } else if r % 3 == 0 {
+                        new.push(format!("n{round}_{k}"));
+                    } else if r % 3 == 1 {
+                        new.push(line.clone());
+                        new.push(format!("i{round}_{k}"));
+                    } // else: line deleted
+                }
+                let (old, new) = (old.join("\n") + "\n", new.join("\n") + "\n");
+                for context in 1..=3 {
+                    let diff = unified_diff_str(&old, &new, context);
+                    assert_eq!(apply_unified(&old, &diff), new, "context={context}\n{diff}");
+                }
+            }
+        }
     }
 }

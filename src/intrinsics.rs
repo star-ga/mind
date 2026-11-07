@@ -549,7 +549,8 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "time_now",
     // `std.dns` / `std.entropy` are deliberately absent. Matching the bare name
     // refused a user function spelled the same way. A call is a world read only
-    // when its qualifier resolves to that module (`crate::std_qualified`).
+    // when it resolves to that module, by its qualifier or, bare, by an import
+    // of that module and no definition of the name (`crate::std_qualified`).
 ];
 
 /// The determinism classification of an intrinsic, or `None` when the name is
