@@ -22,7 +22,6 @@ use super::slots::{Contradicted, contradicts, holds_str, is_null};
 use super::sums::Variant;
 
 mod payloads;
-mod std_decls;
 
 /// What the pass knows about one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +143,13 @@ pub(super) const SCALAR_NAMES: &[&str] = &[
 ];
 
 /// Record `value` for `name`; two declarations that disagree prove nothing.
+/// The name a declaration is keyed by: its source name, without the owner
+/// `mindc test` qualifies the items of its merged module with, so calls and
+/// the project summary, which use source names, find it.
+pub(super) fn fn_key(name: &str) -> &str {
+    crate::eval::module_bindings::symbol_display_name(name)
+}
+
 fn merge<T: PartialEq>(map: &mut BTreeMap<String, Option<T>>, name: &str, value: Option<T>) {
     match map.get_mut(name) {
         Some(slot) if *slot != value => *slot = None,
@@ -264,36 +270,38 @@ pub(super) struct Decls {
 }
 
 impl Decls {
-    /// The declarations of `module`; with `project`, starting from the
-    /// stores the other modules of its project build make (see
-    /// [`super::project`]). The interpreter's module already holds the
-    /// project's modules and the std code it runs, so it takes none.
-    pub(super) fn new(module: &Module, project: bool) -> Self {
+    /// The declarations of `items`, the items of `module` one analysis
+    /// decides, starting from the stores the other modules of its project
+    /// build make (see [`super::project`]).
+    pub(super) fn new(module: &Module, items: &[&Node]) -> Self {
         #[cfg(feature = "cross-module-imports")]
-        if let Some(project) = super::project::current().filter(|_| project) {
-            let mut decls = Self::seeded(module, project.fns.clone(), project.slots.shared(), &[]);
+        if let Some(project) = super::project::current() {
+            let fns = project.fns.clone();
+            let mut decls = Self::seeded_items(module, items, fns, project.slots.shared());
             decls.project_refusing = project.refusing.clone();
             return decls;
         }
-        // The std bodies the interpreter merged keep their module's structs
-        // and externs (see `std_decls`); a build analyses no std body here.
-        let std = if project {
-            Vec::new()
-        } else {
-            std_decls::declarations(module)
-        };
-        Self::seeded(module, Default::default(), Contradicted::default(), &std)
+        Self::seeded_items(module, items, Default::default(), Contradicted::default())
     }
 
     /// The declarations of `module`, with `contradicted` already recorded
-    /// and the functions of the other modules of its project build, then the
-    /// `struct` and `extern "C"` items of `std` for names `module` leaves
-    /// undeclared.
+    /// and the functions of the other modules of its project build.
     pub(super) fn seeded(
         module: &Module,
         project_fns: std::sync::Arc<Fns>,
         contradicted: Contradicted,
-        std: &[&Node],
+    ) -> Self {
+        let items: Vec<&Node> = module.items.iter().collect();
+        Self::seeded_items(module, &items, project_fns, contradicted)
+    }
+
+    /// As [`Self::seeded`], for the `items` of `module` only: its imports
+    /// and type aliases still come from the whole module.
+    pub(super) fn seeded_items(
+        module: &Module,
+        items: &[&Node],
+        project_fns: std::sync::Arc<Fns>,
+        contradicted: Contradicted,
     ) -> Self {
         let mut decls = Self {
             aliases: LocalTypeAliases::new(&module.items),
@@ -308,7 +316,7 @@ impl Decls {
             consts: BTreeMap::new(),
         };
         let mut globals = Vec::new();
-        let mut pending: Vec<&Node> = module.items.iter().collect();
+        let mut pending: Vec<&Node> = items.to_vec();
         while let Some(item) = pending.pop() {
             match item {
                 Node::FnDef(fd, _) => {
@@ -316,9 +324,10 @@ impl Decls {
                         None if returns_value(&fd.body) => Ret::Undeclared,
                         ret => Ret::of(ret.as_ref(), &fd.type_params),
                     };
-                    merge(&mut decls.returns, &fd.name, Some(ret));
+                    let name = fn_key(&fd.name);
+                    merge(&mut decls.returns, name, Some(ret));
                     let types = fd.params.iter().map(|p| p.ty.clone()).collect();
-                    merge(&mut decls.params, &fd.name, Some(types));
+                    merge(&mut decls.params, name, Some(types));
                 }
                 Node::ExternBlock { fns, .. } => {
                     for f in fns {
@@ -345,7 +354,6 @@ impl Decls {
                 _ => {}
             }
         }
-        decls.seed_std(std);
         // Imported and bundled std callees, after local ones, as lowering
         // registers `IRModule::fn_signatures`: a local definition shadows them.
         #[cfg(feature = "cross-module-imports")]
@@ -383,7 +391,7 @@ impl Decls {
                 Node::ExternConst { name, ty, .. } => (name, decls.typed_fact(ty)),
                 _ => continue,
             };
-            merge(&mut decls.consts, name, Some(fact));
+            merge(&mut decls.consts, fn_key(name), Some(fact));
         }
         decls
     }
@@ -715,7 +723,7 @@ impl Decls {
     }
 
     pub(super) fn fn_env(&self, fd: &FnDefData) -> Env {
-        let owner = Some(fd.name.as_str());
+        let owner = Some(fn_key(&fd.name));
         self.param_env(Env::default(), &fd.params, owner, &fd.type_params)
     }
 

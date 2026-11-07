@@ -30,6 +30,27 @@ fn local_enum_key(name: &str) -> String {
     }
 }
 
+/// The registry key an `Enum::Variant` spelling of an imported enum names in
+/// the module being analysed, resolved through its imports as the parser
+/// resolves it. The project summary walks ASTs parsed before the registry
+/// existed, which keep the source spelling of an owner-keyed variant.
+fn imported_variant_key(path: &str) -> Option<String> {
+    #[cfg(feature = "cross-module-imports")]
+    {
+        let current = crate::qualified_enums::current_module_path()?;
+        crate::ir::with_global_enums(|g| {
+            let imports = g.qualified.module_imports.get(&current)?;
+            g.qualified
+                .resolve_variant_in(path, imports, Some(&current))
+        })
+    }
+    #[cfg(not(feature = "cross-module-imports"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 impl Decls {
     /// The variant a constructor or pattern names (`Enum::Variant`), with its
     /// declared payload types and the field names of a struct variant. `None`
@@ -66,7 +87,7 @@ impl Decls {
                 .find(|v| v.name == variant)
                 .map(|v| of(owner, v));
         }
-        let key = format!("{owner}::{variant}");
+        let key = imported_variant_key(path).unwrap_or_else(|| format!("{owner}::{variant}"));
         self.global_payload(|k| k == key)
     }
 

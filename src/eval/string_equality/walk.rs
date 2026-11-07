@@ -69,25 +69,26 @@ struct Walk<'a> {
 pub(super) fn collect_targets(
     module: &Module,
     ordinals: &Ordinals,
-    project: bool,
 ) -> (Targets, MethodTargets, Vec<Refused>) {
-    let decls = Decls::new(module, project);
-    let (targets, methods, refused, _) = fixpoint(decls, ordinals, module);
+    let items: Vec<&Node> = module.items.iter().collect();
+    let decls = Decls::new(module, &items);
+    let (targets, methods, refused, _) = fixpoint(decls, ordinals, &[module.items.as_slice()]);
     (targets, methods, refused)
 }
 
-/// Walk `module` until a walk records no slot the previous ones had not,
-/// starting from `decls`; the last walk's decisions and the final slots.
+/// Walk `runs` (statement lists of one module, each walked in order) until a
+/// walk records no slot the previous ones had not, starting from `decls`;
+/// the last walk's decisions and the final slots.
 pub(super) fn fixpoint<'a>(
     mut decls: Decls,
     ordinals: &'a Ordinals,
-    module: &'a Module,
+    runs: &[&'a [Node]],
 ) -> (Targets, MethodTargets, Vec<Refused>, Decls) {
     // shortcut: one whole-module walk per round of newly recorded slots; a
     // chain of stores through N slots costs N walks. Upgrade to a worklist
     // over the recorded slots if a module ever needs many rounds.
     loop {
-        let walk = Walk::run(decls, ordinals, module);
+        let walk = Walk::run(decls, ordinals, runs);
         let Walk {
             decls: mut walked,
             targets,
@@ -104,7 +105,7 @@ pub(super) fn fixpoint<'a>(
 }
 
 impl<'a> Walk<'a> {
-    fn run(decls: Decls, ordinals: &'a Ordinals, module: &'a Module) -> Self {
+    fn run(decls: Decls, ordinals: &'a Ordinals, runs: &[&'a [Node]]) -> Self {
         let mut walk = Walk {
             decls,
             ordinals,
@@ -114,7 +115,9 @@ impl<'a> Walk<'a> {
             flows: Contradicted::default(),
             pending: Vec::new(),
         };
-        walk.push_stmts(&module.items, Env::default(), None);
+        for run in runs.iter().rev() {
+            walk.push_stmts(run, Env::default(), None);
+        }
         while let Some(task) = walk.pending.pop() {
             match task {
                 Task::Stmts {
@@ -407,7 +410,7 @@ impl<'a> Walk<'a> {
     fn enter_fn(&mut self, fd: &'a FnDefData) {
         let fn_env = self.decls.fn_env(fd);
         self.decls.record_tail_flow(fd, &fn_env, &mut self.flows);
-        self.push_stmts(&fd.body, fn_env, Some(fd.name.as_str()));
+        self.push_stmts(&fd.body, fn_env, Some(super::facts::fn_key(&fd.name)));
     }
 
     fn loop_body(

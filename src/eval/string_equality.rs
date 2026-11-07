@@ -47,6 +47,12 @@
 //! result type that still returns a value has an unknown result. Stores from
 //! other modules of a project build count too.
 //!
+//! `mindc check`, `mindc build` (MLIR and native) and `mindc test` refuse the
+//! same source: each analyses every module against its own declarations, the
+//! project registry and the project summary. The module `mindc test` merges is
+//! split back into its modules first (see [`segments`]); no module learns a
+//! fact from another module's merged body.
+//!
 //! A local binding is a slot like any other: each assignment is read in its
 //! own scope, and the module is walked again until no binding changes (see
 //! `Decls::local_fact`); facts are never joined across branches of
@@ -68,6 +74,9 @@ mod flow_tests;
 mod flows;
 #[cfg(feature = "cross-module-imports")]
 mod project;
+#[cfg(test)]
+mod segment_tests;
+mod segments;
 #[cfg(test)]
 mod slot_tests;
 mod slots;
@@ -428,14 +437,11 @@ pub(crate) fn analyze_interpreted(module: &Module) -> Analysis {
 }
 
 fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
-    // The interpreter's module merges the project's modules and the std code
-    // it runs, so the stores between them are its own (see `Decls::new`).
-    let project = !desugar_methods;
     let ordinals = equality_ordinals(module);
     let methods_wanted = desugar_methods && !ordinals.methods.is_empty();
     let decides = !ordinals.equalities.is_empty()
         || methods_wanted
-        || (project && calls_may_be_refused())
+        || calls_may_be_refused()
         || has_other_string_form(module);
     if !decides {
         return Analysis {
@@ -443,7 +449,14 @@ fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
             refused: Vec::new(),
         };
     }
-    let (mut targets, methods, refused) = walk::collect_targets(module, &ordinals, project);
+    // The interpreter's module merges the std and project modules a test
+    // reaches into the test file; each is decided with its own facts, as the
+    // build compiles each alone (see `segments`).
+    let (mut targets, methods, refused) = if desugar_methods {
+        segments::collect_targets(module, &ordinals)
+    } else {
+        walk::collect_targets(module, &ordinals)
+    };
     let mut methods = if desugar_methods {
         methods
     } else {

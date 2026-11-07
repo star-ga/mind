@@ -202,6 +202,10 @@ const PAYLOAD_PROBE: &str = concat!(
     "}\n",
 );
 
+/// The test `mindc test` runs on a payload project's entry.
+const PAYLOAD_TEST: &str =
+    "#[test]\nfn probed() {\n    let v: i64 = probe()\n    assert v != 1, \"value is 1.\"\n}\n";
+
 /// A private enum of the same name: the registry keys both by their owner.
 const SHADOW: &str = "export { shadow_code }\n\nenum XmlEvent { Open, Close }\n\n\
                       fn shadow_code() -> i64 {\n    return 7\n}\n";
@@ -222,6 +226,20 @@ const RAW_STRING_READ_BY_STD: &str = concat!(
     "    __mind_store_i64(vec_addr(v), \"abc\")\n",
     "    if vec_get(v, 0) == vec_get(v, 0) {\n",
     "        return 1\n",
+    "    }\n",
+    "    return 0\n",
+    "}\n\n",
+    "#[test]\nfn probed() {\n    let v: i64 = probe()\n    assert v != 1, \"value is 1.\"\n}\n",
+);
+
+/// A string handed to `vec_push` escapes into a `Vec`; `string_len` takes
+/// no `Vec`, so its results stay integers on every backend.
+const RECORD_ESCAPE: &str = concat!(
+    "use std.vec;\nuse std.string;\n\n",
+    "pub fn probe() -> i64 {\n",
+    "    let v = vec_push(vec_new(), \"abc\")\n",
+    "    if string_len(\"ab\") == string_len(\"ab\") {\n",
+    "        return vec_len(v)\n",
     "    }\n",
     "    return 0\n",
     "}\n\n",
@@ -261,6 +279,7 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
         ("payload_colliding_enum", true),
     ] {
         let dir = scratch_dir(&format!("string_ops_native_r5_{case}"));
+        std::fs::create_dir_all(dir.join(".git")).expect("project boundary");
         let mut sources = vec!["main.mind", "events.mind"];
         let mut imports = String::from("import events\n");
         if shadow {
@@ -274,7 +293,7 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
         );
         std::fs::write(dir.join("Mind.toml"), manifest).expect("write manifest");
         std::fs::write(dir.join("events.mind"), EVENTS).expect("write events");
-        let main = format!("{imports}\n{PAYLOAD_PROBE}");
+        let main = format!("{imports}\n{PAYLOAD_PROBE}\n{PAYLOAD_TEST}");
         std::fs::write(dir.join("main.mind"), main).expect("write main");
         let check = mindc_in(&dir, &["check", "--no-fmt", "main.mind"]);
         assert_refused(case, "check", &check);
@@ -286,7 +305,44 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
         );
         assert_refused(case, "build", &build);
         assert!(!so.exists(), "{case}: a refused build left an artifact");
+        let test = mindc_in(&dir, &["test", "main.mind"]);
+        assert_refused(case, "mindc test", &test);
+        // Positive control: integers in the payloads build and compare equal.
+        let ints = format!("{imports}\n{}", PAYLOAD_PROBE.replace("\"abc\"", "7"));
+        std::fs::write(dir.join("main.mind"), ints).expect("write main");
+        let build = mindc_in(
+            &dir,
+            &["build", "--emit", "cdylib", "--out", so.to_str().unwrap()],
+        );
+        if common::gate::compiled("string_ops_native_r5", &build) {
+            assert_eq!(probe_value(case, &so), 1, "{case}: integer payloads");
+        }
     }
+}
+
+/// `probe()` of `file` in `dir` built with the MLIR backend.
+fn mlir_probe(case: &str, dir: &Path, file: &str) -> Option<i64> {
+    let so = dir.join(format!("{case}.so"));
+    let _ = std::fs::remove_file(&so);
+    let build = mindc_in(dir, &[file, "--emit-shared", so.to_str().unwrap()]);
+    common::gate::compiled("string_ops_native_r5", &build).then(|| probe_value(case, &so))
+}
+
+/// A string handed to `vec_push` escapes into a `Vec` record only:
+/// `string_len`, which keeps no `Vec`, gives integers back. The build and
+/// `mindc test` both compute 1.
+#[test]
+fn record_escape_does_not_taint_recordless_callees() {
+    let dir = scratch_dir("string_ops_native_r5_record_escape");
+    std::fs::write(dir.join("record_test.mind"), RECORD_ESCAPE).expect("write");
+    if let Some(value) = mlir_probe("record_escape", &dir, "record_test.mind") {
+        assert_eq!(value, 1, "record_escape: build value");
+    }
+    let log = text(&mindc_in(&dir, &["test", "record_test.mind"]));
+    assert!(
+        log.contains("value is 1.") && !log.contains("E2038"),
+        "record_escape: mindc test gave no value 1:\n{log}"
+    );
 }
 
 /// A string handed to `vec_push` escapes to raw memory in std.vec's merged
@@ -297,6 +353,9 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
 fn mindc_test_keeps_the_escapes_of_each_std_module_apart() {
     let dir = scratch_dir("string_ops_native_r5_std_escapes");
     std::fs::write(dir.join("escape_test.mind"), STD_ESCAPE).expect("write");
+    if let Some(value) = mlir_probe("std_escape", &dir, "escape_test.mind") {
+        assert_eq!(value, 1, "std_escape: build value");
+    }
     let log = text(&mindc_in(&dir, &["test", "escape_test.mind"]));
     assert!(
         log.contains("value is 1.") && !log.contains("E2038"),

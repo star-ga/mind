@@ -160,7 +160,7 @@ impl Decls {
         if tail_value(&fd.body) {
             let tail = self.block_fact(&fd.body, env, 0);
             if let Some(last) = fd.body.last() {
-                self.return_flow(&fd.name, last, &tail, out);
+                self.return_flow(super::facts::fn_key(&fd.name), last, &tail, out);
             }
         }
     }

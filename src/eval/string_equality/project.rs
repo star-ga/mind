@@ -19,8 +19,10 @@
 //! the slots the others store into, until no module records a new one. Every
 //! module's own analysis then starts from that set: a slot any module of the
 //! project stores a contradicting value into is maybe a string in all of
-//! them. Functions and structs are keyed by name, so two modules declaring
-//! the same name share the set, which can only refuse more.
+//! them. Functions are keyed by their source name, structs by
+//! `slots::struct_key` and variants by their registry key, so two modules
+//! declaring the same function name share the set, which can only refuse
+//! more.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -57,6 +59,13 @@ impl ProjectModules {
                 summary: OnceLock::new(),
             })
         })
+    }
+
+    /// The AST of project module `path`.
+    pub(super) fn module(&self, path: &str) -> Option<&Module> {
+        self.modules
+            .iter()
+            .find_map(|(p, module)| (p == path).then_some(module))
     }
 
     /// `enums` carrying the modules of `parsed` (see [`Self::of`]).
@@ -103,13 +112,18 @@ impl Drop for Computing {
     }
 }
 
+/// The modules of the active project build, when it has several.
+pub(super) fn active_modules() -> Option<Arc<ProjectModules>> {
+    crate::ir::with_global_enums(|g| g.string_project.clone())
+}
+
 /// The summary for the module being analysed, when it is a module of the
 /// active project build; computed on the first such analysis.
 pub(super) fn current() -> Option<Arc<Summary>> {
     if COMPUTING.with(Cell::get) {
         return None;
     }
-    let project = crate::ir::with_global_enums(|g| g.string_project.clone())?;
+    let project = active_modules()?;
     let path = crate::qualified_enums::current_module_path()?;
     if !project.modules.iter().any(|(p, _)| *p == path) {
         return None;
@@ -141,8 +155,9 @@ fn compute(modules: &[(String, Module)]) -> Summary {
         for (path, module) in modules {
             let _module = crate::qualified_enums::ModuleGuard::install(path.clone());
             let ordinals = super::equality_ordinals(module);
-            let decls = Decls::seeded(module, summary.fns.clone(), summary.slots.shared(), &[]);
-            let (_, _, refused, decls) = super::walk::fixpoint(decls, &ordinals, module);
+            let decls = Decls::seeded(module, summary.fns.clone(), summary.slots.shared());
+            let runs = [module.items.as_slice()];
+            let (_, _, refused, decls) = super::walk::fixpoint(decls, &ordinals, &runs);
             refusing.extend(refused.into_iter().filter_map(|r| r.function));
             grew |= summary.slots.absorb(decls.contradicted.shared());
         }
