@@ -276,9 +276,11 @@ impl Decls {
         }
         // The std bodies the interpreter merged keep their module's structs
         // and externs (see `std_decls`); a build analyses no std body here.
-        let std = (!project)
-            .then(|| std_decls::declarations(module))
-            .unwrap_or_default();
+        let std = if project {
+            Vec::new()
+        } else {
+            std_decls::declarations(module)
+        };
         Self::seeded(module, Default::default(), Contradicted::default(), &std)
     }
 
