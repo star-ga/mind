@@ -1,0 +1,102 @@
+// std/entropy.mind — operating-system randomness (keys, nonces, TLS randoms).
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// entropy_fill(buf, len) fills `len` bytes at `buf` from the kernel CSPRNG with
+// getrandom(2), flags 0 (the urandom source: it blocks only until the kernel
+// pool is first initialised, never after).
+//
+// FAIL CLOSED. There is no fallback to the clock, the pid, /dev/urandom or a
+// PRNG. If the kernel reports an error or delivers fewer bytes than asked, the
+// call returns a negative code AND zeroes all `len` bytes, so a caller that
+// ignores the code reads zeros, never a partial or stale secret.
+//
+// Requests go to the kernel in chunks of at most 256 bytes. getrandom(2)
+// promises a full read for a request of that size from the urandom source, so
+// a short count is a fault, never a retry.
+//
+// Determinism: `getrandom` is a World extern, and `entropy_fill` is classified
+// by name beside it (src/intrinsics.rs), because a caller's IR holds only the
+// call. A program that calls this is refused by the determinism veto without
+// `--allow-nondeterministic` and, with it, attested `nondeterministic`.
+//
+// Linux only: getrandom(2) (glibc >= 2.25, musl >= 1.1.20).
+//
+// This is a self-contained substrate module (it imports nothing), so its object
+// is compiled and linked on demand by `mindc build`.
+
+extern "C" {
+    unsafe fn getrandom(buf: *mut u8, buflen: i64, flags: i32) -> i64;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+}
+
+// ---------------------------------------------------------------------------
+// Result codes and bounds
+// ---------------------------------------------------------------------------
+
+pub fn entropy_ok() -> i64 {
+    0
+}
+
+// `buf` is 0, `len` is negative, or `len` exceeds entropy_max_len().
+pub fn entropy_err_arg() -> i64 {
+    0 - 1
+}
+
+// getrandom(2) returned an error.
+pub fn entropy_err_os() -> i64 {
+    0 - 2
+}
+
+// getrandom(2) returned fewer bytes than requested.
+pub fn entropy_err_short() -> i64 {
+    0 - 3
+}
+
+// Largest single request (1 MiB). A TLS client needs well under 1 KiB.
+pub fn entropy_max_len() -> i64 {
+    1048576
+}
+
+fn entropy_chunk_len() -> i64 {
+    256
+}
+
+// ---------------------------------------------------------------------------
+// Public: entropy_fill
+// ---------------------------------------------------------------------------
+
+// entropy_fill — write `len` random bytes at `buf`.
+// Returns entropy_ok() (0) or a negative entropy_err_* code. On every error
+// after the argument checks the whole buffer is zeroed.
+#[protection]
+pub fn entropy_fill(buf: i64, len: i64) -> i64 {
+    if buf == 0 {
+        return entropy_err_arg();
+    }
+    if len < 0 {
+        return entropy_err_arg();
+    }
+    if len > entropy_max_len() {
+        return entropy_err_arg();
+    }
+    let mut done: i64 = 0;
+    while done < len {
+        let mut want: i64 = len - done;
+        if want > entropy_chunk_len() {
+            want = entropy_chunk_len();
+        }
+        let got: i64 = getrandom((buf + done) as *mut u8, want, 0);
+        if got != want {
+            let _ = memset(buf as *mut u8, 0, len);
+            if got < 0 {
+                return entropy_err_os();
+            }
+            return entropy_err_short();
+        }
+        done = done + want;
+    }
+    entropy_ok()
+}

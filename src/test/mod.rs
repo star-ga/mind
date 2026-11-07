@@ -524,6 +524,7 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
     synthetic_items.extend(std_import_fns::resolve_std_import_fns(
         &module,
+        &entry.source_text,
         support.map(|s| &s.project_std),
     )?);
     if let Some(support) = support {

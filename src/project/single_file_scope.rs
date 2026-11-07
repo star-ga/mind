@@ -673,5 +673,7 @@ fn common_ancestor_dir(files: &[PathBuf]) -> PathBuf {
     common
 }
 
+pub mod world_reach;
+
 #[cfg(test)]
 mod tests;
