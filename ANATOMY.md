@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2174 | **Est. tokens:** ~4,171,619
-**Generated:** 2026-11-07 05:17 UTC
+**Files:** 2174 | **Est. tokens:** ~4,171,627
+**Generated:** 2026-11-07 07:38 UTC
 
 ## Token Budget Guide
 
@@ -123,7 +123,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 56 | ~182,467 |
+| `src/eval/` | 56 | ~182,475 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/string_equality/` | 12 | ~42,197 |
 | `src/eval/string_equality/facts/` | 1 | ~1,401 |
@@ -1346,7 +1346,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `module_bindings.rs` (~4651 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `module_bindings.rs` (~4659 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3977 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
