@@ -35,9 +35,11 @@ cargo test --no-default-features
 # hook, and each runs the same script CI runs:
 #
 #   pre-commit   identity guard, `cargo fmt --check` when Rust is staged, the
-#                ANATOMY.md refresh, the capability-manifest claims gate, and
-#                the two whole-tree hygiene gates (no model/tool credit in a
-#                file; JSON is never an evidence-hash preimage).
+#                ANATOMY.md refresh (on main only, or with MIND_ANATOMY_REFRESH=1;
+#                a PR branch never touches ANATOMY.md), the capability-manifest
+#                claims gate, and the two whole-tree hygiene gates (no
+#                model/tool credit in a file; JSON is never an evidence-hash
+#                preimage).
 #   commit-msg   the same attribution rules over the MESSAGE you just wrote —
 #                a co-authorship trailer, a "Generated with" footer, or a
 #                model/tool credited with the work. A file can be corrected by
