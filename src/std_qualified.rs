@@ -277,6 +277,20 @@ mod tests {
             "dns::tcp_connect_host_timeout(p, 9, 80, 100)",
             "tcp_connect_host_timeout",
         ),
+        // A bare call of an imported std function: the qualifier is absent,
+        // the name resolves to the std row.
+        ("import std.entropy;", "entropy_fill(p, 8)", "entropy_fill"),
+        ("import std.dns;", "dns_resolve(p, 9)", "dns_resolve"),
+        (
+            "import std.dns;",
+            "tcp_connect_host(p, 9, 80)",
+            "tcp_connect_host",
+        ),
+        (
+            "import std.dns as d;",
+            "tcp_connect_host_timeout(p, 9, 80, 100)",
+            "tcp_connect_host_timeout",
+        ),
     ];
 
     #[test]
@@ -303,6 +317,39 @@ mod tests {
         assert_eq!(offender(qualified).as_deref(), Some("dns_resolve"));
         let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_status(p)\n}\n";
         assert_eq!(offender(pure), None);
+    }
+
+    /// A bare name is a world call only when it resolves to the std row: the
+    /// module imports that std module and defines no function of that name.
+    /// Each fixture below fails one of the two.
+    #[test]
+    fn a_bare_call_that_does_not_resolve_to_the_std_row_is_not_a_world_use() {
+        // Defined in the module (top level, and inside a module block).
+        let shadow = "import std.entropy;\n\nfn entropy_fill(p: i64, n: i64) -> i64 {\n    \
+                      p + n\n}\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(shadow), None);
+        let in_block = "import std.dns;\n\nmodule m {\n    pub fn dns_resolve(p: i64, n: i64) -> \
+                        i64 {\n        p + n\n    }\n}\n\npub fn f(p: i64) -> i64 {\n    \
+                        dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(in_block), None);
+        // The module imports a different std module than the row's.
+        let other = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(other), None);
+        // No import at all.
+        let none = "pub fn f(p: i64) -> i64 {\n    dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(none), None);
+        // A pure function of the imported module.
+        let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns_status(p)\n}\n";
+        assert_eq!(offender(pure), None);
+        // Positive control: the shadow fixture without the definition.
+        let world = "import std.entropy;\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(world).as_deref(), Some("entropy_fill"));
+        // The sibling reach reads the same resolution.
+        assert_eq!(
+            reached_offender(world, "f").as_deref(),
+            Some("entropy_fill")
+        );
+        assert_eq!(reached_offender(shadow, "f"), None);
     }
 
     /// `Q` is the qualifier. Each position holds a `std.entropy` use (a world
