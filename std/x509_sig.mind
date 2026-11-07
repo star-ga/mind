@@ -1,0 +1,508 @@
+// std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
+// verification and dispatch for X.509 certificates.
+
+import std.sha256;
+import std.sha512;
+import std.ecdsa_p256;
+import std.x509_p384;
+import std.rsa_pss;
+import std.x509_der;
+import std.x509_bignum;
+
+// ---------------------------------------------------------------------------
+// RSASSA-PKCS1-v1_5 / SHA-256 verification.
+// RFC 8017 §8.2: EM = 0x00 || 0x01 || PS || 0x00 || T
+// where T is DigestInfo ::= SEQUENCE {
+//   digestAlgorithm AlgorithmIdentifier (id-sha256 = 2.16.840.1.101.3.4.2.1),
+//   digest OCTET STRING (32 bytes)
+// }
+// T's DER prefix (19 bytes):
+// 30 31 30 0d 06 09 60 86 48 01 65 03 04 02 01 05 00 04 20
+// PS length = em_len - 3 - 19 - 32 = em_len - 54 bytes.
+// ---------------------------------------------------------------------------
+
+#[protection]
+pub fn pkcs1_v15_check(em: i64, msg: i64, msg_len: i64) -> i64 {
+    pkcs1_v15_check_len(em, 256, msg, msg_len)
+}
+
+pub fn pkcs1_v15_check_len(em: i64, em_len: i64, msg: i64, msg_len: i64) -> i64 {
+    if (__mind_load_i8(em + 0) & 255) != 0 {
+        return 0;
+    }
+    if (__mind_load_i8(em + 1) & 255) != 1 {
+        return 0;
+    }
+    // Scan the 0xFF padding string.
+    let mut i: i64 = 2;
+    let mut scanning: i64 = 1;
+    while scanning == 1 {
+        if i >= em_len {
+            scanning = 0;
+        } else {
+            if (__mind_load_i8(em + i) & 255) == 255 {
+                i = i + 1;
+            } else {
+                scanning = 0;
+            }
+        }
+    }
+    if i - 2 < 8 {
+        // PS must be >= 8 bytes (RFC 8017)
+        return 0;
+    }
+    if (__mind_load_i8(em + i) & 255) != 0 {
+        // 0x00 separator
+        return 0;
+    }
+    i = i + 1;
+    if em_len - i != 51 {
+        // remaining must be exactly DigestInfo(19)+hash(32)
+        return 0;
+    }
+    // Build the expected T = SHA-256 DigestInfo prefix || SHA-256(msg).
+    let t: i64 = __mind_alloc(51);
+    __mind_store_i8(t + 0, 48);
+    __mind_store_i8(t + 1, 49);
+    __mind_store_i8(t + 2, 48);
+    __mind_store_i8(t + 3, 13);
+    __mind_store_i8(t + 4, 6);
+    __mind_store_i8(t + 5, 9);
+    __mind_store_i8(t + 6, 96);
+    __mind_store_i8(t + 7, 134);
+    __mind_store_i8(t + 8, 72);
+    __mind_store_i8(t + 9, 1);
+    __mind_store_i8(t + 10, 101);
+    __mind_store_i8(t + 11, 3);
+    __mind_store_i8(t + 12, 4);
+    __mind_store_i8(t + 13, 2);
+    __mind_store_i8(t + 14, 1);
+    __mind_store_i8(t + 15, 5);
+    __mind_store_i8(t + 16, 0);
+    __mind_store_i8(t + 17, 4);
+    __mind_store_i8(t + 18, 32);
+    sha256(msg, msg_len, t + 19);
+    // Constant-shape compare of em[i..i+51) against t[0..51).
+    let mut j: i64 = 0;
+    let mut ok: i64 = 1;
+    while j < 51 {
+        if (__mind_load_i8(em + i + j) & 255) != (__mind_load_i8(t + j) & 255) {
+            ok = 0;
+        }
+        j = j + 1;
+    }
+    ok
+}
+
+pub fn rsa_pkcs1_sha256_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    // Fail-closed input guards: accept 2048 (256B), 3072 (384B), and 4096 (512B) bit RSA.
+    if n_len != 256 && n_len != 384 && n_len != 512 {
+        return 0;
+    }
+    if sig_len != n_len {
+        return 0;
+    }
+    if (__mind_load_i8(n_addr + 0) & 128) == 0 {
+        return 0;
+    }
+    // RFC 8017: a valid RSA public exponent is odd and >= 3 (3/17/65537).
+    if e < 3 || (e & 1) == 0 {
+        return 0;
+    }
+    if msg_len < 0 {
+        return 0;
+    }
+    let n_limbs: i64 = n_len / 2;
+    let buf_limbs: i64 = n_limbs + 2;
+    let buf_bytes: i64 = buf_limbs * 8;
+    let n: i64 = __mind_alloc(buf_bytes);
+    let s: i64 = __mind_alloc(buf_bytes);
+    let em_limbs: i64 = __mind_alloc(buf_bytes);
+    bn_from_bytes(n_addr, n_len, n);
+    bn_from_bytes(sig_addr, sig_len, s);
+    // RSAVP1: signature representative must be in [0, n-1].
+    if bn_cmp_ge(s, n, buf_limbs) == 1 {
+        return 0;
+    }
+    // Recover EM = sig^e mod n.
+    modexp_rsa(s, e, n, em_limbs, n_limbs);
+    // Serialize EM to n_len big-endian bytes.
+    let em: i64 = __mind_alloc(n_len);
+    bn_to_bytes(em_limbs, em, n_len);
+    pkcs1_v15_check_len(em, n_len, msg_addr, msg_len)
+}
+
+// ---------------------------------------------------------------------------
+// RSASSA-PSS parameter parse.
+// ---------------------------------------------------------------------------
+
+pub fn x509_pss_hash(cert: i64, off: i64, lim: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(cert, off, lim, t) != 0 || __mind_load_i64(t) != 48 {
+        return 0;
+    }
+    let q: i64 = off + __mind_load_i64(t + 8);
+    if q + __mind_load_i64(t + 16) != lim {
+        return 0;
+    }
+    if der_tlv(cert, q, lim, t) != 0 || __mind_load_i64(t) != 6 {
+        return 0;
+    }
+    if oid_is_sha256(cert, q + __mind_load_i64(t + 8), __mind_load_i64(t + 16)) == 0 {
+        return 0;
+    }
+    let next: i64 = q + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if next == lim {
+        return 1;
+    }
+    if next + 2 == lim && xb(cert, next) == 5 && xb(cert, next + 1) == 0 {
+        return 1;
+    }
+    0
+}
+
+pub fn x509_pss_params(cert: i64, sa_content: i64, sa_lim: i64, oid_total: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    let ppos: i64 = sa_content + oid_total;
+    if ppos >= sa_lim {
+        return -2;
+    }
+    if der_tlv(cert, ppos, sa_lim, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t) != 48 {
+        return -2;
+    }
+    let mut p: i64 = ppos + __mind_load_i64(t + 8);
+    let end: i64 = p + __mind_load_i64(t + 16);
+    if end != sa_lim {
+        return -1;
+    }
+    let mut salt: i64 = 20;
+    let mut last: i64 = 159;
+    let mut seen: i64 = 0;
+    while p < end {
+        if der_tlv(cert, p, end, t) != 0 {
+            return -1;
+        }
+        let tag: i64 = __mind_load_i64(t);
+        let cc: i64 = p + __mind_load_i64(t + 8);
+        let stop: i64 = cc + __mind_load_i64(t + 16);
+        if tag <= last || tag > 163 {
+            return -2;
+        }
+        last = tag;
+        if tag == 160 {
+            if x509_pss_hash(cert, cc, stop) == 0 {
+                return -2;
+            }
+            seen = seen | 1;
+        } else {
+            if tag == 161 {
+                if der_tlv(cert, cc, stop, t) != 0 || __mind_load_i64(t) != 48 {
+                    return -2;
+                }
+                let q: i64 = cc + __mind_load_i64(t + 8);
+                if q + __mind_load_i64(t + 16) != stop {
+                    return -2;
+                }
+                if der_tlv(cert, q, stop, t) != 0 || __mind_load_i64(t) != 6 {
+                    return -2;
+                }
+                if oid_is_mgf1(cert, q + __mind_load_i64(t + 8), __mind_load_i64(t + 16)) == 0 {
+                    return -2;
+                }
+                let next: i64 = q + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+                if x509_pss_hash(cert, next, stop) == 0 {
+                    return -2;
+                }
+                seen = seen | 2;
+            } else {
+                if der_tlv(cert, cc, stop, t) != 0 || __mind_load_i64(t) != 2 {
+                    return -2;
+                }
+                let val: i64 = cc + __mind_load_i64(t + 8);
+                let len: i64 = __mind_load_i64(t + 16);
+                if len < 1 || len > 4 || val + len != stop || xb(cert, val) >= 128 {
+                    return -2;
+                }
+                let v: i64 = bytes_be_to_i64(cert + val, len);
+                if tag == 162 {
+                    salt = v;
+                } else {
+                    if v != 1 {
+                        return -2;
+                    }
+                }
+            }
+        }
+        p = stop;
+    }
+    // Omitted hash or MGF means SHA-1, even when saltLength is explicit.
+    if seen != 3 {
+        return -2;
+    }
+    if salt > 222 {
+        return -2;
+    }
+    salt
+}
+
+// ---------------------------------------------------------------------------
+// ECDSA signature parsing.
+// ---------------------------------------------------------------------------
+
+pub fn x509_ecdsa_sig_parse(cert: i64, sig_off: i64, sig_len: i64, out_r: i64, out_s: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    let lim: i64 = sig_off + sig_len;
+    if der_tlv(cert, sig_off, lim, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -3;
+    }
+    let sc: i64 = sig_off + __mind_load_i64(t + 8);
+    let sc_end: i64 = sc + __mind_load_i64(t + 16);
+    if sc_end != lim {
+        return -3;
+    }
+    // r INTEGER
+    if der_tlv(cert, sc, sc_end, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 2 {
+        return -3;
+    }
+    let mut r_off: i64 = sc + __mind_load_i64(t + 8);
+    let mut r_len: i64 = __mind_load_i64(t + 16);
+    let after_r: i64 = r_off + r_len;
+    if r_len < 1 {
+        return -3;
+    }
+    if xb(cert, r_off) >= 128 {
+        return -3;
+    }
+    if xb(cert, r_off) == 0 {
+        if r_len < 2 || xb(cert, r_off + 1) < 128 {
+            return -3;
+        }
+        r_off = r_off + 1;
+        r_len = r_len - 1;
+    }
+    if r_len < 1 || r_len > 32 {
+        return -3;
+    }
+    // s INTEGER
+    if der_tlv(cert, after_r, sc_end, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 2 {
+        return -3;
+    }
+    let mut s_off: i64 = after_r + __mind_load_i64(t + 8);
+    let mut s_len: i64 = __mind_load_i64(t + 16);
+    if s_len < 1 || s_off + s_len != sc_end {
+        return -3;
+    }
+    if xb(cert, s_off) >= 128 {
+        return -3;
+    }
+    if xb(cert, s_off) == 0 {
+        if s_len < 2 || xb(cert, s_off + 1) < 128 {
+            return -3;
+        }
+        s_off = s_off + 1;
+        s_len = s_len - 1;
+    }
+    if s_len < 1 || s_len > 32 {
+        return -3;
+    }
+    // zero-pad to 32 bytes
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(out_r + i, 0);
+        __mind_store_i8(out_s + i, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < r_len {
+        __mind_store_i8(out_r + 32 - r_len + i, __mind_load_i8(cert + r_off + i));
+        i = i + 1;
+    }
+    i = 0;
+    while i < s_len {
+        __mind_store_i8(out_s + 32 - s_len + i, __mind_load_i8(cert + s_off + i));
+        i = i + 1;
+    }
+    0
+}
+
+pub fn x509_ecdsa_sig_parse48(cert: i64, sig_off: i64, sig_len: i64, out_r: i64, out_s: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    let lim: i64 = sig_off + sig_len;
+    if der_tlv(cert, sig_off, lim, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -3;
+    }
+    let sc: i64 = sig_off + __mind_load_i64(t + 8);
+    let sc_end: i64 = sc + __mind_load_i64(t + 16);
+    if sc_end != lim {
+        return -3;
+    }
+    if der_tlv(cert, sc, sc_end, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 2 {
+        return -3;
+    }
+    let mut r_off: i64 = sc + __mind_load_i64(t + 8);
+    let mut r_len: i64 = __mind_load_i64(t + 16);
+    let after_r: i64 = r_off + r_len;
+    if r_len < 1 {
+        return -3;
+    }
+    if xb(cert, r_off) >= 128 {
+        return -3;
+    }
+    if xb(cert, r_off) == 0 {
+        if r_len < 2 || xb(cert, r_off + 1) < 128 {
+            return -3;
+        }
+        r_off = r_off + 1;
+        r_len = r_len - 1;
+    }
+    if r_len < 1 || r_len > 48 {
+        return -3;
+    }
+    if der_tlv(cert, after_r, sc_end, t) != 0 {
+        return -3;
+    }
+    if __mind_load_i64(t + 0) != 2 {
+        return -3;
+    }
+    let mut s_off: i64 = after_r + __mind_load_i64(t + 8);
+    let mut s_len: i64 = __mind_load_i64(t + 16);
+    if s_len < 1 || s_off + s_len != sc_end {
+        return -3;
+    }
+    if xb(cert, s_off) >= 128 {
+        return -3;
+    }
+    if xb(cert, s_off) == 0 {
+        if s_len < 2 || xb(cert, s_off + 1) < 128 {
+            return -3;
+        }
+        s_off = s_off + 1;
+        s_len = s_len - 1;
+    }
+    if s_len < 1 || s_len > 48 {
+        return -3;
+    }
+    let mut i: i64 = 0;
+    while i < 48 {
+        __mind_store_i8(out_r + i, 0);
+        __mind_store_i8(out_s + i, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < r_len {
+        __mind_store_i8(out_r + 48 - r_len + i, __mind_load_i8(cert + r_off + i));
+        i = i + 1;
+    }
+    i = 0;
+    while i < s_len {
+        __mind_store_i8(out_s + 48 - s_len + i, __mind_load_i8(cert + s_off + i));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// x509_verify_cert_sig — verify child's signatureValue over its
+// tbsCertificate under the issuer's SPKI.  Returns 0 ok /
+// -2 unsupported algorithm / -3 bad signature / -14 key-type mismatch.
+// ---------------------------------------------------------------------------
+#[protection]
+pub fn x509_verify_cert_sig(crec: i64, prec: i64) -> i64 {
+    let cbase: i64 = __mind_load_i64(crec + 0);
+    let pbase: i64 = __mind_load_i64(prec + 0);
+    let alg: i64 = __mind_load_i64(crec + 64);
+    let sig_off: i64 = __mind_load_i64(crec + 152);
+    let sig_len: i64 = __mind_load_i64(crec + 160);
+    let tbs_off: i64 = __mind_load_i64(crec + 16);
+    let tbs_len: i64 = __mind_load_i64(crec + 24);
+    let pkey: i64 = __mind_load_i64(prec + 96);
+    if alg == 1 {
+        // rsa PKCS#1 v1.5 / SHA-256
+        if pkey != 1 {
+            return -14;
+        }
+        let e_off: i64 = __mind_load_i64(prec + 120);
+        let e_len: i64 = __mind_load_i64(prec + 128);
+        if e_len < 1 || e_len > 8 {
+            return -14;
+        }
+        let e_val: i64 = bytes_be_to_i64(pbase + e_off, e_len);
+        let rc: i64 = rsa_pkcs1_sha256_verify(pbase + __mind_load_i64(prec + 104), __mind_load_i64(prec + 112), e_val, cbase + sig_off, sig_len, cbase + tbs_off, tbs_len);
+        if rc == 1 {
+            return 0;
+        }
+        return -3;
+    }
+    if alg == 2 {
+        // RSASSA-PSS / SHA-256
+        if pkey != 1 {
+            return -14;
+        }
+        let e_off2: i64 = __mind_load_i64(prec + 120);
+        let e_len2: i64 = __mind_load_i64(prec + 128);
+        if e_len2 < 1 || e_len2 > 8 {
+            return -14;
+        }
+        let e_val2: i64 = bytes_be_to_i64(pbase + e_off2, e_len2);
+        let salt: i64 = __mind_load_i64(crec + 72);
+        let rc2: i64 = rsa_pss_verify_sha256(pbase + __mind_load_i64(prec + 104), __mind_load_i64(prec + 112), e_val2, cbase + sig_off, sig_len, cbase + tbs_off, tbs_len, salt);
+        if rc2 == 1 {
+            return 0;
+        }
+        return -3;
+    }
+    if alg == 3 || alg == 4 {
+        if pkey == 2 {
+            let rbuf: i64 = __mind_alloc(32);
+            let sbuf: i64 = __mind_alloc(32);
+            if x509_ecdsa_sig_parse(cbase, sig_off, sig_len, rbuf, sbuf) != 0 {
+                return -3;
+            }
+            let mut rc3: i64 = 0;
+            if alg == 3 {
+                rc3 = ecdsa_p256_verify(pbase + __mind_load_i64(prec + 136), pbase + __mind_load_i64(prec + 144), rbuf, sbuf, cbase + tbs_off, tbs_len);
+            } else {
+                rc3 = ecdsa_p256_verify_sha384(pbase + __mind_load_i64(prec + 136), pbase + __mind_load_i64(prec + 144), rbuf, sbuf, cbase + tbs_off, tbs_len);
+            }
+            if rc3 == 1 {
+                return 0;
+            }
+            return -3;
+        }
+        if pkey == 3 {
+            if alg != 4 {
+                return -14;
+            }
+            let rbuf48: i64 = __mind_alloc(48);
+            let sbuf48: i64 = __mind_alloc(48);
+            if x509_ecdsa_sig_parse48(cbase, sig_off, sig_len, rbuf48, sbuf48) != 0 {
+                return -3;
+            }
+            let rc4: i64 = ecdsa_p384_verify(pbase + __mind_load_i64(prec + 136), pbase + __mind_load_i64(prec + 144), rbuf48, sbuf48, cbase + tbs_off, tbs_len);
+            if rc4 == 1 {
+                return 0;
+            }
+            return -3;
+        }
+        return -14;
+    }
+    -2
+}

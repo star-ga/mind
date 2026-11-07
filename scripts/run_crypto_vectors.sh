@@ -138,11 +138,19 @@ emit "$WORK/x25519.so"       "$STD/x25519.mind"
 # ---- hkdf = sha256 + hkdf(-sha256) ----------------------------------------
 emit "$WORK/hkdf.so" "$STD/sha256.mind" "$(strip "$STD/hkdf.mind" '^import std\.sha256;')"
 
-# ---- x509 = sha256 + x509(-sha256) ----------------------------------------
-emit "$WORK/x509.so" "$STD/sha256.mind" "$(strip "$STD/x509.mind" '^import std\.sha256;')"
+# ---- x509 = sha256 + the chain validator's module set (-imports) ----------
+# std/x509.mind imports sha512, ecdsa_p256, x509_p384, rsa_pss and the x509_*
+# helpers (rsa_pss in turn imports x509_bignum). rsa_pss is part of the set,
+# so rsa_pss.so and tls13_hs.so reuse X509_SET below.
+X509_SET=()
+for m in sha512 ecdsa_p256 x509_p384 x509_bignum rsa_pss x509_bundle x509_der \
+         x509_ext x509_name x509_sig x509_path x509; do
+  X509_SET+=("$(strip "$STD/$m.mind" '^import ')")
+done
+emit "$WORK/x509.so" "$STD/sha256.mind" "${X509_SET[@]}"
 
-# ---- ecdsa_p256 = sha256 + ecdsa_p256(-imports) ---------------------------
-emit "$WORK/ecdsa_p256.so" "$STD/sha256.mind" "$(strip "$STD/ecdsa_p256.mind" '^import ')"
+# ---- ecdsa_p256 = sha256 + sha512 + ecdsa_p256(-imports) ------------------
+emit "$WORK/ecdsa_p256.so" "$STD/sha256.mind" "$STD/sha512.mind" "$(strip "$STD/ecdsa_p256.mind" '^import ')"
 
 # ---- mlkem768 = keccak + mlkem768(-keccak) --------------------------------
 emit "$WORK/mlkem768.so" "$STD/keccak.mind" "$(strip "$STD/mlkem768.mind" '^import std\.keccak;')"
@@ -156,10 +164,8 @@ emit "$WORK/x25519mlkem768.so" "$STD/keccak.mind" \
   "$STD/x25519.mind" \
   "$(strip "$STD/x25519mlkem768.mind" '^import ')"
 
-# ---- rsa_pss = sha256 + x509(-sha256) + rsa_pss(-imports) ------------------
-emit "$WORK/rsa_pss.so" "$STD/sha256.mind" \
-  "$(strip "$STD/x509.mind" '^import std\.sha256;')" \
-  "$(strip "$STD/rsa_pss.mind" '^import ')"
+# ---- rsa_pss = sha256 + X509_SET (rsa_pss included) ------------------------
+emit "$WORK/rsa_pss.so" "$STD/sha256.mind" "${X509_SET[@]}"
 
 # ---- tls13_keyschedule = sha256 + hkdf(-sha256) + keyschedule(-sha256,-hkdf)
 emit "$WORK/tls13_ks.so" "$STD/sha256.mind" \
@@ -181,18 +187,16 @@ emit "$WORK/tls13_fin.so" "$STD/sha256.mind" \
   "$(strip "$STD/tls13_keyschedule.mind" '^import std\.(sha256|hkdf);')" \
   "$(strip "$STD/tls13_finished.mind" '^import std\.')"
 
-# ---- tls13_handshake = sha256 + hkdf(-sha256) + x509(-sha256)
+# ---- tls13_handshake = sha256 + hkdf(-sha256) + X509_SET (rsa_pss included)
 #      + keyschedule(-sha256,-hkdf) + aes_gcm(-std) + tls13_record(-std)
-#      + tls13_finished(-std) + rsa_pss(-std) + x25519(-std)
-#      + tls13_handshake(-std) --------------------------------------------
+#      + tls13_finished(-std) + x25519(-std) + tls13_handshake(-std) -------
 emit "$WORK/tls13_hs.so" "$STD/sha256.mind" \
   "$(strip "$STD/hkdf.mind" '^import std\.sha256;')" \
-  "$(strip "$STD/x509.mind" '^import std\.sha256;')" \
+  "${X509_SET[@]}" \
   "$(strip "$STD/tls13_keyschedule.mind" '^import std\.(sha256|hkdf);')" \
   "$(strip "$STD/aes_gcm.mind" '^import std\.')" \
   "$(strip "$STD/tls13_record.mind" '^import std\.')" \
   "$(strip "$STD/tls13_finished.mind" '^import std\.')" \
-  "$(strip "$STD/rsa_pss.mind" '^import std\.')" \
   "$(strip "$STD/x25519.mind" '^import std\.')" \
   "$(strip "$STD/tls13_handshake.mind" '^import std\.')"
 

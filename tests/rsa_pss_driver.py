@@ -20,11 +20,12 @@
 #   - fail-closed extras   : wrong salt_len, sig >= n, bad lengths.
 #
 # Build the .so first (std/rsa_pss.mind composes std/sha256.mind +
-# std/x509.mind's bignum, so combine the three sources with import lines
-# stripped, exactly as tests/x509_vectors_driver.py combines sha256+x509):
+# std/x509_bignum.mind, so combine the three sources with import lines
+# stripped; scripts/run_crypto_vectors.sh builds it from X509_SET, which
+# includes both):
 #   cat std/sha256.mind > /tmp/rsa_pss_combined.mind
-#   grep -v '^import std.sha256;' std/x509.mind >> /tmp/rsa_pss_combined.mind
-#   grep -v '^import '            std/rsa_pss.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/x509_bignum.mind >> /tmp/rsa_pss_combined.mind
+#   grep -v '^import ' std/rsa_pss.mind     >> /tmp/rsa_pss_combined.mind
 #   mindc /tmp/rsa_pss_combined.mind --emit-shared /tmp/rsa_pss.so
 #
 # Usage: python3 rsa_pss_driver.py <rsa_pss.so>

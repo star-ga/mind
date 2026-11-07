@@ -8,6 +8,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
+  reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
+  read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
+  `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
+  bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
+  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
+  is `dns_err_unknown`), and a failed call returns no entries. It reads `struct addrinfo`
+  in the layout of the host uname(2) names: Linux (`ai_addr` at +24, AF_INET6 = 10) or
+  Darwin (`ai_addr` at +32, `sa_len` / `sa_family` bytes, AF_INET6 = 30); on any other
+  host, or when uname fails, it returns `dns_err_platform` without calling getaddrinfo.
+  `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
+  a per-connect timeout and return a std.net TcpStream handle; they use Linux socket
+  constants and return 0 on any other host. `getrandom` and `getaddrinfo` are classified
+  as world reads, and so are `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
+  `tcp_connect_host_timeout`, because a caller's IR holds only the call: a program that
+  calls one is refused by the determinism veto without `--allow-nondeterministic` and,
+  with it, attested `nondeterministic`.
+  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
+  `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
+- **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
+  `import std.tls13_client;` resolve, link and run in `mindc build` executables
+  and under `mindc test`.
+  - `std.x509` validates a server chain (`x509_verify_server_chain`) from
+    the leaf through intermediates to a caller-supplied anchor set: RSA PKCS#1
+    v1.5 (2048/3072/4096-bit), RSA-PSS, ECDSA P-256/P-384, validity against the
+    caller's `now_unix`, DNS/IP name constraints, keyUsage and serverAuth EKU,
+    RFC 6125 hostname matching (a wildcard only as the complete left-most
+    label, IP SAN for IP literals), the inner and outer signature algorithm
+    identifiers equal, SHA-1 refused, and in-memory DER/PEM trust
+    anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
+    Limits: no revocation checking, DNS/IP-only name constraints, at most 8
+    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
+    fail closed. Anchors are trusted key bindings: their self-signature and
+    validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
+    constraints apply to the path below them.
+  - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,
+    `x509_path`, `x509_bundle` and `x509_bignum` (the RSA bignum, which
+    `rsa_pss` now imports instead of `x509`). `x509_verify_server_chain` is
+    in `x509_path` and `x509_parse` in `x509_der`; `std/x509.mind` imports
+    the whole validator.
+  - `std/tls13_client.mind` (with `_core`, `_hello`, `_api`): a bounded
+    sans-IO TLS 1.3 client. The caller owns I/O, entropy, time and the tick
+    budget; DNS-only SNI, caller ALPN, one HelloRetryRequest, fragmented
+    handshake reassembly, latched fail-closed refusal, and every chain
+    authenticated by `x509_verify_server_chain`. CertificateVerify supports
+    `rsa_pss_rsae_sha256` only, with an RSA-2048 leaf key that `x509_rsa_spki`
+    decodes strictly as rsaEncryption (NULL or absent parameters, 0 unused
+    bits, exactly two positive minimal INTEGERs); `x509_parse` and the chain
+    verifier share that decoder. Every other leaf key is refused: a non-RSA
+    key (ECDSA included) and RSA-1024 at CertificateVerify (E_CV), RSA-3072
+    and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
+    server key) keeps its known answer at the RSA-PSS verify primitive, not
+    through the client.
+  - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
+    only; issuer signatures inside the chain keep ECDSA P-256/P-384,
+    RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
+    known-answer tests (public CA chains need them, for example an RSA-4096
+    root). Revocation is not implemented.
+  - All twelve modules are bundled table rows and substrate members, and none
+    is a native seed row: `--backend native` refuses their import at the import.
+  - The longest std import chain stays at five modules. The client's top
+    module imports `x509_path` and `tls13_finished` directly:
+    `tls13_hs_cert_verify_content`, `tls13_hs_verify_server_finished` and
+    `tls13_hs_client_finished` move from `tls13_handshake` to `tls13_finished`,
+    and `tls13_hs_rsa_pss_verify` to `rsa_pss`, with the same names and code.
+  - The loops of the IP literal parsers and the anchor loader end on a flag,
+    not on `break` or `continue`, so `mindc test` runs short DNS names, IP
+    literals and `x509_load_anchors` as the executable does.
+  - `tests/std_tls_x509_import.rs`: X.509 refusals (expired, not yet valid, no
+    CA path, hostname mismatch, short names and IP literals, wildcard rules,
+    an EKU without serverAuth, an IP literal against a dNSName, an outer
+    signature algorithm that differs from the inner one, wrong key), the IP
+    literal parsers, the DER and PEM anchor loader and RSA chains under
+    `mindc test` and in the executable, ECDSA/RSA-PSS/IP/name-constraint chains
+    in the executable, the RFC 8448 §3 transcript hash and key schedule on both
+    engines, and the 24 recorded TLS 1.3 flights in the executable; each with a
+    mutated copy that must fail. `tests/x509_chain_smoke.rs` replays the full
+    fixture matrix through `--emit-shared`.
+- `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
+  instead of carrying an identical copy.
 - **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
   writes and reads its results (per-game and per-level actions, a score as a
   numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
@@ -41,6 +121,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Determinism through project modules**: a single-file build (`--emit-evidence`,
+  `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
+  the project modules it imports, transitively and function by function, and classifies
+  each body it reaches with the evidence classifier. A sibling that calls
+  `entropy.entropy_fill`, a `std.dns` resolver or `time.now_ns` used to pass the veto and
+  be attested `deterministic`; it is now refused without `--allow-nondeterministic`
+  (naming the callee and the project function that calls it) and, with it, attested
+  `nondeterministic`. A pure sibling function stays `deterministic`, even beside a
+  world-reading function the program does not call. `mindc verify` keeps a stored
+  `nondeterministic` label when the hashed body calls a function it does not hold; a
+  stored label that a self-contained body contradicts, and a stored `deterministic` the
+  body contradicts, are still refused as tampered. (`src/project/single_file_scope/
+  world_reach.rs`, `src/ir/evidence/reach.rs`, `tests/determinism_veto_control.rs`)
 - **Slice arguments with alias elements and private helpers**: the slice-call
   check compares element types after type-alias resolution (local aliases and
   aliases exported by an imported module), so `array<Q>` with `type Q = i32`

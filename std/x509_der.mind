@@ -1,0 +1,607 @@
+// std/x509_der.mind — DER TLV decoding, OID recognition, byte utilities, and
+// x509_parse (the field walker for a certificate's TBS, names, validity, RSA
+// key and signature; see the slot map at the end of this file).
+//
+// Definite-length encoding only (no BER indefinite length).
+// Single-byte tags (SEQUENCE 0x30, INTEGER 0x02, BIT STRING 0x03,
+// OBJECT IDENTIFIER 0x06, context [0] 0xA0, UTCTime 0x17, GeneralizedTime 0x18).
+
+pub fn der_tlv(buf: i64, pos: i64, limit: i64, out3: i64) -> i64 {
+    if pos < 0 {
+        return 1;
+    }
+    if pos + 2 > limit {
+        return 1;
+    }
+    let tag: i64 = __mind_load_i8(buf + pos) & 255;
+    let l0: i64 = __mind_load_i8(buf + pos + 1) & 255;
+    let mut hlen: i64 = 2;
+    let mut clen: i64 = 0;
+    if l0 < 128 {
+        clen = l0;
+    } else {
+        let nb: i64 = l0 & 127;
+        if nb < 1 {
+            return 1;
+        }
+        if nb > 3 {
+            return 1;
+        }
+        hlen = 2 + nb;
+        if pos + hlen > limit {
+            return 1;
+        }
+        let mut i: i64 = 0;
+        let mut acc: i64 = 0;
+        while i < nb {
+            acc = (acc << 8) | (__mind_load_i8(buf + pos + 2 + i) & 255);
+            i = i + 1;
+        }
+        clen = acc;
+    }
+    if pos + hlen + clen > limit {
+        return 1;
+    }
+    __mind_store_i64(out3 + 0, tag);
+    __mind_store_i64(out3 + 8, hlen);
+    __mind_store_i64(out3 + 16, clen);
+    0
+}
+
+pub fn xb(buf: i64, at: i64) -> i64 {
+    __mind_load_i8(buf + at) & 255
+}
+
+// xb_eq — 1 iff the n bytes at a equal the n bytes at b.
+pub fn xb_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < n {
+        if xb(a, i) != xb(b, i) {
+            ok = 0;
+        }
+        i = i + 1;
+    }
+    ok
+}
+
+// bytes_be_to_i64 — decode up to 8 big-endian bytes into a non-negative i64.
+pub fn bytes_be_to_i64(src: i64, len: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < len {
+        acc = (acc << 8) | (__mind_load_i8(src + i) & 255);
+        i = i + 1;
+    }
+    acc
+}
+
+// ---------------------------------------------------------------------------
+// OID recognisers.  All take (buf, content_off, content_len) and return 0/1.
+// ---------------------------------------------------------------------------
+
+// id-<arc>  2.5.29.x  ->  55 1d xx   (basicConstraints/keyUsage/SAN/EKU)
+pub fn oid_is_id29(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 3 {
+        return 0;
+    }
+    if xb(buf, off) != 85 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 29 {
+        return 0;
+    }
+    if xb(buf, off + 2) == last {
+        return 1;
+    }
+    0
+}
+
+// PKCS-1 RSA family  1.2.840.113549.1.1.xx  ->  2a 86 48 86 f7 0d 01 01 xx
+pub fn oid_is_rsa_fam(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 9 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 247 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 13 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 7) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 8) == last {
+        return 1;
+    }
+    0
+}
+
+// ecdsa-with-SHA2 family  1.2.840.10045.4.3.xx  ->  2a 86 48 ce 3d 04 03 xx
+pub fn oid_is_ecdsa_sig(buf: i64, off: i64, len: i64, last: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 7) == last {
+        return 1;
+    }
+    0
+}
+
+// id-ecPublicKey  1.2.840.10045.2.1  ->  2a 86 48 ce 3d 02 01
+pub fn oid_is_ecpubkey(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 7 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 2 {
+        return 0;
+    }
+    if xb(buf, off + 6) == 1 {
+        return 1;
+    }
+    0
+}
+
+// secp256r1  1.2.840.10045.3.1.7  ->  2a 86 48 ce 3d 03 01 07
+pub fn oid_is_p256(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 42 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 206 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 61 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 7) == 7 {
+        return 1;
+    }
+    0
+}
+
+// secp384r1  1.3.132.0.34  ->  2b 81 04 00 22
+pub fn oid_is_p384(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 5 {
+        return 0;
+    }
+    if xb(buf, off) != 43 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 129 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 0 {
+        return 0;
+    }
+    if xb(buf, off + 4) == 34 {
+        return 1;
+    }
+    0
+}
+
+// id-sha256  2.16.840.1.101.3.4.2.1  ->  60 86 48 01 65 03 04 02 01
+pub fn oid_is_sha256(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 9 {
+        return 0;
+    }
+    if xb(buf, off) != 96 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 134 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 72 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 101 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 4 {
+        return 0;
+    }
+    if xb(buf, off + 7) != 2 {
+        return 0;
+    }
+    if xb(buf, off + 8) == 1 {
+        return 1;
+    }
+    0
+}
+
+// id-mgf1  1.2.840.113549.1.1.8  ->  2a 86 48 86 f7 0d 01 01 08
+pub fn oid_is_mgf1(buf: i64, off: i64, len: i64) -> i64 {
+    oid_is_rsa_fam(buf, off, len, 8)
+}
+
+// id-kp-serverAuth  1.3.6.1.5.5.7.3.1  ->  2b 06 01 05 05 07 03 01
+pub fn oid_is_serverauth(buf: i64, off: i64, len: i64) -> i64 {
+    if len != 8 {
+        return 0;
+    }
+    if xb(buf, off) != 43 {
+        return 0;
+    }
+    if xb(buf, off + 1) != 6 {
+        return 0;
+    }
+    if xb(buf, off + 2) != 1 {
+        return 0;
+    }
+    if xb(buf, off + 3) != 5 {
+        return 0;
+    }
+    if xb(buf, off + 4) != 5 {
+        return 0;
+    }
+    if xb(buf, off + 5) != 7 {
+        return 0;
+    }
+    if xb(buf, off + 6) != 3 {
+        return 0;
+    }
+    if xb(buf, off + 7) == 1 {
+        return 1;
+    }
+    0
+}
+
+// der_uint_ok — 1 iff the INTEGER content (off, len) is a minimally encoded
+// positive value (X.690 §8.3.2: sign bit clear, no superfluous leading 0x00).
+pub fn der_uint_ok(buf: i64, off: i64, len: i64) -> i64 {
+    if len < 1 {
+        return 0;
+    }
+    let b0: i64 = xb(buf, off);
+    if b0 > 127 {
+        return 0;
+    }
+    if b0 == 0 {
+        // 00 alone is zero; 00 before a byte below 0x80 is not minimal
+        if len < 2 {
+            return 0;
+        }
+        if xb(buf, off + 1) < 128 {
+            return 0;
+        }
+    }
+    1
+}
+
+// ---------------------------------------------------------------------------
+// x509_rsa_spki — strict decode of the subjectPublicKeyInfo TLV at `pos`
+// (ending at or before `limit`) as an RSA key (RFC 5280 §4.1.2.7, RFC 8017
+// §A.1.1, RFC 3279 §2.3.1):
+//   SEQUENCE { SEQUENCE { OID rsaEncryption, NULL or absent },
+//              BIT STRING (0 unused bits) {
+//                SEQUENCE { INTEGER n, INTEGER e } } }
+// Every tag must be exact, every length must fill its parent exactly (no
+// third INTEGER, no trailing bytes), and n and e must be positive minimal
+// INTEGERs. Writes n_off, n_len (sign byte stripped), e_off, e_len to out4.
+// Returns 0 for a verified RSA key, 2 when the algorithm is not
+// rsaEncryption (no RSA key), 1 when the SPKI or the RSA key is malformed.
+// out4 is all zero unless the result is 0.
+// ---------------------------------------------------------------------------
+#[protection]
+pub fn x509_rsa_spki(buf: i64, pos: i64, limit: i64, out4: i64) -> i64 {
+    __mind_store_i64(out4 + 0, 0);
+    __mind_store_i64(out4 + 8, 0);
+    __mind_store_i64(out4 + 16, 0);
+    __mind_store_i64(out4 + 24, 0);
+    let t: i64 = __mind_alloc(24);
+    if der_tlv(buf, pos, limit, t) != 0 || __mind_load_i64(t) != 48 {
+        return 1;
+    }
+    let s0: i64 = pos + __mind_load_i64(t + 8);
+    let s_end: i64 = s0 + __mind_load_i64(t + 16);
+    // algorithm AlgorithmIdentifier
+    if der_tlv(buf, s0, s_end, t) != 0 || __mind_load_i64(t) != 48 {
+        return 1;
+    }
+    let a0: i64 = s0 + __mind_load_i64(t + 8);
+    let a_end: i64 = a0 + __mind_load_i64(t + 16);
+    if der_tlv(buf, a0, a_end, t) != 0 || __mind_load_i64(t) != 6 {
+        return 1;
+    }
+    if oid_is_rsa_fam(buf, a0 + __mind_load_i64(t + 8), __mind_load_i64(t + 16), 1) != 1 {
+        return 2;
+    }
+    let pp: i64 = a0 + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if pp != a_end {
+        // parameters present: exactly NULL (05 00) and nothing after it
+        if der_tlv(buf, pp, a_end, t) != 0 || __mind_load_i64(t) != 5 {
+            return 1;
+        }
+        if __mind_load_i64(t + 16) != 0 || pp + 2 != a_end {
+            return 1;
+        }
+    }
+    // subjectPublicKey BIT STRING ends the SPKI
+    if der_tlv(buf, a_end, s_end, t) != 0 || __mind_load_i64(t) != 3 {
+        return 1;
+    }
+    let b0: i64 = a_end + __mind_load_i64(t + 8);
+    let b_end: i64 = b0 + __mind_load_i64(t + 16);
+    if b_end != s_end || __mind_load_i64(t + 16) < 2 || xb(buf, b0) != 0 {
+        return 1;
+    }
+    // RSAPublicKey SEQUENCE fills the rest of the BIT STRING
+    if der_tlv(buf, b0 + 1, b_end, t) != 0 || __mind_load_i64(t) != 48 {
+        return 1;
+    }
+    let r0: i64 = b0 + 1 + __mind_load_i64(t + 8);
+    if r0 + __mind_load_i64(t + 16) != b_end {
+        return 1;
+    }
+    // modulus INTEGER
+    if der_tlv(buf, r0, b_end, t) != 0 || __mind_load_i64(t) != 2 {
+        return 1;
+    }
+    let mut n_off: i64 = r0 + __mind_load_i64(t + 8);
+    let mut n_len: i64 = __mind_load_i64(t + 16);
+    if der_uint_ok(buf, n_off, n_len) != 1 {
+        return 1;
+    }
+    // publicExponent INTEGER, the last element
+    let ep: i64 = n_off + n_len;
+    if der_tlv(buf, ep, b_end, t) != 0 || __mind_load_i64(t) != 2 {
+        return 1;
+    }
+    let e_off: i64 = ep + __mind_load_i64(t + 8);
+    let e_len: i64 = __mind_load_i64(t + 16);
+    if e_off + e_len != b_end || der_uint_ok(buf, e_off, e_len) != 1 {
+        return 1;
+    }
+    if xb(buf, n_off) == 0 {
+        n_off = n_off + 1;
+        n_len = n_len - 1;
+    }
+    __mind_store_i64(out4 + 0, n_off);
+    __mind_store_i64(out4 + 8, n_len);
+    __mind_store_i64(out4 + 16, e_off);
+    __mind_store_i64(out4 + 24, e_len);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// out_fields slot map (each slot is one i64 at out_fields + slot*8):
+//    0 tbs_offset       1 tbs_len          (full DER of tbsCertificate = signed msg)
+//    2 serial_offset    3 serial_len       (serialNumber INTEGER content)
+//    4 issuer_offset    5 issuer_len       (issuer Name, full DER SEQUENCE)
+//    6 subject_offset   7 subject_len      (subject Name, full DER SEQUENCE)
+//    8 notBefore_offset 9 notBefore_len    (validity notBefore Time content)
+//   10 notAfter_offset 11 notAfter_len     (validity notAfter Time content)
+//   12 n_offset        13 n_len            (RSA modulus, leading 0x00 stripped)
+//   14 e_offset        15 e_len            (RSA publicExponent content)
+//                                          (12..15 come from x509_rsa_spki; all
+//                                          zero when the key is not rsaEncryption)
+//   16 sigalg_offset   17 sigalg_len       (signatureAlgorithm, full DER SEQUENCE)
+//   18 sig_offset      19 sig_len          (signatureValue bytes, unused-bits byte skipped)
+//   20 sigoid_offset   21 sigoid_len       (signatureAlgorithm OID content)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// x509_parse — walk the Certificate and record every extracted field.
+// Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+// (RFC 5280 §4.1). tbsCertificate is itself a SEQUENCE whose full DER encoding
+// (tag+length+content) is exactly the byte string covered by the signature.
+// ---------------------------------------------------------------------------
+pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+
+    // Outer Certificate SEQUENCE.
+    if der_tlv(cert_addr, 0, cert_len, t) != 0 {
+        return 1;
+    }
+    let cpos: i64 = __mind_load_i64(t + 8);
+    // start of tbsCertificate
+
+    // tbsCertificate SEQUENCE — the signed message is its full DER extent.
+    if der_tlv(cert_addr, cpos, cert_len, t) != 0 {
+        return 1;
+    }
+    let tbs_hlen: i64 = __mind_load_i64(t + 8);
+    let tbs_clen: i64 = __mind_load_i64(t + 16);
+    let tbs_total: i64 = tbs_hlen + tbs_clen;
+    __mind_store_i64(out_fields + 0, cpos);
+    __mind_store_i64(out_fields + 8, tbs_total);
+    let tbs_content: i64 = cpos + tbs_hlen;
+
+    // signatureAlgorithm SEQUENCE (follows tbsCertificate).
+    let sapos: i64 = cpos + tbs_total;
+    if der_tlv(cert_addr, sapos, cert_len, t) != 0 {
+        return 1;
+    }
+    let sa_hlen: i64 = __mind_load_i64(t + 8);
+    let sa_total: i64 = sa_hlen + __mind_load_i64(t + 16);
+    __mind_store_i64(out_fields + 128, sapos);
+    // slot 16
+    __mind_store_i64(out_fields + 136, sa_total);
+    // slot 17
+    // First element inside signatureAlgorithm is the OID.
+    let sa_content: i64 = sapos + sa_hlen;
+    if der_tlv(cert_addr, sa_content, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 160, sa_content + __mind_load_i64(t + 8));
+    // slot 20 oid offset
+    __mind_store_i64(out_fields + 168, __mind_load_i64(t + 16));
+    // slot 21 oid len
+
+    // signatureValue BIT STRING (follows signatureAlgorithm).
+    let sigpos: i64 = sapos + sa_total;
+    if der_tlv(cert_addr, sigpos, cert_len, t) != 0 {
+        return 1;
+    }
+    let sig_hlen: i64 = __mind_load_i64(t + 8);
+    let sig_clen: i64 = __mind_load_i64(t + 16);
+    if sig_clen < 2 {
+        // need the unused-bits byte + at least one signature byte
+        return 1;
+    }
+    // BIT STRING content = [unused-bits byte] || signature bytes.
+    __mind_store_i64(out_fields + 144, sigpos + sig_hlen + 1);
+    // slot 18 sig offset
+    __mind_store_i64(out_fields + 152, sig_clen - 1);
+    // slot 19 sig len
+
+    // --- inside tbsCertificate ---
+    let mut p: i64 = tbs_content;
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    if (__mind_load_i64(t + 0)) == 160 {
+        // [0] EXPLICIT version (0xA0) present (v3)
+        p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        if der_tlv(cert_addr, p, cert_len, t) != 0 {
+            return 1;
+        }
+    }
+    // serialNumber INTEGER.
+    __mind_store_i64(out_fields + 16, p + __mind_load_i64(t + 8));
+    // slot 2
+    __mind_store_i64(out_fields + 24, __mind_load_i64(t + 16));
+    // slot 3
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // signature AlgorithmIdentifier SEQUENCE (inner copy) — skip.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // issuer Name SEQUENCE.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 32, p);
+    // slot 4
+    __mind_store_i64(out_fields + 40, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    // slot 5
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // validity SEQUENCE { notBefore Time, notAfter Time }.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    let val_content: i64 = p + __mind_load_i64(t + 8);
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert_addr, val_content, cert_len, t) != 0 {
+        // notBefore
+        return 1;
+    }
+    __mind_store_i64(out_fields + 64, val_content + __mind_load_i64(t + 8));
+    // slot 8
+    __mind_store_i64(out_fields + 72, __mind_load_i64(t + 16));
+    // slot 9
+    let nb_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert_addr, val_content + nb_total, cert_len, t) != 0 {
+        // notAfter
+        return 1;
+    }
+    __mind_store_i64(out_fields + 80, val_content + nb_total + __mind_load_i64(t + 8));
+    // slot 10
+    __mind_store_i64(out_fields + 88, __mind_load_i64(t + 16));
+    // slot 11
+
+    // subject Name SEQUENCE.
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 48, p);
+    // slot 6
+    __mind_store_i64(out_fields + 56, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    // slot 7
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // subjectPublicKeyInfo: slots 12..15 are written only for a strictly
+    // decoded rsaEncryption key; any other key type leaves them zero (no RSA
+    // key) and a malformed rsaEncryption key rejects the certificate.
+    let key: i64 = __mind_alloc(32);
+    if x509_rsa_spki(cert_addr, p, cpos + tbs_total, key) == 1 {
+        return 1;
+    }
+    __mind_store_i64(out_fields + 96, __mind_load_i64(key + 0));
+    // slot 12
+    __mind_store_i64(out_fields + 104, __mind_load_i64(key + 8));
+    // slot 13
+    __mind_store_i64(out_fields + 112, __mind_load_i64(key + 16));
+    // slot 14
+    __mind_store_i64(out_fields + 120, __mind_load_i64(key + 24));
+    // slot 15
+    0
+}

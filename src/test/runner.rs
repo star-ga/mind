@@ -39,6 +39,9 @@ pub(super) fn execute_tests(
     )
 }
 
+/// Stack for each test worker thread (see the spawn below).
+const TEST_WORKER_STACK: usize = 512 * 1024 * 1024;
+
 type TestRunner = dyn Fn(&TestEntry, Option<&EvalSupport>) -> TestResult + Send + Sync;
 type ResultSink = dyn Fn(&TestResult, &ReporterKind) + Send + Sync;
 
@@ -85,29 +88,35 @@ fn execute_tests_with(
         let support = Arc::clone(&eval_support);
         let run = Arc::clone(&runner);
         let _completion = completion.clone();
-        let handle = std::thread::spawn(move || {
-            loop {
-                let entry = {
-                    let mut lock = q.lock().unwrap();
-                    lock.pop_front()
-                };
-                let entry = match entry {
-                    Some(e) => e,
-                    None => break,
-                };
+        // Test bodies run on the tree-walking evaluator, which recurses per nested expression and
+        // call; a large std program (the TLS client) overflows the 2 MiB default thread stack in a
+        // debug build. Only the address range is reserved; pages are committed as they are touched.
+        let handle = std::thread::Builder::new()
+            .stack_size(TEST_WORKER_STACK)
+            .spawn(move || {
+                loop {
+                    let entry = {
+                        let mut lock = q.lock().unwrap();
+                        lock.pop_front()
+                    };
+                    let entry = match entry {
+                        Some(e) => e,
+                        None => break,
+                    };
 
-                let result = run(&entry.entry, support.get(&entry.entry.source_file));
+                    let result = run(&entry.entry, support.get(&entry.entry.source_file));
 
-                r.lock().unwrap().push(IndexedTestResult {
-                    ordinal: entry.ordinal,
-                    result,
-                });
-                #[cfg(test)]
-                if let Some(after_store) = &_completion.after_store {
-                    after_store(entry.ordinal);
+                    r.lock().unwrap().push(IndexedTestResult {
+                        ordinal: entry.ordinal,
+                        result,
+                    });
+                    #[cfg(test)]
+                    if let Some(after_store) = &_completion.after_store {
+                        after_store(entry.ordinal);
+                    }
                 }
-            }
-        });
+            })
+            .map_err(|e| TestError::Execution(format!("could not start a test worker: {e}")))?;
         handles.push(handle);
     }
 

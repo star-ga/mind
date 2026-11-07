@@ -1,0 +1,615 @@
+// std/dns.mind — host name resolution and connect-by-name.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// dns_resolve(name_addr, name_len) resolves a host name, or a numeric IPv4 /
+// IPv6 literal, through the C library's getaddrinfo(3) (so /etc/hosts and the
+// system resolver configuration apply) and returns a result record.
+//
+// tcp_connect_host(name_addr, name_len, port) resolves the name and tries each
+// address in resolver order, each connect bounded by a timeout, and returns a
+// std.net TcpStream handle (8-byte heap record, fd at offset 0), so
+// tcp_read / tcp_write / tcp_close from std.net work on it unchanged.
+//
+// Fail closed:
+//   - the name is checked before the resolver sees it: 1..=253 bytes, every
+//     byte printable ASCII (0x21..=0x7E), so no NUL, space or control byte;
+//   - each getaddrinfo error code -1..-12 (EAI_BADFLAGS..EAI_OVERFLOW, the
+//     same values in glibc and musl) has its own dns_err_* code, and any other
+//     non-zero code is dns_err_unknown;
+//   - the result list is bounded (dns_max_addrs()); a longer list, or an entry
+//     with an unexpected family or address length, fails the whole call;
+//   - a failed call has count 0: no partial results.
+//
+// Determinism: `getaddrinfo` and `connect` are World externs, and dns_resolve,
+// tcp_connect_host and tcp_connect_host_timeout are classified by name beside
+// them (src/intrinsics.rs), because a caller's IR holds only the call. A
+// program that calls one, in its entry or in a project module the entry calls,
+// is refused by the determinism veto without `--allow-nondeterministic` and,
+// with it, attested `nondeterministic`.
+//
+// Host layouts. The C library's `struct addrinfo` and `struct sockaddr` differ
+// by host, and nothing at compile time names the host, so dns_resolve asks
+// uname(2) for the system name on every call and reads the layout it names:
+//   - "Linux" (glibc or musl): ai_addr at +24, ai_canonname at +32; the
+//     sockaddr family is a u16 at +0; AF_INET6 = 10;
+//   - "Darwin" (macOS): ai_canonname at +24, ai_addr at +32; the sockaddr holds
+//     sa_len in byte 0 (it must equal ai_addrlen) and sa_family in byte 1;
+//     AF_INET6 = 30.
+// On any other system name, or when uname fails, dns_resolve returns
+// dns_err_platform() with count 0 and never calls getaddrinfo. Other systems,
+// the BSDs included, are not implemented: their AF_INET6 values differ, and on
+// some so does the field order.
+//
+// tcp_connect_host and tcp_connect_host_timeout are Linux only: they use the
+// Linux socket constants (AF_INET6 = 10, SOL_SOCKET = 1, SO_SNDTIMEO = 21), as
+// std.net does, and rely on SO_SNDTIMEO bounding a blocking connect(2). On any
+// other host they return 0 without resolving or opening a socket.
+//
+// This is a self-contained substrate module (it imports nothing), so its object
+// is compiled and linked on demand by `mindc build`.
+
+extern "C" {
+    unsafe fn getaddrinfo(node: *const u8, service: *const u8, hints: *const u8, res: *mut u8) -> i32;
+    unsafe fn freeaddrinfo(res: *mut u8);
+    unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
+    unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+    unsafe fn uname(buf: *mut u8) -> i32;
+}
+
+// ---------------------------------------------------------------------------
+// Result codes
+// ---------------------------------------------------------------------------
+
+pub fn dns_ok() -> i64 {
+    0
+}
+
+// The name was refused before resolution: empty, longer than 253 bytes, or a
+// byte outside printable ASCII.
+pub fn dns_err_name() -> i64 {
+    0 - 1
+}
+
+// EAI_NONAME: the name is not known.
+pub fn dns_err_noname() -> i64 {
+    0 - 2
+}
+
+// EAI_NODATA: the name exists but has no address.
+pub fn dns_err_nodata() -> i64 {
+    0 - 3
+}
+
+// EAI_AGAIN: temporary resolver failure.
+pub fn dns_err_again() -> i64 {
+    0 - 4
+}
+
+// EAI_FAIL: permanent resolver failure.
+pub fn dns_err_fail() -> i64 {
+    0 - 5
+}
+
+// EAI_MEMORY: the resolver ran out of memory.
+pub fn dns_err_memory() -> i64 {
+    0 - 6
+}
+
+// EAI_SYSTEM: a system error inside the resolver.
+pub fn dns_err_system() -> i64 {
+    0 - 7
+}
+
+// EAI_BADFLAGS: the resolver refused the request flags.
+pub fn dns_err_badflags() -> i64 {
+    0 - 8
+}
+
+// Any other non-zero getaddrinfo code.
+pub fn dns_err_unknown() -> i64 {
+    0 - 9
+}
+
+// getaddrinfo reported success with no address.
+pub fn dns_err_empty() -> i64 {
+    0 - 10
+}
+
+// More than dns_max_addrs() addresses.
+pub fn dns_err_too_many() -> i64 {
+    0 - 11
+}
+
+// An entry with no address, an unexpected family or a wrong address length.
+pub fn dns_err_entry() -> i64 {
+    0 - 12
+}
+
+// EAI_ADDRFAMILY: the name has no address in the requested family.
+pub fn dns_err_addrfamily() -> i64 {
+    0 - 13
+}
+
+// EAI_FAMILY: the resolver does not support the requested address family.
+pub fn dns_err_family() -> i64 {
+    0 - 14
+}
+
+// EAI_SOCKTYPE: the resolver does not support the requested socket type.
+pub fn dns_err_socktype() -> i64 {
+    0 - 15
+}
+
+// EAI_SERVICE: the service is not available for the socket type.
+pub fn dns_err_service() -> i64 {
+    0 - 16
+}
+
+// EAI_OVERFLOW: a resolver buffer overflowed.
+pub fn dns_err_overflow() -> i64 {
+    0 - 17
+}
+
+// The host's system name is not one whose addrinfo layout this module reads
+// (see "Host layouts" above), or uname failed.
+pub fn dns_err_platform() -> i64 {
+    0 - 18
+}
+
+// ---------------------------------------------------------------------------
+// Bounds
+// ---------------------------------------------------------------------------
+
+pub fn dns_max_name_len() -> i64 {
+    253
+}
+
+pub fn dns_max_addrs() -> i64 {
+    32
+}
+
+// Per-address connect timeout used by tcp_connect_host.
+pub fn dns_connect_timeout_ms() -> i64 {
+    10000
+}
+
+// Largest timeout tcp_connect_host_timeout accepts.
+pub fn dns_max_timeout_ms() -> i64 {
+    120000
+}
+
+// ---------------------------------------------------------------------------
+// Result record (16 + 32 * dns_max_addrs() bytes)
+//
+//   offset 0   status   -- dns_ok() or a dns_err_* code
+//   offset 8   count    -- number of entries (0 when status != dns_ok())
+//   offset 16 + 32*i, entry i:
+//     +0   family    -- 4 (IPv4) or 6 (IPv6)
+//     +8   addr[16]  -- address bytes in network order; IPv4 uses the first 4
+//     +24  scope_id  -- IPv6 scope id (0 for IPv4)
+// ---------------------------------------------------------------------------
+
+pub fn dns_status(r: i64) -> i64 {
+    __mind_load_i64(r + 0)
+}
+
+pub fn dns_count(r: i64) -> i64 {
+    __mind_load_i64(r + 8)
+}
+
+fn dns_entry(r: i64, i: i64) -> i64 {
+    r + 16 + i * 32
+}
+
+// dns_family — 4, 6, or 0 when `i` is out of range.
+pub fn dns_family(r: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    if i >= dns_count(r) {
+        return 0;
+    }
+    __mind_load_i64(dns_entry(r, i))
+}
+
+// dns_addr_byte — byte `k` (0..16) of entry `i`'s address, or -1 when out of range.
+pub fn dns_addr_byte(r: i64, i: i64, k: i64) -> i64 {
+    if dns_family(r, i) == 0 {
+        return 0 - 1;
+    }
+    if k < 0 {
+        return 0 - 1;
+    }
+    if k >= 16 {
+        return 0 - 1;
+    }
+    __mind_load_i8(dns_entry(r, i) + 8 + k)
+}
+
+pub fn dns_scope_id(r: i64, i: i64) -> i64 {
+    if dns_family(r, i) == 0 {
+        return 0;
+    }
+    __mind_load_i64(dns_entry(r, i) + 24)
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+fn dns_zero(p: i64, n: i64) {
+    let _ = memset(p as *mut u8, 0, n);
+}
+
+fn dns_new_record() -> i64 {
+    let n: i64 = 16 + dns_max_addrs() * 32;
+    let r: i64 = __mind_alloc(n);
+    dns_zero(r, n);
+    r
+}
+
+fn dns_fail(r: i64, code: i64) -> i64 {
+    dns_zero(r, 16 + dns_max_addrs() * 32);
+    __mind_store_i64(r + 0, code);
+    r
+}
+
+// 1 when the name may be handed to the resolver.
+#[protection]
+fn dns_name_ok(name_addr: i64, name_len: i64) -> i64 {
+    if name_addr == 0 {
+        return 0;
+    }
+    if name_len < 1 {
+        return 0;
+    }
+    if name_len > dns_max_name_len() {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i < name_len {
+        let b: i64 = __mind_load_i8(name_addr + i);
+        if b < 33 {
+            return 0;
+        }
+        if b > 126 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    1
+}
+
+// 1 when the NUL-terminated system name at `u` is the `n` bytes packed
+// little-endian in `word`.
+fn dns_sysname_is(u: i64, word: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        if __mind_load_i8(u + k) != ((word >> (8 * k)) & 255) {
+            return 0;
+        }
+        k = k + 1;
+    }
+    if __mind_load_i8(u + n) != 0 {
+        return 0;
+    }
+    1
+}
+
+// The host layout from uname(2): dns_layout_linux(), dns_layout_darwin(), or 0
+// for any other system name or a failed call.
+fn dns_layout() -> i64 {
+    // struct utsname: Linux 6 fields of 65 bytes, Darwin 5 of 256; sysname is
+    // the first field on both.
+    let u: i64 = __mind_alloc(1280);
+    dns_zero(u, 1280);
+    if uname(u as *mut u8) as i64 != 0 {
+        return 0;
+    }
+    // "Linux"
+    if dns_sysname_is(u, 517366245708, 5) == 1 {
+        return dns_layout_linux();
+    }
+    // "Darwin"
+    if dns_sysname_is(u, 121399254606148, 6) == 1 {
+        return dns_layout_darwin();
+    }
+    0
+}
+
+fn dns_layout_linux() -> i64 {
+    1
+}
+
+fn dns_layout_darwin() -> i64 {
+    2
+}
+
+// The address family a sockaddr holds, or -1 when its Darwin sa_len disagrees
+// with ai_addrlen `alen`.
+fn dns_sa_family(sa: i64, alen: i64, layout: i64) -> i64 {
+    if layout == dns_layout_darwin() {
+        if __mind_load_i8(sa) != alen {
+            return 0 - 1;
+        }
+        return __mind_load_i8(sa + 1);
+    }
+    __mind_load_i16(sa)
+}
+
+// getaddrinfo return code -> dns_err_*, one code each (glibc and musl share
+// these values).
+fn dns_map_gai(rc: i64) -> i64 {
+    if rc == 0 - 1 {
+        return dns_err_badflags();
+    }
+    if rc == 0 - 2 {
+        return dns_err_noname();
+    }
+    if rc == 0 - 3 {
+        return dns_err_again();
+    }
+    if rc == 0 - 4 {
+        return dns_err_fail();
+    }
+    if rc == 0 - 5 {
+        return dns_err_nodata();
+    }
+    if rc == 0 - 6 {
+        return dns_err_family();
+    }
+    if rc == 0 - 7 {
+        return dns_err_socktype();
+    }
+    if rc == 0 - 8 {
+        return dns_err_service();
+    }
+    if rc == 0 - 9 {
+        return dns_err_addrfamily();
+    }
+    if rc == 0 - 10 {
+        return dns_err_memory();
+    }
+    if rc == 0 - 11 {
+        return dns_err_system();
+    }
+    if rc == 0 - 12 {
+        return dns_err_overflow();
+    }
+    dns_err_unknown()
+}
+
+// Copy one addrinfo node into entry `i` of `r`, read in host layout `layout`.
+// Returns dns_ok() or dns_err_entry().
+//   struct addrinfo (LP64): ai_family +4, ai_addrlen +16, ai_next +40, and
+//     ai_addr +24 (Linux) or +32 (Darwin)
+//   sockaddr_in:  family, addr +4 (4 bytes)              -- 16 bytes
+//   sockaddr_in6: family, addr +8 (16 bytes), scope +24  -- 28 bytes
+//   (family: dns_sa_family; AF_INET = 2, AF_INET6 = 10 Linux, 30 Darwin)
+#[protection]
+fn dns_take(r: i64, i: i64, node: i64, layout: i64) -> i64 {
+    let fam: i64 = __mind_load_i32(node + 4);
+    let alen: i64 = __mind_load_i32(node + 16);
+    let mut sa: i64 = __mind_load_i64(node + 24);
+    let mut inet6: i64 = 10;
+    if layout == dns_layout_darwin() {
+        sa = __mind_load_i64(node + 32);
+        inet6 = 30;
+    }
+    if sa == 0 {
+        return dns_err_entry();
+    }
+    if dns_sa_family(sa, alen, layout) != fam {
+        return dns_err_entry();
+    }
+    let e: i64 = dns_entry(r, i);
+    let mut k: i64 = 0;
+    if fam == 2 {
+        if alen != 16 {
+            return dns_err_entry();
+        }
+        __mind_store_i64(e, 4);
+        while k < 4 {
+            __mind_store_i8(e + 8 + k, __mind_load_i8(sa + 4 + k));
+            k = k + 1;
+        }
+        return dns_ok();
+    }
+    if fam == inet6 {
+        if alen != 28 {
+            return dns_err_entry();
+        }
+        __mind_store_i64(e, 6);
+        while k < 16 {
+            __mind_store_i8(e + 8 + k, __mind_load_i8(sa + 8 + k));
+            k = k + 1;
+        }
+        __mind_store_i64(e + 24, __mind_load_i32(sa + 24));
+        return dns_ok();
+    }
+    dns_err_entry()
+}
+
+// ---------------------------------------------------------------------------
+// Public: dns_resolve
+// ---------------------------------------------------------------------------
+
+// dns_resolve — resolve `name` (name_len bytes at name_addr, no NUL needed) to
+// its stream-socket addresses. Always returns a record; check dns_status first.
+#[protection]
+pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
+    let r: i64 = dns_new_record();
+    if dns_name_ok(name_addr, name_len) == 0 {
+        return dns_fail(r, dns_err_name());
+    }
+    let layout: i64 = dns_layout();
+    if layout == 0 {
+        return dns_fail(r, dns_err_platform());
+    }
+    // NUL-terminated copy for the C call.
+    let node: i64 = __mind_alloc(name_len + 1);
+    let mut i: i64 = 0;
+    while i < name_len {
+        __mind_store_i8(node + i, __mind_load_i8(name_addr + i));
+        i = i + 1;
+    }
+    __mind_store_i8(node + name_len, 0);
+    // hints: ai_flags 0, ai_family AF_UNSPEC, ai_socktype SOCK_STREAM.
+    let hints: i64 = __mind_alloc(48);
+    dns_zero(hints, 48);
+    __mind_store_i32(hints + 8, 1);
+    let slot: i64 = __mind_alloc(8);
+    __mind_store_i64(slot, 0);
+    let rc: i64 = getaddrinfo(node as *const u8, 0 as *const u8, hints as *const u8, slot as *mut u8) as i64;
+    let head: i64 = __mind_load_i64(slot);
+    if rc != 0 {
+        if head != 0 {
+            freeaddrinfo(head as *mut u8)
+        }
+        return dns_fail(r, dns_map_gai(rc));
+    }
+    let mut cur: i64 = head;
+    let mut n: i64 = 0;
+    let mut st: i64 = dns_ok();
+    while cur != 0 {
+        if n >= dns_max_addrs() {
+            st = dns_err_too_many();
+            cur = 0;
+        } else {
+            st = dns_take(r, n, cur, layout);
+            if st != dns_ok() {
+                cur = 0;
+            } else {
+                n = n + 1;
+                cur = __mind_load_i64(cur + 40);
+            }
+        }
+    }
+    if head != 0 {
+        freeaddrinfo(head as *mut u8)
+    }
+    if st != dns_ok() {
+        return dns_fail(r, st);
+    }
+    if n == 0 {
+        return dns_fail(r, dns_err_empty());
+    }
+    __mind_store_i64(r + 8, n);
+    r
+}
+
+// ---------------------------------------------------------------------------
+// Public: tcp_connect_host
+// ---------------------------------------------------------------------------
+
+// Build the sockaddr for entry `i` with `port` into `sa` (28 bytes); returns its length.
+fn dns_sockaddr(r: i64, i: i64, port: i64, sa: i64) -> i64 {
+    dns_zero(sa, 28);
+    let e: i64 = dns_entry(r, i);
+    __mind_store_i8(sa + 2, (port >> 8) & 255);
+    __mind_store_i8(sa + 3, port & 255);
+    let mut k: i64 = 0;
+    if __mind_load_i64(e) == 4 {
+        __mind_store_i16(sa, 2);
+        while k < 4 {
+            __mind_store_i8(sa + 4 + k, __mind_load_i8(e + 8 + k));
+            k = k + 1;
+        }
+        return 16;
+    }
+    __mind_store_i16(sa, 10);
+    while k < 16 {
+        __mind_store_i8(sa + 8 + k, __mind_load_i8(e + 8 + k));
+        k = k + 1;
+    }
+    __mind_store_i32(sa + 24, __mind_load_i64(e + 24));
+    28
+}
+
+// SO_SNDTIMEO (SOL_SOCKET 1, optname 21) bounds a blocking connect(2) on Linux.
+fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
+    let tv: i64 = __mind_alloc(16);
+    __mind_store_i64(tv + 0, ms / 1000);
+    __mind_store_i64(tv + 8, (ms % 1000) * 1000);
+    setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64
+}
+
+// Connect to entry `i`; returns the connected fd, or -1.
+fn dns_connect_one(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
+    let mut domain: i64 = 10;
+    if dns_family(r, i) == 4 {
+        domain = 2;
+    }
+    let fd: i64 = socket(domain as i32, 1, 0) as i64;
+    if fd < 0 {
+        return 0 - 1;
+    }
+    if dns_set_send_timeout(fd, timeout_ms) != 0 {
+        let _ = close(fd as i32);
+        return 0 - 1;
+    }
+    let sa: i64 = __mind_alloc(28);
+    let salen: i64 = dns_sockaddr(r, i, port, sa);
+    let c: i64 = connect(fd as i32, sa as *const u8, salen as i32) as i64;
+    if c != 0 {
+        let _ = close(fd as i32);
+        return 0 - 1;
+    }
+    // The returned stream has the same blocking semantics as std.net's.
+    if dns_set_send_timeout(fd, 0) != 0 {
+        let _ = close(fd as i32);
+        return 0 - 1;
+    }
+    fd
+}
+
+// tcp_connect_host_timeout — resolve `name` and connect to `port`, trying each
+// address in resolver order; each connect is bounded by `timeout_ms`
+// (1..=dns_max_timeout_ms()). Returns a std.net TcpStream handle, or 0 on a bad
+// argument, a resolution failure, or when no address accepts.
+#[protection]
+pub fn tcp_connect_host_timeout(name_addr: i64, name_len: i64, port: i64, timeout_ms: i64) -> i64 {
+    if port < 1 {
+        return 0;
+    }
+    if port > 65535 {
+        return 0;
+    }
+    if timeout_ms < 1 {
+        return 0;
+    }
+    if timeout_ms > dns_max_timeout_ms() {
+        return 0;
+    }
+    // The socket constants below are Linux values (see "Host layouts").
+    if dns_layout() != dns_layout_linux() {
+        return 0;
+    }
+    let r: i64 = dns_resolve(name_addr, name_len);
+    if dns_status(r) != dns_ok() {
+        return 0;
+    }
+    let n: i64 = dns_count(r);
+    let mut i: i64 = 0;
+    while i < n {
+        let fd: i64 = dns_connect_one(r, i, port, timeout_ms);
+        if fd >= 0 {
+            let h: i64 = __mind_alloc(8);
+            __mind_store_i64(h, fd);
+            return h;
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// tcp_connect_host — tcp_connect_host_timeout with dns_connect_timeout_ms().
+pub fn tcp_connect_host(name_addr: i64, name_len: i64, port: i64) -> i64 {
+    tcp_connect_host_timeout(name_addr, name_len, port, dns_connect_timeout_ms())
+}
