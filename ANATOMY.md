@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2146 | **Est. tokens:** ~4,075,547
-**Generated:** 2026-11-07 00:46 UTC
+**Files:** 2147 | **Est. tokens:** ~4,077,290
+**Generated:** 2026-11-07 00:52 UTC
 
 ## Token Budget Guide
 
@@ -92,10 +92,11 @@
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~931 |
+| `.github/actions/install-mlir-toolchain/` | 1 | ~1,743 |
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~17,042 |
+| `.github/workflows/` | 9 | ~16,486 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~128,929 |
@@ -1053,6 +1054,9 @@
 - `post-commit` (~410 tok, medium) — #!/usr/bin/env bash
 - `post-merge` (~408 tok, medium) — #!/usr/bin/env bash
 - `pre-commit` (~698 tok, large) — #!/usr/bin/env bash
+### `.github/actions/install-mlir-toolchain/`
+
+- `action.yml` (~1743 tok, huge) — name: Install MLIR toolchain
 ### `.github/actions/release-artifact-smoke/`
 
 - `action.yml` (~1081 tok, large) — name: Release artifact smoke
@@ -1074,9 +1078,9 @@
 - `pr_review.py` (~1297 tok, large) — PR review + public-leak check for this repository (comment only; never pushes or merges)."""
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~5397 tok, huge) — name: Bench gate
+- `bench-gate.yml` (~5298 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~333 tok, medium) — name: Cargo Deny
-- `crypto-vectors.yml` (~2073 tok, huge) — name: Crypto Vectors
+- `crypto-vectors.yml` (~1616 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
