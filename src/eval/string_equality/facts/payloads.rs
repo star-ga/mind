@@ -65,7 +65,7 @@ impl Decls {
             types: v.payload.clone(),
             names: v.field_names.clone(),
         };
-        let Some((head, variant)) = path.rsplit_once("::") else {
+        let Some((head, variant)) = path.rsplit_once("::").or_else(|| path.rsplit_once('.')) else {
             let mut local = self.enums.iter().flat_map(|(owner, variants)| {
                 variants
                     .iter()

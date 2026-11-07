@@ -221,7 +221,7 @@ pub(super) fn std_facts(name: &str) -> Option<Contradicted> {
 /// and enum registry of std alone, and `name` as the current module (see
 /// `project::substrate_link::std_only_scope`).
 #[cfg(feature = "cross-module-imports")]
-struct StdScope {
+pub(super) struct StdScope {
     _table: crate::project::single_file_scope::ProjectTableGuard,
     _module: crate::qualified_enums::ModuleGuard,
 }
@@ -240,7 +240,7 @@ thread_local! {
 
 #[cfg(feature = "cross-module-imports")]
 impl StdScope {
-    fn install(name: &str) -> Self {
+    pub(super) fn install(name: &str) -> Self {
         let (table, enums) = SCOPES.with(|scopes| {
             scopes
                 .borrow_mut()
@@ -268,11 +268,11 @@ impl StdScope {
 /// Without cross-module imports there is no module table or registry to
 /// scope: std code resolves against the bundled signatures alone.
 #[cfg(not(feature = "cross-module-imports"))]
-struct StdScope;
+pub(super) struct StdScope;
 
 #[cfg(not(feature = "cross-module-imports"))]
 impl StdScope {
-    fn install(_name: &str) -> Self {
+    pub(super) fn install(_name: &str) -> Self {
         StdScope
     }
 }

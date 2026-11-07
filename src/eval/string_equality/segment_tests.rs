@@ -120,16 +120,28 @@ fn forwarders_are_the_opaque_callee() {
 /// so this pins the source of the facts.
 #[test]
 fn std_facts_are_the_full_module_fixpoint() {
-    for name in ["std.json", "std.vec", "std.string"] {
+    let none = format!("{:?}", slots::Contradicted::default());
+    let mut recorded = Vec::new();
+    for name in ["std.json", "std.vec", "std.string", "std.fs"] {
         let ast = crate::project::stdlib::bundled_module_ast(name).unwrap();
-        let ordinals = equality_ordinals(ast);
-        let decls = facts::Decls::seeded(ast, Default::default(), Default::default());
-        let (_, _, _, decls) = walk::fixpoint(decls, &ordinals, &[ast.items.as_slice()]);
-        let mut fresh = decls.contradicted;
-        fresh.locals.clear();
-        let cached = segments::std_facts(name).unwrap();
-        assert_eq!(format!("{cached:?}"), format!("{fresh:?}"), "{name}");
+        let fresh = {
+            let _scope = segments::StdScope::install(name);
+            let ordinals = equality_ordinals(ast);
+            let decls = facts::Decls::seeded(ast, Default::default(), Default::default());
+            let (_, _, _, decls) = walk::fixpoint(decls, &ordinals, &[ast.items.as_slice()]);
+            let mut fresh = decls.contradicted;
+            fresh.locals.clear();
+            format!("{fresh:?}")
+        };
+        let cached = format!("{:?}", segments::std_facts(name).unwrap());
+        assert_eq!(cached, fresh, "{name}");
+        if fresh != none {
+            recorded.push(name);
+        }
     }
+    // Positive control: some module records a slot, so a walk of nothing
+    // would differ.
+    assert!(!recorded.is_empty(), "no std module recorded a slot");
 }
 
 /// The merge names a project test's own functions for its module; a string
