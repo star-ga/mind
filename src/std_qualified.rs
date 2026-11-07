@@ -2,13 +2,20 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Qualified calls into the world-reading std modules.
+//! Calls into the world-reading std modules.
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout` and
-//! `entropy_fill` read the world only when the call's qualifier resolves to
-//! `std.dns` or `std.entropy`. A user function of the same bare name is
-//! deterministic. The lowered IR keeps only the bare name (the qualifier lives
-//! on the call span, in `SourceSpelling`), so this module reads the source.
+//! `entropy_fill` read the world only when the call resolves to `std.dns` or
+//! `std.entropy`. A user function of the same bare name is deterministic. The
+//! lowered IR keeps only the bare name (the qualifier lives on the call span,
+//! in `SourceSpelling`), so this module reads the source.
+//!
+//! A call resolves in one of two ways, the way the build resolves it. A
+//! qualified call (`dns.dns_resolve(..)`) resolves through its qualifier. A
+//! bare call (`dns_resolve(..)`, no qualifier recorded) resolves by name: it is
+//! the std function when the module imports the std module that owns that row
+//! and defines no function of that name. A bare name that the module defines
+//! is the user's function and stays deterministic.
 //!
 //! Every spelling of the qualifier counts: the module name, an alias, the
 //! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
@@ -18,7 +25,7 @@
 //! counts as a use.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::{Literal, Module, Node, Span};
 use crate::ir::{IRModule, Instr};
@@ -52,17 +59,26 @@ struct QualMap {
     by_qual: BTreeMap<String, Vec<String>>,
     /// Keyed by span, with `::` written as `.`. Only looked up, never iterated.
     refs: HashMap<Span, String>,
+    /// Dotted path of every module the source imports, under any alias.
+    imported: BTreeSet<String>,
+    /// Names of the functions the module itself defines, at the top level or
+    /// in a `module NAME { .. }` block. Impl methods, nested functions and
+    /// `extern` declarations are not here: a bare call does not resolve to
+    /// them, so they cannot hide a std call.
+    defined: BTreeSet<String>,
 }
 
 impl QualMap {
     fn from_module(module: &Module) -> Self {
         let mut by_qual: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut imported = BTreeSet::new();
         for item in &module.items {
             nerve_walk::walk(item, &mut |node| {
                 let Node::Import { path, alias, .. } = node else {
                     return;
                 };
                 let dotted = path.join(".");
+                imported.insert(dotted.clone());
                 let last = path.last().map(String::as_str).unwrap_or("");
                 if let Some(alias) = alias {
                     add_qual(&mut by_qual, alias, &dotted);
@@ -77,12 +93,22 @@ impl QualMap {
             .iter()
             .map(|(span, qual)| (*span, qual.replace("::", ".")))
             .collect();
-        Self { by_qual, refs }
+        let mut defined = BTreeSet::new();
+        collect_defined(&module.items, &mut defined);
+        Self {
+            by_qual,
+            refs,
+            imported,
+            defined,
+        }
     }
 
     fn is_world(&self, span: Span, name: &str) -> bool {
         let Some(qual) = self.refs.get(&span) else {
-            return false;
+            // A bare name resolves to the std row it names when the module
+            // imports that std module and defines no function of that name.
+            return !self.defined.contains(name)
+                && self.imported.iter().any(|path| is_row(path, name));
         };
         match self.by_qual.get(qual.as_str()) {
             Some(paths) => paths.iter().any(|path| is_row(path, name)),
@@ -90,7 +116,7 @@ impl QualMap {
         }
     }
 
-    /// The first qualified std-world call or function-value read in `node`'s
+    /// The first std-world call or function-value read in `node`'s
     /// subtree, `node` included.
     fn offender_in(&self, node: &Node) -> Option<String> {
         let mut found = None;
@@ -108,6 +134,20 @@ impl QualMap {
     }
 }
 
+/// Names of the free functions in `items`, descending into transparent
+/// `module NAME { .. }` blocks but not into function bodies or impls.
+fn collect_defined(items: &[Node], out: &mut BTreeSet<String>) {
+    for item in items {
+        match item {
+            Node::FnDef(fd, _) => {
+                out.insert(fd.name.clone());
+            }
+            Node::Block { stmts, .. } => collect_defined(stmts, out),
+            _ => {}
+        }
+    }
+}
+
 fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
     if qual.is_empty() {
         return;
@@ -121,7 +161,7 @@ fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
 /// What [`module_offender`] names for a source it cannot parse.
 pub const UNPARSED: &str = "<source that does not parse>";
 
-/// The first qualified std-world use anywhere in `source`: every function at
+/// The first std-world use anywhere in `source`: every function at
 /// any depth, impl methods, module blocks and top-level items. Whole-module,
 /// matching the entry IR scan: an uncalled function still refuses the module.
 /// A source that does not parse is [`UNPARSED`], never clean (the CLI calls
@@ -134,7 +174,7 @@ pub fn module_offender(source: &str) -> Option<String> {
     module.items.iter().find_map(|item| map.offender_in(item))
 }
 
-/// The qualified std-world use in the body of `func` in `source`, nested
+/// The std-world use in the body of `func` in `source`, nested
 /// closures and functions included. Every function of that name counts (a
 /// free function and a method alike), so a same-named sibling cannot hide one.
 /// Other functions of the module do not count. `None` when `func` is absent,
@@ -179,7 +219,8 @@ impl Drop for Guard {
     }
 }
 
-/// Whether the call at `span` named `name` is a qualified std-world call in
+/// Whether the call at `span` named `name` is a std-world call (qualified, or
+/// bare and resolving by name) in
 /// the map [`Guard`] installed. False when no guard is installed, so a path
 /// that never parsed a module cannot invent a refusal.
 pub fn call_is_world(span: Span, name: &str) -> bool {
