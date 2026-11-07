@@ -1,0 +1,641 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+//! String equality, length and slice give one answer on every backend.
+//!
+//! A downstream consumer measured two defects:
+//!
+//! * `==` / `!=` on a `string` parameter or a string-returning call compiled
+//!   to a HANDLE compare on the MLIR path: `same("abc", "abc")` returned 0 and
+//!   `a != b` returned 1 for equal text, with no diagnostic. Only literals and
+//!   immutable literal-bound locals were compared by bytes.
+//! * `mindc test` refused every string comparison the build computed, and the
+//!   specified std.string API (`string_len`, `string_slice`, `string_eq`)
+//!   failed on a `string` parameter or a literal argument, because the record
+//!   the interpreter passes was not readable as the std `String` value.
+//! * Strings whose type the pass did not establish (an unannotated binding of
+//!   an `if` expression, a field of an indexed struct-array element, an enum
+//!   payload, a string method result) were neither compared by bytes nor
+//!   refused: the MLIR build still compared handles.
+//!
+//! The same source runs here through the MLIR shared-library build and through
+//! `mindc test`, and every case must produce the SAME value on both. A string
+//! compared with an operand whose type is not a string, and two operands of
+//! which neither has a known type, are refused with `E2038` naming
+//! `string_eq`, by `mindc check`, `mindc build` and `mindc test` alike, and
+//! never compiled to a handle compare.
+//!
+//! Gate: `cargo test --features "std-surface mlir-build cross-module-imports" \
+//!        --test string_ops_backend_parity`
+
+#![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
+
+mod common;
+use common::{mindc_bin, scratch_dir};
+
+use std::process::Command;
+
+const HELPERS: &str = r#"use std.string;
+
+struct Dec {
+    name: string,
+    n: i64,
+}
+
+fn same(a: string, b: string) -> i64 {
+    if a == b { return 1 }
+    return 0
+}
+
+fn differ(a: string, b: string) -> i64 {
+    if a != b { return 1 }
+    return 0
+}
+
+fn is_abc(a: string) -> i64 {
+    if a == "abc" { return 1 }
+    return 0
+}
+
+fn mk() -> string { return "abc" }
+
+fn call_eq() -> i64 {
+    let x = mk()
+    if x == "abc" { return 1 }
+    return 0
+}
+
+fn field_eq(d: Dec) -> i64 {
+    if d.name == "cache" { return 1 }
+    return 0
+}
+
+fn len_of(s: string) -> i64 { return string_len(s) }
+
+fn slice_len(s: string) -> i64 { return string_len(string_slice(s, 1, 3)) }
+
+fn slice_eq(s: string) -> i64 {
+    if string_slice(s, 1, 3) == "bc" { return 1 }
+    return 0
+}
+
+fn lib_eq(a: string, b: string) -> i64 { return string_eq(a, b) }
+
+fn first_is_abc(xs: array<string>) -> i64 {
+    if xs[0] == "abc" { return 1 }
+    return 0
+}
+
+fn pick(a: string, b: string, c: i64) -> i64 {
+    let x = if c == 1 { a } else { b }
+    let y = if c == 1 { b } else { a }
+    if x == y { return 1 }
+    return 0
+}
+
+fn same_first(ds: [Dec; 2]) -> i64 {
+    if ds[0].name == ds[1].name { return 1 }
+    return 0
+}
+
+enum Tok {
+    Word(string),
+    Num(i64),
+}
+
+fn word_is(t: Tok, w: string) -> i64 {
+    match t {
+        Tok::Word(x) => {
+            if x == w { return 1 }
+            return 0
+        },
+        Tok::Num(_) => { return 2 },
+    }
+}
+"#;
+
+/// `(case, expression, expected)`: each case is a zero-argument `pub fn`.
+const CASES: &[(&str, &str, i64)] = &[
+    ("same_equal", "same(\"abc\", \"abc\")", 1),
+    ("same_unequal", "same(\"abc\", \"abd\")", 0),
+    ("differ_equal", "differ(\"abc\", \"abc\")", 0),
+    ("differ_unequal", "differ(\"abc\", \"abd\")", 1),
+    ("param_literal_equal", "is_abc(\"abc\")", 1),
+    ("param_literal_unequal", "is_abc(\"abd\")", 0),
+    ("call_literal_equal", "call_eq()", 1),
+    (
+        "field_literal_equal",
+        "field_eq(Dec { name: \"cache\", n: 1 })",
+        1,
+    ),
+    (
+        "field_literal_unequal",
+        "field_eq(Dec { name: \"cachf\", n: 1 })",
+        0,
+    ),
+    ("literal_literal_equal", "lit_lit()", 1),
+    ("len_of_param", "len_of(\"abcd\")", 4),
+    ("slice_len_param", "slice_len(\"abcd\")", 2),
+    ("slice_literal_equal", "slice_eq(\"abcd\")", 1),
+    ("std_string_eq_param", "lib_eq(\"abc\", \"abc\")", 1),
+    ("std_string_eq_literals", "string_eq(\"abc\", \"abc\")", 1),
+    ("std_string_len_literal", "string_len(\"abcd\")", 4),
+    ("array_element_equal", "first_is_abc([\"abc\", \"x\"])", 1),
+    ("if_value_equal", "pick(\"abc\", \"abc\", 1)", 1),
+    ("if_value_unequal", "pick(\"abc\", \"abd\", 1)", 0),
+    (
+        "indexed_field_equal",
+        "same_first([Dec { name: \"abc\", n: 1 }, Dec { name: \"abc\", n: 2 }])",
+        1,
+    ),
+    (
+        "indexed_field_unequal",
+        "same_first([Dec { name: \"abc\", n: 1 }, Dec { name: \"abd\", n: 2 }])",
+        0,
+    ),
+    ("payload_equal", "word_is(Tok::Word(\"abc\"), \"abc\")", 1),
+    ("payload_unequal", "word_is(Tok::Word(\"abc\"), \"abd\")", 0),
+];
+
+fn source() -> String {
+    let mut src = String::from(HELPERS);
+    src.push_str(
+        "\nfn lit_lit() -> i64 {\n    if \"abc\" == \"abc\" { return 1 }\n    return 0\n}\n",
+    );
+    for (case, expr, _) in CASES {
+        src.push_str(&format!("\npub fn {case}() -> i64 {{ return {expr} }}\n"));
+    }
+    src
+}
+
+fn text(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// The value each case produces under `mindc test` (the interpreter).
+fn interpreter_values(dir: &std::path::Path) -> Vec<i64> {
+    let mut src = source();
+    for (i, (case, _, _)) in CASES.iter().enumerate() {
+        // Each test asserts every candidate value, so the failure names the
+        // value the interpreter computed instead of only "not expected".
+        src.push_str(&format!(
+            "\n#[test]\nfn t{i:02}_{case}() {{\n    let v: i64 = {case}()\n"
+        ));
+        for candidate in 0..=4 {
+            src.push_str(&format!(
+                "    assert v != {candidate}, \"value of {case} is {candidate}.\"\n"
+            ));
+        }
+        src.push_str("}\n");
+    }
+    let path = dir.join("parity_interp.mind");
+    std::fs::write(&path, src).expect("write interpreter source");
+    let out = Command::new(mindc_bin())
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("spawn mindc test");
+    let log = text(&out);
+    CASES
+        .iter()
+        .map(|(case, _, _)| {
+            (0..=4)
+                .find(|candidate| log.contains(&format!("value of {case} is {candidate}.")))
+                .unwrap_or_else(|| panic!("mindc test gave no value for `{case}`:\n{log}"))
+        })
+        .collect()
+}
+
+/// The value each case produces from the MLIR-built shared library.
+fn mlir_values(dir: &std::path::Path) -> Option<Vec<i64>> {
+    let src = dir.join("parity_mlir.mind");
+    let so = dir.join("parity_mlir.so");
+    std::fs::write(&src, source()).expect("write build source");
+    let out = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    if !common::gate::compiled("string_ops_backend_parity", &out) {
+        return None;
+    }
+    let names: Vec<String> = CASES.iter().map(|(c, _, _)| format!("'{c}'")).collect();
+    let py = format!(
+        "import ctypes\nlib = ctypes.CDLL(r'{}')\n\
+         for n in [{}]:\n    f = getattr(lib, n)\n    f.restype = ctypes.c_int64\n    print(f())\n",
+        so.display(),
+        names.join(", ")
+    );
+    let ran = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("spawn python3");
+    assert!(
+        ran.status.success(),
+        "shared library run failed:\n{}",
+        text(&ran)
+    );
+    Some(
+        String::from_utf8_lossy(&ran.stdout)
+            .lines()
+            .map(|line| line.trim().parse().expect("an i64 per case"))
+            .collect(),
+    )
+}
+
+#[test]
+fn string_cases_agree_between_mindc_test_and_the_mlir_build() {
+    let dir = scratch_dir("string_ops_backend_parity");
+    let expected: Vec<i64> = CASES.iter().map(|(_, _, v)| *v).collect();
+    let interp = interpreter_values(&dir);
+    assert_eq!(interp, expected, "mindc test values, in CASES order");
+    if let Some(built) = mlir_values(&dir) {
+        assert_eq!(built, expected, "MLIR build values, in CASES order");
+        assert_eq!(built, interp, "the two backends disagree");
+    }
+}
+
+/// Text compared with an `i64` parameter and with an `i64` call result. Each
+/// would compile to a handle compare, which is false for equal text.
+const REFUSED: &str = r#"fn handle() -> i64 { return 7 }
+
+fn by_handle(h: i64) -> i64 {
+    if h == "abc" { return 1 }
+    return 0
+}
+
+fn by_call() -> i64 {
+    let h = handle()
+    if h != "abc" { return 1 }
+    return 0
+}
+
+fn null_check(s: string) -> i64 {
+    if s == 0 { return 1 }
+    return 0
+}
+
+fn same_any<T>(a: T, b: T) -> i64 {
+    if a == b { return 1 }
+    return 0
+}
+"#;
+
+#[test]
+fn text_against_an_untyped_operand_is_refused_by_check_build_and_test() {
+    let dir = scratch_dir("string_ops_backend_parity_refusal");
+    let src = dir.join("refused.mind");
+    std::fs::write(&src, REFUSED).expect("write refusal source");
+
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    let check_text = text(&check);
+    assert!(!check.status.success(), "check accepted:\n{check_text}");
+    assert_eq!(
+        check_text.matches("E2038").count(),
+        3,
+        "one E2038 per refused comparison, none for the null check:\n{check_text}"
+    );
+    assert!(check_text.contains("string_eq"), "{check_text}");
+    assert!(
+        check_text.contains("types are not known at compile time"),
+        "two operands of unknown type are refused:\n{check_text}"
+    );
+    assert!(!check_text.contains("panicked"), "{check_text}");
+
+    let so = dir.join("refused.so");
+    let build = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    let build_text = text(&build);
+    assert!(!build.status.success(), "build accepted:\n{build_text}");
+    assert!(build_text.contains("E2038"), "{build_text}");
+    assert!(!build_text.contains("panicked"), "{build_text}");
+    assert!(!so.exists(), "a refused build left an artifact");
+
+    let test_src = dir.join("refused_test.mind");
+    std::fs::write(
+        &test_src,
+        format!(
+            "{REFUSED}\n#[test]\nfn refused_handle() {{ assert by_handle(0) == 0, \"handle\" }}\n"
+        ),
+    )
+    .expect("write refusal test source");
+    let test = Command::new(mindc_bin())
+        .args(["test", test_src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc test");
+    let test_text = text(&test);
+    assert!(!test.status.success(), "mindc test passed:\n{test_text}");
+    assert!(test_text.contains("[E2038]"), "{test_text}");
+    assert!(test_text.contains("string_eq"), "{test_text}");
+}
+
+/// A string method lowers to its `string_<method>` std function on the MLIR
+/// build, so its result is a string and compares by bytes. String methods are
+/// not specified MIND (std.string is free functions), and `mindc test` has
+/// none: it must refuse the method, never report a different value.
+const METHOD_SUGAR: &str = r#"use std.string;
+
+fn tails(a: string, b: string) -> i64 {
+    if a.slice_from(1) == b.slice_from(1) { return 1 }
+    return 0
+}
+
+pub fn tails_equal() -> i64 { return tails("xbc", "ybc") }
+
+pub fn tails_unequal() -> i64 { return tails("xbc", "ybd") }
+"#;
+
+#[test]
+fn string_method_results_compare_by_bytes_or_are_refused() {
+    let dir = scratch_dir("string_ops_backend_parity_methods");
+    let src = dir.join("methods.mind");
+    let so = dir.join("methods.so");
+    std::fs::write(&src, METHOD_SUGAR).expect("write method source");
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    assert!(check.status.success(), "check refused:\n{}", text(&check));
+
+    let test_src = dir.join("methods_test.mind");
+    std::fs::write(
+        &test_src,
+        format!(
+            "{METHOD_SUGAR}\n#[test]\nfn equal_tails() {{ assert tails_equal() == 1, \"wrong value\" }}\n\
+             #[test]\nfn unequal_tails() {{ assert tails_unequal() == 0, \"wrong value\" }}\n"
+        ),
+    )
+    .expect("write method test source");
+    let test = Command::new(mindc_bin())
+        .args(["test", test_src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc test");
+    let test_text = text(&test);
+    assert!(!test_text.contains("wrong value"), "{test_text}");
+    assert!(!test_text.contains("panicked"), "{test_text}");
+
+    let build = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    if !common::gate::compiled("string_ops_backend_parity", &build) {
+        return;
+    }
+    let py = format!(
+        "import ctypes\nlib = ctypes.CDLL(r'{}')\n\
+         for n in ['tails_equal', 'tails_unequal']:\n    f = getattr(lib, n)\n    \
+         f.restype = ctypes.c_int64\n    print(f())\n",
+        so.display()
+    );
+    let ran = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("spawn python3");
+    assert!(
+        ran.status.success(),
+        "shared library run failed:\n{}",
+        text(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "1\n0");
+}
+
+/// Positive control for the refusal test: the same shapes with string-typed
+/// operands check clean, so the refusal is about the operand type alone. A
+/// reassigned string binding stays a string.
+#[test]
+fn typed_string_operands_check_clean() {
+    let dir = scratch_dir("string_ops_backend_parity_control");
+    let src = dir.join("typed.mind");
+    std::fs::write(
+        &src,
+        "fn by_text(h: string) -> i64 {\n    if h == \"abc\" { return 1 }\n    return 0\n}\n\
+         fn null_check(s: string) -> i64 {\n    if s == 0 { return 1 }\n    return 0\n}\n\
+         fn reassigned(flag: i64) -> i64 {\n    let mut s: string = \"abc\"\n    \
+         if flag == 1 { s = \"abd\" }\n    if s != \"abc\" { return 1 }\n    return 0\n}\n",
+    )
+    .expect("write control source");
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    assert!(check.status.success(), "control refused:\n{}", text(&check));
+}
+
+/// Run `mindc build --backend=native` on `src`, writing `elf`.
+fn native_build(src: &std::path::Path, elf: &std::path::Path) -> std::process::Output {
+    let _ = std::fs::remove_file(elf);
+    let repo = env!("CARGO_MANIFEST_DIR");
+    Command::new(mindc_bin())
+        .arg("build")
+        .arg("--backend=native")
+        .arg(format!("--out={}", elf.display()))
+        .arg(src)
+        .current_dir(repo)
+        .env("MINDC_STD_DIR", format!("{repo}/std"))
+        .env(
+            "MINDC_NATIVE_ELF",
+            format!("{repo}/examples/mindc_mind/testdata/selfhost_loop/stage1.elf"),
+        )
+        .output()
+        .expect("spawn mindc build --backend=native")
+}
+
+/// The native backend (the frozen pure-MIND x86-64 compiler) either builds a
+/// string comparison and computes the byte-wise answer, or refuses it at
+/// build time with no artifact. It must never emit a handle compare.
+#[test]
+fn native_backend_computes_or_refuses_string_equality() {
+    let dir = scratch_dir("string_ops_backend_parity_native");
+    let src = dir.join("native_eq.mind");
+    let elf = dir.join("native_eq");
+    std::fs::write(
+        &src,
+        "fn same(a: string, b: string) -> i64 {\n    if a == b { return 1 }\n    return 0\n}\n\
+         fn main() -> i64 {\n    if same(\"abc\", \"abc\") == 1 { return 1 }\n    return 2\n}\n",
+    )
+    .expect("write native source");
+    let out = native_build(&src, &elf);
+    let log = text(&out);
+    if out.status.success() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&elf, std::fs::Permissions::from_mode(0o755))
+            .expect("mark native artifact executable");
+        let ran = Command::new(&elf).output().expect("run native artifact");
+        assert_eq!(
+            ran.status.code(),
+            Some(1),
+            "native byte-wise result:\n{log}"
+        );
+    } else {
+        assert!(log.contains("error[backend-native]"), "{log}");
+        assert!(!log.contains("panicked"), "{log}");
+        assert!(!elf.exists(), "a refused native build left an artifact");
+    }
+}
+
+/// The check-time refusals (`E2038` here, and the older `E2300`) refuse a
+/// native build like every other native refusal: a diagnostic, exit 3 and no
+/// artifact. The native bridge lowered its merged image without the gate, so
+/// the same sources reached lowering's backstop and panicked (exit 101).
+#[test]
+fn native_backend_refuses_check_time_refusals_without_panicking() {
+    let dir = scratch_dir("string_ops_backend_parity_native_refusal");
+    let cases = [
+        (
+            "generic_eq",
+            "E2038",
+            "fn same_any<T>(a: T, b: T) -> i64 {\n    if a == b { return 1 }\n    return 0\n}\n\
+             pub fn probe() -> i64 { return same_any(7, 7) }\n\
+             fn main() -> i64 { return probe() }\n",
+        ),
+        (
+            "i64_handles",
+            "E2038",
+            "fn main() -> i64 {\n    let a: i64 = \"abc\"\n    let b: i64 = \"abc\"\n    \
+             if a == b { return 1 }\n    return 0\n}\n",
+        ),
+        (
+            "mutator_argument",
+            "E2300",
+            "fn id(x: i64) -> i64 { return x }\n\
+             fn main() -> i64 {\n    let mut a: array<i64> = array<i64>.new()\n    \
+             return id(a.push(1))\n}\n",
+        ),
+    ];
+    for (name, code, source) in cases {
+        let src = dir.join(format!("{name}.mind"));
+        let elf = dir.join(name);
+        std::fs::write(&src, source).expect("write native refusal source");
+        let out = native_build(&src, &elf);
+        let log = text(&out);
+        assert_eq!(
+            out.status.code(),
+            Some(3),
+            "{name}: a clean refusal:\n{log}"
+        );
+        assert!(log.contains("error[backend-native]"), "{name}:\n{log}");
+        assert!(log.contains(code), "{name}: refused with {code}:\n{log}");
+        assert!(!log.contains("panicked"), "{name}:\n{log}");
+        assert!(
+            !elf.exists(),
+            "{name}: a refused native build left an artifact"
+        );
+    }
+}
+
+/// Strings in slots whose declaration does not say string: a function with
+/// no result type that returns one (by `return` or as its tail), a string
+/// given to an `i64` parameter, returned through an `i64` result, stored in an
+/// `i64` field or an `i64` variant payload. `mindc check` accepted each and
+/// `==` compiled to a handle compare (the MLIR build returned 0 for equal
+/// text) while `mindc test` failed with a different error. Every such
+/// comparison is refused with `E2038` by check, build and test alike.
+const STORED: &str = r#"struct Box { v: i64 }
+
+enum Tok { Num(i64), End }
+
+fn mk() { return "abc" }
+
+fn tail() { "abc" }
+
+fn eqh(a: i64, b: i64) -> i64 {
+    if a == b { return 1 }
+    return 0
+}
+
+fn mk_i64() -> i64 { return "abc" }
+
+fn num(t: Tok) -> i64 {
+    match t {
+        Tok::Num(n) => n,
+        Tok::End => 0,
+    }
+}
+
+pub fn unit_ret() -> i64 {
+    if mk() == mk() { return 1 }
+    return 0
+}
+
+pub fn unit_tail() -> i64 {
+    let a = tail()
+    let b = tail()
+    if a == b { return 1 }
+    return 0
+}
+
+pub fn i64_param() -> i64 { return eqh("abc", "abc") }
+
+pub fn i64_ret() -> i64 {
+    if mk_i64() == mk_i64() { return 1 }
+    return 0
+}
+
+pub fn i64_field() -> i64 {
+    let a = Box { v: "abc" }
+    let b = Box { v: "abc" }
+    if a.v == b.v { return 1 }
+    return 0
+}
+
+pub fn i64_payload() -> i64 {
+    if num(Tok::Num("abc")) == num(Tok::Num("abc")) { return 1 }
+    return 0
+}
+"#;
+
+#[test]
+fn strings_in_slots_declared_otherwise_are_refused_by_check_build_and_test() {
+    let dir = scratch_dir("string_ops_backend_parity_stored");
+    let src = dir.join("stored.mind");
+    std::fs::write(&src, STORED).expect("write stored-string source");
+
+    let check = Command::new(mindc_bin())
+        .args(["check", "--no-fmt", src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc check");
+    let check_text = text(&check);
+    assert!(!check.status.success(), "check accepted:\n{check_text}");
+    assert_eq!(
+        check_text.matches("E2038").count(),
+        6,
+        "one E2038 per comparison of two stored strings:\n{check_text}"
+    );
+    assert!(check_text.contains("string_eq"), "{check_text}");
+    assert!(!check_text.contains("panicked"), "{check_text}");
+
+    let so = dir.join("stored.so");
+    let build = Command::new(mindc_bin())
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc build");
+    let build_text = text(&build);
+    assert!(!build.status.success(), "build accepted:\n{build_text}");
+    assert!(build_text.contains("E2038"), "{build_text}");
+    assert!(!build_text.contains("panicked"), "{build_text}");
+    assert!(!so.exists(), "a refused build left an artifact");
+
+    let test_src = dir.join("stored_test.mind");
+    std::fs::write(
+        &test_src,
+        format!("{STORED}\n#[test]\nfn stored() {{ assert i64_param() == 1, \"value\" }}\n"),
+    )
+    .expect("write stored-string test source");
+    let test = Command::new(mindc_bin())
+        .args(["test", test_src.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc test");
+    let test_text = text(&test);
+    assert!(!test.status.success(), "mindc test passed:\n{test_text}");
+    assert!(test_text.contains("[E2038]"), "{test_text}");
+    assert!(test_text.contains("string_eq"), "{test_text}");
+}

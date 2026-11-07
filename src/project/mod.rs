@@ -1934,7 +1934,7 @@ pub(crate) fn build_global_enums(
         }
     }
     crate::qualified_enums::rebuild(parsed, &mut enums);
-    enums
+    crate::eval::string_equality::ProjectModules::attach(parsed, enums)
 }
 
 /// Resolution state installed for one manifest cdylib build. The module-table

@@ -52,6 +52,15 @@ pub(crate) const E_COLLECTION_MUTATION_IN_EXPR: &str = "E2300";
 /// variant: neither a discriminant test nor a catch-all (#237 CASE 3).
 pub(crate) const E_NON_FINAL_VARIANT_BINDING: &str = "E2301";
 
+/// `==`/`!=` that would compare string handles, not bytes: a string against an
+/// operand whose type is not a string, or two operands of unknown type (see
+/// `eval::string_equality`).
+pub(crate) const E_STRING_EQUALITY_OPERAND: &str = "E2038";
+
+/// `s.length` on a string: a member no string record has, which the build
+/// refuses as an unsupported field read (see `eval::string_equality`).
+pub(crate) const E_STRING_MEMBER: &str = "E6009";
+
 /// The collection mutating-method names whose std implementation returns a
 /// FRESH handle on realloc (`vec_push`, `map_insert`, …).
 ///
@@ -149,6 +158,17 @@ pub(crate) fn non_final_variant_binding(pattern: &Pattern, span: AstSpan) {
                the final arm; falling back to a sequential evaluation here would ignore the \
                scrutinee and return the last arm — a silent miscompile",
         span,
+    });
+}
+
+/// Called from `eval::string_equality::normalize`, which the CASE 2 run below
+/// executes, so check and build refuse the same comparisons.
+pub(crate) fn string_equality_operand(refused: &crate::eval::string_equality::Refused) {
+    report(Refusal {
+        code: crate::eval::string_equality::refusal_code(refused),
+        message: crate::eval::string_equality::refusal_message(refused),
+        help: crate::eval::string_equality::refusal_help(refused),
+        span: refused.span,
     });
 }
 
@@ -482,7 +502,10 @@ fn reject_collection_mutations(roots: Vec<&Node>, ctx: &CollectionScope<'_>) {
 // ---------------------------------------------------------------------------
 
 /// Append every #237 CASE 2 / CASE 3 refusal in `module` to `errors`.
-pub(super) fn check(module: &Module, src: &str, file: Option<&str>, errors: &mut Vec<Pretty>) {
+///
+/// Called by the type check and by the native backend bridge, which lowers
+/// its merged image without the type check.
+pub(crate) fn check(module: &Module, src: &str, file: Option<&str>, errors: &mut Vec<Pretty>) {
     let mut found = collect_collection_mutations(module);
     found.extend(collect_match_refusals(module));
     // Deterministic order whatever the walk order: source position, then code

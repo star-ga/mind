@@ -949,6 +949,9 @@ MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
 }
 
 static int64_t mind_string_eq_impl(int64_t a, int64_t b) {
+    // The null handle 0 is no string record: it equals only itself, and no
+    // record is read through it.
+    if (a == 0 || b == 0) return a == b ? 1 : 0;
     int64_t alen = __mind_load_i64(a + 8);
     int64_t blen = __mind_load_i64(b + 8);
     if (alen != blen) return 0;

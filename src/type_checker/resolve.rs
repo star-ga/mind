@@ -86,7 +86,7 @@ type FxMap<V> = HashMap<String, V, super::FxBuild>;
 ///
 /// MUST stay sorted ascending — looked up with `binary_search`. A `debug_assert`
 /// in `resolve_fn_body` enforces the ordering so a careless insert fails tests.
-const BARE_BUILTINS: &[&str] = &[
+pub(super) const BARE_BUILTINS: &[&str] = &[
     "abs",
     "argmax",
     "backward",
