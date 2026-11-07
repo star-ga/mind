@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2147 | **Est. tokens:** ~4,076,734
-**Generated:** 2026-11-07 02:06 UTC
+**Files:** 2147 | **Est. tokens:** ~4,078,809
+**Generated:** 2026-11-07 02:20 UTC
 
 ## Token Budget Guide
 
@@ -128,7 +128,7 @@
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
-| `src/fmt/` | 3 | ~25,460 |
+| `src/fmt/` | 3 | ~27,177 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~2,530 |
 | `src/ir/` | 13 | ~102,497 |
@@ -159,7 +159,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 449 | ~964,925 |
+| `tests/` | 449 | ~965,283 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1377,7 +1377,7 @@
 - `sys.rs` (~3348 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/fmt/`
 
-- `cli.rs` (~4013 tok, huge) — Copyright 2025 STARGA Inc.
+- `cli.rs` (~5730 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~4199 tok, huge) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~17248 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/fmt/printer/`
@@ -2292,7 +2292,7 @@
 - `07_string_literal_passthrough.out.mind` (~14 tok, tiny) — fn get_message() -> i64 {
 ### `tests/`
 
-- `mindcraft_fmt_cli.rs` (~2925 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindcraft_fmt_cli.rs` (~3283 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fix.rs` (~1445 tok, large) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fixtures.rs` (~1300 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/lint/naming_convention/`
