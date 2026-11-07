@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2174 | **Est. tokens:** ~4,171,627
-**Generated:** 2026-11-07 07:38 UTC
+**Files:** 2174 | **Est. tokens:** ~4,171,714
+**Generated:** 2026-11-07 08:15 UTC
 
 ## Token Budget Guide
 
@@ -123,7 +123,7 @@
 | `src/diagnostics/` | 4 | ~15,672 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 56 | ~182,475 |
+| `src/eval/` | 56 | ~182,562 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/string_equality/` | 12 | ~42,197 |
 | `src/eval/string_equality/facts/` | 1 | ~1,401 |
@@ -1333,7 +1333,7 @@
 - `loops.rs` (~2354 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `lower_import_consts.rs` (~497 tok, medium) — Copyright 2026 STARGA Inc.
-- `match_stmt.rs` (~883 tok, large) — Copyright 2026 STARGA Inc.
+- `match_stmt.rs` (~970 tok, large) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap.rs` (~1140 tok, large) — Copyright 2026 STARGA Inc.
 - `mlir_build_overlap_tests.rs` (~832 tok, large) — Copyright 2026 STARGA Inc.
