@@ -1,0 +1,53 @@
+// One authoritative MIND entry point for both backend transports.
+pub fn tls13ct_run_all() -> i64 {
+    let basic: i64 = tls13c_test_basics();
+    if basic != 0 { return basic; }
+    let cv: i64 = tls13ct_cv();
+    if cv != 0 { return cv; }
+    let mut mode: i64 = 0;
+    while mode < 15 {
+        let n: i64 = tls13ct_negative(mode);
+        if n != 0 { return n; }
+        if mode < 4 {
+            let s: i64 = tls13ct_sni(mode);
+            if s != 0 { return s; }
+            let a: i64 = tls13ct_alpn(mode);
+            if a != 0 { return a; }
+        }
+        if mode < 2 {
+            let c: i64 = tls13ct_cookie_only(mode);
+            if c != 0 { return c; }
+            let e: i64 = tls13ct_extensions(mode);
+            if e != 0 { return e; }
+        }
+        mode = mode + 1;
+    }
+    let mut iso: i64 = 0;
+    while iso < 7 {
+        let r: i64 = tls13ct_isolated(iso);
+        if r != 0 { return r; }
+        iso = iso + 1;
+    }
+    let buf: i64 = __mind_alloc(16384);
+    let mut i: i64 = 0;
+    while i < 24 {
+        let n: i64 = tls13ct_frozen(i, buf);
+        let rc: i64 = tls13ct_replay(buf, n, 1700000000, 0);
+        if rc != 0 { return rc; }
+        if __mind_load_i64(buf + 88) == 0 {
+            let mut variant: i64 = 0;
+            while variant < 3 {
+                // Each refusal is paired with this same flight's positive input.
+                let good: i64 = tls13ct_replay(buf, n, 1700000000, 0);
+                if good != 0 { return good; }
+                let mut now: i64 = 1700000000;
+                if variant == 0 { now = 2000000000; }
+                let bad: i64 = tls13ct_replay(buf, n, now, variant);
+                if bad != 0 { return bad; }
+                variant = variant + 1;
+            }
+        }
+        i = i + 1;
+    }
+    0
+}
