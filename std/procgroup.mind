@@ -16,8 +16,11 @@
 // Results are indexed by spawn order, never completion order.
 //
 // This module is bookkeeping over primitive results: every OS call (pipe,
-// fork, execvp, waitpid, kill, read, poll, the deadline's monotonic clock, the
-// environment) is a primitive of std.procgroup_sys. Self-spawn uses
+// fork, execvp, waitpid, kill, read, poll, the monotonic clock, the
+// environment) is a primitive of std.procgroup_sys, one OS call each. The
+// deadline arithmetic, the poll-until-deadline loop step and the environment
+// save and restore are here; the C-string helpers are std.procgroup_text.
+// Self-spawn uses
 // /proc/self/exe (Linux; elsewhere the child exits 127). A caller that
 // ignores SIGCHLD gets its children reported lost.
 //
@@ -26,6 +29,7 @@
 // exited), +32 signal, +40/+48/+56 output addr/len/cap, +64 truncated.
 
 import std.procgroup_sys;
+import std.procgroup_text;
 
 // ---- Public constants ----
 // States: ok = exited 0; exit_nonzero = exited non-zero (127: could not exec);
@@ -114,105 +118,6 @@ fn pg_field(g: i64, i: i64, off: i64, missing: i64) -> i64 {
     __mind_load_i64(pg_slot(g, i) + off)
 }
 
-fn pg_cstr_len(addr: i64) -> i64 {
-    let mut i: i64 = 0;
-    while __mind_load_i8(addr + i) != 0 {
-        i = i + 1;
-    }
-    i
-}
-
-// Heap copy of `len` bytes at `addr`, NUL-terminated.
-fn pg_copy_cstr(addr: i64, len: i64) -> i64 {
-    let dst: i64 = __mind_alloc(len + 1);
-    if dst == 0 {
-        return 0;
-    }
-    if len > 0 {
-        let _ = memcpy(dst as *mut u8, addr as *const u8, len);
-    }
-    __mind_store_i8(dst + len, 0);
-    dst
-}
-
-// Store four bytes at p + off.
-fn pg_put4(p: i64, off: i64, b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
-    __mind_store_i8(p + off, b0);
-    __mind_store_i8(p + off + 1, b1);
-    __mind_store_i8(p + off + 2, b2);
-    __mind_store_i8(p + off + 3, b3);
-    0
-}
-
-// "/dev/null" as a heap C string.
-fn pg_dev_null() -> i64 {
-    let p: i64 = __mind_alloc(12);
-    let _ = pg_put4(p, 0, 47, 100, 101, 118);
-    let _ = pg_put4(p, 4, 47, 110, 117, 108);
-    let _ = pg_put4(p, 8, 108, 0, 0, 0);
-    p
-}
-
-// "MIND_PROCGROUP_TASK" as a heap C string.
-fn pg_env_name() -> i64 {
-    let p: i64 = __mind_alloc(20);
-    let _ = pg_put4(p, 0, 77, 73, 78, 68);
-    let _ = pg_put4(p, 4, 95, 80, 82, 79);
-    let _ = pg_put4(p, 8, 67, 71, 82, 79);
-    let _ = pg_put4(p, 12, 85, 80, 95, 84);
-    let _ = pg_put4(p, 16, 65, 83, 75, 0);
-    p
-}
-
-// Decimal C string of a non-negative `n`.
-fn pg_decimal(n: i64) -> i64 {
-    let mut digits: i64 = 1;
-    let mut t: i64 = n;
-    while t >= 10 {
-        t = t / 10;
-        digits = digits + 1;
-    }
-    let p: i64 = __mind_alloc(digits + 1);
-    __mind_store_i8(p + digits, 0);
-    let mut v: i64 = n;
-    let mut k: i64 = digits - 1;
-    while k >= 0 {
-        __mind_store_i8(p + k, 48 + v % 10);
-        v = v / 10;
-        k = k - 1;
-    }
-    p
-}
-
-// Value of a decimal C string of 1..9 digits, or -1.
-fn pg_parse_index(addr: i64) -> i64 {
-    let n: i64 = pg_cstr_len(addr);
-    if n == 0 {
-        return 0 - 1;
-    }
-    if n > 9 {
-        return 0 - 1;
-    }
-    let mut v: i64 = 0;
-    let mut i: i64 = 0;
-    let mut bad: i64 = 0;
-    while i < n {
-        let c: i64 = __mind_load_i8(addr + i);
-        if c < 48 {
-            bad = 1;
-        }
-        if c > 57 {
-            bad = 1;
-        }
-        v = v * 10 + (c - 48);
-        i = i + 1;
-    }
-    if bad == 1 {
-        return 0 - 1;
-    }
-    v
-}
-
 // NULL-terminated argv: argv[0] = prog, then the caller's vector.
 fn pg_build_argv(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
     let arr: i64 = __mind_alloc((argv_vec_len + 2) * 8);
@@ -238,23 +143,85 @@ fn pg_sibling_fds(g: i64, i: i64) -> i64 {
     fds
 }
 
-// Set MIND_PROCGROUP_TASK to `i` for the next fork. Returns what
-// procgroup_sys_env_push saved for pg_env_pop.
+// Set MIND_PROCGROUP_TASK to `i` for the next fork. Returns a heap copy of the
+// previous value, or 0 when it was unset, for pg_env_pop.
 fn pg_env_push(i: i64) -> i64 {
-    let name: i64 = pg_env_name();
-    let val: i64 = pg_decimal(i);
-    let saved: i64 = procgroup_sys_env_push(name, val);
+    let name: i64 = procgroup_text_env_name();
+    let val: i64 = procgroup_text_decimal(i);
+    let old: i64 = procgroup_sys_env_read(name);
+    let mut saved: i64 = 0;
+    if old != 0 {
+        saved = procgroup_text_copy_cstr(old, procgroup_text_cstr_len(old));
+    }
+    let _ = procgroup_sys_env_set(name, val);
     let _ = __mind_free(val);
     let _ = __mind_free(name);
     saved
 }
 
-// Put back what pg_env_push replaced.
+// Put back what pg_env_push replaced: MIND_PROCGROUP_TASK is set to `saved`
+// (then freed), or unset when `saved` is 0.
 fn pg_env_pop(saved: i64) -> i64 {
-    let name: i64 = pg_env_name();
-    let _ = procgroup_sys_env_pop(name, saved);
+    let name: i64 = procgroup_text_env_name();
+    if saved != 0 {
+        let _ = procgroup_sys_env_set(name, saved);
+        let _ = __mind_free(saved);
+    } else {
+        let _ = procgroup_sys_env_unset(name);
+    }
     let _ = __mind_free(name);
     0
+}
+
+// Monotonic milliseconds, or -1 when no monotonic clock answers (clock id 1 is
+// CLOCK_MONOTONIC on Linux, 6 on macOS).
+fn pg_clock_ms() -> i64 {
+    let ts: i64 = __mind_alloc(16);
+    __mind_store_i64(ts + 0, 0);
+    __mind_store_i64(ts + 8, 0);
+    let mut r: i64 = procgroup_sys_clock(1, ts);
+    if r != 0 {
+        r = procgroup_sys_clock(6, ts);
+    }
+    let ms: i64 = __mind_load_i64(ts + 0) * 1000 + __mind_load_i64(ts + 8) / 1000000;
+    let _ = __mind_free(ts);
+    if r != 0 {
+        return 0 - 1;
+    }
+    ms
+}
+
+// The deadline `timeout_ms` milliseconds after now on the monotonic clock, for
+// pg_poll_until. When no monotonic clock answers, a deadline that has already
+// passed (0).
+fn pg_deadline(timeout_ms: i64) -> i64 {
+    let now: i64 = pg_clock_ms();
+    if now < 0 {
+        return 0;
+    }
+    now + timeout_ms
+}
+
+// procgroup_sys_poll for at most `cap_ms`, never past `deadline` (from
+// pg_deadline; negative: no deadline). Once the deadline has passed it returns
+// pg_expired() without polling, and a clock that stops answering counts as the
+// deadline passing. Otherwise returns what procgroup_sys_poll returns.
+fn pg_poll_until(pfds: i64, k: i64, deadline: i64, cap_ms: i64) -> i64 {
+    let mut wait_ms: i64 = cap_ms;
+    if deadline >= 0 {
+        let now: i64 = pg_clock_ms();
+        let mut left: i64 = 0;
+        if now >= 0 {
+            left = deadline - now;
+        }
+        if left <= 0 {
+            return pg_expired();
+        }
+        if left < wait_ms {
+            wait_ms = left;
+        }
+    }
+    procgroup_sys_poll(pfds, k, wait_ms)
 }
 
 // Record a waitpid status word. `killed` is 1 when the deadline sent SIGKILL.
@@ -380,7 +347,7 @@ fn pg_pollfd_ready(pfds: i64, j: i64) -> i64 {
     0
 }
 
-// What procgroup_sys_poll_until returns once its deadline has passed.
+// What pg_poll_until returns once its deadline has passed.
 fn pg_expired() -> i64 {
     0 - 2
 }
@@ -534,7 +501,7 @@ fn pg_spawn_piped(prog: i64, argv: i64, shut: i64, nshut: i64, rd_out: i64) -> i
     let rd: i64 = __mind_load_i32(ends + 0);
     let wr: i64 = __mind_load_i32(ends + 4);
     let _ = __mind_free(ends);
-    let null_path: i64 = pg_dev_null();
+    let null_path: i64 = procgroup_text_dev_null();
     let devnull: i64 = procgroup_sys_open(null_path, 0, 0);
     let _ = __mind_free(null_path);
     let pid: i64 = procgroup_sys_fork();
@@ -639,12 +606,12 @@ pub fn procgroup_wait_all(g: i64, timeout_ms: i64) -> i64 {
     let buf: i64 = __mind_alloc(pg_read_chunk());
     let mut deadline: i64 = 0 - 1;
     if timeout_ms > 0 {
-        deadline = procgroup_sys_deadline(timeout_ms);
+        deadline = pg_deadline(timeout_ms);
     }
     let mut active: i64 = pg_active(g);
     while active > 0 {
         let k: i64 = pg_fill_pollfds(g, pfds, map);
-        let ready: i64 = procgroup_sys_poll_until(pfds, k, deadline, pg_poll_ms());
+        let ready: i64 = pg_poll_until(pfds, k, deadline, pg_poll_ms());
         if ready == pg_expired() {
             let _ = pg_expire(g, pfds, map, st, buf);
             active = 0;
@@ -756,23 +723,23 @@ pub fn procgroup_truncated(g: i64, i: i64) -> i64 {
 // procgroup_task_index — this process's slot index when procgroup_spawn
 // started it (or started its parent some other way), else -1.
 pub fn procgroup_task_index() -> i64 {
-    let name: i64 = pg_env_name();
+    let name: i64 = procgroup_text_env_name();
     let v: i64 = procgroup_sys_env_read(name);
     let _ = __mind_free(name);
     if v == 0 {
         return 0 - 1;
     }
-    pg_parse_index(v)
+    procgroup_text_parse_index(v)
 }
 
 // procgroup_self_exe — "/proc/self/exe" as a heap C string: the program
 // path that re-runs the current executable (Linux).
 pub fn procgroup_self_exe() -> i64 {
     let p: i64 = __mind_alloc(16);
-    let _ = pg_put4(p, 0, 47, 112, 114, 111);
-    let _ = pg_put4(p, 4, 99, 47, 115, 101);
-    let _ = pg_put4(p, 8, 108, 102, 47, 101);
-    let _ = pg_put4(p, 12, 120, 101, 0, 0);
+    let _ = procgroup_text_put4(p, 0, 47, 112, 114, 111);
+    let _ = procgroup_text_put4(p, 4, 99, 47, 115, 101);
+    let _ = procgroup_text_put4(p, 8, 108, 102, 47, 101);
+    let _ = procgroup_text_put4(p, 12, 120, 101, 0, 0);
     p
 }
 
@@ -783,7 +750,7 @@ pub fn procgroup_cstr(addr: i64, len: i64) -> i64 {
     if len < 0 {
         return 0;
     }
-    pg_copy_cstr(addr, len)
+    procgroup_text_copy_cstr(addr, len)
 }
 
 // procgroup_decimal — decimal C string of a non-negative `n` (an argument
@@ -792,5 +759,5 @@ pub fn procgroup_decimal(n: i64) -> i64 {
     if n < 0 {
         return 0;
     }
-    pg_decimal(n)
+    procgroup_text_decimal(n)
 }

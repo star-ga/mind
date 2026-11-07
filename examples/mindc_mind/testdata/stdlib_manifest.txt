@@ -39,12 +39,12 @@
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 47
-# TOTAL_COUNT 47
+# BUNDLED_COUNT 62
+# TOTAL_COUNT 62
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
-# 26 modules are not `seed`: the frozen native compiler cannot see them until a
+# 41 modules are not `seed`: the frozen native compiler cannot see them until a
 # reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
@@ -55,7 +55,9 @@ blas	seed	bundled
 chacha20_poly1305	no	bundled
 cli	seed	bundled
 detmath	no	bundled
+dns	no	bundled
 ecdsa_p256	no	bundled
+entropy	no	bundled
 fs	seed	bundled
 hkdf	no	bundled
 hpack	no	bundled
@@ -77,6 +79,7 @@ net	seed	bundled
 process	seed	bundled
 procgroup	no	bundled
 procgroup_sys	no	bundled
+procgroup_text	no	bundled
 reactor	seed	bundled
 regex	seed	bundled
 ring	seed	bundled
@@ -85,6 +88,10 @@ sha256	seed	bundled
 sha512	no	bundled
 string	seed	bundled
 time	seed	bundled
+tls13_client	no	bundled
+tls13_client_api	no	bundled
+tls13_client_core	no	bundled
+tls13_client_hello	no	bundled
 tls13_finished	no	bundled
 tls13_handshake	no	bundled
 tls13_keyschedule	no	bundled
@@ -95,3 +102,11 @@ vec	seed	bundled
 x25519	no	bundled
 x25519mlkem768	no	bundled
 x509	no	bundled
+x509_bignum	no	bundled
+x509_bundle	no	bundled
+x509_der	no	bundled
+x509_ext	no	bundled
+x509_name	no	bundled
+x509_p384	no	bundled
+x509_path	no	bundled
+x509_sig	no	bundled

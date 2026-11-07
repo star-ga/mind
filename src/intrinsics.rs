@@ -423,14 +423,12 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     // artifact does not name. They are listed because leaving them UNCLASSIFIED
     // was measured to be a determinism REGRESSION, not merely a labelling gap.
     //
-    // Before the shipping veto was split from the attestation label, an
-    // unclassified extern blocked artifact emission, so these were caught by
-    // accident. After the split the hard gate consults only genuine World rows,
-    // and a program calling `clock_gettime` EMITTED with exit 0 — a wall-clock
-    // read passing a gate whose own doc scopes it to "PRNG / wall-clock /
-    // stdin". Classifying them restores the block for real nondeterminism
-    // without re-blocking `memset`, which is the whole point of the split.
-    //
+    // Before the shipping veto was split from the attestation label, an unclassified extern blocked
+    // artifact emission, so these were caught by accident. After the split the hard gate consults
+    // only genuine World rows, and a program calling `clock_gettime` EMITTED with exit 0 — a
+    // wall-clock read passing a gate whose own doc scopes it to "PRNG / wall-clock / stdin".
+    // Classifying them restores the block for real nondeterminism without re-blocking `memset`,
+    // which is the whole point of the split.
     // Each row names the unnamed channel it reads:
     "clock_gettime",     // wall / monotonic clock
     "getenv",            // process environment
@@ -440,6 +438,8 @@ const UNREGISTERED_WORLD_INTRINSICS: &[&str] = &[
     "sched_getaffinity", // host CPU topology
     "syscall",           // arbitrary kernel entry — unbounded by construction
     "mmap",              // kernel-chosen address, and file bytes when fd is real
+    "getrandom",         // kernel CSPRNG bytes (std.entropy)
+    "getaddrinfo",       // hosts file, resolver config, network (std.dns)
     // Descriptor / socket reads: the bytes come from outside the artifact. This
     // is the discriminator the classification pass named -- `read(fd, buf, n)`
     // writes through a caller pointer exactly as `memset` does, and the two
@@ -532,22 +532,24 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "procgroup_task_index",
     "procgroup_wait_all",
     // `std.procgroup_sys`, the effect module those three reach their OS calls
-    // through: each primitive whose body calls a World row above (`fork`,
-    // `waitpid`, `read`, `clock_gettime`, `getenv`). The child descriptor
-    // walk and the pollfd records live in `std.procgroup`. close, kill, plain
-    // poll, pipe, dup2, exec and the environment restore call no World row
-    // and stay pure, like `procgroup_new`.
-    "procgroup_sys_deadline",
-    "procgroup_sys_env_push",
+    // through: each straight-line wrapper whose one OS call is a World row
+    // above (`fork`, `waitpid`, `read`, `clock_gettime`, `getenv`). The child
+    // descriptor walk, the pollfd records, the deadline arithmetic and the
+    // environment save and restore live in `std.procgroup`. close, kill, poll,
+    // pipe, dup2, exec, setenv and unsetenv call no World row and stay pure,
+    // like `procgroup_new`.
+    "procgroup_sys_clock",
     "procgroup_sys_env_read",
     "procgroup_sys_fork",
-    "procgroup_sys_poll_until",
     "procgroup_sys_read",
     "procgroup_sys_wait",
     "read_input",
     "read_line",
     "system_time",
     "time_now",
+    // `std.dns` / `std.entropy` are deliberately absent. Matching the bare name
+    // refused a user function spelled the same way. A call is a world read only
+    // when its qualifier resolves to that module (`crate::std_qualified`).
 ];
 
 /// The determinism classification of an intrinsic, or `None` when the name is
@@ -668,5 +670,4 @@ pub(crate) fn std_surface_intrinsic_arity(name: &str) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[path = "intrinsics_tests.rs"]
 mod tests;

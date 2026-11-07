@@ -169,9 +169,9 @@ mod bundle {
             ),
             ("doc", doc_example().to_string(), "procgroup_task_index"),
             (
-                "sys_deadline",
-                "import std.procgroup_sys;\n\nfn main() -> i64 {\n    return procgroup_sys_deadline(1000);\n}\n".to_string(),
-                "procgroup_sys_deadline",
+                "sys_clock",
+                "import std.procgroup_sys;\n\nfn main() -> i64 {\n    return procgroup_sys_clock(1, 0);\n}\n".to_string(),
+                "procgroup_sys_clock",
             ),
             (
                 "sys_fork",
@@ -242,13 +242,13 @@ mod bundle {
 
     /// The substrate list is the link side, which only `mlir-build` compiles.
     /// `std.procgroup` makes its OS calls through `std.procgroup_sys`, so
-    /// importing it links exactly those two modules; the effect module itself
-    /// links only itself.
+    /// importing it links exactly those three modules (the effect module and
+    /// the pure text helpers); the effect module itself links only itself.
     #[cfg(feature = "mlir-build")]
     #[test]
     fn std_procgroup_is_a_self_contained_substrate_module() {
         use libmind::project::substrate_link::{SUBSTRATE_MODULES, substrate_closure};
-        for module in ["std.procgroup", "std.procgroup_sys"] {
+        for module in ["std.procgroup", "std.procgroup_sys", "std.procgroup_text"] {
             assert!(
                 SUBSTRATE_MODULES.contains(&module),
                 "{module} must be linked into executables that import it"
@@ -257,8 +257,8 @@ mod bundle {
         let closure = substrate_closure(["import std.procgroup;\n"]);
         assert_eq!(
             closure.iter().copied().collect::<Vec<_>>(),
-            vec!["std.procgroup", "std.procgroup_sys"],
-            "importing std.procgroup links it and its effect module, nothing else"
+            vec!["std.procgroup", "std.procgroup_sys", "std.procgroup_text"],
+            "importing std.procgroup links it, its effect module and its text helpers, nothing else"
         );
         let closure = substrate_closure(["import std.procgroup_sys;\n"]);
         assert_eq!(

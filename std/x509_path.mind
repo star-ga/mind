@@ -1,0 +1,595 @@
+// std/x509_path.mind — X.509 certificate path building, parent policy validation,
+// full certificate record decoding, and x509_verify_server_chain (the
+// authenticated server-chain check at the end of this file).
+
+import std.x509_der;
+import std.x509_ext;
+import std.x509_name;
+import std.x509_sig;
+
+// ---------------------------------------------------------------------------
+// x509_parse_full — full parse of one X.509v3 certificate into a 288-byte
+// record `rec` (36 i64 fields; see slot map below).  Returns 0 on success,
+// negative on malformed / unsupported critical extensions.
+//
+// rec slot map (each slot is 8 bytes at rec + slot*8):
+//   0 base_addr         1 cert_len
+//   2 tbs_off           3 tbs_len
+//   4 issuer_off        5 issuer_len       (full DER of issuer Name)
+//   6 subject_off       7 subject_len      (full DER of subject Name)
+//   8 sigalg            9 sig_salt         (1 rsa_pkcs1, 2 rsa_pss, 3 ecdsa_p256, 4 p384)
+//  10 notBefore        11 notAfter         (unix seconds)
+//  12 pubkey_type      13 pubkey_n_off     (1 rsa, 2 ec_p256, 3 ec_p384)
+//  14 pubkey_n_len     15 pubkey_e_off
+//  16 pubkey_e_len     17 pubkey_ec_x_off
+//  18 pubkey_ec_y_off
+//  19 sig_off          20 sig_len
+//  21 has_bc           22 bc_ca            23 bc_pathlen
+//  24 has_ku           25 ku0
+//  26 has_eku          27 eku_server_auth
+//  28 has_san          29 san_off          30 san_len
+//  31 has_nc           32 nc_off           33 nc_len
+// ---------------------------------------------------------------------------
+pub fn x509_parse_full(cert: i64, n: i64, rec: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    // defaults
+    __mind_store_i64(rec + 0, cert);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 64, 0);
+    // sigalg 0 = unknown
+    __mind_store_i64(rec + 72, -1);
+    // pss_salt_len
+    __mind_store_i64(rec + 96, 0);
+    // key_type 0 = unknown
+    __mind_store_i64(rec + 168, 0);
+    __mind_store_i64(rec + 176, 0);
+    __mind_store_i64(rec + 184, -1);
+    __mind_store_i64(rec + 192, 0);
+    __mind_store_i64(rec + 200, 0);
+    __mind_store_i64(rec + 208, 0);
+    __mind_store_i64(rec + 216, 0);
+    __mind_store_i64(rec + 224, 0);
+    __mind_store_i64(rec + 232, 0);
+    __mind_store_i64(rec + 240, 0);
+    __mind_store_i64(rec + 248, 0);
+    __mind_store_i64(rec + 256, 0);
+    __mind_store_i64(rec + 264, 0);
+    if n < 4 {
+        return -1;
+    }
+
+    // Outer Certificate SEQUENCE
+    if der_tlv(cert, 0, n, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    let pos: i64 = __mind_load_i64(t + 8);
+    if pos + __mind_load_i64(t + 16) != n {
+        return -1;
+    }
+
+    // tbsCertificate SEQUENCE (full DER extent is the signed message)
+    if der_tlv(cert, pos, n, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    let tbs_hlen: i64 = __mind_load_i64(t + 8);
+    let tbs_clen: i64 = __mind_load_i64(t + 16);
+    __mind_store_i64(rec + 16, pos);
+    __mind_store_i64(rec + 24, tbs_hlen + tbs_clen);
+    let tbs_content: i64 = pos + tbs_hlen;
+    let tbs_end: i64 = tbs_content + tbs_clen;
+    if tbs_end > n {
+        return -1;
+    }
+
+    // signatureAlgorithm SEQUENCE (follows tbs)
+    let sapos: i64 = pos + tbs_hlen + tbs_clen;
+    if der_tlv(cert, sapos, n, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    let sa_hlen: i64 = __mind_load_i64(t + 8);
+    let sa_total: i64 = sa_hlen + __mind_load_i64(t + 16);
+    let sa_content: i64 = sapos + sa_hlen;
+    // signatureAlgorithm OID
+    if der_tlv(cert, sa_content, n, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 6 {
+        return -1;
+    }
+    let sigoid_off: i64 = sa_content + __mind_load_i64(t + 8);
+    let sigoid_len: i64 = __mind_load_i64(t + 16);
+    let sigoid_total: i64 = __mind_load_i64(t + 8) + sigoid_len;
+    let mut alg: i64 = 0;
+    if oid_is_rsa_fam(cert, sigoid_off, sigoid_len, 11) == 1 {
+        alg = 1;
+    }
+    if oid_is_rsa_fam(cert, sigoid_off, sigoid_len, 10) == 1 {
+        alg = 2;
+    }
+    if oid_is_ecdsa_sig(cert, sigoid_off, sigoid_len, 2) == 1 {
+        alg = 3;
+    }
+    if oid_is_ecdsa_sig(cert, sigoid_off, sigoid_len, 3) == 1 {
+        alg = 4;
+    }
+    __mind_store_i64(rec + 64, alg);
+    if alg == 2 {
+        let salt: i64 = x509_pss_params(cert, sa_content, sapos + sa_total, sigoid_total, rec);
+        if salt < 0 {
+            return salt;
+        }
+        __mind_store_i64(rec + 72, salt)
+    }
+
+    // signatureValue BIT STRING
+    let sigpos: i64 = sapos + sa_total;
+    if der_tlv(cert, sigpos, n, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 3 {
+        return -1;
+    }
+    let sig_hlen: i64 = __mind_load_i64(t + 8);
+    let sig_clen: i64 = __mind_load_i64(t + 16);
+    if sig_clen < 2 || sigpos + sig_hlen + sig_clen != n || xb(cert, sigpos + sig_hlen) != 0 {
+        return -1;
+    }
+    __mind_store_i64(rec + 152, sigpos + sig_hlen + 1);
+    __mind_store_i64(rec + 160, sig_clen - 1);
+
+    // --- inside tbsCertificate ---
+    let mut p: i64 = tbs_content;
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) == 160 {
+        // [0] EXPLICIT version
+        p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        if p >= tbs_end {
+            return -1;
+        }
+        if der_tlv(cert, p, tbs_end, t) != 0 {
+            return -1;
+        }
+    }
+    // serialNumber INTEGER
+    if __mind_load_i64(t + 0) != 2 {
+        return -1;
+    }
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // Inner and outer AlgorithmIdentifier must agree byte-for-byte.
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 8) + __mind_load_i64(t + 16) != sa_total {
+        return -1;
+    }
+    if xb_eq(cert + p, cert + sapos, sa_total) == 0 {
+        return -1;
+    }
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // issuer Name
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    __mind_store_i64(rec + 32, p);
+    __mind_store_i64(rec + 40, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // validity SEQUENCE { notBefore Time, notAfter Time }
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    let val_content: i64 = p + __mind_load_i64(t + 8);
+    let val_end: i64 = val_content + __mind_load_i64(t + 16);
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert, val_content, val_end, t) != 0 {
+        return -1;
+    }
+    let t1tag: i64 = __mind_load_i64(t + 0);
+    let t1_off: i64 = val_content + __mind_load_i64(t + 8);
+    let t1_len: i64 = __mind_load_i64(t + 16);
+    if x509_time_unix(cert, t1_off, t1_len, t1tag, rec + 80) != 0 {
+        return -1;
+    }
+    let t1_total: i64 = __mind_load_i64(t + 8) + t1_len;
+    if der_tlv(cert, val_content + t1_total, val_end, t) != 0 {
+        return -1;
+    }
+    let t2tag: i64 = __mind_load_i64(t + 0);
+    let t2_off: i64 = val_content + t1_total + __mind_load_i64(t + 8);
+    let t2_len: i64 = __mind_load_i64(t + 16);
+    if x509_time_unix(cert, t2_off, t2_len, t2tag, rec + 88) != 0 {
+        return -1;
+    }
+
+    // subject Name
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    __mind_store_i64(rec + 48, p);
+    __mind_store_i64(rec + 56, __mind_load_i64(t + 8) + __mind_load_i64(t + 16));
+    p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+
+    // subjectPublicKeyInfo SEQUENCE
+    if der_tlv(cert, p, tbs_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 48 {
+        return -1;
+    }
+    let spki: i64 = p;
+    let mut ps: i64 = p + __mind_load_i64(t + 8);
+    let spki_end: i64 = ps + __mind_load_i64(t + 16);
+    // algorithm AlgorithmIdentifier
+    if der_tlv(cert, ps, spki_end, t) != 0 {
+        return -1;
+    }
+    let alg_content: i64 = ps + __mind_load_i64(t + 8);
+    let alg_end: i64 = alg_content + __mind_load_i64(t + 16);
+    let alg_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if der_tlv(cert, alg_content, alg_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 6 {
+        return -1;
+    }
+    let koid_off: i64 = alg_content + __mind_load_i64(t + 8);
+    let koid_len: i64 = __mind_load_i64(t + 16);
+    let koid_total: i64 = __mind_load_i64(t + 8) + koid_len;
+    ps = ps + alg_total;
+    // subjectPublicKey BIT STRING
+    if der_tlv(cert, ps, spki_end, t) != 0 {
+        return -1;
+    }
+    if __mind_load_i64(t + 0) != 3 {
+        return -1;
+    }
+    let bit_hlen: i64 = __mind_load_i64(t + 8);
+    let bit_clen: i64 = __mind_load_i64(t + 16);
+    if bit_clen < 2 {
+        return -1;
+    }
+    let key_content: i64 = ps + bit_hlen + 1;
+    let key_len: i64 = bit_clen - 1;
+
+    if oid_is_rsa_fam(cert, koid_off, koid_len, 1) == 1 {
+        // rsaEncryption: the strict decoder x509_parse uses (std/x509_der.mind)
+        __mind_store_i64(rec + 96, 1);
+        let key: i64 = __mind_alloc(32);
+        if x509_rsa_spki(cert, spki, tbs_end, key) != 0 {
+            return -14;
+        }
+        __mind_store_i64(rec + 104, __mind_load_i64(key + 0));
+        __mind_store_i64(rec + 112, __mind_load_i64(key + 8));
+        __mind_store_i64(rec + 120, __mind_load_i64(key + 16));
+        __mind_store_i64(rec + 128, __mind_load_i64(key + 24))
+    } else {
+        if oid_is_ecpubkey(cert, koid_off, koid_len) == 1 {
+            // id-ecPublicKey: params must be secp256r1 or secp384r1
+            if der_tlv(cert, alg_content + koid_total, alg_end, t) != 0 {
+                return -14;
+            }
+            if __mind_load_i64(t + 0) != 6 {
+                return -14;
+            }
+            let crv_off: i64 = alg_content + koid_total + __mind_load_i64(t + 8);
+            let crv_len: i64 = __mind_load_i64(t + 16);
+            if oid_is_p256(cert, crv_off, crv_len) == 1 {
+                __mind_store_i64(rec + 96, 2);
+                if key_len != 65 {
+                    return -14;
+                }
+                if xb(cert, key_content) != 4 {
+                    return -14;
+                }
+                __mind_store_i64(rec + 136, key_content + 1);
+                __mind_store_i64(rec + 144, key_content + 33)
+            } else {
+                if oid_is_p384(cert, crv_off, crv_len) == 1 {
+                    __mind_store_i64(rec + 96, 3);
+                    if key_len != 97 {
+                        return -14;
+                    }
+                    if xb(cert, key_content) != 4 {
+                        return -14;
+                    }
+                    __mind_store_i64(rec + 136, key_content + 1);
+                    __mind_store_i64(rec + 144, key_content + 49)
+                } else {
+                    return -2;
+                }
+            }
+        } else {
+            return -2;
+        }
+    }
+
+    // remaining tbs elements: find [3] EXPLICIT Extensions
+    if der_tlv(cert, spki, tbs_end, t) != 0 {
+        return -1;
+    }
+    let mut q: i64 = spki + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    while q < tbs_end {
+        if der_tlv(cert, q, tbs_end, t) != 0 {
+            return -1;
+        }
+        let qtag: i64 = __mind_load_i64(t + 0);
+        let qtotal: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        if qtag == 163 {
+            // [3] EXPLICIT Extensions: content is a single SEQUENCE
+            let ec_off: i64 = q + __mind_load_i64(t + 8);
+            let ec_lim: i64 = ec_off + __mind_load_i64(t + 16);
+            if der_tlv(cert, ec_off, ec_lim, t) != 0 {
+                return -1;
+            }
+            if __mind_load_i64(t + 0) != 48 {
+                return -1;
+            }
+            let rc: i64 = x509_parse_extensions(cert, ec_off + __mind_load_i64(t + 8), ec_off + __mind_load_i64(t + 8) + __mind_load_i64(t + 16), rec);
+            if rc != 0 {
+                return rc;
+            }
+        }
+        q = q + qtotal;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Blob record reader: see the blob layout in the header comment.
+// ---------------------------------------------------------------------------
+
+pub fn x509_blob_off(blob: i64, i: i64) -> i64 {
+    __mind_load_i64(blob + 8 + i * 16)
+}
+
+pub fn x509_blob_len(blob: i64, i: i64) -> i64 {
+    __mind_load_i64(blob + 16 + i * 16)
+}
+
+// Validate the prospective issuer against every subordinate on this path.
+pub fn x509_parent_policy(parent: i64, path: i64, depth: i64, now: i64, is_anchor: i64) -> i64 {
+    if __mind_load_i64(parent + 168) != 1 || __mind_load_i64(parent + 176) != 1 {
+        return -9;
+    }
+    if is_anchor == 0 {
+        if now < __mind_load_i64(parent + 80) {
+            return -5;
+        }
+        if now > __mind_load_i64(parent + 88) {
+            return -6;
+        }
+    }
+    if __mind_load_i64(parent + 192) == 1 && (__mind_load_i64(parent + 200) & 4) == 0 {
+        return -11;
+    }
+    if __mind_load_i64(parent + 208) == 1 && __mind_load_i64(parent + 216) != 1 {
+        return -11;
+    }
+    let mut ca_below: i64 = 0;
+    let mut pi: i64 = 0;
+    while pi < depth {
+        let sub: i64 = __mind_load_i64(path + pi * 8);
+        if pi > 0 {
+            // Self-issued rollover certificates do not consume pathLen.
+            if x509_issuer_matches(sub, sub) == 0 {
+                ca_below = ca_below + 1;
+            }
+        }
+        if __mind_load_i64(parent + 248) == 1 {
+            let nc_rc: i64 = x509_check_name_constraints(__mind_load_i64(parent), __mind_load_i64(parent + 256), __mind_load_i64(parent + 264), __mind_load_i64(sub), __mind_load_i64(sub + 232), __mind_load_i64(sub + 240));
+            if nc_rc != 0 {
+                return nc_rc;
+            }
+        }
+        pi = pi + 1;
+    }
+    let limit: i64 = __mind_load_i64(parent + 184);
+    if limit >= 0 && ca_below > limit {
+        return -10;
+    }
+    0
+}
+
+pub fn x509_issuer_matches(child: i64, parent: i64) -> i64 {
+    let ilen: i64 = __mind_load_i64(child + 40);
+    if ilen != __mind_load_i64(parent + 56) {
+        return 0;
+    }
+    xb_eq(__mind_load_i64(child) + __mind_load_i64(child + 32), __mind_load_i64(parent) + __mind_load_i64(parent + 48), ilen)
+}
+
+// Bounded depth-first search: leaf first, remaining certificates unordered.
+// Try every matching issuer, retaining path-specific policy and a visited mask.
+#[protection]
+pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: i64, depth: i64, used: i64, now: i64) -> i64 {
+    let child: i64 = __mind_load_i64(path + (depth - 1) * 8);
+    let mut error: i64 = -7;
+    let mut ai: i64 = 0;
+    while ai < acount {
+        let anchor: i64 = anchors + ai * 288;
+        // A supplied root may also be in the untrusted certificate bag.
+        // Its issuer policy was checked when it entered the path.
+        if depth > 1 && __mind_load_i64(child + 8) == __mind_load_i64(anchor + 8) {
+            if xb_eq(__mind_load_i64(child), __mind_load_i64(anchor), __mind_load_i64(child + 8)) == 1 {
+                return 0;
+            }
+        }
+        if x509_issuer_matches(child, anchor) == 1 {
+            let mut arc: i64 = x509_parent_policy(anchor, path, depth, now, 1);
+            if arc == 0 {
+                arc = x509_verify_cert_sig(child, anchor);
+            }
+            if arc == 0 {
+                return 0;
+            }
+            if error == -7 {
+                error = arc;
+            }
+        }
+        ai = ai + 1;
+    }
+    if depth >= 8 {
+        return error;
+    }
+    let mut ci: i64 = 1;
+    while ci < count {
+        let bit: i64 = 1 << ci;
+        let parent: i64 = recs + ci * 288;
+        if (used & bit) == 0 && x509_issuer_matches(child, parent) == 1 {
+            let mut rc: i64 = x509_parent_policy(parent, path, depth, now, 0);
+            if rc == 0 {
+                rc = x509_verify_cert_sig(child, parent);
+            }
+            if rc == 0 {
+                __mind_store_i64(path + depth * 8, parent);
+                rc = x509_path_search(recs, count, anchors, acount, path, depth + 1, used | bit, now);
+            }
+            if rc == 0 {
+                return 0;
+            }
+            if error == -7 {
+                error = rc;
+            }
+        }
+        ci = ci + 1;
+    }
+    error
+}
+
+// ---------------------------------------------------------------------------
+// pub fn x509_verify_server_chain(chain, anchors, expected_dns, now_unix)
+//     -> i64
+//
+// Full authenticated server-certificate chain validation per RFC 5280 / 6125.
+// Returns 0 on success, negative on failure.
+//
+// Trust-anchor policy (RFC 5280 §6.1.1(d)): anchors are trusted public-key
+// bindings. Their self-signature is never verified and their validity period
+// is not evaluated, so an unrecognised signature algorithm on an anchor is
+// tolerated. Each anchor must still parse as a certificate: malformed DER, or
+// RSASSA-PSS parameters on its own signature other than SHA-256, make the
+// parse fail and the anchor is skipped (a chain that needs it fails -7). An
+// anchor that issues a path link must be a CA (basicConstraints cA, else -9),
+// carry keyCertSign if it has keyUsage (else -11), list serverAuth if it has
+// an EKU (else -11), and its pathLen (-10) and name constraints (-17) apply to
+// the path below it. Every non-anchor certificate in the path is checked for
+// signature, validity, CA/pathLen, key usage and name constraints.
+// A chain, anchor or hostname pointer <= 0 is refused with -1.
+// ---------------------------------------------------------------------------
+#[protection]
+pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now_unix: i64) -> i64 {
+    if chain <= 0 || anchors <= 0 || expected_dns <= 0 {
+        return -1;
+    }
+    let count: i64 = __mind_load_i64(chain + 0);
+    if count < 1 {
+        return -1;
+    }
+    if count > 8 {
+        return -13;
+    }
+    let recs: i64 = __mind_alloc(2304);
+    // 8 records of 288 bytes
+    let mut i: i64 = 0;
+    while i < count {
+        let rec: i64 = recs + i * 288;
+        let rc: i64 = x509_parse_full(chain + x509_blob_off(chain, i), x509_blob_len(chain, i), rec);
+        if rc != 0 {
+            return rc;
+        }
+        if __mind_load_i64(rec + 64) == 0 {
+            return -2;
+        }
+        i = i + 1;
+    }
+    // hostname to byte length (NUL-terminated input, cap 253)
+    let mut host_len: i64 = 0;
+    let mut scanning: i64 = 1;
+    while scanning == 1 {
+        if host_len >= 254 {
+            scanning = 0;
+        } else {
+            if (__mind_load_i8(expected_dns + host_len) & 255) == 0 {
+                scanning = 0;
+            } else {
+                host_len = host_len + 1;
+            }
+        }
+    }
+    if host_len < 1 || host_len > 253 {
+        return -8;
+    }
+
+    let leaf: i64 = recs;
+    // leaf validity
+    if now_unix < __mind_load_i64(leaf + 80) {
+        return -5;
+    }
+    if now_unix > __mind_load_i64(leaf + 88) {
+        return -6;
+    }
+    // leaf EKU must contain serverAuth
+    if __mind_load_i64(leaf + 208) != 1 || __mind_load_i64(leaf + 216) != 1 {
+        return -11;
+    }
+    // leaf keyUsage (if present) must contain digitalSignature
+    if __mind_load_i64(leaf + 192) == 1 {
+        if (__mind_load_i64(leaf + 200) & 128) == 0 {
+            return -11;
+        }
+    }
+    // SAN must be present and some dNSName must match expected_dns
+    if __mind_load_i64(leaf + 224) != 1 {
+        return -15;
+    }
+    let leaf_base: i64 = __mind_load_i64(leaf + 0);
+    let san_off: i64 = __mind_load_i64(leaf + 232);
+    let san_len: i64 = __mind_load_i64(leaf + 240);
+    if san_len < 1 {
+        return -15;
+    }
+    if x509_san_match(leaf_base, san_off, san_off + san_len, expected_dns, host_len) == 0 {
+        return -8;
+    }
+
+    let acount: i64 = __mind_load_i64(anchors);
+    if acount < 0 || acount > 32 {
+        return -13;
+    }
+    let arecs: i64 = __mind_alloc(9216);
+    let mut j: i64 = 0;
+    let mut valid_anchors: i64 = 0;
+    while j < acount {
+        let ar: i64 = arecs + valid_anchors * 288;
+        let arc: i64 = x509_parse_full(anchors + x509_blob_off(anchors, j), x509_blob_len(anchors, j), ar);
+        if arc == 0 {
+            valid_anchors = valid_anchors + 1;
+        }
+        j = j + 1;
+    }
+    let path: i64 = __mind_alloc(64);
+    __mind_store_i64(path, leaf);
+    x509_path_search(recs, count, arecs, valid_anchors, path, 1, 1, now_unix)
+}
