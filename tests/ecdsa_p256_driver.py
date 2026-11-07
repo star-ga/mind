@@ -23,10 +23,11 @@
 #                             answer vector for message "sample", cross-checked
 #                             against pyca before MIND sees it.
 #
-# Build the .so first (std/ecdsa_p256.mind composes std/sha256.mind, so
-# combine the two sources with the import line stripped, exactly as
-# tests/rsa_pss_driver.py combines sha256+x509+rsa_pss):
+# Build the .so first (std/ecdsa_p256.mind composes std/sha256.mind and
+# std/sha512.mind, so combine the sources with the import lines stripped,
+# exactly as tests/rsa_pss_driver.py combines sha256+x509_bignum+rsa_pss):
 #   cat std/sha256.mind                    >  /tmp/ecdsa_p256_combined.mind
+#   grep -v '^import ' std/sha512.mind     >> /tmp/ecdsa_p256_combined.mind
 #   grep -v '^import ' std/ecdsa_p256.mind >> /tmp/ecdsa_p256_combined.mind
 #   mindc /tmp/ecdsa_p256_combined.mind --emit-shared /tmp/ecdsa_p256.so
 #
