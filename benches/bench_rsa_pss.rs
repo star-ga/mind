@@ -41,13 +41,13 @@
 //! ## Build recipe (mirrors the driver, RFC-8017 combine chain)
 //!
 //! `std/rsa_pss.mind` composes `std/sha256.mind` (the `sha256` entry point) and
-//! `std/x509.mind` (the 130-limb RSA-2048 bignum: `modexp_2048` etc.). The
+//! `std/x509_bignum.mind` (the radix-2^16 RSA bignum: `modexp_rsa` etc.). The
 //! standalone `--emit-shared` build combines the three sources with the import
-//! lines stripped, byte-for-byte the chain in `tests/rsa_pss_driver.py`:
+//! lines stripped:
 //! ```text
 //! cat std/sha256.mind > combined.mind
-//! grep -v '^import std.sha256;' std/x509.mind   >> combined.mind
-//! grep -v '^import '            std/rsa_pss.mind >> combined.mind
+//! grep -v '^import ' std/x509_bignum.mind >> combined.mind
+//! grep -v '^import ' std/rsa_pss.mind     >> combined.mind
 //! mindc combined.mind --emit-shared rsa_pss.so
 //! ```
 //!
@@ -119,33 +119,32 @@ fn mindc_path() -> Option<PathBuf> {
     if rel.exists() { Some(rel) } else { None }
 }
 
-/// Combine `std/sha256.mind` + `std/x509.mind` + `std/rsa_pss.mind` into one
-/// source with the import lines stripped — byte-for-byte the shell combine chain
-/// `tests/rsa_pss_driver.py` documents:
+/// Combine `std/sha256.mind` + `std/x509_bignum.mind` + `std/rsa_pss.mind`
+/// into one source with the import lines stripped:
 ///   cat std/sha256.mind > combined
-///   grep -v '^import std.sha256;' std/x509.mind   >> combined
-///   grep -v '^import '            std/rsa_pss.mind >> combined
+///   grep -v '^import ' std/x509_bignum.mind >> combined
+///   grep -v '^import ' std/rsa_pss.mind     >> combined
 /// Returns `None` (→ self-skip) if any source is unreadable.
 fn combined_source() -> Option<String> {
     let std_dir = manifest_dir().join("std");
     let sha256 = std::fs::read_to_string(std_dir.join("sha256.mind")).ok()?;
-    let x509 = std::fs::read_to_string(std_dir.join("x509.mind")).ok()?;
+    let bignum = std::fs::read_to_string(std_dir.join("x509_bignum.mind")).ok()?;
     let rsa_pss = std::fs::read_to_string(std_dir.join("rsa_pss.mind")).ok()?;
 
-    // grep -v '^import std.sha256;' — x509 only pulls in sha256.
-    let x509_stripped: String = x509
+    // grep -v '^import ' — x509_bignum imports nothing today.
+    let bignum_stripped: String = bignum
         .lines()
-        .filter(|l| !l.starts_with("import std.sha256;"))
+        .filter(|l| !l.starts_with("import "))
         .collect::<Vec<_>>()
         .join("\n");
-    // grep -v '^import ' — rsa_pss pulls in both sha256 and x509.
+    // grep -v '^import ' — rsa_pss pulls in sha256 and x509_bignum.
     let rsa_stripped: String = rsa_pss
         .lines()
         .filter(|l| !l.starts_with("import "))
         .collect::<Vec<_>>()
         .join("\n");
 
-    Some(format!("{sha256}\n{x509_stripped}\n{rsa_stripped}\n"))
+    Some(format!("{sha256}\n{bignum_stripped}\n{rsa_stripped}\n"))
 }
 
 /// Build the combined crypto module to a temp `.so` once. Returns `None`
@@ -169,7 +168,7 @@ fn build_rsa_pss_so() -> Option<&'static PathBuf> {
             return None;
         };
         let Some(src) = combined_source() else {
-            eprintln!("bench_rsa_pss: could not read std/{{sha256,x509,rsa_pss}}.mind; skipping");
+            eprintln!("bench_rsa_pss: could not read std/{{sha256,x509_bignum,rsa_pss}}.mind; skipping");
             return None;
         };
         let dir = std::env::temp_dir();

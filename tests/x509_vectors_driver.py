@@ -22,12 +22,12 @@
 # SHA-256, self-signed) so ground truth is independent and the run is
 # reproducible.  Prints PASS/FAIL per case.
 #
-# Build the .so first (std/x509.mind imports std.sha256, which the standalone
-# --emit-shared path leaves undefined — so combine the two sources into one file,
-# stripping the import line, exactly as hkdf+sha256 are combined):
-#   cat std/sha256.mind > /tmp/x509_combined.mind
-#   grep -v '^import std.sha256;' std/x509.mind >> /tmp/x509_combined.mind
-#   mindc /tmp/x509_combined.mind --emit-shared /tmp/x509.so   # needs mlir-build
+# Build the .so first. std/x509.mind imports the chain validator's module set
+# (sha256, sha512, ecdsa_p256, x509_p384, x509_bignum, rsa_pss and the x509_*
+# helpers); scripts/run_crypto_vectors.sh combines that set into one file with
+# the import lines stripped (X509_SET) and emits it with --emit-shared.
+# Path validation, validity and hostname checks are tested by
+# tests/x509_chain_smoke.rs and tests/std_tls_x509_import.rs.
 #
 # Usage: python3 x509_vectors_driver.py <x509.so>
 
@@ -317,16 +317,16 @@ for _ in range(200):
 record_bool("harden: 200 bit-flip mutations survived (no crash)", True)
 
 # ---------------------------------------------------------------------------
-# CAPABILITY SCOPE (honesty marker): std/x509 does NOT authenticate a peer.
-# The module must self-declare this fail-closed so nothing can wire it to a
-# live socket believing it is MITM-safe. Flipping this to 1 without adding
-# real chain+validity+hostname validation must turn this driver RED.
+# CAPABILITY SCOPE (honesty marker): std/x509 authenticates a peer chain
+# (x509_verify_server_chain: path, validity, key usage and hostname), so the
+# module declares 1. Removing that validator without lowering this value back
+# to 0 must turn this driver RED.
 # ---------------------------------------------------------------------------
 print("=" * 72)
-print("CAPABILITY SCOPE - module must declare it is NOT peer authentication")
+print("CAPABILITY SCOPE - module declares peer authentication")
 print("=" * 72)
-record_bool("scope: x509_peer_auth_supported()==0 (no chain/validity/hostname)",
-            X.x509_peer_auth_supported() == 0,
+record_bool("scope: x509_peer_auth_supported()==1 (chain/validity/hostname implemented)",
+            X.x509_peer_auth_supported() == 1,
             f"got={X.x509_peer_auth_supported()}")
 
 print("=" * 72)

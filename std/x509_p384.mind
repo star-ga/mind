@@ -1,0 +1,610 @@
+// std/x509_p384.mind — ECDSA signature verification on NIST P-384
+// (secp384r1) with SHA-384, in pure MIND.
+//
+// FIPS 186-5 §6.4.2 / SEC1 v2 §4.1.4:
+//   reject unless 1 <= r,s <= n-1
+//   e  = SHA-384(msg)   (48 bytes = 384 bits)
+//   w  = s^-1 mod n
+//   u1 = e*w mod n ;  u2 = r*w mod n
+//   (x, y) = u1*G + u2*Q ; reject the point at infinity
+//   valid iff (x mod n) == r
+//
+// Domain parameters: NIST SP 800-186 / SEC2 secp384r1, curve
+// y^2 = x^3 - 3x + b over GF(p).
+
+import std.sha512;
+
+// ---------------------------------------------------------------------------
+// Bignum primitives — 25 limbs of 16 bits, one limb per 8 bytes.
+// 24 limbs = 384 bits; 25th limb absorbs transient overflow from shift/add.
+// ---------------------------------------------------------------------------
+
+fn p384_bn_zero25(buf: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 25 {
+        __mind_store_i64(buf + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn p384_bn_copy25(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 25 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// Copy a whole Jacobian point: 3 * 25 limbs = 75 limbs
+fn p384_pt_copy(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 75 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+fn p384_bn_is_zero25(a: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut z: i64 = 1;
+    while i < 25 {
+        if __mind_load_i64(a + i * 8) != 0 {
+            z = 0;
+        }
+        i = i + 1;
+    }
+    z
+}
+
+fn p384_bn_eq25(a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut eq: i64 = 1;
+    while i < 25 {
+        if __mind_load_i64(a + i * 8) != __mind_load_i64(b + i * 8) {
+            eq = 0;
+        }
+        i = i + 1;
+    }
+    eq
+}
+
+fn p384_bn_cmp_ge25(a: i64, b: i64) -> i64 {
+    let mut k: i64 = 24;
+    while k >= 0 {
+        let av: i64 = __mind_load_i64(a + k * 8);
+        let bv: i64 = __mind_load_i64(b + k * 8);
+        if av > bv {
+            return 1;
+        }
+        if av < bv {
+            return 0;
+        }
+        k = k - 1;
+    }
+    1
+}
+
+fn p384_bn_sub25(a: i64, b: i64) -> i64 {
+    let mut borrow: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 25 {
+        let av: i64 = __mind_load_i64(a + k * 8);
+        let bv: i64 = __mind_load_i64(b + k * 8);
+        let mut d: i64 = av - bv - borrow;
+        if d < 0 {
+            d = d + 65536;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        __mind_store_i64(a + k * 8, d & 65535);
+        k = k + 1;
+    }
+    0
+}
+
+fn p384_bn_add25(a: i64, b: i64) -> i64 {
+    let mut carry: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 25 {
+        let v: i64 = __mind_load_i64(a + k * 8) + __mind_load_i64(b + k * 8) + carry;
+        __mind_store_i64(a + k * 8, v & 65535);
+        carry = v >> 16;
+        k = k + 1;
+    }
+    0
+}
+
+fn p384_bn_shl1_25(r: i64) -> i64 {
+    let mut carry: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 25 {
+        let v: i64 = (__mind_load_i64(r + k * 8) << 1) | carry;
+        __mind_store_i64(r + k * 8, v & 65535);
+        carry = (v >> 16) & 1;
+        k = k + 1;
+    }
+    0
+}
+
+fn p384_bn_from_be48(src: i64, out: i64) -> i64 {
+    p384_bn_zero25(out);
+    let mut k: i64 = 0;
+    while k < 24 {
+        let lo: i64 = __mind_load_i8(src + 47 - 2 * k) & 255;
+        let hi: i64 = __mind_load_i8(src + 46 - 2 * k) & 255;
+        __mind_store_i64(out + k * 8, lo | (hi << 8));
+        k = k + 1;
+    }
+    0
+}
+
+fn p384_bit_of(a: i64, bit: i64) -> i64 {
+    (__mind_load_i64(a + (bit / 16) * 8) >> (bit % 16)) & 1
+}
+
+// ---------------------------------------------------------------------------
+// NIST P-384 domain parameters
+// ---------------------------------------------------------------------------
+
+fn p384_load_p(out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 65535);
+    __mind_store_i64(out + 8, 65535);
+    __mind_store_i64(out + 16, 0);
+    __mind_store_i64(out + 24, 0);
+    __mind_store_i64(out + 32, 0);
+    __mind_store_i64(out + 40, 0);
+    __mind_store_i64(out + 48, 65535);
+    __mind_store_i64(out + 56, 65535);
+    __mind_store_i64(out + 64, 65534);
+    let mut i: i64 = 9;
+    while i < 24 {
+        __mind_store_i64(out + i * 8, 65535);
+        i = i + 1;
+    }
+    0
+}
+
+fn p384_load_n(out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 10611);
+    __mind_store_i64(out + 8, 52421);
+    __mind_store_i64(out + 16, 6506);
+    __mind_store_i64(out + 24, 60652);
+    __mind_store_i64(out + 32, 42874);
+    __mind_store_i64(out + 40, 18608);
+    __mind_store_i64(out + 48, 3506);
+    __mind_store_i64(out + 56, 22554);
+    __mind_store_i64(out + 64, 11743);
+    __mind_store_i64(out + 72, 62519);
+    __mind_store_i64(out + 80, 19841);
+    __mind_store_i64(out + 88, 51043);
+    let mut i: i64 = 12;
+    while i < 24 {
+        __mind_store_i64(out + i * 8, 65535);
+        i = i + 1;
+    }
+    0
+}
+
+fn p384_load_b(out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 10991);
+    __mind_store_i64(out + 8, 54252);
+    __mind_store_i64(out + 16, 51437);
+    __mind_store_i64(out + 24, 10885);
+    __mind_store_i64(out + 32, 53661);
+    __mind_store_i64(out + 40, 35374);
+    __mind_store_i64(out + 48, 14733);
+    __mind_store_i64(out + 56, 50774);
+    __mind_store_i64(out + 64, 34650);
+    __mind_store_i64(out + 72, 20499);
+    __mind_store_i64(out + 80, 2191);
+    __mind_store_i64(out + 88, 788);
+    __mind_store_i64(out + 96, 16658);
+    __mind_store_i64(out + 104, 65153);
+    __mind_store_i64(out + 112, 40046);
+    __mind_store_i64(out + 120, 6173);
+    __mind_store_i64(out + 128, 11545);
+    __mind_store_i64(out + 136, 58360);
+    __mind_store_i64(out + 144, 1387);
+    __mind_store_i64(out + 152, 39054);
+    __mind_store_i64(out + 160, 59364);
+    __mind_store_i64(out + 168, 57918);
+    __mind_store_i64(out + 176, 12199);
+    __mind_store_i64(out + 184, 45873);
+    0
+}
+
+fn p384_load_gx(out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 2743);
+    __mind_store_i64(out + 8, 29302);
+    __mind_store_i64(out + 16, 24120);
+    __mind_store_i64(out + 24, 14932);
+    __mind_store_i64(out + 32, 10604);
+    __mind_store_i64(out + 40, 48981);
+    __mind_store_i64(out + 48, 62045);
+    __mind_store_i64(out + 56, 21762);
+    __mind_store_i64(out + 64, 10808);
+    __mind_store_i64(out + 72, 33364);
+    __mind_store_i64(out + 80, 16864);
+    __mind_store_i64(out + 88, 23031);
+    __mind_store_i64(out + 96, 39832);
+    __mind_store_i64(out + 104, 35751);
+    __mind_store_i64(out + 112, 15202);
+    __mind_store_i64(out + 120, 28189);
+    __mind_store_i64(out + 128, 44404);
+    __mind_store_i64(out + 136, 62240);
+    __mind_store_i64(out + 144, 50974);
+    __mind_store_i64(out + 152, 36529);
+    __mind_store_i64(out + 160, 1335);
+    __mind_store_i64(out + 168, 48779);
+    __mind_store_i64(out + 176, 51746);
+    __mind_store_i64(out + 184, 43655);
+    0
+}
+
+fn p384_load_gy(out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 3679);
+    __mind_store_i64(out + 8, 37098);
+    __mind_store_i64(out + 16, 7548);
+    __mind_store_i64(out + 24, 31299);
+    __mind_store_i64(out + 32, 33181);
+    __mind_store_i64(out + 40, 7550);
+    __mind_store_i64(out + 48, 45518);
+    __mind_store_i64(out + 56, 2656);
+    __mind_store_i64(out + 64, 47296);
+    __mind_store_i64(out + 72, 46576);
+    __mind_store_i64(out + 80, 12563);
+    __mind_store_i64(out + 88, 59866);
+    __mind_store_i64(out + 96, 5244);
+    __mind_store_i64(out + 104, 10394);
+    __mind_store_i64(out + 112, 7613);
+    __mind_store_i64(out + 120, 63732);
+    __mind_store_i64(out + 128, 56361);
+    __mind_store_i64(out + 136, 37522);
+    __mind_store_i64(out + 144, 39103);
+    __mind_store_i64(out + 152, 23966);
+    __mind_store_i64(out + 160, 11375);
+    __mind_store_i64(out + 168, 38438);
+    __mind_store_i64(out + 176, 56906);
+    __mind_store_i64(out + 184, 13847);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Modular arithmetic on P-384
+// ---------------------------------------------------------------------------
+
+fn p384_mul_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p384_bn_zero25(out);
+    let mut bit: i64 = 383;
+    while bit >= 0 {
+        p384_bn_shl1_25(out);
+        if p384_bn_cmp_ge25(out, m) == 1 {
+            p384_bn_sub25(out, m)
+        }
+        if p384_bit_of(a, bit) == 1 {
+            p384_bn_add25(out, b);
+            if p384_bn_cmp_ge25(out, m) == 1 {
+                p384_bn_sub25(out, m)
+            }
+        }
+        bit = bit - 1;
+    }
+    0
+}
+
+fn p384_add_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p384_bn_copy25(out, a);
+    p384_bn_add25(out, b);
+    if p384_bn_cmp_ge25(out, m) == 1 {
+        p384_bn_sub25(out, m)
+    }
+    0
+}
+
+fn p384_sub_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p384_bn_copy25(out, a);
+    if p384_bn_cmp_ge25(out, b) == 0 {
+        p384_bn_add25(out, m)
+    }
+    p384_bn_sub25(out, b);
+    0
+}
+
+fn p384_modexp(base: i64, e: i64, m: i64, out: i64) -> i64 {
+    p384_bn_zero25(out);
+    __mind_store_i64(out + 0, 1);
+    let tmp: i64 = __mind_alloc(200);
+    let mut bit: i64 = 383;
+    while bit >= 0 {
+        p384_mul_mod(out, out, m, tmp);
+        p384_bn_copy25(out, tmp);
+        if p384_bit_of(e, bit) == 1 {
+            p384_mul_mod(out, base, m, tmp);
+            p384_bn_copy25(out, tmp)
+        }
+        bit = bit - 1;
+    }
+    0
+}
+
+fn p384_mod_inv(a: i64, m: i64, out: i64) -> i64 {
+    let e: i64 = __mind_alloc(200);
+    p384_bn_copy25(e, m);
+    let two: i64 = __mind_alloc(200);
+    p384_bn_zero25(two);
+    __mind_store_i64(two + 0, 2);
+    p384_bn_sub25(e, two);
+    p384_modexp(a, e, m, out)
+}
+
+// ---------------------------------------------------------------------------
+// Jacobian Point Arithmetic on P-384 (X, Y, Z at +0, +200, +400)
+// ---------------------------------------------------------------------------
+
+fn p384_point_double(pt: i64, m: i64, out: i64) -> i64 {
+    if p384_bn_is_zero25(pt + 400) == 1 {
+        p384_pt_copy(out, pt);
+        return 0;
+    }
+    let s: i64 = __mind_alloc(2200);
+    let delta: i64 = s;
+    let gamma: i64 = s + 200;
+    let beta: i64 = s + 400;
+    let alpha: i64 = s + 600;
+    let t1: i64 = s + 800;
+    let t2: i64 = s + 1000;
+    let t3: i64 = s + 1200;
+    let t4: i64 = s + 1400;
+    let b4: i64 = s + 1600;
+    let b8: i64 = s + 1800;
+    let t5: i64 = s + 2000;
+
+    p384_mul_mod(pt + 400, pt + 400, m, delta);
+    p384_mul_mod(pt + 200, pt + 200, m, gamma);
+    p384_mul_mod(pt + 0, gamma, m, beta);
+    p384_sub_mod(pt + 0, delta, m, t1);
+    p384_add_mod(pt + 0, delta, m, t2);
+    p384_mul_mod(t1, t2, m, t3);
+    p384_add_mod(t3, t3, m, t4);
+    p384_add_mod(t4, t3, m, alpha);
+
+    p384_add_mod(beta, beta, m, t1);
+    p384_add_mod(t1, t1, m, b4);
+    p384_add_mod(b4, b4, m, b8);
+
+    p384_mul_mod(alpha, alpha, m, t2);
+    p384_sub_mod(t2, b8, m, out + 0);
+
+    p384_add_mod(pt + 200, pt + 400, m, t1);
+    p384_mul_mod(t1, t1, m, t2);
+    p384_sub_mod(t2, gamma, m, t3);
+    p384_sub_mod(t3, delta, m, out + 400);
+
+    p384_sub_mod(b4, out + 0, m, t1);
+    p384_mul_mod(alpha, t1, m, t2);
+    p384_mul_mod(gamma, gamma, m, t3);
+    p384_add_mod(t3, t3, m, t4);
+    p384_add_mod(t4, t4, m, t5);
+    p384_add_mod(t5, t5, m, t1);
+    p384_sub_mod(t2, t1, m, out + 200);
+    0
+}
+
+fn p384_point_add(p1: i64, p2: i64, m: i64, out: i64) -> i64 {
+    if p384_bn_is_zero25(p1 + 400) == 1 {
+        p384_pt_copy(out, p2);
+        return 0;
+    }
+    if p384_bn_is_zero25(p2 + 400) == 1 {
+        p384_pt_copy(out, p1);
+        return 0;
+    }
+    let s: i64 = __mind_alloc(2600);
+    let z1z1: i64 = s;
+    let z2z2: i64 = s + 200;
+    let u1: i64 = s + 400;
+    let u2: i64 = s + 600;
+    let s1: i64 = s + 800;
+    let s2: i64 = s + 1000;
+    let h: i64 = s + 1200;
+    let rr: i64 = s + 1400;
+    let hh: i64 = s + 1600;
+    let hhh: i64 = s + 1800;
+    let v: i64 = s + 2000;
+    let t1: i64 = s + 2200;
+    let t2: i64 = s + 2400;
+
+    p384_mul_mod(p1 + 400, p1 + 400, m, z1z1);
+    p384_mul_mod(p2 + 400, p2 + 400, m, z2z2);
+    p384_mul_mod(p1 + 0, z2z2, m, u1);
+    p384_mul_mod(p2 + 0, z1z1, m, u2);
+    p384_mul_mod(p2 + 400, z2z2, m, t1);
+    p384_mul_mod(p1 + 200, t1, m, s1);
+    p384_mul_mod(p1 + 400, z1z1, m, t2);
+    p384_mul_mod(p2 + 200, t2, m, s2);
+    p384_sub_mod(u2, u1, m, h);
+    p384_sub_mod(s2, s1, m, rr);
+
+    if p384_bn_is_zero25(h) == 1 {
+        if p384_bn_is_zero25(rr) == 1 {
+            return p384_point_double(p1, m, out);
+        }
+        p384_bn_zero25(out + 0);
+        p384_bn_zero25(out + 200);
+        p384_bn_zero25(out + 400);
+        return 0;
+    }
+
+    p384_mul_mod(h, h, m, hh);
+    p384_mul_mod(hh, h, m, hhh);
+    p384_mul_mod(u1, hh, m, v);
+    p384_mul_mod(rr, rr, m, t1);
+    p384_sub_mod(t1, hhh, m, t2);
+    p384_add_mod(v, v, m, t1);
+    p384_sub_mod(t2, t1, m, out + 0);
+
+    p384_sub_mod(v, out + 0, m, t1);
+    p384_mul_mod(rr, t1, m, t2);
+    p384_mul_mod(s1, hhh, m, t1);
+    p384_sub_mod(t2, t1, m, out + 200);
+
+    p384_mul_mod(p1 + 400, p2 + 400, m, t1);
+    p384_mul_mod(t1, h, m, out + 400);
+    0
+}
+
+fn p384_scalar_mult(k: i64, pt: i64, m: i64, out: i64) -> i64 {
+    p384_bn_zero25(out + 0);
+    p384_bn_zero25(out + 200);
+    p384_bn_zero25(out + 400);
+    let cur: i64 = __mind_alloc(600);
+    let tmp: i64 = __mind_alloc(600);
+    p384_pt_copy(cur, pt);
+    let mut bit: i64 = 0;
+    while bit < 384 {
+        if p384_bit_of(k, bit) == 1 {
+            p384_point_add(out, cur, m, tmp);
+            p384_pt_copy(out, tmp)
+        }
+        p384_point_double(cur, m, tmp);
+        p384_pt_copy(cur, tmp);
+        bit = bit + 1;
+    }
+    0
+}
+
+fn p384_to_affine(pt: i64, m: i64, out_x: i64, out_y: i64) -> i64 {
+    if p384_bn_is_zero25(pt + 400) == 1 {
+        return 1;
+    }
+    let z_inv: i64 = __mind_alloc(200);
+    p384_mod_inv(pt + 400, m, z_inv);
+    let z_inv2: i64 = __mind_alloc(200);
+    p384_mul_mod(z_inv, z_inv, m, z_inv2);
+    let z_inv3: i64 = __mind_alloc(200);
+    p384_mul_mod(z_inv2, z_inv, m, z_inv3);
+    p384_mul_mod(pt + 0, z_inv2, m, out_x);
+    p384_mul_mod(pt + 200, z_inv3, m, out_y);
+    0
+}
+
+fn p384_on_curve(x: i64, y: i64, p: i64, b: i64) -> i64 {
+    let s: i64 = __mind_alloc(1200);
+    let y2: i64 = s;
+    let x2: i64 = s + 200;
+    let x3: i64 = s + 400;
+    let three_x: i64 = s + 600;
+    let rhs1: i64 = s + 800;
+    let rhs: i64 = s + 1000;
+    p384_mul_mod(y, y, p, y2);
+    p384_mul_mod(x, x, p, x2);
+    p384_mul_mod(x2, x, p, x3);
+    p384_add_mod(x, x, p, three_x);
+    p384_add_mod(three_x, x, p, three_x);
+    p384_sub_mod(x3, three_x, p, rhs1);
+    p384_add_mod(rhs1, b, p, rhs);
+    p384_bn_eq25(y2, rhs)
+}
+
+// ---------------------------------------------------------------------------
+// pub fn ecdsa_p384_verify(qx_addr, qy_addr, r_addr, s_addr, msg_addr, msg_len)
+//     -> i64
+// Returns 1 on valid signature, 0 on invalid/fail-closed.
+// ---------------------------------------------------------------------------
+pub fn ecdsa_p384_verify(qx_addr: i64, qy_addr: i64, r_addr: i64, s_addr: i64, msg_addr: i64, msg_len: i64) -> i64 {
+    let pm: i64 = __mind_alloc(200);
+    p384_load_p(pm);
+    let nm: i64 = __mind_alloc(200);
+    p384_load_n(nm);
+    let bb: i64 = __mind_alloc(200);
+    p384_load_b(bb);
+
+    let r: i64 = __mind_alloc(200);
+    p384_bn_from_be48(r_addr, r);
+    let s: i64 = __mind_alloc(200);
+    p384_bn_from_be48(s_addr, s);
+
+    if p384_bn_is_zero25(r) == 1 {
+        return 0;
+    }
+    if p384_bn_cmp_ge25(r, nm) == 1 {
+        return 0;
+    }
+    if p384_bn_is_zero25(s) == 1 {
+        return 0;
+    }
+    if p384_bn_cmp_ge25(s, nm) == 1 {
+        return 0;
+    }
+
+    let qx: i64 = __mind_alloc(200);
+    p384_bn_from_be48(qx_addr, qx);
+    let qy: i64 = __mind_alloc(200);
+    p384_bn_from_be48(qy_addr, qy);
+
+    if p384_bn_cmp_ge25(qx, pm) == 1 {
+        return 0;
+    }
+    if p384_bn_cmp_ge25(qy, pm) == 1 {
+        return 0;
+    }
+    if p384_on_curve(qx, qy, pm, bb) != 1 {
+        return 0;
+    }
+
+    // SHA-384 digest of msg
+    let hash48: i64 = __mind_alloc(48);
+    sha384(msg_addr, msg_len, hash48);
+
+    let e: i64 = __mind_alloc(200);
+    p384_bn_from_be48(hash48, e);
+
+    let w: i64 = __mind_alloc(200);
+    p384_mod_inv(s, nm, w);
+
+    let u1: i64 = __mind_alloc(200);
+    p384_mul_mod(e, w, nm, u1);
+    let u2: i64 = __mind_alloc(200);
+    p384_mul_mod(r, w, nm, u2);
+
+    let g: i64 = __mind_alloc(600);
+    p384_load_gx(g + 0);
+    p384_load_gy(g + 200);
+    p384_bn_zero25(g + 400);
+    __mind_store_i64(g + 400, 1);
+
+    let q: i64 = __mind_alloc(600);
+    p384_bn_copy25(q + 0, qx);
+    p384_bn_copy25(q + 200, qy);
+    p384_bn_zero25(q + 400);
+    __mind_store_i64(q + 400, 1);
+
+    let r1p: i64 = __mind_alloc(600);
+    p384_scalar_mult(u1, g, pm, r1p);
+    let r2p: i64 = __mind_alloc(600);
+    p384_scalar_mult(u2, q, pm, r2p);
+    let rp: i64 = __mind_alloc(600);
+    p384_point_add(r1p, r2p, pm, rp);
+
+    let ax: i64 = __mind_alloc(200);
+    let ay: i64 = __mind_alloc(200);
+    if p384_to_affine(rp, pm, ax, ay) == 1 {
+        return 0;
+    }
+    if p384_bn_cmp_ge25(ax, nm) == 1 {
+        p384_bn_sub25(ax, nm)
+    }
+    if p384_bn_eq25(ax, r) == 1 {
+        return 1;
+    }
+    0
+}
