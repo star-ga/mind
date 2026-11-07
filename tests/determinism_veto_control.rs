@@ -171,6 +171,16 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "entropy_fill",
     ),
     ("dns", "std.dns.dns_resolve(p, 9)", "dns_resolve"),
+    // A bare call of an imported std function is the same call: lowering
+    // keeps the bare name either way (the review's cases A and B).
+    ("entropy", "entropy_fill(p, 8)", "entropy_fill"),
+    ("dns", "dns_resolve(p, 9)", "dns_resolve"),
+    ("dns", "tcp_connect_host(p, 9, 80)", "tcp_connect_host"),
+    (
+        "dns",
+        "tcp_connect_host_timeout(p, 9, 80, 100)",
+        "tcp_connect_host_timeout",
+    ),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -178,6 +188,8 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
 const STD_PURE_CALLERS: &[(&str, &str)] = &[
     ("entropy", "entropy.entropy_max_len()"),
     ("dns", "dns.dns_status(p)"),
+    ("entropy", "entropy_max_len()"),
+    ("dns", "dns_status(p)"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to
@@ -397,6 +409,41 @@ const SIBLING_WORLD: &[SiblingCase] = &[
             (
                 "v.mind",
                 "import std.dns;\n\npub fn k(p: i64) -> i64 {\n    dns.tcp_connect_host(p, 9, 80)\n}\n",
+            ),
+        ],
+        offender: "tcp_connect_host",
+        via: "::k`",
+    },
+    // The review's case D: the sibling calls the imported std function bare.
+    SiblingCase {
+        tag: "bare_entropy",
+        files: &[(
+            "w.mind",
+            "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n",
+        )],
+        offender: "entropy_fill",
+        via: "::g`",
+    },
+    SiblingCase {
+        tag: "bare_dns_helper",
+        files: &[(
+            "w.mind",
+            "import std.dns;\n\nfn h(p: i64) -> i64 {\n    dns_resolve(p, 9)\n}\n\n\
+             pub fn g(p: i64) -> i64 {\n    h(p) + 1\n}\n",
+        )],
+        offender: "dns_resolve",
+        via: "::h`",
+    },
+    SiblingCase {
+        tag: "bare_third_module",
+        files: &[
+            (
+                "w.mind",
+                "import v;\n\npub fn g(p: i64) -> i64 {\n    v.k(p) + 1\n}\n",
+            ),
+            (
+                "v.mind",
+                "import std.dns;\n\npub fn k(p: i64) -> i64 {\n    tcp_connect_host(p, 9, 80)\n}\n",
             ),
         ],
         offender: "tcp_connect_host",
