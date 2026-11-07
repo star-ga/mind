@@ -56,6 +56,8 @@ use crate::deps::mini_sha256;
 use crate::ir::IRModule;
 use crate::ir::compact::{Mic3EncodeError, emit_mic3, emit_mic3_checked};
 
+pub mod reach;
+
 /// The RFC 0016 §3.2/§3.3 `trace_hash` for a compiled artifact's **IR link**:
 /// SHA-256 of the canonical mic@3 bytes of `ir`.
 ///

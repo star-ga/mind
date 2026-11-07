@@ -2,7 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Shared harness for `tests/std_entropy_dns_run.rs`: build a one-file project
+//! Shared harness for `tests/std_entropy_dns_run.rs` and
+//! `tests/std_dns_layout_run.rs`: build a one-file project
 //! with `mindc build`, run the executable with an optional `LD_PRELOAD`, and
 //! the preloaded resolver shim. Split out so the test file stays under the
 //! 800-line ceiling `tests/module_size_ratchet.rs` pins. This is a
@@ -38,6 +39,26 @@ pub fn build_exe(target: &str, main: &str) -> Option<PathBuf> {
     Some(dir.join("target").join("debug").join("ed"))
 }
 
+/// Compile the shim source `src` to `dir/<name>.so` with `mindc --emit-shared`;
+/// a failed compile panics with mindc's own stdout and stderr.
+pub fn emit_shim(dir: &Path, name: &str, src: &Path) -> PathBuf {
+    let so = dir.join(format!("{name}.so"));
+    let out = Command::new(crate::common::mindc_bin())
+        .arg(src)
+        .arg("--emit-shared")
+        .arg(&so)
+        .output()
+        .expect("run mindc --emit-shared");
+    assert!(
+        out.status.success(),
+        "mindc --emit-shared failed for the {name} shim ({})\nstdout: {}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    so
+}
+
 /// Run `exe` (optionally with `LD_PRELOAD`), killing it after `limit`.
 /// Returns the exit code and the elapsed time.
 pub fn run(exe: &Path, preload: Option<&Path>, limit: Duration) -> (i32, Duration) {
@@ -69,6 +90,7 @@ pub fn run(exe: &Path, preload: Option<&Path>, limit: Duration) -> (i32, Duratio
 /// sockaddr family that disagrees with ai_family, `x` one good node then a bad one,
 /// `m` the loopback list 127.0.0.2, 127.0.0.4, 127.0.0.1 in that order, `p`
 /// the list 127.0.0.4, 127.0.0.1.
+#[allow(dead_code)]
 pub const GAI_SHIM: &str = r#"fn sh_zero(p: i64, n: i64) {
     let mut i: i64 = 0;
     while i < n {
@@ -159,30 +181,10 @@ pub fn freeaddrinfo(res: i64) -> i64 {
 }
 "#;
 
-/// Write `text` to `dir/<name>.mind` and compile it with `mindc --emit-shared`
-/// to `dir/<name>.so`, quoting mindc's stdout and stderr when it fails.
-pub fn shared_object(dir: &Path, name: &str, text: &str) -> PathBuf {
-    let src = dir.join(format!("{name}.mind"));
-    std::fs::write(&src, text).unwrap_or_else(|e| panic!("write {}: {e}", src.display()));
-    let so = dir.join(format!("{name}.so"));
-    let out = Command::new(crate::common::mindc_bin())
-        .arg(&src)
-        .arg("--emit-shared")
-        .arg(&so)
-        .output()
-        .unwrap_or_else(|e| panic!("spawn mindc --emit-shared for {name}: {e}"));
-    assert!(
-        out.status.success(),
-        "mindc --emit-shared failed for {name}\n  status: {}\n  stdout: {}\n  stderr: {}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    so
-}
-
 /// Compile [`GAI_SHIM`] in `target`'s scratch directory; returns the `.so`.
+#[allow(dead_code)]
 pub fn gai_shim(target: &str) -> PathBuf {
     let dir = crate::common::scratch_dir(target);
-    shared_object(&dir, "gai_shim", GAI_SHIM)
+    let src = crate::common::scratch_src_in(&dir, "gai_shim.mind", GAI_SHIM);
+    emit_shim(&dir, "gai_shim", &src)
 }

@@ -24,8 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
   rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
   is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
-  checked.** The six request functions are classified nondeterministic by
-  name, like `entropy_fill`.
+  checked.** A qualified call to one of the
+  six request functions (`https.https_get(...)`) is a world read, like
+  `entropy_fill`: the determinism veto refuses it without
+  `--allow-nondeterministic`.
   - Request headers: `https_get_with_headers(url, headers, ca_path)` and
     `https_post_with_headers(url, headers, body, content_type, ca_path)` send a
     caller block of `name: value` CRLF lines (for example `X-API-Key` and
@@ -60,8 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     URL's host and opens and closes one TCP connection to its port, sending
     nothing, with a distinct code per failure: `https_probe_err_url`,
     `_dns_again` (EAI_AGAIN: the resolver or network is down), `_dns`,
-    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. It is
-    classified nondeterministic by name.
+    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. A qualified
+    call to it is a world read.
   - The TLS 1.3 client's record pump and handshake state machine move from
     `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
     the HTTPS driver: the import chain under the state machine is already five
@@ -121,6 +123,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a response that arrives before any request byte is written (a recorded
     server flight, response and close_notify replayed right after the client's
     ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
+- **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
+  reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
+  read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
+  `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
+  bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
+  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
+  is `dns_err_unknown`), and a failed call returns no entries. It reads `struct addrinfo`
+  in the layout of the host uname(2) names: Linux (`ai_addr` at +24, AF_INET6 = 10) or
+  Darwin (`ai_addr` at +32, `sa_len` / `sa_family` bytes, AF_INET6 = 30); on any other
+  host, or when uname fails, it returns `dns_err_platform` without calling getaddrinfo.
+  `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
+  a per-connect timeout and return a std.net TcpStream handle; they use Linux socket
+  constants and return 0 on any other host. `getrandom` and `getaddrinfo` are classified
+  as world reads, and so are `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
+  `tcp_connect_host_timeout`, because a caller's IR holds only the call: a program that
+  calls one is refused by the determinism veto without `--allow-nondeterministic` and,
+  with it, attested `nondeterministic`.
+  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
+  `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
 - **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.
@@ -182,21 +203,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fixture matrix through `--emit-shared`.
 - `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
   instead of carrying an identical copy.
-- **`std.entropy` and `std.dns` for `mindc build` executables (Linux)**: `entropy_fill`
-  reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
-  read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
-  `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
-  bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
-  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
-  is `dns_err_unknown`), and a failed call returns no entries.
-  `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
-  a per-connect timeout and return a std.net TcpStream handle. `getrandom` and
-  `getaddrinfo` are classified as world reads, and so are `entropy_fill`, `dns_resolve`,
-  `tcp_connect_host` and `tcp_connect_host_timeout`, because a caller's IR holds only the
-  call: a program that calls one is refused by the determinism veto without
-  `--allow-nondeterministic` and, with it, attested `nondeterministic`.
-  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
-  `tests/determinism_veto_control.rs`)
 - **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
   writes and reads its results (per-game and per-level actions, a score as a
   numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
@@ -230,6 +236,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- **Determinism through project modules**: a single-file build (`--emit-evidence`,
+  `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
+  the project modules it imports, transitively and function by function, and classifies
+  each body it reaches with the evidence classifier. A sibling that calls
+  `entropy.entropy_fill`, a `std.dns` resolver or `time.now_ns` used to pass the veto and
+  be attested `deterministic`; it is now refused without `--allow-nondeterministic`
+  (naming the callee and the project function that calls it) and, with it, attested
+  `nondeterministic`. A pure sibling function stays `deterministic`, even beside a
+  world-reading function the program does not call. `mindc verify` keeps a stored
+  `nondeterministic` label when the hashed body calls a function it does not hold; a
+  stored label that a self-contained body contradicts, and a stored `deterministic` the
+  body contradicts, are still refused as tampered. (`src/project/single_file_scope/
+  world_reach.rs`, `src/ir/evidence/reach.rs`, `tests/determinism_veto_control.rs`)
 - **Slice arguments with alias elements and private helpers**: the slice-call
   check compares element types after type-alias resolution (local aliases and
   aliases exported by an imported module), so `array<Q>` with `type Q = i32`

@@ -526,29 +526,9 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "read_line",
     "system_time",
     "time_now",
-    // Public std functions over a World extern, named for the reason `now_ns` is:
-    // an imported call's body is compiled into a separate object, so the caller's
-    // IR holds only the name. Without these rows a program calling
-    // `entropy.entropy_fill` emitted without `--allow-nondeterministic`, attested
-    // `deterministic` and passed `mindc verify --require-deterministic`, while a
-    // direct `getrandom` call was refused. The test
-    // `public_world_reach_of_std_entropy_dns_and_https_is_named` derives this set from
-    // the module sources and fails on a missing row or an extra one.
-    // deferred: would also name the World-reaching functions of std.net, std.fs,
-    // std.process and std.iouring, not done because the veto would then refuse
-    // their existing callers without the flag (a policy change, not a fix) —
-    // upgrade path: add each module to that test's list with its rows.
-    "dns_resolve",              // std.dns: getaddrinfo
-    "entropy_fill",             // std.entropy: getrandom
-    "tcp_connect_host",         // std.dns: getaddrinfo, connect
-    "tcp_connect_host_timeout", // std.dns: getaddrinfo, connect
-    "https_get",                // std.https: DNS, network, entropy, clock, CA file
-    "https_get_ca",             // std.https: DNS, network, entropy, clock, CA file
-    "https_post",               // std.https: DNS, network, entropy, clock, CA file
-    "https_post_ca",            // std.https: DNS, network, entropy, clock, CA file
-    "https_get_with_headers",   // std.https: DNS, network, entropy, clock, CA file
-    "https_post_with_headers",  // std.https: DNS, network, entropy, clock, CA file
-    "https_probe",              // std.https_probe: DNS, network
+    // `std.dns` / `std.entropy` are deliberately absent. Matching the bare name
+    // refused a user function spelled the same way. A call is a world read only
+    // when its qualifier resolves to that module (`crate::std_qualified`).
 ];
 
 /// The determinism classification of an intrinsic, or `None` when the name is
