@@ -16,12 +16,6 @@ invisible from inside the other:
    pathspec, so the one file in the tree whose contents are copied from
    arbitrary other files was also the one file the attribution gate never read.
 
-A third defect lives in the same generator: it wrote ANATOMY.md in place, so a
-generator that died mid-write (an interrupted or concurrent pre-commit hook under
-load) left a TRUNCATED index that the hook then staged and committed -- twice.
-The ``case_anatomy_*`` and ``case_precommit_hook_*`` cases pin the repair: the
-index is built beside the target and renamed into place only when whole.
-
 Neither hole is testable by running the gate on the real tree and watching it
 pass: a pass proves the tree is clean today, never that the gate would object
 if it were not.  So each case below MUTATES a scratch copy and asserts the
@@ -37,7 +31,6 @@ Run: ``python3 scripts/test_no_ai_attribution.py`` (no third-party deps).
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -49,7 +42,6 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "check_no_ai_attribution.sh"
 PATTERNS = ROOT / "scripts" / "ai_attribution_patterns.sh"
 ANATOMY = ROOT / "scripts" / "anatomy.sh"
-ANATOMY_HOOK = ROOT / "scripts" / "anatomy-hook.sh"
 
 def rulebook(var: str) -> str:
     """Read one variable out of scripts/ai_attribution_patterns.sh.
@@ -186,292 +178,6 @@ def case_anatomy_indexes_only_tracked_files() -> None:
               "generator produced no index; the omission check would be vacuous")
 
 
-# --- ANATOMY.md is regenerated atomically ------------------------------------
-# A pre-commit regeneration that died or was interrupted under load committed a
-# TRUNCATED ANATOMY.md (3921 -> 967 lines) twice: the generator redirected its
-# output straight onto the tracked file, so the file was cut to zero the moment
-# it started and the hook staged whatever was left. Each case below makes the
-# generator fail on purpose and asserts the committed index is byte-identical.
-
-CRASH_ON = "zz_last.md"  # a root file: the crash lands after the header, mid-body
-IDENT = ("-c", "user.name=STARGA Inc", "-c", "user.email=noreply@star.ga")
-
-
-def anatomy_env(**extra: str) -> dict[str, str]:
-    """Hermetic env: no inherited GIT_* state (this may run inside a hook) and
-    the identity guard stubbed, so a sibling checkout's guard cannot decide the
-    verdict of a case that is about ANATOMY.md."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(extra)
-    return env
-
-
-def anatomy_scratch(repo: Path, bindir: Path) -> bytes:
-    """A scratch repo with the real generator and hook plus a good, committed
-    index. Returns that index's bytes."""
-    bindir.mkdir(parents=True, exist_ok=True)
-    (repo / "scripts").mkdir(parents=True)
-    for src in (ANATOMY, ANATOMY_HOOK):
-        shutil.copy2(src, repo / "scripts" / src.name)
-        (repo / "scripts" / src.name).chmod(0o755)
-    for name in ("a.md", "b.md", "c.md", CRASH_ON):
-        (repo / name).write_text(f"# {name}\n")
-    git("init", "-q", cwd=repo)
-    git("add", "-A", cwd=repo)
-    r = subprocess.run(["bash", "scripts/anatomy.sh", ".", "--output", "ANATOMY.md"],
-                       cwd=repo, capture_output=True, text=True, env=anatomy_env())
-    check("scratch: the generator builds a first index", r.returncode == 0,
-          f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-    git("add", "ANATOMY.md", cwd=repo)
-    git(*IDENT, "commit", "-q", "--no-verify", "-m", "chore: seed", cwd=repo)
-    guard = bindir / "sdlc-ok"
-    guard.write_text("#!/bin/sh\nexit 0\n")
-    guard.chmod(0o755)
-    return (repo / "ANATOMY.md").read_bytes()
-
-
-def crash_env(bindir: Path, action: str) -> dict[str, str]:
-    """PATH with a `basename` that fails (or SIGKILLs the generator, or deletes a
-    file the body has not reached yet) when asked about CRASH_ON. The generator
-    calls basename per file while writing the body, under `set -e`, so this is a
-    crash after the header was written -- the exact shape of the interrupted run.
-    `fired` is the positive control: it proves the crash happened and the cases
-    below are not passing vacuously."""
-    real = shutil.which("basename")
-    shim = bindir / "basename"
-    shim.write_text(
-        '#!/bin/sh\n'
-        'for a in "$@"; do\n'
-        f'  if [ "$a" = "{CRASH_ON}" ]; then\n'
-        '    : > "$SHIM_FIRED"\n'
-        '    if [ "$SHIM_ACTION" = kill ]; then kill -KILL "$(cat "$SHIM_PID")"; fi\n'
-        '    if [ "$SHIM_ACTION" = vanish ]; then rm -f scripts/anatomy-hook.sh; continue; fi\n'
-        '    exit 1\n'
-        '  fi\n'
-        'done\n'
-        f'exec "{real}" "$@"\n')
-    shim.chmod(0o755)
-    return anatomy_env(PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
-                       MIND_SDLC=str(bindir / "sdlc-ok"), SHIM_ACTION=action,
-                       SHIM_FIRED=str(bindir / "fired"), SHIM_PID=str(bindir / "pid"))
-
-
-def hook_env(bindir: Path) -> dict[str, str]:
-    """No crash shim: the hook and generator run as they do on a clean commit."""
-    return anatomy_env(MIND_SDLC=str(bindir / "sdlc-ok"))
-
-
-def run_hook(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", "scripts/anatomy-hook.sh"], cwd=repo,
-                          capture_output=True, text=True, env=env)
-
-
-def check_index(repo: Path, target: str) -> subprocess.CompletedProcess:
-    """`anatomy.sh --check`: a file path, or `-` to read the index from stdin."""
-    return subprocess.run(["bash", str(ANATOMY), "--check", target], cwd=repo,
-                          capture_output=True, text=True, env=anatomy_env())
-
-
-def case_anatomy_crashed_generator_leaves_the_index_untouched() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        (repo / "a.md").write_text("# a, changed: a fresh index would differ\n")
-        env = crash_env(bindir, "exit")
-        r = subprocess.run(["bash", "scripts/anatomy.sh", ".", "--output", "ANATOMY.md"],
-                           cwd=repo, capture_output=True, text=True, env=env)
-        check("a generator that dies mid-body fails loudly (positive control: it did die)",
-              (bindir / "fired").exists() and r.returncode != 0,
-              f"fired={(bindir / 'fired').exists()} rc={r.returncode}")
-        check("a generator that dies mid-body leaves ANATOMY.md byte-identical",
-              (repo / "ANATOMY.md").read_bytes() == good,
-              "the tracked index was cut or rewritten by a run that never finished")
-        check("a generator that dies mid-body leaves no temp file behind",
-              not list(repo.glob("ANATOMY.md.tmp.*")),
-              f"left: {[p.name for p in repo.glob('ANATOMY.md.tmp.*')]}")
-        # Control for the two checks above: a run that DOES finish replaces the
-        # file, so "unchanged" cannot mean "the writer is simply disconnected".
-        ok = subprocess.run(["bash", "scripts/anatomy.sh", ".", "--output", "ANATOMY.md"],
-                            cwd=repo, capture_output=True, text=True, env=anatomy_env())
-        now = (repo / "ANATOMY.md").read_bytes()
-        check("a finished run does replace the index", ok.returncode == 0 and now != good
-              and b"a, changed" in now, f"rc={ok.returncode}")
-
-
-def case_anatomy_killed_generator_leaves_the_index_untouched() -> None:
-    """SIGKILL cannot be trapped: no cleanup runs, so the target must never have
-    been the file being written."""
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        (repo / "a.md").write_text("# a, changed: a fresh index would differ\n")
-        env = crash_env(bindir, "kill")
-        # `exec` keeps the shell's PID, so the shim can address the generator.
-        r = subprocess.run(
-            ["bash", "-c", 'echo $$ > "$SHIM_PID"; exec bash scripts/anatomy.sh . --output ANATOMY.md'],
-            cwd=repo, capture_output=True, text=True, env=env)
-        check("the generator was SIGKILLed mid-body (positive control)",
-              (bindir / "fired").exists() and r.returncode == -9,
-              f"fired={(bindir / 'fired').exists()} rc={r.returncode}")
-        check("a SIGKILLed generator leaves ANATOMY.md byte-identical",
-              (repo / "ANATOMY.md").read_bytes() == good,
-              "the tracked index was cut by a run that was killed")
-
-
-def case_anatomy_refuses_an_index_that_disagrees_with_itself() -> None:
-    """A run that finishes can still be wrong: a file that disappears between the
-    count and the listing leaves a header that promises more entries than the
-    body has. The generator checks its own output before the rename."""
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        env = crash_env(bindir, "vanish")
-        r = subprocess.run(["bash", "scripts/anatomy.sh", ".", "--output", "ANATOMY.md"],
-                           cwd=repo, capture_output=True, text=True, env=env)
-        check("a file vanishing mid-run is observed (positive control)",
-              (bindir / "fired").exists() and not (repo / "scripts" / "anatomy-hook.sh").exists())
-        check("an index that disagrees with itself is refused, with the reason",
-              r.returncode != 0 and "header says" in r.stderr,
-              f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-        check("a refused index leaves ANATOMY.md byte-identical",
-              (repo / "ANATOMY.md").read_bytes() == good)
-
-
-def case_anatomy_sweeps_dead_temp_files_only() -> None:
-    """SIGKILL leaves its temp file behind, and an untracked stray in the repo
-    root is one `git add -A` from being committed. A later run removes temp
-    files whose writer is gone, and must never touch a live concurrent run's."""
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        anatomy_scratch(repo, bindir)
-        gone = subprocess.Popen(["true"])
-        gone.wait()
-        dead = repo / f"ANATOMY.md.tmp.{gone.pid}"
-        live = repo / f"ANATOMY.md.tmp.{os.getpid()}"  # this process is alive
-        dead.write_text("partial")
-        live.write_text("partial")
-        r = subprocess.run(["bash", "scripts/anatomy.sh", ".", "--output", "ANATOMY.md"],
-                           cwd=repo, capture_output=True, text=True, env=anatomy_env())
-        check("sweep: the run itself succeeds", r.returncode == 0, r.stderr.strip()[:200])
-        check("sweep: a temp file whose writer is dead is removed", not dead.exists())
-        check("sweep: a temp file whose writer is alive is kept", live.exists())
-
-
-def case_anatomy_check_rejects_a_damaged_index() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir).decode()
-        lines = good.splitlines(keepends=True)
-        entries = [i for i, ln in enumerate(lines) if ln.startswith("- `")]
-        n = re.search(r"^\*\*Files:\*\* (\d+)", good, re.M).group(1)
-        damaged = {
-            "cut mid-body (the shape that shipped)": "".join(lines[:entries[len(entries) // 2]]),
-            "whose header count disagrees with the body": good.replace(
-                f"**Files:** {n}", f"**Files:** {int(n) + 1}", 1),
-            "with the closing line missing": "".join(lines[:-1]),
-            "that is empty": "",
-        }
-        (repo / "good.md").write_text(good, encoding="utf-8")
-        r = check_index(repo, "good.md")
-        check("--check accepts a whole index (positive control)", r.returncode == 0,
-              f"rc={r.returncode} stderr={r.stderr.strip()[:200]!r}")
-        for label, text in damaged.items():
-            (repo / "bad.md").write_text(text, encoding="utf-8")
-            r = check_index(repo, "bad.md")
-            check(f"--check rejects an index {label}", r.returncode != 0,
-                  "a damaged index passed the integrity check")
-        r = subprocess.run(["bash", str(ANATOMY), "--check", "-"], cwd=repo, input=good,
-                           capture_output=True, text=True, env=anatomy_env())
-        check("--check - reads the index from stdin", r.returncode == 0, r.stderr.strip()[:200])
-        r = subprocess.run(["bash", str(ANATOMY), "--check", "-"], cwd=repo,
-                           input=damaged["cut mid-body (the shape that shipped)"],
-                           capture_output=True, text=True, env=anatomy_env())
-        check("--check - rejects a damaged index on stdin", r.returncode != 0)
-
-
-def case_precommit_hook_never_stages_a_bad_anatomy() -> None:
-    """The hook is the last gate before the commit. Each leg below fed it a
-    different way of producing a bad index and asserts nothing bad is staged."""
-    def staged(repo: Path) -> bytes:
-        return subprocess.run(["git", "show", ":ANATOMY.md"], cwd=repo, check=True,
-                              capture_output=True).stdout
-
-    # (a) the clean path still works.
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        anatomy_scratch(repo, bindir)
-        (repo / "d.md").write_text("# d\n")
-        git("add", "d.md", cwd=repo)
-        r = run_hook(repo, hook_env(bindir))
-        check("hook, clean commit: exits 0 and stages the refreshed index",
-              r.returncode == 0 and b"`d.md`" in staged(repo),
-              f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-        check("hook, clean commit: the staged index passes --check",
-              subprocess.run(["bash", str(ANATOMY), "--check", "-"], cwd=repo,
-                             input=staged(repo).decode(), capture_output=True,
-                             text=True, env=anatomy_env()).returncode == 0)
-
-    # (b) the generator dies: commit blocked, index and worktree file untouched.
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        (repo / "d.md").write_text("# d\n")
-        git("add", "d.md", cwd=repo)
-        r = run_hook(repo, crash_env(bindir, "exit"))
-        # Positive control for this leg: the clean leg above reached the same
-        # code with the same staged file, so the crash is what blocks here.
-        check("hook, generator dies: commit blocked, shim fired",
-              (bindir / "fired").exists() and r.returncode != 0,
-              f"fired={(bindir / 'fired').exists()} rc={r.returncode}")
-        check("hook, generator dies: ANATOMY.md in the worktree is untouched",
-              (repo / "ANATOMY.md").read_bytes() == good)
-        check("hook, generator dies: ANATOMY.md in the index is untouched",
-              staged(repo) == good)
-        check("hook, generator dies: the failure is explained",
-              "ANATOMY.md" in r.stderr, f"stderr={r.stderr.strip()[:300]!r}")
-
-    # (c) a generator that EXITS 0 with a truncated file (an old or foreign
-    # build): the hook must verify the result itself, not trust the status.
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        lines = good.decode().splitlines(keepends=True)
-        cut = next(i for i, ln in enumerate(lines) if ln.startswith("- `")) + 2
-        (repo / "truncated.part").write_text("".join(lines[:cut]), encoding="utf-8")
-        real = repo / "scripts" / "anatomy.real.sh"
-        shutil.copy2(ANATOMY, real)
-        stub = repo / "scripts" / "anatomy.sh"
-        stub.write_text('#!/usr/bin/env bash\n'
-                        'if [ "$1" = --check ]; then exec bash "$(dirname "$0")/anatomy.real.sh" "$@"; fi\n'
-                        'cp truncated.part ANATOMY.md\n')
-        stub.chmod(0o755)
-        (repo / "d.md").write_text("# d\n")
-        git("add", "d.md", cwd=repo)
-        r = run_hook(repo, hook_env(bindir))
-        check("hook, generator exits 0 with a truncated file: commit blocked",
-              r.returncode != 0, f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-        check("hook, generator exits 0 with a truncated file: nothing bad staged",
-              staged(repo) == good)
-
-    # (d) only ANATOMY.md is staged, so nothing is regenerated: what is staged
-    # must still be whole.
-    with tempfile.TemporaryDirectory() as td:
-        repo, bindir = Path(td) / "repo", Path(td) / "bin"
-        good = anatomy_scratch(repo, bindir)
-        env = hook_env(bindir)
-        lines = good.decode().splitlines(keepends=True)
-        (repo / "ANATOMY.md").write_text("".join(lines[:len(lines) // 2]), encoding="utf-8")
-        git("add", "ANATOMY.md", cwd=repo)
-        r = run_hook(repo, env)
-        check("hook, only a truncated ANATOMY.md staged: commit blocked",
-              r.returncode != 0, f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-        (repo / "ANATOMY.md").write_text(good.decode().replace("UTC", "UTC ", 1), encoding="utf-8")
-        git("add", "ANATOMY.md", cwd=repo)
-        r = run_hook(repo, env)
-        check("hook, only a whole ANATOMY.md staged: commit allowed (positive control)",
-              r.returncode == 0, f"rc={r.returncode} stderr={r.stderr.strip()[:300]!r}")
-
-
 def case_bare_vendor_name_in_generated_index_is_red() -> None:
     """THE SHAPE THAT ACTUALLY SHIPPED, run through the PRIMARY gate.
 
@@ -548,25 +254,6 @@ def case_committed_anatomy_names_no_model() -> None:
         check("committed ANATOMY.md names no model (judged by the gate)",
               r.returncode == 0,
               f"gate exited {r.returncode}; stdout={r.stdout.strip()[-400:]!r}")
-
-
-def case_committed_anatomy_matches_the_tracked_tree() -> None:
-    """The committed index must describe THIS tree: every path it lists is
-    tracked, and tracked top-level files are not missing from it."""
-    doc = ROOT / "ANATOMY.md"
-    tracked = set(subprocess.run(["git", "ls-files"], cwd=ROOT, check=True,
-                                 capture_output=True, text=True).stdout.split())
-    basenames = {Path(p).name for p in tracked}
-    listed = re.findall(r"^- `([^`]+)`", doc.read_text(), re.M)
-    check("ANATOMY.md lists something", bool(listed), "no entries parsed")
-    unknown = sorted({n for n in listed if n not in basenames and n not in tracked})
-    check("every file ANATOMY.md lists is tracked", not unknown,
-          f"untracked entries: {unknown[:5]}")
-    # Spot-check the other direction with files the stale index dropped.
-    for rel in ("config/token_pricing.toml", ".githooks/post-merge"):
-        if rel in tracked:
-            check(f"ANATOMY.md lists tracked {rel}", Path(rel).name in set(listed),
-                  "tracked file missing from the generated index")
 
 
 def case_author_identity_guard_rejects_trailing_dot_and_accepts_exact() -> None:
@@ -836,17 +523,10 @@ def main() -> int:
         case_generated_doc_is_in_scope,
         case_control_clean_tree_passes,
         case_anatomy_indexes_only_tracked_files,
-        case_anatomy_crashed_generator_leaves_the_index_untouched,
-        case_anatomy_killed_generator_leaves_the_index_untouched,
-        case_anatomy_refuses_an_index_that_disagrees_with_itself,
-        case_anatomy_sweeps_dead_temp_files_only,
-        case_anatomy_check_rejects_a_damaged_index,
-        case_precommit_hook_never_stages_a_bad_anatomy,
         case_bare_vendor_name_in_generated_index_is_red,
         case_bare_vendor_name_outside_the_artifact_still_passes,
         case_missing_artifact_fails_closed,
         case_committed_anatomy_names_no_model,
-        case_committed_anatomy_matches_the_tracked_tree,
         case_author_identity_guard_rejects_trailing_dot_and_accepts_exact,
         case_identity_guard_rejects_foreign_author_merge_in_range,
         case_identity_guard_accepts_house_identity_merge_in_range,

@@ -36,7 +36,16 @@ fi
 # legs — a maintainer who still has .git/hooks/pre-commit symlinked at this file
 # runs exactly the same code.
 #
-# If ANATOMY.md is stale after staged changes, regenerates and stages it.
+# ANATOMY.md is regenerated on main only (architecture ruling 17). It is a
+# committed, generated file that every landing changes, so a PR branch that also
+# regenerated it conflicted with main on the next landing, and GitHub starts no
+# pull_request workflow on a conflicting PR. The refresh therefore runs when
+#   * the current branch is main, or
+#   * MIND_ANATOMY_REFRESH=1 is set (the landing worktree is a detached HEAD and
+#     sets it; so can anyone who wants the refresh on another branch).
+# On any other branch ANATOMY.md is left exactly as it is and is not staged; an
+# ANATOMY.md that IS staged there (a merge that took main's copy) must still be
+# whole.
 # Author: STARGA Inc <noreply@star.ga>
 
 set -euo pipefail
@@ -123,19 +132,40 @@ SCRIPT="$ROOT_DIR/scripts/anatomy.sh"
 # Only run if anatomy.sh exists in this repo
 [ -x "$SCRIPT" ] || exit 0
 
+# An ANATOMY.md that is staged must be whole, whoever produced it: a cut-off
+# index was committed twice because nothing looked at it. Cheap, and independent
+# of whether this commit refreshes the file.
+verify_staged_anatomy() {
+  local staged problems
+  staged=$(git diff --cached --name-only --diff-filter=ACMR)
+  grep -qx 'ANATOMY.md' <<<"$staged" || return 0
+  if ! problems=$(git show :ANATOMY.md | "$SCRIPT" --check - 2>&1); then
+    echo "pre-commit: the staged ANATOMY.md is not a whole index - commit blocked." >&2
+    printf '%s\n' "$problems" | sed 's/^/  /' >&2
+    echo "  Restore it ('git restore --staged --worktree ANATOMY.md'), take main's copy" >&2
+    echo "  ('git checkout origin/main -- ANATOMY.md'), or regenerate it with scripts/anatomy.sh." >&2
+    return 1
+  fi
+}
+
+# True where ANATOMY.md may be refreshed: on main, or when asked explicitly.
+# A detached HEAD has no branch name, so it refreshes only with the variable.
+anatomy_refresh_wanted() {
+  [ "${MIND_ANATOMY_REFRESH:-}" = 1 ] && return 0
+  [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = main ]
+}
+
 # Check if any tracked source files are staged (not just ANATOMY.md itself)
 staged_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -v '^ANATOMY.md$' || true)
 if [ -z "$staged_files" ]; then
-  # Nothing to regenerate from, but an ANATOMY.md staged on its own must still be
-  # whole: a cut-off index was committed twice because nothing looked at it.
-  if git diff --cached --name-only --diff-filter=ACMR | grep -qx 'ANATOMY.md'; then
-    if ! problems=$(git show :ANATOMY.md | "$SCRIPT" --check - 2>&1); then
-      echo "pre-commit: the staged ANATOMY.md is not a whole index - commit blocked." >&2
-      printf '%s\n' "$problems" | sed 's/^/  /' >&2
-      echo "  Restore it ('git restore --staged --worktree ANATOMY.md') or regenerate it with scripts/anatomy.sh." >&2
-      exit 1
-    fi
-  fi
+  # Nothing to regenerate from.
+  verify_staged_anatomy || exit 1
+  exit 0
+fi
+
+# Not main and not asked: leave ANATOMY.md untouched and unstaged.
+if ! anatomy_refresh_wanted; then
+  verify_staged_anatomy || exit 1
   exit 0
 fi
 
