@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2146 | **Est. tokens:** ~4,075,547
-**Generated:** 2026-11-07 00:46 UTC
+**Files:** 2147 | **Est. tokens:** ~4,077,897
+**Generated:** 2026-11-07 02:28 UTC
 
 ## Token Budget Guide
 
@@ -152,13 +152,13 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 5 | ~19,695 |
-| `src/type_checker/` | 20 | ~65,213 |
+| `src/type_checker/` | 20 | ~65,380 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 449 | ~964,925 |
+| `tests/` | 450 | ~967,108 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1612,7 +1612,7 @@
 - `std_names.rs` (~2150 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
+- `return_checks.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 
 - `aliases.rs` (~3748 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2335,6 +2335,7 @@
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
 - `mindc_test_eval_blockers_parity.rs` (~3004 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `mindc_test_eval_float_compare_parity.rs` (~2183 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_eval_parity.rs` (~3505 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_evaluator_issues.rs` (~6042 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_imports.rs` (~6333 tok, huge) — Copyright 2025-2026 STARGA Inc.
