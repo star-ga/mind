@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2147 | **Est. tokens:** ~4,078,879
-**Generated:** 2026-11-07 02:28 UTC
+**Files:** 2148 | **Est. tokens:** ~4,083,991
+**Generated:** 2026-11-07 02:54 UTC
 
 ## Token Budget Guide
 
@@ -131,7 +131,7 @@
 | `src/fmt/` | 3 | ~27,177 |
 | `src/fmt/printer/` | 1 | ~1,878 |
 | `src/intrinsics/` | 1 | ~2,530 |
-| `src/ir/` | 13 | ~102,497 |
+| `src/ir/` | 13 | ~102,613 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,669 |
@@ -153,13 +153,13 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 5 | ~19,695 |
-| `src/type_checker/` | 20 | ~65,213 |
+| `src/type_checker/` | 21 | ~66,707 |
 | `src/type_checker/resolve/` | 2 | ~3,526 |
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 59 | ~265,274 |
-| `tests/` | 449 | ~965,283 |
+| `tests/` | 449 | ~968,785 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 6 | ~15,987 |
@@ -1447,7 +1447,7 @@
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `project_consts.rs` (~127 tok, small) — Copyright 2026 STARGA Inc.
-- `verify_calls.rs` (~1351 tok, large) — Copyright 2026 STARGA Inc.
+- `verify_calls.rs` (~1467 tok, large) — Copyright 2026 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -1599,6 +1599,7 @@
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
 - `extern_declarations.rs` (~2262 tok, huge) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity.rs` (~1494 tok, large) — Copyright 2026 STARGA Inc.
 - `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2189,8 +2190,8 @@
 - `index_slice_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
 - `int_determinism.rs` (~1234 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~3085 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsic_call_arity_build.rs` (~1467 tok, large) — Copyright 2026 STARGA Inc.
-- `intrinsic_call_arity.rs` (~1788 tok, huge) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity_build.rs` (~3267 tok, huge) — Copyright 2026 STARGA Inc.
+- `intrinsic_call_arity.rs` (~3490 tok, huge) — Copyright 2026 STARGA Inc.
 - `int_suffix_literal.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~675 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_check_run.rs` (~650 tok, large) — Copyright 2025 STARGA Inc.
