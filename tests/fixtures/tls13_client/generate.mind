@@ -1,0 +1,374 @@
+// Deterministic server-flight generator (test fixture module; the production
+// std/tls13_client never imports it). No clock, sockets, RNG or verifier hook.
+// Entropy: client byte i = i; server byte i = (101+i) mod 256.
+// Container: twelve little-endian i64 fields: suite, group, client flags,
+// CH1 length, CH2 length, HRR length, SH length, encrypted handshake flight
+// length, server application-record length, expected client Finished record
+// length, expected client application-record length, tamper mode
+// (0 none, 1 flipped CertificateVerify signature bit, 2 flipped server
+// Finished verify_data bit); then those byte strings in that order.
+// Flights run to completion: the real std/x509 chain verifier accepts the
+// fixture chain against the fixture anchor, the client reaches CONNECTED,
+// emits its Finished, and echoes one application record each way.
+//
+// Certificate chain: the fixture PKI from fixture_keys.mind (leaf signed by
+// the fixture anchor with sha256WithRSAEncryption; SAN dNSName "rsa"). The
+// CertificateVerify RSA-PSS signatures are computed offline by cv_finish.py
+// over the exact transcript contents dumped by tls13ct_cv_content below and
+// pinned in cvsigs.mind; the client's real RSA-PSS verification path checks
+// them on every replay. Everything else (key agreement, key schedule, AEAD
+// sealing, Finished) is computed here in pure MIND from fixed entropy.
+fn tls13ct_config(s: i64, flags: i64, now: i64, variant: i64) -> i64 {
+    let entropy: i64 = __mind_alloc(192);
+    let mut i: i64 = 0;
+    while i < 192 { __mind_store_i8(entropy + i, i); i = i + 1; }
+    let dns: i64 = __mind_alloc(3);
+    // variant 1: wrong expected identity ("xsa" not in the leaf SAN "rsa").
+    __mind_store_i8(dns, 114 + (variant & 1));
+    __mind_store_i8(dns + 1, 115);
+    __mind_store_i8(dns + 2, 97);
+    let leaf: i64 = __mind_alloc(1024);
+    let anchor: i64 = __mind_alloc(1024);
+    let anchors: i64 = __mind_alloc(8 + 1024);
+    let mut alen: i64 = 0;
+    if (variant & 2) == 0 {
+        alen = tls13ct_fx_anchor_der(anchor);
+    } else {
+        alen = tls13ct_fx_other_anchor_der(anchor);
+    }
+    tls13c_zero(anchors, 8 + 1024);
+    tls13c_put_be16(anchors + 2, 1);
+    tls13c_put_be16(anchors + 6, alen);
+    tls13c_copy(anchors + 8, anchor, alen);
+    tls13c_init(s, entropy, 192, anchors, 8 + alen, dns, 3, now, 100, flags);
+    let alpn: i64 = __mind_alloc(9);
+    __mind_store_i8(alpn, 8);
+    __mind_store_i64(alpn + 1, 3543824036607063144);
+    tls13c_set_alpn(s, alpn, 9);
+    entropy
+}
+
+fn tls13ct_extension(ch: i64, typ: i64) -> i64 {
+    let mut p: i64 = 81;
+    let end: i64 = 81 + tls13c_be16(ch + 79);
+    while p + 4 <= end {
+        if tls13c_be16(ch + p) == typ { return ch + p + 4; }
+        p = p + 4 + tls13c_be16(ch + p + 2);
+    }
+    0
+}
+
+fn tls13ct_server_hello(suite: i64, group: i64, share: i64, share_len: i64, retry: i64, dst: i64) -> i64 {
+    __mind_store_i8(dst, 2);
+    tls13c_put_be16(dst + 4, 771);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(dst + 6 + i, 101 + i);
+        __mind_store_i8(dst + 39 + i, 32 + i);
+        i = i + 1;
+    }
+    if retry == 1 {
+        // HRR random as four little-endian words.
+        __mind_store_i64(dst + 6, 1252452481681400271);
+        __mind_store_i64(dst + 14, 0 - 7946490362929078850);
+        __mind_store_i64(dst + 22, 6813026469335376578);
+        __mind_store_i64(dst + 30, 0 - 7191218599241343481);
+    }
+    __mind_store_i8(dst + 38, 32);
+    tls13c_put_be16(dst + 71, suite);
+    __mind_store_i8(dst + 73, 0);
+    tls13c_put_be16(dst + 76, 43);
+    tls13c_put_be16(dst + 78, 2);
+    tls13c_put_be16(dst + 80, 772);
+    tls13c_put_be16(dst + 82, 51);
+    let mut n: i64 = 90 + share_len;
+    if retry == 1 {
+        tls13c_put_be16(dst + 84, 2);
+        tls13c_put_be16(dst + 86, group);
+        tls13c_put_be16(dst + 88, 44);
+        tls13c_put_be16(dst + 90, 6);
+        tls13c_put_be16(dst + 92, 4);
+        tls13c_put_be16(dst + 94, 258);
+        tls13c_put_be16(dst + 96, 772);
+        n = 98;
+    } else {
+        tls13c_put_be16(dst + 84, share_len + 4);
+        tls13c_put_be16(dst + 86, group);
+        tls13c_put_be16(dst + 88, share_len);
+        tls13c_copy(dst + 90, share, share_len);
+    }
+    tls13c_put_be16(dst + 74, n - 76);
+    tls13c_put_be24(dst + 1, n - 4);
+    n
+}
+
+fn tls13ct_plain_record(msg: i64, n: i64, out: i64) -> i64 {
+    __mind_store_i8(out, 22);
+    tls13c_put_be16(out + 1, 771);
+    tls13c_put_be16(out + 3, n);
+    tls13c_copy(out + 5, msg, n);
+    n + 5
+}
+
+// Build the Certificate handshake message around the fixture leaf DER.
+fn tls13ct_cert_msg(cert_msg: i64) -> i64 {
+    let leaf: i64 = __mind_alloc(1024);
+    let llen: i64 = tls13ct_fx_leaf_der(leaf);
+    __mind_store_i8(cert_msg, 11);
+    tls13c_put_be24(cert_msg + 1, 1 + 3 + 3 + llen + 2);
+    __mind_store_i8(cert_msg + 4, 0);
+    tls13c_put_be24(cert_msg + 5, 3 + llen + 2);
+    tls13c_put_be24(cert_msg + 8, llen);
+    tls13c_copy(cert_msg + 11, leaf, llen);
+    tls13c_put_be16(cert_msg + 11 + llen, 0);
+    11 + llen + 2
+}
+
+// Shared server-side flight construction. Fills:
+//   sh (ServerHello), ee (EncryptedExtensions), cm (Certificate),
+//   cv (CertificateVerify), finmsg (server Finished),
+//   and derives every traffic key needed to seal.
+// mode 1 flips one bit of the on-wire CV signature BEFORE sealing (the AEAD
+// records are computed over the tampered plaintext, so record integrity is
+// intact and the failure is the CV signature itself). mode 2 likewise flips
+// one server Finished verify_data bit.
+// Returns via out-params: lengths + the CV signed content (for the offline
+// signature bootstrap) + derived key material for record sealing.
+fn tls13ct_server_flight(suite: i64, group: i64, retry: i64, mode: i64, ch1: i64, n1: i64, ch2: i64, n2: i64, hrr: i64, nh: i64, sh: i64, ee: i64, cm: i64, cv: i64, finmsg: i64, cv_content: i64, keys: i64) -> i64 {
+    let transcript: i64 = __mind_alloc(16384);
+    let mut tn: i64 = n1;
+    tls13c_copy(transcript, ch1, n1);
+    if retry == 1 {
+        sha256(ch1, n1, transcript + 4);
+        __mind_store_i8(transcript, 254);
+        tls13c_put_be24(transcript + 1, 32);
+        tls13c_copy(transcript + 36, hrr, nh);
+        tls13c_copy(transcript + 36 + nh, ch2, n2);
+        tn = 36 + nh + n2;
+    }
+    let ch: i64 = ch1;
+    if retry == 1 { ch = ch2; }
+    let ks: i64 = tls13ct_extension(ch, 51);
+    if ks == 0 { return 0 - 102; }
+    let mut entry: i64 = ks + 2;
+    if tls13c_be16(entry) != group { entry = entry + 4 + tls13c_be16(entry + 2); }
+    if tls13c_be16(entry) != group { return 0 - 103; }
+    let random: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 64 { __mind_store_i8(random + i, (101 + i) & 255); i = i + 1; }
+    let share: i64 = __mind_alloc(1120);
+    let ss: i64 = __mind_alloc(64);
+    let mut slen: i64 = 32;
+    let mut sslen: i64 = 32;
+    if group == 29 {
+        let base: i64 = __mind_alloc(32);
+        tls13c_zero(base, 32);
+        __mind_store_i8(base, 9);
+        x25519(random, base, share);
+        x25519(random, entry + 4, ss);
+    } else {
+        x25519mlkem768_encaps(entry + 4, random, share, ss);
+        slen = 1120;
+        sslen = 64;
+    }
+    let ns: i64 = tls13ct_server_hello(suite, group, share, slen, 0, sh);
+    tls13c_copy(transcript + tn, sh, ns);
+    tn = tn + ns;
+    // Server-side key schedule, from received ClientHello + server entropy.
+    let hs: i64 = __mind_alloc(32);
+    let hash: i64 = __mind_alloc(32);
+    // keys layout (all 32/12-byte slots): 0 s-hs-traffic, 32 c-hs-traffic,
+    // 64 server hs key, 96 server hs iv, 128 server app key, 140 server app
+    // iv, 152 client hs key, 184 client hs iv, 196 client app key,
+    // 228 client app iv.
+    tls13c_handshake_secret(ss, sslen, hs);
+    sha256(transcript, tn, hash);
+    tls13_server_handshake_traffic_secret(hs, hash, keys);
+    tls13_client_handshake_traffic_secret(hs, hash, keys + 32);
+    tls13c_derive_key_n(keys, tls13c_suite_key_len(suite), keys + 64);
+    tls13_derive_iv(keys, keys + 96);
+    tls13c_derive_key_n(keys + 32, tls13c_suite_key_len(suite), keys + 176);
+    tls13_derive_iv(keys + 32, keys + 208);
+    // EncryptedExtensions: ALPN selection "http/1.1".
+    __mind_store_i8(ee, 8);
+    tls13c_put_be24(ee + 1, 17);
+    tls13c_put_be16(ee + 4, 15);
+    tls13c_put_be16(ee + 6, 16);
+    tls13c_put_be16(ee + 8, 11);
+    tls13c_put_be16(ee + 10, 9);
+    __mind_store_i8(ee + 12, 8);
+    __mind_store_i64(ee + 13, 3543824036607063144);
+    tls13c_copy(transcript + tn, ee, 21);
+    tn = tn + 21;
+    // Certificate (fixture leaf), then CertificateVerify over the transcript.
+    let cn: i64 = tls13ct_cert_msg(cm);
+    tls13c_copy(transcript + tn, cm, cn);
+    tn = tn + cn;
+    sha256(transcript, tn, hash);
+    tls13_hs_cert_verify_content(hash, cv_content);
+    let idx: i64 = retry;
+    if group == 4588 { idx = idx + 2; }
+    if suite == 4867 { idx = idx + 4; }
+    __mind_store_i8(cv, 15);
+    tls13c_put_be24(cv + 1, 260);
+    tls13c_put_be16(cv + 4, 2052);
+    tls13c_put_be16(cv + 6, 256);
+    tls13ct_fx_cv_sig(idx, cv + 8);
+    if mode == 1 { __mind_store_i8(cv + 8, tls13c_u8(cv + 8) ^ 1); }
+    tls13c_copy(transcript + tn, cv, 264);
+    tn = tn + 264;
+    // Server Finished over the transcript through CV.
+    sha256(transcript, tn, hash);
+    __mind_store_i8(finmsg, 20);
+    tls13c_put_be24(finmsg + 1, 32);
+    tls13_finished_from_secret(keys, hash, finmsg + 4);
+    if mode == 2 { __mind_store_i8(finmsg + 4, tls13c_u8(finmsg + 4) ^ 1); }
+    tls13c_copy(transcript + tn, finmsg, 36);
+    tn = tn + 36;
+    // Application secrets from the transcript through server Finished.
+    sha256(transcript, tn, hash);
+    let master: i64 = __mind_alloc(32);
+    let app: i64 = __mind_alloc(64);
+    tls13_master_secret(hs, master);
+    tls13_client_application_traffic_secret(master, hash, app);
+    tls13_server_application_traffic_secret(master, hash, app + 32);
+    tls13c_derive_key_n(app + 32, tls13c_suite_key_len(suite), keys + 128);
+    tls13_derive_iv(app + 32, keys + 160);
+    tls13c_derive_key_n(app, tls13c_suite_key_len(suite), keys + 224);
+    tls13_derive_iv(app, keys + 256);
+    // Client Finished (expected on the wire): HMAC over the same transcript.
+    tls13_finished_from_secret(keys + 32, hash, keys + 272);
+    ns + 21 + cn + 264 + 36
+}
+
+pub fn tls13ct_cv_content(suite: i64, group: i64, retry: i64, out: i64) -> i64 {
+    let flags: i64 = retry * 8;
+    if group == 4588 { flags = flags + 1; }
+    let client: i64 = __mind_alloc(tls13c_state_size());
+    let entropy: i64 = tls13ct_config(client, flags, 1700000000, 0);
+    let ch1: i64 = __mind_alloc(8192);
+    let n1: i64 = tls13c_build_client_hello(client, entropy, 192, ch1);
+    if n1 < 0 { return n1; }
+    tls13c_seal_client_hello(client, ch1, n1);
+    let ch2: i64 = __mind_alloc(8192);
+    let hrr: i64 = __mind_alloc(128);
+    let mut nh: i64 = 0;
+    let mut n2: i64 = 0;
+    if retry == 1 {
+        nh = tls13ct_server_hello(suite, group, 0, 0, 1, hrr);
+        let record: i64 = __mind_alloc(256);
+        let rn: i64 = tls13ct_plain_record(hrr, nh, record);
+        tls13c_feed(client, record, rn);
+        let rc: i64 = tls13c_pump(client);
+        if rc < 0 { return rc; }
+        if tls13c_status(client) != 10 { return 0 - 101; }
+        n2 = tls13c_build_client_hello2(client, entropy, 192, ch2);
+        if n2 < 0 { return n2; }
+    }
+    let sh: i64 = __mind_alloc(2048);
+    let ee: i64 = __mind_alloc(64);
+    let cm: i64 = __mind_alloc(2048);
+    let cv: i64 = __mind_alloc(512);
+    let finmsg: i64 = __mind_alloc(64);
+    let keys: i64 = __mind_alloc(512);
+    tls13ct_server_flight(suite, group, retry, 0, ch1, n1, ch2, n2, hrr, nh, sh, ee, cm, cv, finmsg, out, keys);
+    130
+}
+
+pub fn tls13ct_generate(suite: i64, group: i64, retry: i64, mode: i64, out: i64) -> i64 {
+    let flags: i64 = retry * 8;
+    if group == 4588 { flags = flags + 1; }
+    let client: i64 = __mind_alloc(tls13c_state_size());
+    let entropy: i64 = tls13ct_config(client, flags, 1700000000, 0);
+    let ch1: i64 = out + 96;
+    let n1: i64 = tls13c_build_client_hello(client, entropy, 192, ch1);
+    if n1 < 0 { return n1; }
+    tls13c_seal_client_hello(client, ch1, n1);
+    let ch2: i64 = ch1 + n1;
+    let hrr: i64 = ch2 + 8192;
+    let mut nh: i64 = 0;
+    let mut n2: i64 = 0;
+    if retry == 1 {
+        nh = tls13ct_server_hello(suite, group, 0, 0, 1, hrr);
+        let record: i64 = __mind_alloc(256);
+        let rn: i64 = tls13ct_plain_record(hrr, nh, record);
+        tls13c_feed(client, record, rn);
+        let rc: i64 = tls13c_pump(client);
+        if rc < 0 { return rc; }
+        if tls13c_status(client) != 10 { return 0 - 101; }
+        n2 = tls13c_build_client_hello2(client, entropy, 192, ch2);
+        if n2 < 0 { return n2; }
+    }
+    tls13c_copy(ch2 + n2, hrr, nh);
+    let sh: i64 = ch2 + n2 + nh;
+    let ee: i64 = __mind_alloc(64);
+    let cm: i64 = __mind_alloc(2048);
+    let cv: i64 = __mind_alloc(512);
+    let finmsg: i64 = __mind_alloc(64);
+    let cv_content: i64 = __mind_alloc(256);
+    let keys: i64 = __mind_alloc(512);
+    let frc: i64 = tls13ct_server_flight(suite, group, retry, mode, ch1, n1, ch2, n2, hrr, nh, sh, ee, cm, cv, finmsg, cv_content, keys);
+    if frc < 0 { return frc; }
+    let cn: i64 = 11 + tls13ct_fx_leaf_len() + 2;
+    let ns: i64 = frc - 21 - cn - 264 - 36;
+    // Seal the flight: EE (seq 0), Certificate fragments, CV, server Finished.
+    let flight: i64 = sh + ns;
+    let mut nf: i64 = tls13c_record_seal(suite, keys + 64, keys + 96, 0, ee, 21, 22, flight);
+    let mut pos: i64 = 0;
+    let mut seq: i64 = 1;
+    while pos < cn {
+        let mut part: i64 = 77;
+        if pos == 0 { part = 2; }
+        if pos + part > cn { part = cn - pos; }
+        let nr: i64 = tls13c_record_seal(suite, keys + 64, keys + 96, seq, cm + pos, part, 22, flight + nf);
+        if nr < 0 { return nr; }
+        nf = nf + nr;
+        pos = pos + part;
+        seq = seq + 1;
+    }
+    let ncv: i64 = tls13c_record_seal(suite, keys + 64, keys + 96, seq, cv, 264, 22, flight + nf);
+    if ncv < 0 { return ncv; }
+    nf = nf + ncv;
+    let nfn: i64 = tls13c_record_seal(suite, keys + 64, keys + 96, seq + 1, finmsg, 36, 22, flight + nf);
+    if nfn < 0 { return nfn; }
+    nf = nf + nfn;
+    // Server application record: fixed 4-byte payload "pong", app seq 0.
+    let apprec: i64 = flight + nf;
+    let pong: i64 = __mind_alloc(4);
+    __mind_store_i8(pong, 112);
+    __mind_store_i8(pong + 1, 111);
+    __mind_store_i8(pong + 2, 110);
+    __mind_store_i8(pong + 3, 103);
+    let na: i64 = tls13c_record_seal(suite, keys + 128, keys + 160, 0, pong, 4, 23, apprec);
+    if na < 0 { return na; }
+    // Expected client records: Finished (client hs keys, seq 0), then the
+    // fixed 4-byte "ping" application record (client app keys, seq 0).
+    let cfinm: i64 = __mind_alloc(64);
+    __mind_store_i8(cfinm, 20);
+    tls13c_put_be24(cfinm + 1, 32);
+    tls13c_copy(cfinm + 4, keys + 272, 32);
+    let expectfin: i64 = apprec + na;
+    let ncf: i64 = tls13c_record_seal(suite, keys + 176, keys + 208, 0, cfinm, 36, 22, expectfin);
+    if ncf < 0 { return ncf; }
+    let expectapp: i64 = expectfin + ncf;
+    let ping: i64 = __mind_alloc(4);
+    __mind_store_i8(ping, 112);
+    __mind_store_i8(ping + 1, 105);
+    __mind_store_i8(ping + 2, 110);
+    __mind_store_i8(ping + 3, 103);
+    let nca: i64 = tls13c_record_seal(suite, keys + 224, keys + 256, 0, ping, 4, 23, expectapp);
+    if nca < 0 { return nca; }
+    __mind_store_i64(out, suite);
+    __mind_store_i64(out + 8, group);
+    __mind_store_i64(out + 16, flags);
+    __mind_store_i64(out + 24, n1);
+    __mind_store_i64(out + 32, n2);
+    __mind_store_i64(out + 40, nh);
+    __mind_store_i64(out + 48, ns);
+    __mind_store_i64(out + 56, nf);
+    __mind_store_i64(out + 64, na);
+    __mind_store_i64(out + 72, ncf);
+    __mind_store_i64(out + 80, nca);
+    __mind_store_i64(out + 88, mode);
+    96 + n1 + n2 + nh + ns + nf + na + ncf + nca
+}
