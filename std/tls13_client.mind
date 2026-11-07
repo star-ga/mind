@@ -694,7 +694,7 @@ pub fn tls13c_handle_record(state: i64, rec_addr: i64, rec_len: i64) -> i64 {
                     tls13c_copy(state + 63096, state + 63096 + rd, arx - rd);
                     arx = arx - rd;
                     tls13c_store_i64(state + 192, arx);
-                    tls13c_store_i64(state + 200, 0);
+                    tls13c_store_i64(state + 200, 0)
                 }
                 if arx + plen > 2048 {
                     return tls13c_fail(state, tls13ci_err_ovf());
