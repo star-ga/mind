@@ -439,6 +439,7 @@ pub(crate) fn ref_svi_total_variance(
 #[allow(
     clippy::approx_constant,
     clippy::eq_op,
+    clippy::manual_range_contains,
     clippy::neg_cmp_op_on_partial_ord
 )]
 pub(crate) fn ref_two_asset_vol(w1: f64, w2: f64, s1: f64, s2: f64, rho: f64) -> f64 {
