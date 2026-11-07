@@ -37,6 +37,7 @@ pub(super) fn symbol_owner(name: &str) -> Option<&str> {
 /// The owner-scoped symbol `fd` forwards to, when `fd` is a forwarder the
 /// test merge builds: its whole body calls one owner-scoped symbol with its
 /// own parameters, in order, and returns the result.
+#[cfg(feature = "std-surface")]
 pub(super) fn forwarder_target(fd: &crate::ast::FnDefData) -> Option<&str> {
     use crate::ast::{Literal, Node};
     let call = match fd.body.as_slice() {
