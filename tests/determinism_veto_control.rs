@@ -196,6 +196,13 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
     ),
     ("https_io", "https_io.hio_now_unix()", "hio_now_unix"),
     ("https_io", "https_io.hio_now_mono_ms()", "hio_now_mono_ms"),
+    (
+        "https_io",
+        "https_io.hio_remaining_ms(p)",
+        "hio_remaining_ms",
+    ),
+    ("https_io", "https_io.hio_arm(p, 9)", "hio_arm"),
+    ("https_io", "https_io.hio_io_failure(p)", "hio_io_failure"),
 ];
 
 /// Pure functions of the same modules: the positive control.
