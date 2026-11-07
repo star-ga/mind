@@ -125,11 +125,38 @@ SCRIPT="$ROOT_DIR/scripts/anatomy.sh"
 
 # Check if any tracked source files are staged (not just ANATOMY.md itself)
 staged_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -v '^ANATOMY.md$' || true)
-[ -z "$staged_files" ] && exit 0
+if [ -z "$staged_files" ]; then
+  # Nothing to regenerate from, but an ANATOMY.md staged on its own must still be
+  # whole: a cut-off index was committed twice because nothing looked at it.
+  if git diff --cached --name-only --diff-filter=ACMR | grep -qx 'ANATOMY.md'; then
+    if ! problems=$(git show :ANATOMY.md | "$SCRIPT" --check - 2>&1); then
+      echo "pre-commit: the staged ANATOMY.md is not a whole index - commit blocked." >&2
+      printf '%s\n' "$problems" | sed 's/^/  /' >&2
+      echo "  Restore it ('git restore --staged --worktree ANATOMY.md') or regenerate it with scripts/anatomy.sh." >&2
+      exit 1
+    fi
+  fi
+  exit 0
+fi
 
-# Regenerate
+# Regenerate. anatomy.sh builds into a temp file and renames it over ANATOMY.md
+# only once the result is whole, so a generator that fails or is interrupted
+# leaves the existing ANATOMY.md exactly as it was. That used to be the other way
+# round: the file was cut to zero first, and the half-written remainder was staged.
 cd "$ROOT_DIR"
-"$SCRIPT" . --output ANATOMY.md 2>/dev/null
+if ! problems=$("$SCRIPT" . --output ANATOMY.md 2>&1); then
+  echo "pre-commit: ANATOMY.md regeneration failed - ANATOMY.md left as it was, commit blocked." >&2
+  printf '%s\n' "$problems" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+# Do not trust the generator's exit status alone: check the file before staging
+# it, so an index that is cut short is never what gets committed.
+if ! problems=$("$SCRIPT" --check ANATOMY.md 2>&1); then
+  echo "pre-commit: regenerated ANATOMY.md is not a whole index - not staged, commit blocked." >&2
+  printf '%s\n' "$problems" | sed 's/^/  /' >&2
+  exit 1
+fi
 
 # Stage the updated ANATOMY.md if it changed
 if ! git diff --quiet -- ANATOMY.md 2>/dev/null; then
