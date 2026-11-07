@@ -44,9 +44,12 @@ pub mod interp_mem;
 pub mod ir_interp;
 mod loops;
 pub mod lower;
+mod match_stmt;
 mod module_bindings;
 mod module_globals;
 mod narrow_arith;
+mod result_variants;
+mod zeroed_array;
 use module_bindings::symbol_owner;
 pub(crate) use module_bindings::{
     BindingKind as EvalBindingKind, Bindings as EvalBindings, BindingsGuard as EvalBindingsGuard,
@@ -543,7 +546,7 @@ pub fn eval_module_value_with_env_mode(
                     | None => rhs,
                 };
                 // LOCAL mechanism at module scope.
-                let stored = declared_width::bind_let(ann, name, stored)?;
+                let stored = zeroed_array::bind_let(ann, name, stored)?;
                 // issue #99: track (or clear, on a non-u64 shadow) the binding's
                 // declared u64-ness so a later `b > c` / `b >> n` on this name
                 // picks the UNSIGNED interpreter path (matching the artifact).
@@ -584,6 +587,7 @@ pub fn eval_module_value_with_env_mode(
             Node::Assign { name, value, .. } => {
                 let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 let rhs = declared_width::narrow_reassign(name, rhs)?;
+                let rhs = zeroed_array::reassign(&venv, name, rhs)?;
                 if let Value::Int(n) = rhs {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -821,11 +825,11 @@ pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
 
 /// Phase 10.7: does this call-callee denote an enum/`Option`/`Result` variant
 /// constructor with a payload? A `Type::Variant` path (carrying `::`) is the
-/// canonical form; `Some` is the only bare payload-carrying constructor the
-/// interpreter recognizes by name. Tensor-stdlib callees never use `::` and are
-/// never named `Some`, so this never shadows them.
+/// canonical form; `Some`, `Ok` and `Err` are the bare payload-carrying
+/// constructors the interpreter recognizes by name. Tensor-stdlib callees never
+/// use `::` and are never named any of them, so this never shadows them.
 fn is_enum_variant_ctor(callee: &str) -> bool {
-    callee.contains("::") || callee == "Some"
+    callee.contains("::") || callee == "Some" || result_variants::is_result_ctor(callee)
 }
 
 /// Resolve evaluator-bound project calls first, then the current module, then
@@ -881,7 +885,8 @@ fn match_enum_payload(
             }
             crate::ast::Pattern::EnumVariant { path, args } => match value {
                 Value::Enum { variant, payload }
-                    if variant == path && payload.len() == args.len() =>
+                    if result_variants::same_variant(variant, path)
+                        && payload.len() == args.len() =>
                 {
                     if !match_enum_payload(args, payload, out) {
                         return false;
@@ -957,7 +962,7 @@ fn exec_threaded_stmt(
         } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
             // LOCAL mechanism (`lower.rs::mask_narrow_let`'s shift pair).
-            let v = declared_width::bind_let(ann, name, v)?;
+            let v = zeroed_array::bind_let(ann, name, v)?;
             // Record the pre-block value once in the CALLER-OWNED frame, so a
             // shadowing block-`let` is restored when that frame's owner (the
             // enclosing `exec_block_scoped` / fn body) exits.
@@ -972,6 +977,7 @@ fn exec_threaded_stmt(
             // A reassignment carries no annotation, but the binding's declared
             // width still applies (`lower.rs::mask_narrow_assign`).
             let v = declared_width::narrow_reassign(name, v)?;
+            let v = zeroed_array::reassign(env, name, v)?;
             env.insert(name.clone(), v.clone());
             Ok(v)
         }
@@ -1038,6 +1044,11 @@ fn exec_threaded_stmt(
             body,
             ..
         } => loops::run_for_each(var, collection, body, env, tensor_env, mode.clone()),
+        // `match` in statement position: the taken arm is a block scope over
+        // the SAME env, so its assignments to outer names survive (`match_stmt`).
+        Node::Match {
+            scrutinee, arms, ..
+        } => match_stmt::exec_match(scrutinee, arms, env, tensor_env, mode.clone()),
         // Everything else (calls, bare expressions, `return`, …) is a pure
         // expression evaluation; `return` surfaces as `ReturnFlow` and unwinds.
         other => eval_value_expr_mode(other, env, tensor_env, mode.clone()),
@@ -1271,6 +1282,7 @@ pub(crate) fn eval_value_expr_mode(
                     // PARAM mechanism: materialise the argument at the
                     // declared width before it reaches the body.
                     let v = declared_width::narrow(pty, v, declared_width::What::Parameter, p)?;
+                    let v = zeroed_array::adopt(pty, v)?;
                     bound_params.push((p, v, pty));
                 }
                 // Arguments were evaluated above in the caller. The body uses
@@ -1302,12 +1314,12 @@ pub(crate) fn eval_value_expr_mode(
                         // RETURN mechanism: the use site must see exactly what
                         // an `extsi`/`extui` of the truncated result carries.
                         Err(EvalError::ReturnFlow(v)) => {
-                            return declared_width::narrow_return(&func.ret_type, callee, *v);
+                            return zeroed_array::narrow_return(&func.ret_type, callee, *v);
                         }
                         Err(e) => return Err(loops::fence(e)),
                     }
                 }
-                return declared_width::narrow_return(&func.ret_type, callee, result);
+                return zeroed_array::narrow_return(&func.ret_type, callee, result);
             }
             // Linear-memory intrinsics (`__mind_alloc`, load, store, free) run
             // on the thread-local arena so `mindc test` executes memory-using
@@ -1716,11 +1728,11 @@ pub(crate) fn eval_value_expr_mode(
             name, ann, value, ..
         } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
-            declared_width::bind_let(ann, name, v)
+            zeroed_array::bind_let(ann, name, v)
         }
         Node::Assign { name, value, .. } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
-            declared_width::narrow_reassign(name, v)
+            zeroed_array::reassign(env, name, declared_width::narrow_reassign(name, v)?)
         }
         Node::LetTuple { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode.clone()),
         // Function definitions and control flow - placeholder implementation
@@ -2029,7 +2041,7 @@ pub(crate) fn eval_value_expr_mode(
                 // stores a std.vec handle there, and a copy of the handle
                 // shares the heap backing, so element stores must be visible
                 // through every alias of the field.
-                let value = record_store::wrap_struct_field(name, &f.name, value);
+                let value = record_store::wrap_struct_field(name, &f.name, value)?;
                 items.push((f.name.clone(), value));
             }
             Ok(Value::Struct {
@@ -2189,7 +2201,8 @@ pub(crate) fn eval_value_expr_mode(
                     // sub-pattern count, recursively binding each sub-pattern.
                     crate::ast::Pattern::EnumVariant { path, args } => match &val {
                         Value::Enum { variant, payload }
-                            if variant == path && payload.len() == args.len() =>
+                            if result_variants::same_variant(variant, path)
+                                && payload.len() == args.len() =>
                         {
                             match_enum_payload(args, payload, &mut bindings)
                         }
@@ -2299,7 +2312,7 @@ pub(crate) fn eval_value_expr_mode(
                     } => {
                         let val =
                             eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
-                        let val = declared_width::bind_let(ann, name, val)?;
+                        let val = zeroed_array::bind_let(ann, name, val)?;
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
