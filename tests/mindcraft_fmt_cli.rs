@@ -129,6 +129,47 @@ fn diff_prints_diff_to_stdout() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 3a: --diff on two changes seven unchanged lines apart (used to panic)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn diff_with_distant_changes_prints_one_hunk_each() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("distant.mind");
+    // Two lines the formatter rewrites, with seven untouched lines between
+    // them: more than twice the three context lines, so two separate hunks.
+    let mut src = String::from("fn f(a: i64, b: i64) -> i64 {\n    let first: i64 = a  +  b;\n");
+    for k in 1..=7 {
+        src.push_str(&format!("    let pad{k}: i64 = {k};\n"));
+    }
+    src.push_str("    let last: i64 = a  +  b;\n    first + last\n}\n");
+    fs::write(&file, &src).expect("write");
+
+    let output = mindc()
+        .args(["fmt", "--diff"])
+        .arg(&file)
+        .output()
+        .expect("spawn mindc");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "--diff must not panic:\n{stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        stdout.matches("\n@@ -").count(),
+        2,
+        "expected two hunks:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 3b: --diff exits 0 and emits nothing when file is already formatted
 // ---------------------------------------------------------------------------
 
