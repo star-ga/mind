@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2147 | **Est. tokens:** ~4,078,809
-**Generated:** 2026-11-07 02:20 UTC
+**Files:** 2147 | **Est. tokens:** ~4,078,879
+**Generated:** 2026-11-07 02:28 UTC
 
 ## Token Budget Guide
 
@@ -96,7 +96,7 @@
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~16,486 |
+| `.github/workflows/` | 9 | ~16,556 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
 | `scripts/` | 33 | ~128,929 |
@@ -1084,7 +1084,7 @@
 - `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
-- `pr-review.yml` (~1061 tok, large) — name: pr-review
+- `pr-review.yml` (~1131 tok, large) — name: pr-review
 - `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3943 tok, huge) — name: Release
 ### `mind/std/cognitive/`
