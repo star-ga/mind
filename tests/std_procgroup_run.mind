@@ -173,7 +173,7 @@ fn child_main(c: i64, idx: i64) -> i64 {
             __mind_store_i8(two + 0, 55);
             __mind_store_i8(two + 1, 55);
             let _ = write(1, two as *const u8, 2);
-            _exit(0);
+            _exit(0)
         }
         return 0;
     }
