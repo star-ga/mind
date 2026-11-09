@@ -552,6 +552,7 @@ pub fn procgroup_new(capacity: i64) -> i64 {
 // Returns the slot index; a failed pipe or fork still takes the slot (state
 // spawn_failed) so procgroup_wait_all counts it. Returns -1, starting
 // nothing, when the group is full, g is 0 or argv_vec_len is negative.
+#[protection]
 pub fn procgroup_spawn(g: i64, prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
     if g == 0 {
         return 0 - 1;
