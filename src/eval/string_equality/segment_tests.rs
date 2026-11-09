@@ -115,9 +115,8 @@ fn forwarders_are_the_opaque_callee() {
     assert_eq!(interpreted_refusals(&raw), vec![UNTYPED]);
 }
 
-/// The facts of a std module come from a walk of its whole body. No shipped
-/// std module tells a walk of only the merged functions apart (mutant M6),
-/// so this pins the source of the facts.
+/// The cached facts of a std module are a walk of its whole body (a verdict
+/// they decide is pinned by the next test).
 #[test]
 fn std_facts_are_the_full_module_fixpoint() {
     let none = format!("{:?}", slots::Contradicted::default());
@@ -142,6 +141,38 @@ fn std_facts_are_the_full_module_fixpoint() {
     // Positive control: some module records a slot, so a walk of nothing
     // would differ.
     assert!(!recorded.is_empty(), "no std module recorded a slot");
+}
+
+/// A merged std function is decided with the facts of its whole module, not
+/// of the items one test merges. std.json declares `value_as_string`
+/// `-> string` and returns the `i64` of `jv_str_rec_from`, so the build of
+/// std.json refuses a comparison of two of its results; a merged std.json
+/// function that compares them is refused too, while `value_as_string`
+/// itself is not merged. Mutant M6 (a std module's facts from its merged
+/// items alone) reads the declaration and compares bytes.
+#[test]
+fn merged_std_code_reads_the_facts_of_its_whole_module() {
+    let merged = |src: &str| {
+        let mut module = parse(src);
+        module.items = module
+            .items
+            .into_iter()
+            .map(|item| owned("std.json", item))
+            .collect();
+        interpreted_refusals(&module)
+    };
+    let texts = "fn same_text(a: Value, b: Value) -> i64 {
+        if value_as_string(a) == value_as_string(b) { return 1 }
+        return 0
+    }";
+    assert_eq!(merged(texts), vec![UNTYPED]);
+    // Control: two results std.json returns as declared (`i64`) compare as
+    // integers, so the refusal is the contradicted result's.
+    let kinds = "fn same_kind(a: Value, b: Value) -> i64 {
+        if jv_kind(a.h) == jv_kind(b.h) { return 1 }
+        return 0
+    }";
+    assert_eq!(merged(kinds), vec![]);
 }
 
 /// The merge names a project test's own functions for its module; a string
