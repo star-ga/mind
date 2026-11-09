@@ -157,7 +157,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/type_checker/resolve.rs", 1277),
     ("tests/cross_substrate_identity.rs", 3288),
     ("tests/g2_differential_mlir.rs", 1020),
-    ("tests/mindc_deps_phase_de.rs", 851),
+    ("tests/mindc_deps_phase_de.rs", 848),
     ("tests/mindfuzz_cross_substrate.rs", 1486),
     ("tests/return_cond_type_reject.rs", 1007),
     ("tests/std_surface_net_fs_process.rs", 803),

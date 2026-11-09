@@ -30,6 +30,8 @@
 //! nested scope (e.g. an `if` body inside a `fn`) are in **different scopes**
 //! and do NOT trigger this rule.  Only two `let x` at the **same** nesting
 //! level do.
+//!
+//! `let _ = expr` is a discard, not a binding, so repeated `let _` never fire.
 
 use std::collections::HashMap;
 
@@ -187,6 +189,12 @@ fn check_scope(stmts: &[Node], ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
             name, value, span, ..
         } = stmt
         {
+            // `let _ = expr` discards its value and binds no name, so a later
+            // `let _` has nothing to shadow.
+            if name == "_" {
+                check_node(value, ctx, out);
+                continue;
+            }
             if let Some(&(first_start, first_end)) = seen.get(name.as_str()) {
                 // Second (or later) `let name` in the same scope — shadowing.
                 let _ = (first_start, first_end); // first decl location noted for message

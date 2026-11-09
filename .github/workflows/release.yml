@@ -199,14 +199,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.toml') }}
+      # No actions/cache here: a shipped binary is built from a clean target
+      # and registry, so a cache entry written by any other run (including a
+      # pull-request run on the default branch) cannot reach a release.
 
       # Ship a REAL compiler, not a check/parse-only binary: enable the MLIR
       # codegen + autodiff + bundled-stdlib features.

@@ -31,7 +31,9 @@ mod common;
 use common::mic_record::{Val, reference};
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
-use libmind::ir::compact::v3::{mic3_app_metadata, mic3_canonical_check, parse_mic3_envelope};
+#[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
+use libmind::ir::compact::v3::mic3_app_metadata;
+use libmind::ir::compact::v3::{mic3_canonical_check, parse_mic3_envelope};
 use libmind::parser;
 
 fn fn_names(src: &str) -> Vec<String> {
