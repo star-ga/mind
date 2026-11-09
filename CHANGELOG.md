@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.3] - 2026-11-09
 
 ### Added
-- **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
+- **`std.entropy` and `std.dns` for `mindc build` executables (`#349`)**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
   `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with it, attested `nondeterministic`.
   (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
   `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
-- **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
+- **X.509 path validation and a TLS 1.3 client in std (`#346`).** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.
   - `std.x509` validates a server chain (`x509_verify_server_chain`) from
@@ -90,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fixture matrix through `--emit-shared`.
 - `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
   instead of carrying an identical copy.
-- **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`, `#350`)**: a MIND program
   writes and reads its results (per-game and per-level actions, a score as a
   numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
   empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
   allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
   records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
-- **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
+- **Release build hardening and the release feature set (`#344`)**: `Cargo.lock` is committed and every workflow cargo call that resolves
   dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
   compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
   therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
@@ -112,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
   leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
   its feature sets never resolve fips204 or fips205.
-- mindc test can read project files read-only (open/read/lseek/close); results match native.
+- `mindc test` can read project files read-only (open/read/lseek/close); results match native (`#331`).
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
   blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
@@ -189,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
   writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
   instead of trapping silently.
-- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`)**:
+- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`; CI-executed KAT `#325`)**:
   `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
   directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
   when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
@@ -198,11 +198,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record fields are now lowered through the whole-program mic@3 evidence path instead of
   falling back to a placeholder, so a project whose structs carry `String` fields emits
   correct evidence bytes.
-- **`--backend native` bridge and self-host seed chain (`be7f945c`, native lane)**: `mindc build
-  --backend native` bridges to the pure-MIND native-ELF compiler, and the self-host bootstrap
-  seed chain (freeze / re-bless / advance) keeps the zero-Rust loop consistent across the
-  native-lane admission work. `__mind_open` is wired on the Rust/MLIR backend
-  (`be7f945c`), emptying the quarantine-exec set.
+- **`mindc build --backend native` bridges to the pure-MIND native-ELF compiler (`52bd6d3b`)**:
+  the opt-in native backend now hands a project build to the pure-MIND compiler. The
+  `--backend` flag itself shipped in 0.10.2.
+- **The self-host record-trace seed is frozen and the mirror gate follows the advanced
+  compiler seed (`4211591e`, `42cadc3c`)**: the record-trace publication seed and its
+  receipts are committed as a frozen baseline, and the mirror gate is bound to the
+  advanced compiler seed.
+- **`__mind_open` is wired on the Rust/MLIR backend (`be7f945c`)**: `std.fs` path-based
+  file I/O now builds and links under `mindc build`'s default backends. The C runtime
+  gains an `open` definition and the intrinsic table gains the `__mind_open` row
+  (arity 1, pure); this empties the exec-tier quarantine set.
 - **A bare call to an imported `std` world function is classified as a world call (`#374`,
   `e68f3480`)**: the determinism evidence classifier now treats a bare call to an imported
   `std` module's world-reading function (e.g. `entropy_fill`, `dns_resolve`) as a world call,
@@ -247,7 +253,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link set, and an explicit `import std.<submod>` compiles even when the submodule is
   only used for its types.
 
-### Changed — `mlir-opt` and `mlir-translate` run concurrently
+- **Native-ELF saturating `f64` to `i8`/`i16`/`i32` cast codegen (`#10`, `5fdbfbaf`)**: a
+  branchless clamp composes with the saturating `f64` to `i64` base, so `300.0 as i8` is
+  127 (not a wrapped 44), matching the MLIR path. This is the codegen primitive only; wiring
+  the cast through the whole-module native backend is a later slice.
+- **`mindc build` is fail-closed (`#244`, `a8b2eb1d`)**: a source that `mindc check` rejects
+  (for example E1001) or that falls back to the runtime JIT now exits non-zero instead of
+  emitting a launcher and exiting 0, as `run_project` already did.
+- **Lowering helpers follow the feature gates (`#337`, `c09c720d`)**: the MLIR lowering
+  helpers are compiled only under the feature gates of the code that uses them.
+- **Bare enum heads and enum equality settle as `mindc build` does (`#354`, `a5cb17a3`)**:
+  `mindc test` resolves a bare enum head and compares enum values the way the build
+  does, including enums imported from another module.
+- **Slice arguments admit alias-element literals and private helpers (`#340`, `4d081451`)**:
+  the type checker follows type aliases when it checks a literal element or a private
+  helper passed as a slice argument.
+- **Every shipped `std` module resolves through the bundled table (`#341`, `027cc216`)**:
+  `mindc test`, the type checker and the native bridge all read one bundled std table.
+- **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
+  with known-answer tests and cross-substrate identity receipts.
+- **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
+  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`); automated
+  pull-request review and a public-leak check run in CI (`#305`); clippy lints on `main` are
+  cleared (`#302`); the `mic-map` SDK dev dependencies are bumped for advisories
+  (`#296`, `#283`).
+- **CI, docs and test changes**: #378, #373, #370, #369, #361, #357, #353, #352, #348,
+  #332, #325, #323, #322, #321, #319, #307, #306, #304, #303, #301, #299, #295.
+
+### Changed — `mlir-opt` and `mlir-translate` run concurrently (#310)
 - The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
   `mlir-opt`'s output into it, so the translator's process startup overlaps the
   optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
@@ -259,7 +292,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
   reported as `mlir-opt`.
 
-### Performance — runtime-support object off the `--emit-shared` critical path
+### Performance — runtime-support object off the `--emit-shared` critical path (#309)
 - `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
   object on a separate thread while mlir-opt and mlir-translate run, and joins it
   before the shared link. Output bytes are unchanged; a clang failure in that compile
@@ -386,7 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unsupported receivers produce errors instead of being discarded by the test
   evaluator.
 
-### Fixed — aggregate constants preserve struct values (#247)
+### Fixed — aggregate constants preserve struct values (`aa56de24`, `ba3c6f6c`, `ea0a9086`, `2c4dc5e6`)
 - Struct-valued constants and supported fixed arrays of structs now lower their
   real record handles instead of substituting zero. Runnable struct fields are
   currently limited to fixed arrays of `i64` or `f64`. A nested
