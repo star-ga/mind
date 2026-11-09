@@ -42,7 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
     Limits: no revocation checking, DNS/IP-only name constraints, at most 8
     certificates and 32 anchors, exact-DER issuer matching; unsupported cases
-    fail closed. Anchors are trusted key bindings: their self-signature and
+    fail closed. The path search treats a certificate repeated in the chain
+    (same DER) as one candidate issuer and spends at most 64 signature
+    verifications, anchor and bag issuers alike, failing -13 past that, so a
+    peer's certificate bag cannot multiply the work;
+    `x509_verify_server_chain_budget` takes that budget from the caller.
+    The RSA-PSS salt-length bound comes from the issuer's modulus
+    (`n_len - 34` for SHA-256: 222, 350 and 478 for RSA-2048, 3072 and 4096), so
+    long-salt signatures under larger keys verify and one past the key's bound
+    is refused as an unsupported parameter (-2).
+    Anchors are trusted key bindings: their self-signature and
     validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
     constraints apply to the path below them.
   - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,
@@ -63,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
     server key) keeps its known answer at the RSA-PSS verify primitive, not
     through the client.
+    The 2048-byte application receive buffer reclaims bytes the reader has
+    already consumed before its bound check, so a long stream of small records
+    is read in full; a record that does not fit the unread bytes still fails
+    closed (E_OVF).
   - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
     only; issuer signatures inside the chain keep ECDSA P-256/P-384,
     RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
@@ -254,6 +267,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds `mindc test` and the native build to the same result for every comparison on
   `f32` and `f64` through `if`, `!`, `&&`, `||`, a returned `bool`, a `bool` binding and
   a `while` condition.
+- **Bounded X.509 path search, key-derived RSA-PSS salt bound, TLS receive buffer
+  reclaim (`#379`, `2f453d34`)**: the chain search verifies at most 64 signatures and
+  treats a repeated certificate as one candidate issuer; the RSA-PSS salt bound follows
+  the issuer's modulus; the TLS application receive buffer reclaims consumed bytes
+  before its bound check (details under the TLS and X.509 entries above).
+  `tests/x509_pss_salt.rs` and `tests/tls13_client_rx.mind` hold the new behavior.
+- **`mindc test` survives a worker spawn failure and joins every spawned worker (`#380`,
+  `1d6f8ec2`)**: a refused 512 MiB worker stack falls back through 64, 16, 8 and 2 MiB
+  (`MINDC_TEST_WORKER_STACK` sets the ladder); if no worker can start, every test that
+  did not run fails with "could not start a test worker" after the workers already
+  started are joined (before, the run returned early and left them running), and a
+  panicking worker cancels the queue while the others are still joined.
 - **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
   formatter's `--diff` mode no longer panics on edge-case inputs.
 - **`mindc test` admits exactly what the build links and every explicit `std` import

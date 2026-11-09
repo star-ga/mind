@@ -420,10 +420,54 @@ pub fn x509_issuer_matches(child: i64, parent: i64) -> i64 {
     xb_eq(__mind_load_i64(child) + __mind_load_i64(child + 32), __mind_load_i64(parent) + __mind_load_i64(parent + 48), ilen)
 }
 
+// Signature verifications one chain validation may spend over its whole path
+// search, anchor and bag issuers alike: 8 path positions times 8 candidate
+// issuers. The peer controls the bag, so the work is bounded, not only the
+// number of certificates.
+fn x509_path_sig_budget() -> i64 {
+    64
+}
+
+// Chain indices whose DER repeats an earlier certificate of the chain, the leaf
+// included. The search starts with them marked used, so `used` tracks
+// certificate identities: a copy is never a second candidate issuer.
+fn x509_repeat_mask(recs: i64, count: i64) -> i64 {
+    let mut mask: i64 = 0;
+    let mut ci: i64 = 1;
+    while ci < count {
+        let c: i64 = recs + ci * 288;
+        let mut j: i64 = 0;
+        while j < ci {
+            let o: i64 = recs + j * 288;
+            if __mind_load_i64(c + 8) == __mind_load_i64(o + 8) {
+                if xb_eq(__mind_load_i64(c), __mind_load_i64(o), __mind_load_i64(c + 8)) == 1 {
+                    mask = mask | (1 << ci);
+                }
+            }
+            j = j + 1;
+        }
+        ci = ci + 1;
+    }
+    mask
+}
+
+// One signature verification charged to the search's shared budget cell;
+// -13 once it is spent.
+fn x509_path_verify(child: i64, parent: i64, budget: i64) -> i64 {
+    let left: i64 = __mind_load_i64(budget);
+    if left <= 0 {
+        return -13;
+    }
+    __mind_store_i64(budget, left - 1);
+    x509_verify_cert_sig(child, parent)
+}
+
 // Bounded depth-first search: leaf first, remaining certificates unordered.
 // Try every matching issuer, retaining path-specific policy and a visited mask.
+// Every signature verification is charged to the `budget` cell, and a spent
+// budget (-13) ends the whole search.
 #[protection]
-pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: i64, depth: i64, used: i64, now: i64) -> i64 {
+pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: i64, depth: i64, used: i64, now: i64, budget: i64) -> i64 {
     let child: i64 = __mind_load_i64(path + (depth - 1) * 8);
     let mut error: i64 = -7;
     let mut ai: i64 = 0;
@@ -439,10 +483,13 @@ pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: 
         if x509_issuer_matches(child, anchor) == 1 {
             let mut arc: i64 = x509_parent_policy(anchor, path, depth, now, 1);
             if arc == 0 {
-                arc = x509_verify_cert_sig(child, anchor);
+                arc = x509_path_verify(child, anchor, budget);
             }
             if arc == 0 {
                 return 0;
+            }
+            if arc == -13 {
+                return arc;
             }
             if error == -7 {
                 error = arc;
@@ -460,14 +507,17 @@ pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: 
         if (used & bit) == 0 && x509_issuer_matches(child, parent) == 1 {
             let mut rc: i64 = x509_parent_policy(parent, path, depth, now, 0);
             if rc == 0 {
-                rc = x509_verify_cert_sig(child, parent);
+                rc = x509_path_verify(child, parent, budget);
             }
             if rc == 0 {
                 __mind_store_i64(path + depth * 8, parent);
-                rc = x509_path_search(recs, count, anchors, acount, path, depth + 1, used | bit, now);
+                rc = x509_path_search(recs, count, anchors, acount, path, depth + 1, used | bit, now, budget);
             }
             if rc == 0 {
                 return 0;
+            }
+            if rc == -13 {
+                return rc;
             }
             if error == -7 {
                 error = rc;
@@ -497,10 +547,25 @@ pub fn x509_path_search(recs: i64, count: i64, anchors: i64, acount: i64, path: 
 // the path below it. Every non-anchor certificate in the path is checked for
 // signature, validity, CA/pathLen, key usage and name constraints.
 // A chain, anchor or hostname pointer <= 0 is refused with -1.
+//
+// Path-search work (the peer controls the certificate bag): a certificate
+// whose DER repeats an earlier one in the chain is one candidate issuer, never
+// one per copy, and the search spends at most 64 signature verifications,
+// anchor and bag issuers alike; past that it fails -13.
+// x509_verify_server_chain_budget(chain, anchors, expected_dns, now_unix,
+// budget) is the same check with the caller's budget cell: an i64 holding the
+// verifications allowed, decremented by each one (a cell pointer <= 0 is -1).
 // ---------------------------------------------------------------------------
 #[protection]
 pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now_unix: i64) -> i64 {
-    if chain <= 0 || anchors <= 0 || expected_dns <= 0 {
+    let budget: i64 = __mind_alloc(8);
+    __mind_store_i64(budget, x509_path_sig_budget());
+    x509_verify_server_chain_budget(chain, anchors, expected_dns, now_unix, budget)
+}
+
+#[protection]
+pub fn x509_verify_server_chain_budget(chain: i64, anchors: i64, expected_dns: i64, now_unix: i64, budget: i64) -> i64 {
+    if chain <= 0 || anchors <= 0 || expected_dns <= 0 || budget <= 0 {
         return -1;
     }
     let count: i64 = __mind_load_i64(chain + 0);
@@ -591,5 +656,5 @@ pub fn x509_verify_server_chain(chain: i64, anchors: i64, expected_dns: i64, now
     }
     let path: i64 = __mind_alloc(64);
     __mind_store_i64(path, leaf);
-    x509_path_search(recs, count, arecs, valid_anchors, path, 1, 1, now_unix)
+    x509_path_search(recs, count, arecs, valid_anchors, path, 1, 1 | x509_repeat_mask(recs, count), now_unix, budget)
 }
