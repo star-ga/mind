@@ -4,71 +4,231 @@
 
 //! Typed string equality normalization before recursive expression lowering.
 //!
-//! Only locally constructed immutable string values are proof. Parameter and
-//! return annotations share the loose i64 ABI with opaque handles, so this pass
-//! never treats an annotation alone as permission to dereference a String
-//! record. Any assignment to a name makes that name ineligible throughout its
-//! declaration body; this conservative rule avoids branch, loop, and shadowing
-//! ambiguity while retaining literal and immutable-alias equality.
+//! `==` and `!=` on two strings compare bytes. An operand is a string when its
+//! declared type says so (see [`facts`] and [`classify`]): a literal, a
+//! `string`/`String` parameter or annotated binding, a string constant, call
+//! result (including a method call that lowers to a `string_<method>` or
+//! `<type>_<method>` function), struct field, collection element, an `if` /
+//! `match` whose every branch is a string, or a payload of an `Option` /
+//! `Result` declared (or constructed) to carry one. Such a comparison is
+//! rewritten to the compiler-owned `__mind_string_eq` before the interpreter
+//! or any lowering sees it, so every backend computes the same byte-wise
+//! answer. The null handle `0` is a `string` value equal only to itself; no
+//! record is read through it.
+//!
+//! Every other comparison that could compare string handles, which is false
+//! for equal text, is refused at check time with `E2038`, never lowered
+//! silently:
+//!
+//! * a string compared with an operand that is not a string (an integer
+//!   literal is exempt: a handle compared with it is a null or sentinel test);
+//! * two operands of which neither has a known type, so both may be strings;
+//! * a string literal `match` arm on a scrutinee not known to be a string
+//!   (an arm on a string compares bytes on every backend);
+//! * in a project build, a call of a function another module refuses such a
+//!   comparison in (see [`project`]);
+//! * a cast to `string` of an integer literal other than the null handle `0`
+//!   (`5 as string`), which no string record is at.
+//!
+//! An operand whose type is known and is not a string makes the comparison an
+//! integer comparison on every backend. A declaration proves what its slot
+//! holds only while nothing else is stored there (see [`slots`] and
+//! [`flows`]): a parameter, result, field, payload, module or local binding,
+//! or collection element given a value that may be a string where none is
+//! declared, or an integer other than the null handle where a string is
+//! declared, is read as maybe a string. A value whose type the pass did not
+//! establish may be a string, so storing it counts, also when it is handed
+//! to a callee whose body is not analysed here (a std collection, raw
+//! memory): the integer result of such a callee is then maybe a string; a
+//! raw 64-bit load reads any collection's storage. A cast to `string` of a
+//! value not proven a string, other than the null handle, is maybe a string.
+//! A value of a type parameter, or the result of an imported function with
+//! no declared result type, may be anything. A function with no declared
+//! result type that still returns a value has an unknown result. Stores from
+//! other modules of a project build count too.
+//!
+//! `mindc check`, `mindc build` (MLIR and native) and `mindc test` refuse the
+//! same source: each analyses every module against its own declarations, the
+//! project registry and the project summary. The module `mindc test` merges is
+//! split back into its modules first (see [`segments`]); no module learns a
+//! fact from another module's merged body.
+//!
+//! A local binding is a slot like any other: each assignment is read in its
+//! own scope, and the module is walked again until no binding changes (see
+//! `Decls::local_fact`); facts are never joined across branches of
+//! statements, which avoids branch, loop, and shadowing ambiguity.
+//!
+//! `.length` on a string reads a member no string record has; it is refused
+//! at check time with the code the build gives it (`E6009`). For `mindc test`
+//! a method call on a string becomes the `string_<method>` call the MLIR
+//! lowering makes for it ([`analyze_interpreted`]).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
 
-use crate::ast::{BinOp, Literal, Module, Node, Pattern};
+use crate::ast::{BinOp, Literal, Module, Node, Span};
 
-type StringEnv = BTreeSet<String>;
+mod classify;
+mod facts;
+#[cfg(test)]
+mod flow_tests;
+mod flows;
+#[cfg(feature = "cross-module-imports")]
+mod project;
+#[cfg(test)]
+mod segment_tests;
+mod segments;
+#[cfg(test)]
+mod slot_tests;
+mod slots;
+mod sums;
+#[cfg(test)]
+mod tests;
+mod walk;
+
+use facts::Class;
+#[cfg(feature = "cross-module-imports")]
+pub(crate) use project::ProjectModules;
+
 type Targets = BTreeSet<usize>;
+/// Method call ordinal → whether its receiver is passed as the first
+/// argument (a value receiver) or names the type (`string.from(x)`).
+type MethodTargets = BTreeMap<usize, bool>;
 type Assigned = BTreeSet<String>;
-type Ordinals = BTreeMap<usize, usize>;
 
-fn string_result_method(name: &str) -> bool {
-    matches!(
-        name,
-        "slice"
-            | "substring"
-            | "trim"
-            | "trim_start"
-            | "trim_end"
-            | "to_lowercase"
-            | "to_uppercase"
-            | "to_lower"
-            | "to_upper"
-            | "replace"
-            | "concat"
-            | "repeat"
+/// Deterministic preorder numbers of the original equality and method call
+/// nodes, by node address in the analysed AST.
+#[derive(Default)]
+struct Ordinals {
+    equalities: BTreeMap<usize, usize>,
+    methods: BTreeMap<usize, usize>,
+}
+
+/// Why a comparison is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefusedKind {
+    /// A string compared with an operand not known to be a string.
+    Mixed,
+    /// Two operands, neither of a known type.
+    Untyped,
+    /// A string literal pattern matched against a scrutinee not known to be
+    /// a string.
+    Pattern,
+    /// A call of a function of another module of the project that compares
+    /// a value that may be a string there (see `project`).
+    Callee,
+    /// `s.length` on a string: no string record has that member, and no
+    /// backend lowers the read.
+    Member,
+    /// `5 as string`: an integer literal other than the null handle `0` cast
+    /// to `string`; no string record is at that address.
+    Cast,
+}
+
+/// A comparison that would compare string handles instead of bytes.
+pub(crate) struct Refused {
+    pub(crate) op: BinOp,
+    pub(crate) kind: RefusedKind,
+    pub(crate) span: Span,
+    /// The function whose body holds the comparison (`None` at module level
+    /// and in a closure); for [`RefusedKind::Callee`], the function called.
+    pub(crate) function: Option<String>,
+}
+
+/// The `E2038` message for `refused`, naming the byte-wise std function.
+pub(crate) fn refusal_message(refused: &Refused) -> String {
+    let symbol = if refused.op == BinOp::Eq { "==" } else { "!=" };
+    let operands = match refused.kind {
+        RefusedKind::Mixed => "a string with an operand not known to be a string",
+        RefusedKind::Untyped => {
+            "two operands whose types are not known at compile time, so both may be strings"
+        }
+        RefusedKind::Pattern => {
+            return "a string literal `match` pattern is compared with a scrutinee not known \
+                    to be a string; it would compare a handle or read an integer as a \
+                    string record — use `string_eq(s, \"...\")` for byte-wise equality"
+                .to_string();
+        }
+        RefusedKind::Member => {
+            return "`.length` reads a member of a string, which no string record has, and \
+                    no backend lowers the read — use `string_len(s)` for the byte length"
+                .to_string();
+        }
+        RefusedKind::Cast => {
+            return "`as string` casts an integer other than the null handle `0`; no string \
+                    record is at that address, and `==` or a std.string function would read \
+                    one through it"
+                .to_string();
+        }
+        RefusedKind::Callee => {
+            let callee = refused.function.as_deref().unwrap_or("?");
+            return format!(
+                "`{callee}`, defined in another module of this project, compares two \
+                 operands that may be strings (refused there with E2038); it would compare \
+                 handles, not bytes — use `string_eq(a, b)` for byte-wise equality"
+            );
+        }
+    };
+    format!(
+        "`{symbol}` compares {operands}; it would compare handles, not bytes, and \
+         report equal text as unequal — use `string_eq(a, b)` for byte-wise equality"
     )
 }
 
-/// This deliberately accepts only values whose string-record provenance is
-/// visible locally. A named return declaration or opaque i64 handle alone is
-/// not proof that the value has the `{addr,len,cap}` String layout.
-fn is_string_value(mut node: &Node, env: &StringEnv) -> bool {
-    loop {
-        match node {
-            Node::Lit(Literal::Str(_), _) => return true,
-            Node::Lit(Literal::Ident(name), _) => return env.contains(name),
-            Node::Paren(inner, _) => node = inner,
-            Node::MethodCall {
-                receiver, method, ..
-            } if string_result_method(method) => node = receiver,
-            _ => return false,
+/// The diagnostic code of `refused`: `E6009` (the code the build gives the
+/// same read) for a string member read, `E2038` for every comparison.
+pub(crate) fn refusal_code(refused: &Refused) -> &'static str {
+    match refused.kind {
+        RefusedKind::Member => crate::type_checker::lowering_refusals::E_STRING_MEMBER,
+        _ => crate::type_checker::lowering_refusals::E_STRING_EQUALITY_OPERAND,
+    }
+}
+
+/// The `E2038` help text for `refused`.
+pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
+    match refused.kind {
+        RefusedKind::Mixed => {
+            "give the other operand a `string` type (parameter, annotated binding, \
+             field or function return) and store only strings (or the null handle \
+             `0`) where `string` is declared, or compare bytes explicitly with \
+             `string_eq(a, b)` from std.string"
+        }
+        RefusedKind::Untyped => {
+            "give an operand a declared type (an annotated binding such as \
+             `let n: i64 = ...`, a parameter, a field or a function return `-> T`) \
+             and store no string where another type is declared, or compare \
+             strings explicitly with `string_eq(a, b)` from std.string"
+        }
+        RefusedKind::Pattern => {
+            "give the scrutinee a `string` type (parameter, annotated binding, \
+             field or function return) and store only strings there, or test \
+             it with `string_eq(s, \"...\")` from std.string"
+        }
+        RefusedKind::Member => {
+            "call `string_len(s)` from std.string; std.string is a set of free \
+             functions, and a string has no `.length` member"
+        }
+        RefusedKind::Cast => {
+            "cast only a string or the null handle `0` to `string`; write text as a \
+             string literal, or build it with the std.string functions"
+        }
+        RefusedKind::Callee => {
+            "declare the compared slots `string` where strings are passed, or \
+             compare bytes there with `string_eq(a, b)` from std.string; \
+             `mindc build` reports the comparison in its own module"
         }
     }
 }
 
-fn remove_pattern_bindings(pattern: &Pattern, env: &mut StringEnv) {
-    let mut pending = vec![pattern];
-    while let Some(pattern) = pending.pop() {
-        match pattern {
-            Pattern::Ident(name) => {
-                env.remove(name);
-            }
-            Pattern::EnumVariant { args, .. } | Pattern::Tuple(args) => pending.extend(args),
-            Pattern::EnumStruct { fields, .. } => {
-                pending.extend(fields.iter().map(|(_, pattern)| pattern));
-            }
-            Pattern::Literal(_) | Pattern::Wildcard => {}
-        }
+/// Decide one equality from its operand classes: `Ok(true)` rewrites it to the
+/// byte-wise comparison, `Ok(false)` keeps it an integer comparison, and
+/// `Err` refuses it.
+fn decide(left: Class, right: Class) -> Result<bool, RefusedKind> {
+    match (left, right) {
+        (Class::Str, Class::Str) => Ok(true),
+        (Class::Str, Class::IntLiteral) | (Class::IntLiteral, Class::Str) => Ok(false),
+        (Class::Str, _) | (_, Class::Str) => Err(RefusedKind::Mixed),
+        (Class::Unknown, Class::Unknown) => Err(RefusedKind::Untyped),
+        _ => Ok(false),
     }
 }
 
@@ -108,23 +268,25 @@ fn assigned_in(stmts: &[Node]) -> Assigned {
     assigned
 }
 
-/// Give every original equality node a deterministic preorder number. Pointer
-/// identity is used only inside this immutable AST snapshot; the numbers, not
-/// pointers or source-local spans, are carried into the rewritten clone.
+/// Give every original equality and method call node a deterministic
+/// preorder number. Pointer identity is used only inside this immutable AST
+/// snapshot; the numbers, not pointers or source-local spans, are carried
+/// into the rewritten clone.
 fn equality_ordinals(module: &Module) -> Ordinals {
-    let mut ordinals = Ordinals::new();
-    let mut next = 0;
+    let mut ordinals = Ordinals::default();
     let mut pending: Vec<&Node> = module.items.iter().rev().collect();
     while let Some(node) = pending.pop() {
-        if matches!(
-            node,
+        let numbered = match node {
             Node::Binary {
                 op: BinOp::Eq | BinOp::Ne,
                 ..
-            }
-        ) {
-            ordinals.insert(node as *const Node as usize, next);
-            next += 1;
+            } => Some(&mut ordinals.equalities),
+            Node::MethodCall { .. } => Some(&mut ordinals.methods),
+            _ => None,
+        };
+        if let Some(numbered) = numbered {
+            let next = numbered.len();
+            numbered.insert(node as *const Node as usize, next);
         }
         let children = children_ref(node);
         pending.extend(children.into_iter().rev());
@@ -132,287 +294,60 @@ fn equality_ordinals(module: &Module) -> Ordinals {
     ordinals
 }
 
-enum Task<'a> {
-    Stmts {
-        stmts: &'a [Node],
-        index: usize,
-        env: StringEnv,
-        assigned: Rc<Assigned>,
-    },
-    Node {
-        node: &'a Node,
-        env: StringEnv,
-        assigned: Rc<Assigned>,
-    },
+/// Whether a call in the module being analysed may be refused: it is a
+/// module of a project build in which another module refuses a comparison
+/// (see `project`).
+fn calls_may_be_refused() -> bool {
+    #[cfg(feature = "cross-module-imports")]
+    return project::current().is_some_and(|summary| !summary.refusing.is_empty());
+    #[cfg(not(feature = "cross-module-imports"))]
+    false
 }
 
-fn push_stmts<'a>(pending: &mut Vec<Task<'a>>, stmts: &'a [Node], env: StringEnv) {
-    pending.push(Task::Stmts {
-        stmts,
-        index: 0,
-        env,
-        assigned: Rc::new(assigned_in(stmts)),
-    });
-}
-
-/// Record equality nodes with two locally proven string operands. This visitor
-/// owns an explicit heap worklist so deeply nested std modules do not consume
-/// the compiler thread stack. Since assigned names are excluded for their whole
-/// declaration, branch-local facts never need an optimistic control-flow join.
-fn collect_targets(module: &Module, ordinals: &Ordinals) -> Targets {
-    let mut targets = Targets::new();
-    let mut pending = Vec::new();
-    push_stmts(&mut pending, &module.items, StringEnv::new());
-    while let Some(task) = pending.pop() {
-        match task {
-            Task::Stmts {
-                stmts,
-                index,
-                mut env,
-                assigned,
-            } => {
-                let Some(stmt) = stmts.get(index) else {
-                    continue;
+/// Whether `module` has a form the walk decides besides `==` / `!=`: a
+/// `match` with a string literal arm, which compares a string too, a
+/// `.length` member read, which is refused on a string, or a cast to a named
+/// type that may be `string`, refused for an integer literal (see `walk`).
+fn has_other_string_form(module: &Module) -> bool {
+    let mut pending: Vec<&Node> = module.items.iter().collect();
+    while let Some(node) = pending.pop() {
+        match node {
+            Node::Match { arms, .. } => {
+                let literal = |arm: &crate::ast::MatchArm| {
+                    matches!(arm.pattern, crate::ast::Pattern::Literal(Literal::Str(_)))
                 };
-                match stmt {
-                    Node::Let { name, value, .. } => {
-                        let value_env = env.clone();
-                        if !assigned.contains(name) && is_string_value(value, &env) {
-                            env.insert(name.clone());
-                        } else {
-                            env.remove(name);
-                        }
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: value,
-                            env: value_env,
-                            assigned,
-                        });
-                    }
-                    Node::Assign { name, value, .. } => {
-                        let value_env = env.clone();
-                        env.remove(name);
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: value,
-                            env: value_env,
-                            assigned,
-                        });
-                    }
-                    Node::FnDef(fd, _) => {
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env,
-                            assigned,
-                        });
-                        push_stmts(&mut pending, &fd.body, StringEnv::new());
-                    }
-                    _ => {
-                        pending.push(Task::Stmts {
-                            stmts,
-                            index: index + 1,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                        pending.push(Task::Node {
-                            node: stmt,
-                            env,
-                            assigned,
-                        });
-                    }
+                if arms.iter().any(literal) {
+                    return true;
                 }
             }
-            Task::Node {
-                node,
-                env,
-                assigned,
-            } => match node {
-                Node::Block { stmts, .. } | Node::Region { body: stmts, .. } => {
-                    pending.push(Task::Stmts {
-                        stmts,
-                        index: 0,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::If {
-                    cond,
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    if let Some(branch) = else_branch {
-                        pending.push(Task::Stmts {
-                            stmts: branch,
-                            index: 0,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                    pending.push(Task::Stmts {
-                        stmts: then_branch,
-                        index: 0,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: cond,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::For {
-                    var,
-                    start,
-                    end,
-                    body,
-                    ..
-                } => {
-                    let mut body_env = env.clone();
-                    body_env.remove(var);
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: body_env,
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: end,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: start,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::ForEach {
-                    var,
-                    collection,
-                    body,
-                    ..
-                } => {
-                    let mut body_env = env.clone();
-                    body_env.remove(var);
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: body_env,
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: collection,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::While { cond, body, .. } => {
-                    pending.push(Task::Stmts {
-                        stmts: body,
-                        index: 0,
-                        env: env.clone(),
-                        assigned: assigned.clone(),
-                    });
-                    pending.push(Task::Node {
-                        node: cond,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::Match {
-                    scrutinee, arms, ..
-                } => {
-                    for arm in arms.iter().rev() {
-                        let mut arm_env = env.clone();
-                        remove_pattern_bindings(&arm.pattern, &mut arm_env);
-                        pending.push(Task::Node {
-                            node: &arm.body,
-                            env: arm_env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                        if let Some(guard) = &arm.guard {
-                            pending.push(Task::Node {
-                                node: guard,
-                                env: arm_env,
-                                assigned: assigned.clone(),
-                            });
-                        }
-                    }
-                    pending.push(Task::Node {
-                        node: scrutinee,
-                        env,
-                        assigned,
-                    });
-                }
-                Node::Binary {
-                    op, left, right, ..
-                } => {
-                    if matches!(op, BinOp::Eq | BinOp::Ne)
-                        && is_string_value(left, &env)
-                        && is_string_value(right, &env)
-                    {
-                        targets.insert(ordinals[&(node as *const Node as usize)]);
-                    }
-                    let children = super::closures::node_children_ref(node);
-                    for child in children.into_iter().rev() {
-                        pending.push(Task::Node {
-                            node: child,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                }
-                Node::Closure(data, _) => {
-                    let closure_assigned = Rc::new(assigned_in(&data.body));
-                    let closure_env = data
-                        .captures
-                        .iter()
-                        .filter(|name| env.contains(*name) && !closure_assigned.contains(*name))
-                        .cloned()
-                        .collect();
-                    pending.push(Task::Stmts {
-                        stmts: &data.body,
-                        index: 0,
-                        env: closure_env,
-                        assigned: closure_assigned,
-                    });
-                }
-                Node::FnDef(fd, _) => push_stmts(&mut pending, &fd.body, StringEnv::new()),
-                _ => {
-                    let children = super::closures::node_children_ref(node);
-                    for child in children.into_iter().rev() {
-                        pending.push(Task::Node {
-                            node: child,
-                            env: env.clone(),
-                            assigned: assigned.clone(),
-                        });
-                    }
-                }
-            },
+            Node::FieldAccess { field, .. } if field == "length" => return true,
+            Node::As {
+                ty: crate::ast::TypeAnn::Named(name),
+                ..
+            } if !facts::SCALAR_NAMES.contains(&name.as_str()) => return true,
+            _ => {}
         }
+        pending.extend(children_ref(node));
     }
-    targets
+    false
 }
 
 /// Rewrite in deterministic preorder on an explicit heap worklist. A target is
 /// replaced before its original operands are queued, so the synthesized `!= 0`
-/// comparison is not counted as another source equality.
-fn rewrite(module: &mut Module, targets: &mut Targets) {
+/// comparison is not counted as another source equality, and a desugared
+/// method call keeps its receiver and arguments in their preorder.
+fn rewrite(module: &mut Module, targets: &mut Targets, methods: &mut MethodTargets) {
     let mut next_equality = 0;
+    let mut next_method = 0;
     let mut pending: Vec<&mut Node> = module.items.iter_mut().rev().collect();
     while let Some(node) = pending.pop() {
+        if matches!(node, Node::MethodCall { .. }) {
+            let ordinal = next_method;
+            next_method += 1;
+            if let Some(passes_receiver) = methods.remove(&ordinal) {
+                desugar_string_method(node, passes_receiver);
+            }
+        }
         let target = if matches!(
             node,
             Node::Binary {
@@ -458,157 +393,100 @@ fn rewrite(module: &mut Module, targets: &mut Targets) {
     }
 }
 
-/// Return a rewritten clone only when a proven comparison exists. The analysis
-/// itself is iterative: modules with no target keep lower_expr's stack shape,
-/// emitted bytes, and the Windows debug-stack margin unchanged.
-pub(crate) fn normalize(module: &Module) -> Option<Module> {
-    let ordinals = equality_ordinals(module);
-    if ordinals.is_empty() {
-        return None;
-    }
-    let mut targets = collect_targets(module, &ordinals);
-    if targets.is_empty() {
-        return None;
-    }
-    let mut rewritten = module.clone();
-    rewrite(&mut rewritten, &mut targets);
-    assert!(
-        targets.is_empty(),
-        "string equality normalization lost an analyzed AST target"
-    );
-    Some(rewritten)
+/// `s.method(args)` on a string `s` → `string_<method>(s, args)` (or, for a
+/// type-name receiver `string.method(args)`, `string_<method>(args)`): the
+/// call the MLIR lowering makes for a string receiver (`receiver_is_string`).
+fn desugar_string_method(node: &mut Node, passes_receiver: bool) {
+    let old = std::mem::replace(node, Node::Lit(Literal::Int(0), node.span()));
+    let Node::MethodCall {
+        receiver,
+        method,
+        args,
+        span,
+    } = old
+    else {
+        unreachable!("method ordinal did not name a method call")
+    };
+    let receiver = passes_receiver.then_some(*receiver);
+    *node = Node::Call {
+        callee: format!("string_{method}"),
+        args: receiver.into_iter().chain(args).collect(),
+        span,
+    };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ast::Span;
+/// The analysis of one module: the rewritten clone (only when a string
+/// comparison exists) and every refused comparison in source order.
+pub(crate) struct Analysis {
+    pub(crate) rewritten: Option<Module>,
+    pub(crate) refused: Vec<Refused>,
+}
 
-    fn count_calls(node: &Node, name: &str) -> usize {
-        let here = matches!(node, Node::Call { callee, .. } if callee == name) as usize;
-        here + match node {
-            Node::FnDef(fd, _) => fd.body.iter().map(|n| count_calls(n, name)).sum::<usize>(),
-            _ => super::super::closures::node_children_ref(node)
-                .into_iter()
-                .map(|n| count_calls(n, name))
-                .sum::<usize>(),
-        }
+/// Analyze `module` for lowering. The walk is iterative: modules with no
+/// target keep lower_expr's stack shape, emitted bytes, and the Windows
+/// debug-stack margin unchanged.
+pub(crate) fn analyze(module: &Module) -> Analysis {
+    analyze_with(module, false)
+}
+
+/// Analyze `module` for the interpreter: as for lowering, and a method call
+/// on a string also becomes the `string_<method>` call the MLIR lowering
+/// makes for it, so `mindc test` runs the same std function.
+pub(crate) fn analyze_interpreted(module: &Module) -> Analysis {
+    analyze_with(module, true)
+}
+
+fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
+    let ordinals = equality_ordinals(module);
+    let methods_wanted = desugar_methods && !ordinals.methods.is_empty();
+    let decides = !ordinals.equalities.is_empty()
+        || methods_wanted
+        || calls_may_be_refused()
+        || has_other_string_form(module);
+    if !decides {
+        return Analysis {
+            rewritten: None,
+            refused: Vec::new(),
+        };
     }
-
-    fn set_comparison_span(node: &mut Node, replacement: Span) {
-        if let Node::Binary {
-            op: BinOp::Eq | BinOp::Ne,
-            span,
-            ..
-        } = node
-        {
-            *span = replacement;
-        }
-        for child in super::super::closures::node_children_mut(node) {
-            set_comparison_span(child, replacement);
-        }
+    // The interpreter's module merges the std and project modules a test
+    // reaches into the test file; each is decided with its own facts, as the
+    // build compiles each alone (see `segments`).
+    let (mut targets, methods, refused) = if desugar_methods {
+        segments::collect_targets(module, &ordinals)
+    } else {
+        walk::collect_targets(module, &ordinals)
+    };
+    let mut methods = if desugar_methods {
+        methods
+    } else {
+        MethodTargets::new()
+    };
+    if targets.is_empty() && methods.is_empty() {
+        return Analysis {
+            rewritten: None,
+            refused,
+        };
     }
-
-    #[test]
-    fn rewrites_only_locally_proven_strings() {
-        let module = crate::parser::parse(
-            r#"fn same() -> i64 {
-                let a: string = "a"
-                let b: string = "b"
-                let local: string = "x"
-                if a == b { return 1 }
-                if local != "y" { return 2 }
-                return 0
-            }"#,
-        )
-        .unwrap();
-        let rewritten = normalize(&module).expect("two proven comparisons");
-        assert_eq!(
-            rewritten
-                .items
-                .iter()
-                .map(|n| count_calls(n, "__mind_string_eq"))
-                .sum::<usize>(),
-            2
-        );
+    let mut rewritten = module.clone();
+    rewrite(&mut rewritten, &mut targets, &mut methods);
+    assert!(
+        targets.is_empty() && methods.is_empty(),
+        "string equality normalization lost an analyzed AST target"
+    );
+    Analysis {
+        rewritten: Some(rewritten),
+        refused,
     }
+}
 
-    #[test]
-    fn numeric_and_invalidated_facts_are_no_op() {
-        let module = crate::parser::parse(
-            r#"fn control() -> i64 {
-                let value: string = "x"
-                value = 7
-                if value == "x" { return 1 }
-                if 2 != 3 { return 2 }
-                return 0
-            }"#,
-        )
-        .unwrap();
-        assert!(normalize(&module).is_none());
+/// Lowering entry: report each refused comparison through the check-time
+/// refusal sink (which `mindc check` and `mindc build` consult before
+/// lowering), then return the rewritten clone.
+pub(crate) fn normalize(module: &Module) -> Option<Module> {
+    let analysis = analyze(module);
+    for refused in &analysis.refused {
+        crate::type_checker::lowering_refusals::string_equality_operand(refused);
     }
-
-    #[test]
-    fn identical_cross_source_spans_do_not_rewrite_numeric_comparisons() {
-        let mut numeric = crate::parser::parse(
-            "fn numeric(a: i64, b: i64) -> i64 { if a == b { return 1 }; return 0 }",
-        )
-        .unwrap();
-        let mut textual = crate::parser::parse(
-            "fn textual() -> i64 { let a = \"a\"; let b = \"b\"; if a == b { return 1 }; return 0 }",
-        )
-        .unwrap();
-        let shared = Span::new(40, 46);
-        set_comparison_span(&mut numeric.items[0], shared);
-        set_comparison_span(&mut textual.items[0], shared);
-        numeric.items.extend(textual.items);
-
-        let rewritten = normalize(&numeric).expect("the string comparison is proven");
-        assert_eq!(count_calls(&rewritten.items[0], "__mind_string_eq"), 0);
-        assert_eq!(count_calls(&rewritten.items[1], "__mind_string_eq"), 1);
-    }
-
-    #[test]
-    fn an_assigned_name_is_never_treated_as_immutable_string_proof() {
-        let module = crate::parser::parse(
-            r#"fn control(flag: bool) -> i64 {
-                let value: string = "x"
-                if flag { value = 7; let value: string = "x" }
-                if value == "x" { return 1 }
-                return 0
-            }"#,
-        )
-        .unwrap();
-        assert!(normalize(&module).is_none());
-    }
-
-    #[test]
-    fn annotation_and_mixed_operands_do_not_create_string_proof() {
-        let module = crate::parser::parse(
-            r#"fn control(real: string) -> i64 {
-                let fake: string = 7
-                if fake == "x" { return 1 }
-                if real == 7 { return 2 }
-                if real == "x" { return 3 }
-                return 0
-            }"#,
-        )
-        .unwrap();
-        assert!(normalize(&module).is_none());
-    }
-
-    #[test]
-    fn lexical_shadowing_does_not_change_outer_proof() {
-        let module = crate::parser::parse(
-            r#"fn control() -> i64 {
-                let value: string = "outer"
-                if true { let value = 7 }
-                if value == "outer" { return 1 }
-                return 0
-            }"#,
-        )
-        .unwrap();
-        let rewritten = normalize(&module).expect("outer immutable string remains proven");
-        assert_eq!(count_calls(&rewritten.items[0], "__mind_string_eq"), 1);
-    }
+    analysis.rewritten
 }
