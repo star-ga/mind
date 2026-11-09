@@ -108,6 +108,7 @@
 #  include <stdio.h>      // SEEK_SET / SEEK_CUR (Unix gets these via <unistd.h>)
 #  include <io.h>
 #  include <fcntl.h>     // _O_RDONLY / _O_BINARY for MIND_OPEN_RDONLY
+#  include <share.h>     // _SH_DENYNO for _sopen_s
 #  include <intrin.h>     // __cpuid / __cpuidex (file-scope; not inside fn body)
 #  include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
@@ -128,6 +129,14 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
     _lseeki64(fd, cur, SEEK_SET);
     return (ssize_t)r;
 }
+// `_sopen_s` with `_SH_DENYNO` is the CRT's non-deprecated form of `_open`
+// (same sharing mode `_open` uses); it reports failure through its return value
+// and leaves `fd == -1`, which keeps the POSIX `open` contract of -1 on error.
+static int mind_open_rdonly_win(const char *path) {
+    int fd = -1;
+    if (_sopen_s(&fd, path, _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0) return -1;
+    return fd;
+}
 #  define MIND_READ(fd, b, c)      _read((fd), (b), (unsigned)(c))
 #  define MIND_WRITE(fd, b, c)     _write((fd), (b), (unsigned)(c))
 #  define MIND_PREAD(fd, b, c, o)  mind_pread_emu((fd), (b), (c), (mind_off_t)(o))
@@ -137,7 +146,7 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 // bytes `__mind_read` returns for the same file differ between substrates, i.e.
 // break byte-identity at the I/O boundary. POSIX has no such mode, so the two
 // branches agree only with it set.
-#  define MIND_OPEN_RDONLY(p)      _open((p), _O_RDONLY | _O_BINARY)
+#  define MIND_OPEN_RDONLY(p)      mind_open_rdonly_win((p))
 #  define MIND_LSEEK(fd, off, wh)  ((int64_t)_lseeki64((fd), (long long)(off), (wh)))
 #  define MIND_CLOSE(fd)           _close((fd))
 #else

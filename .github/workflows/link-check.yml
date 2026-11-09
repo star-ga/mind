@@ -25,7 +25,6 @@ jobs:
             --no-progress
             --user-agent curl/8.5.0
             --include-fragments
-            --exclude-mail
             --max-retries 5
             --retry-wait-time 10
             --exclude 'https://github.com/star-ga/mind-runtime'
