@@ -11,28 +11,44 @@ fn tls13ct_rx_byte(g: i64) -> i64 {
 }
 
 fn tls13ct_rx_connect(f: i64, size: i64, state: i64) -> i64 {
-    if size < 96 { return 200; }
+    if size < 96 {
+        return 200;
+    }
     let flags: i64 = __mind_load_i64(f + 16);
     let n1: i64 = __mind_load_i64(f + 24);
     let n2: i64 = __mind_load_i64(f + 32);
     let nh: i64 = __mind_load_i64(f + 40);
     let ns: i64 = __mind_load_i64(f + 48);
     let nf: i64 = __mind_load_i64(f + 56);
-    if nh != 0 || __mind_load_i64(f + 88) != 0 { return 201; }
+    if nh != 0 || __mind_load_i64(f + 88) != 0 {
+        return 201;
+    }
     let sh: i64 = f + 96 + n1 + n2;
     let flight: i64 = sh + ns;
     let entropy: i64 = tls13ct_config(state, flags, 1700000000, 0);
     let out: i64 = __mind_alloc(8192);
     let got1: i64 = tls13c_build_client_hello(state, entropy, 192, out);
-    if got1 != n1 { return 202; }
-    if tls13c_seal_client_hello(state, out, got1) != 0 { return 203; }
+    if got1 != n1 {
+        return 202;
+    }
+    if tls13c_seal_client_hello(state, out, got1) != 0 {
+        return 203;
+    }
     tls13c_read_out(state, out, 8192);
     let sn: i64 = tls13ct_plain_record(sh, ns, out);
     tls13c_feed(state, out, sn);
-    if tls13c_pump(state) < 0 { return 204; }
-    if tls13c_feed(state, flight, nf) != 0 { return 205; }
-    if tls13c_pump(state) != 0 { return 206; }
-    if tls13c_is_connected(state) != 1 { return 207; }
+    if tls13c_pump(state) < 0 {
+        return 204;
+    }
+    if tls13c_feed(state, flight, nf) != 0 {
+        return 205;
+    }
+    if tls13c_pump(state) != 0 {
+        return 206;
+    }
+    if tls13c_is_connected(state) != 1 {
+        return 207;
+    }
     tls13c_read_out(state, out, 8192);
     0
 }
@@ -42,22 +58,33 @@ fn tls13ct_rx_connect(f: i64, size: i64, state: i64) -> i64 {
 fn tls13ct_rx_send(state: i64, seq: i64, g: i64, n: i64) -> i64 {
     let data: i64 = __mind_alloc(n);
     let mut i: i64 = 0;
-    while i < n { __mind_store_i8(data + i, tls13ct_rx_byte(g + i)); i = i + 1; }
+    while i < n {
+        __mind_store_i8(data + i, tls13ct_rx_byte(g + i));
+        i = i + 1;
+    }
     let rec: i64 = __mind_alloc(tls13ci_max_record());
     let suite: i64 = tls13c_load_i64(state + 40);
     let rlen: i64 = tls13ci_record_seal(suite, state + 4352, state + 81964, seq, data, n, tls13ci_ct_app_data(), rec);
-    if rlen < 0 { return rlen; }
-    if tls13c_feed(state, rec, rlen) != 0 { return 0 - 1; }
+    if rlen < 0 {
+        return rlen;
+    }
+    if tls13c_feed(state, rec, rlen) != 0 {
+        return 0 - 1;
+    }
     0
 }
 
 // Read up to `n` bytes and check them against the stream starting at `g`.
 fn tls13ct_rx_take(state: i64, g: i64, n: i64) -> i64 {
     let out: i64 = __mind_alloc(n);
-    if tls13c_read_app(state, out, n) != n { return 0 - 1; }
+    if tls13c_read_app(state, out, n) != n {
+        return 0 - 1;
+    }
     let mut i: i64 = 0;
     while i < n {
-        if tls13c_u8(out + i) != tls13ct_rx_byte(g + i) { return 0 - 2; }
+        if tls13c_u8(out + i) != tls13ct_rx_byte(g + i) {
+            return 0 - 2;
+        }
         i = i + 1;
     }
     0
@@ -66,7 +93,9 @@ fn tls13ct_rx_take(state: i64, g: i64, n: i64) -> i64 {
 pub fn tls13ct_run_rx(f: i64, size: i64) -> i64 {
     let state: i64 = __mind_alloc(tls13c_state_size());
     let c: i64 = tls13ct_rx_connect(f, size, state);
-    if c != 0 { return c; }
+    if c != 0 {
+        return c;
+    }
     let seq0: i64 = tls13c_load_i64(state + 152);
     // 60 records of 100 bytes (6000 > 2048). The reader trails the stream by
     // 40 bytes, so the read cursor never reaches the end and the buffer is
@@ -74,21 +103,43 @@ pub fn tls13ct_run_rx(f: i64, size: i64) -> i64 {
     let mut k: i64 = 0;
     let mut read: i64 = 0;
     while k < 60 {
-        if tls13ct_rx_send(state, seq0 + k, k * 100, 100) != 0 { return 210; }
-        if tls13c_pump(state) != 0 { return 211; }
+        if tls13ct_rx_send(state, seq0 + k, k * 100, 100) != 0 {
+            return 210;
+        }
+        if tls13c_pump(state) != 0 {
+            return 211;
+        }
         let mut want: i64 = 100;
-        if k == 0 { want = 60; }
-        if tls13ct_rx_take(state, read, want) != 0 { return 212; }
+        if k == 0 {
+            want = 60;
+        }
+        if tls13ct_rx_take(state, read, want) != 0 {
+            return 212;
+        }
         read = read + want;
         k = k + 1;
     }
-    if tls13ct_rx_take(state, read, 40) != 0 { return 213; }
-    if tls13c_read_app(state, __mind_alloc(8), 8) != 0 { return 214; }
+    if tls13ct_rx_take(state, read, 40) != 0 {
+        return 213;
+    }
+    if tls13c_read_app(state, __mind_alloc(8), 8) != 0 {
+        return 214;
+    }
     // Fail closed: 40 unread bytes plus a 2010-byte record exceed the buffer.
-    if tls13ct_rx_send(state, seq0 + 60, 6000, 40) != 0 { return 215; }
-    if tls13c_pump(state) != 0 { return 216; }
-    if tls13ct_rx_send(state, seq0 + 61, 6040, 2010) != 0 { return 217; }
-    if tls13c_pump(state) != tls13c_err_ovf() { return 218; }
-    if tls13c_is_connected(state) != 0 { return 219; }
+    if tls13ct_rx_send(state, seq0 + 60, 6000, 40) != 0 {
+        return 215;
+    }
+    if tls13c_pump(state) != 0 {
+        return 216;
+    }
+    if tls13ct_rx_send(state, seq0 + 61, 6040, 2010) != 0 {
+        return 217;
+    }
+    if tls13c_pump(state) != tls13c_err_ovf() {
+        return 218;
+    }
+    if tls13c_is_connected(state) != 0 {
+        return 219;
+    }
     0
 }

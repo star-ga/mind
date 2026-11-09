@@ -39,9 +39,11 @@
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
 
 /// `import std.toml` (which imports std.vec, std.map and std.string) plus a
 /// call to an ambient std.vec fn the runtime support does not link.
@@ -112,7 +114,16 @@ fn score() -> i64 {
 }
 "#;
 
+/// One case, one directory. The cases run on parallel threads; two sharing a
+/// path raced (one `mindc test` read the other's truncated write and found 0
+/// tests), so a label already taken in this process is refused, not raced.
 fn scratch(label: &str) -> PathBuf {
+    static TAKEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    let fresh = TAKEN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(label.to_owned());
+    assert!(fresh, "two cases share the scratch label {label}");
     let dir = common::scratch_dir("std_import_admission_parity").join(label);
     fs::create_dir_all(&dir).expect("create case dir");
     dir
@@ -267,7 +278,8 @@ fn every_import_reaching_an_ambient_module_refuses_its_unlinkable_fns() {
     ];
     for module in ["toml", "cli", "http", "tui"] {
         for (name, body) in calls {
-            let stem = format!("{module}_{name}");
+            // `ambient_` keeps toml/vec_free off the stem the test above owns.
+            let stem = format!("ambient_{module}_{name}");
             let program = format!("import std.{module};\n\nfn score() -> i64 {{\n    {body}\n}}\n");
             assert_interpreter_refuses(&stem, &program);
         }

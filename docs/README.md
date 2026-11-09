@@ -10,6 +10,7 @@ This directory collects deep technical documentation for the MIND language, comp
 - [Autodiff](autodiff.md)
 - [IR & MLIR Integration](ir-mlir.md)
 - [FFI & Runtime Embedding](ffi-runtime.md)
+- [std.procgroup: run many child processes](std-procgroup.md)
 - [Benchmarks](benchmarks.md)
 - [Roadmap](roadmap.md)
 
