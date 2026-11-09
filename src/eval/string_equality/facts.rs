@@ -142,7 +142,6 @@ pub(super) const SCALAR_NAMES: &[&str] = &[
     "char", "()",
 ];
 
-/// Record `value` for `name`; two declarations that disagree prove nothing.
 /// The name a declaration is keyed by: its source name, without the owner
 /// `mindc test` qualifies the items of its merged module with, so calls and
 /// the project summary, which use source names, find it.
@@ -150,6 +149,7 @@ pub(super) fn fn_key(name: &str) -> &str {
     crate::eval::module_bindings::symbol_display_name(name)
 }
 
+/// Record `value` for `name`; two declarations that disagree prove nothing.
 fn merge<T: PartialEq>(map: &mut BTreeMap<String, Option<T>>, name: &str, value: Option<T>) {
     match map.get_mut(name) {
         Some(slot) if *slot != value => *slot = None,
