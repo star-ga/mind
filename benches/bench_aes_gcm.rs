@@ -151,6 +151,11 @@ fn seal(
     }
 }
 
+/// GCM spec Test Case 2 key and IV (McGrew/Viega, "The Galois/Counter Mode of
+/// Operation", Appendix B): published all-zero test inputs, never a real key.
+const GCM_TC2_KEY: [u8; 16] = [0u8; 16];
+const GCM_TC2_IV: [u8; 12] = [0u8; 12];
+
 /// Known-answer gate — McGrew/Viega GCM spec Test Case 2 (also verified against
 /// pyca in `tests/crypto_vectors_driver.py`): all-zero 128-bit key, all-zero
 /// 96-bit IV, a single 16-byte zero plaintext block, no AAD. Panics (fails the
@@ -162,8 +167,8 @@ fn assert_gcm_kat(lib: &Library) {
             .expect("aes128_gcm_encrypt symbol")
     };
 
-    let key = [0u8; 16];
-    let iv = [0u8; 12];
+    let key = GCM_TC2_KEY;
+    let iv = GCM_TC2_IV;
     let pt = [0u8; 16];
     // aad_len == 0, but keep a valid 1-byte backing buffer for the address arg.
     let aad = [0u8; 1];
@@ -209,9 +214,9 @@ fn bench_aes_gcm(c: &mut Criterion) {
             .expect("aes128_gcm_encrypt symbol")
     };
 
-    // Fixed 128-bit key / 96-bit IV; empty AAD (still a valid backing pointer).
-    let key = [0u8; 16];
-    let iv = [0u8; 12];
+    // The TC2 test key / IV; empty AAD (still a valid backing pointer).
+    let key = GCM_TC2_KEY;
+    let iv = GCM_TC2_IV;
     let aad = [0u8; 1];
 
     let mut group = c.benchmark_group("aes128_gcm_encrypt");

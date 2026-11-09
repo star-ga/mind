@@ -205,7 +205,7 @@ fn main() -> i64 {
 }
 """
 
-S_GENDEREF_SHADOW = """\
+S_GEN_DEREF_SHADOW = """\
 fn main() -> i64 {
     let gen_deref = 1
     let z = gen_deref(3)
@@ -267,7 +267,7 @@ CASES = [
     (S_MIND_UNREG, "__mind_zzz(1", 0, True, "shadowed unregistered __mind_ -> no (prefix)"),
     (S_BYTE_SHADOW, "byte(2", 0, True, "shadowed 'byte' -> no (E2024 table entry)"),
     (S_BYTES_SHADOW, "bytes(2", 0, True, "shadowed 'bytes' -> no (value type)"),
-    (S_GENDEREF_SHADOW, "gen_deref(3", 0, True, "shadowed gen_deref -> no (builtin)"),
+    (S_GEN_DEREF_SHADOW, "gen_deref(3", 0, True, "shadowed gen_deref -> no (builtin)"),
     (S_PRELUDE_SHADOW, "Some(2", 0, True, "shadowed prelude Some -> no (name_resolvable)"),
     (S_QUALIFIED, "Col::Red(1", 0, True, "qualified head -> no (:: exclusion)"),
     (S_DOT_HEAD, "s.foo(2", 0, True, "dot head -> no (method/path head)"),

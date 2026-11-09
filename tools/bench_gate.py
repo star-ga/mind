@@ -493,6 +493,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--min-trusted",
+        dest="min_fixtures_asserted",
         type=int,
         default=3,
         help="minimum trustworthy frontier fixtures required; default 3",
@@ -580,7 +581,7 @@ def main() -> int:
     rows: list[tuple[str, float | None, float | None, float, float, float | None, str]] = []
     missing: list[str] = []
     failed = False
-    trusted = 0
+    fixtures_asserted = 0  # count of low-variance fixture comparisons
     required_noisy: list[str] = []
     rebless_candidates: list[str] = []
     for name in watched:
@@ -594,8 +595,9 @@ def main() -> int:
             # A missing MEASUREMENT is not a warning, it is an absent gate.
             #
             # This fails CLOSED on a missing reference (above) but used to fail OPEN
-            # here: every watched name `continue`d, rows stayed empty, trusted==0 with
-            # no noisy entries skipped the inconclusive guard, and the run printed
+            # here: every watched name `continue`d, rows stayed empty,
+            # fixtures_asserted==0 with no noisy entries skipped the inconclusive
+            # guard, and the run printed
             # "bench gate: PASS" exit 0 having compared NOTHING. Measured 2026-08-29 —
             # an empty --current produced three warnings and a green gate.
             #
@@ -616,7 +618,7 @@ def main() -> int:
         if rel_var is not None and rel_var > args.max_rel_variance:
             verdict = "NOISY"
         else:
-            trusted += 1
+            fixtures_asserted += 1
             # FAIL if it regresses beyond threshold over EITHER reference.
             over_ch = d_ch is not None and d_ch > args.threshold
             over_fl = d_fl is not None and d_fl > args.threshold
@@ -678,7 +680,7 @@ def main() -> int:
     # Machine-readable count consumed by the shared gate runner. Only complete,
     # low-variance fixture comparisons and low-variance ordering pairs
     # contribute to the assertion count.
-    print(f"asserted={trusted + pairs_asserted}")
+    print(f"asserted={fixtures_asserted + pairs_asserted}")
     if required_noisy:
         print(
             "::error::--require-pipeline canonical fixture(s) are noisy: "
@@ -724,14 +726,14 @@ def main() -> int:
             f"{args.max_rel_variance:.0%}); the ordering is not asserted. Re-run on an idle host."
         )
         return 2
-    if trusted < args.min_trusted:
+    if fixtures_asserted < args.min_fixtures_asserted:
         print(
-            f"::error::bench gate FAILED: only {trusted} trustworthy frontier "
-            f"fixture(s) asserted; minimum is {args.min_trusted}. "
+            f"::error::bench gate FAILED: only {fixtures_asserted} trustworthy frontier "
+            f"fixture(s) asserted; minimum is {args.min_fixtures_asserted}. "
             f"Noisy fixtures exceed the {args.max_rel_variance:.0%} trust bar."
         )
         return 2
-    if trusted == 0 and noisy:
+    if fixtures_asserted == 0 and noisy:
         print(
             f"::warning::all benches inconclusive (spread > {args.max_rel_variance:.0%}): "
             "loaded box. Re-run on an idle host before trusting deltas."
@@ -740,7 +742,8 @@ def main() -> int:
     if noisy:
         print(
             f"::warning::ignored {len(noisy)} noisy bench(es) {noisy} "
-            f"(spread > {args.max_rel_variance:.0%}); gated on the {trusted} trustworthy one(s)."
+            f"(spread > {args.max_rel_variance:.0%}); gated on the "
+            f"{fixtures_asserted} trustworthy one(s)."
         )
     if rebless_candidates:
         print(
