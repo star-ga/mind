@@ -2165,7 +2165,7 @@ jobs:
       # run_gate-exempt: tools/rules_engine.py - a `test -s` presence check on the unpacked scanner, not an invocation; the governance gate runs in the next step
       - name: Pull the pinned scanner
         env:
-          IMAGE: ghcr.io/star-ga/arch-mind@sha256:c63d54d8f2aa9914402f8c8b37381438ebfb2189f383052de722b44377e7772d
+          IMAGE: ghcr.io/star-ga/arch-mind@sha256:720ea1092557b1a45efb7eaa114da33d6b5c7ac9ee00e8901b3583cb1a08a3a4
           SCANNER_ROOT: ${{ runner.temp }}/arch-mind-scanner
         run: |
           set -euo pipefail
@@ -2194,7 +2194,7 @@ jobs:
           test -x "$root/sidecar/target/release/arch-mind-sidecar"
 
       - name: Run arch-mind governance gate
-        # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind fea599ec and publishes asserted=<N> directly
+        # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind c12d08b3 and publishes asserted=<N> directly
         env:
           ARCH_MIND: ${{ runner.temp }}/arch-mind-scanner/bin/arch-mind
           ARCH_BASE_REF: origin/main
