@@ -37,21 +37,19 @@
 // the code lives in the modules it imports. x509_verify_server_chain is in
 // std/x509_path.mind and x509_parse in std/x509_der.mind, so a client such
 // as std.tls13_client calls them without importing this module.
-// The `pub import` lines are that entry point: modules this file does not
-// call itself, re-exported to every caller of `import std.x509`.
 // ==========================================================================
 
 import std.sha256;
 import std.sha512;
-pub import std.ecdsa_p256;
-pub import std.x509_p384;
-pub import std.x509_bundle;
-pub import std.rsa_pss;
+import std.ecdsa_p256;
+import std.x509_p384;
+import std.x509_bundle;
+import std.rsa_pss;
 import std.x509_der;
-pub import std.x509_ext;
-pub import std.x509_name;
+import std.x509_ext;
+import std.x509_name;
 import std.x509_sig;
-pub import std.x509_path;
+import std.x509_path;
 
 // ---------------------------------------------------------------------------
 // Capability flag (fail-closed honesty marker). 1 == true: peer

@@ -65,7 +65,7 @@ EXPECTED_COMPILER_SHA256 = (
     "377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b"
 )
 EXPECTED_STD_SEED_SHA256 = (
-    "07dc9f456dd2444a917eecbd7a7f04a4cc43929d3ecb7968dbf5f5811cd13f8d"
+    "421d99c41cd6b0dcf77c39f67181b9846a2658437d72eb8b590d5c26089bffca"
 )
 
 # Every subprocess this gate starts is bounded, so a hang is a reported failure
