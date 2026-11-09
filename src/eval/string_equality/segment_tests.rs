@@ -170,7 +170,7 @@ fn project_test_own_functions_keep_bare_keys() {
 /// Each module of a project build analysed with the whole-project registry
 /// installed and its module path current: the refusal kinds of `analysed`.
 #[cfg(feature = "cross-module-imports")]
-fn project_refusals(modules: &[(&str, &str)], analysed: &str) -> Vec<RefusedKind> {
+fn project_refusals_reparsed(modules: &[(&str, &str)], analysed: &str) -> Vec<RefusedKind> {
     let parsed: Vec<(String, Module)> = modules
         .iter()
         .map(|(path, src)| (path.to_string(), parse(src)))
@@ -178,8 +178,12 @@ fn project_refusals(modules: &[(&str, &str)], analysed: &str) -> Vec<RefusedKind
     let enums = crate::project::build_global_enums(&parsed);
     let _enums = crate::qualified_enums::GlobalGuard::install(enums);
     let _module = crate::qualified_enums::ModuleGuard::install(analysed);
-    let (_, module) = parsed.iter().find(|(path, _)| path == analysed).unwrap();
-    analyze(module).refused.iter().map(|r| r.kind).collect()
+    // The project build parses each module with the whole-project registry
+    // installed. In particular, this rewrites an imported constructor to its
+    // registry key and makes the colliding-owner case exercise that lookup.
+    let (_, source) = modules.iter().find(|(path, _)| *path == analysed).unwrap();
+    let module = parse(source);
+    analyze(&module).refused.iter().map(|r| r.kind).collect()
 }
 
 #[cfg(feature = "cross-module-imports")]
@@ -236,20 +240,20 @@ fn imported_payload_store_is_read_by_the_declaring_module() {
             modules.push(("crate.shadow", SHADOW));
         }
         assert_eq!(
-            project_refusals(&modules, "crate.events"),
+            project_refusals_reparsed(&modules, "crate.events"),
             vec![UNTYPED],
             "shadow={shadow}"
         );
         assert_eq!(
-            project_refusals(&modules, "crate.main"),
+            project_refusals_reparsed(&modules, "crate.main"),
             vec![RefusedKind::Callee],
             "shadow={shadow}"
         );
         // Positive control: integers in the payload.
         let ints = probe_main("7", shadow);
         modules[1].1 = ints.as_str();
-        assert_eq!(project_refusals(&modules, "crate.events"), vec![]);
-        assert_eq!(project_refusals(&modules, "crate.main"), vec![]);
+        assert_eq!(project_refusals_reparsed(&modules, "crate.events"), vec![]);
+        assert_eq!(project_refusals_reparsed(&modules, "crate.main"), vec![]);
     }
 }
 
@@ -277,7 +281,10 @@ fn imported_struct_variant_store_is_read_by_the_declaring_module() {
         return same_text(a, b)
     }";
     let modules = [("crate.events", events), ("crate.main", main)];
-    assert_eq!(project_refusals(&modules, "crate.events"), vec![UNTYPED]);
+    assert_eq!(
+        project_refusals_reparsed(&modules, "crate.events"),
+        vec![UNTYPED]
+    );
 }
 
 /// An imported variant declared to carry a `string` compares bytes in the
@@ -298,5 +305,5 @@ fn an_imported_string_payload_compares_bytes() {
             }",
         ),
     ];
-    assert_eq!(project_refusals(&modules, "crate.main"), vec![]);
+    assert_eq!(project_refusals_reparsed(&modules, "crate.main"), vec![]);
 }
