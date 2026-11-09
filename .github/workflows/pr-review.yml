@@ -58,7 +58,11 @@ jobs:
           # Outside the checkout, so the base-branch script's single-turn CLI call does not stop on file reads.
           (cd "$(mktemp -d)" && python3 /tmp/pr_review.py) > /tmp/review.md || { rc=$?
             # On the token path, show the CLI's own error (stdout) so a failed review is diagnosable.
-            if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then echo "Reply OK" | claude -p --max-turns 1 --output-format text 2>&1 | head -c 400; echo; fi
+            # Same isolation as the call above: empty directory, no tools, ANTHROPIC_* stripped; never changes the exit code.
+            if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+              (cd "$(mktemp -d)" && env $(env | grep -o '^ANTHROPIC_[A-Z_]*' | sed 's/^/-u /') \
+                sh -c 'echo "Reply OK" | claude -p --tools "" --max-turns 1 --output-format text' 2>&1 | head -c 400) || true
+              echo; fi
             exit $rc; }
       - name: Post or update the review comment
         run: |

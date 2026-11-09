@@ -256,25 +256,6 @@ def case_committed_anatomy_names_no_model() -> None:
               f"gate exited {r.returncode}; stdout={r.stdout.strip()[-400:]!r}")
 
 
-def case_committed_anatomy_matches_the_tracked_tree() -> None:
-    """The committed index must describe THIS tree: every path it lists is
-    tracked, and tracked top-level files are not missing from it."""
-    doc = ROOT / "ANATOMY.md"
-    tracked = set(subprocess.run(["git", "ls-files"], cwd=ROOT, check=True,
-                                 capture_output=True, text=True).stdout.split())
-    basenames = {Path(p).name for p in tracked}
-    listed = re.findall(r"^- `([^`]+)`", doc.read_text(), re.M)
-    check("ANATOMY.md lists something", bool(listed), "no entries parsed")
-    unknown = sorted({n for n in listed if n not in basenames and n not in tracked})
-    check("every file ANATOMY.md lists is tracked", not unknown,
-          f"untracked entries: {unknown[:5]}")
-    # Spot-check the other direction with files the stale index dropped.
-    for rel in ("config/token_pricing.toml", ".githooks/post-merge"):
-        if rel in tracked:
-            check(f"ANATOMY.md lists tracked {rel}", Path(rel).name in set(listed),
-                  "tracked file missing from the generated index")
-
-
 def case_author_identity_guard_rejects_trailing_dot_and_accepts_exact() -> None:
     """The author identity guard must require the exact string
     `STARGA Inc <noreply@star.ga>` and reject `STARGA Inc.` (trailing period)
@@ -546,7 +527,6 @@ def main() -> int:
         case_bare_vendor_name_outside_the_artifact_still_passes,
         case_missing_artifact_fails_closed,
         case_committed_anatomy_names_no_model,
-        case_committed_anatomy_matches_the_tracked_tree,
         case_author_identity_guard_rejects_trailing_dot_and_accepts_exact,
         case_identity_guard_rejects_foreign_author_merge_in_range,
         case_identity_guard_accepts_house_identity_merge_in_range,

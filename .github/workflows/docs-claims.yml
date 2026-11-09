@@ -106,11 +106,18 @@ jobs:
         # pathspec, and scripts/anatomy.sh indexed UNTRACKED files, so a private
         # local note could be transcribed into that very document. It also
         # re-checks the committed ANATOMY.md against the TRACKED tree, which is
-        # what catches an index regenerated in the wrong checkout.
+        # what catches an index regenerated in the wrong checkout. That freshness
+        # re-check lives in scripts/test_smoke_wiring_lint.py --anatomy (run by this same step) and
+        # runs on a push to main only (it reads GITHUB_EVENT_NAME and
+        # GITHUB_REF): ANATOMY.md is regenerated on main only, so a PR branch holds
+        # a stale copy by design. On pull_request the no-attribution scan of
+        # ANATOMY.md and every scope case still run.
         # Same job as the gate it tests, deliberately: this job already has a row
         # in .github/required-ci-jobs.tsv, so the step is release-required
         # without a new row (verify: python3 scripts/check_release_gating.py).
-        run: python3 scripts/run_gate.py scripts/test_no_ai_attribution.py
+        run: |
+          python3 scripts/run_gate.py scripts/test_no_ai_attribution.py
+          python3 scripts/run_gate.py scripts/test_smoke_wiring_lint.py --anatomy
 
       - name: JSON is never an evidence-hash preimage (wedge integrity)
         run: python3 scripts/run_gate.py scripts/check_json_not_evidence.sh

@@ -159,7 +159,8 @@ fn execute_tests_with(
                 }
             }
         }) {
-            Ok(_accepted_stack) => {
+            Ok(_accepted_stack) =>
+            {
                 #[cfg(test)]
                 if let Some(on_spawned) = &completion.on_worker_spawned {
                     on_spawned(worker_idx, _accepted_stack);

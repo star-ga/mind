@@ -18,9 +18,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::super::{
-    IndexedTestEntry, IndexedTestResult, TestError, TestResult, TestStatus,
-};
+use super::super::{IndexedTestEntry, IndexedTestResult, TestError, TestResult, TestStatus};
 
 /// Default stack size for each test worker thread (512 MiB).
 ///
@@ -204,9 +202,7 @@ impl WorkerPool {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            std::io::Error::other("no worker stack sizes configured")
-        }))
+        Err(last_err.unwrap_or_else(|| std::io::Error::other("no worker stack sizes configured")))
     }
 
     /// Cancel queued work, join all already-spawned workers so no orphan
@@ -289,8 +285,7 @@ mod tests {
     };
     use crate::test::runner::{CompletionControl, execute_tests_with};
     use crate::test::{
-        EvalSupport, IndexedTestEntry, ReporterKind, TestEntry, TestOptions, TestResult,
-        TestStatus,
+        EvalSupport, IndexedTestEntry, ReporterKind, TestEntry, TestOptions, TestResult, TestStatus,
     };
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -340,19 +335,19 @@ mod tests {
         assert_eq!(&ladder[1..], FALLBACK_WORKER_STACKS);
 
         let completion = CompletionControl {
-            worker_stacks: Some(Arc::new(move |_| {
-                vec![UNSPAWNABLE_STACK, SMALL_TEST_STACK]
-            })),
+            worker_stacks: Some(Arc::new(move |_| vec![UNSPAWNABLE_STACK, SMALL_TEST_STACK])),
             on_worker_spawned: Some(Arc::new(move |idx, stack| {
                 recorded.lock().expect("spawned lock").push((idx, stack));
             })),
             ..CompletionControl::default()
         };
-        let runner = Arc::new(|entry: &TestEntry, _support: Option<&EvalSupport>| TestResult {
-            name: entry.name.clone(),
-            status: TestStatus::Passed,
-            duration: Duration::ZERO,
-        });
+        let runner = Arc::new(
+            |entry: &TestEntry, _support: Option<&EvalSupport>| TestResult {
+                name: entry.name.clone(),
+                status: TestStatus::Passed,
+                duration: Duration::ZERO,
+            },
+        );
         let sink = Arc::new(|_result: &TestResult, _reporter: &ReporterKind| {});
         let opts = TestOptions {
             threads: 2,
@@ -383,11 +378,13 @@ mod tests {
             worker_stacks: Some(Arc::new(move |_| ladder.clone())),
             ..CompletionControl::default()
         };
-        let runner = Arc::new(|entry: &TestEntry, _support: Option<&EvalSupport>| TestResult {
-            name: entry.name.clone(),
-            status: TestStatus::Passed,
-            duration: Duration::ZERO,
-        });
+        let runner = Arc::new(
+            |entry: &TestEntry, _support: Option<&EvalSupport>| TestResult {
+                name: entry.name.clone(),
+                status: TestStatus::Passed,
+                duration: Duration::ZERO,
+            },
+        );
         let emitted = Arc::new(Mutex::new(Vec::<String>::new()));
         let emitted_sink = Arc::clone(&emitted);
         let sink = Arc::new(move |result: &TestResult, _reporter: &ReporterKind| {
@@ -479,7 +476,10 @@ mod tests {
         };
 
         let summary = execute_tests_with(
-            vec![dummy_entry(1, "worker0_item"), dummy_entry(2, "worker1_item")],
+            vec![
+                dummy_entry(1, "worker0_item"),
+                dummy_entry(2, "worker1_item"),
+            ],
             Arc::new(BTreeMap::new()),
             &opts,
             runner,
