@@ -246,6 +246,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mindc test` evaluates `vec_zeroed` arrays and `Ok`/`Err` values like the build (`#375`,
   `b235dda0`)**: the test evaluator now handles zero-initialized growable arrays and
   `Result::Ok`/`Result::Err` payloads with the same semantics as native execution.
+- **A float comparison returned from a `bool` function is a `bool` (`#377`, `d9720285`)**:
+  the type checker no longer reads `return a <= b;` over `f32`/`f64` operands in a
+  `-> bool` function as returning a float (E2010); a comparison, `&&`/`||` or `!`
+  (parentheses looked through) denotes a truth value, while a genuine float returned
+  from an int/bool function is still refused. `tests/mindc_test_eval_float_compare_parity.rs`
+  holds `mindc test` and the native build to the same result for every comparison on
+  `f32` and `f64` through `if`, `!`, `&&`, `||`, a returned `bool`, a `bool` binding and
+  a `while` condition.
 - **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
   formatter's `--diff` mode no longer panics on edge-case inputs.
 - **`mindc test` admits exactly what the build links and every explicit `std` import
@@ -273,7 +281,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
   with known-answer tests and cross-substrate identity receipts.
 - **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
-  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`); automated
+  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
+  pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`); automated
   pull-request review and a public-leak check run in CI (`#305`); clippy lints on `main` are
   cleared (`#302`); the `mic-map` SDK dev dependencies are bumped for advisories
   (`#296`, `#283`).
