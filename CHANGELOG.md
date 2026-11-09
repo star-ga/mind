@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-09
+
 ### Added
 - **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
@@ -192,6 +194,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
   when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
   verify negative returns on null, missing, and non-directory paths in debug and release builds.
+- **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`)**: `String`
+  record fields are now lowered through the whole-program mic@3 evidence path instead of
+  falling back to a placeholder, so a project whose structs carry `String` fields emits
+  correct evidence bytes.
+- **`--backend native` bridge and self-host seed chain (`be7f945c`, native lane)**: `mindc build
+  --backend native` bridges to the pure-MIND native-ELF compiler, and the self-host bootstrap
+  seed chain (freeze / re-bless / advance) keeps the zero-Rust loop consistent across the
+  native-lane admission work. `__mind_open` is wired on the Rust/MLIR backend
+  (`be7f945c`), emptying the quarantine-exec set.
+- **A bare call to an imported `std` world function is classified as a world call (`#374`,
+  `e68f3480`)**: the determinism evidence classifier now treats a bare call to an imported
+  `std` module's world-reading function (e.g. `entropy_fill`, `dns_resolve`) as a world call,
+  so a program that reaches one through an imported module is refused without
+  `--allow-nondeterministic` and attested `nondeterministic` with it, matching direct calls.
+- **`mindc test` evaluates float conditions, zeroed arrays, `break` and `for-each` like the
+  build (`#342`, `67439663`)**: the test evaluator now matches native/MLIR semantics for
+  float-typed `if`/`while` conditions, zero-initialized fixed arrays, `break` out of nested
+  loops, and `for-each` over arrays, closing evaluator/build divergence.
+- **A foreign export from a module decoded from mic@3 is refused (`#356`, `c36deb0d`)**:
+  the MLIR lowering rejects an `extern` export whose defining module was decoded from a
+  mic@3 artifact, preventing cross-artifact symbol leakage.
+- **A wrong-arity intrinsic call is refused in every feature build (`#355`, `#338`, `#368`)**:
+  the intrinsic-call arity check fires uniformly across feature profiles, reporting `E2005`
+  in every body shape (bare call, method call, imported-module body).
+- **Malformed UTF-8 is refused in the canonical JSON dump (`#347`, `676bd2fa`)**:
+  `std/json_canon` rejects a `String` whose bytes are not valid UTF-8 instead of emitting
+  replacement characters.
+- **`--emit object` writes a relocatable object (`#339`, `615d375c`)**: the object-file emit
+  path produces a proper relocatable `.o` (not a linked image), so downstream link steps
+  can compose it with other objects.
+- **Narrow imported `extern "C"` argument and return widths are preserved (`#333`,
+  `e9a8f3b2`)**: an imported `extern "C"` function with `i8`/`i16`/`i32`/`u8`/`u16`/`u32`
+  parameter or return types keeps its declared width through the call ABI instead of
+  being silently widened to `i64`.
+- **Qualified enum variants resolve and imported enum variants evaluate (`#334`, `#335`)**:
+  `m::Variant` resolves against the owning module's enum, and `mindc test` evaluates an
+  imported enum variant constructor correctly.
+- **Narrow-arith inference widens on a wide-`i64` operand (`#329`, `732edb0f`)**: the
+  3-valued narrow-arith lattice widens to `i64` when one operand is a known wide `i64`,
+  preventing a narrow-type miscompile in mixed-width expressions.
+- **`mlir-opt` load/store addresses lower as base plus offset (`#358`, `7c667dc8`)**:
+  the MLIR lowering emits `base + offset` addressing for load/store, reducing redundant
+  address arithmetic.
+- **`mindc test` evaluates `vec_zeroed` arrays and `Ok`/`Err` values like the build (`#375`,
+  `b235dda0`)**: the test evaluator now handles zero-initialized growable arrays and
+  `Result::Ok`/`Result::Err` payloads with the same semantics as native execution.
+- **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
+  formatter's `--diff` mode no longer panics on edge-case inputs.
+- **`mindc test` admits exactly what the build links and every explicit `std` import
+  compiles (`#367`, `#365`)**: the test runner's module admission matches the build's
+  link set, and an explicit `import std.<submod>` compiles even when the submodule is
+  only used for its types.
 
 ### Changed — `mlir-opt` and `mlir-translate` run concurrently
 - The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
@@ -738,6 +792,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   self-host loop stage1==stage2==stage3==frozen.
 
 ### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
+- **PQC signing compiled in, signed (opt-in).** The release profile compiles in
+  ML-DSA-87 and SLH-DSA-SHAKE-256s signing support; signing activates only through
+  opt-in key-seed environment variables. Revocation is out of scope.
 - **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
   signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
   lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based) — BOTH legs must verify
