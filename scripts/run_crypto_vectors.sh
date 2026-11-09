@@ -198,7 +198,7 @@ emit "$WORK/tls13_hs.so" "$STD/sha256.mind" \
   "$(strip "$STD/tls13_record.mind" '^import std\.')" \
   "$(strip "$STD/tls13_finished.mind" '^import std\.')" \
   "$(strip "$STD/x25519.mind" '^import std\.')" \
-  "$(strip "$STD/tls13_handshake.mind" '^import std\.')"
+  "$(strip "$STD/tls13_handshake.mind" '^(pub )?import std\.')"
 
 # ---- run every driver, exit code gates the run ----------------------------
 run_driver keccak            tests/keccak_driver.py            "$WORK/keccak.so"

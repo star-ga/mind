@@ -84,7 +84,7 @@
 //   grep -vE '^import std\.' std/tls13_finished.mind       >> /tmp/tls13hs.mind
 //   grep -vE '^import std\.' std/rsa_pss.mind              >> /tmp/tls13hs.mind
 //   grep -vE '^import std\.' std/x25519.mind               >> /tmp/tls13hs.mind
-//   grep -vE '^import std\.' std/tls13_handshake.mind      >> /tmp/tls13hs.mind
+//   grep -vE '^(pub )?import std\.' std/tls13_handshake.mind >> /tmp/tls13hs.mind
 //   mindc /tmp/tls13hs.mind --emit-shared /tmp/tls13hs.so   # needs mlir-build
 //
 // Naming: every new symbol is tls13_hs_-prefixed — clear of libc/libm (ELF
@@ -95,6 +95,9 @@
 // calls, no randomness.  Fail-closed: every verify returns 0 on any mismatch.
 
 import std.sha256;
+// std.hkdf is part of this composition (the combined-file build above lists it)
+// and is re-exported to callers; this file calls it only through tls13_keyschedule.
+pub import std.hkdf;
 import std.tls13_keyschedule;
 import std.tls13_finished;
 import std.rsa_pss;
