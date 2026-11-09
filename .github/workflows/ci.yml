@@ -741,17 +741,20 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # skip-decompress keeps the digest check, drops the action's unzip (deprecated Buffer(), DEP0005).
       - name: Download avx2 digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: mindfuzz-digest-avx2-llvm${{ matrix.llvm }}
           path: avx2
+          skip-decompress: true
 
       - name: Download neon digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: mindfuzz-digest-neon-llvm${{ matrix.llvm }}
           path: neon
+          skip-decompress: true
 
       - name: Assert avx2 batch digest == neon batch digest
         # Genuine cross-runner byte compare. mic@3 carries no machine bytes, so
@@ -759,15 +762,12 @@ jobs:
         # corpus — a wedge break — and MUST fail the build.
         run: |
           set -euo pipefail
-          # File format (written by tests/mindfuzz_cross_substrate.rs):
-          #   iters=<program count>
-          #   <64-hex batch mic@3 digest>
-          # The count is compared as well as the digest. Equality of two digests
-          # says nothing about how much was hashed: with MINDFUZZ_ITERS=0 both
-          # runners wrote the SHA-256 of NOTHING — non-empty, equal, and this job
-          # printed PASS having compared no programs at all. The test now refuses
-          # any count below its floor, and this job refuses a file that does not
-          # state a count at or above that floor, so neither side can go vacuous.
+          for d in avx2 neon; do z=("$d"/*); [ "${#z[@]}" = 1 ] && unzip -q "${z[0]}" -d "$d" || { echo "FAIL: $d: want one artifact zip, got: ${z[*]}"; exit 1; }; done
+          # File format (tests/mindfuzz_cross_substrate.rs): `iters=<program count>`, then the 64-hex batch
+          # mic@3 digest. The count is compared as well as the digest: equal digests say nothing about how much
+          # was hashed — with MINDFUZZ_ITERS=0 both runners wrote the SHA-256 of NOTHING (non-empty, equal) and
+          # this job printed PASS having compared no programs. The test refuses any count below its floor, and
+          # this job refuses a file that does not state a count at or above it, so neither side can go vacuous.
           MIN_ITERS=32
           read_count() { sed -n 's/^iters=\([0-9][0-9]*\)$/\1/p' "$1" | head -1; }
           read_digest() { sed -n '2p' "$1" | tr -d '[:space:]'; }
