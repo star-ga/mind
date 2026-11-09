@@ -47,6 +47,8 @@ pub(super) fn execute_tests(
 
 type TestRunner = dyn Fn(&TestEntry, Option<&EvalSupport>) -> TestResult + Send + Sync;
 type ResultSink = dyn Fn(&TestResult, &ReporterKind) + Send + Sync;
+#[cfg(test)]
+type BeforeSpawnHook = Arc<dyn Fn(usize, &Arc<CancellationState>) + Send + Sync>;
 
 /// Tests may observe a completed result after it reaches the shared queue or
 /// inject stack-size ladders and worker lifecycle hooks.
@@ -58,7 +60,7 @@ struct CompletionControl {
     #[cfg(test)]
     worker_stacks: Option<Arc<dyn Fn(usize) -> Vec<usize> + Send + Sync>>,
     #[cfg(test)]
-    before_spawn: Option<Arc<dyn Fn(usize, &Arc<CancellationState>) + Send + Sync>>,
+    before_spawn: Option<BeforeSpawnHook>,
     #[cfg(test)]
     on_worker_spawned: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 }
