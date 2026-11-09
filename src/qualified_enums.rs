@@ -40,7 +40,7 @@ pub(crate) struct Registry {
     /// Canonical source alias key -> target resolved within that source owner.
     alias_targets: BTreeMap<String, TypeAnn>,
     /// Module path -> its resolved import paths, for reading a type in its owner's scope.
-    module_imports: BTreeMap<String, Vec<String>>,
+    pub(crate) module_imports: BTreeMap<String, Vec<String>>,
     /// `owner.NAME` -> the declared type of that module-level constant.
     const_types: BTreeMap<String, TypeAnn>,
     pub(crate) variant_tags: BTreeMap<String, i64>,
@@ -127,7 +127,7 @@ impl Registry {
         (hits.len() == 1).then(|| hits.into_iter().next()).flatten()
     }
 
-    fn resolve_variant_in(
+    pub(crate) fn resolve_variant_in(
         &self,
         spelling: &str,
         imports: &[String],

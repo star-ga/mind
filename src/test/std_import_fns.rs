@@ -60,7 +60,9 @@ struct StdModule {
 /// supplies (`project_std`) contributes nothing here. A bundled module that
 /// fails to parse is a fail-loud error. A bare name two admitted modules
 /// define is left out (the build would hold two global definitions), and so
-/// is a name the file binds through its own `extern "C"` block.
+/// is a name the file binds through its own `extern "C"` block, and a bare
+/// `string_eq` / `string_trim`: the build links the runtime support's, which
+/// the evaluator runs itself (`eval::extern_c_intrinsics`).
 #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 pub(super) fn resolve_std_import_fns(
     module: &crate::ast::Module,
@@ -156,7 +158,8 @@ pub(super) fn resolve_std_import_fns(
         out.extend(m.consts.iter().cloned());
     }
     for name in definers.keys() {
-        if let Some(m) = unique(name).filter(|_| !extern_names.contains(name)) {
+        let runtime = crate::eval::extern_c_intrinsics::is_runtime_string_fn(name);
+        if let Some(m) = unique(name).filter(|_| !extern_names.contains(name) && !runtime) {
             out.push(forwarder(
                 name.to_string(),
                 &m.fns[*name],
@@ -301,7 +304,9 @@ fn explicit_import_admits_the_modules_it_imports() {
 
 /// For every shipped module, `import <it>;` admits exactly the build's link
 /// set: every fn of each module in the substrate closure (and of the imported
-/// module), plus the runtime-support names of the ambient modules.
+/// module), plus the runtime-support names of the ambient modules. A bare
+/// `string_eq` / `string_trim` call reaches the runtime support's definition,
+/// which the evaluator runs itself, so no std body answers it.
 #[cfg(all(test, feature = "cross-module-imports", feature = "mlir-build"))]
 #[test]
 fn admission_is_the_build_link_set_for_every_shipped_module() {
@@ -335,12 +340,20 @@ fn admission_is_the_build_link_set_for_every_shipped_module() {
                 *count.entry(f).or_default() += 1;
             }
         }
+        let runtime = crate::eval::extern_c_intrinsics::is_runtime_string_fn;
         let expected: BTreeSet<&str> = count
             .iter()
-            .filter(|(_, n)| **n == 1)
+            .filter(|(f, n)| **n == 1 && !runtime(f))
             .map(|(f, _)| f.as_str())
             .collect();
         let items = resolve_program(&src);
+        if *name == "std.string" {
+            // Positive control: the module defines the name the runtime answers.
+            assert!(
+                count.contains_key("string_eq"),
+                "std.string defines string_eq"
+            );
+        }
         assert_eq!(
             bare_fn_names(&items),
             expected,

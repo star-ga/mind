@@ -43,44 +43,8 @@ pub use print::format_ir_module;
 pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed};
 pub use verify_calls::verify_module;
 
-/// Whole-project enum registry; single-file compilation leaves it empty.
-#[derive(Debug, Clone, Default)]
-pub struct GlobalEnums {
-    /// Enum type names declared across the project. The parser checks this to
-    /// decide whether a dotted `First.Second` reference is a variant access.
-    pub names: Vec<String>,
-    /// `"Enum::Variant"` → ordinal tag, mirroring the per-module `EnumDef`
-    /// lowering. Merged into `IRModule::enum_variant_tags`.
-    #[cfg(feature = "std-surface")]
-    pub variant_tags: std::collections::BTreeMap<String, i64>,
-    /// `"Enum::Variant"` → declared positional payload field types.
-    #[cfg(feature = "std-surface")]
-    pub payload_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
-    /// `"Enum"` → heap-record slot count (`1 + max payload arity`).
-    #[cfg(feature = "std-surface")]
-    pub slots: std::collections::BTreeMap<String, usize>,
-    /// Enum type names that carry a payload on ≥1 variant (boxed enums).
-    #[cfg(feature = "std-surface")]
-    pub boxed: std::collections::BTreeSet<String>,
-    /// `"Enum::Variant"` → struct-variant field NAMES (parallel to
-    /// `payload_types`), present only for a struct variant `V { f: T }`.
-    #[cfg(feature = "std-surface")]
-    pub struct_field_names: std::collections::BTreeMap<String, Vec<String>>,
-    /// Legacy bare-name project struct schemas in declaration order.
-    #[cfg(feature = "std-surface")]
-    pub structs: std::collections::BTreeMap<String, (Vec<String>, Vec<crate::ast::TypeAnn>)>,
-    /// Collision-safe transient schemas keyed by owner, e.g. `crate.parser.Node`.
-    #[cfg(feature = "std-surface")]
-    pub qualified_structs:
-        std::collections::BTreeMap<String, (Vec<String>, Vec<crate::ast::TypeAnn>)>,
-    /// Every FUNCTION declared across the project → its declared return type.
-    /// Lets a `let x = f(...)` infer `x`'s type (string / collection / struct)
-    /// for method-call resolution — `let raw = decorator_arg_string(d); raw.split(…)`.
-    #[cfg(feature = "std-surface")]
-    pub fn_returns: std::collections::BTreeMap<String, crate::ast::TypeAnn>,
-    #[cfg(feature = "cross-module-imports")]
-    pub(crate) qualified: crate::qualified_enums::Registry,
-}
+mod global_enums;
+pub use global_enums::GlobalEnums;
 
 thread_local! {
     static GLOBAL_ENUMS: std::cell::RefCell<GlobalEnums> =
