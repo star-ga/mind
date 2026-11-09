@@ -16,10 +16,16 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+#[path = "worker.rs"]
+mod worker;
+
 use super::{
     EvalSupport, IndexedTestEntry, IndexedTestResult, ReporterKind, TestEntry, TestError,
     TestOptions, TestResult, TestRunSummary, TestStatus, run_one_test,
 };
+#[cfg(test)]
+use worker::CancellationState;
+use worker::{WorkerPanicGuard, WorkerPool, default_stack_ladder};
 
 /// Execute the test entries in parallel, collecting results.
 pub(super) fn execute_tests(
@@ -39,18 +45,24 @@ pub(super) fn execute_tests(
     )
 }
 
-/// Stack for each test worker thread (see the spawn below).
-const TEST_WORKER_STACK: usize = 512 * 1024 * 1024;
-
 type TestRunner = dyn Fn(&TestEntry, Option<&EvalSupport>) -> TestResult + Send + Sync;
 type ResultSink = dyn Fn(&TestResult, &ReporterKind) + Send + Sync;
+#[cfg(test)]
+type BeforeSpawnHook = Arc<dyn Fn(usize, &Arc<CancellationState>) + Send + Sync>;
 
-/// Tests may observe a completed result after it reaches the shared queue.
+/// Tests may observe a completed result after it reaches the shared queue or
+/// inject stack-size ladders and worker lifecycle hooks.
 /// The production control is zero-sized and has no callback or branch.
 #[derive(Clone, Default)]
 struct CompletionControl {
     #[cfg(test)]
     after_store: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    #[cfg(test)]
+    worker_stacks: Option<Arc<dyn Fn(usize) -> Vec<usize> + Send + Sync>>,
+    #[cfg(test)]
+    before_spawn: Option<BeforeSpawnHook>,
+    #[cfg(test)]
+    on_worker_spawned: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 }
 
 fn execute_tests_with(
@@ -70,65 +82,109 @@ fn execute_tests_with(
     };
     let thread_count = thread_count.min(entries.len());
 
-    let queue: Arc<Mutex<VecDeque<IndexedTestEntry>>> = Arc::new(Mutex::new(
-        entries
-            .into_iter()
-            .enumerate()
-            .map(|(ordinal, entry)| IndexedTestEntry { ordinal, entry })
-            .collect(),
-    ));
+    let indexed_entries: Vec<IndexedTestEntry> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, entry)| IndexedTestEntry { ordinal, entry })
+        .collect();
+    let queue: Arc<Mutex<VecDeque<IndexedTestEntry>>> =
+        Arc::new(Mutex::new(indexed_entries.iter().cloned().collect()));
     let results: Arc<Mutex<Vec<IndexedTestResult>>> = Arc::new(Mutex::new(Vec::new()));
 
     let reporter = opts.reporter.clone();
+    let base_stacks = default_stack_ladder();
+    let mut pool = WorkerPool::new(Arc::clone(&queue));
+    let mut spawn_err = None;
 
-    let mut handles = Vec::new();
-    for _ in 0..thread_count {
+    for worker_idx in 0..thread_count {
+        #[cfg(test)]
+        if let Some(before_spawn) = &completion.before_spawn {
+            before_spawn(worker_idx, &pool.cancellation());
+        }
+        #[cfg(test)]
+        let custom_stacks = completion.worker_stacks.as_ref().map(|f| f(worker_idx));
+        #[cfg(test)]
+        let stacks: &[usize] = custom_stacks.as_deref().unwrap_or(&base_stacks);
+        #[cfg(not(test))]
+        let stacks: &[usize] = &base_stacks;
+
         let q = Arc::clone(&queue);
         let r = Arc::clone(&results);
         let support = Arc::clone(&eval_support);
         let run = Arc::clone(&runner);
-        let _completion = completion.clone();
-        // Test bodies run on the tree-walking evaluator, which recurses per nested expression and
-        // call; a large std program (the TLS client) overflows the 2 MiB default thread stack in a
-        // debug build. Only the address range is reserved; pages are committed as they are touched.
-        let handle = std::thread::Builder::new()
-            .stack_size(TEST_WORKER_STACK)
-            .spawn(move || {
+        let cancelled = pool.cancellation();
+        let worker_completion = completion.clone();
+
+        match pool.spawn_with_fallback(worker_idx, stacks, move || {
+            let q = Arc::clone(&q);
+            let r = Arc::clone(&r);
+            let support = Arc::clone(&support);
+            let run = Arc::clone(&run);
+            let cancelled = Arc::clone(&cancelled);
+            let _completion = worker_completion.clone();
+            move || {
+                let _panic_guard = WorkerPanicGuard {
+                    cancellation: &cancelled,
+                };
                 loop {
+                    if cancelled.is_cancelled() {
+                        break;
+                    }
                     let entry = {
-                        let mut lock = q.lock().unwrap();
-                        lock.pop_front()
+                        let mut lock = q.lock().unwrap_or_else(|e| e.into_inner());
+                        if cancelled.is_cancelled() {
+                            lock.clear();
+                            None
+                        } else {
+                            lock.pop_front()
+                        }
                     };
-                    let entry = match entry {
-                        Some(e) => e,
-                        None => break,
+                    let Some(entry) = entry else {
+                        break;
                     };
 
                     let result = run(&entry.entry, support.get(&entry.entry.source_file));
+                    if cancelled.is_cancelled() {
+                        break;
+                    }
 
-                    r.lock().unwrap().push(IndexedTestResult {
-                        ordinal: entry.ordinal,
-                        result,
-                    });
+                    r.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(IndexedTestResult {
+                            ordinal: entry.ordinal,
+                            result,
+                        });
                     #[cfg(test)]
                     if let Some(after_store) = &_completion.after_store {
                         after_store(entry.ordinal);
                     }
                 }
-            })
-            .map_err(|e| TestError::Execution(format!("could not start a test worker: {e}")))?;
-        handles.push(handle);
+            }
+        }) {
+            Ok(_accepted_stack) =>
+            {
+                #[cfg(test)]
+                if let Some(on_spawned) = &completion.on_worker_spawned {
+                    on_spawned(worker_idx, _accepted_stack);
+                }
+            }
+            Err(err) => {
+                spawn_err = Some(err);
+                break;
+            }
+        }
     }
 
-    for h in handles {
-        h.join()
-            .map_err(|_| TestError::Execution("worker thread panicked".into()))?;
+    if let Some(err) = spawn_err {
+        pool.cancel_and_fail_unrun(&indexed_entries, &results, &err);
+    } else {
+        pool.join_all()?;
     }
 
     let indexed_results = Arc::try_unwrap(results)
-        .unwrap_or_else(|arc| arc.lock().unwrap().clone().into())
+        .unwrap_or_else(|arc| arc.lock().unwrap_or_else(|e| e.into_inner()).clone().into())
         .into_inner()
-        .unwrap();
+        .unwrap_or_else(|e| e.into_inner());
 
     // Workers finish in an arbitrary order. Discovery order is the stable
     // contract: names alone are insufficient when duplicate names occur in
@@ -245,6 +301,7 @@ mod deterministic_report_tests {
                     release_first_tx.send(()).expect("release first result");
                 }
             })),
+            ..CompletionControl::default()
         };
 
         let emitted = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
