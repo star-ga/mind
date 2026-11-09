@@ -109,7 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `dns_set_send_timeout`, `dns_connect_fd`, `dns_errno` and `dns_close_fd`
     (`std.https_probe` makes its socket calls through them, so it makes no OS
     call of its own; a call to `dns_tcp_socket` or `dns_connect_fd` is a world
-    read). `dns_resolve`, `tcp_connect_host(_timeout)` and
+    read); `dns_clock_gettime` and `dns_read_path` (a bounded whole-file read
+    that closes its descriptor), through which `std.https_io` reads the clocks
+    and the CA bundle, so it makes no OS call of its own either (a call to
+    `dns_clock_gettime` is a world read). `dns_resolve`, `tcp_connect_host(_timeout)` and
     the host-layout probe release every per-call allocation (the name copy,
     hints and out-slot, the `uname` buffer, the socket address, the timeout
     value, the record the connect call resolves) on the success and every

@@ -13,20 +13,16 @@
 // nondeterministic qualified rows (src/std_qualified.rs); the file read
 // (hio_read_ca, hio_load_anchors) is a declared input; the three limits and
 // hio_io_budget_ms are pure.
-
-import std.https_url;
-import std.dns;
-import std.net;
-import std.x509_bundle;
-
+//
 // The system clock for certificate validity (CLOCK_REALTIME, id 0) and the
 // monotonic clock for the request deadline (CLOCK_MONOTONIC, id 1 on Linux: a
 // wall-clock step, NTP or an operator setting the date cannot stretch or cut
-// the deadline). Socket calls go through std.net and std.dns, so this module
-// declares nothing they declare.
-extern "C" {
-    unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
-}
+// the deadline). The clock reads, the socket time limit and the bundle file
+// read go through std.dns, so this module makes no OS call of its own.
+
+import std.https_url;
+import std.dns;
+import std.x509_bundle;
 
 // Seconds one socket read or write may block.
 pub fn hio_io_timeout_s() -> i64 {
@@ -57,7 +53,7 @@ pub fn hio_now_unix() -> i64 {
     let ts: i64 = __mind_alloc(16);
     __mind_store_i64(ts, 0);
     __mind_store_i64(ts + 8, 0);
-    let rc: i64 = clock_gettime(0, ts as *mut u8) as i64;
+    let rc: i64 = dns_clock_gettime(0, ts);
     let sec: i64 = __mind_load_i64(ts);
     __mind_free(ts);
     if rc != 0 || sec <= 0 {
@@ -71,7 +67,7 @@ pub fn hio_now_mono_ms() -> i64 {
     let ts: i64 = __mind_alloc(16);
     __mind_store_i64(ts, 0);
     __mind_store_i64(ts + 8, 0);
-    let rc: i64 = clock_gettime(1, ts as *mut u8) as i64;
+    let rc: i64 = dns_clock_gettime(1, ts);
     let sec: i64 = __mind_load_i64(ts);
     let nsec: i64 = __mind_load_i64(ts + 8);
     __mind_free(ts);
@@ -128,16 +124,6 @@ pub fn hio_io_failure(deadline: i64) -> i64 {
     https_err_io()
 }
 
-// std.net's tcp_close closes the descriptor held in a handle record; the
-// bundle file uses it, so this module declares no libc close of its own.
-fn hio_close_fd(fd: i64) -> i64 {
-    let h: i64 = __mind_alloc(8);
-    __mind_store_i64(h, fd);
-    tcp_close(h);
-    __mind_free(h);
-    0
-}
-
 // The trust-anchor blob (x509_load_anchors) of the bundle file at the
 // NUL-terminated `path`, or -1: unreadable, larger than x509_max_bundle_len(),
 // malformed PEM/DER, or no certificate.
@@ -145,35 +131,11 @@ pub fn hio_read_ca(path: i64) -> i64 {
     if path <= 0 {
         return 0 - 1;
     }
-    let fd: i64 = __mind_open(path);
-    if fd < 0 {
-        return 0 - 1;
-    }
     let cap: i64 = x509_max_bundle_len() + 1;
     let buf: i64 = __mind_alloc(cap);
-    let mut got: i64 = 0;
-    let mut rc: i64 = 0;
-    let mut going: i64 = 1;
-    while going == 1 {
-        let n: i64 = __mind_read(fd, buf + got, cap - got, 0 - 1);
-        if n == 0 {
-            going = 0;
-        } else {
-            if n < 0 {
-                rc = 0 - 1;
-                going = 0;
-            } else {
-                got = got + n;
-                if got >= cap {
-                    rc = 0 - 1;
-                    going = 0;
-                }
-            }
-        }
-    }
-    hio_close_fd(fd);
+    let got: i64 = dns_read_path(path, buf, cap);
     let mut blob: i64 = 0 - 1;
-    if rc == 0 {
+    if got >= 0 && got < cap {
         blob = x509_load_anchors(buf, got);
         if blob <= 0 {
             blob = 0 - 1;

@@ -24,10 +24,11 @@
 //     with an unexpected family or address length, fails the whole call;
 //   - a failed call has count 0: no partial results.
 //
-// Determinism: `getaddrinfo`, `socket` and `connect` are World externs
-// (src/intrinsics.rs), and dns_resolve, tcp_connect_host,
-// tcp_connect_host_timeout, dns_tcp_socket and dns_connect_fd are classified by
-// name (src/std_qualified.rs), because a caller's IR holds only the call. A
+// Determinism: `getaddrinfo`, `socket`, `connect` and `clock_gettime` are World
+// externs (src/intrinsics.rs), and dns_resolve, tcp_connect_host,
+// tcp_connect_host_timeout, dns_tcp_socket, dns_connect_fd and dns_clock_gettime
+// are classified by name (src/std_qualified.rs), because a caller's IR holds
+// only the call. A
 // program that calls one, in its entry or in a project module the entry calls,
 // is refused by the determinism veto without `--allow-nondeterministic` and,
 // with it, attested `nondeterministic`.
@@ -64,6 +65,7 @@ extern "C" {
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
     unsafe fn uname(buf: *mut u8) -> i32;
     unsafe fn __errno_location() -> i64;
+    unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +588,65 @@ pub fn dns_errno() -> i64 {
 // dns_close_fd — close(2) descriptor `fd`. Returns 0, or -1.
 pub fn dns_close_fd(fd: i64) -> i64 {
     close(fd as i32) as i64
+}
+
+// ---------------------------------------------------------------------------
+// Clock and file calls of the https stack (std.https_io reads the clocks and
+// the CA bundle through these, so it makes no OS call of its own).
+// deferred: would live in std.time and std.fs, kept here because both are
+// native-seed rows of the stdlib manifest (an edit to one is a reseed that
+// changes the bytes of every native build) — upgrade path: move them at the
+// next reseed and point std.https_io at the new homes.
+// ---------------------------------------------------------------------------
+
+// dns_clock_gettime — clock_gettime(2) of clock `clk` (CLOCK_REALTIME 0,
+// CLOCK_MONOTONIC 1 on Linux) into the 16-byte timespec at `ts` (tv_sec at +0,
+// tv_nsec at +8). Returns 0, or -1. It reads a clock, so it is a qualified row
+// (src/std_qualified.rs).
+pub fn dns_clock_gettime(clk: i64, ts: i64) -> i64 {
+    clock_gettime(clk as i32, ts as *mut u8) as i64
+}
+
+// Read `fd` sequentially into `buf` until end of file, an error, or `cap`
+// bytes: the count, or -1 on a read error.
+fn dns_read_fd_all(fd: i64, buf: i64, cap: i64) -> i64 {
+    let mut got: i64 = 0;
+    let mut rc: i64 = 0;
+    let mut going: i64 = 1;
+    while going == 1 {
+        let n: i64 = __mind_read(fd, buf + got, cap - got, 0 - 1);
+        if n == 0 {
+            going = 0;
+        } else {
+            if n < 0 {
+                rc = 0 - 1;
+                going = 0;
+            } else {
+                got = got + n;
+                if got >= cap {
+                    going = 0;
+                }
+            }
+        }
+    }
+    if rc != 0 {
+        return 0 - 1;
+    }
+    got
+}
+
+// dns_read_path — open the NUL-terminated `path` read-only, read it into the
+// `cap`-byte buffer at `buf` and close it. The byte count (`cap` when the file
+// has `cap` bytes or more), or -1 when the file cannot be opened or a read
+// fails. The descriptor is closed on every path that opened it.
+pub fn dns_read_path(path: i64, buf: i64, cap: i64) -> i64 {
+    let fd: i64 = __mind_open(path);
+    if fd < 0 {
+        return 0 - 1;
+    }
+    let got: i64 = dns_read_fd_all(fd, buf, cap);
+    let _ = close(fd as i32);
+    got
 }
 
 // Connect to entry `i`; returns the connected fd, or -1.

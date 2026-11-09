@@ -5,8 +5,8 @@
 //! Calls into the world-reading std modules.
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
-//! `dns_tcp_socket`, `dns_connect_fd`, `entropy_fill` and the `https_*` entry
-//! points read the world only when the call resolves to `std.dns`,
+//! `dns_tcp_socket`, `dns_connect_fd`, `dns_clock_gettime`, `entropy_fill` and
+//! the `https_*` entry points read the world only when the call resolves to `std.dns`,
 //! `std.entropy`, `std.https`, `std.https_probe` or `std.https_io`. A user
 //! function of the same bare name is deterministic. The lowered IR keeps only
 //! the bare name (the qualifier lives on the call span, in `SourceSpelling`),
@@ -47,6 +47,8 @@ const ROWS: &[(&str, &str)] = &[
     // The socket descriptor calls std.https_probe makes through std.dns.
     ("std.dns", "dns_tcp_socket"),
     ("std.dns", "dns_connect_fd"),
+    // The clock read std.https_io makes through std.dns.
+    ("std.dns", "dns_clock_gettime"),
     ("std.entropy", "entropy_fill"),
     // std.https reaches DNS, the network, entropy, the clock and the CA file.
     ("std.https", "https_get"),

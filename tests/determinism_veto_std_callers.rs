@@ -32,6 +32,7 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
     ),
     ("dns", "dns.dns_tcp_socket(2)", "dns_tcp_socket"),
     ("dns", "dns.dns_connect_fd(p, p, 16)", "dns_connect_fd"),
+    ("dns", "dns.dns_clock_gettime(1, p)", "dns_clock_gettime"),
     // The `::` and full-path spellings name the same std function.
     (
         "entropy",
