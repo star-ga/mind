@@ -2,14 +2,21 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Qualified calls into the world-reading std modules.
+//! Calls into the world-reading std modules.
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
 //! `entropy_fill` and the `https_*` entry points read the world only when the
-//! call's qualifier resolves to `std.dns`, `std.entropy`, `std.https`,
-//! `std.https_probe` or `std.https_io`. A user function of the same bare name
-//! is deterministic. The lowered IR keeps only the bare name (the qualifier lives
-//! on the call span, in `SourceSpelling`), so this module reads the source.
+//! call resolves to `std.dns`, `std.entropy`, `std.https`, `std.https_probe`
+//! or `std.https_io`. A user function of the same bare name is deterministic.
+//! The lowered IR keeps only the bare name (the qualifier lives on the call
+//! span, in `SourceSpelling`), so this module reads the source.
+//!
+//! A call resolves in one of two ways, the way the build resolves it. A
+//! qualified call (`dns.dns_resolve(..)`) resolves through its qualifier. A
+//! bare call (`dns_resolve(..)`, no qualifier recorded) resolves by name: it is
+//! the std function when the module imports the std module that owns that row
+//! and defines no function of that name. A bare name that the module defines
+//! is the user's function and stays deterministic.
 //!
 //! Every spelling of the qualifier counts: the module name, an alias, the
 //! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
@@ -19,7 +26,7 @@
 //! counts as a use.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::{Literal, Module, Node, Span};
 use crate::ir::{IRModule, Instr};
@@ -68,17 +75,26 @@ struct QualMap {
     by_qual: BTreeMap<String, Vec<String>>,
     /// Keyed by span, with `::` written as `.`. Only looked up, never iterated.
     refs: HashMap<Span, String>,
+    /// Dotted path of every module the source imports, under any alias.
+    imported: BTreeSet<String>,
+    /// Names of the functions the module itself defines, at the top level or
+    /// in a `module NAME { .. }` block. Impl methods, nested functions and
+    /// `extern` declarations are not here: a bare call does not resolve to
+    /// them, so they cannot hide a std call.
+    defined: BTreeSet<String>,
 }
 
 impl QualMap {
     fn from_module(module: &Module) -> Self {
         let mut by_qual: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut imported = BTreeSet::new();
         for item in &module.items {
             nerve_walk::walk(item, &mut |node| {
                 let Node::Import { path, alias, .. } = node else {
                     return;
                 };
                 let dotted = path.join(".");
+                imported.insert(dotted.clone());
                 let last = path.last().map(String::as_str).unwrap_or("");
                 if let Some(alias) = alias {
                     add_qual(&mut by_qual, alias, &dotted);
@@ -93,12 +109,22 @@ impl QualMap {
             .iter()
             .map(|(span, qual)| (*span, qual.replace("::", ".")))
             .collect();
-        Self { by_qual, refs }
+        let mut defined = BTreeSet::new();
+        collect_defined(&module.items, &mut defined);
+        Self {
+            by_qual,
+            refs,
+            imported,
+            defined,
+        }
     }
 
     fn is_world(&self, span: Span, name: &str) -> bool {
         let Some(qual) = self.refs.get(&span) else {
-            return false;
+            // A bare name resolves to the std row it names when the module
+            // imports that std module and defines no function of that name.
+            return !self.defined.contains(name)
+                && self.imported.iter().any(|path| is_row(path, name));
         };
         match self.by_qual.get(qual.as_str()) {
             Some(paths) => paths.iter().any(|path| is_row(path, name)),
@@ -106,7 +132,7 @@ impl QualMap {
         }
     }
 
-    /// The first qualified std-world call or function-value read in `node`'s
+    /// The first std-world call or function-value read in `node`'s
     /// subtree, `node` included.
     fn offender_in(&self, node: &Node) -> Option<String> {
         let mut found = None;
@@ -124,6 +150,20 @@ impl QualMap {
     }
 }
 
+/// Names of the free functions in `items`, descending into transparent
+/// `module NAME { .. }` blocks but not into function bodies or impls.
+fn collect_defined(items: &[Node], out: &mut BTreeSet<String>) {
+    for item in items {
+        match item {
+            Node::FnDef(fd, _) => {
+                out.insert(fd.name.clone());
+            }
+            Node::Block { stmts, .. } => collect_defined(stmts, out),
+            _ => {}
+        }
+    }
+}
+
 fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
     if qual.is_empty() {
         return;
@@ -137,7 +177,7 @@ fn add_qual(map: &mut BTreeMap<String, Vec<String>>, qual: &str, path: &str) {
 /// What [`module_offender`] names for a source it cannot parse.
 pub const UNPARSED: &str = "<source that does not parse>";
 
-/// The first qualified std-world use anywhere in `source`: every function at
+/// The first std-world use anywhere in `source`: every function at
 /// any depth, impl methods, module blocks and top-level items. Whole-module,
 /// matching the entry IR scan: an uncalled function still refuses the module.
 /// A source that does not parse is [`UNPARSED`], never clean (the CLI calls
@@ -150,7 +190,7 @@ pub fn module_offender(source: &str) -> Option<String> {
     module.items.iter().find_map(|item| map.offender_in(item))
 }
 
-/// The qualified std-world use in the body of `func` in `source`, nested
+/// The std-world use in the body of `func` in `source`, nested
 /// closures and functions included. Every function of that name counts (a
 /// free function and a method alike), so a same-named sibling cannot hide one.
 /// Other functions of the module do not count. `None` when `func` is absent,
@@ -195,7 +235,8 @@ impl Drop for Guard {
     }
 }
 
-/// Whether the call at `span` named `name` is a qualified std-world call in
+/// Whether the call at `span` named `name` is a std-world call (qualified, or
+/// bare and resolving by name) in
 /// the map [`Guard`] installed. False when no guard is installed, so a path
 /// that never parsed a module cannot invent a refusal.
 pub fn call_is_world(span: Span, name: &str) -> bool {
@@ -293,6 +334,20 @@ mod tests {
             "dns::tcp_connect_host_timeout(p, 9, 80, 100)",
             "tcp_connect_host_timeout",
         ),
+        // A bare call of an imported std function: the qualifier is absent,
+        // the name resolves to the std row.
+        ("import std.entropy;", "entropy_fill(p, 8)", "entropy_fill"),
+        ("import std.dns;", "dns_resolve(p, 9)", "dns_resolve"),
+        (
+            "import std.dns;",
+            "tcp_connect_host(p, 9, 80)",
+            "tcp_connect_host",
+        ),
+        (
+            "import std.dns as d;",
+            "tcp_connect_host_timeout(p, 9, 80, 100)",
+            "tcp_connect_host_timeout",
+        ),
     ];
 
     #[test]
@@ -319,6 +374,39 @@ mod tests {
         assert_eq!(offender(qualified).as_deref(), Some("dns_resolve"));
         let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns.dns_status(p)\n}\n";
         assert_eq!(offender(pure), None);
+    }
+
+    /// A bare name is a world call only when it resolves to the std row: the
+    /// module imports that std module and defines no function of that name.
+    /// Each fixture below fails one of the two.
+    #[test]
+    fn a_bare_call_that_does_not_resolve_to_the_std_row_is_not_a_world_use() {
+        // Defined in the module (top level, and inside a module block).
+        let shadow = "import std.entropy;\n\nfn entropy_fill(p: i64, n: i64) -> i64 {\n    \
+                      p + n\n}\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(shadow), None);
+        let in_block = "import std.dns;\n\nmodule m {\n    pub fn dns_resolve(p: i64, n: i64) -> \
+                        i64 {\n        p + n\n    }\n}\n\npub fn f(p: i64) -> i64 {\n    \
+                        dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(in_block), None);
+        // The module imports a different std module than the row's.
+        let other = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(other), None);
+        // No import at all.
+        let none = "pub fn f(p: i64) -> i64 {\n    dns_resolve(p, 9)\n}\n";
+        assert_eq!(offender(none), None);
+        // A pure function of the imported module.
+        let pure = "import std.dns;\n\npub fn f(p: i64) -> i64 {\n    dns_status(p)\n}\n";
+        assert_eq!(offender(pure), None);
+        // Positive control: the shadow fixture without the definition.
+        let world = "import std.entropy;\n\npub fn f(p: i64) -> i64 {\n    entropy_fill(p, 8)\n}\n";
+        assert_eq!(offender(world).as_deref(), Some("entropy_fill"));
+        // The sibling reach reads the same resolution.
+        assert_eq!(
+            reached_offender(world, "f").as_deref(),
+            Some("entropy_fill")
+        );
+        assert_eq!(reached_offender(shadow, "f"), None);
     }
 
     /// `Q` is the qualifier. Each position holds a `std.entropy` use (a world

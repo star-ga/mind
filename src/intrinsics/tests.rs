@@ -244,10 +244,10 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
     public.into_iter().partition(|f| world.contains(f))
 }
 
-/// A program reaches these modules only by a qualified call, so each public
-/// function whose body reads the world is a row of `std_qualified` and is NOT
-/// a bare nondeterministic name (a user function of that spelling is
-/// deterministic). No other public function is a row. Two-sided, so a row
+/// A program reaches these modules by a qualified call or by a bare call of an
+/// imported name, so each public function whose body reads the world is a row
+/// of `std_qualified` and is NOT a bare nondeterministic name (a user function
+/// of that spelling is deterministic). No other public function is a row. Two-sided, so a row
 /// dropped and a row too many both fail, and a scan that found nothing on
 /// either side fails rather than passing vacuously.
 #[cfg(feature = "std-surface")]

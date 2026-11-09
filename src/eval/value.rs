@@ -195,8 +195,9 @@ impl PartialEq for Record {
 /// element store made through one reference is visible through every alias.
 /// That is the tree evaluator's model of the std.vec handle the compiled
 /// build copies by value while its heap backing stays shared. A struct
-/// literal whose field is DECLARED `array<T>` is the only producer
-/// (`record_store::wrap_struct_field`); the interpreter keeps carrying every
+/// literal whose field is DECLARED `array<T>` (`record_store::wrap_struct_field`)
+/// and a slot declared `array<T>` that takes a `vec_zeroed` buffer
+/// (`zeroed_array`) are the producers; the interpreter keeps carrying every
 /// other array shape as a plain [`Value::Tuple`].
 #[derive(Clone)]
 pub struct ArrayBuf(Rc<RefCell<Vec<Value>>>);
