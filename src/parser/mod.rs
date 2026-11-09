@@ -1240,8 +1240,8 @@ impl<'a> P<'a> {
             false
         };
         match kw {
-            Some(StmtKw::Import) => return self.parse_import(),
-            Some(StmtKw::Use) => return self.parse_use(),
+            Some(StmtKw::Import) => return self.parse_import(is_pub),
+            Some(StmtKw::Use) => return self.parse_use(is_pub),
             Some(StmtKw::Const) => return self.parse_const(Vec::new()),
             Some(StmtKw::Type) => return self.parse_type_alias(Vec::new()),
             Some(StmtKw::Module) => return self.parse_module_block(Vec::new()),
@@ -1464,69 +1464,6 @@ impl<'a> P<'a> {
             }
         }
         Ok(expr)
-    }
-
-    fn parse_import(&mut self) -> Result<Node, ParseError> {
-        let start = self.pos;
-        self.pos += 6; // "import"
-        self.skip_ws();
-        let mut path = Vec::new();
-        let first = self
-            .word()
-            .ok_or_else(|| self.err("expected module name".into()))?;
-        path.push(first.to_string());
-        while self.eat(b'.') {
-            let part = self
-                .word()
-                .ok_or_else(|| self.err("expected module name after '.'".into()))?;
-            path.push(part.to_string());
-        }
-        let alias = self.parse_optional_as_alias()?;
-        self.eat(b';'); // optional semicolon
-        self.register_import_qualifier(&path, alias.as_deref());
-        let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, alias, span })
-    }
-
-    fn parse_use(&mut self) -> Result<Node, ParseError> {
-        let start = self.pos;
-        self.pos += 3; // "use"
-        self.skip_ws();
-        let mut path = Vec::new();
-        let first = self
-            .word()
-            .ok_or_else(|| self.err("expected module name".into()))?;
-        path.push(first.to_string());
-        // #263 surface 1: accept BOTH the shipped dotted form (`use a.b.c`) and
-        // the path form (`use std::fixed_point::Q16_16`). A `::` separator is
-        // the Rust-style module path; the final segment is bound as the imported
-        // name, exactly as the dotted form does. Segments may not mix within one
-        // `use`, but this loop handles either separator per step, which subsumes
-        // both spellings without a separate parse path.
-        loop {
-            if self.eat(b'.') {
-                let part = self
-                    .word()
-                    .ok_or_else(|| self.err("expected module name after '.'".into()))?;
-                path.push(part.to_string());
-            } else if self.pos + 1 < self.b.len()
-                && self.b[self.pos] == b':'
-                && self.b[self.pos + 1] == b':'
-            {
-                self.pos += 2; // consume `::`
-                let part = self
-                    .word()
-                    .ok_or_else(|| self.err("expected path segment after '::'".into()))?;
-                path.push(part.to_string());
-            } else {
-                break;
-            }
-        }
-        let alias = self.parse_optional_as_alias()?;
-        self.eat(b';'); // optional semicolon
-        self.register_import_qualifier(&path, alias.as_deref());
-        let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, alias, span })
     }
 
     // ── Phase 10.5 Tier-1 / Tier-2 declarations ──────────────────────

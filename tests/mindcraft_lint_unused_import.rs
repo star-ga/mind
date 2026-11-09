@@ -76,3 +76,20 @@ fn unused_import_silent_when_referenced() {
         "expected no lint::unused_import diagnostic on negative fixture, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `pub import` is a facade re-export: silent. A plain unused import beside it
+// still fires, so the skip cannot widen to every import in the file.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pub_import_silent_plain_unused_still_fires() {
+    let src = "pub import std.vec;\nimport std.map;\n\npub fn f() -> i64 {\n    1\n}\n";
+    let diags = run(src, "facade.mind");
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected only the plain import to fire, got: {diags:?}"
+    );
+    assert_eq!(diags[0].message, "unused import `std.map`", "{diags:?}");
+}
