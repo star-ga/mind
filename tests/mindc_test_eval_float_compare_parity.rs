@@ -27,7 +27,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-const OPS: [(&str, &str, fn(f64, f64) -> bool); 6] = [
+/// A comparison's name, its MIND operator, and the host truth it must match.
+type CompareOp = (&'static str, &'static str, fn(f64, f64) -> bool);
+
+const OPS: [CompareOp; 6] = [
     ("lt", "<", |a, b| a < b),
     ("le", "<=", |a, b| a <= b),
     ("gt", ">", |a, b| a > b),

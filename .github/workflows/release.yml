@@ -27,8 +27,14 @@ name: Release
 #   1. Land the change on main and let CI go green on that commit.
 #   2. `git tag -a vX.Y.Z <that commit> && git push origin vX.Y.Z`
 #      (a human pushes the tag; this workflow never will).
-#   3. The tag push runs this workflow. Or dispatch it with the EXISTING tag
-#      name if the tag-push run needs to be repeated.
+#   3. The tag push runs this workflow. To repeat it, re-run that run
+#      (`gh run rerun <run-id>`): a re-run keeps the tag as its ref.
+#
+# The tag push is the ONLY trigger. There is deliberately no workflow_dispatch:
+# a dispatch runs in the cache scope of the branch it is dispatched on (main,
+# by default), so the build steps below would execute the tagged commit with a
+# runtime token that can write main's cache, and every later main run would
+# restore what it wrote. A tag-push run is scoped to the tag alone.
 #
 # If the gate blocks with "no ci.yml run exists for commit ...", the commit was
 # skipped by ci.yml's `paths-ignore`. Dispatch CI on that ref, wait for green,
@@ -58,12 +64,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'EXISTING tag to release (e.g. v0.12.0). Must already point at a CI-green commit — this workflow never creates tags.'
-        required: true
-        type: string
 
 # Read-only by default. `contents: write` is granted to the publishing job alone,
 # so the five build runners never hold a token that could push a ref.
@@ -92,8 +92,8 @@ jobs:
 
       - name: Release gating contract (static)
         # Asserts the properties this file is supposed to have — no self-minted
-        # tags, publish + build both behind this gate, dispatch takes an existing
-        # tag, write scoped to the publisher, and required-ci-jobs.tsv still in
+        # tags, publish + build both behind this gate, a tag push as the only
+        # trigger, write scoped to the publisher, and required-ci-jobs.tsv still in
         # agreement with ci.yml. Runs first: if the contract itself has drifted,
         # nothing downstream is trustworthy.
         run: python3 scripts/run_gate.py scripts/check_release_gating.py
@@ -102,17 +102,9 @@ jobs:
         id: verify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Passed through the environment, never interpolated into the script
-          # body: `${{ inputs.tag }}` is attacker-influenced text and a quote in
-          # it would otherwise close the shell string and run as a command.
-          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
+          TAG="${GITHUB_REF#refs/tags/}"
 
           # The tag is the sole source of the release name and version, so a
           # malformed one must stop here rather than produce a garbage release.
