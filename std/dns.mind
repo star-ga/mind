@@ -259,7 +259,7 @@ fn dns_new_record() -> i64 {
 // dns_free — release a record returned by dns_resolve (success or failure).
 // The record must not be read afterwards.
 pub fn dns_free(r: i64) {
-    __mind_free(r);
+    __mind_free(r)
 }
 
 fn dns_fail(r: i64, code: i64) -> i64 {

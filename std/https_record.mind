@@ -53,7 +53,7 @@ pub fn tls13rl_pend_len(pend: i64) -> i64 {
 pub fn tls13rl_pend_release(pend: i64) -> i64 {
     let plain: i64 = __mind_load_i64(pend + 16);
     if plain != 0 {
-        __mind_free(plain);
+        __mind_free(plain)
     }
     __mind_free(pend);
     0
@@ -134,7 +134,7 @@ pub fn tls13rl_handle_record(state: i64, rec_addr: i64, rec_len: i64, pend: i64)
         if rtype != tls13ci_ct_handshake() {
             return tls13c_fail(state, tls13ci_err_record());
         }
-        tls13rl_pend_set(pend, rec_addr + 5, rlen);
+        tls13rl_pend_set(pend, rec_addr + 5, rlen)
     } else {
         if rtype == tls13ci_ct_change_cipher_spec() {
             return 0;
@@ -208,7 +208,7 @@ fn tls13rl_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plai
             }
             return 0;
         }
-        tls13rl_pend_set(pend, plain, plen);
+        tls13rl_pend_set(pend, plain, plen)
     } else {
         if ptype == tls13ci_ct_app_data() {
             if use_app != 1 {
