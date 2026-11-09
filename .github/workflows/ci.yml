@@ -2167,21 +2167,21 @@ jobs:
         env:
           IMAGE: ghcr.io/star-ga/arch-mind@sha256:720ea1092557b1a45efb7eaa114da33d6b5c7ac9ee00e8901b3583cb1a08a3a4
           SCANNER_ROOT: ${{ runner.temp }}/arch-mind-scanner
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker pull "$IMAGE"
+          export DOCKER_CONFIG="$RUNNER_TEMP/ghcr-login"; mkdir -p "$DOCKER_CONFIG"  # step-local login, removed after the pull
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"; docker logout ghcr.io; rm -rf "$DOCKER_CONFIG"; unset DOCKER_CONFIG
           root="$SCANNER_ROOT"
           case "$root" in "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*)
             echo "::error::scanner root must sit outside the checkout"; exit 1;;
           esac
-          rm -rf "$root"
-          mkdir -p "$root"
+          rm -rf "$root"; mkdir -p "$root"
           cid="$(docker create "$IMAGE")"
           docker cp "$cid:/opt/arch-mind/." "$root/"
           docker rm "$cid"
-          uid="$(id -u)"
-          gid="$(id -g)"
+          uid="$(id -u)"; gid="$(id -g)"
           cat > "$root/bin/arch-mind" << EOF
           #!/bin/bash
           set -euo pipefail

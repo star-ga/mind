@@ -17,8 +17,6 @@
 //   mind_audit verify auditable_model.bin
 //   mind_audit compliance auditable_model.bin --framework=fda,eu-ai-act
 
-import std.tensor;
-
 // ============================================================================
 // Section 1: SBOM Generation
 // ============================================================================

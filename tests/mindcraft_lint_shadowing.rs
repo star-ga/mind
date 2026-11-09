@@ -108,3 +108,31 @@ fn shadowing_inline_distinct_names_silent() {
         "expected no shadowing diagnostic for distinct names, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Inline: repeated `let _` discards bind nothing, so nothing is shadowed
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shadowing_silent_on_repeated_discard() {
+    let src = "fn f() -> i64 {\n    let _ = g()\n    let _ = g()\n    let _ = g()\n    0\n}\n";
+    let diags = run(src, "inline.mind");
+    assert!(
+        diags.is_empty(),
+        "expected no shadowing diagnostic for repeated `let _`, got: {diags:?}"
+    );
+}
+
+// Positive control for the discard case: a named rebind next to the discards
+// still fires, so the discard skip cannot hide a real shadow.
+#[test]
+fn shadowing_still_fires_beside_discards() {
+    let src = "fn f() -> i64 {\n    let _ = g()\n    let x: i64 = 1\n    let _ = g()\n    let x: i64 = 2\n    x\n}\n";
+    let diags = run(src, "inline.mind");
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected exactly one shadowing diagnostic (for `x`), got: {diags:?}"
+    );
+    assert!(diags[0].message.contains("`let x`"), "{diags:?}");
+}

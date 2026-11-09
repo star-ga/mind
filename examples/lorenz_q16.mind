@@ -49,13 +49,13 @@
 
 pub fn lorenz_q16(state: i64, steps: i64) -> i64 {
     // Q16.16 system constants (executable subset — plain `let`, no const-generics).
-    let SIGMA: i64 = 655360;
+    let sigma: i64 = 655360;
     // 10.0
-    let RHO: i64 = 1835008;
+    let rho: i64 = 1835008;
     // 28.0
-    let BETA: i64 = 174762;
+    let beta: i64 = 174762;
     // 8/3 truncated -> 2.666656494140625
-    let DT: i64 = 256;
+    let dt: i64 = 256;
     // 1/256 = 0.00390625
 
     // Cell addresses: x @ state, y @ state+8, z @ state+16 (8 bytes per i64).
@@ -71,14 +71,14 @@ pub fn lorenz_q16(state: i64, steps: i64) -> i64 {
     while s < steps {
         // Derivatives — each `*` is one i64 multiply followed by one `>> 16`,
         // in fixed source order (exact integer arithmetic, no reassociation).
-        let dx: i64 = (SIGMA * (y - x)) >> 16;
-        let dy: i64 = ((x * (RHO - z)) >> 16) - y;
-        let dz: i64 = ((x * y) >> 16) - ((BETA * z) >> 16);
+        let dx: i64 = (sigma * (y - x)) >> 16;
+        let dy: i64 = ((x * (rho - z)) >> 16) - y;
+        let dz: i64 = ((x * y) >> 16) - ((beta * z) >> 16);
 
         // Forward Euler: state += DT * derivative (again qmul then integer add).
-        x = x + ((DT * dx) >> 16);
-        y = y + ((DT * dy) >> 16);
-        z = z + ((DT * dz) >> 16);
+        x = x + ((dt * dx) >> 16);
+        y = y + ((dt * dy) >> 16);
+        z = z + ((dt * dz) >> 16);
 
         s = s + 1;
     }
