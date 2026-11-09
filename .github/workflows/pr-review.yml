@@ -55,15 +55,32 @@ jobs:
           # goes to /tmp/leaks.txt, which the "Fail on a leak" step enforces and which is non-empty (red) when
           # the leak list is missing, so an unchecked run cannot pass.
           git show "$BASE:.github/scripts/pr_review.py" > /tmp/pr_review.py 2>/dev/null || cp .github/scripts/pr_review.py /tmp/pr_review.py
+          # A stale verdict must not stand in for one this run produced.
+          rm -f /tmp/leaks.txt
           # Outside the checkout, so the base-branch script's single-turn CLI call does not stop on file reads.
-          (cd "$(mktemp -d)" && python3 /tmp/pr_review.py) > /tmp/review.md || { rc=$?
+          rc=0; (cd "$(mktemp -d)" && python3 /tmp/pr_review.py) > /tmp/review.md 2> /tmp/review.err || rc=$?
+          cat /tmp/review.err >&2
+          if [ "$rc" != 0 ]; then
             # On the token path, show the CLI's own error (stdout) so a failed review is diagnosable.
             # Same isolation as the call above: empty directory, no tools, ANTHROPIC_* stripped; never changes the exit code.
             if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
               (cd "$(mktemp -d)" && env $(env | grep -o '^ANTHROPIC_[A-Z_]*' | sed 's/^/-u /') \
                 sh -c 'echo "Reply OK" | claude -p --tools "" --max-turns 1 --output-format text' 2>&1 | head -c 400) || true
               echo; fi
-            exit $rc; }
+            # The script writes /tmp/leaks.txt before it calls the model, so the file exists only when the leak
+            # check completed and the advisory model review alone is missing. Post that verdict (pattern numbers
+            # only) with the script's own redacted reason and let "Fail on a leak" rule on it; the job stays red
+            # when the leak check itself never ran.
+            test -f /tmp/leaks.txt || exit "$rc"
+            reason=$(grep -m1 '^review model call failed' /tmp/review.err | head -c 300 || true)
+            { echo '<!-- pr-review -->'; echo '### Automated review'; echo
+              if [ -s /tmp/leaks.txt ]; then
+                echo '**Leak check: FAILED.** Private or attribution text found in this PR (pattern numbers only, so this public comment repeats nothing):'; echo
+                sed 's/^/- /' /tmp/leaks.txt; echo; echo
+              else echo '**Leak check: passed.**'; echo; fi
+              echo "**Model review: unavailable for this run** (${reason:-see the review job log}). The leak check above ran and is enforced; the model review is advisory and runs again on the next push."
+            } > /tmp/review.md
+          fi
       - name: Post or update the review comment
         run: |
           marker='<!-- pr-review -->'
