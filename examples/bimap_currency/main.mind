@@ -49,11 +49,11 @@ enum Currency {
 }
 
 fn print_pair_line(idx: i64, name: String) -> i64 {
-    let mut line = string_new();
-    line = string_push_i64(line, idx);
-    line = string_push_byte(line, 32);
-    line = string_push_str(line, name);
-    line = string_push_byte(line, 10);
+    let line = string_new();
+    let line = string_push_i64(line, idx);
+    let line = string_push_byte(line, 32);
+    let line = string_push_str(line, name);
+    let line = string_push_byte(line, 10);
     print_bytes(string_addr(line), string_len(line));
     return 0;
 }

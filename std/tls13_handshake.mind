@@ -95,6 +95,7 @@
 // calls, no randomness.  Fail-closed: every verify returns 0 on any mismatch.
 
 import std.sha256;
+import std.hkdf;
 import std.tls13_keyschedule;
 import std.tls13_finished;
 import std.rsa_pss;
