@@ -126,7 +126,7 @@ surface_tolerance = 25
 note              = 'floor over tests/**/*.rs (378 in the composed native-module bridge source tree); the README floor may lag the tree by at most 25 files before the gate demands a refresh.'
 
 [counts.rust_test_fns]
-declared          = 3569
+declared          = 3570
 mode              = "floor"
 floor_tolerance   = 200
 kind              = "regex_count"
@@ -160,7 +160,9 @@ note              = '"11 unit tests under tools/pytorch_bridge/tests/" — exact
 # on the surface, which is why the two numbers differ (see the note below).
 # Raised 43 -> 57 with the X.509 path-validation modules (8), the TLS 1.3 client
 # modules (4) and the mic@3 record modules (2).
-declared  = 57
+# Raised 57 -> 62 with std.entropy, std.dns, std.procgroup, std.procgroup_sys
+# and std.procgroup_text.
+declared  = 62
 mode      = "floor"
 floor_tolerance = 4
 kind      = "glob_count"
