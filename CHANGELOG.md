@@ -340,7 +340,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
   fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
   pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`) and compares
-  the scanned tree with its own merge base, not a later `main` (`#382`); automated
+  the scanned tree with the commit's own first parent, not a later `main` (`#382`); automated
   pull-request review and a public-leak check run in CI (`#305`), and the review job still
   posts the leak verdict when the review model is unavailable (`#378`); the link check
   retries transient network errors instead of failing (`#381`); clippy lints on `main` are
