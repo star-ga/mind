@@ -32,22 +32,14 @@
 //   -8 https_probe_err_argument   timeout_ms is out of range
 //
 // Determinism: https_probe reads the world (DNS, network) and is classified
-// nondeterministic by name (src/intrinsics.rs), like dns_resolve.
+// nondeterministic by name (src/std_qualified.rs), like dns_resolve.
 //
-// Linux only: SO_SNDTIMEO = 21, AF_INET6 = 10 and the errno values below are
-// the Linux values, as in std.dns.
+// Linux only: AF_INET6 = 10 and the errno values below are the Linux values,
+// as in std.dns. Every socket call (socket, SO_SNDTIMEO, connect, errno, close)
+// goes through std.dns, so this module makes no OS call of its own.
 
 import std.https_url;
 import std.dns;
-
-// __errno_location returns the address of the calling thread's errno.
-extern "C" {
-    unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
-    unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
-    unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
-    unsafe fn close(fd: i32) -> i32;
-    unsafe fn __errno_location() -> i64;
-}
 
 // ---------------------------------------------------------------------------
 // Codes
@@ -139,15 +131,11 @@ fn hp_try(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
     if dns_family(r, i) == 4 {
         domain = 2;
     }
-    let fd: i64 = socket(domain as i32, 1, 0) as i64;
+    let fd: i64 = dns_tcp_socket(domain);
     if fd < 0 {
         return https_probe_err_socket();
     }
-    let tv: i64 = __mind_alloc(16);
-    __mind_store_i64(tv, timeout_ms / 1000);
-    __mind_store_i64(tv + 8, (timeout_ms % 1000) * 1000);
-    let so: i64 = setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64;
-    __mind_free(tv);
+    let so: i64 = dns_set_send_timeout(fd, timeout_ms);
     let mut rc: i64 = https_probe_ok();
     if so != 0 {
         rc = https_probe_err_socket();
@@ -159,14 +147,14 @@ fn hp_try(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
             z = z + 1;
         }
         let salen: i64 = hp_sockaddr(r, i, port, sa);
-        let c: i64 = connect(fd as i32, sa as *const u8, salen as i32) as i64;
-        let e: i64 = __mind_load_i32(__errno_location());
+        let c: i64 = dns_connect_fd(fd, sa, salen);
+        let e: i64 = dns_errno();
         if c != 0 {
             rc = hp_connect_error(e);
         }
         __mind_free(sa)
     }
-    if close(fd as i32) as i64 != 0 && rc == https_probe_ok() {
+    if dns_close_fd(fd) != 0 && rc == https_probe_ok() {
         rc = https_probe_err_socket();
     }
     rc

@@ -24,9 +24,10 @@
 //     with an unexpected family or address length, fails the whole call;
 //   - a failed call has count 0: no partial results.
 //
-// Determinism: `getaddrinfo` and `connect` are World externs, and dns_resolve,
-// tcp_connect_host and tcp_connect_host_timeout are classified by name beside
-// them (src/intrinsics.rs), because a caller's IR holds only the call. A
+// Determinism: `getaddrinfo`, `socket` and `connect` are World externs
+// (src/intrinsics.rs), and dns_resolve, tcp_connect_host,
+// tcp_connect_host_timeout, dns_tcp_socket and dns_connect_fd are classified by
+// name (src/std_qualified.rs), because a caller's IR holds only the call. A
 // program that calls one, in its entry or in a project module the entry calls,
 // is refused by the determinism veto without `--allow-nondeterministic` and,
 // with it, attested `nondeterministic`.
@@ -62,6 +63,7 @@ extern "C" {
     unsafe fn close(fd: i32) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
     unsafe fn uname(buf: *mut u8) -> i32;
+    unsafe fn __errno_location() -> i64;
 }
 
 // ---------------------------------------------------------------------------
@@ -545,8 +547,22 @@ fn dns_sockaddr(r: i64, i: i64, port: i64, sa: i64) -> i64 {
     28
 }
 
-// SO_SNDTIMEO (SOL_SOCKET 1, optname 21) bounds a blocking connect(2) on Linux.
-fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
+// ---------------------------------------------------------------------------
+// Socket descriptor calls (the one place the https stack opens, bounds,
+// connects and closes a socket; std.https_probe calls these). Each is one OS
+// call and its argument marshalling. Linux values, as in std.net.
+// ---------------------------------------------------------------------------
+
+// dns_tcp_socket — a new TCP socket (SOCK_STREAM 1) of address family `domain`
+// (AF_INET 2, AF_INET6 10): the descriptor, or a negative value.
+pub fn dns_tcp_socket(domain: i64) -> i64 {
+    socket(domain as i32, 1, 0) as i64
+}
+
+// dns_set_send_timeout — SO_SNDTIMEO (SOL_SOCKET 1, optname 21) on descriptor
+// `fd` to `ms` milliseconds (0 clears it); it bounds a blocking connect(2) on
+// Linux. Returns the setsockopt result: 0, or -1.
+pub fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
     let tv: i64 = __mind_alloc(16);
     __mind_store_i64(tv + 0, ms / 1000);
     __mind_store_i64(tv + 8, (ms % 1000) * 1000);
@@ -555,31 +571,48 @@ fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
     rc
 }
 
+// dns_connect_fd — connect(2) descriptor `fd` to the `salen`-byte socket
+// address at `sa`. Returns 0, or -1 with the reason in dns_errno().
+pub fn dns_connect_fd(fd: i64, sa: i64, salen: i64) -> i64 {
+    connect(fd as i32, sa as *const u8, salen as i32) as i64
+}
+
+// dns_errno — the calling thread's errno. Read it straight after the call that
+// failed: no other OS call may come between them.
+pub fn dns_errno() -> i64 {
+    __mind_load_i32(__errno_location())
+}
+
+// dns_close_fd — close(2) descriptor `fd`. Returns 0, or -1.
+pub fn dns_close_fd(fd: i64) -> i64 {
+    close(fd as i32) as i64
+}
+
 // Connect to entry `i`; returns the connected fd, or -1.
 fn dns_connect_one(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
     let mut domain: i64 = 10;
     if dns_family(r, i) == 4 {
         domain = 2;
     }
-    let fd: i64 = socket(domain as i32, 1, 0) as i64;
+    let fd: i64 = dns_tcp_socket(domain);
     if fd < 0 {
         return 0 - 1;
     }
     if dns_set_send_timeout(fd, timeout_ms) != 0 {
-        let _ = close(fd as i32);
+        let _ = dns_close_fd(fd);
         return 0 - 1;
     }
     let sa: i64 = __mind_alloc(28);
     let salen: i64 = dns_sockaddr(r, i, port, sa);
-    let c: i64 = connect(fd as i32, sa as *const u8, salen as i32) as i64;
+    let c: i64 = dns_connect_fd(fd, sa, salen);
     __mind_free(sa);
     if c != 0 {
-        let _ = close(fd as i32);
+        let _ = dns_close_fd(fd);
         return 0 - 1;
     }
     // The returned stream has the same blocking semantics as std.net's.
     if dns_set_send_timeout(fd, 0) != 0 {
-        let _ = close(fd as i32);
+        let _ = dns_close_fd(fd);
         return 0 - 1;
     }
     fd

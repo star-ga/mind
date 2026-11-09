@@ -282,9 +282,9 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 16,
-        "dns_resolve, tcp_connect_host(_timeout), entropy_fill, https_get(_ca), https_post(_ca), \
-         https_get_with_headers, https_post_with_headers, https_probe, hio_now_unix, \
-         hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure"
+        named, 18,
+        "dns_resolve, tcp_connect_host(_timeout), dns_tcp_socket, dns_connect_fd, entropy_fill, \
+         https_get(_ca), https_post(_ca), https_get_with_headers, https_post_with_headers, \
+         https_probe, hio_now_unix, hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure"
     );
 }

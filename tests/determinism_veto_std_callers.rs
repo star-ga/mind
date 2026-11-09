@@ -30,6 +30,8 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "dns.tcp_connect_host_timeout(p, 9, 80, 100)",
         "tcp_connect_host_timeout",
     ),
+    ("dns", "dns.dns_tcp_socket(2)", "dns_tcp_socket"),
+    ("dns", "dns.dns_connect_fd(p, p, 16)", "dns_connect_fd"),
     // The `::` and full-path spellings name the same std function.
     (
         "entropy",
