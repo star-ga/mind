@@ -214,7 +214,16 @@ fn tls13rl_open_protected(state: i64, rec_addr: i64, rec_len: i64, st: i64, plai
             if use_app != 1 {
                 return tls13c_fail(state, tls13ci_err_app());
             }
-            let arx: i64 = tls13c_load_i64(state + 192);
+            // Reclaim bytes the reader already consumed (read cursor at
+            // state + 200) so the receive buffer bounds only unread data.
+            let rd: i64 = tls13c_load_i64(state + 200);
+            let mut arx: i64 = tls13c_load_i64(state + 192);
+            if rd > 0 {
+                tls13c_copy(state + tls13ci_app_rx_off(), state + tls13ci_app_rx_off() + rd, arx - rd);
+                arx = arx - rd;
+                tls13c_store_i64(state + 192, arx);
+                tls13c_store_i64(state + 200, 0)
+            }
             if arx + plen > tls13ci_app_rx_cap() {
                 return tls13c_fail(state, tls13ci_err_ovf());
             }

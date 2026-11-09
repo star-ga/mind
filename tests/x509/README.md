@@ -133,6 +133,15 @@ on their own, the wildcard rules, and the trust-anchor policy above. They read `
 anchor bundles, a cross-signed anchor pair, and RSASSA-PSS/SHA-384 versus
 sha384WithRSAEncryption self-signed anchors).
 
+`tests/x509_pss_salt.rs` covers the RSA-PSS salt-length bound (RFC 8017 §9.1.2,
+`n_len - 34` for SHA-256) with `adv/pss3072_long_*` and `adv/pss4096_long_*`:
+a root and a leaf per key size, openssl-generated under temporary keys that
+were not kept, the leaf signed with the largest salt the root key allows (350
+and 478). `pss3072_long_leaf_salt351` is `pss3072_long_leaf` with saltLength 351
+patched into both AlgorithmIdentifier copies (the signature no longer matches,
+so a refusal as a bad signature (-3) would also be a failure of the bound check,
+which must answer -2 first).
+
 `tests/std_tls_x509_import.rs` runs the verifier through `import std.x509;`
 under `mindc test` and in a `mindc build` executable, each with a mutated copy
 that must fail. Both engines also run the short DNS names, the IPv4 and IPv6

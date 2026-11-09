@@ -692,6 +692,7 @@ fn flights_program(mutate: bool) -> String {
         "tls13_client_cases.mind",
         "tls13_client_runner.mind",
         "tls13_client_shipped.mind",
+        "tls13_client_rx.mind",
     ] {
         body.push_str(&read(format!("{TESTS}/{f}")));
         body.push('\n');
@@ -721,7 +722,9 @@ fn flights_program(mutate: bool) -> String {
     body.push_str("    return 0;\n}\n\n");
     body.push_str(
         "fn checks() -> i64 {\n    let all: i64 = tls13ct_run_all();\n    if all != 0 {\n\
-         \x20       return 1;\n    }\n    if tls13ct_run_shipped() != 0 {\n        return 2;\n    }\n    return 0;\n}\n\n",
+         \x20       return 1;\n    }\n    if tls13ct_run_shipped() != 0 {\n        return 2;\n    }\n\
+         \x20   let buf: i64 = __mind_alloc(16384);\n    let n: i64 = tls13ct_frozen(0, buf);\n\
+         \x20   if tls13ct_run_rx(buf, n) != 0 {\n        return 3;\n    }\n    return 0;\n}\n\n",
     );
     program(FLIGHT_IMPORTS, &body)
 }

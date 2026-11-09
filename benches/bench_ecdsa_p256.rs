@@ -31,11 +31,12 @@
 //!
 //! ## Build recipe (combine chain — NOT self-contained)
 //!
-//! `std/ecdsa_p256.mind` composes `std/sha256.mind` via `import std.sha256;`, so
-//! the two sources are combined with the import line stripped, byte-for-byte the
-//! chain the driver documents:
+//! `std/ecdsa_p256.mind` composes `std/sha256.mind` and `std/sha512.mind` (the
+//! SHA-384 verifier) via `import`, so the sources are combined with the import
+//! lines stripped, byte-for-byte the chain the driver documents:
 //! ```text
 //! cat std/sha256.mind                    >  combined.mind
+//! cat std/sha512.mind                    >> combined.mind
 //! grep -v '^import ' std/ecdsa_p256.mind >> combined.mind
 //! mindc combined.mind --emit-shared ecdsa_p256.so
 //! ```
@@ -82,6 +83,11 @@ const KAT_R: &str = "EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EA
 const KAT_S: &str = "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8";
 const KAT_MSG: &[u8] = b"sample";
 
+// RFC 6979 A.2.5, P-256 / SHA-384, message "sample" (same key): the
+// `ecdsa_p256_verify_sha384` path, cross-checked with `openssl dgst -sha384`.
+const KAT384_R: &str = "0EAFEA039B20E9B42309FB1D89E213057CBF973DC0CFC8F129EDDDC800EF7719";
+const KAT384_S: &str = "4861F0491E6998B9455193E34E7B0D284DDD7149A74B95B9261F13ABDE940954";
+
 /// Decode a 64-char hex string into a 32-byte big-endian buffer (matches the
 /// driver's `int.to_bytes(32, "big")` big-endian scalar encoding).
 fn hex32(s: &str) -> Vec<u8> {
@@ -96,6 +102,13 @@ fn manifest_dir() -> PathBuf {
 }
 
 fn mindc_path() -> Option<PathBuf> {
+    // The mindc cargo built for this bench run, wherever the target dir is.
+    if let Some(p) = option_env!("CARGO_BIN_EXE_mindc") {
+        let p = PathBuf::from(p);
+        if p.exists() {
+            return Some(p);
+        }
+    }
     let dbg = manifest_dir().join("target").join("debug").join("mindc");
     if dbg.exists() {
         return Some(dbg);
@@ -104,7 +117,8 @@ fn mindc_path() -> Option<PathBuf> {
     if rel.exists() { Some(rel) } else { None }
 }
 
-/// Combine `std/sha256.mind` + import-stripped `std/ecdsa_p256.mind` into one
+/// Combine `std/sha256.mind` + `std/sha512.mind` + import-stripped
+/// `std/ecdsa_p256.mind` into one
 /// temp source and compile it to a temp `.so` once. Returns `None` (self-skip)
 /// if the MLIR toolchain is shadowed, `mindc` is not built, or the combine /
 /// compile fails — same fail-safe contract as the gated harnesses (never panic).
@@ -127,10 +141,15 @@ fn build_verify_so() -> Option<&'static PathBuf> {
 
         // Combine chain, byte-for-byte the driver's:
         //   cat std/sha256.mind                    >  combined
+        //   cat std/sha512.mind                    >> combined
         //   grep -v '^import ' std/ecdsa_p256.mind >> combined
         let std_dir = manifest_dir().join("std");
         let Ok(sha) = std::fs::read_to_string(std_dir.join("sha256.mind")) else {
             eprintln!("bench_ecdsa_p256: cannot read std/sha256.mind; skipping");
+            return None;
+        };
+        let Ok(sha512) = std::fs::read_to_string(std_dir.join("sha512.mind")) else {
+            eprintln!("bench_ecdsa_p256: cannot read std/sha512.mind; skipping");
             return None;
         };
         let Ok(ecdsa_raw) = std::fs::read_to_string(std_dir.join("ecdsa_p256.mind")) else {
@@ -142,7 +161,7 @@ fn build_verify_so() -> Option<&'static PathBuf> {
             .filter(|l| !l.starts_with("import "))
             .collect::<Vec<_>>()
             .join("\n");
-        let combined = format!("{sha}\n{ecdsa_stripped}\n");
+        let combined = format!("{sha}\n{sha512}\n{ecdsa_stripped}\n");
 
         let dir = std::env::temp_dir();
         let src_path = dir.join("mind_bench_ecdsa_p256_combined.mind");
@@ -209,6 +228,26 @@ fn assert_verify_correct(f: VerifyFn, qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) 
     );
 }
 
+/// SHA-384 belt: the RFC 6979 A.2.5 P-256 / SHA-384 vector accepts and a
+/// bit-flipped `s` rejects, so a broken `sha512.mind` link can never be timed.
+fn assert_verify_sha384_correct(f: VerifyFn, qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) {
+    let accept = verify(f, qx, qy, r, s, KAT_MSG);
+    assert_eq!(
+        accept, 1,
+        "ecdsa_p256_verify_sha384 REJECTED the RFC 6979 A.2.5 SHA-384 vector (rc={accept})"
+    );
+    let mut bad_s = s.to_vec();
+    bad_s[31] ^= 1;
+    let reject = verify(f, qx, qy, r, &bad_s, KAT_MSG);
+    assert_eq!(
+        reject, 0,
+        "ecdsa_p256_verify_sha384 ACCEPTED a bit-flipped s (rc={reject})"
+    );
+    eprintln!(
+        "bench_ecdsa_p256: SHA-384 correctness VERIFIED (accepts KAT, bit-flipped s rejects)"
+    );
+}
+
 fn bench_ecdsa_p256(c: &mut Criterion) {
     let Some(so) = build_verify_so() else {
         eprintln!("bench_ecdsa_p256: verify kernel unavailable; no measurements taken.");
@@ -223,6 +262,12 @@ fn bench_ecdsa_p256(c: &mut Criterion) {
     // `sym` outlive every call below, keeping the .so mapped.
     let f: VerifyFn = *sym;
 
+    let sym384: Symbol<VerifyFn> = unsafe {
+        lib.get(b"ecdsa_p256_verify_sha384")
+            .expect("ecdsa_p256_verify_sha384 symbol")
+    };
+    let f384: VerifyFn = *sym384;
+
     // Fixed inputs, laid out once (32-byte big-endian scalars + the message).
     let qx = hex32(KAT_QX);
     let qy = hex32(KAT_QY);
@@ -231,6 +276,9 @@ fn bench_ecdsa_p256(c: &mut Criterion) {
 
     // Correctness gate first: an ops/sec number for a broken verifier is a lie.
     assert_verify_correct(f, &qx, &qy, &r, &s);
+    let r384 = hex32(KAT384_R);
+    let s384 = hex32(KAT384_S);
+    assert_verify_sha384_correct(f384, &qx, &qy, &r384, &s384);
 
     let mut group = c.benchmark_group("ecdsa_p256");
     group.bench_function("verify", |b| {
@@ -241,6 +289,19 @@ fn bench_ecdsa_p256(c: &mut Criterion) {
                 black_box(&qy),
                 black_box(&r),
                 black_box(&s),
+                black_box(KAT_MSG),
+            );
+            black_box(rc);
+        });
+    });
+    group.bench_function("verify_sha384", |b| {
+        b.iter(|| {
+            let rc = verify(
+                f384,
+                black_box(&qx),
+                black_box(&qy),
+                black_box(&r384),
+                black_box(&s384),
                 black_box(KAT_MSG),
             );
             black_box(rc);

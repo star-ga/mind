@@ -39,145 +39,13 @@
 #![cfg(not(windows))]
 
 mod common;
-use common::mindc_bin;
+use common::x509_so::{ChainFn, Lib, TD, blob, blob_of, now_unix, read_der, run};
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::OnceLock;
 
-use libloading::{Library, Symbol};
+use libloading::Symbol;
 
-type ChainFn = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
 type FlagFn = unsafe extern "C" fn() -> i64;
-
-const TD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/x509/testdata");
-
-fn read_der(name: &str) -> Vec<u8> {
-    std::fs::read(format!("{TD}/{name}.der")).expect("read fixture")
-}
-
-/// Pack the chain/anchor blob: i64 count, (i64 off, i64 len) pairs, data.
-fn blob(names: &[&str]) -> Vec<u8> {
-    blob_of(&names.iter().map(|n| read_der(n)).collect::<Vec<_>>())
-}
-
-fn blob_of(ders: &[Vec<u8>]) -> Vec<u8> {
-    let n = ders.len();
-    let mut off = 8 + 16 * n;
-    let mut out = Vec::new();
-    out.extend_from_slice(&(n as i64).to_le_bytes());
-    for d in ders {
-        out.extend_from_slice(&(off as i64).to_le_bytes());
-        out.extend_from_slice(&(d.len() as i64).to_le_bytes());
-        off += d.len();
-    }
-    for d in ders {
-        out.extend_from_slice(d);
-    }
-    out
-}
-
-fn now_unix() -> i64 {
-    std::fs::read_to_string(format!("{TD}/now.txt"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap()
-}
-
-/// Build the combined x509 shared library once.
-fn build_x509_so() -> Option<&'static PathBuf> {
-    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
-    SO.get_or_init(|| {
-        for tool in ["mlir-opt", "mlir-translate", "clang"] {
-            if which::which(tool).is_err() {
-                crate::common::gate::skipped(
-                    "x509_chain_smoke",
-                    &format!("x509_chain_smoke: {tool} not on PATH; skipping"),
-                );
-                return None;
-            }
-        }
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // Concatenate the module set exactly as X509_SET in scripts/run_crypto_vectors.sh.
-        let mut combined = String::new();
-        for m in [
-            "sha256",
-            "sha512",
-            "ecdsa_p256",
-            "x509_p384",
-            "x509_bignum",
-            "rsa_pss",
-            "x509_bundle",
-            "x509_der",
-            "x509_ext",
-            "x509_name",
-            "x509_sig",
-            "x509_path",
-            "x509",
-        ] {
-            let src = std::fs::read_to_string(manifest_dir.join("std").join(format!("{m}.mind")))
-                .expect("read std module");
-            for line in src.lines() {
-                if !line.starts_with("import ") {
-                    combined.push_str(line);
-                    combined.push('\n');
-                }
-            }
-        }
-        let dir = crate::common::scratch_dir("x509_chain_smoke");
-        let src_path = dir.join("x509_combined.mind");
-        std::fs::write(&src_path, combined).expect("write combined source");
-        let so_path = dir.join("mind_x509_chain_smoke.so");
-        let out = Command::new(mindc_bin())
-            .args([
-                src_path.to_str().unwrap(),
-                "--emit-shared",
-                so_path.to_str().unwrap(),
-            ])
-            .env("MINDC_BUILD_TOOL_TIMEOUT_SECS", "900")
-            .output()
-            .expect("spawn mindc for x509_chain_smoke");
-        // Shared fail-closed helper: a capability gap may skip (never under
-        // MIND_BENCH_REQUIRE=1); any other compile failure panics.
-        if !crate::common::gate::compiled("x509_chain_smoke", &out) {
-            return None;
-        }
-        Some(so_path)
-    })
-    .as_ref()
-}
-
-struct Lib(&'static Library);
-
-impl Lib {
-    fn get() -> Option<&'static Lib> {
-        static LIB: OnceLock<Option<Lib>> = OnceLock::new();
-        LIB.get_or_init(|| {
-            let so = build_x509_so()?;
-            let lib = unsafe { Library::new(so).expect("dlopen x509 .so") };
-            let lib: &'static Library = Box::leak(Box::new(lib));
-            Some(Lib(lib))
-        })
-        .as_ref()
-    }
-}
-
-fn run(lib: &Lib, chain: &[&str], anchors: &[&str], dns: &str, now: i64) -> i64 {
-    let chain = blob(chain);
-    let anchors = blob(anchors);
-    let mut dnsb = dns.as_bytes().to_vec();
-    dnsb.push(0);
-    let f: Symbol<ChainFn> = unsafe { lib.0.get(b"x509_verify_server_chain\0").unwrap() };
-    unsafe {
-        f(
-            chain.as_ptr() as i64,
-            anchors.as_ptr() as i64,
-            dnsb.as_ptr() as i64,
-            now,
-        )
-    }
-}
 
 #[test]
 fn x509_peer_auth_supported_is_one() {
@@ -545,4 +413,251 @@ const ANCHOR_POLICY: &[Row] = &[
 fn x509_trust_anchor_policy() {
     let Some(lib) = Lib::get() else { return };
     check_rows(lib, ANCHOR_POLICY);
+}
+
+// ── Path-search work bound ─────────────────────────────────────────────────
+// The peer controls the certificate bag. A repeated certificate (same DER) is
+// one candidate issuer, and one path search spends at most 64 signature
+// verifications, anchors and bag issuers alike, failing -13 past that.
+
+type BudgetFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
+
+const RSA_HOST: &str = "www.rsa-test.example.com";
+const PATH_HOST: &str = "path.example.com";
+const UNLIMITED: i64 = 1 << 40;
+/// The RSA leaf and seven copies of its self-signed issuer: every copy
+/// verifies every other one, the shape of a bag that cost 13,699 verifications.
+const RSA_COPIES: &[&str] = &[
+    "rsa_leaf", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root", "rsa_root",
+];
+const INTER_COPIES: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+    "path_ec_inter",
+];
+/// Two certificates named `path_ec root` with the same DER length.
+const SAME_LEN_ROOTS: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_anchor_wrongkey",
+    "path_ec_root",
+];
+/// 1 + 31 + 1 + 31 = 64 verifications: each of 31 wrong-key anchors is tried
+/// for the intermediate and for the bag root.
+const THREE: &[&str] = &["path_ec_leaf", "path_ec_inter", "path_ec_root"];
+/// THREE plus a wrong-key intermediate the leaf tries last: 65 verifications.
+const FOUR: &[&str] = &[
+    "path_ec_leaf",
+    "path_ec_inter",
+    "path_ec_root",
+    "path_wrongkey",
+];
+const WRONG_31: &[&str] = &["path_anchor_wrongkey"; 31];
+const WRONG_32: &[&str] = &["path_anchor_wrongkey"; 32];
+
+/// Validate through `x509_verify_server_chain_budget` with `budget`
+/// verifications allowed; returns (verdict, verifications spent).
+fn run_budget(lib: &Lib, chain: &[&str], anchors: &[&str], host: &str, budget: i64) -> (i64, i64) {
+    run_budget_blob(lib, &blob(chain), &blob(anchors), host, budget)
+}
+
+fn run_budget_blob(lib: &Lib, chain: &[u8], anchors: &[u8], host: &str, budget: i64) -> (i64, i64) {
+    let host = format!("{host}\0");
+    let f: Symbol<BudgetFn> = unsafe { lib.0.get(b"x509_verify_server_chain_budget\0").unwrap() };
+    let mut left = budget;
+    let cell = &mut left as *mut i64 as i64;
+    let got = unsafe {
+        f(
+            chain.as_ptr() as i64,
+            anchors.as_ptr() as i64,
+            host.as_ptr() as i64,
+            now_unix(),
+            cell,
+        )
+    };
+    (got, budget - left)
+}
+
+/// Seven copies of one self-signed issuer cost one verification, not one per
+/// copy per path position; the copy kept still completes a valid path, and a
+/// different certificate with the same name and DER length is its own
+/// candidate.
+#[test]
+fn x509_repeated_certificate_is_one_candidate_issuer() {
+    let Some(lib) = Lib::get() else { return };
+    assert_eq!(
+        run_budget(lib, RSA_COPIES, &["ec_root"], RSA_HOST, UNLIMITED),
+        (-7, 1)
+    );
+    assert_eq!(run(lib, RSA_COPIES, &["ec_root"], RSA_HOST, now_unix()), -7);
+    assert_eq!(
+        run_budget(lib, INTER_COPIES, &["path_ec_root"], PATH_HOST, UNLIMITED),
+        (0, 2)
+    );
+    assert_eq!(
+        run(lib, INTER_COPIES, &["path_ec_root"], PATH_HOST, now_unix()),
+        0
+    );
+    assert_eq!(
+        run_budget(lib, SAME_LEN_ROOTS, &["ec_root"], PATH_HOST, UNLIMITED),
+        (-3, 4)
+    );
+    // The reported shape: a self-signed leaf and seven copies of it. The
+    // leaf's identity is used from the start, so no copy is even tried.
+    let copies = blob_of(&vec![self_issued_ca_leaf(); 8]);
+    let ec_root = blob(&["ec_root"]);
+    assert_eq!(
+        run_budget_blob(lib, &copies, &ec_root, PATH_HOST, UNLIMITED),
+        (-7, 0)
+    );
+    let f: Symbol<ChainFn> = unsafe { lib.0.get(b"x509_verify_server_chain\0").unwrap() };
+    let host = format!("{PATH_HOST}\0");
+    let (c, a, h) = (
+        copies.as_ptr() as i64,
+        ec_root.as_ptr() as i64,
+        host.as_ptr() as i64,
+    );
+    assert_eq!(unsafe { f(c, a, h, now_unix()) }, -7);
+}
+
+/// DER element: tag, minimal definite length, body.
+fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+    let n = body.len();
+    let mut out = match n {
+        0..=127 => vec![tag, n as u8],
+        128..=255 => vec![tag, 0x81, n as u8],
+        _ => vec![tag, 0x82, (n >> 8) as u8, n as u8],
+    };
+    out.extend_from_slice(body);
+    out
+}
+
+/// (header length, total length) of the DER element at `pos`.
+fn der_extent(d: &[u8], pos: usize) -> (usize, usize) {
+    let b = d[pos + 1] as usize;
+    if b < 0x80 {
+        return (2, 2 + b);
+    }
+    let k = b & 0x7f;
+    let n = d[pos + 2..pos + 2 + k]
+        .iter()
+        .fold(0, |a, &x| (a << 8) | x as usize);
+    (2 + k, 2 + k + n)
+}
+
+/// A self-issued CA leaf for path.example.com (cA, serverAuth EKU, SAN, no
+/// keyUsage) with path_ec_leaf's key and a signature that does not verify: a
+/// copy of it is a candidate issuer only if one identity can enter a path
+/// twice, and that try is a counted verification.
+fn self_issued_ca_leaf() -> Vec<u8> {
+    let leaf = read_der("path_ec_leaf");
+    let mut p = der_extent(&leaf, 0).0;
+    p += der_extent(&leaf, p).0;
+    for _ in 0..6 {
+        // version, serial, signature, issuer, validity, subject
+        p += der_extent(&leaf, p).1;
+    }
+    let spki = leaf[p..p + der_extent(&leaf, p).1].to_vec();
+    let ext = |id: u8, critical: bool, value: Vec<u8>| {
+        let flag = if critical {
+            tlv(0x01, &[0xff])
+        } else {
+            Vec::new()
+        };
+        tlv(
+            0x30,
+            &[tlv(0x06, &[0x55, 0x1d, id]), flag, tlv(0x04, &value)].concat(),
+        )
+    };
+    let alg = tlv(
+        0x30,
+        &tlv(0x06, &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]),
+    );
+    let rdn = [tlv(0x06, &[0x55, 0x04, 0x03]), tlv(0x0c, b"self leaf")].concat();
+    let name = tlv(0x30, &tlv(0x31, &tlv(0x30, &rdn)));
+    let validity = [tlv(0x17, b"260101000000Z"), tlv(0x17, b"290101000000Z")].concat();
+    let exts = [
+        ext(0x13, true, tlv(0x30, &tlv(0x01, &[0xff]))),
+        ext(
+            0x25,
+            false,
+            tlv(0x30, &tlv(0x06, &[0x2b, 6, 1, 5, 5, 7, 3, 1])),
+        ),
+        ext(0x11, false, tlv(0x30, &tlv(0x82, PATH_HOST.as_bytes()))),
+    ];
+    let tbs = [
+        tlv(0xa0, &tlv(0x02, &[2])),
+        tlv(0x02, &[1]),
+        alg.clone(),
+        name.clone(),
+        tlv(0x30, &validity),
+        name,
+        spki,
+        tlv(0xa3, &tlv(0x30, &exts.concat())),
+    ];
+    let sig = [
+        vec![0u8],
+        tlv(0x30, &[tlv(0x02, &[1]), tlv(0x02, &[1])].concat()),
+    ]
+    .concat();
+    tlv(
+        0x30,
+        &[tlv(0x30, &tbs.concat()), alg, tlv(0x03, &sig)].concat(),
+    )
+}
+
+#[rustfmt::skip]
+const SIG_BUDGET: &[Row] = &[
+    ("budget_64_spent", THREE, WRONG_31, PATH_HOST, 0, -3),
+    ("budget_65th_refused_in_bag", FOUR, WRONG_31, PATH_HOST, 0, -13),
+    ("budget_65th_refused_at_anchor", THREE, WRONG_32, PATH_HOST, 0, -13),
+];
+
+/// The search counts every verification, stops at the caller's budget (the
+/// boundary is exact) and `x509_verify_server_chain` allows exactly 64.
+#[test]
+fn x509_path_search_spends_at_most_64_signature_verifications() {
+    let Some(lib) = Lib::get() else { return };
+    check_rows(lib, SIG_BUDGET);
+    assert_eq!(
+        run_budget(lib, THREE, WRONG_31, PATH_HOST, UNLIMITED),
+        (-3, 64)
+    );
+    assert_eq!(
+        run_budget(lib, FOUR, WRONG_31, PATH_HOST, UNLIMITED),
+        (-3, 65)
+    );
+    assert_eq!(
+        run_budget(lib, THREE, WRONG_32, PATH_HOST, UNLIMITED),
+        (-3, 66)
+    );
+    assert_eq!(run_budget(lib, THREE, WRONG_31, PATH_HOST, 64), (-3, 64));
+    assert_eq!(run_budget(lib, THREE, WRONG_31, PATH_HOST, 63), (-13, 63));
+    assert_eq!(
+        run_budget(lib, THREE, &["path_ec_root"], PATH_HOST, 2),
+        (0, 2)
+    );
+    assert_eq!(
+        run_budget(lib, THREE, &["path_ec_root"], PATH_HOST, 1),
+        (-13, 1)
+    );
+    // A budget cell pointer <= 0 is refused like the other pointers.
+    let f: Symbol<BudgetFn> = unsafe { lib.0.get(b"x509_verify_server_chain_budget\0").unwrap() };
+    let (chain, anchors) = (blob(THREE), blob(&["path_ec_root"]));
+    let host = format!("{PATH_HOST}\0");
+    let got = unsafe {
+        f(
+            chain.as_ptr() as i64,
+            anchors.as_ptr() as i64,
+            host.as_ptr() as i64,
+            now_unix(),
+            0,
+        )
+    };
+    assert_eq!(got, -1, "a null budget cell must be refused");
 }
