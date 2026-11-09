@@ -209,10 +209,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
     server key) keeps its known answer at the RSA-PSS verify primitive, not
     through the client.
-    The 2048-byte application receive buffer reclaims bytes the reader has
-    already consumed before its bound check, so a long stream of small records
-    is read in full; a record that does not fit the unread bytes still fails
-    closed (E_OVF).
+    The application receive buffer holds one record (16384 bytes): the client
+    opens the next record only after the reader has drained the previous one,
+    so a long stream of small records is read in full and unread bytes are
+    never overwritten; a record longer than the record bound fails closed
+    (E_OVF).
   - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
     only; issuer signatures inside the chain keep ECDSA P-256/P-384,
     RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
