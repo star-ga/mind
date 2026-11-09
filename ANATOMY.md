@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2154 | **Est. tokens:** ~4,095,798
-**Generated:** 2026-11-07 03:32 UTC
+**Files:** 2162 | **Est. tokens:** ~4,111,161
+**Generated:** 2026-11-07 05:30 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~32,790 |
+| `./` | 35 | ~32,819 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -30,7 +30,7 @@
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~87,307 |
+| `benches/` | 28 | ~87,905 |
 | `benches/common/` | 2 | ~2,998 |
 | `benches/e2e/` | 1 | ~3,047 |
 | `bench/fft/` | 8 | ~8,060 |
@@ -96,10 +96,10 @@
 | `.github/actions/release-artifact-smoke/` | 1 | ~1,081 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~16,556 |
+| `.github/workflows/` | 9 | ~16,679 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~22,857 |
-| `scripts/` | 33 | ~128,929 |
+| `scripts/` | 33 | ~136,753 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -158,11 +158,11 @@
 | `src/type_checker/slice_abi/` | 4 | ~16,046 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 59 | ~265,274 |
-| `tests/` | 451 | ~974,128 |
+| `std/` | 59 | ~266,161 |
+| `tests/` | 453 | ~977,104 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 6 | ~15,987 |
+| `tests/common/` | 7 | ~17,332 |
 | `tests/conformance/cpu_baseline/` | 12 | ~390 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,706 |
@@ -232,9 +232,9 @@
 | `tests/std_entropy_dns_support/` | 1 | ~1,583 |
 | `tests/support/` | 12 | ~28,187 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tests/x509/` | 1 | ~2,170 |
+| `tests/x509/` | 1 | ~2,316 |
 | `tests/x509/testdata/` | 86 | ~13,454 |
-| `tests/x509/testdata/adv/` | 21 | ~4,088 |
+| `tests/x509/testdata/adv/` | 26 | ~5,523 |
 | `tests/xsi_quant/` | 3 | ~11,915 |
 | `tools/` | 4 | ~20,957 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
@@ -263,7 +263,7 @@
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
-- `CONTRIBUTING.md` (~2260 tok, huge) — Contributing to MIND
+- `CONTRIBUTING.md` (~2289 tok, huge) — Contributing to MIND
 - `deny.toml` (~131 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
@@ -317,7 +317,7 @@
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
 - `bench_aes_gcm.rs` (~2590 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_ecdsa_p256.rs` (~2786 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_ecdsa_p256.rs` (~3384 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_hkdf.rs` (~4424 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_hpack.rs` (~3927 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -1081,7 +1081,7 @@
 - `bench-gate.yml` (~5298 tok, huge) — name: Bench gate
 - `cargo-deny.yml` (~333 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~1616 tok, huge) — name: Crypto Vectors
-- `docs-claims.yml` (~2814 tok, huge) — name: Docs Claims
+- `docs-claims.yml` (~2937 tok, huge) — name: Docs Claims
 - `link-check.yml` (~319 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
 - `pr-review.yml` (~1131 tok, large) — name: pr-review
@@ -1099,8 +1099,8 @@
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
-- `anatomy-hook.sh` (~1811 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
-- `anatomy.sh` (~2755 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `anatomy-hook.sh` (~2504 tok, huge) — STARGA author guard (chained first: a wrong-identity commit must never be created).
+- `anatomy.sh` (~3505 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `arch_gate.sh` (~2222 tok, huge) — arch_gate.sh - architectural-governance gate (arch-mind).
 - `cfg_gate_wiring_lint.py` (~4265 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~7653 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
@@ -1143,8 +1143,8 @@
 
 - `test_exec_semantics_gate.py` (~6646 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
 - `test_gate_wiring.py` (~7205 tok, huge) — Regression test for scripts/check_gate_wiring.py.
-- `test_no_ai_attribution.py` (~7235 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
-- `test_smoke_wiring_lint.py` (~2257 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
+- `test_no_ai_attribution.py` (~6945 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
+- `test_smoke_wiring_lint.py` (~8928 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
 - `workflow_scan.py` (~4926 tok, huge) — workflow_scan.py — dependency-free structural reader for the GitHub Actions
 ### `sdk/ts/mic-map/dist/`
@@ -1692,7 +1692,7 @@
 - `tls13_client_api.mind` (~2553 tok, huge) — Public constants, accessors and sans-IO calls of std.tls13_client: input
 - `tls13_client_core.mind` (~4433 tok, huge) — Internal bounded state storage for std.tls13_client. The public facade keeps
 - `tls13_client_hello.mind` (~5613 tok, huge) — ClientHello, ServerHello and bounded HRR negotiation, and the handshake and
-- `tls13_client.mind` (~6621 tok, huge) — std.tls13_client — bounded sans-IO TLS 1.3 client.
+- `tls13_client.mind` (~6744 tok, huge) — std.tls13_client — bounded sans-IO TLS 1.3 client.
 - `tls13_finished.mind` (~2712 tok, huge) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
 - `tls13_handshake.mind` (~2986 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
 - `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
@@ -1709,8 +1709,8 @@
 - `x509.mind` (~1080 tok, large) — std/x509.mind — X.509v3 DER parsing, RSA PKCS#1 v1.5 (SHA-256) signature
 - `x509_name.mind` (~4230 tok, huge) — std/x509_name.mind — RFC 6125 hostname matching, IPv4/IPv6 literal parsing,
 - `x509_p384.mind` (~4342 tok, huge) — std/x509_p384.mind — ECDSA signature verification on NIST P-384
-- `x509_path.mind` (~5199 tok, huge) — std/x509_path.mind — X.509 certificate path building, parent policy validation,
-- `x509_sig.mind` (~3958 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
+- `x509_path.mind` (~5851 tok, huge) — std/x509_path.mind — X.509 certificate path building, parent policy validation,
+- `x509_sig.mind` (~4070 tok, huge) — std/x509_sig.mind — RSA PKCS#1 v1.5, RSASSA-PSS and ECDSA signature
 ### `tests/`
 
 - `aggregate_const_run.rs` (~1765 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1779,7 +1779,8 @@
 - `gate.rs` (~4999 tok, huge) — Copyright 2025 STARGA Inc.
 - `json_canon_kat.rs` (~1057 tok, large) — Copyright 2025 STARGA Inc.
 - `mic_record.rs` (~1944 tok, huge) — Copyright 2026 STARGA Inc.
-- `mod.rs` (~2697 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2701 tok, huge) — Copyright 2025 STARGA Inc.
+- `x509_so.rs` (~1341 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `xsi_gate.rs` (~4684 tok, huge) — Copyright 2025 STARGA Inc.
 - `xsi_workloads.rs` (~606 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/`
@@ -2779,7 +2780,7 @@
 - `std_surface_vec_module.rs` (~1809 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_zeroed.rs` (~1097 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3251 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_tls_x509_import.rs` (~8137 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_tls_x509_import.rs` (~8189 tok, huge) — Copyright 2026 STARGA Inc.
 - `stmt_keyword_recognizer.rs` (~2527 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2826,6 +2827,7 @@
 - `test_harness_root_cause_error.rs` (~758 tok, large) — Copyright 2025 STARGA Inc.
 - `tls13_client_cases.mind` (~5652 tok, huge) — Pure-MIND regression entry point; identical assertions on both backends.
 - `tls13_client_runner.mind` (~449 tok, medium) — One authoritative MIND entry point for both backend transports.
+- `tls13_client_rx.mind` (~1034 tok, large) — Application receive buffer of the TLS 1.3 client (2048 bytes): consumed
 - `tls13_client_shipped.mind` (~1114 tok, large) — Shipped-verifier refusal: the real std/x509 verifier, an anchor set that does
 - `tls13_finished_driver.py` (~3085 tok, huge) — # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
 - `tls13_handshake_driver.py` (~6662 tok, huge) — # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
@@ -2870,10 +2872,11 @@
 - `wide_integer_types.rs` (~517 tok, large) — Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
-- `x509_chain_smoke.rs` (~5177 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `x509_chain_smoke.rs` (~6283 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `x509_pss_salt.rs` (~784 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `tests/x509/`
 
-- `README.md` (~2170 tok, huge) — X.509 chain and trust-anchor tests
+- `README.md` (~2316 tok, huge) — X.509 chain and trust-anchor tests
 ### `tests/x509/testdata/adv/`
 
 - `a_inter_pss384_root.der` (binary, 524 bytes)
@@ -2884,8 +2887,13 @@
 - `a_root_rsa384.der` (binary, 724 bytes)
 - `bundle_ec_plus_sha1.pem` (~450 tok, medium) — -----BEGIN CERTIFICATE-----
 - `bundle_sha1_plus_ec.der` (binary, 1246 bytes)
+- `pss3072_long_leaf.der` (binary, 1076 bytes)
+- `pss3072_long_leaf_salt351.der` (binary, 1076 bytes)
+- `pss3072_long_root.der` (binary, 1061 bytes)
 - `pss4096_inter2048.der` (binary, 1086 bytes)
 - `pss4096_leaf.der` (binary, 665 bytes)
+- `pss4096_long_leaf.der` (binary, 1204 bytes)
+- `pss4096_long_root.der` (binary, 1317 bytes)
 - `pss4096_root.der` (binary, 1338 bytes)
 - `rsa3072_leaf.der` (binary, 688 bytes)
 - `rsa3072_root.der` (binary, 978 bytes)

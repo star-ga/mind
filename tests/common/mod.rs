@@ -29,6 +29,7 @@
 
 pub mod gate;
 pub mod mic_record;
+pub mod x509_so;
 pub mod xsi_gate;
 
 use std::path::{Path, PathBuf};

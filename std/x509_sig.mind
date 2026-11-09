@@ -242,7 +242,10 @@ pub fn x509_pss_params(cert: i64, sa_content: i64, sa_lim: i64, oid_total: i64, 
     if seen != 3 {
         return -2;
     }
-    if salt > 222 {
+    // Parse time does not know the issuer key, so bound by the largest supported
+    // modulus (512 bytes): emLen - hLen - 2 = 512 - 32 - 2. The exact bound for
+    // the issuer's key is enforced where the signature is verified.
+    if salt > 478 {
         return -2;
     }
     salt
@@ -463,6 +466,11 @@ pub fn x509_verify_cert_sig(crec: i64, prec: i64) -> i64 {
         }
         let e_val2: i64 = bytes_be_to_i64(pbase + e_off2, e_len2);
         let salt: i64 = __mind_load_i64(crec + 72);
+        // RFC 8017 §9.1.2: sLen <= emLen - hLen - 2, with emLen = the issuer modulus
+        // length and hLen = 32 (SHA-256).
+        if salt > __mind_load_i64(prec + 112) - 34 {
+            return -2;
+        }
         let rc2: i64 = rsa_pss_verify_sha256(pbase + __mind_load_i64(prec + 104), __mind_load_i64(prec + 112), e_val2, cbase + sig_off, sig_len, cbase + tbs_off, tbs_len, salt);
         if rc2 == 1 {
             return 0;
