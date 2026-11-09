@@ -50,22 +50,22 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
     // 4 i64-multiplies from each of the 128 length==2 butterflies (the most
     // numerous stage).
     let nbytes: i64 = n * 8;
-    let mut areS2: i64 = re;
-    let mut aimS2: i64 = im;
-    let reEnd2: i64 = re + nbytes;
-    while areS2 < reEnd2 {
-        let bre: i64 = areS2 + 8;
-        let bim: i64 = aimS2 + 8;
+    let mut are_s2: i64 = re;
+    let mut aim_s2: i64 = im;
+    let re_end2: i64 = re + nbytes;
+    while are_s2 < re_end2 {
+        let bre: i64 = are_s2 + 8;
+        let bim: i64 = aim_s2 + 8;
         let xbr: i64 = __mind_load_i64(bre);
         let xbi: i64 = __mind_load_i64(bim);
-        let uur: i64 = __mind_load_i64(areS2);
-        let uui: i64 = __mind_load_i64(aimS2);
-        __mind_store_i64(areS2, uur + xbr);
-        __mind_store_i64(aimS2, uui + xbi);
+        let uur: i64 = __mind_load_i64(are_s2);
+        let uui: i64 = __mind_load_i64(aim_s2);
+        __mind_store_i64(are_s2, uur + xbr);
+        __mind_store_i64(aim_s2, uui + xbi);
         __mind_store_i64(bre, uur - xbr);
         __mind_store_i64(bim, uui - xbi);
-        areS2 = areS2 + 16;
-        aimS2 = aimS2 + 16;
+        are_s2 = are_s2 + 16;
+        aim_s2 = aim_s2 + 16;
     }
 
     // Stages length>=4: twiddles vary, so the Q16.16 complex multiply stays.
@@ -81,16 +81,16 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
         let twstep: i64 = step * 16;
         let lenbytes: i64 = length * 8;
         let halfbytes: i64 = half * 8;
-        let mut areS: i64 = re;
-        let mut aimS: i64 = im;
+        let mut are_s: i64 = re;
+        let mut aim_s: i64 = im;
         let mut start: i64 = 0;
         while start < n {
             let mut jj: i64 = 0;
             let mut twp: i64 = tw;
-            let mut are: i64 = areS;
-            let mut aim: i64 = aimS;
-            let mut bre: i64 = areS + halfbytes;
-            let mut bim: i64 = aimS + halfbytes;
+            let mut are: i64 = are_s;
+            let mut aim: i64 = aim_s;
+            let mut bre: i64 = are_s + halfbytes;
+            let mut bim: i64 = aim_s + halfbytes;
             while jj < half {
                 let wr: i64 = __mind_load_i64(twp);
                 let wi: i64 = __mind_load_i64(twp + 8);
@@ -117,8 +117,8 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
                 bre = bre + 8;
                 bim = bim + 8;
             }
-            areS = areS + lenbytes;
-            aimS = aimS + lenbytes;
+            are_s = are_s + lenbytes;
+            aim_s = aim_s + lenbytes;
             start = start + length;
         }
         length = length << 1;

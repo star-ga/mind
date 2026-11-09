@@ -13,14 +13,14 @@ import std.vec;
 fn main() -> i64 {
     // vec_new() allocates a fresh Vec on the heap via __mind_alloc.
     // The Vec is a three-field heap record: { data_addr, len, cap }.
-    let v = vec_new();
+    let mut v = vec_new();
 
-    // Every operation returns the (possibly reallocated) Vec handle —
-    // there is no hidden mutation. Capacity doubles on growth, starting
-    // at 16 slots.
-    let v = vec_push(v, 10);
-    let v = vec_push(v, 20);
-    let v = vec_push(v, 30);
+    // Every operation returns the (possibly reallocated) Vec handle, and
+    // the caller stores it back explicitly — there is no hidden mutation.
+    // Capacity doubles on growth, starting at 16 slots.
+    v = vec_push(v, 10);
+    v = vec_push(v, 20);
+    v = vec_push(v, 30);
 
     let n = vec_len(v);
     // 3

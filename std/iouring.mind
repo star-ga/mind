@@ -246,7 +246,6 @@ pub fn io_ring_submit_raw(h: i64, slot: i64, opcode: i64, fd: i64, off: i64, add
     // places its SQEs and SQ-array entries where the kernel actually reads them.
     let sring: i64 = __mind_load_i64(h + 8);
     let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
-    let entries: i64 = __mind_load_i64(h + 56) + 1;
     let want: i64 = tail + slot;
     let pos: i64 = want - (want / entries) * entries;
     let sqes: i64 = __mind_load_i64(h + 16);
