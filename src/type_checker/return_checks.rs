@@ -40,6 +40,19 @@ pub(super) fn check_return_and_cond_types(
     }
 }
 
+/// A returned expression whose value is a truth value whatever its operand
+/// class: `infer_expr` reports `f64 <= f64` as `ScalarF64` (the operand class),
+/// so `return a <= b;` in a `-> bool` fn must not read as returning a float.
+/// Parentheses are looked through; a comparison, `&&`/`||` or `!` denotes a
+/// boolean, anything else (a float call, a float binding) still falls to
+/// `infer_expr`, so a genuine float returned from an int/bool fn stays E2010.
+fn denotes_truth_value(node: &Node) -> bool {
+    match node {
+        Node::Paren(inner, _) => denotes_truth_value(inner),
+        other => cond_is_boolean_intent(other),
+    }
+}
+
 fn check_cond_type(
     cond: &Node,
     env: &TypeEnv,
@@ -47,7 +60,7 @@ fn check_cond_type(
     file: Option<&str>,
     errs: &mut Vec<Pretty>,
 ) {
-    if cond_is_boolean_intent(cond) {
+    if denotes_truth_value(cond) {
         return;
     }
     if let Ok((vt, _)) = infer_expr(cond, env) {
@@ -76,7 +89,7 @@ fn check_return_and_cond_node(
 ) {
     match node {
         Node::Return { value, .. } => match (ret_ty, value) {
-            (Some(rt), Some(v)) if is_int_scalar(rt) => {
+            (Some(rt), Some(v)) if is_int_scalar(rt) && !denotes_truth_value(v) => {
                 if let Ok((vt, _)) = infer_expr(v, env) {
                     if is_float_scalar(&vt) {
                         errs.push(diag_from_span(
