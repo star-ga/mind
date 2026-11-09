@@ -126,7 +126,7 @@ surface_tolerance = 25
 note              = 'floor over tests/**/*.rs (378 in the composed native-module bridge source tree); the README floor may lag the tree by at most 25 files before the gate demands a refresh.'
 
 [counts.rust_test_fns]
-declared          = 3569
+declared          = 3570
 mode              = "floor"
 floor_tolerance   = 200
 kind              = "regex_count"
@@ -162,8 +162,9 @@ note              = '"11 unit tests under tools/pytorch_bridge/tests/" — exact
 # client modules (4); 55 -> 57 with std.entropy and std.dns; 57 -> 59 with
 # std.https_http1 and std.https_url (std.tls13_client became std.https); 59 -> 61
 # with std.mic_record and std.mic_results; 61 -> 62 with std.https_probe; 62 -> 64
-# with std.https_io and std.https_record (std.https split under the size ceiling).
-declared  = 64
+# with std.https_io and std.https_record (std.https split under the size ceiling);
+# 64 -> 67 with std.procgroup, std.procgroup_sys and std.procgroup_text.
+declared  = 67
 mode      = "floor"
 floor_tolerance = 4
 kind      = "glob_count"

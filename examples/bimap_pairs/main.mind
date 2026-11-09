@@ -38,21 +38,21 @@ const COUNTRY = [("US", "United States"), ("JP", "Japan"), ("GB", "United Kingdo
 const HTTP_STATUS = [(200, "OK"), (404, "Not Found"), (500, "Server Error")]
 
 fn print_kv(a: String, b: String) -> i64 {
-    let line = string_new();
-    let line = string_push_str(line, a);
-    let line = string_push_byte(line, 32);
-    let line = string_push_str(line, b);
-    let line = string_push_byte(line, 10);
+    let mut line = string_new();
+    line = string_push_str(line, a);
+    line = string_push_byte(line, 32);
+    line = string_push_str(line, b);
+    line = string_push_byte(line, 10);
     print_bytes(string_addr(line), string_len(line));
     return 0;
 }
 
 fn print_ns(n: i64, s: String) -> i64 {
-    let line = string_new();
-    let line = string_push_i64(line, n);
-    let line = string_push_byte(line, 32);
-    let line = string_push_str(line, s);
-    let line = string_push_byte(line, 10);
+    let mut line = string_new();
+    line = string_push_i64(line, n);
+    line = string_push_byte(line, 32);
+    line = string_push_str(line, s);
+    line = string_push_byte(line, 10);
     print_bytes(string_addr(line), string_len(line));
     return 0;
 }

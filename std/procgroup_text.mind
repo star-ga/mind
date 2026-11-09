@@ -1,0 +1,115 @@
+// std.procgroup_text — the C-string and byte helpers of std.procgroup.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Pure bookkeeping over heap memory: decimal text, the NUL-terminated copies,
+// the "/dev/null" and "MIND_PROCGROUP_TASK" names. It makes no OS call and
+// reads no world: the same bytes in, the same bytes out. std.procgroup calls
+// these; they are public only so that it can.
+
+// memcpy copies bytes between memory buffers; it makes no OS call.
+extern "C" {
+    unsafe fn memcpy(dst: *mut u8, src: *const u8, n: i64) -> *mut u8;
+}
+
+// Length of the NUL-terminated string at `addr`.
+pub fn procgroup_text_cstr_len(addr: i64) -> i64 {
+    let mut i: i64 = 0;
+    while __mind_load_i8(addr + i) != 0 {
+        i = i + 1;
+    }
+    i
+}
+
+// Heap copy of `len` bytes at `addr`, NUL-terminated.
+pub fn procgroup_text_copy_cstr(addr: i64, len: i64) -> i64 {
+    let dst: i64 = __mind_alloc(len + 1);
+    if dst == 0 {
+        return 0;
+    }
+    if len > 0 {
+        let _ = memcpy(dst as *mut u8, addr as *const u8, len);
+    }
+    __mind_store_i8(dst + len, 0);
+    dst
+}
+
+// Store four bytes at p + off.
+pub fn procgroup_text_put4(p: i64, off: i64, b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
+    __mind_store_i8(p + off, b0);
+    __mind_store_i8(p + off + 1, b1);
+    __mind_store_i8(p + off + 2, b2);
+    __mind_store_i8(p + off + 3, b3);
+    0
+}
+
+// "/dev/null" as a heap C string.
+pub fn procgroup_text_dev_null() -> i64 {
+    let p: i64 = __mind_alloc(12);
+    let _ = procgroup_text_put4(p, 0, 47, 100, 101, 118);
+    let _ = procgroup_text_put4(p, 4, 47, 110, 117, 108);
+    let _ = procgroup_text_put4(p, 8, 108, 0, 0, 0);
+    p
+}
+
+// "MIND_PROCGROUP_TASK" as a heap C string.
+pub fn procgroup_text_env_name() -> i64 {
+    let p: i64 = __mind_alloc(20);
+    let _ = procgroup_text_put4(p, 0, 77, 73, 78, 68);
+    let _ = procgroup_text_put4(p, 4, 95, 80, 82, 79);
+    let _ = procgroup_text_put4(p, 8, 67, 71, 82, 79);
+    let _ = procgroup_text_put4(p, 12, 85, 80, 95, 84);
+    let _ = procgroup_text_put4(p, 16, 65, 83, 75, 0);
+    p
+}
+
+// Decimal C string of a non-negative `n`.
+pub fn procgroup_text_decimal(n: i64) -> i64 {
+    let mut digits: i64 = 1;
+    let mut t: i64 = n;
+    while t >= 10 {
+        t = t / 10;
+        digits = digits + 1;
+    }
+    let p: i64 = __mind_alloc(digits + 1);
+    __mind_store_i8(p + digits, 0);
+    let mut v: i64 = n;
+    let mut k: i64 = digits - 1;
+    while k >= 0 {
+        __mind_store_i8(p + k, 48 + v % 10);
+        v = v / 10;
+        k = k - 1;
+    }
+    p
+}
+
+// Value of a decimal C string of 1..9 digits, or -1.
+pub fn procgroup_text_parse_index(addr: i64) -> i64 {
+    let n: i64 = procgroup_text_cstr_len(addr);
+    if n == 0 {
+        return 0 - 1;
+    }
+    if n > 9 {
+        return 0 - 1;
+    }
+    let mut v: i64 = 0;
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < n {
+        let c: i64 = __mind_load_i8(addr + i);
+        if c < 48 {
+            bad = 1;
+        }
+        if c > 57 {
+            bad = 1;
+        }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    if bad == 1 {
+        return 0 - 1;
+    }
+    v
+}

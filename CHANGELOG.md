@@ -148,6 +148,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a response that arrives before any request byte is written (a recorded
     server flight, response and close_notify replayed right after the client's
     ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
+- **`std.procgroup` — run many child processes and wait for all of them**
+  (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
+  `procgroup_spawn` / `procgroup_wait_all` start up to 4096 children, capture
+  each child's stdout through its own pipe (drained while the children run),
+  and wait for all of them with one deadline; a child still running at the
+  deadline is killed with `SIGKILL` and reported timed out. Every spawned slot
+  ends in one state (ok, non-zero exit, signal, timed out, spawn failed, lost),
+  and `procgroup_wait_all` returns how many are not ok. `procgroup_self_exe()`
+  plus `procgroup_task_index()` let one `mindc build` executable run itself N
+  times in parallel. Bundled and linked like the other substrate modules; not
+  in the native seed. `tests/std_procgroup_run.rs` builds a program with
+  `mindc build` that spawns 25 copies of itself. `procgroup_spawn`,
+  `procgroup_wait_all` and `procgroup_task_index` are classified as world
+  readers (`src/intrinsics.rs`), so the flat `mindc <file>` path refuses an
+  artifact for a program that calls them unless `--allow-nondeterministic` is
+  given, and attests it `nondeterministic`. `std.procgroup` itself makes no
+  OS call: every pipe, fork, exec, wait, kill, read, poll, clock and
+  environment call is a primitive of the new effect module
+  `std.procgroup_sys` (`std/procgroup_sys.mind`, not in the native seed;
+  every function in it is one straight-line OS call, with the deadline
+  arithmetic, the poll-until-deadline step and the environment save and
+  restore in `std.procgroup`, and the C-string helpers in
+  `std.procgroup_text`), and
+  the primitives that read the world are classified the same way.
 - **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).

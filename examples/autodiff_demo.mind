@@ -66,13 +66,13 @@ fn matrix_vector_product() {
     let loss = sum(y);
     // Scalar reduction for backward
 
-    let grad_A = backward(loss, A);
+    let grad_a = backward(loss, A);
     // ∂loss/∂A = outer product of dloss/dy and x
     let grad_x = backward(loss, x);
     // ∂loss/∂x = Aᵀ @ dloss/dy
 
     print("y = Ax:", y);
-    print("∂loss/∂A:", grad_A);
+    print("∂loss/∂A:", grad_a);
     print("∂loss/∂x:", grad_x);
 }
 
@@ -92,7 +92,7 @@ fn broadcast_bias() {
     let loss = sum(Y);
     // Scalar for backward
 
-    let grad_X = backward(loss, X);
+    let grad_x = backward(loss, X);
     // All ones
     let grad_b = backward(loss, b);
     // Sum over batch: [4.0, 4.0, 4.0]
@@ -186,12 +186,12 @@ fn linear_layer_with_activation() {
     // Scalar loss
 
     // Backward pass
-    let grad_W = backward(loss, W);
+    let grad_w = backward(loss, W);
     let grad_b = backward(loss, b);
     let grad_x = backward(loss, x);
 
     print("Layer output:", activated);
-    print("∂loss/∂W:", grad_W);
+    print("∂loss/∂W:", grad_w);
     print("∂loss/∂b:", grad_b);
     print("∂loss/∂x:", grad_x);
 }

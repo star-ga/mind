@@ -108,22 +108,21 @@
 #  include <stdio.h>      // SEEK_SET / SEEK_CUR (Unix gets these via <unistd.h>)
 #  include <io.h>
 #  include <fcntl.h>     // _O_RDONLY / _O_BINARY for MIND_OPEN_RDONLY
+#  include <share.h>     // _SH_DENYNO for _sopen_s
 #  include <intrin.h>     // __cpuid / __cpuidex (file-scope; not inside fn body)
 #  include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
 typedef long long mind_off_t;
 static ssize_t mind_pread_emu(int fd, void *buf, size_t count, mind_off_t off) {
     long long cur = _lseeki64(fd, 0, SEEK_CUR);
-    if (cur < 0) return -1;
-    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    if (cur < 0 || _lseeki64(fd, off, SEEK_SET) < 0) return -1;
     int r = _read(fd, buf, (unsigned)count);
     _lseeki64(fd, cur, SEEK_SET);
     return (ssize_t)r;
 }
 static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t off) {
     long long cur = _lseeki64(fd, 0, SEEK_CUR);
-    if (cur < 0) return -1;
-    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    if (cur < 0 || _lseeki64(fd, off, SEEK_SET) < 0) return -1;
     int r = _write(fd, buf, (unsigned)count);
     _lseeki64(fd, cur, SEEK_SET);
     return (ssize_t)r;
@@ -132,12 +131,12 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 #  define MIND_WRITE(fd, b, c)     _write((fd), (b), (unsigned)(c))
 #  define MIND_PREAD(fd, b, c, o)  mind_pread_emu((fd), (b), (c), (mind_off_t)(o))
 #  define MIND_PWRITE(fd, b, c, o) mind_pwrite_emu((fd), (b), (c), (mind_off_t)(o))
-// `_O_BINARY` is not a gratuitous extra flag: Windows CRT descriptors default
-// to TEXT mode, which silently rewrites CRLF -> LF on read. That would make the
-// bytes `__mind_read` returns for the same file differ between substrates, i.e.
-// break byte-identity at the I/O boundary. POSIX has no such mode, so the two
-// branches agree only with it set.
-#  define MIND_OPEN_RDONLY(p)      _open((p), _O_RDONLY | _O_BINARY)
+// `_O_BINARY` is load-bearing: Windows CRT descriptors default to TEXT mode,
+// which rewrites CRLF -> LF on read, so `__mind_read` would return different
+// bytes per substrate (a byte-identity break at the I/O boundary). The open is
+// `_sopen_s` (the non-deprecated `_open`, same `_SH_DENYNO` sharing), -1 on error.
+static int mind_open_rdonly_win(const char *p) { int fd = -1; return _sopen_s(&fd, p, _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) == 0 ? fd : -1; }
+#  define MIND_OPEN_RDONLY(p)      mind_open_rdonly_win((p))
 #  define MIND_LSEEK(fd, off, wh)  ((int64_t)_lseeki64((fd), (long long)(off), (wh)))
 #  define MIND_CLOSE(fd)           _close((fd))
 #else

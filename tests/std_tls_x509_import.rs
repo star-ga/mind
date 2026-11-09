@@ -33,7 +33,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const TD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/x509/testdata");
+#[cfg(all(unix, feature = "mlir-build"))]
 const TLS_FIX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls13_client");
+#[cfg(all(unix, feature = "mlir-build"))]
 const TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests");
 
 // ── Program assembly ───────────────────────────────────────────────────────
@@ -252,6 +254,7 @@ const X509_INTERP_RSA: &[Chain] = &[
 
 /// The build set adds ECDSA P-256 / P-384 and RSA-PSS chains, intermediates,
 /// the IP address positives, name constraints and the wildcard positives.
+#[cfg(all(unix, feature = "mlir-build"))]
 #[rustfmt::skip]
 const X509_BUILD: &[Chain] = &[
     case("ec_ok", &["ec_leaf", "ec_inter"], &["ec_root"], "www.example.com", 0, 0),
