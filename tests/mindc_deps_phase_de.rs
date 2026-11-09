@@ -86,23 +86,13 @@ fn create_local_bare_repo(bare_dir: &Path, pkg_name: &str) -> String {
     let work = bare_dir.parent().unwrap().join("work_repo");
     fs::create_dir_all(&work).unwrap();
 
-    // Init bare repo. An explicit initial branch keeps git from printing its
-    // default-branch-name advice.
+    // Init the bare and the work tree on `main` (no default-branch advice);
+    // the work tree adds the bare as `origin` instead of cloning it while empty.
     fs::create_dir_all(bare_dir).unwrap();
-    run_git(&[
-        "init",
-        "--bare",
-        "--initial-branch=main",
-        &bare_dir.to_string_lossy(),
-    ]);
-
-    // Init the work tree with the bare as `origin`. Cloning the still-empty
-    // bare would print git's "cloned an empty repository" warning.
-    run_git(&["init", "--initial-branch=main", &work.to_string_lossy()]);
-    run_git_in(
-        &["remote", "add", "origin", &bare_dir.to_string_lossy()],
-        &work,
-    );
+    let (bare, work_s) = (bare_dir.to_string_lossy(), work.to_string_lossy());
+    run_git(&["init", "--bare", "--initial-branch=main", &bare]);
+    run_git(&["init", "--initial-branch=main", &work_s]);
+    run_git_in(&["remote", "add", "origin", &bare], &work);
 
     // Populate the work tree.
     let mind_toml = format!(
