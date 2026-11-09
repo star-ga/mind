@@ -337,6 +337,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mindc test`, the type checker and the native bridge all read one bundled std table.
 - **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
   with known-answer tests and cross-substrate identity receipts.
+- **The warnings `main` and pull-request runs showed are cleared (`#383`, `e3b01d11`)**:
+  the `shadowing` lint no longer fires on a repeated `let _ = expr` discard, which binds
+  no name, while a named rebind beside the discards still fires
+  (`tests/mindcraft_lint_shadowing.rs` holds both); the Windows runtime-support read path
+  opens through `_sopen_s` and keeps `_O_BINARY`, so `__mind_read` bytes stay identical
+  across substrates; the release workflow builds a shipped binary from a clean target and
+  registry with no `actions/cache` step, so a cache entry written by another run cannot
+  reach a release; the arch-mind scanner pull logs in to the registry for that step only;
+  the examples and benches no longer trip the lint or compiler warnings; the crate
+  `homepage` is `https://mindlang.dev`.
 - **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
   fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
   pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`) and compares
