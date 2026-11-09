@@ -439,6 +439,9 @@ mod tests {
             let _ = worker0_started_tx.send(());
             if let Some(cancel) = cancel_for_runner.lock().expect("cancel lock").clone() {
                 cancel.wait_cancelled();
+                // Keep the worker alive after cancellation so only a real join (not
+                // luck of scheduling) makes the active count reach zero.
+                std::thread::sleep(Duration::from_millis(150));
             }
             TestResult {
                 name: entry.name.clone(),
@@ -513,6 +516,9 @@ mod tests {
             }
             if let Some(cancel) = cancel_for_runner.lock().expect("cancel lock").clone() {
                 cancel.wait_cancelled();
+                // Keep the worker alive after cancellation so only a real join (not
+                // luck of scheduling) makes the active count reach zero.
+                std::thread::sleep(Duration::from_millis(150));
             }
             TestResult {
                 name: entry.name.clone(),
