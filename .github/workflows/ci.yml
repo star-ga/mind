@@ -2205,7 +2205,7 @@ jobs:
         # run_gate-exempt: scripts/arch_gate.sh - enforces its own rules>=1 non-vacuity floor against pinned arch-mind c12d08b3 and publishes asserted=<N> directly
         env:
           ARCH_MIND: ${{ runner.temp }}/arch-mind-scanner/bin/arch-mind
-          ARCH_BASE_REF: origin/main
+          ARCH_BASE_REF: HEAD^1  # the merge commit's own base (on main: the parent), never a later main
         run: bash scripts/arch_gate.sh
 
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features

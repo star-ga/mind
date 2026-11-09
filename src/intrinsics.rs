@@ -522,6 +522,27 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "monotonic_now",
     "now",
     "now_ns",
+    // `std.procgroup`'s world readers, for the same reason: an imported call's
+    // body (`fork`, `getenv`, `clock_gettime`, `waitpid`) is not in the caller's
+    // IR. `procgroup_spawn` forks and reads the environment, `procgroup_wait_all`
+    // reads the clock for its deadline and reaps whatever finished, and
+    // `procgroup_task_index` reads the environment. The other procgroup calls
+    // read the group's own memory and stay pure.
+    "procgroup_spawn",
+    "procgroup_task_index",
+    "procgroup_wait_all",
+    // `std.procgroup_sys`, the effect module those three reach their OS calls
+    // through: each straight-line wrapper whose one OS call is a World row
+    // above (`fork`, `waitpid`, `read`, `clock_gettime`, `getenv`). The child
+    // descriptor walk, the pollfd records, the deadline arithmetic and the
+    // environment save and restore live in `std.procgroup`. close, kill, poll,
+    // pipe, dup2, exec, setenv and unsetenv call no World row and stay pure,
+    // like `procgroup_new`.
+    "procgroup_sys_clock",
+    "procgroup_sys_env_read",
+    "procgroup_sys_fork",
+    "procgroup_sys_read",
+    "procgroup_sys_wait",
     "read_input",
     "read_line",
     "system_time",

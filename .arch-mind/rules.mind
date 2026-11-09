@@ -55,4 +55,9 @@ module mind_root_rules {
     // evidence metric). Fires if evidence density regresses; lift per release.
     [arch_rule(evidence_chain_density, ge)]
     const EVIDENCE_FLOOR: i32 = 5
+
+    // std/procgroup_sys.mind only wraps OS calls. std/procgroup.mind holds
+    // the loops and the slot records and calls these wrappers.
+    [arch_effect_module]
+    const OS_EFFECT_MODULES: str = "std/procgroup_sys.mind"
 }
