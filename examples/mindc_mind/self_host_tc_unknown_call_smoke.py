@@ -383,7 +383,7 @@ fn main() -> i64 {
 }
 """
 
-S_GENDEREF = """\
+S_GEN_DEREF = """\
 fn main() -> i64 {
     let g = gen_deref(0)
     if g == 0 {
@@ -738,7 +738,7 @@ CASES = [
      "misspelled __mind_ still blanket-accepted (E2024 warns) -> no"),
     ("classify", S_BYTE, "byte(65", 0, "E2024 intrinsic table (`byte`) -> no"),
     ("classify", S_BYTES, "bytes(4", 0, "`bytes` value-type callee -> no"),
-    ("classify", S_GENDEREF, "gen_deref", 0, "`gen_deref` builtin -> no"),
+    ("classify", S_GEN_DEREF, "gen_deref", 0, "`gen_deref` builtin -> no"),
     ("classify", S_FNVALUE, "f(2", 0,
      "local VALUE binding called -> E2012 domain, NOT E2003 (boundary)"),
     ("classify", S_FNVALUE_PARAM, "h(1", 0,

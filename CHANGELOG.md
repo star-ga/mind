@@ -309,6 +309,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one module stores into another module's `i64` payload is refused with `E2038` in a
   project build as it is in one file, also when a third module declares a private enum
   of the same name.
+- **Release builds run only in the tag's own cache scope**: `release.yml`'s
+  `workflow_dispatch` trigger ran the release build of the tagged commit in the cache scope
+  of the branch it was dispatched on (main, by default), where the build's runtime token
+  could write cache entries every later main run restores. A tag push is now the only
+  trigger; to repeat a release, re-run its tag-push run, which keeps the tag as its ref.
+  `scripts/check_release_gating.py` R3 now fails on any other trigger and on a branch
+  filter in the push trigger.
 - **Determinism through project modules**: a single-file build (`--emit-evidence`,
   `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
   the project modules it imports, transitively and function by function, and classifies

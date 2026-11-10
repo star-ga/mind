@@ -46,7 +46,7 @@
 #   grep -vE '^import std\.' std/tls13_finished.mind       >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.' std/rsa_pss.mind              >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.' std/x25519.mind               >> /tmp/tls13hs.mind
-#   grep -vE '^import std\.' std/tls13_handshake.mind      >> /tmp/tls13hs.mind
+#   grep -vE '^(pub )?import std\.' std/tls13_handshake.mind >> /tmp/tls13hs.mind
 #   mindc /tmp/tls13hs.mind --emit-shared /tmp/tls13hs.so   # needs mlir-build
 #
 # Usage: python3 tls13_handshake_driver.py <tls13hs.so>

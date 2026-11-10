@@ -145,7 +145,7 @@ emit "$WORK/hkdf.so" "$STD/sha256.mind" "$(strip "$STD/hkdf.mind" '^import std\.
 X509_SET=()
 for m in sha512 ecdsa_p256 x509_p384 x509_bignum rsa_pss x509_bundle x509_der \
          x509_ext x509_name x509_sig x509_path x509; do
-  X509_SET+=("$(strip "$STD/$m.mind" '^import ')")
+  X509_SET+=("$(strip "$STD/$m.mind" '^(pub )?import ')")
 done
 emit "$WORK/x509.so" "$STD/sha256.mind" "${X509_SET[@]}"
 
@@ -198,7 +198,7 @@ emit "$WORK/tls13_hs.so" "$STD/sha256.mind" \
   "$(strip "$STD/tls13_record.mind" '^import std\.')" \
   "$(strip "$STD/tls13_finished.mind" '^import std\.')" \
   "$(strip "$STD/x25519.mind" '^import std\.')" \
-  "$(strip "$STD/tls13_handshake.mind" '^import std\.')"
+  "$(strip "$STD/tls13_handshake.mind" '^(pub )?import std\.')"
 
 # ---- run every driver, exit code gates the run ----------------------------
 run_driver keccak            tests/keccak_driver.py            "$WORK/keccak.so"

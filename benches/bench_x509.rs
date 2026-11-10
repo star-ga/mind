@@ -289,6 +289,8 @@ fn bench_x509(c: &mut Criterion) {
         rc_rsa, 1,
         "bench_x509: rsa_pkcs1_sha256_verify rejected the valid signature (rc={rc_rsa})"
     );
+    // Prints sizes and the public exponent of the embedded public sample cert
+    // (`CERT_DER_HEX`), never its bytes; there is no private key in this bench.
     eprintln!(
         "bench_x509: correctness gate PASSED — parse rc=0, verify_self_signed rc=1, \
          rsa_pkcs1_sha256_verify rc=1 ({} DER bytes, {}-byte modulus, e={e})",

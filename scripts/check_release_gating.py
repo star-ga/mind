@@ -35,8 +35,9 @@ WHAT IS CHECKED
   R1  release.yml never creates or pushes a git tag.
   R2  Every job that publishes a GitHub Release transitively `needs:` the gate
       job, and the gate job actually invokes scripts/verify_ci_green.py.
-  R3  workflow_dispatch takes an existing ref to release, not a free-text
-      version that the workflow turns into a tag.
+  R3  A tag push is the only trigger: no workflow_dispatch (which used to take
+      a free-text version and mint its tag, and in any form runs in the cache
+      scope of the branch it is dispatched on), and no branch push.
   R4  `contents: write` is not granted workflow-wide; only the publishing job
       may hold it (the builders and the gate run read-only).
   R5  .github/required-ci-jobs.tsv and every workflow it names agree in both
@@ -169,7 +170,7 @@ TAG_MINTING_RE = re.compile(
 RULES: dict[str, str] = {
     "R1": "release.yml mints no tags",
     "R2": "publish + build gated on the CI-green verifier",
-    "R3": "dispatch takes an existing tag, not a free-text version",
+    "R3": "tag push is the only trigger (no dispatch, no branch push)",
     "R4": "contents:write scoped to the publishing job",
     "R5": "required-ci-jobs.tsv == every workflow it names (both directions)",
     "R6": "verify_ci_green.py present and reading that manifest",
@@ -322,26 +323,30 @@ def check_release_workflow(errors: list[str], ran: set[str]) -> None:
                 )
 
     _ran(ran, "R3")
-    # R3 — dispatch input must name an existing ref, never a version to mint.
-    dispatch = blocks(top.get("on", ""), 2).get("workflow_dispatch")
-    if dispatch is None:
-        _fail(errors, "R3", "release.yml has no workflow_dispatch trigger to check.")
-    else:
-        inputs = blocks(blocks(dispatch, 4).get("inputs", ""), 6)
-        if "version" in inputs:
+    # R3 — a tag push is the only trigger. Any other event either mints the ref
+    # it releases (the old free-text `version` dispatch) or runs in the cache
+    # scope of a branch: a dispatch from main executes the tagged commit with a
+    # runtime token that can write main's cache, which every later main run
+    # restores. A tag-push run is scoped to its tag alone.
+    triggers = blocks(top.get("on", ""), 2)
+    if not triggers:
+        _fail(errors, "R3", "release.yml declares no `on:` trigger to check.")
+    for event in sorted(set(triggers) - {"push"}):
+        _fail(
+            errors,
+            "R3",
+            f"release.yml is triggered by `{event}`; a release must run only on a "
+            "tag push, in the tag's own cache scope. Re-run a tag-push run instead "
+            "of dispatching one.",
+        )
+    if "push" in triggers:
+        push = blocks(triggers["push"], 4)
+        if set(push) != {"tags"}:
             _fail(
                 errors,
                 "R3",
-                "workflow_dispatch still takes a free-text `version` input. The "
-                "dispatch path must take an EXISTING tag, so the released commit "
-                "is one that already passed review and CI.",
-            )
-        if "tag" not in inputs:
-            _fail(
-                errors,
-                "R3",
-                f"workflow_dispatch must take a `tag` input naming an existing tag; "
-                f"found inputs {sorted(inputs) or '(none)'}.",
+                f"release.yml's push trigger must filter on `tags:` alone; found "
+                f"{sorted(push) or '(no filter)'}.",
             )
 
     _ran(ran, "R4")
