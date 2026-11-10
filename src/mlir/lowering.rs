@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use super::contraction_outs::zeroed_empty;
+use super::zeroed_empty;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 #[cfg(feature = "std-surface")]
 use crate::mlir::gemm_tuning::*;
