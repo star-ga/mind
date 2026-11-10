@@ -2,6 +2,23 @@
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
 
+## Shipped (v0.10.3)
+
+- ✅ **TLS 1.3 client and X.509 path validation in std** (v0.10.3) – `std.x509`
+  validates a server chain (RSA PKCS#1 v1.5, RSA-PSS, ECDSA P-256/P-384; RFC 6125
+  hostname matching; SHA-1 refused), and `std.tls13_client` is a bounded sans-IO
+  TLS 1.3 client. Revocation is out of scope.
+- ✅ **`std.entropy` and `std.dns`** (v0.10.3) – `entropy_fill` reads the kernel
+  CSPRNG with getrandom(2); `dns_resolve` resolves host names with getaddrinfo(3);
+  `tcp_connect_host` connects over TCP. All are classified as world reads.
+- ✅ **PQC-hybrid evidence signing compiled in, signed (opt-in)** (v0.10.3) –
+  ML-DSA-87 + SLH-DSA-SHAKE-256s, both legs required (non-degradable). Signing
+  activates only through opt-in key-seed environment variables.
+- ✅ **Results as mic@3 records** (v0.10.3) – `std.mic_record` / `std.mic_results`
+  write and read results as canonical mic@3 artifacts with fixed limits.
+- ✅ **Release build hardening** (v0.10.3) – `Cargo.lock` committed, `--locked`
+  across workflows, `release_profile` job, and `check_release_gating.py` assertions.
+
 ## Shipped (v0.10.0)
 
 - ✅ **Enum tagged-union payloads construct, match, and RUN** (v0.10.0) – an

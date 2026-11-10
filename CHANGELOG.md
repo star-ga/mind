@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-09
+
 ### Added
-- **`std.procgroup` — run many child processes and wait for all of them**
-  (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
+- **`std.procgroup` — run many child processes and wait for all of them (`#351`,
+  `59ac0915`)** (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
   `procgroup_spawn` / `procgroup_wait_all` start up to 4096 children, capture
   each child's stdout through its own pipe (drained while the children run),
   and wait for all of them with one deadline; a child still running at the
@@ -32,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restore in `std.procgroup`, and the C-string helpers in
   `std.procgroup_text`), and
   the primitives that read the world are classified the same way.
-- **`std.entropy` and `std.dns` for `mindc build` executables**: `entropy_fill`
+- **`std.entropy` and `std.dns` for `mindc build` executables (`#349`)**: `entropy_fill`
   reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
   read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
   `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
@@ -51,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with it, attested `nondeterministic`.
   (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
   `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
-- **X.509 path validation and a TLS 1.3 client in std.** `import std.x509;` and
+- **X.509 path validation and a TLS 1.3 client in std (`#346`).** `import std.x509;` and
   `import std.tls13_client;` resolve, link and run in `mindc build` executables
   and under `mindc test`.
   - `std.x509` validates a server chain (`x509_verify_server_chain`) from
@@ -125,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fixture matrix through `--emit-shared`.
 - `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
   instead of carrying an identical copy.
-- **Results as mic@3 records (`std.mic_record`, `std.mic_results`)**: a MIND program
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`, `#350`)**: a MIND program
   writes and reads its results (per-game and per-level actions, a score as a
   numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
   empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
@@ -134,7 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
   allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
   records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
-- **Release build hardening**: `Cargo.lock` is committed and every workflow cargo call that resolves
+- **Release build hardening and the release feature set (`#344`)**: `Cargo.lock` is committed and every workflow cargo call that resolves
   dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
   compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
   therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
@@ -147,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
   leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
   its feature sets never resolve fips204 or fips205.
-- mindc test can read project files read-only (open/read/lseek/close); results match native.
+- `mindc test` can read project files read-only (open/read/lseek/close); results match native (`#331`).
 - **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
   `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
   blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
@@ -166,13 +168,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one module stores into another module's `i64` payload is refused with `E2038` in a
   project build as it is in one file, also when a third module declares a private enum
   of the same name.
-- **Release builds run only in the tag's own cache scope**: `release.yml`'s
+- **Release builds run only in the tag's own cache scope (`#385`, `cd84394e`)**: `release.yml`'s
   `workflow_dispatch` trigger ran the release build of the tagged commit in the cache scope
   of the branch it was dispatched on (main, by default), where the build's runtime token
   could write cache entries every later main run restores. A tag push is now the only
   trigger; to repeat a release, re-run its tag-push run, which keeps the tag as its ref.
   `scripts/check_release_gating.py` R3 now fails on any other trigger and on a branch
-  filter in the push trigger.
+  filter in the push trigger. The same change clears the other open code-scanning alerts:
+  the AES-GCM bench names its key and IV as the published all-zero GCM Test Case 2
+  inputs, the roofline bench's CPUID read builds on the MSRV toolchain as on newer ones,
+  and a test, a tool and two smoke scripts get clearer identifiers.
 - **Determinism through project modules**: a single-file build (`--emit-evidence`,
   `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
   the project modules it imports, transitively and function by function, and classifies
@@ -239,13 +244,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
   writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
   instead of trapping silently.
-- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`)**:
+- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`; CI-executed KAT `#325`)**:
   `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
   directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
   when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
   verify negative returns on null, missing, and non-directory paths in debug and release builds.
+- **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`)**: `String`
+  record fields are now lowered through the whole-program mic@3 evidence path instead of
+  falling back to a placeholder, so a project whose structs carry `String` fields emits
+  correct evidence bytes.
+- **`mindc build --backend native` bridges to the pure-MIND native-ELF compiler (`52bd6d3b`)**:
+  the opt-in native backend now hands a project build to the pure-MIND compiler. The
+  `--backend` flag itself shipped in 0.10.2.
+- **The self-host record-trace seed is frozen and the mirror gate follows the advanced
+  compiler seed (`4211591e`, `42cadc3c`)**: the record-trace publication seed and its
+  receipts are committed as a frozen baseline, and the mirror gate is bound to the
+  advanced compiler seed.
+- **`__mind_open` is wired on the Rust/MLIR backend (`be7f945c`)**: `std.fs` path-based
+  file I/O now builds and links under `mindc build`'s default backends. The C runtime
+  gains an `open` definition and the intrinsic table gains the `__mind_open` row
+  (arity 1, pure); this empties the exec-tier quarantine set.
+- **A bare call to an imported `std` world function is classified as a world call (`#374`,
+  `e68f3480`)**: the determinism evidence classifier now treats a bare call to an imported
+  `std` module's world-reading function (e.g. `entropy_fill`, `dns_resolve`) as a world call,
+  so a program that reaches one through an imported module is refused without
+  `--allow-nondeterministic` and attested `nondeterministic` with it, matching direct calls.
+- **`mindc test` evaluates float conditions, zeroed arrays, `break` and `for-each` like the
+  build (`#342`, `67439663`)**: the test evaluator now matches native/MLIR semantics for
+  float-typed `if`/`while` conditions, zero-initialized fixed arrays, `break` out of nested
+  loops, and `for-each` over arrays, closing evaluator/build divergence.
+- **A foreign export from a module decoded from mic@3 is refused (`#356`, `c36deb0d`)**:
+  the MLIR lowering rejects an `extern` export whose defining module was decoded from a
+  mic@3 artifact, preventing cross-artifact symbol leakage.
+- **A wrong-arity intrinsic call is refused in every feature build (`#355`, `#338`, `#368`)**:
+  the intrinsic-call arity check fires uniformly across feature profiles, reporting `E2005`
+  in every body shape (bare call, method call, imported-module body).
+- **Malformed UTF-8 is refused in the canonical JSON dump (`#347`, `676bd2fa`)**:
+  `std/json_canon` rejects a `String` whose bytes are not valid UTF-8 instead of emitting
+  replacement characters.
+- **`--emit object` writes a relocatable object (`#339`, `615d375c`)**: the object-file emit
+  path produces a proper relocatable `.o` (not a linked image), so downstream link steps
+  can compose it with other objects.
+- **Narrow imported `extern "C"` argument and return widths are preserved (`#333`,
+  `e9a8f3b2`)**: an imported `extern "C"` function with `i8`/`i16`/`i32`/`u8`/`u16`/`u32`
+  parameter or return types keeps its declared width through the call ABI instead of
+  being silently widened to `i64`.
+- **Qualified enum variants resolve and imported enum variants evaluate (`#334`, `#335`)**:
+  `m::Variant` resolves against the owning module's enum, and `mindc test` evaluates an
+  imported enum variant constructor correctly.
+- **Narrow-arith inference widens on a wide-`i64` operand (`#329`, `732edb0f`)**: the
+  3-valued narrow-arith lattice widens to `i64` when one operand is a known wide `i64`,
+  preventing a narrow-type miscompile in mixed-width expressions.
+- **`mlir-opt` load/store addresses lower as base plus offset (`#358`, `7c667dc8`)**:
+  the MLIR lowering emits `base + offset` addressing for load/store, reducing redundant
+  address arithmetic.
+- **`mindc test` evaluates `vec_zeroed` arrays and `Ok`/`Err` values like the build (`#375`,
+  `b235dda0`)**: the test evaluator now handles zero-initialized growable arrays and
+  `Result::Ok`/`Result::Err` payloads with the same semantics as native execution.
+- **A float comparison returned from a `bool` function is a `bool` (`#377`, `d9720285`)**:
+  the type checker no longer reads `return a <= b;` over `f32`/`f64` operands in a
+  `-> bool` function as returning a float (E2010); a comparison, `&&`/`||` or `!`
+  (parentheses looked through) denotes a truth value, while a genuine float returned
+  from an int/bool function is still refused. `tests/mindc_test_eval_float_compare_parity.rs`
+  holds `mindc test` and the native build to the same result for every comparison on
+  `f32` and `f64` through `if`, `!`, `&&`, `||`, a returned `bool`, a `bool` binding and
+  a `while` condition.
+- **Bounded X.509 path search, key-derived RSA-PSS salt bound, TLS receive buffer
+  reclaim (`#379`, `2f453d34`)**: the chain search verifies at most 64 signatures and
+  treats a repeated certificate as one candidate issuer; the RSA-PSS salt bound follows
+  the issuer's modulus; the TLS application receive buffer reclaims consumed bytes
+  before its bound check (details under the TLS and X.509 entries above).
+  `tests/x509_pss_salt.rs` and `tests/tls13_client_rx.mind` hold the new behavior.
+- **`mindc test` survives a worker spawn failure and joins every spawned worker (`#380`,
+  `1d6f8ec2`)**: a refused 512 MiB worker stack falls back through 64, 16, 8 and 2 MiB
+  (`MINDC_TEST_WORKER_STACK` sets the ladder); if no worker can start, every test that
+  did not run fails with "could not start a test worker" after the workers already
+  started are joined (before, the run returned early and left them running), and a
+  panicking worker cancels the queue while the others are still joined.
+- **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
+  formatter's `--diff` mode no longer panics on edge-case inputs.
+- **`mindc test` admits exactly what the build links and every explicit `std` import
+  compiles (`#367`, `#365`)**: the test runner's module admission matches the build's
+  link set, and an explicit `import std.<submod>` compiles even when the submodule is
+  only used for its types.
 
-### Changed — `mlir-opt` and `mlir-translate` run concurrently
+- **Native-ELF saturating `f64` to `i8`/`i16`/`i32` cast codegen (`#10`, `5fdbfbaf`)**: a
+  branchless clamp composes with the saturating `f64` to `i64` base, so `300.0 as i8` is
+  127 (not a wrapped 44), matching the MLIR path. This is the codegen primitive only; wiring
+  the cast through the whole-module native backend is a later slice.
+- **`mindc build` is fail-closed (`#244`, `a8b2eb1d`)**: a source that `mindc check` rejects
+  (for example E1001) or that falls back to the runtime JIT now exits non-zero instead of
+  emitting a launcher and exiting 0, as `run_project` already did.
+- **Lowering helpers follow the feature gates (`#337`, `c09c720d`)**: the MLIR lowering
+  helpers are compiled only under the feature gates of the code that uses them.
+- **Bare enum heads and enum equality settle as `mindc build` does (`#354`, `a5cb17a3`)**:
+  `mindc test` resolves a bare enum head and compares enum values the way the build
+  does, including enums imported from another module.
+- **Slice arguments admit alias-element literals and private helpers (`#340`, `4d081451`)**:
+  the type checker follows type aliases when it checks a literal element or a private
+  helper passed as a slice argument.
+- **Every shipped `std` module resolves through the bundled table (`#341`, `027cc216`)**:
+  `mindc test`, the type checker and the native bridge all read one bundled std table.
+- **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
+  with known-answer tests and cross-substrate identity receipts.
+- **The warnings `main` and pull-request runs showed are cleared (`#383`, `e3b01d11`)**:
+  the `shadowing` lint no longer fires on a repeated `let _ = expr` discard, which binds
+  no name, while a named rebind beside the discards still fires
+  (`tests/mindcraft_lint_shadowing.rs` holds both); the Windows runtime-support read path
+  opens through `_sopen_s` and keeps `_O_BINARY`, so `__mind_read` bytes stay identical
+  across substrates; the release workflow builds a shipped binary from a clean target and
+  registry with no `actions/cache` step, so a cache entry written by another run cannot
+  reach a release; the arch-mind scanner pull logs in to the registry for that step only;
+  the examples and benches no longer trip the lint or compiler warnings; the crate
+  `homepage` is `https://mindlang.dev`.
+- **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
+  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
+  pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`) and compares
+  the scanned tree with the commit's own first parent, not a later `main` (`#382`); automated
+  pull-request review and a public-leak check run in CI (`#305`), and the review job still
+  posts the leak verdict when the review model is unavailable (`#378`); the link check
+  retries transient network errors instead of failing (`#381`); clippy lints on `main` are
+  cleared (`#302`); the `mic-map` SDK dev dependencies are bumped for advisories
+  (`#296`, `#283`).
+- **CI, docs and test changes**: #373, #370, #369, #361, #357, #353, #352, #348,
+  #332, #325, #323, #322, #321, #319, #307, #306, #304, #303, #301, #299, #295.
+
+### Changed — `mlir-opt` and `mlir-translate` run concurrently (#310)
 - The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
   `mlir-opt`'s output into it, so the translator's process startup overlaps the
   optimizer's run. `--emit-shared` / `--emit-obj` builds of the three end-to-end
@@ -257,7 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
   reported as `mlir-opt`.
 
-### Performance — runtime-support object off the `--emit-shared` critical path
+### Performance — runtime-support object off the `--emit-shared` critical path (#309)
 - `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support
   object on a separate thread while mlir-opt and mlir-translate run, and joins it
   before the shared link. Output bytes are unchanged; a clang failure in that compile
@@ -384,7 +508,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unsupported receivers produce errors instead of being discarded by the test
   evaluator.
 
-### Fixed — aggregate constants preserve struct values (#247)
+### Fixed — aggregate constants preserve struct values (`aa56de24`, `ba3c6f6c`, `ea0a9086`, `2c4dc5e6`)
 - Struct-valued constants and supported fixed arrays of structs now lower their
   real record handles instead of substituting zero. Runnable struct fields are
   currently limited to fixed arrays of `i64` or `f64`. A nested
@@ -790,6 +914,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   self-host loop stage1==stage2==stage3==frozen.
 
 ### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
+- **PQC signing compiled in, signed (opt-in).** The release profile compiles in
+  ML-DSA-87 and SLH-DSA-SHAKE-256s signing support; signing activates only through
+  opt-in key-seed environment variables. Revocation is out of scope.
 - **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
   signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
   lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based) — BOTH legs must verify
