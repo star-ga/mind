@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use super::contraction_outs::zeroed_empty;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 #[cfg(feature = "std-surface")]
 use crate::mlir::gemm_tuning::*;
@@ -609,26 +610,6 @@ impl LoweringContext {
 
     fn emit_line(&mut self, line: &str) {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
-    }
-
-    /// Allocate `tensor.empty` and fill it with 0. Return the filled SSA name.
-    ///
-    /// A named linalg contraction adds each product into the output element.
-    /// `tensor.empty` does not write 0, so the sum includes the bytes `malloc`
-    /// returned. The caller passes the filled name as `outs`.
-    fn emit_zeroed_empty(&mut self, id: usize, dtype: &DType, tensor_ty: &str) -> String {
-        let elem = dtype.as_str();
-        let zero_lit = match dtype {
-            DType::F64 | DType::F32 | DType::F16 | DType::BF16 => "0.0",
-            _ => "0",
-        };
-        self.emit_line(&format!("    %z{id} = arith.constant {zero_lit} : {elem}"));
-        self.emit_line(&format!("    %tmp{id} = tensor.empty() : {tensor_ty}"));
-        self.emit_line(&format!(
-            "    %acc{id} = linalg.fill ins(%z{id} : {elem}) \
-             outs(%tmp{id} : {tensor_ty}) -> {tensor_ty}"
-        ));
-        format!("%acc{id}")
     }
 
     /// Register the result `ValueKind` of an intrinsic/extern `Instr::Call`,
@@ -2534,10 +2515,7 @@ impl LoweringContext {
                 let b_info = self.tensor_info(b, "matmul rhs")?;
                 let (out_shape, m_ty, n_ty, result_ty) =
                     matmul_shapes(&a_info.shape, &b_info.shape, a_info.dtype.as_str())?;
-                // The matmul body adds each product into the output element.
-                // `tensor.empty` does not write 0, so the sum includes whatever
-                // `malloc` returned. Fill 0 before the contraction.
-                let zero_ref = self.emit_zeroed_empty(dst.0, &a_info.dtype, &result_ty);
+                let zero_ref = zeroed_empty(&mut self.body, dst.0, &a_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form — the only one mlir-opt's
                 // linalg named-op parser accepts (a per-operand `ins(%a : ta, %b : tb)`
                 // is rejected as "expected non-function type").
@@ -2565,9 +2543,7 @@ impl LoweringContext {
                 let filter_info = self.tensor_info(filter, "conv2d filter")?;
                 let (out_shape, input_ty, filter_ty, result_ty) =
                     conv2d_shapes(&input_info, &filter_info, *stride_h, *stride_w, *padding)?;
-                // Same contract as matmul: the convolution adds into the output.
-                // Fill 0 so a dirty allocation cannot change the result.
-                let zero_ref = self.emit_zeroed_empty(dst.0, &input_info.dtype, &result_ty);
+                let zero_ref = zeroed_empty(&mut self.body, dst.0, &input_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form (see MatMul above).
                 self.emit_line(&format!(
                     "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{}, %{} : {}, {}) outs({} : {}) -> {}",
