@@ -18,14 +18,14 @@
 // tls13_client_hello (hellos, HelloRetryRequest, traffic keys),
 // tls13_client_api (public constants, accessors, application data) and this
 // module (the record pump and the handshake state machine, which calls the
-// chain verifier). tls13_client_api and x509_bundle are `pub import`s for
-// callers: x509_load_anchors builds the trust-anchor buffer.
+// chain verifier). x509_bundle is imported for callers: x509_load_anchors
+// builds the trust-anchor buffer.
 
 import std.tls13_client_core;
 import std.tls13_client_hello;
-pub import std.tls13_client_api;
+import std.tls13_client_api;
 import std.x509_der;
-pub import std.x509_bundle;
+import std.x509_bundle;
 import std.x509_path;
 import std.tls13_finished;
 import std.rsa_pss;
