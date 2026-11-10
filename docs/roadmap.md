@@ -2488,6 +2488,21 @@ and is not.
       dimensions that are ranges rather than small enums, instead of adding a new
       one. Rung 3 of the write-avoidance ladder: it is already present and has
       never been used.
+- [ ] **Tuning constants are a dimension too (added 2026-11-09).** The GEMM
+      blocking constants in `src/mlir/gemm_tuning.rs` (`MC`, `KC`, `NC`, `MR`,
+      `NR` per tier, and the `Q16_BLIS_MIN_DIM` switch point) select a lowering
+      path like any flag, but only the default values ever run. A non-default
+      value that miscompiles stays hidden until a retune makes it the default.
+      Each non-default cell is checked against the default cell with the value
+      oracle of MOC-17: the integer tiers (`Q16_*`, `I8_*`, `I8_VNNI_*`) must
+      give equal results for every legal value, and a floating-point tier joins
+      only for constants that keep the k-reduction order. The override is a
+      test-only input, off by default; with it off, every artifact is
+      byte-identical to a build without it. It lands where the GEMM lowering is
+      written in MIND and adds no Rust; until then the dimension is an excluded
+      cell with that reason. **Gate:** a planted defect that only one
+      non-default `KC` value reaches is named by its cell, and the default-only
+      suite stays green on the same change.
 
 ### Why this is worth doing now
 
@@ -3272,6 +3287,41 @@ governance/evidence, P1 impact/repair/routing, P2 enterprise rollout.
     minimized failing cases, deterministic fuzz seeds.
     **Gates:** every newly fixed miscompile adds permanent corpus case;
     corpus survives all codegen flag combinations.
+    *Value oracle (added 2026-11-09).* Agreement between x86-64 and arm64
+    proves determinism, not correctness. A miscompile that gives the same
+    wrong value on both substrates passes every identity gate, and the pinned
+    reference hashes catch it only at the shapes the fixed corpus uses. The
+    generated-program value oracle on `main` (`tests/mindfuzz_cross_substrate.rs`:
+    native ELF == test-local interpreter == mic@3 VM) covers scalar i64 `f(a)`
+    programs, and its generator stays away from the values the spec defines
+    with most care: divisors are forced non-zero, shifts stay in `0..=5` and
+    magnitudes never overflow. Extend it in this order, in MIND, tested with
+    `mindc test`:
+    (a) the generator also emits the defined edge cases (`x / 0`, `x % 0`,
+    `INT_MIN / -1`, wrapping overflow, shifts at and past the operand width),
+    after D-2 fixes one answer for each;
+    (b) the narrower integer widths, Q16.16 and tensor operations, with tensor
+    shapes at the GEMM blocking edges (the `MR`/`NR` remainder tails, and one
+    below, at and one above `Q16_BLIS_MIN_DIM`) and narrowing cast chains;
+    (c) exact equality with no tolerance for integers and Q16.16; strict f32
+    joins after a ruling on the reference operation order; a construct the
+    reference cannot run is listed as not covered, never as passing;
+    (d) an AST-level reducer (remove statements, inline calls, shrink constants
+    and shapes) that keeps the same failing oracle and writes a hermetic
+    regression fixture that fails on the parent commit;
+    (e) each mismatch is classified before it is filed, as a generator defect
+    (the program breaks a rule of the spec) or a compiler defect.
+    **Gates:** mutation control: a planted off-by-one in the shared GEMM
+    remainder-tail bounds, at a shape no pinned fixture uses, leaves the
+    cross-substrate suite green and turns the value oracle red, naming the
+    program and the shape; positive control: the same planted change at a
+    pinned shape turns both red; zero unclassified mismatches on `main` over
+    the CI seed set; each fixed miscompile records its subsystem (front end,
+    optimiser rewrite, SSA, lowering, native emitter, GEMM kernel, mic@3
+    codec) and the check it added to the IR verifier, or the reason no
+    verifier check applies.
+    *Depends on:* D-2 for (a); MG-04 for the MIND generator and reducer.
+    Architecture audit before implementation.
 18. **MOC-18: Cross-repository compatibility dashboard.** Machine-readable
     consumer matrix across the public consumers (`mind-mem`, `mind-nerve`,
     the editor grammar package and the language specification) and the internal and commercial ones:
@@ -3735,6 +3785,20 @@ control: under each perturbation the final artifact hash differs too; a run in w
 side crashed or wrote no records reports `unverified`, never an empty diff; with tracing
 off, every artifact is byte-identical to a build without this feature (keystone and the
 mic@3 flip smoke unchanged).
+
+**Value bisection (added 2026-11-09).** A trace diff needs two runs that disagree. A
+miscompile that gives the same wrong value everywhere gives two identical traces. For that
+case the trace also keeps, on request, the full mic@3 bytes after each optimiser pass, and
+the mic@3 VM runs each snapshot on the fixture inputs against the reference value of the
+MOC-17 value oracle. The report names the first pass whose snapshot disagrees. When every
+snapshot agrees and the native ELF does not, it names the native-emit stage and, through
+(b), the first function. Nothing is rebuilt with passes disabled, so the defect cannot move
+or disappear between the run that found it and the run that isolates it. **Gates:** a
+planted wrong rewrite in one fold rule, giving the same value on x86-64 and arm64, is named
+by its pass and by nothing earlier; a planted native-lowering defect is named at the
+native-emit stage while every pass snapshot agrees; a snapshot the VM refuses reports
+`unverified` for that pass, never agreement. The per-pass snapshots exist once the pinned
+optimiser schedule does.
 
 *Firewall:* the trace is a diagnostic file. It is never part of the evidence chain or of any
 `trace_hash` preimage. The Python smokes keep their current role and are not extended; each
