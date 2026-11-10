@@ -424,7 +424,7 @@ mod run {
     fn fork_failure_run() -> Option<Run> {
         use std::os::unix::fs::PermissionsExt;
         let exe = built()?;
-        let dir = crate::common::scratch_dir("std_procgroup_run_nproc");
+        let dir = nproc_copy_dir();
         let copy = dir.join("pg");
         std::fs::copy(exe, &copy).expect("copy the executable");
         for p in [&dir, &copy] {
@@ -437,6 +437,19 @@ mod run {
             cmd.uid(65534).gid(65534);
         }
         Some(execute_cmd(cmd, &copy).unwrap_or_else(|why| panic!("{why}")))
+    }
+
+    /// Directory for the uid-65534 copy. The process temp directory can sit
+    /// under a home directory of mode 750. uid 65534 cannot enter that home,
+    /// and execve returns EACCES before the program starts. `/tmp` is mode
+    /// 1777, so the dropped uid can traverse it.
+    fn nproc_copy_dir() -> std::path::PathBuf {
+        if effective_uid() != Some(0) {
+            return crate::common::scratch_dir("std_procgroup_run_nproc");
+        }
+        let dir = std::path::PathBuf::from(format!("/tmp/mind-pg-nproc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the nproc dir");
+        dir
     }
 
     const OK: i64 = 0;
