@@ -1,7 +1,8 @@
-// Application receive buffer of the TLS 1.3 client (2048 bytes): consumed
-// bytes are reclaimed before the bound check, so a long stream of small
-// records that the reader keeps slightly behind is read in full, while a record
-// that does not fit the unread bytes still fails closed with E_OVF.
+// Application receive buffer of the TLS 1.3 client: it holds one record
+// (tls13ci_app_rx_cap() bytes) and the pump opens the next record only after
+// the reader has drained the previous one. So a long stream of small records
+// read in pieces arrives in full, unread bytes are never overwritten by a later
+// record, and a record longer than the record bound fails closed with E_OVF.
 //
 // Records are sealed under the client's own read key and sequence, so the
 // client opens them exactly like server records. Flight `f` is the first
@@ -97,49 +98,80 @@ pub fn tls13ct_run_rx(f: i64, size: i64) -> i64 {
         return c;
     }
     let seq0: i64 = tls13c_load_i64(state + 152);
-    // 60 records of 100 bytes (6000 > 2048). The reader trails the stream by
-    // 40 bytes, so the read cursor never reaches the end and the buffer is
-    // never reset; only reclaiming consumed bytes lets the stream through.
+    // Three records of 100 bytes wait in the input buffer together.
     let mut k: i64 = 0;
-    let mut read: i64 = 0;
-    while k < 60 {
+    while k < 3 {
         if tls13ct_rx_send(state, seq0 + k, k * 100, 100) != 0 {
             return 210;
         }
-        if tls13c_pump(state) != 0 {
-            return 211;
-        }
-        let mut want: i64 = 100;
-        if k == 0 {
-            want = 60;
-        }
-        if tls13ct_rx_take(state, read, want) != 0 {
-            return 212;
-        }
-        read = read + want;
         k = k + 1;
     }
-    if tls13ct_rx_take(state, read, 40) != 0 {
+    if tls13c_pump(state) != 0 {
+        return 211;
+    }
+    if tls13ct_rx_take(state, 0, 70) != 0 {
+        return 212;
+    }
+    // 30 unread bytes of record 0: the pump must not open record 1 over them.
+    if tls13c_pump(state) != 0 {
         return 213;
     }
-    if tls13c_read_app(state, __mind_alloc(8), 8) != 0 {
+    if tls13ct_rx_take(state, 70, 30) != 0 {
         return 214;
     }
-    // Fail closed: 40 unread bytes plus a 2010-byte record exceed the buffer.
-    if tls13ct_rx_send(state, seq0 + 60, 6000, 40) != 0 {
+    if tls13c_read_app(state, __mind_alloc(8), 8) != 0 {
         return 215;
     }
     if tls13c_pump(state) != 0 {
         return 216;
     }
-    if tls13ct_rx_send(state, seq0 + 61, 6040, 2010) != 0 {
+    if tls13ct_rx_take(state, 100, 100) != 0 {
         return 217;
     }
-    if tls13c_pump(state) != tls13c_err_ovf() {
+    if tls13c_pump(state) != 0 {
         return 218;
     }
-    if tls13c_is_connected(state) != 0 {
+    if tls13ct_rx_take(state, 200, 100) != 0 {
         return 219;
+    }
+    // A stream longer than the buffer, read in pieces that cross records.
+    let recs: i64 = tls13ci_app_rx_cap() / 100 + 4;
+    let mut j: i64 = 0;
+    while j < recs {
+        let g: i64 = 300 + j * 100;
+        if tls13ct_rx_send(state, seq0 + 3 + j, g, 100) != 0 {
+            return 220;
+        }
+        if tls13c_pump(state) != 0 {
+            return 221;
+        }
+        if tls13ct_rx_take(state, g, 60) != 0 {
+            return 222;
+        }
+        if tls13c_pump(state) != 0 {
+            return 223;
+        }
+        if tls13ct_rx_take(state, g + 60, 40) != 0 {
+            return 224;
+        }
+        j = j + 1;
+    }
+    // Fail closed: a record header longer than the record bound.
+    let hdr: i64 = __mind_alloc(5);
+    let blen: i64 = tls13ci_max_record() - 4;
+    __mind_store_i8(hdr, tls13ci_ct_app_data());
+    __mind_store_i8(hdr + 1, 3);
+    __mind_store_i8(hdr + 2, 3);
+    __mind_store_i8(hdr + 3, (blen >> 8) & 255);
+    __mind_store_i8(hdr + 4, blen & 255);
+    if tls13c_feed(state, hdr, 5) != 0 {
+        return 225;
+    }
+    if tls13c_pump(state) != tls13c_err_ovf() {
+        return 226;
+    }
+    if tls13c_is_connected(state) != 0 {
+        return 227;
     }
     0
 }

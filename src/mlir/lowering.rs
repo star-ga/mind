@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use super::zeroed_empty;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 #[cfg(feature = "std-surface")]
 use crate::mlir::gemm_tuning::*;
@@ -2514,16 +2515,13 @@ impl LoweringContext {
                 let b_info = self.tensor_info(b, "matmul rhs")?;
                 let (out_shape, m_ty, n_ty, result_ty) =
                     matmul_shapes(&a_info.shape, &b_info.shape, a_info.dtype.as_str())?;
-                self.emit_line(&format!(
-                    "    %tmp{} = tensor.empty() : {}",
-                    dst.0, result_ty
-                ));
+                let zero_ref = zeroed_empty(&mut self.body, dst.0, &a_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form — the only one mlir-opt's
                 // linalg named-op parser accepts (a per-operand `ins(%a : ta, %b : tb)`
                 // is rejected as "expected non-function type").
                 self.emit_line(&format!(
-                    "    %{} = linalg.matmul ins(%{}, %{} : {}, {}) outs(%tmp{} : {}) -> {}",
-                    dst.0, a.0, b.0, m_ty, n_ty, dst.0, result_ty, result_ty
+                    "    %{} = linalg.matmul ins(%{}, %{} : {}, {}) outs({} : {}) -> {}",
+                    dst.0, a.0, b.0, m_ty, n_ty, zero_ref, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,
@@ -2545,14 +2543,11 @@ impl LoweringContext {
                 let filter_info = self.tensor_info(filter, "conv2d filter")?;
                 let (out_shape, input_ty, filter_ty, result_ty) =
                     conv2d_shapes(&input_info, &filter_info, *stride_h, *stride_w, *padding)?;
-                self.emit_line(&format!(
-                    "    %tmp{} = tensor.empty() : {}",
-                    dst.0, result_ty
-                ));
+                let zero_ref = zeroed_empty(&mut self.body, dst.0, &input_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form (see MatMul above).
                 self.emit_line(&format!(
-                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{}, %{} : {}, {}) outs(%tmp{} : {}) -> {}",
-                    dst.0, input.0, filter.0, input_ty, filter_ty, dst.0, result_ty, result_ty
+                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{}, %{} : {}, {}) outs({} : {}) -> {}",
+                    dst.0, input.0, filter.0, input_ty, filter_ty, zero_ref, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,

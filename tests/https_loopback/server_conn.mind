@@ -1,0 +1,233 @@
+// Loopback TLS 1.3 server, part: one connection (TEST-ONLY). The harness appends
+// the parts after server.mind (SERVER_PARTS in
+// tests/support/https_loopback_harness.rs).
+
+// One connection. Returns 0 (served or refused by the client) or -1.
+fn hl_serve(s: i64, cid: i64) -> i64 {
+    let rec: i64 = __mind_alloc(16700);
+    let n: i64 = hl_read_record(s, rec);
+    if n < 0 {
+        // Closed before any record: a probe, not a case.
+        return 1;
+    }
+    if n < 9 || tls13c_u8(rec) != 22 || tls13c_u8(rec + 5) != 1 {
+        return 0 - 1;
+    }
+    let ch: i64 = rec + 5;
+    let chlen: i64 = n - 5;
+    let cshare: i64 = hl_client_share(ch, chlen);
+    if cshare == 0 {
+        return 0 - 1;
+    }
+    let tr: i64 = __mind_alloc(32776);
+    __mind_store_i64(tr, 0);
+    hl_tr_add(tr, ch, chlen);
+    // Server key share (fixed test scalar) and the shared secret.
+    let skey: i64 = __mind_alloc(32);
+    let base: i64 = __mind_alloc(32);
+    let spub: i64 = __mind_alloc(32);
+    let shared: i64 = __mind_alloc(32);
+    tls13c_zero(base, 32);
+    __mind_store_i8(base, 9);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(skey + i, (77 + 5 * i + cid) & 255);
+        i = i + 1;
+    }
+    x25519(skey, base, spub);
+    x25519(skey, cshare, shared);
+    // ServerHello.
+    let sid: i64 = tls13c_u8(ch + 4 + 34);
+    let sh: i64 = __mind_alloc(160);
+    __mind_store_i8(sh, 2);
+    tls13c_put_be16(sh + 4, 771);
+    i = 0;
+    while i < 32 {
+        __mind_store_i8(sh + 6 + i, (201 + i) & 255);
+        i = i + 1;
+    }
+    __mind_store_i8(sh + 38, sid);
+    tls13c_copy(sh + 39, ch + 4 + 35, sid);
+    let mut p: i64 = 39 + sid;
+    tls13c_put_be16(sh + p, 4865);
+    __mind_store_i8(sh + p + 2, 0);
+    tls13c_put_be16(sh + p + 3, 46);
+    tls13c_put_be16(sh + p + 5, 43);
+    tls13c_put_be16(sh + p + 7, 2);
+    tls13c_put_be16(sh + p + 9, 772);
+    tls13c_put_be16(sh + p + 11, 51);
+    tls13c_put_be16(sh + p + 13, 36);
+    tls13c_put_be16(sh + p + 15, 29);
+    tls13c_put_be16(sh + p + 17, 32);
+    tls13c_copy(sh + p + 19, spub, 32);
+    let shlen: i64 = p + 51;
+    tls13c_put_be24(sh + 1, shlen - 4);
+    hl_tr_add(tr, sh, shlen);
+    let out: i64 = __mind_alloc(16700);
+    __mind_store_i8(out, 22);
+    tls13c_put_be16(out + 1, 771);
+    tls13c_put_be16(out + 3, shlen);
+    tls13c_copy(out + 5, sh, shlen);
+    hl_send(s, out, shlen + 5);
+    // Handshake secrets.
+    let hs: i64 = __mind_alloc(32);
+    let hash: i64 = __mind_alloc(32);
+    let s_hs: i64 = __mind_alloc(32);
+    let c_hs: i64 = __mind_alloc(32);
+    tls13c_handshake_secret(shared, 32, hs);
+    hl_tr_hash(tr, hash);
+    tls13_server_handshake_traffic_secret(hs, hash, s_hs);
+    tls13_client_handshake_traffic_secret(hs, hash, c_hs);
+    let skeys: i64 = __mind_alloc(48);
+    let ckeys: i64 = __mind_alloc(48);
+    hl_traffic_keys(s_hs, skeys);
+    hl_traffic_keys(c_hs, ckeys);
+    // EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    let fl: i64 = __mind_alloc(8192);
+    __mind_store_i8(fl, 8);
+    tls13c_put_be24(fl + 1, 2);
+    tls13c_put_be16(fl + 4, 0);
+    let mut f: i64 = 6;
+    let leaf: i64 = __mind_alloc(2048);
+    let llen: i64 = hl_leaf(cid, leaf);
+    let inter: i64 = __mind_alloc(2048);
+    let ilen: i64 = hl_inter(inter);
+    let cstart: i64 = f;
+    __mind_store_i8(fl + f, 11);
+    tls13c_put_be24(fl + f + 1, 1 + 3 + 3 + llen + 2 + 3 + ilen + 2);
+    __mind_store_i8(fl + f + 4, 0);
+    tls13c_put_be24(fl + f + 5, 3 + llen + 2 + 3 + ilen + 2);
+    f = f + 8;
+    tls13c_put_be24(fl + f, llen);
+    tls13c_copy(fl + f + 3, leaf, llen);
+    tls13c_put_be16(fl + f + 3 + llen, 0);
+    f = f + 3 + llen + 2;
+    tls13c_put_be24(fl + f, ilen);
+    tls13c_copy(fl + f + 3, inter, ilen);
+    tls13c_put_be16(fl + f + 3 + ilen, 0);
+    f = f + 3 + ilen + 2;
+    hl_tr_add(tr, fl, f);
+    hl_tr_hash(tr, hash);
+    let content: i64 = __mind_alloc(130);
+    tls13_hs_cert_verify_content(hash, content);
+    let cv: i64 = fl + f;
+    __mind_store_i8(cv, 15);
+    if cid == 11 {
+        // An ECDSA leaf: ecdsa_secp256r1_sha256 and a signature the client
+        // must never accept.
+        tls13c_put_be24(cv + 1, 76);
+        tls13c_put_be16(cv + 4, 1027);
+        tls13c_put_be16(cv + 6, 72);
+        i = 0;
+        while i < 72 {
+            __mind_store_i8(cv + 8 + i, (i * 13 + 1) & 255);
+            i = i + 1;
+        }
+        f = f + 80;
+    } else {
+        tls13c_put_be24(cv + 1, 260);
+        tls13c_put_be16(cv + 4, 2052);
+        tls13c_put_be16(cv + 6, 256);
+        if cid == 12 {
+            tls13c_zero(cv + 8, 256)
+        } else {
+            hl_pss_sign(content, 130, cv + 8)
+        }
+        if cid == 8 {
+            __mind_store_i8(cv + 8 + 10, tls13c_u8(cv + 8 + 10) ^ 1)
+        }
+        f = f + 264;
+    }
+    hl_tr_add(tr, cv, fl + f - cv);
+    hl_tr_hash(tr, hash);
+    let fin: i64 = fl + f;
+    __mind_store_i8(fin, 20);
+    tls13c_put_be24(fin + 1, 32);
+    tls13_finished_from_secret(s_hs, hash, fin + 4);
+    f = f + 36;
+    hl_tr_add(tr, fin, 36);
+    if hl_send_sealed(s, skeys, fl, f, 22, 0) != 0 {
+        return 0 - 1;
+    }
+    // Application secrets from the transcript through the server Finished.
+    hl_tr_hash(tr, hash);
+    let master: i64 = __mind_alloc(32);
+    let c_ap: i64 = __mind_alloc(32);
+    let s_ap: i64 = __mind_alloc(32);
+    tls13_master_secret(hs, master);
+    tls13_client_application_traffic_secret(master, hash, c_ap);
+    tls13_server_application_traffic_secret(master, hash, s_ap);
+    let sakeys: i64 = __mind_alloc(48);
+    let cakeys: i64 = __mind_alloc(48);
+    hl_traffic_keys(s_ap, sakeys);
+    hl_traffic_keys(c_ap, cakeys);
+    // The client's Finished (any ChangeCipherSpec before it is skipped). A
+    // client that refused the server closes here instead.
+    let plain: i64 = __mind_alloc(16700);
+    let mut fin_seen: i64 = 0;
+    while fin_seen == 0 {
+        let rn: i64 = hl_read_record(s, rec);
+        if rn < 0 {
+            return 0;
+        }
+        if tls13c_u8(rec) == 23 {
+            let prc: i64 = tls13c_record_open(4865, ckeys, ckeys + 16, 0, rec, rn, plain);
+            if prc < 0 || (prc & 255) != 22 || tls13c_u8(plain) != 20 {
+                return 0 - 1;
+            }
+            fin_seen = 1;
+        }
+    }
+    if cid == 0 {
+        // A NewSessionTicket the client must skip.
+        let nst: i64 = __mind_alloc(64);
+        tls13c_zero(nst, 64);
+        __mind_store_i8(nst, 4);
+        tls13c_put_be24(nst + 1, 30);
+        tls13c_put_be16(nst + 4, 1);
+        __mind_store_i8(nst + 12, 1);
+        tls13c_put_be16(nst + 14, 16);
+        hl_send_sealed(s, sakeys, nst, 34, 22, 0)
+    }
+    let req: i64 = __mind_alloc(65536);
+    let head: i64 = __mind_alloc(8);
+    let rlen: i64 = hl_read_request(s, cakeys, req, rec, plain, head);
+    if rlen < 0 {
+        return 0 - 1;
+    }
+    let resp: i64 = __mind_alloc(131072);
+    let respn: i64 = hl_response(cid, req, rlen, __mind_load_i64(head), resp);
+    if cid == 9 {
+        // Half of the first application record, then EOF without close_notify.
+        hl_send_sealed(s, sakeys, resp, respn, 23, 40);
+        return 0;
+    }
+    if cid == 0 {
+        // Headers and body in separate records.
+        let hb: i64 = hl_head_end(resp, respn);
+        hl_send_sealed(s, sakeys, resp, hb, 23, 0);
+        hl_send_sealed(s, sakeys, resp + hb, respn - hb, 23, 0)
+    } else {
+        hl_send_sealed(s, sakeys, resp, respn, 23, 0)
+    }
+    let mut end: i64 = 0;
+    if cid >= hl_case_count() {
+        end = hl_canned_end(cid);
+    }
+    if end == 3 {
+        return 0;
+    }
+    // close_notify (1, 0); internal_error (2, 80); user_canceled (1, 90).
+    let alert: i64 = __mind_alloc(2);
+    __mind_store_i8(alert, 1);
+    __mind_store_i8(alert + 1, 0);
+    if end == 1 {
+        __mind_store_i8(alert, 2);
+        __mind_store_i8(alert + 1, 80)
+    }
+    if end == 2 {
+        __mind_store_i8(alert + 1, 90)
+    }
+    hl_send_sealed(s, sakeys, alert, 2, 21, 0);
+    0
+}

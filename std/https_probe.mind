@@ -1,0 +1,206 @@
+// std/https_probe.mind — the std.https network probe: resolve the host of an
+// https URL and open and close one TCP connection to it, with a distinct code
+// for each way that fails.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// https_probe(url, url_len, timeout_ms) parses the URL as std.https does
+// (hx_url_parse), resolves its host with std.dns dns_resolve, and connects to
+// each address in resolver order, each connect bounded by timeout_ms
+// (1..=dns_max_timeout_ms()). The first connection that opens is closed at
+// once. No byte is written: a probe never sends a request, so it is safe at
+// any time. After a request fails with https_class_before_send(), a caller
+// can probe until the probe returns https_probe_ok() and then retry the same
+// request. When every address fails, the code names the last address's
+// failure.
+//
+// Codes:
+//    0 https_probe_ok             resolved, connected and closed
+//   -1 https_probe_err_url        the URL is refused (as https_err_url)
+//   -2 https_probe_err_dns_again  temporary resolver failure (EAI_AGAIN):
+//                                 the resolver or the network is down
+//   -3 https_probe_err_dns        any other resolution failure (unknown
+//                                 name, no address, resolver error, a list
+//                                 std.dns refuses)
+//   -4 https_probe_err_refused    the connection was refused (ECONNREFUSED)
+//   -5 https_probe_err_timeout    the connect did not finish in timeout_ms
+//   -6 https_probe_err_unreachable  no route to the network or the host
+//   -7 https_probe_err_socket     socket, setsockopt or close failed, or
+//                                 connect failed with another errno
+//   -8 https_probe_err_argument   timeout_ms is out of range
+//
+// Determinism: https_probe reads the world (DNS, network) and is classified
+// nondeterministic by name (src/std_qualified.rs), like dns_resolve.
+//
+// Linux only: AF_INET6 = 10 and the errno values below are the Linux values,
+// as in std.dns. Every socket call (socket, SO_SNDTIMEO, connect, errno, close)
+// goes through std.dns, so this module makes no OS call of its own.
+
+import std.https_url;
+import std.dns;
+
+// ---------------------------------------------------------------------------
+// Codes
+// ---------------------------------------------------------------------------
+
+pub fn https_probe_ok() -> i64 {
+    0
+}
+
+pub fn https_probe_err_url() -> i64 {
+    -1
+}
+
+pub fn https_probe_err_dns_again() -> i64 {
+    -2
+}
+
+pub fn https_probe_err_dns() -> i64 {
+    -3
+}
+
+pub fn https_probe_err_refused() -> i64 {
+    -4
+}
+
+pub fn https_probe_err_timeout() -> i64 {
+    -5
+}
+
+pub fn https_probe_err_unreachable() -> i64 {
+    -6
+}
+
+pub fn https_probe_err_socket() -> i64 {
+    -7
+}
+
+pub fn https_probe_err_argument() -> i64 {
+    -8
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+// The code for a connect(2) that failed with errno `e`.
+fn hp_connect_error(e: i64) -> i64 {
+    // ECONNREFUSED
+    if e == 111 {
+        return https_probe_err_refused();
+    }
+    // EINPROGRESS (the SO_SNDTIMEO bound expired), ETIMEDOUT, EAGAIN
+    if e == 115 || e == 110 || e == 11 {
+        return https_probe_err_timeout();
+    }
+    // ENETUNREACH, EHOSTUNREACH
+    if e == 101 || e == 113 {
+        return https_probe_err_unreachable();
+    }
+    https_probe_err_socket()
+}
+
+// The sockaddr for entry `i` of the dns record `r` with `port`, into `sa`
+// (28 bytes zeroed by the caller); returns its length.
+fn hp_sockaddr(r: i64, i: i64, port: i64, sa: i64) -> i64 {
+    __mind_store_i8(sa + 2, (port >> 8) & 255);
+    __mind_store_i8(sa + 3, port & 255);
+    let mut k: i64 = 0;
+    if dns_family(r, i) == 4 {
+        __mind_store_i16(sa, 2);
+        while k < 4 {
+            __mind_store_i8(sa + 4 + k, dns_addr_byte(r, i, k));
+            k = k + 1;
+        }
+        return 16;
+    }
+    __mind_store_i16(sa, 10);
+    while k < 16 {
+        __mind_store_i8(sa + 8 + k, dns_addr_byte(r, i, k));
+        k = k + 1;
+    }
+    __mind_store_i32(sa + 24, dns_scope_id(r, i));
+    28
+}
+
+// Open and close one connection to entry `i`. Returns a probe code.
+fn hp_try(r: i64, i: i64, port: i64, timeout_ms: i64) -> i64 {
+    let mut domain: i64 = 10;
+    if dns_family(r, i) == 4 {
+        domain = 2;
+    }
+    let fd: i64 = dns_tcp_socket(domain);
+    if fd < 0 {
+        return https_probe_err_socket();
+    }
+    let so: i64 = dns_set_send_timeout(fd, timeout_ms);
+    let mut rc: i64 = https_probe_ok();
+    if so != 0 {
+        rc = https_probe_err_socket();
+    } else {
+        let sa: i64 = __mind_alloc(28);
+        let mut z: i64 = 0;
+        while z < 28 {
+            __mind_store_i8(sa + z, 0);
+            z = z + 1;
+        }
+        let salen: i64 = hp_sockaddr(r, i, port, sa);
+        let c: i64 = dns_connect_fd(fd, sa, salen);
+        let e: i64 = dns_errno();
+        if c != 0 {
+            rc = hp_connect_error(e);
+        }
+        __mind_free(sa)
+    }
+    if dns_close_fd(fd) != 0 && rc == https_probe_ok() {
+        rc = https_probe_err_socket();
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// Public: https_probe
+// ---------------------------------------------------------------------------
+
+// https_probe — resolve the host of the https URL [url, url+url_len) and open
+// and close one TCP connection to its port, each connect bounded by
+// timeout_ms. Returns https_probe_ok() or a negative https_probe_err_* code.
+#[protection]
+pub fn https_probe(url: i64, url_len: i64, timeout_ms: i64) -> i64 {
+    if timeout_ms < 1 || timeout_ms > dns_max_timeout_ms() {
+        return https_probe_err_argument();
+    }
+    let u: i64 = hx_url_new();
+    if hx_url_parse(url, url_len, u) != 0 {
+        __mind_free(u);
+        return https_probe_err_url();
+    }
+    let host: i64 = url + hx_url_host_off(u);
+    let hlen: i64 = hx_url_host_len(u);
+    let port: i64 = hx_url_port(u);
+    __mind_free(u);
+    let r: i64 = dns_resolve(host, hlen);
+    let st: i64 = dns_status(r);
+    if st != dns_ok() {
+        __mind_free(r);
+        if st == dns_err_again() {
+            return https_probe_err_dns_again();
+        }
+        return https_probe_err_dns();
+    }
+    let n: i64 = dns_count(r);
+    let mut rc: i64 = https_probe_err_dns();
+    let mut i: i64 = 0;
+    let mut done: i64 = 0;
+    while done == 0 && i < n {
+        rc = hp_try(r, i, port, timeout_ms);
+        if rc == https_probe_ok() {
+            done = 1;
+        }
+        i = i + 1;
+    }
+    __mind_free(r);
+    rc
+}

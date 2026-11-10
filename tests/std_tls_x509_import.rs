@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! A program that imports `std.x509` and `std.tls13_client` checks, builds,
+//! A program that imports `std.x509` and `std.https` (the TLS 1.3 client) checks, builds,
 //! links and runs, and the X.509 and TLS 1.3 known answers hold under
 //! `mindc test` and in the executable `mindc build` writes.
 //!
@@ -480,14 +480,11 @@ fn x509_ip_literals_and_anchor_bundles_agree_in_test_and_build() {
 const CAPABILITY: &str = "fn checks() -> i64 {\n    let st: i64 = __mind_alloc(tls13c_state_size());\n\
      \x20   if st == 0 {\n        return 2;\n    }\n    return 1 - x509_peer_auth_supported();\n}\n\n";
 
-/// `import std.x509; import std.tls13_client;` resolves, links and runs, and
+/// `import std.x509; import std.https;` resolves, links and runs, and
 /// `x509_peer_auth_supported()` reports the implemented path validation.
 #[test]
 fn a_program_importing_x509_and_the_tls_client_builds_and_runs() {
-    let dir = project(
-        "capability",
-        &program(&["x509", "tls13_client"], CAPABILITY),
-    );
+    let dir = project("capability", &program(&["x509", "https"], CAPABILITY));
     let out = mindc_in(&dir, &["check", "main.mind"]);
     assert!(
         out.status.success(),
@@ -617,7 +614,7 @@ fn tls_keyschedule_program(mutate: bool) -> String {
          \x20   if tls13c_derive_hs_keys(s) != 0 {{\n        return 100;\n    }}\n\
          \x20   let w: i64 = __mind_alloc(64);\n    let mut n: i64 = 0;\n{expect}    return n;\n}}\n\n"
     ));
-    program(&["tls13_client", "tls13_client_core"], &body)
+    program(&["https", "tls13_client_core"], &body)
 }
 
 /// The RFC 8448 §3 transcript hash and key schedule hold under `mindc test`
@@ -652,7 +649,9 @@ const FLIGHT_IMPORTS: &[&str] = &[
     "tls13_client_core",
     "tls13_client_hello",
     "tls13_client_api",
-    "tls13_client",
+    "https_url",
+    "https_http1",
+    "https",
 ];
 
 /// The 24 recorded flights: suite x group x HelloRetryRequest x tamper mode.

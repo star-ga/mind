@@ -33,3 +33,34 @@ pub use lowering::{
     MlirLowerError, MlirModule, compile_ir_to_mlir_text, lower_ir_to_mlir,
     lower_ir_to_mlir_with_entry,
 };
+
+/// Append `arith.constant`, `tensor.empty` and `linalg.fill`. Return the filled SSA name.
+///
+/// `linalg.matmul` and `linalg.conv_2d_nhwc_hwcf` add each product into the output
+/// element. `tensor.empty` does not write 0, so the caller passes the filled name as `outs`.
+fn zeroed_empty(
+    body: &mut String,
+    id: usize,
+    dtype: &crate::types::DType,
+    tensor_ty: &str,
+) -> String {
+    use crate::types::DType;
+    use std::fmt::Write;
+    let elem = dtype.as_str();
+    let zero_lit = match dtype {
+        DType::F64 | DType::F32 | DType::F16 | DType::BF16 => "0.0",
+        _ => "0",
+    };
+    let lines = [
+        format!("    %z{id} = arith.constant {zero_lit} : {elem}"),
+        format!("    %tmp{id} = tensor.empty() : {tensor_ty}"),
+        format!(
+            "    %acc{id} = linalg.fill ins(%z{id} : {elem}) \
+             outs(%tmp{id} : {tensor_ty}) -> {tensor_ty}"
+        ),
+    ];
+    for line in lines {
+        writeln!(body, "{line}").expect("write to string cannot fail");
+    }
+    format!("%acc{id}")
+}

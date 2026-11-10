@@ -1,0 +1,434 @@
+// Client program for tests/std_https_loopback.rs (TEST-ONLY): every case
+// calls std.https against the loopback server (tests/https_loopback/server.mind)
+// in the server's case order, or refuses before any connection. `main`
+// returns the number of failed checks; each failure prints one line.
+// MIND_HTTPS_TEST_PORT names the server port; MIND_HTTPS_TEST_MUTATE=1 flips
+// exactly one expectation (case 0 expects status 201), so a run that cannot
+// fail is detected. The CA bundle paths (cl_ca_*) are written by the harness.
+
+fn cl_put(dst: i64, v: i64, n: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        __mind_store_i8(dst + k, (v >> (8 * k)) & 255);
+        k = k + 1;
+    }
+    n
+}
+
+fn cl_lit_prefix(dst: i64) -> i64 {
+    cl_put(dst + 0, 3400000511170344040, 8);
+    cl_put(dst + 8, 8317981851476258668, 8);
+    cl_put(dst + 16, 14964, 2);
+    18
+}
+
+fn cl_lit_hello(dst: i64) -> i64 {
+    cl_put(dst + 0, 122511465736239, 6);
+    6
+}
+
+fn cl_lit_echo(dst: i64) -> i64 {
+    cl_put(dst + 0, 4429359981244146991, 8);
+    cl_put(dst + 8, 49, 1);
+    9
+}
+
+fn cl_lit_chunked(dst: i64) -> i64 {
+    cl_put(dst + 0, 7234306498600919855, 8);
+    8
+}
+
+fn cl_lit_large(dst: i64) -> i64 {
+    cl_put(dst + 0, 111494975024175, 6);
+    6
+}
+
+fn cl_lit_redirect(dst: i64) -> i64 {
+    cl_put(dst + 0, 7162256579384144431, 8);
+    cl_put(dst + 8, 116, 1);
+    9
+}
+
+fn cl_lit_case(dst: i64) -> i64 {
+    cl_put(dst + 0, 435727459119, 5);
+    5
+}
+
+fn cl_lit_body(dst: i64) -> i64 {
+    cl_put(dst + 0, 2478495400738169467, 8);
+    cl_put(dst + 8, 8204602, 3);
+    11
+}
+
+fn cl_lit_json(dst: i64) -> i64 {
+    cl_put(dst + 0, 8386093285582598241, 8);
+    cl_put(dst + 8, 7957705966486450025, 8);
+    16
+}
+
+fn cl_lit_hello_body(dst: i64) -> i64 {
+    cl_put(dst + 0, 7863333806460921192, 8);
+    cl_put(dst + 8, 43509902953, 5);
+    13
+}
+
+fn cl_lit_status_ok(dst: i64) -> i64 {
+    cl_put(dst + 0, 3543824036068086856, 8);
+    cl_put(dst + 8, 21197622919311904, 7);
+    15
+}
+
+fn cl_lit_echo_hdr(dst: i64) -> i64 {
+    cl_put(dst + 0, 6065626767270686040, 8);
+    cl_put(dst + 8, 6647929, 3);
+    11
+}
+
+fn cl_lit_location(dst: i64) -> i64 {
+    cl_put(dst + 0, 7957695015157985100, 8);
+    8
+}
+
+fn cl_lit_elsewhere(dst: i64) -> i64 {
+    cl_put(dst + 0, 3400000511170344040, 8);
+    cl_put(dst + 8, 8317981851476258668, 8);
+    cl_put(dst + 16, 7527596848587288436, 8);
+    cl_put(dst + 24, 6648421, 3);
+    27
+}
+
+fn cl_lit_http_url(dst: i64) -> i64 {
+    cl_put(dst + 0, 7795501408042906728, 8);
+    cl_put(dst + 8, 8391173025006969711, 8);
+    cl_put(dst + 16, 47, 1);
+    17
+}
+
+fn cl_lit_userinfo_url(dst: i64) -> i64 {
+    cl_put(dst + 0, 3400000511170344040, 8);
+    cl_put(dst + 8, 7165064556222706549, 8);
+    cl_put(dst + 16, 13357363044576353, 7);
+    23
+}
+
+fn cl_lit_bad_ct(dst: i64) -> i64 {
+    cl_put(dst + 0, 7020109268283581812, 8);
+    cl_put(dst + 8, 683625, 3);
+    11
+}
+
+fn cl_lit_port_env(dst: i64) -> i64 {
+    cl_put(dst + 0, 6076561371234715981, 8);
+    cl_put(dst + 8, 6869206888880231248, 8);
+    cl_put(dst + 16, 1414680400, 5);
+    21
+}
+
+fn cl_lit_mutate_env(dst: i64) -> i64 {
+    cl_put(dst + 0, 6076561371234715981, 8);
+    cl_put(dst + 8, 6869206888880231248, 8);
+    cl_put(dst + 16, 76228175615309, 7);
+    23
+}
+
+fn cl_lit_fail(dst: i64) -> i64 {
+    cl_put(dst + 0, 138718822726, 5);
+    5
+}
+
+fn cl_lit_err(dst: i64) -> i64 {
+    cl_put(dst + 0, 9133022241776928, 7);
+    7
+}
+
+fn cl_lit_status(dst: i64) -> i64 {
+    cl_put(dst + 0, 2338341774247097120, 8);
+    8
+}
+
+fn cl_lit_len(dst: i64) -> i64 {
+    cl_put(dst + 0, 139291094048, 5);
+    5
+}
+
+fn cl_dec(dst: i64, v: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(24);
+    let mut n: i64 = 0;
+    let mut x: i64 = v;
+    let mut neg: i64 = 0;
+    if x < 0 {
+        neg = 1;
+        x = 0 - x;
+    }
+    if x == 0 {
+        __mind_store_i8(tmp, 48);
+        n = 1;
+    }
+    while x > 0 {
+        __mind_store_i8(tmp + n, 48 + x % 10);
+        x = x / 10;
+        n = n + 1;
+    }
+    let mut p: i64 = 0;
+    if neg == 1 {
+        __mind_store_i8(dst, 45);
+        p = 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + p + i, __mind_load_i8(tmp + n - 1 - i));
+        i = i + 1;
+    }
+    p + n
+}
+
+fn cl_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while same == 1 && i < n {
+        if (__mind_load_i8(a + i) & 255) != (__mind_load_i8(b + i) & 255) {
+            same = 0;
+        }
+        i = i + 1;
+    }
+    same
+}
+
+// Print "FAIL <id> error <e> status <s> len <n>" and return 1 when ok is 0.
+fn cl_check(id: i64, ok: i64, r: i64) -> i64 {
+    if ok == 1 {
+        return 0;
+    }
+    let line: i64 = __mind_alloc(160);
+    let mut p: i64 = cl_lit_fail(line);
+    p = p + cl_dec(line + p, id);
+    p = p + cl_lit_err(line + p);
+    p = p + cl_dec(line + p, https_error(r));
+    p = p + cl_lit_status(line + p);
+    p = p + cl_dec(line + p, https_status(r));
+    p = p + cl_lit_len(line + p);
+    p = p + cl_dec(line + p, https_body_len(r));
+    __mind_store_i8(line + p, 10);
+    __mind_write(1, line, p + 1, 0 - 1);
+    1
+}
+
+// "https://localhost:<port><path>" at dst; returns its length.
+fn cl_url(dst: i64, port: i64, path_fn: i64, n: i64) -> i64 {
+    let mut p: i64 = cl_lit_prefix(dst);
+    p = p + cl_dec(dst + p, port);
+    if path_fn == 0 {
+        p = p + cl_lit_hello(dst + p);
+    }
+    if path_fn == 1 {
+        p = p + cl_lit_echo(dst + p);
+    }
+    if path_fn == 2 {
+        p = p + cl_lit_chunked(dst + p);
+    }
+    if path_fn == 3 {
+        p = p + cl_lit_large(dst + p);
+    }
+    if path_fn == 4 {
+        p = p + cl_lit_redirect(dst + p);
+    }
+    if path_fn > 4 {
+        p = p + cl_lit_case(dst + p);
+        p = p + cl_dec(dst + p, n);
+    }
+    p
+}
+
+fn cl_env_int(name: i64) -> i64 {
+    let rec: i64 = proc_getenv(name);
+    let a: i64 = __mind_load_i64(rec);
+    let n: i64 = __mind_load_i64(rec + 8);
+    if a == 0 || n < 1 {
+        return 0 - 1;
+    }
+    let mut v: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        v = v * 10 + (__mind_load_i8(a + i) & 255) - 48;
+        i = i + 1;
+    }
+    v
+}
+
+// A refusal: the named error, and no status or body.
+fn cl_refused(id: i64, r: i64, code: i64) -> i64 {
+    let mut ok: i64 = 0;
+    if https_error(r) == code && https_status(r) == 0 && https_body_len(r) == 0 {
+        ok = 1;
+    }
+    cl_check(id, ok, r)
+}
+
+// The value of header [name, name+n) equals [want, want+wn).
+fn cl_header_is(r: i64, name: i64, n: i64, want: i64, wn: i64) -> i64 {
+    let h: i64 = https_header(r, name, n);
+    if h == 0 {
+        return 0;
+    }
+    if __mind_load_i64(h + 8) != wn {
+        return 0;
+    }
+    cl_eq(__mind_load_i64(h), want, wn)
+}
+
+fn cl_local_cases() -> i64 {
+    let mut f: i64 = 0;
+    let url: i64 = __mind_alloc(256);
+    let bundle: i64 = __mind_alloc(4096);
+    cl_ca_bundle(bundle);
+    // An http:// URL and a URL with userinfo are refused before any I/O.
+    let n1: i64 = cl_lit_http_url(url);
+    f = f + cl_refused(101, https_get_ca(url, n1, bundle), https_err_url());
+    let n2: i64 = cl_lit_userinfo_url(url);
+    f = f + cl_refused(102, https_get_ca(url, n2, bundle), https_err_url());
+    // A malformed bundle and a missing one.
+    let bad: i64 = __mind_alloc(4096);
+    cl_ca_bad(bad);
+    let n3: i64 = cl_url(url, 443, 0, 0);
+    f = f + cl_refused(103, https_get_ca(url, n3, bad), https_err_ca_bundle());
+    cl_ca_missing(bad);
+    f = f + cl_refused(104, https_get_ca(url, n3, bad), https_err_ca_bundle());
+    // A content type with a line break.
+    let ct: i64 = __mind_alloc(64);
+    let ctn: i64 = cl_lit_bad_ct(ct);
+    let body: i64 = __mind_alloc(64);
+    let bn: i64 = cl_lit_body(body);
+    f = f + cl_refused(105, https_post_ca(url, n3, body, bn, ct, ctn, bundle), https_err_request());
+    f
+}
+
+fn cl_server_cases(port: i64, mutate: i64) -> i64 {
+    let mut f: i64 = 0;
+    let mut ok: i64 = 0;
+    let url: i64 = __mind_alloc(256);
+    let bundle: i64 = __mind_alloc(4096);
+    cl_ca_bundle(bundle);
+    let other: i64 = __mind_alloc(4096);
+    cl_ca_other(other);
+    let want: i64 = __mind_alloc(64);
+    let wn: i64 = cl_lit_hello_body(want);
+    let lit: i64 = __mind_alloc(64);
+    let lit2: i64 = __mind_alloc(64);
+    // 0: GET, a NewSessionTicket first, body in a second record.
+    let r0: i64 = https_get_ca(url, cl_url(url, port, 0, 0), bundle);
+    let mut want_status: i64 = 200;
+    if mutate == 1 {
+        want_status = 201;
+    }
+    ok = 0;
+    if https_error(r0) == 0 {
+        ok = 1;
+    }
+    f = f + cl_check(0, ok, r0);
+    ok = 0;
+    if https_status(r0) == want_status {
+        ok = 1;
+    }
+    f = f + cl_check(1, ok, r0);
+    ok = 0;
+    if https_body_len(r0) == wn && cl_eq(https_body_addr(r0), want, wn) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(2, ok, r0);
+    let sln: i64 = cl_lit_status_ok(lit);
+    ok = 0;
+    if https_status_line_len(r0) == sln && cl_eq(https_status_line_addr(r0), lit, sln) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(3, ok, r0);
+    ok = 0;
+    if https_tls_verdict(r0) == 0 {
+        ok = 1;
+    }
+    f = f + cl_check(4, ok, r0);
+    // 1: POST, echoed body and content type.
+    let body: i64 = __mind_alloc(64);
+    let bn: i64 = cl_lit_body(body);
+    let ctn: i64 = cl_lit_json(lit);
+    let r1: i64 = https_post_ca(url, cl_url(url, port, 1, 0), body, bn, lit, ctn, bundle);
+    ok = 0;
+    if https_error(r1) == 0 && https_status(r1) == 200 {
+        ok = 1;
+    }
+    f = f + cl_check(10, ok, r1);
+    ok = 0;
+    if https_body_len(r1) == bn && cl_eq(https_body_addr(r1), body, bn) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(11, ok, r1);
+    let hn: i64 = cl_lit_echo_hdr(lit2);
+    ok = 0;
+    if cl_header_is(r1, lit2, hn, lit, ctn) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(12, ok, r1);
+    // 2: chunked body with an extension and a trailer.
+    let r2: i64 = https_get_ca(url, cl_url(url, port, 2, 0), bundle);
+    ok = 0;
+    if https_error(r2) == 0 && https_status(r2) == 200 {
+        ok = 1;
+    }
+    f = f + cl_check(20, ok, r2);
+    ok = 0;
+    if https_body_len(r2) == wn && cl_eq(https_body_addr(r2), want, wn) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(21, ok, r2);
+    // 3: a body over three TLS records.
+    let r3: i64 = https_get_ca(url, cl_url(url, port, 3, 0), bundle);
+    ok = 0;
+    if https_error(r3) == 0 && https_body_len(r3) == 40000 {
+        ok = 1;
+    }
+    f = f + cl_check(30, ok, r3);
+    let mut pat: i64 = 1;
+    let mut i: i64 = 0;
+    while pat == 1 && i < https_body_len(r3) {
+        if (__mind_load_i8(https_body_addr(r3) + i) & 255) != ((i * 7 + 3) & 255) {
+            pat = 0;
+        }
+        i = i + 1;
+    }
+    f = f + cl_check(31, pat, r3);
+    // 4: a redirect is returned, not followed.
+    let r4: i64 = https_get_ca(url, cl_url(url, port, 4, 0), bundle);
+    ok = 0;
+    if https_error(r4) == 0 && https_status(r4) == 301 && https_body_len(r4) == 0 {
+        ok = 1;
+    }
+    f = f + cl_check(40, ok, r4);
+    let ln: i64 = cl_lit_location(lit);
+    let en: i64 = cl_lit_elsewhere(lit2);
+    ok = 0;
+    if cl_header_is(r4, lit, ln, lit2, en) == 1 {
+        ok = 1;
+    }
+    f = f + cl_check(41, ok, r4);
+    // 5..12: refusals.
+    f = f + cl_refused(50, https_get_ca(url, cl_url(url, port, 5, 5), bundle), https_err_hostname());
+    f = f + cl_refused(60, https_get_ca(url, cl_url(url, port, 5, 6), bundle), https_err_cert_validity());
+    f = f + cl_refused(70, https_get_ca(url, cl_url(url, port, 5, 7), other), https_err_unknown_anchor());
+    f = f + cl_refused(80, https_get_ca(url, cl_url(url, port, 5, 8), bundle), https_err_cert_verify());
+    f = f + cl_refused(90, https_get_ca(url, cl_url(url, port, 5, 9), bundle), https_err_truncated());
+    f = f + cl_refused(100, https_get_ca(url, cl_url(url, port, 5, 10), bundle), https_err_body_too_large());
+    f = f + cl_refused(110, https_get_ca(url, cl_url(url, port, 5, 11), bundle), https_err_unsupported_key());
+    f = f + cl_refused(120, https_get_ca(url, cl_url(url, port, 5, 12), bundle), https_err_unsupported_key());
+    f
+}
+
+fn main() -> i64 {
+    let name: i64 = __mind_alloc(32);
+    cl_lit_port_env(name);
+    let port: i64 = cl_env_int(name);
+    if port < 1 {
+        return 200;
+    }
+    cl_lit_mutate_env(name);
+    let mutate: i64 = cl_env_int(name);
+    cl_local_cases() + cl_server_cases(port, mutate)
+}

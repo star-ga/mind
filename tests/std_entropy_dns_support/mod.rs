@@ -41,6 +41,7 @@ pub fn build_exe(target: &str, main: &str) -> Option<PathBuf> {
 
 /// Compile the shim source `src` to `dir/<name>.so` with `mindc --emit-shared`;
 /// a failed compile panics with mindc's own stdout and stderr.
+#[allow(dead_code)]
 pub fn emit_shim(dir: &Path, name: &str, src: &Path) -> PathBuf {
     let so = dir.join(format!("{name}.so"));
     let out = Command::new(crate::common::mindc_bin())
@@ -61,6 +62,7 @@ pub fn emit_shim(dir: &Path, name: &str, src: &Path) -> PathBuf {
 
 /// Run `exe` (optionally with `LD_PRELOAD`), killing it after `limit`.
 /// Returns the exit code and the elapsed time.
+#[allow(dead_code)]
 pub fn run(exe: &Path, preload: Option<&Path>, limit: Duration) -> (i32, Duration) {
     let mut cmd = Command::new(exe);
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
