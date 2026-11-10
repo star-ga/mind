@@ -101,7 +101,7 @@ pub fn build_x509_so() -> Option<&'static PathBuf> {
             let src = std::fs::read_to_string(manifest_dir.join("std").join(format!("{m}.mind")))
                 .expect("read std module");
             for line in src.lines() {
-                if !line.starts_with("import ") {
+                if !(line.starts_with("import ") || line.starts_with("pub import ")) {
                     combined.push_str(line);
                     combined.push('\n');
                 }

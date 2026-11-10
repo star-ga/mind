@@ -557,12 +557,12 @@ pub enum Node {
         else_branch: Option<Vec<Node>>,
         span: Span,
     },
-    /// Import statement: `import std.io;`
+    /// `import std.io [as io];`; `alias` is the rename call sites use (see `ast::SourceSpelling`).
+    /// `public` is `pub import`, a facade re-export (imports are transitive; `pub` is the intent).
     Import {
         path: Vec<String>,
-        /// The `as NAME` rename (`use app_config as config`). Call sites qualify through it,
-        /// and the formatter prints it back; see `ast::SourceSpelling` for the field-vs-variant rule.
         alias: Option<String>,
+        public: bool,
         span: Span,
     },
     /// Array literal: `[1.0, 2.0, 3.0]`

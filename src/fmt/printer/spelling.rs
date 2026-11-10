@@ -148,7 +148,15 @@ pub(super) fn emit_import_export(p: &mut Printer, node: &Node) {
     let ind = p.indent_str();
     p.push(&ind);
     match node {
-        Node::Import { path, alias, .. } => {
+        Node::Import {
+            path,
+            alias,
+            public,
+            ..
+        } => {
+            if *public {
+                p.push("pub ");
+            }
             p.push("import ");
             push_path_alias(p, path, alias.as_deref());
             p.push(";");

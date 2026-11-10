@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Import qualifiers and the surface-spelling side table.
+//! Import declarations, their qualifiers, and the surface-spelling side table.
 //!
 //! The parser desugars `q.f(x)` to `f(x)`, `q.CONST` to `CONST`, `module m { … }` to a
 //! transparent block and `true` to `1`. The compiler wants exactly that, but the formatter
@@ -21,6 +21,82 @@ use super::{P, ParseError};
 use crate::ast::{Attribute, Literal, Node, Span};
 
 impl P<'_> {
+    /// `import a.b [as c];`, after an optional `pub` (`public`) the caller consumed.
+    pub(super) fn parse_import(&mut self, public: bool) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "import"
+        self.skip_ws();
+        let mut path = Vec::new();
+        let first = self
+            .word()
+            .ok_or_else(|| self.err("expected module name".into()))?;
+        path.push(first.to_string());
+        while self.eat(b'.') {
+            let part = self
+                .word()
+                .ok_or_else(|| self.err("expected module name after '.'".into()))?;
+            path.push(part.to_string());
+        }
+        self.finish_import(start, path, public)
+    }
+
+    /// `use a.b [as c];` or `use a::b`, after an optional `pub` (`public`).
+    pub(super) fn parse_use(&mut self, public: bool) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 3; // "use"
+        self.skip_ws();
+        let mut path = Vec::new();
+        let first = self
+            .word()
+            .ok_or_else(|| self.err("expected module name".into()))?;
+        path.push(first.to_string());
+        // #263 surface 1: accept BOTH the shipped dotted form (`use a.b.c`) and
+        // the path form (`use std::fixed_point::Q16_16`). A `::` separator is
+        // the Rust-style module path; the final segment is bound as the imported
+        // name, exactly as the dotted form does. Segments may not mix within one
+        // `use`, but this loop handles either separator per step, which subsumes
+        // both spellings without a separate parse path.
+        loop {
+            if self.eat(b'.') {
+                let part = self
+                    .word()
+                    .ok_or_else(|| self.err("expected module name after '.'".into()))?;
+                path.push(part.to_string());
+            } else if self.pos + 1 < self.b.len()
+                && self.b[self.pos] == b':'
+                && self.b[self.pos + 1] == b':'
+            {
+                self.pos += 2; // consume `::`
+                let part = self
+                    .word()
+                    .ok_or_else(|| self.err("expected path segment after '::'".into()))?;
+                path.push(part.to_string());
+            } else {
+                break;
+            }
+        }
+        self.finish_import(start, path, public)
+    }
+
+    /// The tail `import` and `use` share: the `as` rename, the optional `;`, the qualifier.
+    fn finish_import(
+        &mut self,
+        start: usize,
+        path: Vec<String>,
+        public: bool,
+    ) -> Result<Node, ParseError> {
+        let alias = self.parse_optional_as_alias()?;
+        self.eat(b';'); // optional semicolon
+        self.register_import_qualifier(&path, alias.as_deref());
+        let span = Span::new(start, self.pos);
+        Ok(Node::Import {
+            path,
+            alias,
+            public,
+            span,
+        })
+    }
+
     /// Consume an optional `as NAME` rename and return the name.
     ///
     /// Shared by `parse_import` and `parse_use`, and it must be: the formatter canonicalises

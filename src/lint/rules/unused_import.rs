@@ -32,6 +32,9 @@
 //!
 //! This is intentionally conservative: any ambiguous or partial match is
 //! treated as "used" to avoid false positives.
+//!
+//! A `pub import` re-exports the module to this module's importers, so it is
+//! never reported: a facade module imports what its callers use, not what it uses.
 
 use crate::ast::Node;
 use crate::lint::rule::{LintCtx, LintRule};
@@ -59,9 +62,20 @@ impl LintRule for UnusedImport {
         let source = ctx.source;
 
         for item in &ctx.module.items {
-            let Node::Import { path, alias, span } = item else {
+            let Node::Import {
+                path,
+                alias,
+                public,
+                span,
+            } = item
+            else {
                 continue;
             };
+            // `pub import` declares the import part of this module's interface (a facade
+            // such as `std.x509`), so its own file need not reference it.
+            if *public {
+                continue;
+            }
             // The name a USE SITE writes is the alias when the import was renamed
             // (`use app_config as config` → call sites say `config.…`). Checking the last
             // path segment instead would report every aliased import as unused, and — worse —

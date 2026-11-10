@@ -132,6 +132,23 @@ fn use_alias_survives() {
 }
 
 #[test]
+fn pub_import_survives() {
+    // A facade's `pub import` is its re-export declaration; dropping `pub` made the formatter
+    // refuse every file that wrote it (`fmt::unformattable`).
+    let src = "import std.vec;\npub import std.map;\n\npub fn f() -> i64 {\n    1\n}\n";
+    assert_kept("pub import", src, &["pub import std.map;"]);
+    assert!(
+        fmt(src).starts_with("import std.vec;\n"),
+        "`pub` leaked onto a plain import"
+    );
+    assert_kept(
+        "pub use with alias",
+        "pub use app_config as config\n\npub fn f() -> i64 {\n    1\n}\n",
+        &["pub import app_config as config;"],
+    );
+}
+
+#[test]
 fn module_qualified_call_survives() {
     assert_kept(
         "aliased single-segment qualifier",
