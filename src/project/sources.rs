@@ -356,6 +356,7 @@ fn import_closure(
         pending.extend(imports.iter().map(String::as_str).map(segments));
     }
     let mut included = BTreeSet::new();
+    let mut top_level = Vec::new();
     let mut by_key = BTreeMap::<String, Vec<usize>>::new();
     let mut by_stem = BTreeMap::<String, Vec<usize>>::new();
     for (index, path) in walked.iter().enumerate() {
@@ -366,11 +367,23 @@ fn import_closure(
         // A root, or a top-level module in the entry's own directory, is a
         // member; leaving it out of the stem index keeps a bare import from
         // turning ambiguous on a file that is already in the set.
-        if members.contains(&canonical(path)) || path.parent() == Some(source_root) {
+        if members.contains(&canonical(path)) {
             included.insert(index);
+        } else if path.parent() == Some(source_root) {
+            top_level.push(index);
         } else if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
             by_stem.entry(stem.to_string()).or_default().push(index);
         }
+    }
+    let read_imports = |path: &Path| -> Result<Vec<Vec<String>>> {
+        let source = fs::read_to_string(path)
+            .map_err(|e| anyhow!("cannot read project source {}: {e}", path.display()))?;
+        Ok(declared_imports(&source))
+    };
+    // The entry directory's modules are members; their imports are followed.
+    for index in top_level {
+        included.insert(index);
+        pending.extend(read_imports(&walked[index])?);
     }
     while let Some(path) = pending.pop() {
         if path.is_empty() {
@@ -378,13 +391,7 @@ fn import_closure(
         }
         for &index in walked_targets(&path, &by_key, &by_stem) {
             if included.insert(index) {
-                let source = fs::read_to_string(&walked[index]).map_err(|e| {
-                    anyhow!(
-                        "cannot read project source {}: {e}",
-                        walked[index].display()
-                    )
-                })?;
-                pending.extend(declared_imports(&source));
+                pending.extend(read_imports(&walked[index])?);
             }
         }
     }
