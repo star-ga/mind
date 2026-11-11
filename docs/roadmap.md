@@ -2224,7 +2224,7 @@ the fleet, a dependency hub every release gates on. A spec (preimage layout, cha
 vectors) fails softly: implementations drift, but shared vectors *detect* drift, whereas
 coupling is structural. This is the mic@3 pattern and it is already known to work here.
 
-**Firewall — do not cross it.** The governance layer's I13 states that structural admissibility must not
+**Firewall — do not cross it.** The governance layer's E4 (non-causal separation) states that structural admissibility must not
 enter the optimization loop: no gradient, no reward, no penalty term, separate evidence
 stream, no action identifiers — "the moment a structural boundary becomes a metric, it
 ceases to function as a boundary." Prediction confidence must therefore never confer
@@ -2251,7 +2251,7 @@ and every one of them answers it correctly and in isolation:
 | `mind` compiler | identity of an **artifact** | `trace_hash = mini_sha256(emit_mic3(ir))` on canonical mic@3 bytes (RFC 0016/0021) |
 | Agent kernel | identity of a **decision** | routing lineage + `kernel.replay` |
 | `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
-| Governance layer | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
+| Governance layer | identity of a **constraint** | I1–I9 invariants plus extensions E1–E6, SOP-5 `spec_hash` binding, witness chain |
 | `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
 | Architecture scanner | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
 
@@ -2297,7 +2297,7 @@ Proposed surface:
 
 ### Firewall — do not cross it
 
-The governance layer's **I13** holds: structural admissibility must not enter the
+The governance layer's **E4** (non-causal separation) holds: structural admissibility must not enter the
 optimization loop. The composite anchor is an evidence artifact, not a score.
 It must never be reduced to a single quality number, and a high anchor coverage
 must never confer authority to relax an invariant. Six chains agreeing is not
