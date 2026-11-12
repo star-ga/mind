@@ -27,7 +27,7 @@ use tempfile::TempDir;
 
 use super::{
     NATIVE_SHAPES, T2_SHAPES, Tools, build_native_cmd, emit_shared_cmd, manifest_dir, read, run_ok,
-    stage_references, tmp,
+    stage_native_source, stage_references, tmp,
 };
 
 /// Minimum pairs per row; `tools/bench_gate.py --pairs` rejects fewer (exit 4).
@@ -270,9 +270,9 @@ fn t2_shape(run: &mut Run, shape: &str, source: &str) {
 
 fn native_shape(run: &mut Run, shape: &str) {
     let corpus = manifest_dir().join("examples/mindc_mind/testdata/backend_native_bridge");
-    let src = corpus.join(format!("{shape}.mind"));
     let oracle = read(&corpus.join(format!("{shape}.elf")));
     let work = tmp();
+    let src = stage_native_source(shape, work.path());
     let out = [work.path().join("base.elf"), work.path().join("cand.elf")];
     let mut bytes = [Vec::new(), Vec::new()];
     for arm in [BASE, CAND] {
