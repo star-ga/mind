@@ -665,7 +665,10 @@ mod functional {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_results_helpers_free_their_key_buffers() {
-        use common::mic_record::rss_growth_kib;
+        use common::mic_record::{alone, rss_growth_kib};
+        if !alone("functional::the_results_helpers_free_their_key_buffers") {
+            return;
+        }
         let Some(lib) = lib() else { return };
         const BOUND_KIB: i64 = 2048;
         let g = b"ls20".as_slice();

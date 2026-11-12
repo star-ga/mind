@@ -255,6 +255,37 @@ pub fn rss_kib() -> (i64, i64) {
     (field("VmRSS:"), field("VmHWM:"))
 }
 
+/// Run a resident-set bound alone. The resident set belongs to the process,
+/// so a bound taken while sibling tests allocate on other threads measures
+/// them too (measured: 26916 KiB beside the siblings, under the bound with
+/// one test thread). The parent runs this test binary again with only
+/// `test_name` selected and returns `false`; the child returns `true` and
+/// takes the measurement.
+#[cfg(target_os = "linux")]
+pub fn alone(test_name: &str) -> bool {
+    const ALONE_VAR: &str = "MIND_RSS_BOUND_ALONE";
+    if std::env::var_os(ALONE_VAR).is_some_and(|v| v == test_name) {
+        return true;
+    }
+    let exe = std::env::current_exe().expect("current_exe");
+    let out = Command::new(exe)
+        .args([test_name, "--exact", "--test-threads", "1", "--nocapture"])
+        .env(ALONE_VAR, test_name)
+        .output()
+        .expect("spawn this test binary");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // `--exact` on a name that matches no test still exits 0.
+    assert!(
+        out.status.success() && text.contains("test result: ok. 1 passed"),
+        "{test_name} alone:\n{text}"
+    );
+    false
+}
+
 /// Growth in KiB of the resident set and of its peak, whichever is larger,
 /// over `rounds` calls of `round`, after a warm-up of a tenth as many (at
 /// least one) so the allocator's arenas are already mapped.

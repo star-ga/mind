@@ -289,7 +289,10 @@ fn non_canonical_maps_are_refused() {
 #[cfg(target_os = "linux")]
 #[test]
 fn decode_insert_and_remove_free_what_they_no_longer_hold() {
-    use common::mic_record::rss_growth_kib;
+    use common::mic_record::{alone, rss_growth_kib};
+    if !alone("decode_insert_and_remove_free_what_they_no_longer_hold") {
+        return;
+    }
     let Some(lib) = lib() else { return };
     const BOUND_KIB: i64 = 2048;
     let free = |h: i64| assert_eq!(lib.call("mrec_free", &[h]), 0, "mrec_free");
