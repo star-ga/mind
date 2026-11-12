@@ -153,5 +153,5 @@ if __name__ == "__main__":
     _HEAP = "glibc.malloc.perturb=165:glibc.malloc.tcache_count=0"
     if os.environ.get("GLIBC_TUNABLES") != _HEAP:
         env = {**os.environ, "GLIBC_TUNABLES": _HEAP}
-        os.execve(sys.executable, [sys.executable, *sys.argv], env)
+        os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)  # keeps the count shim
     sys.exit(main())
