@@ -49190,9 +49190,9 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     // width-64 param — all of main.mind — so the self-compile is byte-identical.
     let st_p: NbState = NbState { code: nb_wrap_params_w(st_p0.code, buf, params_addr, n_params, 0), next_id: st_p0.next_id, last_id: st_p0.last_id, ncalls: st_p0.ncalls };
 
-    // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative
-    // to THIS fn's code String; up to 512 jumps; jcell = a 1-i64 count, zeroed).
-    let jmps: i64 = __mind_alloc(512 * 2 * 8);
+    // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative to
+    // THIS fn's code String; nbwm_jcap records, match arms included; jcell = count).
+    let jmps: i64 = __mind_alloc(nbwm_jcap(buf, ast_span_lo(node), hm_fn_span(node)) * 2 * 8);
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
 

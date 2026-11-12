@@ -338,3 +338,43 @@ pub fn nbwm_cnew(w: i64, key: i64) -> i64 {
     __mind_store_i64(w + 16, __mind_load_i64(w + 16) + 1);
     nbwm_set(__mind_load_i64(w), __mind_load_i64(w + 8), key, rec)
 }
+
+// SSA jump table of fn source [lo, lo + span): 512 records, or 400 + 2 per `=>`
+// when that is more. The router keeps a fn on the SSA path only when its jump
+// estimate is <= 400 (hm_over_ssa_caps), and that estimate does not see match
+// arms: each int-literal or enum arm desugars at parse time to an if with a je
+// and a jmp record, so a match of 384 arms wrote past the fixed 512-record
+// table (SIGSEGV). Only the table size changes: a fn that fit keeps 512 records.
+pub fn nbwm_jcap(buf: i64, lo: i64, span: i64) -> i64 {
+    let need: i64 = 400 + 2 * nbwm_arrows(buf, lo, lo + span);
+    if need > 512 {
+        return need;
+    }
+    512
+}
+
+// The `=>` pairs that start in [a, b). Halves the range, so the stack depth is
+// log2(span / 256) + 256 frames.
+pub fn nbwm_arrows(buf: i64, a: i64, b: i64) -> i64 {
+    if b - a <= 256 {
+        return nbwm_arrows_run(buf, a, b, 0);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    nbwm_arrows(buf, a, mid) + nbwm_arrows(buf, mid, b)
+}
+
+pub fn nbwm_arrows_run(buf: i64, i: i64, b: i64, acc: i64) -> i64 {
+    if i >= b {
+        return acc;
+    }
+    let hit: i64 = if __mind_load_i8(buf + i) == 61 {
+        if __mind_load_i8(buf + i + 1) == 62 {
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    nbwm_arrows_run(buf, i + 1, b, acc + hit)
+}
