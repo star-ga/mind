@@ -1,0 +1,90 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The forward-jump table of one native function. A record is 2 words: the
+// fn-relative site of a rel32 field and its fn-relative target (-1 until the
+// target is known). The emitters append a record per je / jmp and patch the
+// function code in place when the body is done (nb_patch_jmps in main.mind).
+//
+// The table has a fixed size. A push had no bound: when the size rule of a
+// table missed a construct, the records went past the table into the next
+// allocation (a 257-arm match: SIGSEGV in the compiler, or a program with a
+// misplaced patch). The count cell now holds the capacity. A push past it
+// writes nothing, marks the cell, and poisons the owner function when one is
+// bound (nbjt_bind), so that function is refused and never emitted: the SSA
+// path then gives it to the HOME path, whose table is checked before each
+// push (hm_je, hm_jmp). A size rule that undercounts can cost a refusal, never
+// a wrong byte.
+// PART RULE: intrinsics only.
+
+// The count cell of a table of cap records: +0 count, +8 cap, +16 the address
+// of the owner's poison word (0: none), +24 1 after a refused push.
+pub fn nbjt_cell(cap: i64) -> i64 {
+    let c: i64 = __mind_alloc(32);
+    __mind_store_i64(c, 0);
+    __mind_store_i64(c + 8, cap);
+    __mind_store_i64(c + 16, 0);
+    __mind_store_i64(c + 24, 0);
+    c
+}
+
+// Publish jcell in the fn's let cell (word +48) and bind the cell's poison
+// word (+80, read after the body walk) to the table.
+pub fn nbjt_bind(lcell: i64, jcell: i64) -> i64 {
+    __mind_store_i64(lcell + 48, jcell);
+    __mind_store_i64(jcell + 16, lcell + 80);
+    0
+}
+
+// 1 iff a push on this table was refused.
+pub fn nbjt_full(jcell: i64) -> i64 {
+    __mind_load_i64(jcell + 24)
+}
+
+// Refuse a push: mark the cell and poison the bound owner.
+pub fn nbjt_refuse(jcell: i64) -> i64 {
+    __mind_store_i64(jcell + 24, 1);
+    let p: i64 = __mind_load_i64(jcell + 16);
+    if p != 0 {
+        __mind_store_i64(p, 1)
+    }
+    0
+}
+
+// Append the record (site, target) at index [jcell] and bump the count. A
+// full table refuses the push (nbjt_refuse) and writes no record.
+pub fn nb_jmps_push(jmps: i64, jcell: i64, site: i64, target: i64) -> i64 {
+    let n: i64 = __mind_load_i64(jcell);
+    if n >= __mind_load_i64(jcell + 8) {
+        return nbjt_refuse(jcell);
+    }
+    __mind_store_i64(jmps + (n * 2 + 0) * 8, site);
+    __mind_store_i64(jmps + (n * 2 + 1) * 8, target);
+    __mind_store_i64(jcell, n + 1);
+    0
+}
+
+// Set the target of record `which`. The If arm records je then (maybe) jmp in
+// order and sets each target as soon as it is known, so `which` is the count
+// after its push, less one. After a refused push that index names another
+// record: nothing is written then, or for an index outside the table.
+pub fn nb_jmp_set_target(jmps: i64, jcell: i64, which: i64, target: i64) -> i64 {
+    if nbjt_full(jcell) != 0 {
+        return 0;
+    }
+    if which < 0 {
+        return 0;
+    }
+    if which >= __mind_load_i64(jcell + 8) {
+        return 0;
+    }
+    nbjt_set(jmps, which, target)
+}
+
+// Set the target of record `which` with no cell: the caller has checked the
+// index (the HOME path, hm_last_jmp and hm_set in main.mind).
+pub fn nbjt_set(jmps: i64, which: i64, target: i64) -> i64 {
+    __mind_store_i64(jmps + (which * 2 + 1) * 8, target);
+    0
+}

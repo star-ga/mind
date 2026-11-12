@@ -60,6 +60,7 @@ import nb_arr_fold;
 import nb_branch_memo;
 import nb_exit_carry;
 import nb_value_if_memo;
+import nbt_jump_table;
 import nbt_fvc_names;
 
 // ===========================================================================
@@ -37714,8 +37715,7 @@ pub fn nb_emit_blas_dot_q16(code: String, a_slot: i64, b_slot: i64, len_slot: i6
     let k5: String = nb_intdot_movimm(k4, 0, nb_slot_disp(iv));
     // Local forward/back jump scaffold (je-exit + back-edge = 2 records).
     let jmps: i64 = __mind_alloc(4 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(4);
     // --- loop header: cmpflag = (i < len) ; je exit when 0 ---
     let hdr: i64 = string_len(k5);
     let c1: String = nb_load_rax(k5, nb_slot_disp(iv));
@@ -37882,8 +37882,7 @@ pub fn nb_emit_blas_dot_i16(code: String, a_slot: i64, b_slot: i64, len_slot: i6
     let k4: String = nb_intdot_movimm(k3, 0, nb_slot_disp(iv));
     // Local forward/back jump scaffold (je-exit + back-edge = 2 records).
     let jmps: i64 = __mind_alloc(4 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(4);
     // --- loop header: cmpflag = (i < len) ; je exit when 0 ---
     let hdr: i64 = string_len(k4);
     let c1: String = nb_load_rax(k4, nb_slot_disp(iv));
@@ -38023,16 +38022,7 @@ pub fn nb_calls_push(calls: i64, n: i64, rel_off: i64, lo: i64, hi: i64) -> i64 
 // patch the assembled fn code in place (string_addr) before it is concatenated.
 // An intra-function jump's rel32 is position-independent (site and target move as
 // one unit when the linker relocates the fn), so a fn-relative patch is exact.
-//
-// One jump record = 2 i64 words: (rel32_site_within_fn, target_off_within_fn).
-// `jcell` is a 1-i64 count cell. nb_jmps_push appends at index [jcell] and bumps.
-pub fn nb_jmps_push(jmps: i64, jcell: i64, site: i64, target: i64) -> i64 {
-    let n: i64 = __mind_load_i64(jcell);
-    __mind_store_i64(jmps + (n * 2 + 0) * 8, site);
-    __mind_store_i64(jmps + (n * 2 + 1) * 8, target);
-    __mind_store_i64(jcell, n + 1);
-    0
-}
+// The table, its capacity and the checked push are in nbt_jump_table.mind.
 
 // `cmp qword [rbp+disp32], 0 ; je rel32(0 placeholder)` (mirror
 // src/native::emit_cmp_je_zero). Records the je's rel32 site (fn-relative) into
@@ -38060,15 +38050,6 @@ pub fn nb_emit_jmp(code: String, jmps: i64, jcell: i64) -> String {
     let site: i64 = string_len(c1);
     let _j: i64 = nb_jmps_push(jmps, jcell, site, 0 - 1);
     nb_u32(c1, 0)
-}
-
-// Back-patch the MOST-RECENTLY-recorded jump's target (the one whose target is
-// still the -1 sentinel) to `target`. The If arm records je then (maybe) jmp in
-// order; it sets each one's target as soon as it is known, in LIFO order, so the
-// last sentinel-targeted record is always the one being resolved.
-pub fn nb_jmp_set_target(jmps: i64, jcell: i64, which: i64, target: i64) -> i64 {
-    __mind_store_i64(jmps + (which * 2 + 1) * 8, target);
-    0
 }
 
 // i64-REFERENCES deref-write tail: append the 8-byte store-through-address
@@ -47901,7 +47882,7 @@ pub fn hm_set(jmps: i64, which: i64, target: i64) -> i64 {
     if which < 0 {
         return 0;
     }
-    nb_jmp_set_target(jmps, 0, which, target)
+    nbjt_set(jmps, which, target)
 }
 
 // Bind NAME -> slot in the let-env, capacity-checked against hc+80.
@@ -48397,8 +48378,7 @@ pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncal
     let st_p: NbState = NbState { code: nb_wrap_params_w(st_p0.code, buf, params_addr, n_params, 0), next_id: st_p0.next_id, last_id: st_p0.last_id, ncalls: st_p0.ncalls };
 
     let jmps: i64 = __mind_alloc(jcap * 2 * 8 + 16);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(jcap);
     let lets: i64 = __mind_alloc(lcap * 5 * 8 + 40);
     let lcell: i64 = nbwm_cell();
     __mind_store_i64(lcell + 120, ctx);
@@ -48421,7 +48401,7 @@ pub fn nb_lower_fn_home_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncal
     __mind_store_i64(lcell + 24, srt);
     __mind_store_i64(lcell + 32, is_entry);
     __mind_store_i64(lcell + 40, jmps);
-    __mind_store_i64(lcell + 48, jcell);
+    let _jb: i64 = nbjt_bind(lcell, jcell);
     __mind_store_i64(lcell + 56, loops);
     __mind_store_i64(lcell + 64, lpcell);
     __mind_store_i64(lcell + 72, frt_lookup_width(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))));
@@ -49054,9 +49034,8 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
 
     // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative to
     // THIS fn's code String; nbwm_jcap records, match arms included; jcell = count).
-    let jmps: i64 = __mind_alloc(nbwm_jcap(buf, ast_span_lo(node), hm_fn_span(node)) * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(nbwm_jcap(buf, ast_span_lo(node), hm_fn_span(node)));
+    let jmps: i64 = __mind_alloc(__mind_load_i64(jcell + 8) * 2 * 8);
 
     // Per-fn let-env: name span -> (frame slot, struct-lit node, declared width),
     // for `let` bindings (up to 512, 5 i64 words each; lcell = a 2-i64 cell:
@@ -49141,7 +49120,7 @@ pub fn nb_lower_fn_ctx(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: 
     __mind_store_i64(lcell + 24, srt);
     __mind_store_i64(lcell + 32, is_entry);
     __mind_store_i64(lcell + 40, jmps);
-    __mind_store_i64(lcell + 48, jcell);
+    let _jb: i64 = nbjt_bind(lcell, jcell);
     __mind_store_i64(lcell + 56, loops);
     __mind_store_i64(lcell + 64, lpcell);
     // C2 param/return width driver: stash THIS fn's declared return width (frt
@@ -53880,8 +53859,7 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let jmps: i64 = __mind_alloc(512 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(512);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = nbwm_cell();
@@ -53980,8 +53958,7 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let jmps: i64 = __mind_alloc(512 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(512);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = nbwm_cell();
     let _lz: i64 = nb_dtk_zero(lcell, 16, 0);
@@ -54030,7 +54007,7 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 24, srt);
     __mind_store_i64(lcell + 32, 0);
     __mind_store_i64(lcell + 40, jmps);
-    __mind_store_i64(lcell + 48, jcell);
+    let _jb: i64 = nbjt_bind(lcell, jcell);
     __mind_store_i64(lcell + 56, loops);
     __mind_store_i64(lcell + 64, lpcell);
     __mind_store_i64(lcell + 80, 0);
@@ -54160,8 +54137,7 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     // each float param slot FLOAT so a param ident routes the SSE2 path.
     let calls: i64 = __mind_alloc(8);
     let jmps: i64 = __mind_alloc(512 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(512);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = nbwm_cell();
     let _lz: i64 = nb_dtk_zero(lcell, 16, 0);
@@ -55649,8 +55625,7 @@ pub fn selftest_native_elf_intdot(a_addr: i64, b_addr: i64, n: i64) -> EmitState
     let bb: String = nb_intdot_lea(ba, 0 - 512, 0 - 96);
     // Loop scaffold (mirror nb_emit_while's byte-level structure).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // header = back-edge target.
     let header: i64 = string_len(bb);
     // cond: rax=i ; (i < n) -> 0/1 ; store cond.
@@ -55807,8 +55782,7 @@ pub fn selftest_native_elf_intdot_i16(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 32768, 0 - 65672);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- generate A[0..n] (base slot -65664) ---
     let ga0: String = nb_intdot_movimm(bb, 0, 0 - 65568);
     let ga_hdr: i64 = string_len(ga0);
@@ -55969,8 +55943,7 @@ pub fn selftest_native_elf_intdot_q16(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- generate A[0..n] (base slot -1048656) ---
     let ga0: String = nb_intdot_movimm(bb, 0, 0 - 1048608);
     let ga_hdr: i64 = string_len(ga0);
@@ -56255,8 +56228,7 @@ pub fn selftest_native_elf_gemv_i16(m: i64, n: i64) -> EmitState {
     let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
     let kc: String = nb_gemv_consts(p0, m, n);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     let gens: String = nb_gemv_gen_loops(kc, 0, jmps, jcell);
     let rows: String = nb_gemv_row_loop(gens, 0, jmps, jcell);
     // exit(0).
@@ -56280,8 +56252,7 @@ pub fn selftest_native_elf_gemv_q16(m: i64, n: i64) -> EmitState {
     let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
     let kc: String = nb_gemv_consts(p0, m, n);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     let gens: String = nb_gemv_gen_loops(kc, 1, jmps, jcell);
     let rows: String = nb_gemv_row_loop(gens, 1, jmps, jcell);
     // exit(0).
@@ -56500,8 +56471,7 @@ pub fn selftest_native_elf_gemm_q16(m: i64, n: i64, k: i64) -> EmitState {
     let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
     let kc: String = nb_gemm_consts(p0, m, n, k, 16, 44);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     let gens: String = nb_gemm_gen_loops(kc, jmps, jcell);
     let loops: String = nb_gemm_triple_loop(gens, 1, jmps, jcell);
     // exit(0).
@@ -56526,8 +56496,7 @@ pub fn selftest_native_elf_gemm_i8(m: i64, n: i64, k: i64) -> EmitState {
     let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
     let kc: String = nb_gemm_consts(p0, m, n, k, 24, 56);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     let gens: String = nb_gemm_gen_loops(kc, jmps, jcell);
     let loops: String = nb_gemm_triple_loop(gens, 0, jmps, jcell);
     // exit(0).
@@ -56732,8 +56701,7 @@ pub fn selftest_native_elf_genf32(n: i64) -> EmitState {
     let k12: String = nb_intdot_movimm(k11, 8, 0 - 248);
     let la: String = nb_intdot_lea(k12, 0 - 224, 0 - 240);
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let g0: String = nb_intdot_movimm(la, 0, 0 - 32);
     let g_hdr: i64 = string_len(g0);
     let gc1: String = nb_load_rax(g0, 0 - 32);
@@ -56902,8 +56870,7 @@ pub fn selftest_native_elf_dot_f32(n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(z7, 0 - 131072, 0 - 96);
     let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 104);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     // Generate a (base slot -96) then b (base slot -104); LCG state continues.
     let ga: String = nb_f32_gen_loop(bb, 0 - 96, jmps, jcell);
     let gb: String = nb_f32_gen_loop(ga, 0 - 104, jmps, jcell);
@@ -57084,8 +57051,7 @@ pub fn selftest_native_elf_matmul_f32_v(m: i64, n: i64) -> EmitState {
     let p0: String = nb_fp_prologue_frame(string_new(), 131072);
     let kc: String = nb_f32matmul_consts(p0, m, n);
     let jmps: i64 = __mind_alloc(64 * 8 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(256);
     let gens: String = nb_f32matmul_gen_loops(kc, n, jmps, jcell);
     let rows: String = nb_f32matmul_row_loop(gens, jmps, jcell);
     // exit(0).
@@ -57666,8 +57632,7 @@ pub fn selftest_native_elf_dot_l1_q16(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- generate A[0..n] (base slot -1048656) ---
     let ga0: String = nb_intdot_movimm(bb, 0, 0 - 1048608);
     let ga_hdr: i64 = string_len(ga0);
@@ -57971,8 +57936,7 @@ pub fn selftest_native_elf_simd_dot_q16(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- generate A[0..n] (base slot -1048656) ---
     let ga0: String = nb_intdot_movimm(bb, 0, 0 - 1048608);
     let ga_hdr: i64 = string_len(ga0);
@@ -58193,8 +58157,7 @@ pub fn selftest_native_elf_simd_dot_f32(n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(k13, 0 - 131072, 0 - 96);
     let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 104);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     // Generate a (base slot -96) then b (base slot -104); LCG state continues.
     let ga: String = nb_f32_gen_loop(bb, 0 - 96, jmps, jcell);
     let gb: String = nb_f32_gen_loop(ga, 0 - 104, jmps, jcell);
@@ -58413,8 +58376,7 @@ pub fn selftest_native_elf_avx2_dot_f32(n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(k13, 0 - 131072, 0 - 96);
     let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 104);
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     // Generate a (base slot -96) then b (base slot -104); LCG state continues.
     let ga: String = nb_f32_gen_loop(bb, 0 - 96, jmps, jcell);
     let gb: String = nb_f32_gen_loop(ga, 0 - 104, jmps, jcell);
@@ -58624,8 +58586,7 @@ pub fn selftest_native_elf_simd_dot_i16(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 32768, 0 - 65672);
     // Jump scaffold buffer shared by the three loops (genA, genB, dot).
     let jmps: i64 = __mind_alloc(64 * 4 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(128);
     // --- generate A[0..n] (base slot -65664) ---
     let ga0: String = nb_intdot_movimm(bb, 0, 0 - 65568);
     let ga_hdr: i64 = string_len(ga0);
@@ -58808,8 +58769,7 @@ pub fn selftest_native_elf_tensor_ewadd_i64(n: i64) -> EmitState {
     let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- loop 1: materialize a[i]=i+1, b[i]=2*i ---
     let g0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
     let g_hdr: i64 = string_len(g0);
@@ -58974,8 +58934,7 @@ pub fn selftest_native_elf_tensor_ewadd_f64(a_addr: i64, b_addr: i64, n: i64, ex
     let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
     // Jump scaffold buffer shared by both loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- loop 1: c[i] = a[i] + b[i] (the tensor element-wise op) ---
     let w0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
     let w_hdr: i64 = string_len(w0);
@@ -59125,8 +59084,7 @@ pub fn selftest_native_elf_tensor_dot_i64(n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 131136);
     // Jump scaffold buffer shared by both loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- loop 1: materialize a[i]=i+1, b[i]=2*i+3 ---
     let g0: String = nb_intdot_movimm(bb, 0, 0 - 131080);
     let g_hdr: i64 = string_len(g0);
@@ -59540,8 +59498,7 @@ pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitStat
     let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
     // Jump scaffold shared by all 8 loops (16 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sa: String = nb_tmm_seed_a(bc, jmps, jcell);
     let sb: String = nb_tmm_seed_b(sa, jmps, jcell);
     let mm: String = nb_tmm_row_loop(sb, jmps, jcell);
@@ -63479,8 +63436,7 @@ pub fn selftest_native_elf_tensor_rowsum_i64(m: i64, n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(k7, 0 - 131072, 0 - 131128);
     // Jump scaffold shared by all 4 loops (8 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sd: String = nb_rsum_seed_outer(ba, jmps, jcell);
     let rw: String = nb_rsum_row_outer(sd, jmps, jcell);
     // result = sum ; write(1, &result, 8) — the full-width stdout observable.
@@ -63678,8 +63634,7 @@ pub fn selftest_native_elf_tensor_transpose_i64(m: i64, n: i64) -> EmitState {
     let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 131136);
     // Jump scaffold shared by all 4 loops (8 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sa: String = nb_tt_seed_a(bb, jmps, jcell);
     let xp: String = nb_tt_xpose_outer(sa, jmps, jcell);
     let cs: String = nb_tt_checksum(xp, jmps, jcell);
@@ -63864,8 +63819,7 @@ pub fn selftest_native_elf_tensor_ewmul_i64(n: i64) -> EmitState {
     let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- loop 1: materialize a[i]=i+1, b[i]=2*i+3 ---
     let g0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
     let g_hdr: i64 = string_len(g0);
@@ -64153,8 +64107,7 @@ pub fn selftest_native_elf_tensor_colsum_i64(m: i64, n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(k7, 0 - 131072, 0 - 131128);
     // Jump scaffold shared by all 4 loops (8 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sd: String = nb_csum_seed_outer(ba, jmps, jcell);
     let cl: String = nb_csum_col_outer(sd, jmps, jcell);
     // result = sum ; write(1, &result, 8) — the full-width stdout observable.
@@ -64457,8 +64410,7 @@ pub fn selftest_native_elf_tensor_bcastadd_i64(m: i64, n: i64) -> EmitState {
     let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
     // Jump scaffold shared by all 5 loops (10 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sa: String = nb_bcast_seed_a(bc, jmps, jcell);
     let sb: String = nb_bcast_seed_b(sa, jmps, jcell);
     let cp: String = nb_bcast_compute_outer(sb, jmps, jcell);
@@ -64770,8 +64722,7 @@ pub fn selftest_native_elf_tensor_maxrowmax_i64(m: i64, n: i64) -> EmitState {
     let ba: String = nb_intdot_lea(k10, 0 - 131072, 0 - 131128);
     // Jump scaffold shared by all 4 loops (8 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sd: String = nb_rmx_seed_outer(ba, jmps, jcell);
     let rw: String = nb_rmx_row_outer(sd, jmps, jcell);
     // result = sum ; write(1, &result, 8) — the full-width stdout observable.
@@ -64963,8 +64914,7 @@ pub fn selftest_native_elf_tensor_relu_i64(n: i64) -> EmitState {
     let bc: String = nb_intdot_lea(ba, 0 - 65536, 0 - 131144);
     // Jump scaffold buffer shared by all three loops.
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     // --- loop 1: materialize a[i] = (i - half)*3 (the zero-straddling ramp) ---
     let g0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
     let g_hdr: i64 = string_len(g0);
@@ -65448,8 +65398,7 @@ pub fn selftest_native_elf_tensor_batchsum_i64(b: i64, m: i64, n: i64) -> EmitSt
     let ba: String = nb_intdot_lea(k10, 0 - 131072, 0 - 131128);
     // Jump scaffold shared by all 4 loops (8 records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sd: String = nb_b3s_seed_a(ba, jmps, jcell);
     let bt: String = nb_b3s_batch_outer(sd, jmps, jcell);
     // result = sum ; write(1, &result, 8) — the full-width stdout observable.
@@ -65750,8 +65699,7 @@ pub fn selftest_native_elf_tensor_rowmin_i64(m: i64, n: i64) -> EmitState {
     // Jump scaffold shared by all 4 loops + the per-element min-update (10
     // records; capacity 64).
     let jmps: i64 = __mind_alloc(64 * 2 * 8);
-    let jcell: i64 = __mind_alloc(8);
-    __mind_store_i64(jcell, 0);
+    let jcell: i64 = nbjt_cell(64);
     let sd: String = nb_rmn_seed_outer(ba, jmps, jcell);
     let rw: String = nb_rmn_row_outer(sd, jmps, jcell);
     // result = sum ; write(1, &result, 8) — the full-width stdout observable.

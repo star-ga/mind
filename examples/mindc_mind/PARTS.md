@@ -193,9 +193,9 @@ because they call it. The leaf-closed if-merge table helpers (`mt2names`,
 The same slot table holds one count record per else list (`nbwm_cget`,
 `nbwm_cput`): `nb_count_else` in `main.mind` reads the id count an enclosing
 count walk made instead of a new walk per enclosing arm.
-`nbwm_jcap` sizes the SSA jump table: 512 records, or 400 + 2 per `=>` when that is
-more (a `match` arm desugars to an `if` with two jump records, and the router's
-jump estimate does not count arms).
+`nbwm_jcap` sizes the SSA jump table: 512 records, or 400 + 2 per `>` byte when
+that is more (a `match` arm desugars to an `if` with two jump records, the router's
+jump estimate does not count arms, and each arm has a `>` token in any spelling).
 
 ## The exit-carry and value-if parts (0.10.3)
 
@@ -212,6 +212,15 @@ its import and the two-step test take four lines of `main.mind` (67925, pin 6792
 to the base of its brace level (a match arm is one level of the desugared if
 chain, 7968 B of stack measured per arm), so a match too deep for the compiler's
 own stack is refused (rc 3). The nesting-unit notes moved there with it (pin 67923).
+
+## The jump table part (0.10.3)
+
+`nbt_jump_table.mind` holds the forward-jump table of a native function: the count
+cell with its capacity (`nbjt_cell`), the checked push (`nb_jmps_push`) and
+`nb_jmp_set_target`, moved from `main.mind`. A push past the table writes nothing,
+marks the cell and poisons the function bound with `nbjt_bind`; the SSA path then
+gives that function to the HOME path. Every table site makes its cell with
+`nbjt_cell(records)`. `MAIN_MIND_LINE_PIN` went down to 67871.
 
 ## Twin-shaped loops and the extern scan part (0.10.3)
 
