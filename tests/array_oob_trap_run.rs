@@ -255,7 +255,7 @@ fn folded_array_elements_run_on_both_routes() {
 /// A typed dense tensor literal stores the folded element value: the old
 /// encoder stored 0 for `0 - 1` (a silent wrong value). An element with no
 /// constant value is refused by name on the MLIR route, never stored as 0.
-/// Route A refuses the tensor binding by name (`lane.type.array`).
+/// Route A refuses the tensor annotation by name (`lane.type.tensor`).
 #[test]
 fn dense_tensor_literal_stores_folded_values_or_refuses() {
     let mindc = mindc_bin();
@@ -277,7 +277,7 @@ fn dense_tensor_literal_stores_folded_values_or_refuses() {
     let runtime = "fn main() -> i64 {\n    let x: i64 = 3;\n    let t: tensor<i64[2]> = [x, 2];\n    return t[0] + 10;\n}\n";
     for (src, native, want) in [
         (runtime, false, "is not a constant"),
-        (folded, true, "lane.type.array"),
+        (folded, true, "lane.type.tensor"),
     ] {
         let (built, blob) = build_only(&mindc, src, native);
         assert!(
