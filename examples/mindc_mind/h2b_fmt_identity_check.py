@@ -121,6 +121,10 @@ SEMANTIC_EDIT_EXCLUSIONS = {
         "675db451: the private detmath kernel copies are removed for `import std.detmath`, "
         "+77/-362 (semantic edit)"
     ),
+    "std/detmath.mind": (
+        "3f299672: reduce_arg subtracts each part of pi/2 once (pio2_1t removed) and seven "
+        "sin/cos kernel coefficients get the right digits, +10/-12 (semantic edit)"
+    ),
     "examples/mindc_mind/selfhost_driver.mind": (
         "3129845c: nb_report_unsupported reports the extern ABI refusal first, "
         "+4 code lines (semantic edit)"
