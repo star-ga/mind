@@ -183,3 +183,12 @@ pub fn nxa_find(p: i64, i: i64, len: i64, c: i64) -> i64 {
     }
     r
 }
+
+// The entries a lookup may read from table tab: cnt, or 0 when the allocation
+// of the table was refused (tab == 0).
+pub fn nxa_tab_len(tab: i64, cnt: i64) -> i64 {
+    if tab == 0 {
+        return 0;
+    }
+    cnt
+}

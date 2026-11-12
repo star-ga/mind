@@ -235,9 +235,11 @@ pub fn nxa_ident_len(p: i64, lo: i64, len: i64) -> i64 {
 
 // E-code of the first extern refusal in [p, p + len): 2039 (no ABI row on this
 // route), 2040 (by-value #[repr(C)] struct), else 0.
+// Without the struct table (allocation refused) no type is looked up: 2039 or 0.
 pub fn nxa_refusal(p: i64, len: i64) -> i64 {
-    let cnt: i64 = nxa_rc_scan(p, len, 0);
-    let tab: i64 = __mind_alloc(cnt * 8 + 8);
+    let found: i64 = nxa_rc_scan(p, len, 0);
+    let tab: i64 = __mind_alloc(found * 8 + 8);
+    let cnt: i64 = nxa_tab_len(tab, found);
     let _f: i64 = nxa_rc_scan(p, len, tab);
     let mut i: i64 = 0;
     let mut r: i64 = 0;
