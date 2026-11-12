@@ -101,6 +101,30 @@ SEMANTIC_EDIT_EXCLUSIONS = {
         "main #346 46a9c328: path validation split into x509_* modules, +49/-700 "
         "(semantic edit)"
     ),
+    # 0.10.3 train edits (lane commits, landed in the release commit 8db067a1).
+    # The three std files change comment text, not layout: e9e0b363 rewords a
+    # second line-start `// std/<x>.mind` comment line, which the seed
+    # module-bound scan reads as a module bound.
+    "std/chacha20_poly1305.mind": (
+        "e9e0b363: the line-start `// std/sha256.mind` comment line is reworded so the "
+        "seed module-bound scan reads one bound (comment text edit, not layout)"
+    ),
+    "std/mlkem768.mind": (
+        "e9e0b363: the line-start `// std/hkdf.mind` comment line is reworded so the "
+        "seed module-bound scan reads one bound (comment text edit, not layout)"
+    ),
+    "std/x25519mlkem768.mind": (
+        "e9e0b363: the line-start `// std/mlkem768.mind` comment line is moved off the "
+        "line start so the seed module-bound scan reads one bound (comment text edit)"
+    ),
+    "examples/detmath_kat/main.mind": (
+        "675db451: the private detmath kernel copies are removed for `import std.detmath`, "
+        "+77/-362 (semantic edit)"
+    ),
+    "examples/mindc_mind/selfhost_driver.mind": (
+        "3129845c: nb_report_unsupported reports the extern ABI refusal first, "
+        "+4 code lines (semantic edit)"
+    ),
     # Main #383 e3b01d11 lint-warning fixes: renamed bindings, `let mut` plus
     # reassignment for shadowed lets, an unused import dropped (code edits).
     "examples/autodiff_demo.mind": ("main #383 e3b01d11: snake_case gradient bindings"),
