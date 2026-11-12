@@ -35,7 +35,7 @@ COMPILER_COMPONENTS: tuple[str, ...] = tuple("examples/mindc_mind/" + name for n
     "nb_intern_names.mind", "nb_intern_names2.mind", "nb_synth_sha.mind", "nb_synth_sha2.mind",
     "nb_float_lit.mind", "nb_float_lit2.mind", "nb_extern_abi.mind", "nbt_extern_scan.mind", "nb_lastdef.mind", "nb_strtab_index.mind",
     "nb_lower_loop.mind", "nb_lex_scan.mind", "nb_stack_budget.mind", "nbx_bind.mind", "nb_print.mind", "nb_arr_fold.mind",
-    "nb_branch_memo.mind", "nbt_fvc_names.mind"))
+    "nb_branch_memo.mind", "nb_exit_carry.mind", "nbt_fvc_names.mind"))
 FROZEN_SEED = "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
 LAYOUT_MAGIC = int.from_bytes(b"MINDLAY\x01", "little")
 BOUNDED_LAYOUT = (768 << 20, 384 << 20, 1 << 20)  # arena, stack, guard (bounded seed)

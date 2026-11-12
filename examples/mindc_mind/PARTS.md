@@ -193,6 +193,18 @@ because they call it. The leaf-closed if-merge table helpers (`mt2names`,
 The same slot table holds one count record per else list (`nbwm_cget`,
 `nbwm_cput`): `nb_count_else` in `main.mind` reads the id count an enclosing
 count walk made instead of a new walk per enclosing arm.
+`nbwm_jcap` sizes the SSA jump table: 512 records, or 400 + 2 per `=>` when that is
+more (a `match` arm desugars to an `if` with two jump records, and the router's
+jump estimate does not count arms).
+
+## The exit-carry part (0.10.3)
+
+`nb_exit_carry.mind` holds the branch-exit-carry pre-gate of the native router
+(`nb_stmts_branch_exit_carry`, called by `hm_fn_pregate`). One bottom-up walk makes
+three facts of each statement list (loop exit, assign, exit-carry branch); it
+replaces `nb_block_loop_exit` and `nb_block_any_assign`, which re-walked every
+later arm at each arm and had no other caller. `MAIN_MIND_LINE_PIN` went down to
+67921.
 
 ## Twin-shaped loops and the extern scan part (0.10.3)
 
