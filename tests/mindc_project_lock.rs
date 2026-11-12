@@ -345,6 +345,21 @@ fn check_config_is_never_read_from_a_leftover_temporary_manifest() {
     );
 }
 
+/// A bare `mindc build --backend native` takes its entry from the manifest
+/// that governs the route: a leftover temporary manifest is no project, so the
+/// build ends exactly as in a directory that never had a `Mind.toml`.
+#[test]
+fn native_no_path_build_treats_a_leftover_temporary_manifest_as_absent() {
+    let files = [("alpha.mind", SIMPLE_MIND)];
+    let [control, killed] = leftover_vs_control(
+        "alpha",
+        &files,
+        "alpha.mind",
+        &["build", "--backend", "native"],
+    );
+    assert_eq!(stderr_of(&killed), stderr_of(&control));
+}
+
 /// A search for the project made before the build lock meets a LIVE standalone
 /// build: its lock held and its temporary manifest written (or still empty,
 /// between creation and write). The writer removes that file, then releases

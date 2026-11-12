@@ -123,7 +123,18 @@ pub fn run_native_build(req: &NativeRequest<'_>) {
         || super::artifact::native_artifact_path(governed.as_ref(), req.optimize),
         str::to_string,
     );
-    run_native_backend_bridge_profile(req.paths, &out, req.profile);
+    // A bare build's entry is the one the governing manifest declares: the one
+    // search the route and the artifact path came from, never a second one.
+    let declared: Vec<String> = governed
+        .iter()
+        .map(|(root, m)| root.join(&m.build.entry).display().to_string())
+        .collect();
+    let paths = if req.paths.is_empty() {
+        declared.as_slice()
+    } else {
+        req.paths
+    };
+    run_native_backend_bridge_profile(paths, &out, req.profile);
 }
 
 /// Refuse native requests when the build lacks the closure-admission surface.
@@ -172,24 +183,16 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     // resolves duplicate bare names last-definition-wins, so order decides which
     // program runs), and argv order is whatever a caller happened to type.
     // Siblings come from the project resolver instead.
-    // NO PATH: resolve the entry the manifest declares, the same way an ordinary
-    // `mindc build` in a project does. Previously this exited with "got 0", so a
-    // bare `mindc build --backend native` inside a project could not build at all
-    // even though the manifest names its entry.
+    // NO PATH: `run_native_build` passes the entry the manifest declares, the same
+    // way an ordinary `mindc build` in a project does. Previously this exited with
+    // "got 0", so a bare `mindc build --backend native` inside a project could not
+    // build at all even though the manifest names its entry. Empty here: no project.
     let resolved_entry: String = if paths.is_empty() {
-        match crate::project::governing_project_root().and_then(|root| {
-            let manifest = crate::project::load_manifest(&root)?;
-            Ok(root.join(&manifest.build.entry))
-        }) {
-            Ok(entry) => entry.display().to_string(),
-            Err(e) => {
-                eprintln!(
-                    "error[backend-native]: no source given and no project entry could be \
-                     resolved: {e:#}"
-                );
-                process::exit(2);
-            }
-        }
+        eprintln!(
+            "error[backend-native]: no source given and no project entry could be \
+             resolved: Could not find Mind.toml in current directory or any parent"
+        );
+        process::exit(2);
     } else if paths.len() == 1 {
         paths[0].clone()
     } else {
