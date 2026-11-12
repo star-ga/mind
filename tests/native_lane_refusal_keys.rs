@@ -65,6 +65,11 @@ const ROWS: &[Row] = &[
         "",
     ),
     row(
+        "lane.extern.bind_clause",
+        "extern \"C\" bind(\"libz.so.1\") {}",
+        "",
+    ),
+    row(
         "lane.extern.callconv",
         "extern \"C\" callconv(.win64) { fn close(fd: i32) -> i32; }",
         "",

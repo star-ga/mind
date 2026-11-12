@@ -192,13 +192,16 @@ fn std_dns_and_entropy_sources_pass_the_pointer_discard() {
         let text = std::fs::read_to_string(&path).unwrap();
         let ast = crate::parser::parse(&text).expect("std module parses");
         match profile_lane_admits_source(&ast, true) {
-            Ok(()) => "ok".to_string(),
-            Err(e) => format!("{} {}", e.construct, e.function.unwrap_or_default()),
+            Ok(()) => ("ok", String::new()),
+            Err(e) => (e.construct, e.function.unwrap_or_default()),
         }
     };
     assert_eq!(
         [verdict("dns"), verdict("entropy")],
-        ["lane.alloc.size_positive dns_new_record", "ok"]
+        [
+            ("lane.alloc.size_positive", "dns_new_record".to_string()),
+            ("ok", String::new()),
+        ]
     );
 }
 
