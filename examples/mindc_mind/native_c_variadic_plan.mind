@@ -1,0 +1,191 @@
+// Copyright 2026 STARGA Inc.
+// Scalar Linux x86-64 LP64 SysV variadic plans, format version 2.
+// Depends on supplied ncp_* helpers; no admission, emission, or calls.
+// All input addresses denote live immutable internal buffers. See docs/compiler/NATIVE_C_VARIADIC_PLAN.md.
+
+pub fn ncv_type(t: i64) -> i64 {
+    let tag: i64 = ncp_type(t);
+    if tag < 0 { return 0 - 1; }
+    let n: i64 = __mind_load_i64(t);
+    if __mind_load_i8(t + 7 + n) < 0 { return 0 - 1; }
+    tag
+}
+
+pub fn ncv_equal_step(a: i64, b: i64, i: i64, prior: i64) -> i64 {
+    if prior == 0 { return 0; }
+    if __mind_load_i8(a + 8 + i) != __mind_load_i8(b + 8 + i) { return 0; }
+    1
+}
+
+// Equality compares live encoding bytes, never padding or record addresses.
+pub fn ncv_type_equal(a: i64, b: i64) -> i64 {
+    if ncv_type(a) < 0 { return 0; }
+    if ncv_type(b) < 0 { return 0; }
+    let n: i64 = __mind_load_i64(a);
+    if n != __mind_load_i64(b) { return 0; }
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while i < n {
+        same = ncv_equal_step(a, b, i, same);
+        i = i + 1;
+    }
+    same
+}
+
+pub fn ncv_argument_error(params: i64, actual: i64, fixed: i64, i: i64, prior: i64) -> i64 {
+    if prior != 0 { return prior; }
+    let source: i64 = __mind_load_i64(actual + i * 8);
+    if i < fixed {
+        let declared: i64 = __mind_load_i64(params + i * 8);
+        let dt: i64 = ncv_type(declared);
+        if dt <= 0 { return 5; }
+        if dt == 11 { return 6; }
+        let st: i64 = ncv_type(source);
+        if st <= 0 { return 9; }
+        if ncv_type_equal(declared, source) == 0 { return 10; }
+        return 0;
+    }
+    if ncv_type(source) <= 0 { return 9; }
+    0
+}
+
+// Stable validation errors; validation allocates nothing.
+pub fn ncv_validate(decl: i64, actual_types: i64, total: i64) -> i64 {
+    if decl == 0 { return 8; }
+    let convention: i64 = __mind_load_i64(decl + 16);
+    if convention != 0 {
+        if convention != 1 { return 1; }
+    }
+    let safety: i64 = __mind_load_i64(decl + 24);
+    if safety != 0 {
+        if safety != 1 { return 2; }
+    }
+    if __mind_load_i64(decl + 32) != 1 { return 3; }
+    let fixed: i64 = __mind_load_i64(decl + 40);
+    if fixed < 1 { return 4; }
+    if total < fixed { return 4; }
+    if total > 256 { return 4; }
+    let result: i64 = ncv_type(__mind_load_i64(decl + 56));
+    if result < 0 { return 5; }
+    if result == 11 { return 7; }
+    let params: i64 = __mind_load_i64(decl + 48);
+    if params == 0 { return 8; }
+    if actual_types == 0 { return 8; }
+    let mut error: i64 = 0;
+    let mut i: i64 = 0;
+    while i < total {
+        error = ncv_argument_error(params, actual_types, fixed, i, error);
+        i = i + 1;
+    }
+    error
+}
+
+pub fn ncv_role(i: i64, fixed: i64) -> i64 {
+    if i < fixed { return 0; }
+    1
+}
+
+pub fn ncv_conversion(t: i64, role: i64) -> i64 {
+    if role == 0 { return 0; }
+    if t == 1 { return 1; }
+    if t == 2 { return 2; }
+    if t == 3 { return 3; }
+    if t == 4 { return 4; }
+    if t == 13 { return 5; }
+    if t == 11 { return 6; }
+    0
+}
+
+pub fn ncv_abi_tag(t: i64, conversion: i64) -> i64 {
+    if conversion == 0 { return t; }
+    if conversion == 6 { return 12; }
+    5
+}
+
+pub fn ncv_source_width(t: i64) -> i64 {
+    if t == 11 { return 32; }
+    ncp_width(t)
+}
+
+// Destination has already been zeroed; copy only the live type encoding.
+pub fn ncv_copy_type(dst: i64, src: i64) -> i64 {
+    let n: i64 = __mind_load_i64(src);
+    __mind_store_i64(dst, n);
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + 8 + i, __mind_load_i8(src + 8 + i));
+        i = i + 1;
+    }
+    0
+}
+
+pub fn ncv_copy_abi(dst: i64, src: i64, abi: i64, conversion: i64) -> i64 {
+    if conversion == 0 { return ncv_copy_type(dst, src); }
+    __mind_store_i64(dst, 1);
+    __mind_store_i8(dst + 8, abi);
+    0
+}
+
+// Per-row step keeps counters in fresh storage, avoiding nested loop mutation.
+pub fn ncv_place(plan: i64, actual: i64, fixed: i64, i: i64) -> i64 {
+    let src: i64 = __mind_load_i64(actual + i * 8);
+    let t: i64 = ncv_type(src);
+    let role: i64 = ncv_role(i, fixed);
+    let conversion: i64 = ncv_conversion(t, role);
+    let abi: i64 = ncv_abi_tag(t, conversion);
+    let slot: i64 = plan + 96 + i * 160;
+    let _source_copy: i64 = ncv_copy_type(slot, src);
+    let _abi_copy: i64 = ncv_copy_abi(slot + 48, src, abi, conversion);
+    let gp: i64 = __mind_load_i64(plan + 24);
+    let sse: i64 = __mind_load_i64(plan + 32);
+    let stack: i64 = __mind_load_i64(plan + 40);
+    let kind: i64 = ncp_location_class(abi, gp, sse);
+    let location: i64 = ncp_location(kind, gp, sse, stack);
+    __mind_store_i64(plan + 24, gp + ncp_delta(kind, 1, 1));
+    __mind_store_i64(plan + 32, sse + ncp_delta(kind, 2, 1));
+    __mind_store_i64(plan + 40, stack + ncp_delta(kind, 3, 8));
+    __mind_store_i64(slot + 96, role);
+    __mind_store_i64(slot + 104, conversion);
+    __mind_store_i64(slot + 112, ncv_source_width(t));
+    __mind_store_i64(slot + 120, ncp_width(abi));
+    __mind_store_i64(slot + 128, ncp_normalize(abi));
+    __mind_store_i64(slot + 136, kind);
+    __mind_store_i64(slot + 144, location);
+    0
+}
+
+// Single allocation seam; no product fault flag or alternate allocator.
+pub fn ncv_allocate(bytes: i64) -> i64 {
+    __mind_alloc(bytes)
+}
+
+// One allocation after full validation. Caller owns and frees the result.
+pub fn ncv_plan(decl: i64, actual_types: i64, total: i64) -> i64 {
+    if ncv_validate(decl, actual_types, total) != 0 { return 0; }
+    let fixed: i64 = __mind_load_i64(decl + 40);
+    let result: i64 = ncv_type(__mind_load_i64(decl + 56));
+    let bytes: i64 = 96 + total * 160;
+    let plan: i64 = ncv_allocate(bytes);
+    if plan == 0 { return 0; }
+    let mut offset: i64 = 0;
+    while offset < bytes {
+        __mind_store_i64(plan + offset, 0);
+        offset = offset + 8;
+    }
+    let mut i: i64 = 0;
+    while i < total {
+        let _placed: i64 = ncv_place(plan, actual_types, fixed, i);
+        i = i + 1;
+    }
+    let stack: i64 = __mind_load_i64(plan + 40);
+    __mind_store_i64(plan, 2);
+    __mind_store_i64(plan + 8, total);
+    __mind_store_i64(plan + 16, fixed);
+    __mind_store_i64(plan + 48, ((stack + 15) / 16) * 16);
+    __mind_store_i64(plan + 56, __mind_load_i64(plan + 32));
+    __mind_store_i64(plan + 64, result);
+    __mind_store_i64(plan + 72, ncp_result_class(result));
+    __mind_store_i64(plan + 80, ncp_width(result));
+    __mind_store_i64(plan + 88, ncp_normalize(result));
+    plan
+}

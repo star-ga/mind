@@ -1,0 +1,19 @@
+// Calls that must read and write nothing: group 5, pixels 0 and pixels -3 with
+// ptrs = 0 (a read of ptrs would fault), and an accumulate with pos 0, neg -2
+// and init 1 (out read and written back unchanged, off = 0 never read). Stdout =
+// the 256-byte buffer, still all 7; exit = the summed results (0).
+
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(buf + i * 8, 7);
+        i = i + 1;
+    }
+    let r1: i64 = __mind_group_bank_i64(0, buf, 8, 8, 5);
+    let r2: i64 = __mind_group_bank_i64(0, buf, 8, 0, 3);
+    let r3: i64 = __mind_group_bank_i64(0, buf, 8, 0 - 3, 4);
+    let r4: i64 = __mind_group_acc32_i64(buf, buf, 0, 0, 0 - 2, 1);
+    __mind_write(1, buf, 256, 0 - 1);
+    r1 + r2 + r3 + r4
+}

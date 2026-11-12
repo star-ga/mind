@@ -171,3 +171,118 @@ fn build_reports_missing_tools() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
+
+/// Builds `let x: Tensor[<dt>,(4)] = <fill>; x` on the MLIR export route
+/// (`emit_mlir_string` + `build_mlir_artifacts`, the `mind --emit-shared` path),
+/// runs it, and returns element 2 as raw bits (f64/i64 as is, f32/i32
+/// zero-extended). Readback harness: `@main` returns that element bitcast to
+/// i64, and `mlir-runner` prints it. `Err` is the build refusal text.
+fn fill_bits_on_export_route(dt: &str, fill: &str) -> Option<Result<u64, String>> {
+    let tools = resolve_or_skip()?;
+    let Ok(runner) = which::which("mlir-runner").or_else(|_| which::which("mlir-cpu-runner"))
+    else {
+        crate::common::gate::skipped("mlir_build", "mlir-runner not on PATH");
+        return None;
+    };
+    let module = parser::parse_with_diagnostics(&format!("let x: Tensor[{dt},(4)] = {fill}; x"))
+        .expect("parse module");
+    let ir = eval::lower_to_ir(&module).expect("lowering");
+    let ids: Vec<usize> = ir
+        .instrs
+        .iter()
+        .filter_map(|i| match i {
+            libmind::ir::Instr::ConstTensor(id, ..) => Some(id.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 1, "one fill tensor expected: {:?}", ir.instrs);
+    let to_i64 = match dt {
+        "f64" => "%rb = arith.bitcast %re : f64 to i64",
+        "f32" => "%rw = arith.bitcast %re : f32 to i32\n    %rb = arith.extui %rw : i32 to i64",
+        "i32" => "%rb = arith.extui %re : i32 to i64",
+        _ => "%rb = arith.ori %re, %re : i64",
+    };
+    let plain = eval::emit_mlir_string(&ir, eval::MlirLowerPreset::None);
+    let (head, tail) = plain.rsplit_once("    return\n").expect("main returns");
+    let text = format!(
+        "{}    %ri = arith.constant 2 : index\n    \
+         %re = tensor.extract %{}[%ri] : tensor<4x{dt}>\n    {to_i64}\n    return %rb : i64\n{tail}",
+        head.replacen("func.func @main() -> () {", "func.func @main() -> i64 {", 1),
+        ids[0],
+    );
+    let opts = eval::MlirBuildOptions {
+        preset: eval::MlirLowerPreset::None.as_str(),
+        emit_mlir_file: None,
+        emit_llvm_file: None,
+        emit_obj_file: None,
+        emit_shared: None,
+        opt_pipeline: None,
+        target_triple: None,
+    };
+    let products = match eval::build_mlir_artifacts(&text, &tools, &opts) {
+        Ok(p) => p,
+        Err(err) => return Some(Err(format!("{err}"))),
+    };
+    let dir = tempdir().expect("tempdir");
+    let llvm_mlir = dir.path().join("fill.mlir");
+    fs::write(&llvm_mlir, &products.optimized_mlir).expect("write lowered mlir");
+    let out = std::process::Command::new(runner)
+        .args(["-e", "main", "--entry-point-result=i64"])
+        .arg(&llvm_mlir)
+        .output()
+        .expect("spawn mlir-runner");
+    assert!(
+        out.status.success(),
+        "runner: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let printed = String::from_utf8_lossy(&out.stdout);
+    Some(Ok(printed.trim().parse::<i64>().expect("i64 result") as u64))
+}
+
+/// A float tensor fill must carry the exact binary64 value, and for f32 the
+/// binary64 value rounded to binary32 (nearest, ties to even). Expected bits are
+/// data, taken outside the repo from `struct.pack('<d'|'<f', x)`; f32 `1e300`
+/// overflows to +inf under ties-to-even (`struct.pack('<f', inf)`).
+#[test]
+fn float_fill_runs_exact_bits_on_export_route() {
+    let cases: [(&str, &str, u64); 18] = [
+        ("f64", "1.5", 0x3FF8_0000_0000_0000),
+        ("f64", "-0.25", 0xBFD0_0000_0000_0000),
+        ("f64", "1e300", 0x7E37_E43C_8800_759C),
+        ("f64", "0.1", 0x3FB9_9999_9999_999A),
+        ("f64", "1", 0x3FF0_0000_0000_0000),
+        ("f64", "0", 0x0),
+        ("f64", "-0.0", 0x8000_0000_0000_0000),
+        ("f32", "1.5", 0x3FC0_0000),
+        ("f32", "-0.25", 0xBE80_0000),
+        ("f32", "1e300", 0x7F80_0000),
+        ("f32", "0.1", 0x3DCC_CCCD),
+        ("f32", "1", 0x3F80_0000),
+        ("f32", "-0.0", 0x8000_0000),
+        // 1 + 2^-24 and 1 + 3*2^-24 are f32 ties: each rounds to the even neighbour.
+        ("f32", "1.0000000596046448", 0x3F80_0000),
+        ("f32", "1.0000001788139343", 0x3F80_0002),
+        ("f32", "1.000000059604645", 0x3F80_0001),
+        // Positive controls: integer fills keep their integer arm.
+        ("i32", "-7", 0xFFFF_FFF9),
+        ("i64", "-3", 0xFFFF_FFFF_FFFF_FFFD),
+    ];
+    let mut wrong = Vec::new();
+    for (dt, fill, want) in cases {
+        let Some(got) = fill_bits_on_export_route(dt, fill) else {
+            return;
+        };
+        match got {
+            Ok(got) if got == want => {}
+            Ok(got) => wrong.push(format!("{dt} fill {fill}: got {got:#x}, want {want:#x}")),
+            Err(e) => wrong.push(format!("{dt} fill {fill}: build refused: {e}")),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of 18 fills wrong:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}

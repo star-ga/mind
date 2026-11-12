@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "author": "STARGA Inc.",
+  "status": "CANDIDATE_TEST_CONTRACT",
+  "scope": "Additive independent raw-pointer provenance tests. Original context/runtime catalogues remain unchanged. Expected acceptances that are outside current alias/reference support remain visible failures, not silently changed to refusals. The scalar-shadow row is a separately versioned corrected policy.",
+  "source_catalogues": [
+    {
+      "catalogue": "POINTER_PROVENANCE_EXTENSION.json",
+      "sha256": "4aec398bebda99608d2c83906615382dff5394190869476f7331919f0c013e62",
+      "case_count": 28
+    },
+    {
+      "catalogue": "POINTER_AGGREGATE_EXTENSION.json",
+      "sha256": "7f2099d1f10f08f21fdd80de9ef9c5ef5fcb511ff14a1039688f65054dfa2c4c",
+      "case_count": 8
+    },
+    {
+      "catalogue": "BOUNDARY_SUPPLEMENT.json",
+      "sha256": "05918af5495165adab4a70b48471f778aa413a5cf0c57475318f2747b1a97ac1",
+      "case_count": 10
+    },
+    {
+      "catalogue": "SHADOW_POLICY_SUPPLEMENT.json",
+      "sha256": "8c05ad084d29b4cb7cfc870cd5a37887e9a1f6a25f0083e35324d3f6be63813d",
+      "case_count": 1
+    },
+    {
+      "catalogue": "CANDIDATE2_DELTA_SUPPLEMENT.json",
+      "sha256": "789428e2e75609bbf0c12cb0141fddbbf551f5ddfeb9bd14265b95f04f0e60fb",
+      "case_count": 3
+    }
+  ],
+  "cases": [
+    {
+      "id": "annotated-pointer-alias-narrow",
+      "source": "fn f(p:*const u8)->i64{let q:*const u8=p;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "annotated-pointer-alias-float",
+      "source": "fn f(p:*const u8)->i64{let q:*const u8=p;return(q as f64)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "transitive-inferred-alias",
+      "source": "fn f(p:*const u8)->i64{let q=p;let r=q;let s=r;return(s as i16)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "parenthesized-alias",
+      "source": "fn f(p:*const u8)->i64{let q=((p));return((q))as f64 as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-cast-alias",
+      "source": "fn main()->i64{let q=7 as *const u8;return(q as i32)as i64;}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-reassignment",
+      "source": "fn f(p:*const u8)->i64{let mut q=p;q=9 as *const u8;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-assignment-from-param",
+      "source": "fn f(p:*const u8,r:*const u8)->i64{let mut q=p;q=r;return(q as f64)as i64;} fn main()->i64{return f(7 as *const u8,9 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-branch-assignment",
+      "source": "fn f(p:*const u8,n:i64)->i64{let mut q=p;if n>0{q=9 as *const u8;}return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8,1);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-loop-assignment",
+      "source": "fn f(p:*const u8)->i64{let mut q=p;let mut i:i64=0;while i<2{q=p;i=i+1;}return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-if-value-join",
+      "source": "fn f(p:*const u8,n:i64)->i64{let q=if n>0{p}else{9 as *const u8};return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8,1);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "explicit-clear-before-narrow",
+      "source": "fn f(p:*const u8)->i64{return((p as i64)as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "explicit-clear-before-float",
+      "source": "fn f(p:*const u8)->i64{return((p as i64)as f64)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "explicit-clear-annotated-alias",
+      "source": "fn f(p:*const u8)->i64{let q:i64=p as i64;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "explicit-clear-inferred-alias",
+      "source": "fn f(p:*const u8)->i64{let q=p as i64;let r=q;return(r as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "cleared-integer-assignment",
+      "source": "fn f(p:*const u8)->i64{let mut q:i64=p as i64;q=9;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 9
+    },
+    {
+      "id": "both-branches-explicitly-clear",
+      "source": "fn f(p:*const u8,n:i64)->i64{let q=if n>0{p as i64}else{9};return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8,1);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "alias-recast-to-pointer",
+      "source": "fn f(p:*const u8)->i64{let q=p as i64;let r=q as *const u8;return(r as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "inner-scalar-shadow-of-pointer-alias",
+      "source": "fn f(p:*const u8)->i64{let q=p;if 1==1{let q:i64=5;return(q as i32)as i64;}return 0;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 5,
+      "note": "Proper lexical scope control; unlike the original conservative same-name PARAMETER-shadow case, q is an alias binding, not a parameter."
+    },
+    {
+      "id": "inner-pointer-shadow-of-scalar",
+      "source": "fn f(p:*const u8)->i64{let q:i64=5;if 1==1{let q=p;return(q as i32)as i64;}return 0;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-scope-restored-after-scalar-shadow",
+      "source": "fn f(p:*const u8)->i64{let q=p;if 1==1{let q:i64=5;let z=q+1;}return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "scalar-scope-restored-after-pointer-shadow",
+      "source": "fn f(p:*const u8)->i64{let q:i64=5;if 1==1{let q=p;let z=q as i64;}return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 5
+    },
+    {
+      "id": "typed-call-explicit-clear",
+      "source": "fn narrow(x:i64)->i64{return(x as i32)as i64;} fn f(p:*const u8)->i64{return narrow(p as i64);} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "typed-pointer-call-propagates",
+      "source": "fn narrow(p:*const u8)->i64{let q=p;return(q as i32)as i64;} fn forward(p:*const u8)->i64{return narrow(p);} fn main()->i64{return forward(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "i64-return-explicit-clear",
+      "source": "fn address(p:*const u8)->i64{return p as i64;} fn main()->i64{let q=address(7 as *const u8);return(q as i32)as i64;}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "raw-pointer-return-unsupported",
+      "source": "fn identity(p:*const u8)->*const u8{return p;} fn main()->i64{let q=identity(7 as *const u8);return(q as i32)as i64;}",
+      "expected": "refuse",
+      "note": "Raw-pointer return parsing is not yet reviewed/admitted; normal refusal required until that separate obligation is met."
+    },
+    {
+      "id": "implicit-pointer-to-i64-return",
+      "source": "fn address(p:*const u8)->i64{return p;} fn main()->i64{let q=address(7 as *const u8);return(q as i32)as i64;}",
+      "expected": "refuse",
+      "scope_review": "Requires explicit source return-type contract; do not falsely claim current direct-param tracking already implements all return typing."
+    },
+    {
+      "id": "pointer-argument-to-i64-parameter",
+      "source": "fn narrow(x:i64)->i64{return(x as i32)as i64;} fn main()->i64{return narrow(7 as *const u8);}",
+      "expected": "refuse",
+      "scope_review": "Requires checked call argument/signature matching; distinguish this wider obligation from alias tracking."
+    },
+    {
+      "id": "incompatible-assignment-no-cast",
+      "source": "fn f(p:*const u8)->i64{let mut q:i64=3;q=p;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse",
+      "scope_review": "Requires assignment type validation, not silent raw-bit reclassification."
+    },
+    {
+      "id": "pointer-array-load-narrow",
+      "source": "fn f(p:*const u8)->i64{let xs=[p,p];let q=xs[0];return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-array-load-float",
+      "source": "fn f(p:*const u8)->i64{let xs=[p,p];let q=xs[1];return(q as f64)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-tuple-field-narrow",
+      "source": "fn f(p:*const u8)->i64{let pair=(p,5);let q=pair.0;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-record-field-narrow",
+      "source": "struct PtrCarrier{p:*const u8} fn f(p:*const u8)->i64{let c:PtrCarrier=PtrCarrier{p:p};let q=c.p;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "pointer-record-return-flow",
+      "source": "struct PtrCarrier{p:*const u8} fn carry(p:*const u8)->PtrCarrier{return PtrCarrier{p:p};} fn main()->i64{let c:PtrCarrier=carry(7 as *const u8);return(c.p as i32)as i64;}",
+      "expected": "refuse"
+    },
+    {
+      "id": "cleared-array-element",
+      "source": "fn f(p:*const u8)->i64{let xs=[p as i64,9];let q=xs[0];return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "cleared-record-field",
+      "source": "struct ScalarCarrier{x:i64} fn f(p:*const u8)->i64{let c:ScalarCarrier=ScalarCarrier{x:p as i64};return(c.x as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "cleared-record-return",
+      "source": "struct ScalarCarrier{x:i64} fn carry(p:*const u8)->ScalarCarrier{return ScalarCarrier{x:p as i64};} fn main()->i64{let c:ScalarCarrier=carry(7 as *const u8);return(c.x as i32)as i64;}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "deref-store-pointer-laundering",
+      "source": "fn f(p:*const u8)->i64{let x:i64=0;let r=&x;*r=p;return(x as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "deref-store-explicit-clear",
+      "source": "fn f(p:*const u8)->i64{let x:i64=0;let r=&x;*r=p as i64;return(x as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "deref-store-pointer-target",
+      "source": "fn f(p:*mut i64)->i64{*p=7;return 0;} fn main()->i64{let x:i64=0;return f((&x)as *mut i64);}",
+      "expected": "refuse",
+      "note": "The documented native dereference write path is i64 references, not arbitrary raw pointer dereference admission."
+    },
+    {
+      "id": "alias-param-pointer-narrow",
+      "source": "type PointerAlias=*const u8;fn f(p:PointerAlias)->i64{return(p as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "alias-param-pointer-float",
+      "source": "type PointerAlias=*const u8;fn f(p:PointerAlias)->i64{return(p as f64)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "alias-local-pointer-narrow",
+      "source": "type PointerAlias=*const u8;fn f(p:*const u8)->i64{let q:PointerAlias=p;return(q as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "alias-param-scalar-forgery",
+      "source": "type PointerAlias=*const u8;fn f(p:PointerAlias)->i64{return(p as i32)as i64;} fn main()->i64{return f(7);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "nested-alias-record-pointer",
+      "source": "type PointerAlias=*const u8;type PointerAlias2=PointerAlias;struct PointerAliasCarrier{p:PointerAlias2} fn f(p:*const u8)->i64{let c:PointerAliasCarrier=PointerAliasCarrier{p:p};return(c.p as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "alias-main-argv-narrow",
+      "source": "type ArgvAlias=*const *const u8;fn main(argc:i64,argv:ArgvAlias)->i64{return(argv as i32)as i64;}",
+      "expected": "refuse"
+    },
+    {
+      "id": "alias-param-explicit-clear",
+      "source": "type PointerAlias=*const u8;fn f(p:PointerAlias)->i64{return(p as i64 as i32)as i64;} fn main()->i64{return f(7 as *const u8);}",
+      "expected": "accept",
+      "exit": 7,
+      "note": "Positive alias-resolution control: if aliases are supported by the existing source normalizer, explicit conversion preserves the same result."
+    },
+    {
+      "id": "pointer-param-scalar-shadow-corrected-policy",
+      "source": "fn f(p:*const u8)->i64{let p:i64=7;return(p as i32)as i64;} fn main()->i64{return f(9 as *const u8);}",
+      "expected": "accept",
+      "exit": 7
+    },
+    {
+      "id": "unused-raw-pointer-store-target",
+      "source": "fn write_raw(p:*mut i64)->i64{*p=7;return 0;}fn main()->i64{return 0;}",
+      "expected": "refuse"
+    },
+    {
+      "id": "byte-field-pointer-index",
+      "source": "struct IndexByteCarrier{a:[u8;3]}fn f(p:*const u8)->i64{let b:IndexByteCarrier=IndexByteCarrier{a:[3 as u8,5 as u8,7 as u8]};return b.a[p] as i64;}fn main()->i64{return f(1 as *const u8);}",
+      "expected": "refuse"
+    },
+    {
+      "id": "byte-field-cleared-index",
+      "source": "struct IndexByteCarrier{a:[u8;3]}fn f(p:*const u8)->i64{let b:IndexByteCarrier=IndexByteCarrier{a:[3 as u8,5 as u8,7 as u8]};return b.a[p as i64] as i64;}fn main()->i64{return f(1 as *const u8);}",
+      "expected": "accept",
+      "exit": 5
+    }
+  ]
+}

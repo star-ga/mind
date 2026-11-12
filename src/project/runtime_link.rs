@@ -21,7 +21,7 @@ use anyhow::{Result, anyhow};
 use crate::diagnostics::capability::FallbackReason;
 use crate::diagnostics::refusal::CodedRefusal;
 
-pub(super) struct RuntimeLink {
+pub(crate) struct RuntimeLink {
     pub dir: PathBuf,
     pub file_name: &'static str,
     pub link_name: &'static str,

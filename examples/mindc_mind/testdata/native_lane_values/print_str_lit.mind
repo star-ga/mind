@@ -1,0 +1,11 @@
+// print: a string literal writes its bytes and no newline; UTF-8 bytes pass
+// through unchanged. The MLIR runtime is print_bytes (runtime-support).
+// expect: (3, b"hello world|h\xc3\xa9llo \xe2\x9c\x93|")
+fn main() -> i64 {
+    print("hello");
+    print(" world");
+    print("|");
+    print("héllo ✓");
+    print("|");
+    3
+}

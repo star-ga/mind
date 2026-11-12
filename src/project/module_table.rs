@@ -39,7 +39,6 @@
 //! benches are unaffected (module-level gate, no per-statement cfg).
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::ast::{Module, Node, TypeAnn};
 
@@ -336,41 +335,9 @@ impl ModuleTable {
     }
 }
 
-/// Module-file stems that name the CRATE ROOT rather than a submodule.
-/// A file `main.mind` / `lib.mind` / `mod.mind` collapses to its parent path
-/// (`src/main.mind` -> `crate`), so it can NOT be imported under its own stem
-/// (`use lib;` will not resolve to a `lib` module — the file is `crate`, not
-/// `crate.lib`). This is the single source of truth for that reserved set.
-pub const RESERVED_ROOT_STEMS: [&str; 3] = ["main", "lib", "mod"];
-
-/// `true` when `stem` is a reserved crate-root module name (see
-/// [`RESERVED_ROOT_STEMS`]). Callers use this to diagnose a file whose name
-/// collapses to the crate root instead of resolving as a named module.
-pub fn is_reserved_root_stem(stem: &str) -> bool {
-    RESERVED_ROOT_STEMS.contains(&stem)
-}
-
-/// Derive a dotted module path from a source file path relative to the
-/// project source root. `src/lexer/token.mind` -> `crate.lexer.token`;
-/// `src/main.mind` -> `crate`.
-pub fn module_path_of(file: &Path, src_root: &Path) -> String {
-    let rel = file.strip_prefix(src_root).unwrap_or(file);
-    let mut parts: Vec<String> = rel
-        .components()
-        .filter_map(|c| c.as_os_str().to_str())
-        .map(|s| s.trim_end_matches(".mind").to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    // `main` / `lib` / `mod` are the crate root, not a named submodule.
-    if matches!(parts.last().map(String::as_str), Some(s) if is_reserved_root_stem(s)) {
-        parts.pop();
-    }
-    if parts.is_empty() {
-        "crate".to_string()
-    } else {
-        format!("crate.{}", parts.join("."))
-    }
-}
+// The module-key rule is owned by `sources`: the project source set is an
+// import closure over these keys, so it must exist without this feature.
+pub use super::sources::{RESERVED_ROOT_STEMS, is_reserved_root_stem, module_path_of};
 
 /// Collect a module's exported names from its parsed AST.
 ///
@@ -442,13 +409,18 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                         });
                     }
                 }
-                Node::ExternBlock { callconv, fns, .. } => {
+                Node::ExternBlock {
+                    callconv,
+                    binding,
+                    fns,
+                    ..
+                } => {
                     for function in fns {
                         if exported_set.contains(&function.name) {
                             exported_extern::remember(
                                 &mut exported_externs,
                                 &aliases,
-                                *callconv,
+                                (*callconv, binding),
                                 function,
                             );
                         }
@@ -491,7 +463,12 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                 // use of a sibling type/alias goes through type resolution, not
                 // this value-ident surface.
                 Node::Const { name, .. } => exported.push(name.clone()),
-                Node::ExternBlock { callconv, fns, .. } => {
+                Node::ExternBlock {
+                    callconv,
+                    binding,
+                    fns,
+                    ..
+                } => {
                     for function in fns {
                         if !exported.iter().any(|name| name == &function.name) {
                             exported.push(function.name.clone());
@@ -499,7 +476,7 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                         exported_extern::remember(
                             &mut exported_externs,
                             &aliases,
-                            *callconv,
+                            (*callconv, binding),
                             function,
                         );
                     }

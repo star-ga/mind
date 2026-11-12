@@ -1,0 +1,19 @@
+// Strictly growing alloc/free loop (verifier repro, W11c round 2): each step
+// allocates i*8 bytes, touches the last word and frees it, for 30000 steps.
+// Every request is larger than every block freed before it, so a free list
+// that never merges or returns its top block to the bump cursor runs out of
+// address space (~3.6 GB requested in total) while the live footprint never
+// exceeds 240 KB. Expected exit 12, empty stdout.
+fn main() -> i64 {
+    let mut i: i64 = 1;
+    let mut s: i64 = 0;
+    while i < 30000 {
+        let p: i64 = __mind_alloc(i * 8);
+        __mind_store_i64(p + i * 8 - 8, i);
+        s = s + __mind_load_i64(p + i * 8 - 8) - i;
+        let f: i64 = __mind_free(p);
+        s = s + f;
+        i = i + 1;
+    }
+    s + 12
+}

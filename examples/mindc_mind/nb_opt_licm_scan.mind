@@ -1,0 +1,233 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Direct tree searches for the LICM legality self-check (nb_opt_licm_check.mind),
+// written apart from the pass's name-fact tables (nb_opt_licm_facts.mind): a
+// search counts the occurrences of one name in one role under one node, and a
+// node kind it does not know counts as a huge number, so every query on an
+// unfamiliar tree fails. PART RULE: intrinsics and other parts only.
+
+import nb_prim_desc;
+
+pub fn nblc_f(node: i64, k: i64) -> i64 {
+    __mind_load_i64(node + k * 8)
+}
+
+pub fn nblc_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+// 1 iff leaf is a node spelling exactly the bytes [lo, hi).
+pub fn nblc_hits(buf: i64, leaf: i64, lo: i64, hi: i64) -> i64 {
+    if leaf == 0 {
+        return 0;
+    }
+    if nblc_f(leaf, 2) - nblc_f(leaf, 1) != hi - lo {
+        return 0;
+    }
+    nblc_same(buf, nblc_f(leaf, 1), lo, hi - lo)
+}
+
+pub fn nblc_same(buf: i64, a: i64, b: i64, n: i64) -> i64 {
+    if n <= 0 {
+        return 1;
+    }
+    if nblc_byte(buf, a) != nblc_byte(buf, b) {
+        return 0;
+    }
+    nblc_same(buf, a + 1, b + 1, n - 1)
+}
+
+// 1 iff kind k (int, break, continue, float, string literal) holds no name.
+pub fn nblc_leaf(k: i64) -> i64 {
+    if k == 1 {
+        return 1;
+    }
+    if k == 22 {
+        return 1;
+    }
+    if k == 23 {
+        return 1;
+    }
+    if k == 24 {
+        return 1;
+    }
+    if k == 34 {
+        return 1;
+    }
+    0
+}
+
+// A count no legal tree reaches: an unknown kind fails every query.
+pub fn nblc_unknown() -> i64 {
+    1000000
+}
+
+pub fn nblc_list(buf: i64, sa: i64, n: i64, stride: i64, off: i64, mode: i64, lo: i64, hi: i64) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        t = t + nblc_scan(buf, __mind_load_i64(sa + i * stride + off), mode, lo, hi);
+        i = i + 1;
+    }
+    t
+}
+
+// How often name [lo, hi) occurs under node in role `mode`: 1 assignment
+// target, 2 let binder, 3 address-of operand, 4 any name position.
+pub fn nblc_scan(buf: i64, node: i64, mode: i64, lo: i64, hi: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = nblc_f(node, 0);
+    if k == 2 {
+        if mode == 4 {
+            return nblc_hits(buf, node, lo, hi);
+        }
+        return 0;
+    }
+    if nblc_leaf(k) == 1 {
+        return 0;
+    }
+    let c0: i64 = nblc_f(node, 3);
+    let c1: i64 = nblc_f(node, 4);
+    let c2: i64 = nblc_f(node, 5);
+    if k == 6 {
+        let own: i64 = if mode == 2 {
+            nblc_hits(buf, c0, lo, hi)
+        } else {
+            0
+        };
+        return own + nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    if k == 21 {
+        let own: i64 = if mode == 1 {
+            nblc_hits(buf, c0, lo, hi)
+        } else {
+            0
+        };
+        return own + nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    if k == 30 {
+        let own: i64 = if mode == 3 {
+            nblc_hits(buf, c0, lo, hi)
+        } else {
+            0
+        };
+        return own + nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 10 {
+        return nblc_list(buf, c0, nblc_f(node, 6), 8, 0, mode, lo, hi);
+    }
+    if k == 4 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_list(buf, c1, nblc_f(node, 6), 8, 0, mode, lo, hi);
+    }
+    if k == 27 {
+        return nblc_list(buf, c1, nblc_f(node, 6), 8, 0, mode, lo, hi);
+    }
+    if k == 19 {
+        return nblc_list(buf, c1, nblc_f(node, 6), 24, 16, mode, lo, hi);
+    }
+    if k == 8 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 12 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 14 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 15 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 17 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 18 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 25 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 31 {
+        return nblc_scan(buf, c0, mode, lo, hi);
+    }
+    if k == 3 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi);
+    }
+    if k == 28 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi);
+    }
+    if k == 20 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi);
+    }
+    if k == 35 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi);
+    }
+    if k == 32 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    if k == 33 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    if k == 16 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    if k == 29 {
+        return nblc_scan(buf, c0, mode, lo, hi) + nblc_scan(buf, c1, mode, lo, hi) + nblc_scan(buf, c2, mode, lo, hi);
+    }
+    nblc_unknown()
+}
+
+// 1 iff E holds only literals, names, parentheses and + - * (1-3),
+// comparisons (5-10), & | ^ << >> (11-15).
+pub fn nblc_pure(e: i64) -> i64 {
+    if e == 0 {
+        return 0;
+    }
+    let k: i64 = nblc_f(e, 0);
+    if k < 3 {
+        return 1;
+    }
+    if k == 12 {
+        return nblc_pure(nblc_f(e, 3));
+    }
+    if k != 3 {
+        return 0;
+    }
+    let op: i64 = nblc_f(e, 6);
+    if op == 4 {
+        return 0;
+    }
+    if op < 1 {
+        return 0;
+    }
+    if op > 15 {
+        return 0;
+    }
+    nblc_pure(nblc_f(e, 3)) * nblc_pure(nblc_f(e, 4))
+}
+
+// ---- the narrow-lattice code of a declared type ----
+// What the annotation pass caches on a name whose let spells type t: +8/+16/+32
+// signed, -8/-16/-32 unsigned, 64 for an absent type or i64. Any other spelling
+// (an alias, u64, a struct, a float) answers nblc_unknown_code(): not checked.
+pub fn nblc_unknown_code() -> i64 {
+    1000
+}
+
+pub fn nblc_type_code(buf: i64, t: i64) -> i64 {
+    if t == 0 {
+        return 64;
+    }
+    let c: i64 = prim_code_of(buf, nblc_f(t, 1), nblc_f(t, 2));
+    if c == prim_code_i64() {
+        return 64;
+    }
+    let w: i64 = prim_code_width(c);
+    if w == 64 {
+        return nblc_unknown_code();
+    }
+    w
+}

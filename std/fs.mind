@@ -38,6 +38,10 @@ pub fn o_trunc() -> i64 {
     512
 }
 
+pub fn o_append() -> i64 {
+    1024
+}
+
 pub fn seek_set() -> i64 {
     0
 }
@@ -87,6 +91,7 @@ extern "C" {
     unsafe fn readdir(dirp: *mut u8) -> *mut u8;
     unsafe fn closedir(dirp: *mut u8) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+    unsafe fn is_dir_fd(fd: i64) -> i64;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +237,12 @@ pub fn dir_vec_get(v: i64, i: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 // read_to_string — read entire file into a heap string record [addr, len, cap].
-// Returns len=0 string on error.
+// Returns len=0 string on error.  A directory is refused by file type
+// (fstat S_ISDIR via is_dir_fd), not by size: filesystems disagree on the
+// size lseek reports for a directory (ext4 returns a non-zero block count;
+// others return 0), so size is not a reliable signal.  The zero record
+// (ptr 0, len 0, cap 0) is the only correct answer for a directory on
+// every filesystem.
 pub fn read_to_string(path_addr: i64) -> i64 {
     let rec: i64 = __mind_alloc(24);
     __mind_store_i64(rec + 0, 0);
@@ -240,6 +250,10 @@ pub fn read_to_string(path_addr: i64) -> i64 {
     __mind_store_i64(rec + 16, 0);
     let fd: i64 = open(path_addr as *const u8, o_rdonly() as i32, 0) as i64;
     if fd < 0 {
+        return rec;
+    }
+    if is_dir_fd(fd) == 1 {
+        let _ = close(fd as i32);
         return rec;
     }
     let file_sz: i64 = lseek(fd as i32, 0, seek_end() as i32);
@@ -322,6 +336,26 @@ pub fn read_file_native(path_addr: i64, buf_addr: i64, cap: i64) -> i64 {
 // Returns 1 on success, 0 on error.
 pub fn write_string(path_addr: i64, buf_addr: i64, buf_len: i64) -> i64 {
     let flags: i64 = o_wronly() + o_creat() + o_trunc();
+    let fd: i64 = open(path_addr as *const u8, flags as i32, 420) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    let n: i64 = write(fd as i32, buf_addr as *const u8, buf_len);
+    let _ = close(fd as i32);
+    if n == buf_len {
+        1
+    } else {
+        0
+    }
+}
+
+// append_string — append buf_len bytes at buf_addr to the end of path,
+// creating the file (mode 0644) when it does not exist; existing bytes are
+// never truncated or rewritten. Every write lands at the current end of file
+// (O_APPEND), so an append-only log needs no read-modify-write or temp file.
+// Returns 1 when all buf_len bytes were written, 0 on any error or short write.
+pub fn append_string(path_addr: i64, buf_addr: i64, buf_len: i64) -> i64 {
+    let flags: i64 = o_wronly() + o_creat() + o_append();
     let fd: i64 = open(path_addr as *const u8, flags as i32, 420) as i64;
     if fd < 0 {
         return 0;
@@ -425,7 +459,7 @@ pub fn fs_mkdir(path_addr: i64, mode: i64) -> i64 {
 
 // Internal: walk path bytes creating intermediate dirs via tail recursion.
 // work: mutable copy of path (heap), plen: total path length.
-fn mkdir_p_walk(work: i64, plen: i64, i: i64, mode: i64) -> i64 {
+fn fs_mkdir_p_walk(work: i64, plen: i64, i: i64, mode: i64) -> i64 {
     if i > plen {
         0
     } else {
@@ -439,7 +473,7 @@ fn mkdir_p_walk(work: i64, plen: i64, i: i64, mode: i64) -> i64 {
                 let _ = mkdir(work as *const u8, mode as i32);
             }
         }
-        mkdir_p_walk(work, plen, i + 1, mode)
+        fs_mkdir_p_walk(work, plen, i + 1, mode)
     }
 }
 
@@ -454,7 +488,7 @@ pub fn mkdir_p(path_addr: i64, mode: i64) -> i64 {
         return 0;
     }
     let work: i64 = fs_heap_copy(path_addr, plen);
-    let _ = mkdir_p_walk(work, plen, 1, mode);
+    let _ = fs_mkdir_p_walk(work, plen, 1, mode);
     let buf: i64 = __mind_alloc(144);
     let _ = memset(buf as *mut u8, 0, 144);
     let sr: i64 = stat(path_addr as *const u8, buf as *mut u8) as i64;
@@ -490,7 +524,7 @@ pub fn remove_file(path_addr: i64) -> i64 {
 }
 
 // Internal: remove entries in vec_h for directory at path_addr.
-fn remove_recursive_entries(path_addr: i64, plen: i64, vec_h: i64, idx: i64) -> i64 {
+fn fs_remove_recursive_entries(path_addr: i64, plen: i64, vec_h: i64, idx: i64) -> i64 {
     let n: i64 = dir_vec_len(vec_h);
     if idx >= n {
         1
@@ -505,7 +539,7 @@ fn remove_recursive_entries(path_addr: i64, plen: i64, vec_h: i64, idx: i64) -> 
         let _ = fs_copy_bytes(ename_addr, full + plen + 1, ename_len);
         __mind_store_i8(full + full_len, 0);
         let sub_ok: i64 = remove_recursive(full);
-        let rest_ok: i64 = remove_recursive_entries(path_addr, plen, vec_h, idx + 1);
+        let rest_ok: i64 = fs_remove_recursive_entries(path_addr, plen, vec_h, idx + 1);
         if sub_ok == 1 {
             rest_ok
         } else {
@@ -533,7 +567,7 @@ pub fn remove_recursive(path_addr: i64) -> i64 {
     }
     let vec_h: i64 = read_dir(path_addr);
     let plen: i64 = fs_cstr_len(path_addr);
-    let ok: i64 = remove_recursive_entries(path_addr, plen, vec_h, 0);
+    let ok: i64 = fs_remove_recursive_entries(path_addr, plen, vec_h, 0);
     if ok == 1 {
         let dr: i64 = rmdir(path_addr as *const u8) as i64;
         if dr == 0 {

@@ -1,0 +1,10 @@
+import std.io;
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 72);
+    __mind_store_i8(p + 1, 105);
+    __mind_store_i8(p + 2, 10);
+    let n: i64 = print_bytes(p, 3);
+    return n + 40;
+}

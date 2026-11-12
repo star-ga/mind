@@ -1,0 +1,36 @@
+// Two buffers grown alternately by __mind_realloc, 8 and 16 bytes per step for
+// 30000 steps (peak 720 KB live, ~10.8 GB requested in total). At most one of
+// them ends at the bump cursor, so most steps move a block and free the old
+// one: freed blocks must merge with their free neighbours and be found again
+// by later, larger requests. Every element is checked at the end.
+// Expected exit 21, empty stdout.
+fn main() -> i64 {
+    let mut x: i64 = 0;
+    let mut y: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 30000 {
+        x = __mind_realloc(x, i * 8 + 8);
+        __mind_store_i64(x + i * 8, i);
+        y = __mind_realloc(y, i * 16 + 16);
+        __mind_store_i64(y + i * 16, 0 - i);
+        __mind_store_i64(y + i * 16 + 8, i * 3);
+        i = i + 1;
+    }
+    let mut bad: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 30000 {
+        if __mind_load_i64(x + j * 8) != j {
+            bad = bad + 1;
+        }
+        if __mind_load_i64(y + j * 16) != 0 - j {
+            bad = bad + 1;
+        }
+        if __mind_load_i64(y + j * 16 + 8) != j * 3 {
+            bad = bad + 1;
+        }
+        j = j + 1;
+    }
+    let f1: i64 = __mind_free(x);
+    let f2: i64 = __mind_free(y);
+    bad + f1 + f2 + 21
+}

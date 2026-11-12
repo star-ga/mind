@@ -1,0 +1,8 @@
+// A8: a narrow-typed const inlines exactly like an i64 one. mindc-Rust neither
+// range-checks nor truncates the initializer to the declared u8, so K reads as
+// the plain 300 on both backends: 300 / 2 = 150. The `;`-less form, at EOF.
+fn main() -> i64 {
+    K / 2
+}
+
+const K: u8 = 300

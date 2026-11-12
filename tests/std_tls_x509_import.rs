@@ -141,7 +141,7 @@ fn assert_interp(case: &str, dir: &Path, pass: bool) {
 /// a capability gap the shared gate allows to skip.
 #[cfg(all(unix, feature = "mlir-build"))]
 fn build_and_run(case: &str, dir: &Path) -> Option<i32> {
-    let out = mindc_in(dir, &["build"]);
+    let out = mindc_in(dir, &["build", "--backend", "mlir"]);
     if !common::gate::compiled("std_tls_x509_import", &out) {
         return None;
     }

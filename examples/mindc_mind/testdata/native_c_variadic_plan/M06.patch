@@ -1,0 +1,4 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -153,0 +154 @@
++    __mind_store_i64(slot + 152, 1);

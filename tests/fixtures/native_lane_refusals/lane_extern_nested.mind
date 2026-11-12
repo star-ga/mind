@@ -1,0 +1,2 @@
+// lane.extern.nested: an extern block inside a function body.
+fn main() -> i64 { extern "C" { fn close(fd: i32) -> i32; } return 0; }

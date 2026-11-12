@@ -1,0 +1,12 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// Minimised from the pinned mindfuzz_self_host run (seed 1234, program 40).
+fn main() -> i64 {
+    let mut c534: i64 = 0;
+    let mut v1498: i64 = 0;
+    if ((c534 * 4) - (4 / (v1498 | 1))) >= (1 % (9 | 1)) {
+        v1498 = 0;
+        let mut v1498: i64 = 0;
+        v1498 = 0;
+    }
+    return 0;
+}

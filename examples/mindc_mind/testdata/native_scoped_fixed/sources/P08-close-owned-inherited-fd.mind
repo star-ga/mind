@@ -1,0 +1,20 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+extern "C" { unsafe fn __errno_location()->*mut i32; }
+fn main()->i64 {
+ let ep:i64=__errno_location() as i64;
+ if ep==0 { return 90; }
+ let p:i64=__mind_alloc(8);
+ if p==0 { return 89; }
+ let first:i64=__mind_read(9,p,1,0-1);
+ let byte:i64=__mind_load_i8(p) as i64;
+ let closed:i64=close(9 as i32) as i64;
+ __mind_store_i32(ep,77);
+ let second:i64=__mind_read(9,p,1,0-1);
+ let observed:i64=__mind_load_i32(ep) as i64;
+ __mind_free(p);
+ if first!=1 { return 91; }
+ if byte!=81 { return 92; }
+ if closed!=0 { return 93; }
+ if second!=0-1 { return 94; }
+ if observed!=9 { return 95; } 0
+}

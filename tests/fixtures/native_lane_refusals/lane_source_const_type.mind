@@ -1,0 +1,4 @@
+// lane.source.const_type: a const initialised from a unit call.
+fn h() { }
+const U = h();
+fn main() -> i64 { return 0; }

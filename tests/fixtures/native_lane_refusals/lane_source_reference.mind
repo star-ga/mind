@@ -1,0 +1,2 @@
+// lane.source.reference: a reference to a local.
+fn main() -> i64 { let x: i64 = 1; let r = &x; return 0; }

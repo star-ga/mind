@@ -1,0 +1,119 @@
+// Copyright 2026 STARGA Inc.
+// Recognizer cases for examples/mindc_mind/nb_opt_level.mind. The native_opt rows of
+// native_lane_value_shapes_smoke.py build the part's own text followed by this file
+// natively: exit 0 when every case holds, else 100 + the number of the first failing
+// case. The directive is written one ASCII code at a time, independently of the
+// packed words the part compares against.
+
+fn opt_text(b: i64, off: i64) -> i64 {
+    __mind_store_i8(b + off + 0, 47);
+    __mind_store_i8(b + off + 1, 47);
+    __mind_store_i8(b + off + 2, 32);
+    __mind_store_i8(b + off + 3, 109);
+    __mind_store_i8(b + off + 4, 105);
+    __mind_store_i8(b + off + 5, 110);
+    __mind_store_i8(b + off + 6, 100);
+    __mind_store_i8(b + off + 7, 58);
+    __mind_store_i8(b + off + 8, 32);
+    __mind_store_i8(b + off + 9, 110);
+    __mind_store_i8(b + off + 10, 97);
+    __mind_store_i8(b + off + 11, 116);
+    __mind_store_i8(b + off + 12, 105);
+    __mind_store_i8(b + off + 13, 118);
+    __mind_store_i8(b + off + 14, 101);
+    __mind_store_i8(b + off + 15, 95);
+    __mind_store_i8(b + off + 16, 111);
+    __mind_store_i8(b + off + 17, 112);
+    __mind_store_i8(b + off + 18, 116);
+    __mind_store_i8(b + off + 19, 32);
+    __mind_store_i8(b + off + 20, 61);
+    __mind_store_i8(b + off + 21, 32);
+    __mind_store_i8(b + off + 22, 102);
+    __mind_store_i8(b + off + 23, 117);
+    __mind_store_i8(b + off + 24, 108);
+    __mind_store_i8(b + off + 25, 108)
+}
+
+fn opt_case(b: i64, lo: i64, hi: i64, want: i64, id: i64) -> i64 {
+    if nbo_opt_flags(b, lo, hi) == want {
+        return 0;
+    }
+    100 + id
+}
+
+fn opt_line_cases(b: i64) -> i64 {
+    let _t: i64 = opt_text(b, 0);
+    __mind_store_i8(b + 26, 10);
+    let c1: i64 = opt_case(b, 0, 40, 8, 1);
+    if c1 != 0 {
+        return c1;
+    }
+    let c2: i64 = opt_case(b, 0, 26, 8, 2);
+    if c2 != 0 {
+        return c2;
+    }
+    __mind_store_i8(b + 26, 13);
+    let c3: i64 = opt_case(b, 0, 40, 8, 3);
+    if c3 != 0 {
+        return c3;
+    }
+    __mind_store_i8(b + 26, 120);
+    let c4: i64 = opt_case(b, 0, 40, 0, 4);
+    if c4 != 0 {
+        return c4;
+    }
+    opt_case(b, 0, 25, 0, 5)
+}
+
+fn opt_spelling_cases(b: i64) -> i64 {
+    let _t: i64 = opt_text(b, 0);
+    __mind_store_i8(b + 26, 10);
+    __mind_store_i8(b + 25, 76);
+    let c6: i64 = opt_case(b, 0, 40, 0, 6);
+    if c6 != 0 {
+        return c6;
+    }
+    let _t2: i64 = opt_text(b, 0);
+    __mind_store_i8(b + 22, 115);
+    let c7: i64 = opt_case(b, 0, 40, 0, 7);
+    if c7 != 0 {
+        return c7;
+    }
+    let _t3: i64 = opt_text(b, 0);
+    __mind_store_i8(b + 9, 78);
+    let c8: i64 = opt_case(b, 0, 40, 0, 8);
+    if c8 != 0 {
+        return c8;
+    }
+    let _t4: i64 = opt_text(b, 0);
+    __mind_store_i8(b + 2, 109);
+    opt_case(b, 0, 40, 0, 9)
+}
+
+fn opt_offset_cases(b: i64) -> i64 {
+    __mind_store_i64(b, 0);
+    let _t: i64 = opt_text(b, 7);
+    __mind_store_i8(b + 33, 10);
+    let c10: i64 = opt_case(b, 7, 60, 8, 10);
+    if c10 != 0 {
+        return c10;
+    }
+    let c11: i64 = opt_case(b, 6, 60, 0, 11);
+    if c11 != 0 {
+        return c11;
+    }
+    opt_case(b, 0, 60, 0, 12)
+}
+
+fn main() -> i64 {
+    let b: i64 = __mind_alloc(128);
+    let r1: i64 = opt_line_cases(b);
+    if r1 != 0 {
+        return r1;
+    }
+    let r2: i64 = opt_spelling_cases(b);
+    if r2 != 0 {
+        return r2;
+    }
+    opt_offset_cases(b)
+}

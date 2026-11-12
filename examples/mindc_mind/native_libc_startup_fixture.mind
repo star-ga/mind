@@ -1,0 +1,345 @@
+// Copyright 2026 STARGA Inc.
+// Diagnostic-only image constructor. Host-authored source-main bytes and typed
+// fixture patch rows are test instruments, never compiler source admission.
+pub fn nsf_read(p: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_read(0, p + done, n - done, 0 - 1);
+        if got <= 0 {
+            return 0;
+        }
+        done = done + got;
+    }
+    1
+}
+pub fn nsf_output(p: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_write(1, p + done, n - done, 0 - 1);
+        if got <= 0 {
+            return 0;
+        }
+        done = done + got;
+    }
+    1
+}
+pub fn nsf_word(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+pub fn nsf_combine(start: String, runtime: String, body: String, reorder: i64) -> String {
+    let mut out: String = string_new();
+    if reorder == 0 {
+        out = nd_bytes(out, string_addr(start), string_len(start));
+        out = nd_bytes(out, string_addr(runtime), string_len(runtime));
+        out = nd_bytes(out, string_addr(body), string_len(body));
+    } else {
+        out = nd_bytes(out, string_addr(runtime), string_len(runtime));
+        out = nd_bytes(out, string_addr(body), string_len(body));
+        out = nd_bytes(out, string_addr(start), string_len(start));
+    }
+    out
+}
+pub fn nsf_corrupt(request: i64, symbols: i64, mode: i64) -> i64 {
+    if mode == 20 {
+        return nsf_word(request, 0, 0);
+    }
+    if mode == 21 {
+        return nsf_word(request, 7, 0);
+    }
+    if mode == 22 {
+        return nsf_word(request, 7, 4097);
+    }
+    if mode == 23 {
+        return nsf_word(request, 9, 2147483648);
+    }
+    if mode == 24 {
+        return nsf_word(symbols, 0, 0);
+    }
+    if mode == 25 {
+        return nsf_word(symbols, 1, 0 - 1);
+    }
+    if mode == 26 {
+        return nsf_word(symbols, 1, __mind_load_i64(request + 8));
+    }
+    if mode == 27 {
+        return nsf_word(symbols, 2, 0 - 1);
+    }
+    if mode == 28 {
+        return nsf_word(symbols, 3, 0);
+    }
+    if mode == 29 {
+        return nsf_word(symbols, 2, __mind_load_i64(request + 8));
+    }
+    if mode == 30 {
+        return nsf_word(symbols, 4, 0 - 1);
+    }
+    if mode == 31 {
+        return nsf_word(symbols, 4, __mind_load_i64(symbols + 24));
+    }
+    if mode == 32 {
+        return nsf_word(symbols, 5, 0 - 1);
+    }
+    if mode == 33 {
+        return nsf_word(symbols, 6, 0);
+    }
+    if mode == 34 {
+        return nsf_word(symbols, 5, __mind_load_i64(request + 8));
+    }
+    if mode == 35 {
+        return nsf_word(symbols, 2, 0);
+    }
+    if mode == 36 {
+        return nsf_word(symbols, 5, 0);
+    }
+    if mode == 37 {
+        return nsf_word(symbols, 5, __mind_load_i64(symbols + 16));
+    }
+    if mode == 38 {
+        return nsf_word(symbols, 7, 0 - 1);
+    }
+    if mode == 39 {
+        return nsf_word(symbols, 7, 3);
+    }
+    if mode == 40 {
+        return nsf_word(symbols, 8, 5);
+    }
+    if mode == 41 {
+        return nsf_word(symbols, 8, 12);
+    }
+    if mode == 42 {
+        return nsf_word(symbols, 9, 0 - 1);
+    }
+    if mode == 43 {
+        return nsf_word(symbols, 9, 256);
+    }
+    if mode == 44 {
+        return nsf_word(symbols, 1, 9223372036854775807);
+    }
+    if mode == 45 {
+        return nsf_word(symbols, 3, 9223372036854775807);
+    }
+    0
+}
+pub fn nsf_constant(kind: i64, layout: i64, start: i64) -> i64 {
+    if kind == 1 {
+        return __mind_load_i64(layout + 88);
+    }
+    if kind == 2 {
+        return __mind_load_i64(layout + 120);
+    }
+    if kind == 3 {
+        return __mind_load_i64(layout + 136);
+    }
+    if kind == 4 {
+        return __mind_load_i64(layout + 160);
+    }
+    if kind == 5 {
+        return __mind_load_i64(layout + 168);
+    }
+    if kind == 6 {
+        return __mind_load_i64(layout + 24) + start + nsa_adapter_offset();
+    }
+    if kind == 7 {
+        return __mind_load_i64(layout + 104);
+    }
+    0
+}
+pub fn main() -> i64 {
+    let header: i64 = __mind_alloc(64);
+    if nsf_read(header, 64) == 0 {
+        return 71;
+    }
+    let mode: i64 = __mind_load_i64(header);
+    let arity: i64 = __mind_load_i64(header + 8);
+    let stack: i64 = __mind_load_i64(header + 16);
+    let nb: i64 = __mind_load_i64(header + 24);
+    let np: i64 = __mind_load_i64(header + 32);
+    let nc: i64 = __mind_load_i64(header + 40);
+    let nl: i64 = __mind_load_i64(header + 48);
+    let reorder: i64 = __mind_load_i64(header + 56);
+    if nb < 1 {
+        return 71;
+    }
+    if nb > 65536 {
+        return 71;
+    }
+    if np < 0 {
+        return 71;
+    }
+    if np > 128 {
+        return 71;
+    }
+    if nc < 0 {
+        return 71;
+    }
+    if nc > 128 {
+        return 71;
+    }
+    if nl < 0 {
+        return 71;
+    }
+    if nl > 4096 {
+        return 71;
+    }
+    let b: i64 = __mind_alloc(nb);
+    let ps: i64 = __mind_alloc(np * 16 + 8);
+    let cs: i64 = __mind_alloc(nc * 16 + 8);
+    let ls: i64 = __mind_alloc(nl + 8);
+    if nsf_read(b, nb) == 0 {
+        return 71;
+    }
+    if nsf_read(ps, np * 16) == 0 {
+        return 71;
+    }
+    if nsf_read(cs, nc * 16) == 0 {
+        return 71;
+    }
+    if nsf_read(ls, nl) == 0 {
+        return 71;
+    }
+    if __mind_read(0, header, 1, 0 - 1) != 0 {
+        return 72;
+    }
+    let body: String = String { addr: b, len: nb, cap: nb };
+    let literals: String = String { addr: ls, len: nl, cap: nl + 8 };
+    let request: i64 = __mind_alloc(80);
+    let metadata: i64 = __mind_alloc(64);
+    let runtime_meta: i64 = __mind_alloc(64);
+    let symbols: i64 = __mind_alloc(80);
+    let policy: i64 = __mind_alloc(48);
+    let layout: i64 = __mind_alloc(256);
+    let total: i64 = nsa_code_size() + nda_code_size() + nb;
+    nsf_word(request, 0, 1);
+    nsf_word(request, 1, total);
+    nsf_word(request, 2, 4096);
+    nsf_word(request, 3, 4096);
+    nsf_word(request, 4, nl);
+    nsf_word(request, 5, 65536);
+    nsf_word(request, 6, 1048576);
+    nsf_word(request, 7, stack);
+    nsf_word(request, 8, 4096);
+    nsf_word(request, 9, 67108864);
+    let draft_runtime: String = nda_emit(request, runtime_meta);
+    if string_len(draft_runtime) != nda_code_size() {
+        return 73;
+    }
+    let start: i64 = if reorder == 0 {
+        0
+    } else {
+        nda_code_size() + nb
+    };
+    let runtime: i64 = if reorder == 0 {
+        nsa_code_size()
+    } else {
+        0
+    };
+    let source_main: i64 = if reorder == 0 {
+        nsa_code_size() + nda_code_size()
+    } else {
+        nda_code_size()
+    };
+    nsf_word(symbols, 0, 1);
+    nsf_word(symbols, 1, start);
+    nsf_word(symbols, 2, runtime);
+    nsf_word(symbols, 3, string_len(draft_runtime));
+    nsf_word(symbols, 4, __mind_load_i64(runtime_meta + 8));
+    nsf_word(symbols, 5, source_main);
+    nsf_word(symbols, 6, nb);
+    nsf_word(symbols, 7, arity);
+    nsf_word(symbols, 8, 7);
+    nsf_word(symbols, 9, 0);
+    let skeleton: String = nsa_blob_p1(string_new(), 0, 0, 0, 0, 0);
+    let draft: String = nsf_combine(skeleton, draft_runtime, body, reorder);
+    let mut imports: Vec = vec_new();
+    imports = vec_push(imports, nd_import("__libc_start_main", "GLIBC_2.34"));
+    imports = vec_push(imports, nd_import("putchar", "GLIBC_2.2.5"));
+    imports = vec_push(imports, nd_import("getenv", "GLIBC_2.2.5"));
+    imports = vec_push(imports, nd_import("__errno_location", "GLIBC_2.2.5"));
+    imports = vec_push(imports, nd_import("close", "GLIBC_2.2.5"));
+    let mut patches: Vec = vec_new();
+    patches = vec_push(patches, nd_patch(start + nsa_libc_fixup(), 0));
+    let mut i: i64 = 0;
+    while i < np {
+        let offset: i64 = __mind_load_i64(ps + i * 16);
+        let index: i64 = __mind_load_i64(ps + i * 16 + 8);
+        if offset < 2 {
+            return 71;
+        }
+        if offset > nb - 4 {
+            return 71;
+        }
+        if index < 1 {
+            return 71;
+        }
+        if index > 4 {
+            return 71;
+        }
+        patches = vec_push(patches, nd_patch(source_main + offset, index));
+        i = i + 1;
+    }
+    nsf_word(policy, 0, 1);
+    nsf_word(policy, 1, 65536);
+    nsf_word(policy, 2, 1048576);
+    nsf_word(policy, 3, stack);
+    nsf_word(policy, 4, 4096);
+    nsf_word(policy, 5, 67108864);
+    let interp: String = "/lib64/ld-linux-x86-64.so.2";
+    let soname: String = "libc.so.6";
+    if ndx_plan(draft, start, imports, patches, interp, soname, literals, policy, layout) != 0 {
+        return 73;
+    }
+    nsf_word(request, 2, __mind_load_i64(layout + 56));
+    nsf_word(request, 3, __mind_load_i64(layout + 80));
+    let _corrupt: i64 = nsf_corrupt(request, symbols, mode);
+    let startup: String = nsa_emit(request, symbols, metadata);
+    if string_len(startup) == 0 {
+        if nsf_output(metadata, 64) == 0 {
+            return 74;
+        }
+        return 2;
+    }
+    i = 0;
+    while i < nc {
+        let offset: i64 = __mind_load_i64(cs + i * 16);
+        let kind: i64 = __mind_load_i64(cs + i * 16 + 8);
+        if offset < 0 {
+            return 71;
+        }
+        if offset > nb - 8 {
+            return 71;
+        }
+        if kind < 1 {
+            return 71;
+        }
+        if kind > 7 {
+            return 71;
+        }
+        __mind_store_i64(b + offset, nsf_constant(kind, layout, start));
+        i = i + 1;
+    }
+    let final_runtime: String = nda_emit(request, runtime_meta);
+    if string_len(final_runtime) != string_len(draft_runtime) {
+        return 73;
+    }
+    let code: String = nsf_combine(startup, final_runtime, body, reorder);
+    let note_buffer: i64 = __mind_alloc(52);
+    i = 0;
+    while i < 52 {
+        __mind_store_i8(note_buffer + i, 0);
+        i = i + 1;
+    }
+    __mind_store_i32(note_buffer, 5);
+    __mind_store_i32(note_buffer + 4, 32);
+    __mind_store_i32(note_buffer + 8, 2);
+    __mind_store_i32(note_buffer + 12, 1145981261);
+    let note: String = String { addr: note_buffer, len: 52, cap: 52 };
+    let image: String = ndx_write_elf(code, start, imports, patches, interp, soname, literals, policy, note, layout);
+    if string_len(image) == 0 {
+        return 73;
+    }
+    if nsf_output(string_addr(image), string_len(image)) == 0 {
+        return 74;
+    }
+    0
+}

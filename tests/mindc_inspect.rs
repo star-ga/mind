@@ -139,3 +139,105 @@ fn inspect_malformed_artifact_exits_1_not_panic() {
         "byte-identical garbage must not exit 0"
     );
 }
+
+/// A native ELF holds no IR, only the MIND PT_NOTE (the sha256 of its seeded
+/// mic@3 module). `inspect` prints that note, found through the program
+/// headers, and refuses a broken note header instead of printing a value.
+#[test]
+fn inspect_prints_the_mind_note_of_a_native_elf_and_refuses_a_broken_one() {
+    // The frozen Rust-oracle ELF (native_elf_oracle) and a self-host ELF (the
+    // backend_native_bridge output of the frozen seed) carry the same note shape.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "examples/mindc_mind/testdata/native_elf_oracle/add.elf",
+        "examples/mindc_mind/testdata/backend_native_bridge/add.elf",
+    ] {
+        check_note_of(&root.join(rel));
+    }
+}
+
+fn check_note_of(elf_path: &std::path::Path) {
+    let elf = std::fs::read(elf_path).expect("committed native ELF");
+    let note: String = elf[elf.len() - 32..]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let out = mindc().arg("inspect").arg(elf_path).output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && s.contains(&format!("mind_note:        {note} (type 1, ")),
+        "inspect must print the MIND note of the ELF:\n{s}"
+    );
+    // Flip one byte of the note name (MIND -> MINE): no MIND note, exit 1.
+    let name_at = elf.len() - 40 + 3;
+    assert_eq!(elf[name_at], b'D');
+    let mut broken = elf.clone();
+    broken[name_at] = b'E';
+    let bad =
+        std::env::temp_dir().join(format!("mindc_inspect_badnote_{}.elf", std::process::id()));
+    std::fs::write(&bad, &broken).unwrap();
+    let out = mindc().arg("inspect").arg(&bad).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "a broken note must be refused");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no MIND note"));
+    // Flip the descriptor size (32 -> 33): a malformed MIND note, exit 1.
+    let mut broken = elf.clone();
+    broken[elf.len() - 48] = 33;
+    std::fs::write(&bad, &broken).unwrap();
+    let out = mindc().arg("inspect").arg(&bad).output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a wrong note size must be refused"
+    );
+    // A smaller descriptor (32 -> 16) stays inside the segment, so only the
+    // descsz guard refuses it.
+    let mut broken = elf.clone();
+    broken[elf.len() - 48] = 16;
+    std::fs::write(&bad, &broken).unwrap();
+    let out = mindc().arg("inspect").arg(&bad).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "descsz 16 must be refused");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("malformed MIND note"),
+        "descsz 16 must be refused by the descsz guard"
+    );
+    let _ = std::fs::remove_file(&bad);
+}
+
+/// Golden: `inspect` of a mic@3 artifact prints each extern declaration with
+/// its narrow parameter spellings (std.fs `open(pathname, flags: i32, mode: i32)`).
+#[cfg(feature = "std-surface")]
+#[test]
+fn inspect_prints_extern_decls_with_narrow_params() {
+    let dir = std::env::temp_dir();
+    let src = dir.join(format!("mindc_inspect_extern_{}.mind", std::process::id()));
+    let art = dir.join(format!("mindc_inspect_extern_{}.mic3", std::process::id()));
+    std::fs::write(
+        &src,
+        "extern \"C\" {\n    unsafe fn open(pathname: *const u8, flags: i32, mode: i32) -> i32;\n    \
+         unsafe fn isatty(fd: i32) -> i32;\n}\n\nfn main() -> i64 {\n    return 0;\n}\n",
+    )
+    .unwrap();
+    let out = mindc()
+        .arg(&src)
+        .arg("--emit-mic3")
+        .arg(&art)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = mindc().arg("inspect").arg(&art).output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{s}");
+    assert!(
+        s.contains(
+            "  extern fn open(!llvm.ptr, i32, i32) -> i32 varargs=false vararg_hints=[] callconv="
+        ),
+        "inspect must print the open decl with its i32 params:\n{s}"
+    );
+    assert!(s.contains("  extern fn isatty(i32) -> i32 "), "{s}");
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&art);
+}

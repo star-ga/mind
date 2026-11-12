@@ -1,0 +1,2 @@
+// lane.source.extern_const: an extern constant in a function body.
+fn main() -> i64 { extern const X: i64; return 0; }

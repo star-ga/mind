@@ -99,9 +99,9 @@ echo "  PASS  fmt check ($ENTRY canonical)"
 # `cmp` passes trivially — defeating the self-consistency check and hiding a real drift.
 # Fresh compiles make this a true gate (a deterministic compiler still yields identical
 # bytes for the two paths; a non-deterministic one is caught).
-if ! "$MINDC" build "$ENTRY" --release --emit=cdylib --no-cache --out="$DIR_SO" >"$FK_TMP/step.log" 2>&1; then
+if ! "$MINDC" build --backend mlir "$ENTRY" --release --emit=cdylib --no-cache --out="$DIR_SO" >"$FK_TMP/step.log" 2>&1; then
   echo "  FAIL  direct cdylib build"; tail -6 "$FK_TMP/step.log" | sed 's/^/        /'; exit 1; fi
-if ! "$MINDC" build --release --emit=cdylib --no-cache --out="$MT_SO" >"$FK_TMP/step.log" 2>&1; then
+if ! "$MINDC" build --backend mlir --release --emit=cdylib --no-cache --out="$MT_SO" >"$FK_TMP/step.log" 2>&1; then
   echo "  FAIL  Mind.toml cdylib build"; tail -6 "$FK_TMP/step.log" | sed 's/^/        /'; exit 1; fi
 if cmp -s "$DIR_SO" "$MT_SO"; then
   echo "  PASS  byte-identical build ($(stat -c%s "$MT_SO") B, sha=$(sha256sum "$MT_SO" | cut -c1-16))"; pass=$((pass+1))
@@ -145,6 +145,7 @@ chk "float_lit_exact (dyadic-only C1 guard)" python3 examples/mindc_mind/self_ho
 chk "carry_cap (256-cap scratch-table guard)" python3 examples/mindc_mind/self_host_carry_cap_smoke.py
 chk "narrow_param (i8/i16/i32 param fail-closed)" python3 examples/mindc_mind/self_host_narrow_param_smoke.py
 chk "if_region_carry (i64 branch loop-carry)"  python3 examples/mindc_mind/self_host_if_region_carry_smoke.py
+chk "for (range-for bounds, exit edges, hygiene gate)" python3 examples/mindc_mind/self_host_for_smoke.py
 chk "tc_let_class (E2015 let/assign class)" python3 examples/mindc_mind/self_host_tc_let_class_mismatch_smoke.py
 chk "tc_fixed_bytes (E2006 bytes->vec)" python3 examples/mindc_mind/self_host_tc_fixed_bytes_into_vec_smoke.py
 chk "tc_shape_annot (dtype/rank/dim compat)" python3 examples/mindc_mind/self_host_tc_shape_annot_compat_smoke.py

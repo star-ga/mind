@@ -145,12 +145,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # LINUX GLIBC FLOOR. A Linux binary needs the newest glibc symbol version
+        # it was linked against. Built directly on ubuntu-24.04, the v0.10.2 asset
+        # needed GLIBC_2.39 and did not start on Ubuntu 22.04, Debian 11/12 or
+        # RHEL 8/9. The Linux legs therefore compile inside `image`, a glibc 2.28
+        # build image pinned by digest (never a tag), and the glibc-floor smoke
+        # fails the leg when the binary needs a symbol newer than `glibc_floor`.
+        # It then runs the binary in `floor_image`, a minimal glibc 2.28 system
+        # with no compiler, linker, LLVM or MLIR. ci.yml release_profile carries
+        # the same three values per target; check_release_gating.py R8 fails on
+        # any drift. Bump an image digest deliberately, never to a newer floor
+        # without a written decision.
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: Linux x86_64
             artifact: mindc-linux-x64
             ext: tar.gz
+            image: quay.io/pypa/manylinux_2_28_x86_64@sha256:9555ba6c479fa69a2aa80ad1dc57154a60d562b19df159361d9379a02beb1e36
+            glibc_floor: "2.28"
+            floor_image: docker.io/library/almalinux:8.10-minimal@sha256:3f9b9fdb5957745afcc9269e82c8c43e3140ab8802172967927070c5bc8be907
           # Native arm64 runner, the class ci.yml's cross_substrate_identity and
           # release_profile jobs already use. The leg used to cross-compile with
           # `cross` on an x86 runner, so the shipped aarch64 binary was never run
@@ -160,6 +174,9 @@ jobs:
             name: Linux ARM64
             artifact: mindc-linux-arm64
             ext: tar.gz
+            image: quay.io/pypa/manylinux_2_28_aarch64@sha256:cb37f0d66c8a75abb93cf6085cad1f1427cd7208f0c0fc48359bb1eea9924f21
+            glibc_floor: "2.28"
+            floor_image: docker.io/library/almalinux:8.10-minimal@sha256:3f9b9fdb5957745afcc9269e82c8c43e3140ab8802172967927070c5bc8be907
           - os: macos-26
             target: x86_64-apple-darwin
             name: macOS x86_64
@@ -186,7 +203,11 @@ jobs:
           # resolves to now.
           ref: ${{ needs.gate.outputs.sha }}
 
+      # The Linux legs install their toolchain inside the pinned build image
+      # (the Build (Linux) step below); a toolchain on the runner would link
+      # against the runner's newer glibc.
       - name: Install Rust
+        if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -220,7 +241,40 @@ jobs:
       # (ci.yml release_profile builds this exact command before any tag), not
       # whatever the newest semver-compatible crypto crates are on tag day.
       - name: Build
+        if: runner.os != 'Linux'
         run: cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+
+      # The same cargo build, run inside the pinned glibc 2.28 build image, so the
+      # shipped binary links against glibc 2.28 and not the runner's glibc. The
+      # toolchain is installed in the image from the official rustup-init, checked
+      # against its published sha256, on the same `stable` channel the other legs
+      # use. CARGO_NET_OFFLINE passes through only when the caller sets it (an
+      # offline reproduction with a pre-filled CARGO_HOME). ci.yml release_profile
+      # runs this step verbatim on every PR.
+      - name: Build (Linux, inside the pinned glibc-floor build image)
+        if: runner.os == 'Linux'
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp/home -e CARGO_HOME=/tmp/home/.cargo -e RUSTUP_HOME=/tmp/home/.rustup \
+            -e CARGO_TERM_COLOR -e CARGO_REGISTRIES_CRATES_IO_PROTOCOL -e CARGO_NET_OFFLINE \
+            -v "$PWD:/src" -w /src "$IMAGE" bash -euo pipefail -c "$(cat <<'IN_IMAGE'
+          if [ ! -x "$CARGO_HOME/bin/rustc" ]; then
+            base="https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu"
+            curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init "$base/rustup-init"
+            want=$(curl --proto '=https' --tlsv1.2 -sSf "$base/rustup-init.sha256" | cut -d' ' -f1)
+            echo "$want  /tmp/rustup-init" | sha256sum -c -
+            chmod +x /tmp/rustup-init
+            /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain stable
+          fi
+          export PATH="$CARGO_HOME/bin:$PATH"
+          echo "build image glibc: $(getconf GNU_LIBC_VERSION)"
+          rustc -V
+          cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+          IN_IMAGE
+          )"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -249,10 +303,38 @@ jobs:
       # that fails here uploads nothing, so the release job never publishes.
       # The same action runs in ci.yml's release_profile job on every PR.
       - name: Post-build smoke (checksum, unpack, --version == tag)
+        id: smoke
         uses: ./.github/actions/release-artifact-smoke
         with:
           archive: ${{ matrix.artifact }}.${{ matrix.ext }}
           version: ${{ needs.gate.outputs.version }}
+
+      # Fails the leg (so nothing is published) when the shipped binary needs a
+      # glibc symbol newer than the floor or links any library outside glibc and
+      # libgcc_s, or when it does not run `--version` and a native-backend
+      # hello-world build + run inside the floor-glibc image.
+      - name: Glibc-floor smoke (max GLIBC symbol <= floor, runs on the floor)
+        id: floor
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/glibc-floor-smoke
+        with:
+          binary: ${{ steps.smoke.outputs.binary }}
+          glibc-floor: ${{ matrix.glibc_floor }}
+          floor-image: ${{ matrix.floor_image }}
+
+      # The build environment of record for the release notes: the digest-pinned
+      # image this leg compiled in, and what the floor smoke measured.
+      - name: Record the Linux build environment
+        if: runner.os == 'Linux'
+        env:
+          IMAGE: ${{ matrix.image }}
+          FLOOR: ${{ matrix.glibc_floor }}
+          GLIBC_MAX: ${{ steps.floor.outputs.glibc_max }}
+        run: |
+          set -euo pipefail
+          printf 'image=%s\nglibc_floor=%s\nglibc_max=%s\n' "$IMAGE" "$FLOOR" "$GLIBC_MAX" \
+            > ${{ matrix.artifact }}.build-env.txt
+          cat ${{ matrix.artifact }}.build-env.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -261,6 +343,7 @@ jobs:
           path: |
             ${{ matrix.artifact }}.${{ matrix.ext }}
             ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+            ${{ matrix.artifact }}.build-env.txt
 
   release:
     name: Create Release
@@ -284,6 +367,66 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The notes are composed from the verified commit plus what each Linux leg
+      # recorded: the digest-pinned build image it compiled in and the glibc
+      # floor it was checked against. A Linux leg without that record stops the
+      # release here, so the notes never name an image that did not build it.
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## MIND Compiler v${{ needs.gate.outputs.version }}
+
+          The native language for intelligent systems.
+
+          Built from `${{ needs.gate.outputs.sha }}`, verified CI-green on every
+          gate in `.github/required-ci-jobs.tsv` before this release was cut.
+
+          ### Downloads
+
+          | Platform | Architecture | File |
+          |----------|--------------|------|
+          | Linux | x86_64 | `mindc-linux-x64.tar.gz` |
+          | Linux | ARM64 | `mindc-linux-arm64.tar.gz` |
+          | macOS | Intel | `mindc-macos-x64.tar.gz` |
+          | macOS | Apple Silicon | `mindc-macos-arm64.tar.gz` |
+          | Windows | x86_64 | `mindc-windows-x64.zip` |
+
+          ### Quick Install
+
+          ```bash
+          # Linux/macOS
+          curl -LO https://github.com/star-ga/mind/releases/download/v${{ needs.gate.outputs.version }}/mindc-linux-x64.tar.gz
+          tar -xzf mindc-linux-x64.tar.gz
+          sudo mv mindc /usr/local/bin/
+          mindc --version
+          ```
+
+          ### Linux compatibility
+
+          The Linux binaries need glibc 2.28 or newer (for example RHEL, AlmaLinux
+          or Rocky Linux 8+, Debian 10+, Ubuntu 20.04+, Fedora 29+, Amazon Linux
+          2023). Each one is built inside the build image below, pinned by digest.
+          Before upload it is checked to need no glibc symbol newer than the floor
+          and no shared library other than glibc and libgcc_s, and it is run on a
+          minimal glibc 2.28 system that has no compiler, linker, LLVM or MLIR.
+
+          | File | Build image (pinned by digest) | glibc floor | Newest glibc symbol needed |
+          |------|--------------------------------|-------------|----------------------------|
+          NOTES
+          for leg in mindc-linux-x64 mindc-linux-arm64; do
+            env_file="artifacts/$leg.build-env.txt"
+            test -s "$env_file" || { echo "RELEASE BLOCKED: $env_file is missing: the $leg leg recorded no build image."; exit 1; }
+            image=$(sed -n 's/^image=//p' "$env_file")
+            floor=$(sed -n 's/^glibc_floor=//p' "$env_file")
+            max=$(sed -n 's/^glibc_max=//p' "$env_file")
+            printf '%s\n' "$image" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo "RELEASE BLOCKED: $leg build image '$image' is not pinned by digest."; exit 1; }
+            test -n "$floor" && test -n "$max" || { echo "RELEASE BLOCKED: $env_file has no glibc floor or measured maximum."; exit 1; }
+            printf '| `%s.tar.gz` | `%s` | %s | GLIBC_%s |\n' "$leg" "$image" "$floor" "$max" >> release-notes.md
+          done
+          printf '\n---\n**MIND Language**: https://github.com/star-ga/mind\n' >> release-notes.md
+          cat release-notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -304,33 +447,4 @@ jobs:
             artifacts/mindc-macos-arm64.tar.gz.sha256
             artifacts/mindc-windows-x64.zip
             artifacts/mindc-windows-x64.zip.sha256
-          body: |
-            ## MIND Compiler v${{ needs.gate.outputs.version }}
-
-            The native language for intelligent systems.
-
-            Built from `${{ needs.gate.outputs.sha }}`, verified CI-green on every
-            gate in `.github/required-ci-jobs.tsv` before this release was cut.
-
-            ### Downloads
-
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Linux | x86_64 | `mindc-linux-x64.tar.gz` |
-            | Linux | ARM64 | `mindc-linux-arm64.tar.gz` |
-            | macOS | Intel | `mindc-macos-x64.tar.gz` |
-            | macOS | Apple Silicon | `mindc-macos-arm64.tar.gz` |
-            | Windows | x86_64 | `mindc-windows-x64.zip` |
-
-            ### Quick Install
-
-            ```bash
-            # Linux/macOS
-            curl -LO https://github.com/star-ga/mind/releases/download/v${{ needs.gate.outputs.version }}/mindc-linux-x64.tar.gz
-            tar -xzf mindc-linux-x64.tar.gz
-            sudo mv mindc /usr/local/bin/
-            mindc --version
-            ```
-
-            ---
-            **MIND Language**: https://github.com/star-ga/mind
+          body_path: release-notes.md

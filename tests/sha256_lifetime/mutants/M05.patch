@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -573 +573 @@
+-        __mind_free(out);
++        // MUTATION: omitted digest release.

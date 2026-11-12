@@ -66,7 +66,7 @@ def live_rc(src: bytes, tmp: pathlib.Path) -> int:
     s = tmp / "s.mind"
     s.write_bytes(src)
     o = tmp / "s.elf"
-    r = subprocess.run([MINDC, "build", str(s), "--release", "--emit=binary",
+    r = subprocess.run([MINDC, "build", "--backend", "mlir", str(s), "--release", "--emit=binary",
                         "--out=" + str(o)], capture_output=True)
     if r.returncode != 0:
         return -999

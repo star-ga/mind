@@ -1,0 +1,38 @@
+// Author: STARGA Inc.
+// Repeated-use memory check under an independently enforced32MiB AS cap.
+// Kernel getrlimit is a test precondition, not a product dependency.
+extern "C" {
+    unsafe fn getrlimit(resource: i32, limit: *mut u8) -> i32;
+}
+pub fn main() -> i64 {
+    let limits: i64 = __mind_alloc(16);
+    if limits == 0 {
+        return 75;
+    }
+    if getrlimit(9, limits as *mut u8) != 0 || __mind_load_i64(limits) != 33554432 {
+        return 76;
+    }
+    let input: i64 = __mind_alloc(1);
+    let output: i64 = __mind_alloc(32);
+    if input == 0 || output == 0 {
+        return 75;
+    }
+    __mind_store_i8(input, 97);
+    let mut i: i64 = 0;
+    while i < 100000 {
+        if sha256_checked(input, 1, output) != 0 {
+            print(1);
+            return 1;
+        }
+        if __mind_load_i64(output + 0) != -3837880752741967926 || __mind_load_i64(output + 8) != 5610398383135113978 || __mind_load_i64(output + 16) != 8236657198024853159 || __mind_load_i64(output + 24) != -4951445352667971399 {
+            print(2);
+            return 2;
+        }
+        i = i + 1;
+    }
+    __mind_free(input);
+    __mind_free(output);
+    __mind_free(limits);
+    print(0);
+    return 0;
+}

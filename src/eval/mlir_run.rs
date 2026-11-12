@@ -13,6 +13,8 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 #[cfg(feature = "mlir-exec")]
+use std::path::Path;
+#[cfg(feature = "mlir-exec")]
 use std::path::PathBuf;
 
 #[cfg(feature = "mlir-exec")]
@@ -34,10 +36,67 @@ impl Default for MlirExecConfig {
         Self {
             mlir_opt: None,
             mlir_cpu_runner: None,
-            opt_passes: vec![String::from("--canonicalize"), String::from("--cse")],
+            // The runner JITs only the `llvm` dialect: lower the scalar program to it.
+            opt_passes: [
+                "--canonicalize",
+                "--cse",
+                "--convert-scf-to-cf",
+                "--convert-cf-to-llvm",
+                "--convert-arith-to-llvm",
+                "--convert-func-to-llvm",
+                "--reconcile-unrealized-casts",
+            ]
+            .map(String::from)
+            .to_vec(),
             timeout: Duration::from_secs(15),
         }
     }
+}
+
+/// The JIT runner's tool name for the LLVM release of `mlir_opt`: LLVM 20
+/// renamed `mlir-cpu-runner` to `mlir-runner`. An unreadable version takes the
+/// current name, so a missing tool is reported under the name a user installs.
+#[cfg(feature = "mlir-exec")]
+pub fn runner_tool_name(mlir_opt: &Path) -> &'static str {
+    let version = std::process::Command::new(mlir_opt)
+        .arg("--version")
+        .output();
+    let text = version.map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    match text.ok().as_deref().and_then(llvm_major) {
+        Some(major) if major < 20 => "mlir-cpu-runner",
+        _ => "mlir-runner",
+    }
+}
+
+/// The major release in `--version` text (`Ubuntu LLVM version 20.1.8` -> 20).
+#[cfg(feature = "mlir-exec")]
+fn llvm_major(text: &str) -> Option<u32> {
+    let rest = text.split("LLVM version ").nth(1)?;
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// The C runner utilities (`printI64`, `printNewline`) of the runner's own LLVM
+/// install, `<prefix>/lib/libmlir_c_runner_utils.so*`; the unversioned name
+/// sorts first. `None` leaves the runner to report the unresolved symbol.
+#[cfg(feature = "mlir-exec")]
+fn c_runner_utils(runner: &Path) -> Option<PathBuf> {
+    let bin = std::fs::canonicalize(runner).ok()?;
+    let lib = bin.parent()?.parent()?.join("lib");
+    let is_utils = |p: &PathBuf| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("libmlir_c_runner_utils.so"))
+    };
+    let mut found: Vec<PathBuf> = std::fs::read_dir(lib)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(is_utils)
+        .collect();
+    found.sort();
+    found.into_iter().next()
 }
 
 #[cfg(feature = "mlir-exec")]
@@ -79,10 +138,7 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
                     if start.elapsed() >= limit {
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Err(format!(
-                            "mlir-cpu-runner timed out after {}s",
-                            limit.as_secs()
-                        ));
+                        return Err(format!("MLIR runner timed out after {}s", limit.as_secs()));
                     }
                     std::thread::sleep(Duration::from_millis(25));
                 }
@@ -92,7 +148,8 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
     }
 
     let mlir_opt = resolve("MLIR_OPT", &cfg.mlir_opt, "mlir-opt")?;
-    let mlir_cpu_runner = resolve("MLIR_CPU_RUNNER", &cfg.mlir_cpu_runner, "mlir-cpu-runner")?;
+    let runner_name = runner_tool_name(&mlir_opt);
+    let mlir_cpu_runner = resolve("MLIR_CPU_RUNNER", &cfg.mlir_cpu_runner, runner_name)?;
 
     let mut temp = NamedTempFile::new().map_err(|e| e.to_string())?;
     temp.write_all(mlir.as_bytes()).map_err(|e| e.to_string())?;
@@ -124,18 +181,21 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
     runner_cmd
         .arg("-O0")
         .arg("--entry-point-result=void")
+        .args(
+            c_runner_utils(&mlir_cpu_runner).map(|lib| format!("--shared-libs={}", lib.display())),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     let mut child = runner_cmd
         .spawn()
-        .map_err(|e| format!("mlir-cpu-runner failed to spawn: {e}"))?;
+        .map_err(|e| format!("{runner_name} failed to spawn: {e}"))?;
     {
         let stdin = child
             .stdin
             .as_mut()
-            .ok_or("Failed to open stdin for mlir-cpu-runner")?;
+            .ok_or("Failed to open stdin for the MLIR runner")?;
         stdin
             .write_all(optimized_mlir.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -144,11 +204,11 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
     let mut child_stdout = child
         .stdout
         .take()
-        .ok_or("Failed to capture mlir-cpu-runner stdout")?;
+        .ok_or("Failed to capture the MLIR runner stdout")?;
     let mut child_stderr = child
         .stderr
         .take()
-        .ok_or("Failed to capture mlir-cpu-runner stderr")?;
+        .ok_or("Failed to capture the MLIR runner stderr")?;
 
     use std::io::Read;
 
@@ -175,7 +235,7 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
         } else {
             String::new()
         };
-        return Err(format!("mlir-cpu-runner failed: {}\n{}", status, msg));
+        return Err(format!("{runner_name} failed: {}\n{}", status, msg));
     }
 
     let stdout_string = if !stdout_data.is_empty() {
@@ -191,4 +251,15 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
     };
 
     Ok(stdout_string.trim().to_string())
+}
+
+#[cfg(all(test, feature = "mlir-exec"))]
+mod tests {
+    #[test]
+    fn llvm_major_reads_the_release() {
+        assert_eq!(super::llvm_major("Ubuntu LLVM version 20.1.8\n"), Some(20));
+        assert_eq!(super::llvm_major("  LLVM version 18.1.8"), Some(18));
+        assert_eq!(super::llvm_major("LLVM version 23.0.0git"), Some(23));
+        assert_eq!(super::llvm_major("mlir-opt: no version"), None);
+    }
 }

@@ -2,17 +2,17 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! UNSIGNED narrow div/rem by zero must yield the deterministic contract value
-//! `0` (matching the signed-i32 and i64 div guards) — NOT trap. The narrow
-//! BinOp arm guarded the SIGNED `divsi`/`remsi` paths (INT_MIN/-1 + divisor-0)
-//! but routed `u32` `divui`/`remui` straight to a bare `arith.divui : i32`,
-//! which lowers to x86 `divl` and raises `#DE` (SIGFPE / process crash) on a
-//! zero divisor, while AArch64 `udiv` returns 0 with no trap — a cross-substrate
-//! divergence AND a crash where every other integer width returns 0. The fix
-//! adds the unsigned divisor-0 guard (substitute 1, force the result to 0).
+//! UNSIGNED narrow div/rem by zero must end the process deterministically with
+//! the W2-trap exit status 79 (docs/errors.md, "Integer division trap") — the
+//! same rule as the signed widths — never a SIGFPE. A bare `arith.divui : i32`
+//! lowers to x86 `divl`, which raises `#DE` (SIGFPE) on a zero divisor while
+//! AArch64 `udiv` returns 0: a cross-substrate divergence. The lowering guards
+//! the divisor (substituting 1 so the division itself is never undefined) and
+//! calls the division trap when it is zero.
 //!
-//! Repro before the fix: `f(100, 0)` for `a / b : u32` crashed with SIGFPE.
-//! After the fix it returns 0, and every non-zero divisor is unchanged.
+//! A trapping call ends the process, so each zero-divisor case runs in its own
+//! child Python process and the test asserts that child's exit status. Every
+//! non-zero divisor keeps its UNSIGNED value.
 //!
 //! Gate: `cargo test --release --features "std-surface mlir-build
 //!                   cross-module-imports" --test narrow_unsigned_div_zero_run`
@@ -36,6 +36,15 @@ use std::process::Command;
 /// the printed integer, or `i64::MIN` if the call crashed / produced no output
 /// (a SIGFPE leaves stdout empty — that is exactly the pre-fix failure).
 fn call_f(ty: &str, body: &str, a: i64, b: i64, tag: &str) -> i64 {
+    let out = run_f(ty, body, a, b, tag);
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(i64::MIN)
+}
+
+/// Compile and call `f(a, b)` in a child Python process; return its output.
+fn run_f(ty: &str, body: &str, a: i64, b: i64, tag: &str) -> std::process::Output {
     let mindc = mindc_bin();
     let dir = std::env::temp_dir();
     let s = dir.join(format!("mind_udivz_{tag}.mind"));
@@ -60,14 +69,27 @@ fn call_f(ty: &str, body: &str, a: i64, b: i64, tag: &str) -> i64 {
          print(lib.f({a}, {b}))\n",
         so.to_string_lossy()
     );
-    let out = Command::new("python3")
+    Command::new("python3")
         .args(["-c", &py])
         .output()
-        .expect("py");
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(i64::MIN)
+        .expect("py")
+}
+
+/// A zero divisor must end the child process with the trap status 79 and
+/// print nothing (the call never returns).
+fn assert_traps(ty: &str, body: &str, a: i64, b: i64, tag: &str) {
+    let out = run_f(ty, body, a, b, tag);
+    assert_eq!(
+        out.status.code(),
+        Some(79),
+        "{tag}: `{body}` with b = {b} must exit 79 (division trap); status {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "{tag}: the trap must end the process at the call"
+    );
 }
 
 fn mlir_build_available() -> bool {
@@ -91,7 +113,7 @@ fn mlir_build_available() -> bool {
 }
 
 #[test]
-fn unsigned_narrow_div_by_zero_is_deterministic_zero() {
+fn unsigned_narrow_div_by_zero_traps_deterministically() {
     if !mlir_build_available() {
         crate::common::gate::skipped(
             "narrow_unsigned_div_zero_run",
@@ -100,11 +122,11 @@ fn unsigned_narrow_div_by_zero_is_deterministic_zero() {
         return;
     }
 
-    // THE BUG: `u32 / 0` and `u32 % 0` used to SIGFPE-crash. Now they must
-    // return the deterministic contract value 0 (same as signed/i64). A crash
-    // would leave stdout empty -> i64::MIN, so this assert is the regression.
-    assert_eq!(call_f("u32", "    return a / b", 100, 0, "div0"), 0);
-    assert_eq!(call_f("u32", "    return a % b", 100, 0, "mod0"), 0);
+    // `u32 / 0` and `u32 % 0` must exit 79 (W2-trap), never SIGFPE (which
+    // would surface as a signal, status code None).
+    assert_traps("u32", "    return a / b", 100, 0, "div0");
+    assert_traps("u32", "    return a % b", 100, 0, "mod0");
+    assert_traps("u32", "    return a / b", 4_294_967_295, 0, "div0max");
 
     // Non-zero divisors are UNCHANGED and still use UNSIGNED semantics:
     // 0xFFFFFFFF / 2 == 2147483647 (unsigned), not 0 (which `-1 / 2` signed gives).

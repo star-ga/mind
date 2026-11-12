@@ -1,0 +1,61 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// Three FIPS 180-4 SHA-256 vectors, printed as lowercase hex lines:
+// empty, "abc", and the 56-byte message abcdbcdecdef...nopq.
+import std.sha256;
+
+fn hex_digit(n: i64) -> i64 {
+    if n < 10 {
+        return 48 + n;
+    }
+    87 + n
+}
+
+fn print_digest(out: i64) -> i64 {
+    let buf: i64 = __mind_alloc(65);
+    let mut i: i64 = 0;
+    while i < 32 {
+        let b: i64 = __mind_load_i8(out + i) & 255;
+        __mind_store_i8(buf + i * 2, hex_digit(b / 16));
+        __mind_store_i8(buf + i * 2 + 1, hex_digit(b & 15));
+        i = i + 1;
+    }
+    __mind_store_i8(buf + 64, 10);
+    __mind_write(1, buf, 65, 0 - 1)
+}
+
+fn fill_abc(buf: i64) -> i64 {
+    __mind_store_i8(buf, 97);
+    __mind_store_i8(buf + 1, 98);
+    __mind_store_i8(buf + 2, 99);
+    3
+}
+
+fn fill_fips56(buf: i64) -> i64 {
+    let mut g: i64 = 0;
+    while g < 14 {
+        let mut k: i64 = 0;
+        while k < 4 {
+            __mind_store_i8(buf + g * 4 + k, 97 + g + k);
+            k = k + 1;
+        }
+        g = g + 1;
+    }
+    56
+}
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(32);
+    let msg: i64 = __mind_alloc(56);
+    sha256(0, 0, out);
+    print_digest(out);
+    fill_abc(msg);
+    sha256(msg, 3, out);
+    print_digest(out);
+    fill_fips56(msg);
+    sha256(msg, 56, out);
+    print_digest(out);
+    return 0;
+}

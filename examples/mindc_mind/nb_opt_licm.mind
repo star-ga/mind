@@ -1,0 +1,391 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Loop-invariant code motion on While (M-A4 slice 1) for the native lowering.
+//
+// Under OptLevel::Full (flags bit 3, nb_opt_level.mind) the function lowering
+// compiles nbl_fn_body(fn) instead of the declared body. The pass is an
+// AST -> AST rewrite, so the frame count, the loop-carry analysis and the
+// emitter walk ONE tree and nothing below the AST changes. A top-level
+//     let X: T = E;
+// of a While body whose E is Pure and total (integer literals, names,
+// parentheses, + - * & | ^ << >> and the six comparisons; never / or %, a call,
+// a load, a store, an allocation, a float literal) and whose names are
+// invariant in the loop is split into
+//     let H: T = E';                    // before the While
+//     while C { .. let X: T = H; .. }   // X keeps its place, type and scope
+// H is a hidden name, the source text from the function body's `{` to the end
+// of the let (to one byte less per further level it is hoisted): it never
+// spells an identifier, and it is unique in the function, because candidate
+// lets never overlap and each level ends inside the let's own span. E' is E
+// with every name an earlier hoisted let binds renamed to that let's H, so a
+// chain of invariant lets moves as a whole.
+//
+// A name is invariant in While W at the let when no `NAME = v` assigns it
+// anywhere in W (no loop-carried value, no value the condition reads), no let
+// of it precedes the candidate in W's body or sits in W's condition (except an
+// earlier hoisted let: renamed), and the function never takes its address.
+// One body-order sweep per While, no fixpoint; inner Whiles are rewritten
+// first, so a let an inner While hoists lands in the outer body and the outer
+// sweep may hoist it again. A hoisted value is Pure and total, so computing it
+// when the loop runs zero times is unobservable, and it reads no memory, so no
+// alias model is needed. The result is a pure function of the tree and the
+// source bytes. nb_opt_licm_check.mind re-verifies every hoist on the
+// rewritten tree. PART RULE: intrinsics and other parts only.
+
+import nb_opt_level;
+import nb_opt_licm_facts;
+import nb_opt_licm_check;
+
+// The sweep record of one While:
+// [buf, fn facts, While facts, condition facts, stmts, marks, per-stmt facts, fn body lo]
+pub fn nbl_sw(sw: i64, k: i64) -> i64 {
+    __mind_load_i64(sw + k * 8)
+}
+
+pub fn nbl_stmt_at(sw: i64, j: i64) -> i64 {
+    __mind_load_i64(nbl_sw(sw, 4) + j * 8)
+}
+
+// The end of the hidden name for hoisting statement s: the let's end, or one
+// byte before the end of s's own hidden name when s is itself a hoisted let.
+pub fn nbl_hidden_hi(buf: i64, s: i64) -> i64 {
+    if nbl_hidden(buf, nbl_f(s, 3)) == 1 {
+        return nbl_f(nbl_f(s, 3), 2) - 1;
+    }
+    nbl_f(s, 2)
+}
+
+// The binding of name [lo, hi) at body index i: index j of an earlier HOISTED
+// let of it, -1 for none in the body (bound outside the While), -2 for any
+// other let of it in an earlier statement (at any depth).
+pub fn nbl_resolve(sw: i64, i: i64, lo: i64, hi: i64) -> i64 {
+    let j: i64 = i - 1;
+    if j < 0 {
+        return 0 - 1;
+    }
+    let buf: i64 = nbl_sw(sw, 0);
+    if __mind_load_i64(nbl_sw(sw, 5) + j * 8) == 1 {
+        if nbl_named(buf, nbl_f(nbl_stmt_at(sw, j), 3), lo, hi) == 1 {
+            return j;
+        }
+        return nbl_resolve(sw, j, lo, hi);
+    }
+    if nbl_acc_has(buf, __mind_load_i64(nbl_sw(sw, 6) + j * 8), 2, lo, hi) == 1 {
+        return 0 - 2;
+    }
+    nbl_resolve(sw, j, lo, hi)
+}
+
+// 1 iff every name of E (Pure) is invariant in the While at body index i.
+pub fn nbl_invariant(sw: i64, i: i64, e: i64) -> i64 {
+    let k: i64 = nbl_f(e, 0);
+    if k == 1 {
+        return 1;
+    }
+    if k == 12 {
+        return nbl_invariant(sw, i, nbl_f(e, 3));
+    }
+    if k == 3 {
+        return nbl_invariant(sw, i, nbl_f(e, 3)) * nbl_invariant(sw, i, nbl_f(e, 4));
+    }
+    let buf: i64 = nbl_sw(sw, 0);
+    let lo: i64 = nbl_f(e, 1);
+    let hi: i64 = nbl_f(e, 2);
+    if nbl_resolve(sw, i, lo, hi) == 0 - 2 {
+        return 0;
+    }
+    if nbl_acc_has(buf, nbl_sw(sw, 2), 1, lo, hi) == 1 {
+        return 0;
+    }
+    if nbl_acc_has(buf, nbl_sw(sw, 3), 2, lo, hi) == 1 {
+        return 0;
+    }
+    if nbl_acc_has(buf, nbl_sw(sw, 1), 8, lo, hi) == 1 {
+        return 0;
+    }
+    1
+}
+
+// E with every name bound by an earlier hoisted let renamed to that let's H
+// (the leaf is copied, so it keeps its cached narrow code).
+pub fn nbl_rename(sw: i64, i: i64, e: i64) -> i64 {
+    let k: i64 = nbl_f(e, 0);
+    if k == 2 {
+        let j: i64 = nbl_resolve(sw, i, nbl_f(e, 1), nbl_f(e, 2));
+        if j < 0 {
+            return e;
+        }
+        return nbl_respan(e, nbl_sw(sw, 7), nbl_hidden_hi(nbl_sw(sw, 0), nbl_stmt_at(sw, j)));
+    }
+    if k == 12 {
+        let c: i64 = nbl_rename(sw, i, nbl_f(e, 3));
+        if c == nbl_f(e, 3) {
+            return e;
+        }
+        return nbl_with(e, 3, c);
+    }
+    if k != 3 {
+        return e;
+    }
+    let l: i64 = nbl_rename(sw, i, nbl_f(e, 3));
+    let r: i64 = nbl_rename(sw, i, nbl_f(e, 4));
+    if l == nbl_f(e, 3) {
+        if r == nbl_f(e, 4) {
+            return e;
+        }
+    }
+    nbl_with(nbl_with(e, 3, l), 4, r)
+}
+
+// 1 iff body statement i is a let this sweep hoists.
+pub fn nbl_candidate(sw: i64, i: i64) -> i64 {
+    let s: i64 = nbl_stmt_at(sw, i);
+    if nbl_f(s, 0) != 6 {
+        return 0;
+    }
+    if nbl_hidden_hi(nbl_sw(sw, 0), s) <= nbl_f(s, 1) {
+        return 0;
+    }
+    let init: i64 = nbl_f(s, 5);
+    if nbl_pure(init) == 0 {
+        return 0;
+    }
+    if nbl_has_code(init) == 0 {
+        return 0;
+    }
+    nbl_invariant(sw, i, init)
+}
+
+// Mark statement i when it is still a candidate, and return the new hoist count.
+// The mark lives in a helper so the sweep loop stays a straight statement list:
+// the mic@3 emitter refuses a call inside an if that sits in a while.
+pub fn nbl_mark(sw: i64, marks: i64, i: i64, live: i64, nh: i64) -> i64 {
+    if live != 1 {
+        return nh;
+    }
+    if nbl_candidate(sw, i) == 0 {
+        return nh;
+    }
+    __mind_store_i64(marks + i * 8, 1);
+    nh + 1
+}
+
+// The rewritten While w (its inner Whiles already rewritten): w itself when
+// nothing is hoisted, else a group (kind -20, aux = count, child0 = array of
+// the hoisted lets followed by the new While). No candidate follows a
+// top-level break, continue or return.
+pub fn nbl_sweep(buf: i64, fnf: i64, fblo: i64, w: i64) -> i64 {
+    let body: i64 = nbl_f(w, 4);
+    let sa: i64 = nbl_f(body, 3);
+    let n: i64 = nbl_f(body, 6);
+    let sw: i64 = __mind_alloc(64);
+    let marks: i64 = __mind_alloc(n * 8 + 8);
+    let per: i64 = __mind_alloc(n * 8 + 8);
+    __mind_store_i64(sw, buf);
+    __mind_store_i64(sw + 8, fnf);
+    __mind_store_i64(sw + 16, nbl_facts(w));
+    __mind_store_i64(sw + 24, nbl_facts(nbl_f(w, 3)));
+    __mind_store_i64(sw + 32, sa);
+    __mind_store_i64(sw + 40, marks);
+    __mind_store_i64(sw + 48, per);
+    __mind_store_i64(sw + 56, fblo);
+    let mut nh: i64 = 0;
+    let mut live: i64 = 1;
+    let mut i: i64 = 0;
+    while i < n {
+        let s: i64 = __mind_load_i64(sa + i * 8);
+        let k: i64 = nbl_f(s, 0);
+        __mind_store_i64(marks + i * 8, 0);
+        __mind_store_i64(per + i * 8, nbl_facts(s));
+        live = live * nbl_falls_through(k);
+        nh = nbl_mark(sw, marks, i, live, nh);
+        i = i + 1;
+    }
+    if nh == 0 {
+        return w;
+    }
+    nbl_group(sw, w, n, nh)
+}
+
+// 1 iff body statement i is hoisted.
+pub fn nbl_marked(sw: i64, i: i64) -> i64 {
+    __mind_load_i64(nbl_sw(sw, 5) + i * 8)
+}
+
+// The hidden name of hoisted body statement i.
+pub fn nbl_hname(sw: i64, i: i64) -> i64 {
+    nbl_ident(nbl_sw(sw, 7), nbl_hidden_hi(nbl_sw(sw, 0), nbl_stmt_at(sw, i)))
+}
+
+// Body statement i of the new While: a hoisted `let X: T = E` reads `H`.
+pub fn nbl_in_place(sw: i64, i: i64) -> i64 {
+    let s: i64 = nbl_stmt_at(sw, i);
+    if nbl_marked(sw, i) == 0 {
+        return s;
+    }
+    nbl_with(s, 5, nbl_hname(sw, i))
+}
+
+// Store the hoisted `let H: T = E'` of body statement i at pre[p]; the count
+// stored. H keeps X's declared type, so a narrow H wraps where X wrapped and a
+// later hoisted let that reads H sees the value it saw in X.
+pub fn nbl_pre_put(sw: i64, pre: i64, p: i64, i: i64) -> i64 {
+    if nbl_marked(sw, i) == 0 {
+        return 0;
+    }
+    let s: i64 = nbl_stmt_at(sw, i);
+    let named: i64 = nbl_with(s, 3, nbl_hname(sw, i));
+    __mind_store_i64(pre + p * 8, nbl_with(named, 5, nbl_rename(sw, i, nbl_f(s, 5))));
+    1
+}
+
+// The group: each hoisted `let H: T = E'` in body order, then the While whose
+// body keeps every statement in place, a hoisted let becoming `let X: T = H`.
+pub fn nbl_group(sw: i64, w: i64, n: i64, nh: i64) -> i64 {
+    let body: i64 = nbl_f(w, 4);
+    let pre: i64 = __mind_alloc((nh + 1) * 8);
+    let nsa: i64 = __mind_alloc(n * 8 + 8);
+    let mut p: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(nsa + i * 8, nbl_in_place(sw, i));
+        p = p + nbl_pre_put(sw, pre, p, i);
+        i = i + 1;
+    }
+    __mind_store_i64(pre + nh * 8, nbl_with(w, 4, nbl_with(body, 3, nsa)));
+    let g: i64 = nbl_with(w, 0, 0 - 20);
+    __mind_store_i64(g + 24, pre);
+    __mind_store_i64(g + 48, nh + 1);
+    g
+}
+
+// ---- statement lists, inner Whiles first ----
+// Loop nests deeper than this keep their inner levels as declared.
+pub fn nbl_depth_cap() -> i64 {
+    64
+}
+
+pub fn nbl_stmt(buf: i64, fnf: i64, fblo: i64, s: i64, d: i64) -> i64 {
+    let k: i64 = nbl_f(s, 0);
+    if k == 20 {
+        let body: i64 = nbl_f(s, 4);
+        if d >= nbl_depth_cap() {
+            return s;
+        }
+        if body == 0 {
+            return s;
+        }
+        let nb: i64 = nbl_block(buf, fnf, fblo, body, d + 1);
+        return nbl_sweep(buf, fnf, fblo, nbl_rebody(s, body, nb));
+    }
+    if k == 10 {
+        return nbl_block(buf, fnf, fblo, s, d);
+    }
+    if k != 16 {
+        return s;
+    }
+    let t: i64 = nbl_f(s, 4);
+    let e: i64 = nbl_f(s, 5);
+    let t2: i64 = nbl_arm(buf, fnf, fblo, t, d);
+    let e2: i64 = nbl_arm(buf, fnf, fblo, e, d);
+    if t2 == t {
+        if e2 == e {
+            return s;
+        }
+    }
+    nbl_with(nbl_with(s, 4, t2), 5, e2)
+}
+
+// An if arm: a block, or an else-if; anything else stays as declared.
+pub fn nbl_arm(buf: i64, fnf: i64, fblo: i64, a: i64, d: i64) -> i64 {
+    if a == 0 {
+        return a;
+    }
+    if nbl_f(a, 0) == 10 {
+        return nbl_block(buf, fnf, fblo, a, d);
+    }
+    if nbl_f(a, 0) == 16 {
+        return nbl_stmt(buf, fnf, fblo, a, d);
+    }
+    a
+}
+
+// Store the m statements r contributes, from index q on, at dst.
+pub fn nbl_put(dst: i64, r: i64, q: i64, m: i64) -> i64 {
+    if q >= m {
+        return 0;
+    }
+    __mind_store_i64(dst + q * 8, nbl_item(r, q));
+    nbl_put(dst, r, q + 1, m)
+}
+
+// Statements a rewritten statement contributes to its list.
+pub fn nbl_count(r: i64) -> i64 {
+    if nbl_f(r, 0) == 0 - 20 {
+        return nbl_f(r, 6);
+    }
+    1
+}
+
+pub fn nbl_block(buf: i64, fnf: i64, fblo: i64, blk: i64, d: i64) -> i64 {
+    let sa: i64 = nbl_f(blk, 3);
+    let n: i64 = nbl_f(blk, 6);
+    let outs: i64 = __mind_alloc(n * 8 + 8);
+    let mut total: i64 = 0;
+    let mut changed: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let s: i64 = __mind_load_i64(sa + i * 8);
+        let r: i64 = nbl_stmt(buf, fnf, fblo, s, d);
+        __mind_store_i64(outs + i * 8, r);
+        if r != s {
+            changed = 1;
+        }
+        total = total + nbl_count(r);
+        i = i + 1;
+    }
+    if changed == 0 {
+        return blk;
+    }
+    let arr: i64 = __mind_alloc(total * 8 + 8);
+    let mut p: i64 = 0;
+    let mut j: i64 = 0;
+    while j < n {
+        let r: i64 = __mind_load_i64(outs + j * 8);
+        let m: i64 = nbl_count(r);
+        let _c: i64 = nbl_put(arr + p * 8, r, 0, m);
+        p = p + m;
+        j = j + 1;
+    }
+    nbl_with(nbl_with(blk, 3, arr), 6, total)
+}
+
+// The body the native lowering compiles for fn node: the declared body, or
+// under OptLevel::Full the LICM-rewritten one once nblc_verdict accepts it.
+// Off: one flag test, nothing allocated, nothing written.
+pub fn nbl_fn_body(buf: i64, node: i64, flags: i64) -> i64 {
+    let body: i64 = nbl_f(node, 5);
+    if (flags & nbo_flag_full()) == 0 {
+        return body;
+    }
+    if body == 0 {
+        return body;
+    }
+    if nbl_f(body, 0) != 10 {
+        return body;
+    }
+    if (__mind_load_i64(buf + nbl_f(body, 1)) & 255) != 123 {
+        return body;
+    }
+    let fnf: i64 = nbl_facts(body);
+    if nbl_facts_unknown(fnf) == 1 {
+        return body;
+    }
+    let rw: i64 = nbl_block(buf, fnf, nbl_f(body, 1), body, 0);
+    if rw == body {
+        return body;
+    }
+    nblc_verdict(buf, body, rw)
+}

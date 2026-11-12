@@ -1,0 +1,12 @@
+// A runtime bounds trap after the driver started a helper thread (the fake
+// libcuda.so.1 with MIND_FAKE_CUDA_THREAD set). The trap must end the whole
+// process with the bounds-trap status 77 at once: exit (60) would end only
+// the calling thread and leave the process running.
+extern "C" {
+    fn cuInit(flags: u32) -> i32;
+}
+fn main() -> i64 {
+    let a = [10, 20, 30];
+    let i: i64 = cuInit(0 as u32) as i64 + 3;
+    return a[i];
+}

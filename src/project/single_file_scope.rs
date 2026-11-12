@@ -20,9 +20,18 @@ use anyhow::{Context, Result};
 use crate::ast::Module;
 
 use super::sources::{canonical_project_root, resolve_project_entry};
-use super::{
-    DEFAULT_TARGET_BLOCK, find_project_root_for_file_checked, load_manifest, resolve_sources,
-};
+use super::{DEFAULT_TARGET_BLOCK, find_project_root_for_file_checked, load_manifest};
+
+/// The one refusal, `E2042`, for a file that imports a local module while no
+/// `Mind.toml` governs it. `mindc check`, `mindc test` and `mindc <file>` print
+/// it; `mindc build <file>` refuses the same case with the same code.
+pub fn missing_project(imports: &[String]) -> String {
+    format!(
+        "error[type-check][E2042]: local import(s) {} require an enclosing Mind.toml project \
+         that declares the source set; add a Mind.toml in the file's directory or a parent",
+        imports.join(", ")
+    )
+}
 
 pub enum Discovery {
     SingleTranslationUnit,
@@ -190,13 +199,7 @@ pub fn install_for_check(files: &[(PathBuf, String)]) -> Result<ProjectTableGuar
     if files.len() == 1 {
         match discover_with_source(&files[0].0, DEFAULT_TARGET_BLOCK, &files[0].1)? {
             Discovery::Project(scope) => return Ok(scope.install()),
-            Discovery::MissingProject(imports) => {
-                anyhow::bail!(
-                    "error[type-check][E2003]: local import(s) {} require an enclosing Mind.toml \
-                     project that declares the source set",
-                    imports.join(", ")
-                );
-            }
+            Discovery::MissingProject(imports) => anyhow::bail!("{}", missing_project(&imports)),
             Discovery::SingleTranslationUnit => {}
         }
     }
@@ -341,8 +344,14 @@ fn discover_project(
     entry_imports: Vec<String>,
 ) -> Result<Option<ProjectScope>> {
     let entry_dir = entry.parent().unwrap_or_else(|| Path::new("."));
-    let Some(project_root) = find_project_root_for_file_checked(entry_dir)? else {
-        return Ok(None);
+    // A temporary manifest is never a project (`build_lock::lock_cwd_project`).
+    let project_root = loop {
+        let Some(root) = find_project_root_for_file_checked(entry_dir)? else {
+            return Ok(None);
+        };
+        if !super::build_lock::clear_temporary_manifest(&root)? {
+            break root;
+        }
     };
     let project_root = canonical_project_root(&project_root)?;
     let manifest = load_manifest(&project_root)?;
@@ -350,11 +359,12 @@ fn discover_project(
         .targets
         .get(target_block)
         .or_else(|| manifest.targets.get(DEFAULT_TARGET_BLOCK));
-    let (candidates, explicit_sources) = resolve_sources(
+    let (candidates, explicit_sources) = super::sources::resolve_sources_for(
         &project_root,
         &manifest.build.entry,
         selected.and_then(|target| target.sources.as_deref()),
-        false,
+        entry,
+        &entry_imports,
     )?;
     let resolved_entry = resolve_project_entry(&project_root, &manifest.build.entry)?;
     let source_root = if explicit_sources {
@@ -616,7 +626,16 @@ fn capture_scope<'a>(
     // native linking; raw basenames are insufficient for a root-level entry.
     let _resolved_guard =
         super::active_module_table::ResolvedImportsGuard::install(resolved_imports.clone());
-    let enums = super::build_global_enums(&parsed);
+    let mut enums = super::build_global_enums(&parsed);
+    // A check or a test of the entry decides string comparisons over the
+    // program it links, with this table also where it is not installed
+    // (`string_equality::project`).
+    enums.string_project = crate::eval::string_equality::ProjectModules::of_program(
+        &parsed,
+        &linked,
+        table.clone(),
+        resolved_imports.clone(),
+    );
     Ok(ProjectScope {
         entry: entry.to_path_buf(),
         sources,

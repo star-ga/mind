@@ -37,6 +37,79 @@ impl ProjectBuildLock {
     }
 }
 
+/// First line of every temporary manifest, so a leftover of a killed build is
+/// told apart from a real project manifest (which never carries it).
+const TEMPORARY_MANIFEST_MARKER: &str =
+    "# mindc: temporary manifest of a standalone build; removed when that build returns\n";
+
+/// The temporary `Mind.toml` a standalone build writes for its duration.
+pub fn temporary_manifest(pkg_name: &str, entry: &str) -> String {
+    format!(
+        "{TEMPORARY_MANIFEST_MARKER}[package]\nname = \"{pkg_name}\"\nversion = \"0.1.0\"\n\n\
+         [build]\nentry = \"{entry}\"\n"
+    )
+}
+
+fn is_temporary_manifest(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| text.starts_with(TEMPORARY_MANIFEST_MARKER))
+}
+
+/// Remove `path` when it is a leftover temporary manifest; true when it was.
+///
+/// Call only under the project lock of its directory: a temporary manifest's
+/// writer removes it before releasing that lock, so one still present under
+/// the lock belongs to a killed build.
+pub(crate) fn remove_leftover(path: &Path) -> io::Result<bool> {
+    if !is_temporary_manifest(path) {
+        return Ok(false);
+    }
+    fs::remove_file(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "cannot remove leftover temporary manifest {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(true)
+}
+
+/// True when `root`'s manifest was a temporary one, which is then gone: a
+/// leftover is removed under the lock, a live build's is removed by its writer
+/// before the lock is granted. A caller that sees true searches again.
+///
+/// The lock is taken only for a marked manifest, so a real project pays one
+/// read and no lock here.
+#[cfg(feature = "cross-module-imports")]
+pub(crate) fn clear_temporary_manifest(root: &Path) -> io::Result<bool> {
+    let path = root.join("Mind.toml");
+    if !is_temporary_manifest(&path) {
+        return Ok(false);
+    }
+    let _lock = ProjectBuildLock::acquire(root)?;
+    remove_leftover(&path)?;
+    Ok(true)
+}
+
+/// Lock the project the current directory is in, by the one rule every build
+/// form follows: a temporary manifest is never a project. A leftover is removed
+/// under the lock, and a manifest that vanished while we waited (a live
+/// standalone build's) is absent too; either way the search runs again, so the
+/// result is what a directory without that file gives. Every pass removes a
+/// file or finds one absent, so the search ends.
+pub(crate) fn lock_cwd_project() -> anyhow::Result<ProjectBuildLock> {
+    loop {
+        let root = super::find_project_root()?;
+        let lock = ProjectBuildLock::acquire(&root)?;
+        let manifest = root.join("Mind.toml");
+        if remove_leftover(&manifest)? || !manifest.exists() {
+            continue;
+        }
+        return Ok(lock);
+    }
+}
+
 /// Restores an exact manifest snapshot on every normal or unwinding exit.
 ///
 /// Callers still invoke [`restore`](Self::restore) explicitly so an I/O failure

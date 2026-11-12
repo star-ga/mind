@@ -1,0 +1,150 @@
+// Author: STARGA Inc. Original API and real Linux raw syscalls.
+// Run only in a fresh owned cwd with exactly the empty ./fse and ./fsc/d
+// directories supplied as declared fixture data by the host transport.
+// Requires NOFILE soft/hard1024 from the independently checked transport.
+
+fn fcr_expect(id: i64, got: i64, want: i64) -> i64 {
+    if got != want {
+        print(id);
+        print(got);
+        print(want);
+        return 1;
+    }
+    0
+}
+
+fn fcr_path(p: i64, last: i64) -> i64 {
+    __mind_store_i8(p, 102);
+    __mind_store_i8(p + 1, 115);
+    __mind_store_i8(p + 2, 99);
+    __mind_store_i8(p + 3, 47);
+    __mind_store_i8(p + 4, last);
+    __mind_store_i8(p + 5, 0);
+    0
+}
+
+fn fcr_create(path: i64) -> i64 {
+    let fd: i64 = __mind_sys_openat(0 - 100, path, 193, 384);
+    if fd < 0 {
+        return fd;
+    }
+    __mind_sys_close(fd)
+}
+
+fn fcr_empty(root: i64, slot: i64) -> i64 {
+    __mind_store_i64(slot, 713);
+    let status: i64 = fs_read_dir_checked(root, 3, 0, 0, slot);
+    let mut failures: i64 = fcr_expect(301, status, 0);
+    if status == 0 {
+        let list: i64 = __mind_load_i64(slot);
+        if list <= 0 || list == 713 {
+            return failures + fcr_expect(302, 0, 1);
+        }
+        failures = failures + fcr_expect(303, __mind_load_i64(list + 8), 0);
+        let _ = fs_dir_list_free(list);
+    }
+    failures
+}
+
+fn fcr_names(root: i64, slot: i64) -> i64 {
+    __mind_store_i64(slot, 713);
+    let status: i64 = fs_read_dir_checked(root, 3, 3, 6, slot);
+    let mut failures: i64 = fcr_expect(401, status, 0);
+    if status == 0 {
+        let list: i64 = __mind_load_i64(slot);
+        if list <= 0 || list == 713 {
+            return failures + fcr_expect(402, 0, 1);
+        }
+        let count: i64 = __mind_load_i64(list + 8);
+        failures = failures + fcr_expect(403, count, 3);
+        let mut seen: i64 = 0;
+        if count == 3 {
+            let entries: i64 = __mind_load_i64(list);
+            let mut i: i64 = 0;
+            while i < 3 {
+                let entry: i64 = __mind_load_i64(entries + i * 8);
+                let name: i64 = __mind_load_i64(entry);
+                failures = failures + fcr_expect(410 + i, __mind_load_i64(entry + 8), 1);
+                failures = failures + fcr_expect(420 + i, __mind_load_i8(name + 1) & 255, 0);
+                let value: i64 = __mind_load_i8(name) & 255;
+                let flags: i64 = __mind_load_i64(entry + 16);
+                let mut bit: i64 = 0;
+                let mut kind: i64 = 2;
+                if value == 97 { bit = 1; }
+                if value == 100 { bit = 2; kind = 1; }
+                if value == 255 { bit = 4; }
+                failures = failures + fcr_expect(430 + i, if bit != 0 { 1 } else { 0 }, 1);
+                failures = failures + fcr_expect(440 + i, seen & bit, 0);
+                // Filesystems may legitimately return DT_UNKNOWN. Explicit
+                // known-kind mapping is checked by the independent block KAT.
+                failures = failures + fcr_expect(450 + i, if flags == kind || flags == 0 { 1 } else { 0 }, 1);
+                seen = seen | bit;
+                i = i + 1;
+            }
+        }
+        failures = failures + fcr_expect(460, seen, 7);
+        let _ = fs_dir_list_free(list);
+    }
+    failures
+}
+
+fn fcr_refuse(id: i64, path: i64, n: i64, entries: i64,
+              names: i64, slot: i64, wanted: i64) -> i64 {
+    __mind_store_i64(slot, 713);
+    let actual: i64 = fs_read_dir_checked(path, n, entries, names, slot);
+    let mut failures: i64 = fcr_expect(id, actual, wanted);
+    let unchanged: i64 = if __mind_load_i64(slot) == 713 { 1 } else { 0 };
+    failures = failures + fcr_expect(id + 1, unchanged, 1);
+    // An unexpected successful listing is still owned and must be released.
+    if actual == 0 && __mind_load_i64(slot) > 0 && __mind_load_i64(slot) != 713 {
+        let _ = fs_dir_list_free(__mind_load_i64(slot));
+    }
+    failures
+}
+
+pub fn main() -> i64 {
+    let work: i64 = __mind_alloc(64);
+    if work == 0 { return fcr_expect(900, 0, 1); }
+    let mut i: i64 = 0;
+    while i < 64 { __mind_store_i8(work + i, 0); i = i + 1; }
+    __mind_store_i8(work, 102);
+    __mind_store_i8(work + 1, 115);
+    __mind_store_i8(work + 2, 99);
+    let _ = fcr_path(work + 8, 97);
+    let _ = fcr_path(work + 16, 100);
+    let _ = fcr_path(work + 24, 255);
+    let _ = fcr_path(work + 32, 120);
+    __mind_store_i8(work + 40, 102);
+    __mind_store_i8(work + 41, 115);
+    __mind_store_i8(work + 42, 101);
+    let slot: i64 = work + 48;
+    let mut failures: i64 = fcr_empty(work + 40, slot);
+    failures = failures + fcr_expect(101, fcr_create(work + 8), 0);
+    failures = failures + fcr_expect(103, fcr_create(work + 24), 0);
+    if failures == 0 {
+        failures = failures + fcr_names(work, slot);
+        failures = failures + fcr_refuse(501, work + 32, 5, 8, 64, slot, 0 - 2);
+        failures = failures + fcr_refuse(511, work + 8, 5, 8, 64, slot, 0 - 20);
+        failures = failures + fcr_refuse(521, work, 3, 2, 64, slot, 0 - 75);
+        failures = failures + fcr_refuse(531, work, 3, 8, 5, slot, 0 - 75);
+        let mut repetitions: i64 = 0;
+        while repetitions < 10000 && failures == 0 {
+            failures = failures + fcr_names(work, slot);
+            repetitions = repetitions + 1;
+        }
+        failures = failures + fcr_expect(601, repetitions, 10000);
+    }
+    // All paths are inside the transport's fresh owned fixture directories.
+    // Unexpected residue is retained by the external transport on any failure.
+    if failures == 0 {
+        failures = failures + fcr_expect(701, __mind_sys_unlinkat(0 - 100, work + 8, 0), 0);
+        failures = failures + fcr_expect(702, __mind_sys_unlinkat(0 - 100, work + 24, 0), 0);
+        failures = failures + fcr_expect(703, __mind_sys_unlinkat(0 - 100, work + 16, 512), 0);
+        failures = failures + fcr_expect(704, __mind_sys_unlinkat(0 - 100, work, 512), 0);
+        failures = failures + fcr_expect(705, __mind_sys_unlinkat(0 - 100, work + 40, 512), 0);
+    }
+    __mind_free(work);
+    if failures != 0 { return 1; }
+    print(0);
+    0
+}

@@ -34,8 +34,8 @@
 // themselves.
 //
 // Layout: this module is the entry point that imports the whole validator;
-// the code lives in the modules it imports. x509_verify_server_chain is in
-// std/x509_path.mind and x509_parse in std/x509_der.mind, so a client such
+// the code lives in the modules it imports. x509_verify_server_chain is
+// in std/x509_path.mind and x509_parse in std/x509_der.mind, so a client such
 // as std.tls13_client calls them without importing this module.
 // ==========================================================================
 

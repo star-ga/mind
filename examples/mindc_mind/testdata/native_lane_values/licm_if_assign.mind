@@ -1,0 +1,21 @@
+// LICM slice 1 must NOT hoist `t`: its operand is assigned inside an if arm of the
+// loop. `u` (literals and a parameter) does hoist.
+fn ia(n: i64, a0: i64, b: i64) -> i64 {
+    let mut a: i64 = a0;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: i64 = a * 3;
+        let u: i64 = b * 4 + 2;
+        if i == 2 {
+            a = a + 5;
+        }
+        s = s + t + u;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    ia(6, 2, 3) % 233
+}

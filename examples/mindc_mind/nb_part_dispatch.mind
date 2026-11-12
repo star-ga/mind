@@ -1,0 +1,258 @@
+// Copyright 2026 STARGA Inc.
+// Part dispatch: the fixed chains main.mind's hooks call into the compiler parts.
+// Each chain asks every part in a fixed order and takes the first "mine" answer;
+// a stub part answers "not mine" (-1, 0, or the code unchanged), so no byte moves.
+//
+// Kind / seed-id ledger (single space; the Rust frozen_native_value seed_id == nb kind):
+// 60 __mind_vpaddd_i32x8 · 61 __mind_vpsubd_i32x8 · 62 __mind_vpaddb_i8x32 · 63 __mind_vpshufb_i8x32 · 64 __mind_vmovdqu_i32x8
+// 65 __mind_vpaddq_i64x4 · 66 __mind_vpsubq_i64x4 · 67 __mind_cpu_features_v1 · 68 __mind_rdtscp_v1 · 69 __mind_lfence_v1
+// 70 __mind_ymm_vmovdqu_ld(r,base,disp) · 71 __mind_ymm_vmovdqu_st · 72 __mind_ymm_vpaddd_i32x8_m · 73 __mind_ymm_vpsubd_i32x8_m
+// 74 __mind_ymm_vpaddb_i8x32_m · 75 __mind_ymm_vpshufb_i8x32_m(d,t,base,disp) · 76 __mind_ymm_vpaddd_i32x8_r(d,a,b)
+// 77 __mind_ymm_vpsubd_i32x8_r · 78 __mind_ymm_vpaddb_i8x32_r · 79 __mind_ymm_vpshufb_i8x32_r(d,t,m)
+// 80 __mind_ymm_vpaddq_i64x4_m · 81 __mind_ymm_vpsubq_i64x4_m · 82 __mind_ymm_vpaddq_i64x4_r · 83 __mind_ymm_vpsubq_i64x4_r
+// 84 __mind_cpu_relax · 85 __mind_atomic_load_acquire_i64 · 86 __mind_atomic_store_release_i64
+// 87 __mind_group_bank_i64(ptrs,bank,plane,pixels,group) · 88 __mind_group_acc32_i64(out,bank,off,pos,neg,init)
+// sys family: 90 __mind_sys_mmap · 91 __mind_sys_munmap · 92 __mind_sys_sched_setaffinity · 93 __mind_sys_perf_event_open
+//
+// Entry-guard flag word (nb_entry_prefix): bit 0 argv capture, bit 1 ymm rows
+// reachable (ISA guard), bit 2 rdtscp reachable (CPUID guard). An entry guard runs
+// AFTER the argv capture and the main(argc, argv) binding: a guard must leave rsp,
+// rdi and rsi unchanged (no unbalanced push, pop or call) and may only exit on failure.
+//
+// PART RULE: a part calls std.* and other parts only, never a main.mind fn. The
+// Mind.toml build of the checkout compiles each part as its own module, which
+// cannot see the crate root; a composed unit (native stream, Rust oracle) holds
+// everything inline. To reuse a main.mind helper, MOVE it (with every fn it
+// calls) into a part that main.mind imports, as tc_shoc_eq moved with the table.
+
+import std.string;
+import nb_x86_vex;
+import nb_x86_ymm_bank;
+import nb_cpu_features;
+import nb_measure;
+import nb_shm;
+import nbx_cuda_rows2;
+import nb_exit;
+import nb_emit_core;
+import nb_group_sum_bank;
+import nb_group_sum_acc;
+
+// Callee span [lo, hi) in buf (already past the `__mind_` prefix guard).
+pub fn nbp_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    let v: i64 = nbv_intrinsic_id(buf, lo, hi);
+    if v > 0 {
+        return v;
+    }
+    let c: i64 = nbc_intrinsic_id(buf, lo, hi);
+    if c > 0 {
+        return c;
+    }
+    let m: i64 = nbm_intrinsic_id(buf, lo, hi);
+    if m > 0 {
+        return m;
+    }
+    let s: i64 = nbs_intrinsic_id(buf, lo, hi);
+    if s > 0 {
+        return s;
+    }
+    let b: i64 = nbb_intrinsic_id(buf, lo, hi);
+    if b > 0 {
+        return b;
+    }
+    let g: i64 = nbg_intrinsic_id(buf, lo, hi);
+    if g > 0 {
+        return g;
+    }
+    0 - 1
+}
+
+// Full-span syscall-family match (n = hi - lo), consulted after the frozen 20-51 rows.
+pub fn nbp_sys_intrinsic_id(buf: i64, lo: i64, n: i64) -> i64 {
+    let s: i64 = nbs_sys_intrinsic_id(buf, lo, n);
+    if s > 0 {
+        return s;
+    }
+    let m: i64 = nbm_sys_intrinsic_id(buf, lo, n);
+    if m > 0 {
+        return m;
+    }
+    0 - 1
+}
+
+// 1 iff the owning part implements `kind` at `args_len` arguments. Kind 54
+// answers nbe_assert_arity_ok. Every other kind outside 60..99 answers 1.
+// The call sites poison the fn when this is 0 (main.mind nb_expr intrinsic arm,
+// nb_store_stmt), so a kind whose emit is missing never truncates the code.
+pub fn nbp_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 54 {
+        return nbe_assert_arity_ok(args_len);
+    }
+    if kind < 60 {
+        return 1;
+    }
+    if kind > 99 {
+        return 1;
+    }
+    if kind <= 66 {
+        return nbv_kind_ok(kind, args_len);
+    }
+    if kind == 67 {
+        return nbc_kind_ok(kind, args_len);
+    }
+    if kind <= 69 {
+        return nbm_kind_ok(kind, args_len);
+    }
+    if kind <= 83 {
+        return nbb_kind_ok(kind, args_len);
+    }
+    if kind <= 86 {
+        return nbs_kind_ok(kind, args_len);
+    }
+    if kind == 87 {
+        return nbg_kind_ok(kind, args_len);
+    }
+    if kind == 88 {
+        return nbg_kind_ok(kind, args_len);
+    }
+    if kind >= 90 {
+        if kind <= 92 {
+            return nbs_kind_ok(kind, args_len);
+        }
+    }
+    if kind == 93 {
+        return nbm_kind_ok(kind, args_len);
+    }
+    0
+}
+
+// Inline body for a part-owned kind (60..99), appended to `code`. An unowned
+// kind returns an empty String, which DROPS `code`: callers reach this only
+// after nbp_kind_ok(kind, args_len) == 1 (else they poison the fn).
+pub fn nbp_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if kind <= 66 {
+        return nbv_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind == 67 {
+        return nbc_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind <= 69 {
+        return nbm_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind <= 83 {
+        return nbb_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind <= 86 {
+        return nbs_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind == 87 {
+        return nbg_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind == 88 {
+        return nbg_emit(code, kind, ids, dst_id, ctx);
+    }
+    if kind >= 90 {
+        if kind <= 92 {
+            return nbs_sys_emit(code, kind, ids, dst_id, ctx);
+        }
+    }
+    if kind == 93 {
+        return nbm_sys_emit(code, kind, ids, dst_id, ctx);
+    }
+    string_new()
+}
+
+// Guard bits for the pruned emission set: bit 1 ymm rows, bit 2 rdtscp. Each part
+// answer is normalised to 0/1, so a count can never spill into bit 0 (argv).
+pub fn nbp_fns_use_guard(src_addr: i64, ordered: i64, n_fns: i64) -> i64 {
+    let ymm: i64 = nbp_bit(nbb_or_fns_use_ymm(nbv_fns_use_ymm(src_addr, ordered, n_fns), src_addr, ordered, n_fns));
+    let tsc: i64 = nbp_bit(nbm_fns_use_rdtscp(src_addr, ordered, n_fns));
+    ymm * 2 + tsc * 4
+}
+
+pub fn nbp_bit(x: i64) -> i64 {
+    if x != 0 {
+        return 1;
+    }
+    0
+}
+
+// Program-start preconditions, emitted after the entry's argv capture + binding. Bits are
+// read with / and % (flags >= 0): the bare-surface parser has no bitwise operator.
+pub fn nbp_entry_guard(code: String, flags: i64) -> String {
+    if (flags / 2) % 2 == 1 {
+        return nbp_entry_guard_tsc(nbv_entry_guard(code), flags);
+    }
+    nbp_entry_guard_tsc(code, flags)
+}
+
+pub fn nbp_entry_guard_tsc(code: String, flags: i64) -> String {
+    if (flags / 4) % 2 == 1 {
+        return nbm_entry_guard(code);
+    }
+    code
+}
+
+// Bindable extern rows past the frozen table (main.mind nbx_row tail). 0 = no row.
+// Rows 87.. are libc (versioned) rows after the CUDA block (admit_extern TABLE_TAIL).
+pub fn nbx_row_part(i: i64, out: i64) -> i64 {
+    // freeaddrinfo(*mut u8) with no result type @ GLIBC_2.2.5
+    if i == 87 {
+        return nbx_put(out, 12, 8242823587470602854, 1868983913, 0, 11, 3328827817059765319, 3485234, 1287, 0, 1);
+    }
+    // uname(*mut u8) -> i32 @ GLIBC_2.2.5
+    if i == 88 {
+        return nbx_put(out, 5, 435626798709, 0, 0, 11, 3328827817059765319, 3485234, 1281, 0, 1);
+    }
+    nbcu_row(i, out)
+}
+
+// Name bytes of an nbx_row record (nbx_name_eq, nbx_meta): in-line, or behind
+// the pointer a part row over 24 bytes stores in its first name word.
+pub fn nbx_row_name(rec: i64) -> i64 {
+    nbcu_name(rec)
+}
+
+// Call-site argument fence of a bound extern row (nb_expr): returns xr, and
+// poisons the compile (lcell + 80) when a part row's argument rule fails.
+pub fn nbx_call_fence(xr: i64, t: i64, args: i64, n: i64, buf: i64, lcell: i64) -> i64 {
+    nbcu_fence(xr, t, args, n, buf, lcell)
+}
+
+// FrozenNative-only registry rows (tc twin of E2024's any-profile lookup):
+// argc/argv (seed ids 10, 11) and every part-owned kind, derived from the parts'
+// own name match so a part row needs no second tc list. 1 = registered.
+pub fn tcp_native_only_span(buf: i64, len: i64) -> i64 {
+    // "__mind_argc"
+    if tc_shoc_span_eq(buf, len, 7016437169844477791, 6514546, 0, 0, 11, 0, 0) == 1 {
+        return 1;
+    }
+    // "__mind_argv"
+    if tc_shoc_span_eq(buf, len, 7016437169844477791, 7759730, 0, 0, 11, 0, 0) == 1 {
+        return 1;
+    }
+    if nbp_intrinsic_id(buf, 0, len) > 0 {
+        return 1;
+    }
+    // The kind 87 / 88 maps also read the call's arity, and the sys family
+    // (90-93) has its own map. E2024 registration is by name only.
+    if nbg_bank_name(buf, 0, len) + nbg_acc_name(buf, 0, len) > 0 {
+        return 1;
+    }
+    if nbp_sys_intrinsic_id(buf, 0, len) > 0 {
+        return 1;
+    }
+    0
+}
+
+// Packed-word ABI of the same set; exact because every native-only name is <= 32 bytes.
+pub fn tcp_native_only(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    if len > 32 {
+        return 0;
+    }
+    let buf: i64 = __mind_alloc(32);
+    __mind_store_i64(buf, w0);
+    __mind_store_i64(buf + 8, w1);
+    __mind_store_i64(buf + 16, w2);
+    __mind_store_i64(buf + 24, w3);
+    tcp_native_only_span(buf, len)
+}

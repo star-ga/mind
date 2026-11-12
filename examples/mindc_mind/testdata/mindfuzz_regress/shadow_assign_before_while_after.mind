@@ -1,0 +1,14 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// A while after the shadow mutates the shadow; the merge keeps the pre-shadow write.
+fn main() -> i64 {
+    let mut a: i64 = 1;
+    let mut x: i64 = 0;
+    if a >= 1 {
+        x = 5;
+        let mut x: i64 = 7;
+        while x < 9 {
+            x = x + 1;
+        }
+    }
+    return x;
+}

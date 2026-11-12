@@ -1,0 +1,12 @@
+// Regression class (twin-emitter review round 3, runtime leg): native ELF carried var assigned from a bare ident after a body-local let (post slot must be its own).
+fn main() -> i64 {
+    let mut w: i64 = 2;
+    let mut c: i64 = 0;
+    while c < 7 {
+        let mut v: i64 = 2;
+        v = v;
+        w = c;
+        c = c + 1;
+    }
+    return w;
+}

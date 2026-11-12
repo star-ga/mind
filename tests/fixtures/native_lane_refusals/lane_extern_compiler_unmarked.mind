@@ -1,0 +1,3 @@
+// lane.extern.compiler_unmarked: an extern block under a compiler without nbextc01.
+extern "C" { fn getuid() -> i32; }
+fn main() -> i64 { return 0; }

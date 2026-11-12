@@ -1,0 +1,33 @@
+// LICM slice 1 keeps the narrow code of a hoisted name in plain arithmetic too.
+// narrow: `x` is a u8, so `x + 100` is u8 arithmetic and wraps: (200 + 100) & 255 = 44;
+// 3 trips * 44 = 132.
+// wide: `w` is an i64, so `w + b` joins a wide left with a u8 right and stays wide:
+// 100 + 200 = 300, one trip.
+// (132 + 300) % 251 = 432 - 251 = 181.
+fn narrow(a: u8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: u8 = a + 0;
+        let y: i64 = x + 100;
+        s = s + y;
+        i = i + 1;
+    }
+    s
+}
+
+fn wide(p: i64, b: u8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let w: i64 = p + 0;
+        let z: i64 = w + b;
+        s = s + z;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    (narrow(200, 3) + wide(100, 200, 1)) % 251
+}

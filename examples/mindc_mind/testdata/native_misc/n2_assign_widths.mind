@@ -1,0 +1,16 @@
+// N2: an assignment to a narrow local wraps the new value at the declared width,
+// in the code and in the trace note (note leg). Independent value:
+// x: u8 = 1; x = x + 300 -> 301 & 255 = 45; two trips of x = x * 3 -> 135, 405 & 255 = 149.
+// y: i8 = 100; y = y + 100 -> 200 wraps to -56. 149 - 56 + 60 = 153.
+fn main() -> i64 {
+    let mut x: u8 = 1;
+    x = x + 300;
+    let mut y: i8 = 100;
+    y = y + 100;
+    let mut i: i64 = 0;
+    while i < 2 {
+        x = x * 3;
+        i = i + 1;
+    }
+    (x as i64) + (y as i64) + 60
+}

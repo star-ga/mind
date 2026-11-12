@@ -1,0 +1,15 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// M-A3 fixture: __mind_lfence_v1 returns 0 and needs no start guard (LFENCE is
+// baseline x86-64), so the image carries no CPUID. The counter's name in a
+// string literal and in this comment (__mind_rdtscp_v1) is not a call and must
+// not add the RDTSCP guard either.
+fn main() -> i64 {
+    let s: String = "__mind_rdtscp_v1";
+    // __mind_rdtscp_v1() in this comment is not a call either.
+    let a: i64 = __mind_lfence_v1();
+    let b: i64 = __mind_lfence_v1();
+    a + b
+}

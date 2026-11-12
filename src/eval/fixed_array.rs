@@ -2,27 +2,28 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Typed construction for fixed arrays whose elements are computed at runtime.
+//! Typed construction for float bindings: fixed arrays whose elements are
+//! computed at runtime, and a scalar binding declared `f32` of an `f64` value.
 
-use crate::ast::{Literal, Node, TypeAnn};
-use crate::ir::{IRModule, Instr, ValueId};
+use crate::ast::{Node, TypeAnn};
+use crate::ir::{BinOp, IRModule, Instr, ValueId};
 use crate::types::{DType, ShapeDim};
 
 fn const_i64(node: &Node) -> Option<i64> {
-    match node {
-        Node::Lit(Literal::Int(value), _) => Some(*value),
-        Node::Neg { operand, .. } => const_i64(operand).map(i64::wrapping_neg),
-        _ => None,
-    }
+    crate::opt::fold::const_int(node)
 }
 
 fn const_f64(node: &Node) -> Option<f64> {
-    match node {
-        Node::Lit(Literal::Float(value), _) => Some(*value),
-        Node::Lit(Literal::Int(value), _) => Some(*value as f64),
-        Node::Neg { operand, .. } => const_f64(operand).map(|value| -value),
-        _ => None,
-    }
+    crate::opt::fold::const_float(node)
+}
+
+/// The `ConstArray` values of a named constant array literal; `None` when the
+/// initializer is not an array literal or an element is not a constant.
+pub(super) fn const_array_values(value: &Node) -> Option<Vec<i64>> {
+    let Node::ArrayLit { elements, .. } = value else {
+        return None;
+    };
+    elements.iter().map(const_i64).collect()
 }
 
 fn lower_dense(
@@ -173,4 +174,54 @@ pub(crate) fn lower_binding(
         return runtime;
     }
     lower_node(value, ir, context)
+}
+
+/// A binding declared `f32` (a `let`, an assignment) takes an `f64` value
+/// through `__mind_conv_f32` (`arith.truncf`, IEEE round to nearest even),
+/// the conversion `x as f32` emits: the declared width governs the binding, as
+/// `let a: i8 = 300` wraps. Only a value proven `f64` (`is_f64`) converts. Any
+/// other value, and any other declared type, returns `val` unchanged
+/// (byte-identical); an unproven `f64` value stays a loud `mlir-opt` refusal.
+pub(super) fn f32_literal(ir: &mut IRModule, ty: &TypeAnn, val: ValueId) -> ValueId {
+    if super::scalar_float_cast_width(ty) != Some(32) || !is_f64(ir, val) {
+        return val;
+    }
+    let conv = ir.fresh();
+    let name = "__mind_conv_f32".to_string();
+    ir.instrs.push(Instr::legacy_call(conv, name, vec![val]));
+    conv
+}
+
+/// True when `id` is proven `f64`: an `f64` constant, a `__mind_conv_f64` call,
+/// a call of a fn declared `-> f64`, a parameter declared `f64`, or `+ - * / %`
+/// with an `f64` operand (both operands of a float op have one type).
+fn is_f64(ir: &IRModule, id: ValueId) -> bool {
+    let def = ir
+        .instrs
+        .iter()
+        .rev()
+        .find(|i| crate::ir::instruction_dst(i) == Some(id));
+    let declared_f64 =
+        |ty: Option<&TypeAnn>| ty.and_then(super::scalar_float_cast_width) == Some(64);
+    match def {
+        Some(Instr::ConstF64(..)) => true,
+        Some(Instr::Call { name, .. }) => {
+            name == "__mind_conv_f64"
+                || declared_f64(ir.fn_signatures.get(name).and_then(|(_, r)| r.as_ref()))
+        }
+        // Params are recorded by name at fn entry (`enter_narrow_scope`); a
+        // shadowing `let` replaces or removes it, so a stale id is never proven.
+        Some(Instr::Param { name, .. }) => declared_f64(
+            super::NARROW_LOCALS
+                .with(|n| n.borrow().get(name).cloned())
+                .as_ref(),
+        ),
+        Some(Instr::BinOp { op, lhs, rhs, .. }) => {
+            matches!(
+                op,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+            ) && (is_f64(ir, *lhs) || is_f64(ir, *rhs))
+        }
+        _ => false,
+    }
 }

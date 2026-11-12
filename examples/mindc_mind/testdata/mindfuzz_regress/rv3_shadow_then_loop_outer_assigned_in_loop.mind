@@ -1,0 +1,14 @@
+// Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop (+ block-local shadow).
+fn main() -> i64 {
+    let mut x: i64 = 1;
+    let mut y: i64 = 0;
+    let mut c: i64 = 2;
+    if c > 1 {
+        let mut x: i64 = 2;
+        while x < 5 {
+            x = (x + 1);
+            y = (y + x);
+        }
+    }
+    return (x + y);
+}

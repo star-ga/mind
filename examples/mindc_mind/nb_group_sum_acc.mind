@@ -1,0 +1,217 @@
+// Copyright 2026 STARGA Inc.
+// Kind 88: __mind_group_acc32_i64(out, bank, off, pos, neg, init) -> 0, and the
+// emit entry for kinds 87 / 88.
+// 32 i64 accumulators: acc[i] = (init == 1) ? out[i] : 0; for j < pos, acc[i] +=
+// *(bank + off[j] + i*8); for j < neg, acc[i] -= *(bank + off[pos + j] + i*8);
+// then out[i] = acc[i]. off is an array of i64 byte offsets; nothing needs
+// alignment; a count <= 0 runs no step (wrapping arithmetic throughout).
+// Paths: the accumulators live in ymm0..7 when the AVX2 probe passes, else in a
+// 256-byte stack scratch. Both read out once before any bank / off read and write
+// out once after the last, so the stored bytes are the same on every CPU even
+// when out overlaps bank or off.
+// Registers: r12 out, rbx bank, rdx off (then off + pos*8), r9 pos, r14 neg,
+// r11 init, rsi j, rcx i, r8 the AVX2 flag.
+
+import std.string;
+import nb_group_sum_enc;
+import nb_group_sum_bank;
+
+// 1 iff [lo, hi) is "__mind_group_acc32_i64" (22 bytes), else 0. Name only.
+pub fn nbg_acc_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 22 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 7448782734072045407 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 8) != 7161674894985752434 {
+        return 0;
+    }
+    if (__mind_load_i64(buf + lo + 16) & 281474976710655) != 57408300724787 {
+        return 0;
+    }
+    1
+}
+
+// "__mind_group_acc32_i64" with exactly six arguments -> 88, else -1.
+pub fn nbg_acc_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if nbg_acc_name(buf, lo, hi) == 0 {
+        return 0 - 1;
+    }
+    if nbg_arity(buf, hi) != 6 {
+        return 0 - 1;
+    }
+    88
+}
+
+// Callee span [lo, hi) -> 87 / 88, or -1 when neither name (or the wrong arity).
+pub fn nbg_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if nbg_bank_id(buf, lo, hi) > 0 {
+        return 87;
+    }
+    if nbg_acc_id(buf, lo, hi) > 0 {
+        return 88;
+    }
+    0 - 1
+}
+
+// 1 iff this part emits `kind` at `args_len` arguments (nbp_kind_ok).
+pub fn nbg_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 87 {
+        if args_len == 5 {
+            return 1;
+        }
+    }
+    if kind == 88 {
+        if args_len == 6 {
+            return 1;
+        }
+    }
+    0
+}
+
+// One ymm op against [rax + 32*i]: mode 0 `op` (D4 / FB) into ymm i, mode 1
+// vmovdqu load, mode 2 vmovdqu store.
+pub fn nbg_chunk(code: String, op: i64, mode: i64, i: i64) -> String {
+    if mode == 2 {
+        return nbg_mem(code, 2, 0, 127, i, i * 32);
+    }
+    if mode == 1 {
+        return nbg_mem(code, 2, 0, 111, i, i * 32);
+    }
+    nbg_mem(code, 1, i, op, i, i * 32)
+}
+
+// nbg_chunk for i = 0..7.
+pub fn nbg_chunks(code: String, op: i64, mode: i64) -> String {
+    let mut c: String = code;
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_chunk(c, op, mode, i);
+        i = i + 1;
+    }
+    c
+}
+
+// rax = bank + off[j]: mov rax, [rdx + rsi*8] ; add rax, rbx
+pub fn nbg_tap_addr(code: String) -> String {
+    nbg_rr(nbg_b4(code, 72, 139, 4, 242), 1, 0, 3)
+}
+
+// for j in 0..cnt (rsi): ymm i op= [bank + off[j] + 32*i].
+pub fn nbg_vec_taps(code: String, cnt: i64, op: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let c1: String = nbg_b3(code, 72, 49, 246);
+    let head: i64 = string_len(c1);
+    let c2: String = nbg_jcc(nbg_rr(c1, 57, 6, cnt), 141, done);
+    let c3: String = nbg_jmp(nbg_add_rsi(nbg_chunks(nbg_tap_addr(c2), op, 0), 1), back);
+    nbg_here(nbg_link(c3, back, head), done)
+}
+
+// xor ecx, ecx ; head: cmp rcx, 32 ; jge done  (the caller emits the body, then
+// nbg_i_tail with the same cells).
+pub fn nbg_i_head(code: String, done: i64) -> String {
+    nbg_jcc(nbg_b4(nbg_b2(code, 49, 201), 72, 131, 249, 32), 141, done)
+}
+
+// add rcx, 1 ; jmp head ; done:
+pub fn nbg_i_tail(code: String, head: i64, done: i64) -> String {
+    let back: i64 = nbg_cell();
+    let c1: String = nbg_jmp(nbg_b4(code, 72, 131, 193, 1), back);
+    nbg_here(nbg_link(c1, back, head), done)
+}
+
+// for j in 0..cnt: for i in 0..32: [rsp + i*8] (+|-)= [bank + off[j] + i*8].
+pub fn nbg_stack_taps(code: String, cnt: i64, sub: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let idone: i64 = nbg_cell();
+    let c1: String = nbg_b3(code, 72, 49, 246);
+    let head: i64 = string_len(c1);
+    let c2: String = nbg_tap_addr(nbg_jcc(nbg_rr(c1, 57, 6, cnt), 141, done));
+    let ihead: i64 = string_len(c2) + 2;
+    let c3: String = nbg_b4(nbg_i_head(c2, idone), 76, 139, 20, 200);
+    let opc: i64 = if sub == 1 {
+        41
+    } else {
+        1
+    };
+    let c4: String = nbg_b4(c3, 76, opc, 20, 204);
+    let c5: String = nbg_jmp(nbg_add_rsi(nbg_i_tail(c4, ihead, idone), 1), back);
+    nbg_here(nbg_link(c5, back, head), done)
+}
+
+// No AVX2: sub rsp, 256 ; scratch = init ? out : 0 ; taps ; out = scratch ;
+// add rsp, 256.
+pub fn nbg_acc_scalar(code: String) -> String {
+    let d1: i64 = nbg_cell();
+    let d2: i64 = nbg_cell();
+    let zero: i64 = nbg_cell();
+    let put: i64 = nbg_cell();
+    let c0: String = nbg_u32(nbg_b3(code, 72, 129, 236), 256);
+    let h1: i64 = string_len(c0) + 2;
+    let mut c: String = nbg_jcc(nbg_b4(nbg_i_head(c0, d1), 73, 131, 251, 1), 133, zero);
+    c = nbg_jmp(nbg_b4(c, 77, 139, 20, 204), put);
+    c = nbg_b3(nbg_here(c, zero), 69, 49, 210);
+    c = nbg_i_tail(nbg_b4(nbg_here(c, put), 76, 137, 20, 204), h1, d1);
+    c = nbg_stack_taps(c, 9, 0);
+    c = nbg_stack_taps(nbg_b4(c, 74, 141, 20, 202), 14, 1);
+    let h2: i64 = string_len(c) + 2;
+    c = nbg_b4(nbg_b4(nbg_i_head(c, d2), 76, 139, 20, 204), 77, 137, 20, 204);
+    nbg_u32(nbg_b3(nbg_i_tail(c, h2, d2), 72, 129, 196), 256)
+}
+
+pub fn nbg_emit_acc(code: String, s_out: i64, s_bank: i64, s_off: i64, s_pos: i64, s_neg: i64, s_init: i64, id: i64) -> String {
+    let scalar: i64 = nbg_cell();
+    let load: i64 = nbg_cell();
+    let after: i64 = nbg_cell();
+    let epi: i64 = nbg_cell();
+    let mut c: String = nbg_slot(nbg_slot(nbg_prologue(code), s_out, 12), s_bank, 15);
+    c = nbg_slot(nbg_slot(nbg_slot(c, s_pos, 9), s_neg, 14), s_init, 11);
+    // rdx is loaded after the probe: cpuid writes edx.
+    c = nbg_slot(nbg_rr(nbg_cpuid_r8(c), 137, 3, 15), s_off, 2);
+    c = nbg_jcc(nbg_b4(c, 73, 131, 248, 1), 133, scalar);
+    c = nbg_jcc(nbg_b4(c, 73, 131, 251, 1), 132, load);
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_rrr(c, 239, i, i, i);
+        i = i + 1;
+    }
+    c = nbg_jmp(c, after);
+    c = nbg_chunks(nbg_rr(nbg_here(c, load), 137, 0, 12), 0, 1);
+    c = nbg_vec_taps(nbg_here(c, after), 9, 212);
+    c = nbg_vec_taps(nbg_b4(c, 74, 141, 20, 202), 14, 251);
+    c = nbg_jmp(nbg_chunks(nbg_rr(c, 137, 0, 12), 0, 2), epi);
+    c = nbg_acc_scalar(nbg_here(c, scalar));
+    nbg_epi(nbg_here(c, epi), id)
+}
+
+// Kinds 87 / 88. ids == 0 (no operand slots) or an emission ctx emits nothing,
+// which the caller's 0-byte fence refuses; slot ids are read only inside the arm.
+pub fn nbg_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if ids == 0 {
+        return string_new();
+    }
+    if ctx != 0 {
+        return string_new();
+    }
+    if kind == 87 {
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        let a2: i64 = __mind_load_i64(ids + 2 * 8);
+        let a3: i64 = __mind_load_i64(ids + 3 * 8);
+        let a4: i64 = __mind_load_i64(ids + 4 * 8);
+        return nbg_emit_bank(code, a0, a1, a2, a3, a4, dst_id);
+    }
+    if kind == 88 {
+        let b0: i64 = __mind_load_i64(ids + 0 * 8);
+        let b1: i64 = __mind_load_i64(ids + 1 * 8);
+        let b2: i64 = __mind_load_i64(ids + 2 * 8);
+        let b3: i64 = __mind_load_i64(ids + 3 * 8);
+        let b4: i64 = __mind_load_i64(ids + 4 * 8);
+        let b5: i64 = __mind_load_i64(ids + 5 * 8);
+        return nbg_emit_acc(code, b0, b1, b2, b3, b4, b5, dst_id);
+    }
+    string_new()
+}

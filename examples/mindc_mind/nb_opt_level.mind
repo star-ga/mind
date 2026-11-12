@@ -1,0 +1,71 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Native optimisation level of one compile (M-A4 slice 0: the level and its
+// plumbing; LICM and linear-scan are later slices and still change nothing).
+//
+// The level is DECLARED IN THE SOURCE, so it is inside the attested bytes and
+// the compiler never reads an environment variable: line 1 of the user region
+// reading exactly
+//     // mind: native_opt = full
+// (then a newline, a carriage return or the end of the source) selects Full
+// (= Basic + LICM + LSRA); no such line, or any other spelling, is Off.
+// The attribute form `#[native_opt(full)]` on the entry fn is not used: the
+// native front door refuses every attributed fn (lane.source.function_contract)
+// and this compiler poisons an unknown attribute, while the comment leaves the
+// Rust leg's --emit-ir / --emit-mic3 / --emit-evidence bytes unchanged.
+//
+// The level travels as bit 3 (nbo_flag_full) of the per-compile flags word the
+// lowering already threads to every function as `uses_argv` (bit 0 argv capture,
+// bit 1 ymm guard, bit 2 rdtscp guard); each pass tests `(flags & 8) != 0` in
+// its function lowering. It is probed ONCE per compile, logs nothing and emits
+// nothing, so a source without the line compiles to the same bytes as before.
+
+// Bit 3 of the per-compile flags word: OptLevel::Full.
+pub fn nbo_flag_full() -> i64 {
+    8
+}
+
+// 1 iff [lo, hi) starts with the 26-byte directive line: three little-endian
+// words "// mind:", " native_", "opt = fu", then "ll" and the line end. Loads
+// only through intrinsics (a part calls nothing in main.mind); like load_byte,
+// the last 8-byte load may read up to 6 bytes past hi.
+pub fn nbo_directive_full(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 26 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 4207609350952333103 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 8) != 6874030601547116064 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 16) != 8459484396971651183 {
+        return 0;
+    }
+    let tail: i64 = __mind_load_i64(buf + lo + 24);
+    if (tail & 65535) != 27756 {
+        return 0;
+    }
+    if hi - lo == 26 {
+        return 1;
+    }
+    let t: i64 = (tail >> 16) & 255;
+    if t == 10 {
+        return 1;
+    }
+    if t == 13 {
+        return 1;
+    }
+    0
+}
+
+// The flags-word contribution of the declaration for the user region
+// [user_lo, src_len): nbo_flag_full() when declared, else 0.
+pub fn nbo_opt_flags(buf: i64, user_lo: i64, src_len: i64) -> i64 {
+    if nbo_directive_full(buf, user_lo, src_len) == 1 {
+        return nbo_flag_full();
+    }
+    0
+}

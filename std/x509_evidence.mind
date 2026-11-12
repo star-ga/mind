@@ -1,0 +1,39 @@
+// std/x509_evidence.mind — std.evidence record of the std.x509_path chain verdict.
+// Author: STARGA Inc.
+//
+// x509_verify_server_chain_budget_ev runs the unchanged
+// x509_verify_server_chain_budget with every argument passed through as is
+// (a budget cell pointer <= 0 is refused -1 by that function, exactly as a
+// direct call), and, when the caller passes a sink (std.evidence evd_new),
+// appends one record of the verdict. sink 0 returns at once and records
+// nothing. This is an opt-in variant: no existing std or compiler path calls
+// it. A program pays for std.x509_path and std.evidence only.
+//
+// The program writes the record about itself; it is NOT authenticated (see
+// std/evidence.mind).
+//
+// Record: [ evd_mod_x509 | refuse or accept | -code (0 on accept) | certificates in the chain | 0 (unused) ]
+// The code is the x509_verify_server_chain_budget result (-1 refused input,
+// -7 unknown anchor, -13 search budget, ...: see std/x509_path.mind). The
+// certificate bytes, the host name and the time input are not recorded.
+
+import std.evidence;
+import std.x509_path;
+
+#[protection]
+pub fn x509_verify_server_chain_budget_ev(chain: i64, anchors: i64, expected_dns: i64, at_unix: i64, budget: i64, sink: i64) -> i64 {
+    let rc: i64 = x509_verify_server_chain_budget(chain, anchors, expected_dns, at_unix, budget);
+    if sink == 0 {
+        return rc;
+    }
+    let mut kind: i64 = evd_kind_accept();
+    if rc != 0 {
+        kind = evd_kind_refuse();
+    }
+    let mut certs: i64 = 0;
+    if chain > 0 {
+        certs = __mind_load_i64(chain + 0);
+    }
+    let _ = evidence_record(sink, evd_mod_x509(), kind, 0 - rc, certs, 0);
+    rc
+}

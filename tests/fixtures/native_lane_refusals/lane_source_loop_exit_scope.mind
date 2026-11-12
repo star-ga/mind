@@ -1,0 +1,2 @@
+// lane.source.loop_exit_scope: break outside a loop.
+fn main() -> i64 { break; return 0; }

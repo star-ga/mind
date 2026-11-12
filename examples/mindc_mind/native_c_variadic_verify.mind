@@ -1,0 +1,45 @@
+// Copyright 2026 STARGA Inc.
+// Frozen expected words and masks, followed by an independently captured call.
+// No compiler planner or emitter is linked into this diagnostic verifier.
+pub fn vv_read(a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_read(0, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        if got > n - done { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn vv_write(fd: i64, a: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let got: i64 = __mind_write(fd, a + done, n - done, 0 - 1);
+        if got <= 0 { return 0; }
+        if got > n - done { return 0; }
+        done = done + got;
+    }
+    1
+}
+pub fn main() -> i64 {
+    let a: i64 = __mind_alloc(25104);
+    let out: i64 = __mind_alloc(8);
+    if a == 0 { return 70; }
+    if out == 0 { return 70; }
+    if vv_read(a, 25104) == 0 { return 71; }
+    if __mind_read(0, out, 1, 0 - 1) != 0 { return 72; }
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1046 {
+        let mask: i64 = __mind_load_i64(a + 8368 + i * 8);
+        let observed: i64 = __mind_load_i64(a + 16736 + i * 8) & mask;
+        if observed != __mind_load_i64(a + i * 8) { bad = 1; }
+        __mind_store_i64(a + 16736 + i * 8, observed);
+        i = i + 1;
+    }
+    if vv_write(3, a + 16736, 8368) == 0 { return 73; }
+    __mind_store_i8(out, 49 - bad);
+    __mind_store_i8(out + 1, 10);
+    if vv_write(1, out, 2) == 0 { return 73; }
+    bad
+}

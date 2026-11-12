@@ -1,0 +1,162 @@
+// Copyright 2026 STARGA Inc.
+// Bare-builtin name membership for the E2012 fn-value check: the two-word packed-name
+// equality and the resolve.rs BARE_BUILTINS table, moved verbatim from main.mind.
+// A part calls std.* and other parts only.
+
+// Two-word packed-name equality: 1 iff (w0, w1, len) == (e0, e1, elen).
+pub fn tc_fvc_eq2(w0: i64, w1: i64, len: i64, e0: i64, e1: i64, elen: i64) -> i64 {
+    if len != elen {
+        return 0;
+    }
+    if w0 != e0 {
+        return 0;
+    }
+    if w1 != e1 {
+        return 0;
+    }
+    1
+}
+
+// Membership in resolve.rs BARE_BUILTINS (all 34 entries; longest is
+// "random_normal", 13 bytes, so two packed words are a bijection). Constants
+// are regenerated from the Rust table by the smoke on every run — a table
+// drift fails loud there rather than silently here.
+pub fn tc_fvc_is_bare_builtin(w0: i64, w1: i64, len: i64) -> i64 {
+    // "abs"
+    if tc_fvc_eq2(w0, w1, len, 7561825, 0, 3) == 1 {
+        return 1;
+    }
+    // "argmax"
+    if tc_fvc_eq2(w0, w1, len, 132359842656865, 0, 6) == 1 {
+        return 1;
+    }
+    // "backward"
+    if tc_fvc_eq2(w0, w1, len, 7237954716668485986, 0, 8) == 1 {
+        return 1;
+    }
+    // "conv2d"
+    if tc_fvc_eq2(w0, w1, len, 110167898091363, 0, 6) == 1 {
+        return 1;
+    }
+    // "cos"
+    if tc_fvc_eq2(w0, w1, len, 7565155, 0, 3) == 1 {
+        return 1;
+    }
+    // "exp"
+    if tc_fvc_eq2(w0, w1, len, 7370853, 0, 3) == 1 {
+        return 1;
+    }
+    // "fft"
+    if tc_fvc_eq2(w0, w1, len, 7628390, 0, 3) == 1 {
+        return 1;
+    }
+    // "fft2d"
+    if tc_fvc_eq2(w0, w1, len, 430343218790, 0, 5) == 1 {
+        return 1;
+    }
+    // "floor"
+    if tc_fvc_eq2(w0, w1, len, 491495844966, 0, 5) == 1 {
+        return 1;
+    }
+    // "full"
+    if tc_fvc_eq2(w0, w1, len, 1819047270, 0, 4) == 1 {
+        return 1;
+    }
+    // "gather"
+    if tc_fvc_eq2(w0, w1, len, 125779869720935, 0, 6) == 1 {
+        return 1;
+    }
+    // "ifft"
+    if tc_fvc_eq2(w0, w1, len, 1952867945, 0, 4) == 1 {
+        return 1;
+    }
+    // "linspace"
+    if tc_fvc_eq2(w0, w1, len, 7305790156125923692, 0, 8) == 1 {
+        return 1;
+    }
+    // "log"
+    if tc_fvc_eq2(w0, w1, len, 6778732, 0, 3) == 1 {
+        return 1;
+    }
+    // "log10"
+    if tc_fvc_eq2(w0, w1, len, 206987292524, 0, 5) == 1 {
+        return 1;
+    }
+    // "log2"
+    if tc_fvc_eq2(w0, w1, len, 845639532, 0, 4) == 1 {
+        return 1;
+    }
+    // "log_softmax"
+    if tc_fvc_eq2(w0, w1, len, 8387513897336663916, 7889261, 11) == 1 {
+        return 1;
+    }
+    // "matmul"
+    if tc_fvc_eq2(w0, w1, len, 119251603317101, 0, 6) == 1 {
+        return 1;
+    }
+    // "max"
+    if tc_fvc_eq2(w0, w1, len, 7889261, 0, 3) == 1 {
+        return 1;
+    }
+    // "maxpool2d"
+    if tc_fvc_eq2(w0, w1, len, 3633401523800138093, 100, 9) == 1 {
+        return 1;
+    }
+    // "mean"
+    if tc_fvc_eq2(w0, w1, len, 1851876717, 0, 4) == 1 {
+        return 1;
+    }
+    // "ones"
+    if tc_fvc_eq2(w0, w1, len, 1936027247, 0, 4) == 1 {
+        return 1;
+    }
+    // "pow"
+    if tc_fvc_eq2(w0, w1, len, 7827312, 0, 3) == 1 {
+        return 1;
+    }
+    // "rand_normal"
+    if tc_fvc_eq2(w0, w1, len, 8245930798724571506, 7102829, 11) == 1 {
+        return 1;
+    }
+    // "rand_uniform"
+    if tc_fvc_eq2(w0, w1, len, 7597138673987903858, 1836216166, 12) == 1 {
+        return 1;
+    }
+    // "random"
+    if tc_fvc_eq2(w0, w1, len, 120325193752946, 0, 6) == 1 {
+        return 1;
+    }
+    // "random_normal"
+    if tc_fvc_eq2(w0, w1, len, 7953195792153338226, 465491030639, 13) == 1 {
+        return 1;
+    }
+    // "relu"
+    if tc_fvc_eq2(w0, w1, len, 1970038130, 0, 4) == 1 {
+        return 1;
+    }
+    // "reshape"
+    if tc_fvc_eq2(w0, w1, len, 28552536314307954, 0, 7) == 1 {
+        return 1;
+    }
+    // "round"
+    if tc_fvc_eq2(w0, w1, len, 431349919602, 0, 5) == 1 {
+        return 1;
+    }
+    // "sigmoid"
+    if tc_fvc_eq2(w0, w1, len, 28263424968845683, 0, 7) == 1 {
+        return 1;
+    }
+    // "sin"
+    if tc_fvc_eq2(w0, w1, len, 7235955, 0, 3) == 1 {
+        return 1;
+    }
+    // "sqrt"
+    if tc_fvc_eq2(w0, w1, len, 1953657203, 0, 4) == 1 {
+        return 1;
+    }
+    // "sum"
+    if tc_fvc_eq2(w0, w1, len, 7173491, 0, 3) == 1 {
+        return 1;
+    }
+    0
+}

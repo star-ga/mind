@@ -58,6 +58,9 @@ impl BuildInputSnapshot {
         let backend = target
             .map(|config| config.backend.clone())
             .unwrap_or_else(|| target_name.to_string());
+        // Before the cache lookup, so a cached MLIR artifact is never served for a
+        // manifest the MLIR route cannot honor.
+        super::toolchain_pin::admit_mlir_route(manifest.build.backend, target_name, &backend)?;
         let target_triple = target.and_then(|config| config.target.clone());
         let sources = target.and_then(|config| config.sources.clone());
         let native_paths = if emit == EmitKind::Cdylib {

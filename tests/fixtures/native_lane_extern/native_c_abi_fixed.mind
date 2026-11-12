@@ -1,0 +1,33 @@
+// native_c_abi_fixed.mind — the fixed-arity extern corpus of lane L2a.
+//
+// Every declaration here is one row of `nbx_row` (examples/mindc_mind/main.mind).
+// A name outside the table, a width the row does not carry, varargs, or a
+// callconv other than C/SysV refuses at admission BY NAME. The dynamic-ELF
+// determinism gate builds this file twice in two directories and requires
+// byte-identical images under `--compiler`.
+extern "C" {
+    fn close(fd: i32) -> i32;
+    fn fstat(fd: i32, buf: *mut u8) -> i32;
+    fn getuid() -> i32;
+    fn __errno_location() -> *mut i32;
+}
+
+fn main() -> i64 {
+    // close(-1) -> -1 sign-extended; errno is EBADF (9) through the TLS slot.
+    let fd: i64 = 0 - 1;
+    let r: i64 = close(fd as i32) as i64;
+    let e: i64 = __mind_load_i32(__errno_location() as i64);
+    if r != 0 - 1 { return 10; }
+    if e != 9 { return 11; }
+    // fstat(0) on stdin: a character device, and st_uid is our uid.
+    let p: i64 = __mind_alloc(144);
+    let fr: i64 = fstat(0 as i32, p as *mut u8) as i64;
+    if fr != 0 { return 20; }
+    let mode: i64 = __mind_load_i32(p + 24) & 61440;
+    if mode != 8192 { return 21; }
+    let u: i64 = getuid() as i64;
+    let st_uid: i64 = __mind_load_i64(p + 28) & 4294967295;
+    if u != st_uid { return 22; }
+    __mind_free(p);
+    return 0;
+}

@@ -56,6 +56,7 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 # stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import COMPILER_COMPONENTS  # noqa: E402
 
 # Resolved at the top of main(), not at import: `resolve_so()` refuses a stale
 # oracle by raising, which is the right thing for the gate and the wrong thing
@@ -265,11 +266,14 @@ def ast_kind_coverage(fixture_texts):
     a gate that asserts nothing must never read as a pass, so a run that
     resolves zero kinds is itself a failure.
     """
+    # The parser is main.mind plus its parts (kinds move into parts verbatim), so the
+    # kind list is read from the whole composed source, never from main.mind alone.
     main_mind = _HERE / "main.mind"
+    sources = [main_mind] + [_HERE.parents[1] / part for part in COMPILER_COMPONENTS]
     try:
-        kinds = _AST_KIND_DECL.findall(main_mind.read_text())
+        kinds = list(dict.fromkeys(k for src in sources for k in _AST_KIND_DECL.findall(src.read_text())))
     except OSError as exc:
-        return False, 0, [f"cannot read {main_mind}: {exc}"]
+        return False, 0, [f"cannot read the compiler sources: {exc}"]
 
     failures = []
     if not kinds:
@@ -290,7 +294,7 @@ def ast_kind_coverage(fixture_texts):
             )
     for k in sorted(mapped - set(kinds)):
         failures.append(
-            f"{k}: classified here but no longer declared in {main_mind.name} — the "
+            f"{k}: classified here but no longer declared in main.mind or its parts — the "
             "lint's scope has drifted from the parser it claims to cover."
         )
 

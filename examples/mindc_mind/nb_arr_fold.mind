@@ -1,0 +1,170 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Constant array elements for the mic@3 note twin (moved out of main.mind and
+// extended). An element is a constant when it is an integer constant
+// expression that folds by spec 3.2: an integer literal, `-e`, `(e)`, or
+// `e + e`, `e - e`, `e * e`, `e / e`, folded bottom-up. A division by zero or an
+// overflow does not fold, so the element stays a runtime value. This is the
+// mirror of the Rust oracle `opt::fold::const_int` (src/opt/fold.rs), arm by arm.
+//
+// AST kinds and binop tags are the main.mind tables (a part cannot call a
+// main.mind fn): int literal 1, binop 3, paren 12, neg 14; op tags add 1,
+// sub 2, mul 3, div 4 (node aux, +48).
+
+import nb_ast;
+import nb_float_lit;
+
+pub fn arr_fold_max() -> i64 {
+    9223372036854775807
+}
+pub fn arr_fold_min() -> i64 {
+    0 - 9223372036854775807 - 1
+}
+
+// 1 when `a op b` folds to an i64 (Rust checked_add/sub/mul/div), else 0.
+pub fn arr_fold_binop_ok(op: i64, a: i64, b: i64) -> i64 {
+    if op == 1 {
+        if b > 0 {
+            if a > arr_fold_max() - b {
+                return 0;
+            }
+        }
+        if b < 0 {
+            if a < arr_fold_min() - b {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    if op == 2 {
+        if b < 0 {
+            if a > arr_fold_max() + b {
+                return 0;
+            }
+        }
+        if b > 0 {
+            if a < arr_fold_min() + b {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    if op == 3 {
+        if a == 0 {
+            return 1;
+        }
+        if b == 0 {
+            return 1;
+        }
+        if a == 0 - 1 {
+            if b == arr_fold_min() {
+                return 0;
+            }
+            return 1;
+        }
+        if b == 0 - 1 {
+            if a == arr_fold_min() {
+                return 0;
+            }
+            return 1;
+        }
+        let r: i64 = a * b;
+        if r / b != a {
+            return 0;
+        }
+        return 1;
+    }
+    if op == 4 {
+        if b == 0 {
+            return 0;
+        }
+        if a == arr_fold_min() {
+            if b == 0 - 1 {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    0
+}
+
+// True iff `elem` is an integer constant expression that folds (see above) —
+// the only element shape OP_CONST_ARRAY can bake into the instruction.
+pub fn arr_elem_is_int(src: i64, elem: i64) -> i64 {
+    let k: i64 = ast_kind(elem);
+    if k == 1 {
+        return 1;
+    }
+    if k == 12 {
+        return arr_elem_is_int(src, ast_child0(elem));
+    }
+    if k == 14 {
+        if arr_elem_is_int(src, ast_child0(elem)) == 0 {
+            return 0;
+        }
+        if arr_elem_int(src, ast_child0(elem)) == arr_fold_min() {
+            return 0;
+        }
+        return 1;
+    }
+    if k == 3 {
+        if arr_elem_is_int(src, ast_child0(elem)) == 0 {
+            return 0;
+        }
+        if arr_elem_is_int(src, ast_child1(elem)) == 0 {
+            return 0;
+        }
+        let a: i64 = arr_elem_int(src, ast_child0(elem));
+        let b: i64 = arr_elem_int(src, ast_child1(elem));
+        return arr_fold_binop_ok(ast_aux(elem), a, b);
+    }
+    0
+}
+
+// True iff EVERY element of the array literal is a constant int. A non-const
+// element fails closed (the array-lit descriptor is not built, the module
+// refuses) — never a wrong-value CONST_ARRAY.
+pub fn arrlit_all_int(src: i64, elems_addr: i64, count: i64, j: i64) -> i64 {
+    if j >= count {
+        return 1;
+    }
+    let elem: i64 = __mind_load_i64(elems_addr + j * 8);
+    if arr_elem_is_int(src, elem) == 0 {
+        return 0;
+    }
+    arrlit_all_int(src, elems_addr, count, j + 1)
+}
+
+// Read the folded i64 value of a constant array element (call it only when
+// arr_elem_is_int is 1). The synthetic int-lit sentinel (child1==1) carries its
+// value directly in child0.
+pub fn arr_elem_int(src: i64, elem: i64) -> i64 {
+    let k: i64 = ast_kind(elem);
+    if k == 12 {
+        return arr_elem_int(src, ast_child0(elem));
+    }
+    if k == 14 {
+        return 0 - arr_elem_int(src, ast_child0(elem));
+    }
+    if k == 3 {
+        let a: i64 = arr_elem_int(src, ast_child0(elem));
+        let b: i64 = arr_elem_int(src, ast_child1(elem));
+        let op: i64 = ast_aux(elem);
+        if op == 1 {
+            return a + b;
+        }
+        if op == 2 {
+            return a - b;
+        }
+        if op == 3 {
+            return a * b;
+        }
+        return a / b;
+    }
+    if ast_child1(elem) == 1 {
+        return ast_child0(elem);
+    }
+    parse_int_span(src, ast_span_lo(elem), ast_span_hi(elem), 0)
+}

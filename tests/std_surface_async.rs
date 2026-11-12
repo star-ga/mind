@@ -108,11 +108,11 @@ fn async_mind_internal_helpers_lower() {
 
     for want in [
         "sched_alloc",
-        "trace_append",
+        "sched_trace_append",
         "snd_alloc",
         "snd_chain_append",
-        "fnv_offset",
-        "fnv_prime",
+        "async_fnv_offset",
+        "async_fnv_prime",
     ] {
         assert!(
             has_fndef(&ir, want),
@@ -132,10 +132,10 @@ fn run_calls_snd_thunk_and_trace_append() {
         count_calls_recursive(&ir.instrs, "snd_thunk") > 0,
         "run must call snd_thunk"
     );
-    // run() calls trace_append for event recording.
+    // run() calls sched_trace_append for event recording.
     assert!(
-        count_calls_recursive(&ir.instrs, "trace_append") > 0,
-        "run must call trace_append"
+        count_calls_recursive(&ir.instrs, "sched_trace_append") > 0,
+        "run must call sched_trace_append"
     );
 }
 
@@ -146,12 +146,12 @@ fn trace_hash_uses_fnv_helpers() {
     let ir = lower_async_mind();
 
     assert!(
-        count_calls_recursive(&ir.instrs, "fnv_offset") > 0,
-        "trace_hash must call fnv_offset"
+        count_calls_recursive(&ir.instrs, "async_fnv_offset") > 0,
+        "trace_hash must call async_fnv_offset"
     );
     assert!(
-        count_calls_recursive(&ir.instrs, "fnv_prime") > 0,
-        "trace_hash must call fnv_prime"
+        count_calls_recursive(&ir.instrs, "async_fnv_prime") > 0,
+        "trace_hash must call async_fnv_prime"
     );
 }
 

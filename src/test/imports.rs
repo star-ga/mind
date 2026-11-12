@@ -291,10 +291,7 @@ pub(super) fn prepare_eval_support(path: &Path, source: &str) -> EvalSupport {
     match discovery {
         Discovery::SingleTranslationUnit => EvalSupport::default(),
         Discovery::MissingProject(imports) => EvalSupport {
-            setup_error: Some(format!(
-                "error[type-check][E2003]: local import(s) {} require an enclosing Mind.toml project that declares the source set",
-                imports.join(", ")
-            )),
+            setup_error: Some(crate::project::single_file_scope::missing_project(&imports)),
             ..EvalSupport::default()
         },
         Discovery::Project(scope) => {

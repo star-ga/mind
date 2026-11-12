@@ -1,0 +1,34 @@
+# selfhost column: the native self-host route verdict. accept = an ELF is built. refuse:<E-code> = no ELF and exactly that
+# code on stderr. refuse:- = no ELF and no E2039/E2040 on stderr: the native route binds only its fixed libc list (user-library
+# binding is 0.10.4), so the s_* value rows and the accept_struct_ptr pointer form stop at that bind refusal after the ABI check passes.
+# No libc list entry takes or returns i8/u8/i16/u16, so a narrow C argument is unreachable on the native route in 0.10.3.
+name	kind	ret	fixture	code	selfhost
+s_i8	value	i64	abi_sysv.mind	-	refuse:-
+s_u8	value	i64	abi_sysv.mind	-	refuse:-
+s_i16	value	i64	abi_sysv.mind	-	refuse:-
+s_u16	value	i64	abi_sysv.mind	-	refuse:-
+s_i32	value	i64	abi_sysv.mind	-	refuse:-
+s_u32	value	i64	abi_sysv.mind	-	refuse:-
+s_bool	value	i64	abi_sysv.mind	-	refuse:-
+s_f32	value	f32	abi_sysv_float.mind	-	refuse:-
+s_f64	value	f64	abi_sysv_float.mind	-	refuse:-
+s_ints	value	i64	abi_sysv.mind	-	refuse:-
+s_floats	value	i64	abi_sysv.mind	-	refuse:-
+s_mixed	value	i64	abi_sysv.mind	-	refuse:-
+w_i8	value	i64	abi_win64.mind	-	refuse:E2039
+w_u8	value	i64	abi_win64.mind	-	refuse:E2039
+w_i16	value	i64	abi_win64.mind	-	refuse:E2039
+w_u16	value	i64	abi_win64.mind	-	refuse:E2039
+w_i32	value	i64	abi_win64.mind	-	refuse:E2039
+w_u32	value	i64	abi_win64.mind	-	refuse:E2039
+w_bool	value	i64	abi_win64.mind	-	refuse:E2039
+w_f32	value	f32	abi_win64_float.mind	-	refuse:E2039
+w_f64	value	f64	abi_win64_float.mind	-	refuse:E2039
+w_ints	value	i64	abi_win64.mind	-	refuse:E2039
+w_floats	value	i64	abi_win64.mind	-	refuse:E2039
+w_mixed	value	i64	abi_win64.mind	-	refuse:E2039
+refuse_aapcs	refuse	-	abi_refuse_aapcs.mind	E2039	refuse:E2039
+refuse_win64_varargs	refuse	-	abi_refuse_win64_varargs.mind	E2039	refuse:E2039
+refuse_struct_param	refuse	-	abi_refuse_struct_param.mind	E2040	refuse:E2040
+refuse_struct_return	refuse	-	abi_refuse_struct_return.mind	E2040	refuse:E2040
+accept_struct_ptr	accept	-	abi_accept_struct_ptr.mind	-	refuse:-

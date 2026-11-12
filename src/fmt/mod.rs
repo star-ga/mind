@@ -78,6 +78,29 @@ impl std::fmt::Display for FmtError {
 
 impl std::error::Error for FmtError {}
 
+/// The clauses of an `extern "C"` block head, each with a leading blank:
+/// `callconv(..)` when it is not the default, then `bind(..)` when present.
+fn extern_block_clauses(
+    callconv: crate::ast::CallConv,
+    binding: &crate::ast::ExternBinding,
+) -> String {
+    use crate::ast::{CallConv, ExternBinding};
+    let cc = match callconv {
+        CallConv::C => "",
+        CallConv::SysV => " callconv(.sysv)",
+        CallConv::Win64 => " callconv(.win64)",
+        CallConv::Aapcs => " callconv(.aapcs)",
+    };
+    match binding {
+        ExternBinding::Base => cc.to_string(),
+        ExternBinding::Address => format!("{cc} bind(.address)"),
+        ExternBinding::Library(name) => {
+            let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{cc} bind(\"{quoted}\")")
+        }
+    }
+}
+
 /// Format a MIND source string according to `cfg`, returning the canonical
 /// representation.
 ///
@@ -222,6 +245,24 @@ mod tests {
         let once = format_source(source, &cfg).expect("valid source formats");
         let twice = format_source(&once, &cfg).expect("formatted source re-formats");
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn extern_bind_clauses_round_trip() {
+        let cfg = MindcraftFormatConfig::default();
+        for source in [
+            "extern \"C\" bind(\"libz.so.1\") {\n    fn crc32(c: u64, p: *const u8, n: u32) -> u64;\n}\n",
+            "extern \"C\" callconv(.sysv) bind(.address) {\n    fn cuInit(flags: u32) -> i32;\n}\n",
+        ] {
+            let once = format_source(source, &cfg).expect("bind clause formats");
+            let clause = if source.contains("libz") {
+                "bind(\"libz.so.1\")"
+            } else {
+                "callconv(.sysv) bind(.address)"
+            };
+            assert!(once.contains(clause), "the clause must survive fmt: {once}");
+            assert_eq!(once, format_source(&once, &cfg).expect("re-formats"));
+        }
     }
 
     #[test]

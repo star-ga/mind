@@ -51,7 +51,7 @@ _REPO = _HERE.parent.parent
 _ORACLE_DIR = _HERE / "testdata" / "native_elf_oracle"
 _ORACLE_MANIFEST = _ORACLE_DIR / "MANIFEST.txt"
 
-
+from _selfhost_sources import compiler_library  # noqa: E402
 from _frozen_native_oracle import load_manifest, read_oracle  # noqa: E402
 
 _ORACLE_MANIFEST_CACHE = load_manifest(_ORACLE_MANIFEST)
@@ -395,7 +395,7 @@ def _seeded_buffer() -> tuple[bytes, int]:
     # single-buffer lex yields the same item order as Rust's per-module parse +
     # `combined.items.extend`.
     std_blob = b"\n".join(parts) + b"\n"
-    user = (_HERE / "main.mind").read_bytes()
+    user = compiler_library()  # main.mind + COMPILER_COMPONENTS, one compiler unit
     return std_blob + user, len(std_blob)
 
 

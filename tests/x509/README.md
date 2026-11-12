@@ -152,9 +152,61 @@ control `eku_server_leaf`; the test derives an `ec_leaf` whose outer
 signatureAlgorithm says SHA-384 while its tbsCertificate says SHA-256 (-1). `scripts/run_crypto_vectors.sh` builds the same module set for
 the field-level `tests/x509_vectors_driver.py`.
 
+## Offline tools and driver modes
+
+`scripts/run_crypto_vectors.sh` and `tests/x509_vectors_driver.py` carry the
+fixture tools and the manual chain modes as entry points (no extra tracked
+harness files). With `CARGO_TARGET_DIR` and `CARGO_BUILD_JOBS=2` set:
+
+```sh
+timeout 3600 nice -n 15 bash scripts/run_crypto_vectors.sh x509-build-shared /tmp/x509.so "$CARGO_TARGET_DIR/release/mindc"
+timeout 600 nice -n 15 python3 tests/x509_vectors_driver.py /tmp/x509.so
+timeout 600 nice -n 15 python3 tests/x509_vectors_driver.py chain /tmp/x509.so
+for t in b1 b2 b3 b4 b5 b6; do timeout 300 nice -n 15 python3 tests/x509_vectors_driver.py "$t" /tmp/x509.so; done
+timeout 3600 nice -n 15 bash scripts/run_crypto_vectors.sh x509-build-native "$CARGO_TARGET_DIR/release/mindc"
+```
+
+`x509-build-shared` concatenates the same import-stripped module set as
+X509_SET. The `chain` mode replays `testdata/cases_native.bin` (written by the
+`gen-manifest` mode) through that library; `b1`-`b6` are the regression cases
+that `tests/x509_chain_smoke.rs` also runs (`tests/_x509_vectors_modes.py`
+holds their bodies and the `gen-path` / `gen-malformed` generators).
+`scripts/run_crypto_vectors.sh x509-gen-fixtures` regenerates the openssl
+fixtures with temporary keys outside the repository and removes them on exit;
+the gen-path mode keeps keys only in process memory. Run the generators with a
+timeout and low scheduling priority. None of these modes is part of the CI
+gate; the Rust tests above are.
+
 ## `--backend native`
 
 The native backend compiles only the std modules of its frozen seed, and these
 modules are not seed rows, so `mindc build --backend native` refuses
 `import std.x509;` at the import. The `mindc build` (MLIR) executable is what
 the tests above run.
+
+`scripts/run_crypto_vectors.sh x509-build-native` is the native twin of the
+matrix: it concatenates the module set after `import std.sha256;` (the seed
+provides SHA-256), embeds the fixture pack as hex string literals between
+`native_head.mind` and `native_body.mind`, and builds with
+`mindc build --backend native --no-cache`; `--backend native` is mandatory,
+since selecting a CPU target alone still uses MLIR. The native build currently
+exits 3 and writes no artifact. Under native-lane-v1 the refusal is
+`lane.type.named` in `nat_unhex`; under the frozen profile it is:
+
+```text
+error[backend-native]: `main` calls `__mind_alloc`, which has no definition in the closure (closure.unresolved_edge)
+```
+
+The same refusal occurs with this minimal project entry:
+
+```mind
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, 42);
+    __mind_load_i64(p)
+}
+```
+
+This needs compiler admission work outside the X.509 modules. Native
+acceptance is **unverified** until the harness passes; a successful MLIR
+matrix is not evidence of native parity.

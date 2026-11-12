@@ -1,0 +1,81 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// M-A3 fixture: __mind_sys_perf_event_open is Linux syscall 298 with five
+// arguments. Flags bit 31 lies outside PERF_FLAG_ALL and the kernel checks the
+// flags before it copies the attr or applies any permission policy, so -EINVAL
+// (-22) pins the number and shows the fifth argument reaches r8. Then a software
+// CPU-clock counter (type 1, config 0, attr size 64, exclude_kernel|exclude_hv)
+// on this process opens, counts and closes. A host whose policy refuses the
+// counter (-EACCES from perf_event_paranoid, -EPERM from a seccomp filter) gets a
+// named stderr line instead of the count path. On an admitting host a group_fd of
+// 999 (never open here) must give -EBADF (-9): with cpu and group_fd swapped the
+// kernel sees cpu 999 and gives -EINVAL instead, so this pins arg 3 to rdx and arg
+// 4 to r10. Exit 0 on either path; 1..6 name the failed step.
+fn spin(n: i64, acc: i64) -> i64 {
+    if n <= 0 {
+        return acc;
+    }
+    spin(n - 1, acc + n)
+}
+
+fn refused() -> i64 {
+    // "perf_event_open: counter refused by host policy\n" (48 bytes)
+    let m: i64 = __mind_alloc(48);
+    __mind_store_i64(m + 0, 7311142505497650544);
+    __mind_store_i64(m + 8, 4210414235217261678);
+    __mind_store_i64(m + 16, 8243122710737019680);
+    __mind_store_i64(m + 24, 7234315324506862112);
+    __mind_store_i64(m + 32, 8391173023733473824);
+    __mind_store_i64(m + 40, 754743717003227168);
+    let w: i64 = __mind_write(2, m, 48, 0 - 1);
+    w - 48
+}
+
+fn count(fd: i64) -> i64 {
+    let s: i64 = spin(2000, 0);
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i64(buf, 0);
+    let got: i64 = __mind_read(fd, buf, 8, 0 - 1);
+    if got != 8 {
+        return 3;
+    }
+    if __mind_load_i64(buf) <= 0 {
+        return 4;
+    }
+    if __mind_sys_close(fd) != 0 {
+        return 5;
+    }
+    s - 2001000
+}
+
+fn main() -> i64 {
+    let bad: i64 = __mind_sys_perf_event_open(0, 0, 0 - 1, 0 - 1, 2147483648);
+    if bad != 0 - 22 {
+        return 1;
+    }
+    let attr: i64 = __mind_alloc(64);
+    __mind_store_i64(attr + 0, 274877906945);
+    __mind_store_i64(attr + 8, 0);
+    __mind_store_i64(attr + 16, 0);
+    __mind_store_i64(attr + 24, 0);
+    __mind_store_i64(attr + 32, 0);
+    __mind_store_i64(attr + 40, 96);
+    __mind_store_i64(attr + 48, 0);
+    __mind_store_i64(attr + 56, 0);
+    let fd: i64 = __mind_sys_perf_event_open(attr, 0, 0 - 1, 0 - 1, 0);
+    if fd == 0 - 13 {
+        return refused();
+    }
+    if fd == 0 - 1 {
+        return refused();
+    }
+    if fd < 0 {
+        return 2;
+    }
+    if __mind_sys_perf_event_open(attr, 0, 0 - 1, 999, 0) != 0 - 9 {
+        return 6;
+    }
+    count(fd)
+}

@@ -311,6 +311,13 @@ fn classify_instrs(
             | Instr::Slice { .. }
             | Instr::Gather { .. }
             | Instr::SparseAttr { .. } => requirements.unsupported_core = true,
+            // The extern binding record (`OP_EXTERN_BIND`) has no v0x04 row yet.
+            #[cfg(feature = "std-surface")]
+            Instr::ExternFnDecl { binding, .. } if *binding != Default::default() => {
+                return Err(Mic3EncodeError::UnsupportedV04Surface(
+                    "extern binding record has no v0x04 row".to_string(),
+                ));
+            }
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
             | Instr::ArrayLoad { .. }

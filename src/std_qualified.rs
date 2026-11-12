@@ -65,6 +65,9 @@ const ROWS: &[(&str, &str)] = &[
     ("std.https_io", "hio_remaining_ms"),
     ("std.https_io", "hio_arm"),
     ("std.https_io", "hio_io_failure"),
+    // std.os_evidence runs procgroup_spawn and procgroup_wait_all.
+    ("std.os_evidence", "procgroup_spawn_ev"),
+    ("std.os_evidence", "procgroup_wait_all_ev"),
 ];
 
 /// Whether `name` is a world-reading public function of `module`.

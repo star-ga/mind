@@ -453,7 +453,7 @@ fn write_project(dir: &Path, name: &str, source: &str) {
 
 fn run_mindc_build(dir: &Path) -> std::process::Output {
     Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(dir)
         .output()
         .expect("spawn mindc")

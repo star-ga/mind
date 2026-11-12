@@ -1,0 +1,334 @@
+[
+  {
+    "name": "bundle_roundtrip",
+    "kind": "roundtrip",
+    "expect": 0
+  },
+  {
+    "name": "bundle_owned_storage",
+    "kind": "owned",
+    "expect": 0
+  },
+  {
+    "name": "profile_0",
+    "kind": "profile",
+    "value": 0,
+    "expect": 2
+  },
+  {
+    "name": "profile_2",
+    "kind": "profile",
+    "value": 2,
+    "expect": 2
+  },
+  {
+    "name": "profile_-1",
+    "kind": "profile",
+    "value": -1,
+    "expect": 2
+  },
+  {
+    "name": "length_-1",
+    "kind": "length",
+    "value": -1,
+    "expect": 1
+  },
+  {
+    "name": "length_0",
+    "kind": "length",
+    "value": 0,
+    "expect": 1
+  },
+  {
+    "name": "length_191",
+    "kind": "length",
+    "value": 191,
+    "expect": 1
+  },
+  {
+    "name": "length_9223372036854775807",
+    "kind": "length",
+    "value": 9223372036854775807,
+    "expect": 1
+  },
+  {
+    "name": "header_0",
+    "kind": "header_xor",
+    "word": 0,
+    "expect": 4
+  },
+  {
+    "name": "header_1",
+    "kind": "header_xor",
+    "word": 1,
+    "expect": 4
+  },
+  {
+    "name": "header_2",
+    "kind": "header_xor",
+    "word": 2,
+    "expect": 4
+  },
+  {
+    "name": "header_3",
+    "kind": "header_xor",
+    "word": 3,
+    "expect": 4
+  },
+  {
+    "name": "header_4",
+    "kind": "header_xor",
+    "word": 4,
+    "expect": 4
+  },
+  {
+    "name": "header_5",
+    "kind": "header_xor",
+    "word": 5,
+    "expect": 4
+  },
+  {
+    "name": "header_6",
+    "kind": "header_xor",
+    "word": 6,
+    "expect": 4
+  },
+  {
+    "name": "header_7",
+    "kind": "header_xor",
+    "word": 7,
+    "expect": 4
+  },
+  {
+    "name": "header_8",
+    "kind": "header_xor",
+    "word": 8,
+    "expect": 4
+  },
+  {
+    "name": "header_9",
+    "kind": "header_xor",
+    "word": 9,
+    "expect": 4
+  },
+  {
+    "name": "header_10",
+    "kind": "header_xor",
+    "word": 10,
+    "expect": 4
+  },
+  {
+    "name": "header_11",
+    "kind": "header_xor",
+    "word": 11,
+    "expect": 4
+  },
+  {
+    "name": "header_12",
+    "kind": "header_xor",
+    "word": 12,
+    "expect": 4
+  },
+  {
+    "name": "header_13",
+    "kind": "header_xor",
+    "word": 13,
+    "expect": 4
+  },
+  {
+    "name": "header_14",
+    "kind": "header_xor",
+    "word": 14,
+    "expect": 4
+  },
+  {
+    "name": "header_15",
+    "kind": "header_xor",
+    "word": 15,
+    "expect": 4
+  },
+  {
+    "name": "header_16",
+    "kind": "header_xor",
+    "word": 16,
+    "expect": 4
+  },
+  {
+    "name": "header_17",
+    "kind": "header_xor",
+    "word": 17,
+    "expect": 4
+  },
+  {
+    "name": "header_18",
+    "kind": "header_xor",
+    "word": 18,
+    "expect": 4
+  },
+  {
+    "name": "header_19",
+    "kind": "header_xor",
+    "word": 19,
+    "expect": 4
+  },
+  {
+    "name": "header_20",
+    "kind": "header_xor",
+    "word": 20,
+    "expect": 4
+  },
+  {
+    "name": "header_21",
+    "kind": "header_xor",
+    "word": 21,
+    "expect": 4
+  },
+  {
+    "name": "header_22",
+    "kind": "header_xor",
+    "word": 22,
+    "expect": 4
+  },
+  {
+    "name": "header_23",
+    "kind": "header_xor",
+    "word": 23,
+    "expect": 4
+  },
+  {
+    "name": "payload_source",
+    "kind": "payload_xor",
+    "region": "source",
+    "expect": 4
+  },
+  {
+    "name": "payload_wire",
+    "kind": "payload_xor",
+    "region": "wire",
+    "expect": 4
+  },
+  {
+    "name": "payload_code",
+    "kind": "payload_xor",
+    "region": "code",
+    "expect": 4
+  },
+  {
+    "name": "payload_import_name",
+    "kind": "payload_xor",
+    "region": "import_name",
+    "expect": 4
+  },
+  {
+    "name": "payload_version",
+    "kind": "payload_xor",
+    "region": "version",
+    "expect": 4
+  },
+  {
+    "name": "payload_soname",
+    "kind": "payload_xor",
+    "region": "soname",
+    "expect": 4
+  },
+  {
+    "name": "payload_interpreter",
+    "kind": "payload_xor",
+    "region": "interpreter",
+    "expect": 4
+  },
+  {
+    "name": "fixup_0_0",
+    "kind": "fixup_xor",
+    "row": 0,
+    "word": 0,
+    "expect": 4
+  },
+  {
+    "name": "fixup_0_1",
+    "kind": "fixup_xor",
+    "row": 0,
+    "word": 1,
+    "expect": 4
+  },
+  {
+    "name": "fixup_0_2",
+    "kind": "fixup_xor",
+    "row": 0,
+    "word": 2,
+    "expect": 4
+  },
+  {
+    "name": "fixup_1_0",
+    "kind": "fixup_xor",
+    "row": 1,
+    "word": 0,
+    "expect": 4
+  },
+  {
+    "name": "fixup_1_1",
+    "kind": "fixup_xor",
+    "row": 1,
+    "word": 1,
+    "expect": 4
+  },
+  {
+    "name": "fixup_1_2",
+    "kind": "fixup_xor",
+    "row": 1,
+    "word": 2,
+    "expect": 4
+  },
+  {
+    "name": "fixup_2_0",
+    "kind": "fixup_xor",
+    "row": 2,
+    "word": 0,
+    "expect": 4
+  },
+  {
+    "name": "fixup_2_1",
+    "kind": "fixup_xor",
+    "row": 2,
+    "word": 1,
+    "expect": 4
+  },
+  {
+    "name": "fixup_2_2",
+    "kind": "fixup_xor",
+    "row": 2,
+    "word": 2,
+    "expect": 4
+  },
+  {
+    "name": "fixup_3_0",
+    "kind": "fixup_xor",
+    "row": 3,
+    "word": 0,
+    "expect": 4
+  },
+  {
+    "name": "fixup_3_1",
+    "kind": "fixup_xor",
+    "row": 3,
+    "word": 1,
+    "expect": 4
+  },
+  {
+    "name": "fixup_3_2",
+    "kind": "fixup_xor",
+    "row": 3,
+    "word": 2,
+    "expect": 4
+  },
+  {
+    "name": "truncated",
+    "kind": "truncated",
+    "expect": 4
+  },
+  {
+    "name": "extended",
+    "kind": "extended",
+    "expect": 4
+  }
+]

@@ -423,7 +423,7 @@ mod mlir_functional {
         )
         .expect("write main.mind");
         let compile_out = Command::new(&mindc)
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(&proj)
             .output()
             .expect("spawn mindc build");

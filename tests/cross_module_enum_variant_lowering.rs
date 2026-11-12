@@ -175,7 +175,14 @@ fn write_project(root: &Path, main: &str) {
 
 fn build(root: &Path, artifact: &Path) -> Output {
     Command::new(mindc_bin())
-        .args(["build", "--no-cache", "--out", artifact.to_str().unwrap()])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--no-cache",
+            "--out",
+            artifact.to_str().unwrap(),
+        ])
         .current_dir(root)
         .output()
         .expect("run mindc build")

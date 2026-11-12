@@ -124,6 +124,7 @@ fn cross_module_field_access_runs() {
         .current_dir(&root)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",
@@ -235,6 +236,7 @@ c_abi = ["read"]
         .current_dir(&root)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",
@@ -333,6 +335,7 @@ c_abi = ["read"]
         .current_dir(&ambiguous)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",
@@ -406,6 +409,7 @@ c_abi = ["read"]
         .current_dir(&ambiguous)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",
@@ -505,6 +509,7 @@ c_abi = ["read"]
         .current_dir(&same_shape)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",

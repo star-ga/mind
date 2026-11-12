@@ -1,0 +1,4 @@
+# Seed drift: seed-bound files that differ from their SEED_LEDGER.tsv row.
+# One line per file: path, first commit, reason (tab-separated). CI is red
+# when a drifted file has no line, or a line names a file that does not drift.
+# Empty on main and on a tag commit: the land step refuses a non-empty list.

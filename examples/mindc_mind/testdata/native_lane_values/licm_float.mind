@@ -1,0 +1,19 @@
+// LICM slice 1 on f64 lets: `t` (a product of invariant f64 names) hoists with its
+// declared type, and `u` reads `t` and hoists with it.
+fn fl(x: i64, n: i64) -> i64 {
+    let a: f64 = x as f64;
+    let b: f64 = a + 0.5;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: f64 = a * b;
+        let u: f64 = t - a;
+        s = s + (u as i64) + i;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    (fl(3, 4) + fl(5, 0)) % 239
+}

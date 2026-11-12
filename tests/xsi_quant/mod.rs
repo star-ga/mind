@@ -232,7 +232,7 @@ fn quant_examples_known_answer_suites_pass() {
                 .unwrap_or_else(|e| panic!("copy quant/{name}/{file}: {e}"));
         }
         let out = Command::new(mindc_bin())
-            .arg("run")
+            .args(["run", "--backend", "mlir"])
             .current_dir(&work)
             .output()
             .unwrap_or_else(|e| panic!("spawn mindc run for quant/{name}: {e}"));

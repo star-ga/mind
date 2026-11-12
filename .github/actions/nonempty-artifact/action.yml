@@ -1,0 +1,19 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: nonempty-artifact
+description: Fail when the self-host cdylib from the Mind.toml build is missing or empty.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if [ ! -f /tmp/libmindc_mind_self_host.so ]; then
+          echo "ERROR: artifact not produced by mindc build"
+          exit 1
+        fi
+        SZ=$(stat -c%s /tmp/libmindc_mind_self_host.so)
+        echo "Artifact size: ${SZ} bytes"
+        if [ "$SZ" -eq 0 ]; then
+          echo "ERROR: artifact is empty"
+          exit 1
+        fi

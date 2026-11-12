@@ -256,7 +256,7 @@ fn standalone_path_import_is_refused() {
     let text = output_text(&output);
     assert!(!output.status.success(), "{text}");
     assert!(
-        text.contains("E2003") && text.contains("Mind.toml"),
+        text.contains("E2042") && text.contains("Mind.toml"),
         "{text}"
     );
 }

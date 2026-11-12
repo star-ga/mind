@@ -130,7 +130,7 @@ pub fn replay_scheduler() -> i64 {
 // grow-by-doubling allocation; min-cap 4, matching vec.mind's policy so
 // allocation traces are deterministic.
 
-fn trace_append(s: i64, event: i64) -> i64 {
+fn sched_trace_append(s: i64, event: i64) -> i64 {
     let old_len: i64 = sched_trace_len(s);
     let old_cap: i64 = sched_trace_cap(s);
     let old_addr: i64 = sched_trace_addr(s);
@@ -243,14 +243,14 @@ pub fn run(s: i64, snd: i64) -> i64 {
     let chain_len: i64 = snd_chain_len(snd);
     let kind: i64 = sched_kind(s);
     if kind == 1 {
-        let _ = trace_append(s, thunk);
+        let _ = sched_trace_append(s, thunk);
     }
     let mut result: i64 = thunk;
     let mut i: i64 = 0;
     while i < chain_len {
         let delta: i64 = __mind_load_i64(chain_addr + i * 8);
         if kind == 1 {
-            let _ = trace_append(s, delta);
+            let _ = sched_trace_append(s, delta);
         }
         result = result + delta;
         i = i + 1;
@@ -278,12 +278,12 @@ pub fn run(s: i64, snd: i64) -> i64 {
 //
 // For a SyncScheduler (kind == 0) the log is empty; returns 0.
 
-fn fnv_offset() -> i64 {
+fn async_fnv_offset() -> i64 {
     // 0xcbf29ce484222325 as signed i64 = -3750763034362895579
     0 - 3750763034362895579
 }
 
-fn fnv_prime() -> i64 {
+fn async_fnv_prime() -> i64 {
     1099511628211
 }
 
@@ -293,11 +293,11 @@ pub fn trace_hash(s: i64) -> i64 {
     if len == 0 {
         return 0;
     }
-    let mut h: i64 = fnv_offset();
+    let mut h: i64 = async_fnv_offset();
     let mut i: i64 = 0;
     while i < len {
         let event: i64 = __mind_load_i64(addr + i * 8);
-        h = (h ^ event) * fnv_prime();
+        h = (h ^ event) * async_fnv_prime();
         i = i + 1;
     }
     h

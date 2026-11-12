@@ -1,0 +1,15 @@
+// Positive control: this module imports `z`, which stores a value of
+// unknown type into a collection, so a typed element compare here may
+// read that value and is still refused.
+import z;
+
+fn eq32j(a: [u8; 32], b: [u8; 32]) -> i64 {
+    let mut i = 0;
+    while i < 32 {
+        if a[i] != b[i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}

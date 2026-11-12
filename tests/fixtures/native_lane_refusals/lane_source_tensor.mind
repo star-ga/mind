@@ -1,0 +1,2 @@
+// lane.source.tensor: a gradient call.
+fn main() -> i64 { let g = grad(1); return 0; }

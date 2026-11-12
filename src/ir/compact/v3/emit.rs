@@ -596,9 +596,13 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
             param_types,
             ret_type,
             vararg_hints,
+            binding,
             ..
         } => {
             st.intern(name);
+            if let crate::ast::ExternBinding::Library(lib) = binding {
+                st.intern(lib);
+            }
             for t in param_types {
                 st.intern(t);
             }
@@ -771,10 +775,7 @@ pub(super) fn emit_mic3_legacy(module: &IRModule) -> Vec<u8> {
     }
 
     // Instructions
-    uleb128_write(&mut out, module.instrs.len() as u64).unwrap();
-    for instr in &module.instrs {
-        emit_instr(&mut out, instr, &st, ver);
-    }
+    emit_stream(&mut out, &module.instrs, &st, ver);
 
     // std-surface registries
     #[cfg(feature = "std-surface")]
@@ -858,6 +859,15 @@ fn emit_value_types_table<W: Write>(
 }
 
 // ─── Instruction emitter ──────────────────────────────────────────────────────
+
+/// Write a stream: its record count (a bound `ExternFnDecl` is two records,
+/// see `format.rs`), then each record.
+fn emit_stream<W: Write>(w: &mut W, instrs: &[Instr], st: &StringTable, ver: u8) {
+    uleb128_write(w, super::format::stream_records(instrs) as u64).unwrap();
+    for instr in instrs {
+        emit_instr(w, instr, st, ver);
+    }
+}
 
 // `ver` gates the v0x03 `value_types` sub-list in the OP_FN_DEF arm, which is
 // `std-surface`-only. Under `not(std-surface)` that arm is compiled out, so `ver`
@@ -1107,10 +1117,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
             encode_opt_vid(w, *ret_id).unwrap();
             encode_opt_f64(w, *reap_threshold).unwrap();
             // Emit body recursively
-            uleb128_write(w, body.len() as u64).unwrap();
-            for bi in body {
-                emit_instr(w, bi, st, ver);
-            }
+            emit_stream(w, body, st, ver);
             // Step D (v0x03) — this function's own aggregate `value_types` table,
             // TAIL-APPENDED after the body so the whole v0x02 FnDef encoding is
             // byte-untouched. Written iff `ver >= 0x03`. In a v0x02 stream the
@@ -1199,14 +1206,8 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
         } => {
             w.write_all(&[OP_WHILE]).unwrap();
             write_vid(w, *cond_id).unwrap();
-            uleb128_write(w, cond_instrs.len() as u64).unwrap();
-            for ci in cond_instrs {
-                emit_instr(w, ci, st, ver);
-            }
-            uleb128_write(w, body.len() as u64).unwrap();
-            for bi in body {
-                emit_instr(w, bi, st, ver);
-            }
+            emit_stream(w, cond_instrs, st, ver);
+            emit_stream(w, body, st, ver);
             encode_named_vids(w, live_vars, st).unwrap();
             encode_vid_vec(w, init_ids).unwrap();
             encode_vid_vec(w, exit_ids).unwrap();
@@ -1230,19 +1231,10 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
         } => {
             w.write_all(&[OP_IF]).unwrap();
             write_vid(w, *cond_id).unwrap();
-            uleb128_write(w, cond_instrs.len() as u64).unwrap();
-            for ci in cond_instrs {
-                emit_instr(w, ci, st, ver);
-            }
-            uleb128_write(w, then_instrs.len() as u64).unwrap();
-            for ti in then_instrs {
-                emit_instr(w, ti, st, ver);
-            }
+            emit_stream(w, cond_instrs, st, ver);
+            emit_stream(w, then_instrs, st, ver);
             write_vid(w, *then_result).unwrap();
-            uleb128_write(w, else_instrs.len() as u64).unwrap();
-            for ei in else_instrs {
-                emit_instr(w, ei, st, ver);
-            }
+            emit_stream(w, else_instrs, st, ver);
             write_vid(w, *else_result).unwrap();
             write_vid(w, *dst).unwrap();
             encode_named_vids(w, branch_bindings, st).unwrap();
@@ -1340,10 +1332,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
             alloc_ids,
         } => {
             w.write_all(&[OP_REGION]).unwrap();
-            uleb128_write(w, body.len() as u64).unwrap();
-            for bi in body {
-                emit_instr(w, bi, st, ver);
-            }
+            emit_stream(w, body, st, ver);
             write_vid(w, *result).unwrap();
             write_vid(w, *enter_id).unwrap();
             write_vid(w, *exit_id).unwrap();
@@ -1357,6 +1346,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
             is_varargs,
             vararg_hints,
             callconv,
+            binding,
         } => {
             w.write_all(&[OP_EXTERN_FN_DECL]).unwrap();
             encode_string_idx(w, name, st).unwrap();
@@ -1372,6 +1362,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
                 encode_string_idx(w, h, st).unwrap();
             }
             w.write_all(&[callconv_to_byte(*callconv)]).unwrap();
+            super::format::write_bind_record(w, name, binding, |s| st.get(s));
         }
         #[cfg(feature = "std-surface")]
         Instr::Break { live } => {

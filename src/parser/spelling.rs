@@ -15,7 +15,7 @@
 //! The parser desugars `q.f(x)` to `f(x)`, `q.CONST` to `CONST`, `module m { … }` to a
 //! transparent block and `true` to `1`. The compiler wants exactly that, but the formatter
 //! prints this same AST back out, so whatever the desugar discards is recorded here in
-//! [`crate::ast::SourceSpelling`], keyed by span. Nothing outside the formatter reads it.
+//! [`crate::ast::SourceSpelling`], keyed by span. Qualified POSIX call resolution also reads the retained qualifier.
 
 use super::{P, ParseError};
 use crate::ast::{Attribute, Literal, Node, Span};

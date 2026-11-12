@@ -1,0 +1,10 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// Import only. The wrapper is not called, so the trap is not reached.
+import std.sha256;
+
+fn main() -> i64 {
+    return 0;
+}

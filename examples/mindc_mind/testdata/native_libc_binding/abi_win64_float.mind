@@ -1,0 +1,14 @@
+// extern "C" ABI row, Win64: the f32 and f64 returns, kept apart from
+// abi_win64.mind so a failure here does not hide the other rows. Callee in abi_callees.c.
+extern "C" callconv(.win64) {
+    fn w_f32(a: f32) -> f32;
+    fn w_f64(a: f64) -> f64;
+}
+
+pub fn t_w_f32() -> f32 {
+    let a: f32 = 1.5 as f32;
+    return w_f32(a)
+}
+pub fn t_w_f64() -> f64 {
+    return w_f64(2.25)
+}

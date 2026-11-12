@@ -1,0 +1,17 @@
+// LICM slice 1: `let t` and `let u` hoist out of the loop (names, literals, * + << ^).
+fn f(a: i64, b: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: i64 = a * b + 3;
+        let u: i64 = (t << 2) ^ b;
+        s = s + u + i;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    let r: i64 = f(3, 4, 6) + f(5, 7, 0) + f(2, 9, 3);
+    r % 251
+}

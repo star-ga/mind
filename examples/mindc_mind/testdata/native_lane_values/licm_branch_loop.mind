@@ -1,0 +1,26 @@
+// LICM slice 1 reaches loops inside an if arm and inside a nested block; a loop
+// that runs zero times still computes its hoisted value unobservably.
+fn ib(c: i64, n: i64, a: i64) -> i64 {
+    let mut s: i64 = 0;
+    if c > 0 {
+        let mut i: i64 = 0;
+        while i < n {
+            let t: i64 = a * a + c;
+            s = s + t;
+            i = i + 1;
+        }
+    } else {
+        let mut j: i64 = 0;
+        while j < 0 {
+            let z: i64 = a - 1;
+            s = s + z;
+            j = j + 1;
+        }
+        s = s + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    (ib(2, 5, 3) + ib(0, 5, 3)) % 229
+}

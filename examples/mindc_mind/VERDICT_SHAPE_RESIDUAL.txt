@@ -45,7 +45,6 @@ full_strtab_smoke
 general_float_netverify
 lockstep_lint
 mic3_flip_smoke
-mindfuzz_self_host
 mod_operator_smoke
 multi_let_smoke
 now_ns_smoke

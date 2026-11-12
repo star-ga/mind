@@ -40,13 +40,16 @@ mod load;
 pub use load::{
     IMPLICIT_STD_MODULES, bundled_module_ast, imported_std_extras, is_loaded, misplaced_std_import,
     misplaced_std_imports, parsed_std_modules, parsed_stdlib_modules_for, std_import_roots,
-    std_source, std_sources,
+    std_source, std_sources, stdlib_override_error,
 };
 
 /// Compile-time bundle of every std/*.mind file, laid out as
 /// `(module_path, source_text)` pairs. Module paths use the dotted
 /// notation `Node::Import` already speaks (`use std.vec` → `["std", "vec"]`
-/// → joined `"std.vec"`).
+/// → joined `"std.vec"`). Being exhaustive, it holds every std module that
+/// another std module imports, so a single-file compile of any std module
+/// resolves its own std imports (pinned by
+/// `every_std_import_of_a_std_module_is_bundled`).
 ///
 /// The list is ordered alphabetically by module path so the module
 /// table's deterministic-insertion contract is preserved when the
@@ -66,7 +69,10 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.dns", include_str!("../../std/dns.mind")),
     ("std.ecdsa_p256", include_str!("../../std/ecdsa_p256.mind")),
     ("std.entropy", include_str!("../../std/entropy.mind")),
+    ("std.evidence", include_str!("../../std/evidence.mind")),
+    ("std.evidence_mic", include_str!("../../std/evidence_mic.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
+    ("std.fs_checked", include_str!("../../std/fs_checked.mind")),
     ("std.hkdf", include_str!("../../std/hkdf.mind")),
     ("std.hpack", include_str!("../../std/hpack.mind")),
     ("std.http", include_str!("../../std/http.mind")),
@@ -86,10 +92,15 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.llvm", include_str!("../../std/llvm.mind")),
     ("std.map", include_str!("../../std/map.mind")),
     ("std.mic_record", include_str!("../../std/mic_record.mind")),
+    ("std.mic_record_table", include_str!("../../std/mic_record_table.mind")),
+    ("std.mic_record_wire", include_str!("../../std/mic_record_wire.mind")),
     ("std.mic_results", include_str!("../../std/mic_results.mind")),
     ("std.mlir", include_str!("../../std/mlir.mind")),
     ("std.mlkem768", include_str!("../../std/mlkem768.mind")),
     ("std.net", include_str!("../../std/net.mind")),
+    ("std.os_evidence", include_str!("../../std/os_evidence.mind")),
+    ("std.posix", include_str!("../../std/posix.mind")),
+    ("std.posix_sys", include_str!("../../std/posix_sys.mind")),
     ("std.process", include_str!("../../std/process.mind")),
     ("std.procgroup", include_str!("../../std/procgroup.mind")),
     ("std.procgroup_sys", include_str!("../../std/procgroup_sys.mind")),
@@ -118,6 +129,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.x509_bignum", include_str!("../../std/x509_bignum.mind")),
     ("std.x509_bundle", include_str!("../../std/x509_bundle.mind")),
     ("std.x509_der", include_str!("../../std/x509_der.mind")),
+    ("std.x509_evidence", include_str!("../../std/x509_evidence.mind")),
     ("std.x509_ext", include_str!("../../std/x509_ext.mind")),
     ("std.x509_name", include_str!("../../std/x509_name.mind")),
     ("std.x509_p384", include_str!("../../std/x509_p384.mind")),
@@ -211,12 +223,54 @@ mod tests {
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
         assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.fs_checked"));
         assert!(names.contains(&"std.http"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
         assert!(names.contains(&"std.sha256"));
         assert!(names.contains(&"std.sha512"));
         assert!(names.contains(&"std.tui"));
+    }
+
+    #[test]
+    fn every_std_import_of_a_std_module_is_bundled() {
+        // A std module that imports a std module with no row here resolves
+        // nothing for that import: each call into it fails later as E2003.
+        let std_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        let mut files: Vec<_> = std::fs::read_dir(&std_dir)
+            .expect("std/ is readable")
+            .map(|e| e.expect("std/ entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "mind"))
+            .collect();
+        files.sort();
+        let mut imports_seen = 0usize;
+        let mut missing = Vec::new();
+        for file in &files {
+            let src = std::fs::read_to_string(file).expect("std module is readable");
+            let ast = crate::parser::parse(&src).expect("std module parses");
+            for item in &ast.items {
+                let crate::ast::Node::Import { path, .. } = item else {
+                    continue;
+                };
+                if path.first().map(String::as_str) != Some("std") || path.len() != 2 {
+                    continue;
+                }
+                if !std_dir.join(format!("{}.mind", path[1])).is_file() {
+                    continue;
+                }
+                imports_seen += 1;
+                let key = path.join(".");
+                if !STDLIB_MIND_SOURCES.iter().any(|(name, _)| *name == key) {
+                    missing.push(format!("{} imports {key}", file.display()));
+                }
+            }
+        }
+        // Positive control: std/x509.mind alone imports eleven std modules.
+        assert!(imports_seen >= 11, "only {imports_seen} std imports seen");
+        assert!(
+            missing.is_empty(),
+            "std imports with no bundled row: {missing:?}"
+        );
     }
 
     #[cfg(feature = "cross-module-imports")]
@@ -241,6 +295,8 @@ mod tests {
         assert!(table.resolves(&["std".into(), "json".into()], "jv_parse"));
         assert!(table.resolves(&["std".into(), "regex".into()], "rx_compile"));
         assert!(table.resolves(&["std".into(), "fs".into()], "read_to_string"));
+        assert!(table.resolves(&["std".into(), "fs_checked".into()], "fs_read_dir_checked"));
+        assert!(table.resolves(&["std".into(), "fs_checked".into()], "fs_dir_list_free"));
         assert!(table.resolves(&["std".into(), "http".into()], "http_get"));
         assert!(table.resolves(&["std".into(), "http".into()], "http_post"));
         assert!(table.resolves(&["std".into(), "net".into()], "tcp_listen"));
@@ -335,21 +391,16 @@ mod tests {
     }
 
     #[test]
-    fn env_override_falls_back_on_missing_dir() {
-        // A pointed-at dir that doesn't exist must NOT crash and must
-        // NOT silently produce an empty stdlib — the override is
-        // honoured "best effort" and falls back to the bundled set.
-        unsafe {
-            std::env::set_var("MIND_STDLIB_PATH", "/nonexistent/mind/stdlib/path");
-        }
-        let mods = parsed_stdlib_modules();
-        unsafe {
-            std::env::remove_var("MIND_STDLIB_PATH");
-        }
-        assert_eq!(
-            mods.len(),
-            STDLIB_MIND_SOURCES.len(),
-            "missing override dir must fall back to bundled stdlib"
+    fn env_override_refuses_a_missing_dir() {
+        // spec/v1.0/stdlib.md, "Environment override": a set but unusable
+        // MIND_STDLIB_PATH is an error naming the path, never a silent fall
+        // back to the bundled set. Checked on the path, not through the
+        // process environment, so a parallel test never sees the bad value.
+        let root = std::path::Path::new("/nonexistent/mind/stdlib/path");
+        let err = stdlib_override_error(root).expect("a missing override dir is refused");
+        assert!(
+            err.contains("/nonexistent/mind/stdlib/path") && err.contains("is not a directory"),
+            "{err}"
         );
     }
 

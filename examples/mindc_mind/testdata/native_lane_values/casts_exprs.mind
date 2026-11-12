@@ -1,0 +1,59 @@
+// Author: STARGA Inc. i64 <-> f64 conversions of expression-shaped operands:
+// arithmetic, calls, value-ifs, loop-carried f64, loads. 8 LE bytes per result.
+fn put(buf: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(buf + i * 8, v);
+    0
+}
+fn half(x: f64) -> f64 {
+    x / 2.0
+}
+fn add3(a: f64, b: f64, c: f64) -> f64 {
+    a + b + c
+}
+fn pick(c: i64) -> f64 {
+    if c == 1 {
+        7.75
+    } else {
+        0.0 - 7.75
+    }
+}
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(512);
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 4617315517961601024);
+    let a: f64 = 3.75;
+    let b: f64 = 2.5;
+    put(buf, 0, (a + b) as i64);
+    put(buf, 1, (a * b) as i64);
+    put(buf, 2, (a - b * 4.0) as i64);
+    put(buf, 3, half(a) as i64);
+    put(buf, 4, add3(a, b, 0.25) as i64);
+    put(buf, 5, pick(1) as i64);
+    put(buf, 6, pick(0) as i64);
+    put(buf, 7, __mind_bits_to_f64(__mind_load_i64(p)) as i64);
+    put(buf, 8, (0.0 - a) as i64);
+    let k: i64 = 1000001;
+    put(buf, 9, ((k as f64) / 3.0) as i64);
+    put(buf, 10, __mind_f64_to_bits((k * 3 + 1) as f64));
+    put(buf, 11, __mind_f64_to_bits(__mind_load_i64(p) as f64));
+    let v: f64 = if k > 5 {
+        a
+    } else {
+        b
+    };
+    put(buf, 12, v as i64);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < 10 {
+        acc = acc + (i as f64) * 0.5;
+        i = i + 1;
+    }
+    put(buf, 13, acc as i64);
+    put(buf, 14, __mind_f64_to_bits(acc));
+    put(buf, 15, ((a as i64) as f64) as i64);
+    let c: i64 = 3 < 4;
+    put(buf, 16, __mind_f64_to_bits(c as f64));
+    put(buf, 17, __mind_f64_to_bits((a < b) as f64));
+    __mind_write(1, buf, 18 * 8, 0 - 1);
+    0
+}

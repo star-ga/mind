@@ -88,7 +88,7 @@ Its arithmetic is *guarded*. `mindc --emit-mlir` on `fn d(a: i64, b: i64) -> i64
 %2     = arith.select %disz2, %ddz2, %ddt2 : i64
 ```
 
-i.e. MIND's defined edges `x/0 = 0` and `INT_MIN/-1 = INT_MIN`.
+i.e. MIND's defined edges as they stood then (`x/0 = 0`, `INT_MIN/-1 = INT_MIN`); `mindc build` now traps on both with exit status 79 (docs/errors.md, "Integer division trap").
 
 **Reachability blind spots, all seven checked.**
 
@@ -348,14 +348,15 @@ constant evaluation is a separate engine, `src/opt/comptime.rs`, consumed by
 `src/opt/scev.rs:518` and `src/opt/collapse.rs:55` (see §10).
 
 **Finished and tested — but it disagrees with both code generators on MIND's
-defined arithmetic edges.** Both generators define `x/0 = 0` and
-`INT_MIN/-1 = INT_MIN` (engine 1's guard is quoted in §1; the self-host native
-emitter states the same contract at `main.mind:28438-28439`). The interpreter
-does neither:
+defined arithmetic edges.** When this audit was written both generators
+defined `x/0 = 0` and `INT_MIN/-1 = INT_MIN` (engine 1's guard is quoted in §1).
+That contract is superseded: `mindc build` (MLIR and native) now traps on `x/0`,
+`x%0` and i64 `INT_MIN/-1` with exit status 79 (docs/errors.md, "Integer
+division trap"). The interpreter does neither:
 
 ```
 $ mind eval '7 / 0'
-Evaluation error: division by zero                 <- generators say 0
+Evaluation error: division by zero                 <- generators trap (exit 79)
 
 $ mind eval '(0 - 9223372036854775807 - 1) / (0 - 1)'
 thread 'main' panicked at src/eval/mod.rs:2712:13:
@@ -395,9 +396,10 @@ and the surplus walker is deleted
    `src/test/mod.rs::eval_asserts_in_stmts` is retired — a whole surplus
    evaluator removed by *wiring*, the top rung of the ladder.
 2. Route every interpreter `Div`/`Mod` through one shared helper implementing
-   `x/0 = 0` and `INT_MIN/-1 = INT_MIN`, matching both generators, and add a
-   conformance cell per edge. This is a capability *gain*: programs on a defined
-   edge become executable instead of crashing the process.
+   the division trap of docs/errors.md (`x/0`, `x%0`, i64 `INT_MIN/-1` stop the
+   program with exit status 79), matching both generators, and add a
+   conformance cell per edge. This is a capability *gain*: a program on a
+   defined edge stops deterministically instead of crashing the process.
 
 ---
 
@@ -509,8 +511,8 @@ definition transcribed twice:
 ```
 
 Note also that this convention is a **third** answer on the defined edges:
-`wrapping_div` gives `INT_MIN/-1 = INT_MIN` (agreeing with the generators) but
-*panics* on `x/0` (agreeing with neither). The fuzzer never sees it because the
+`wrapping_div` gives `INT_MIN/-1 = INT_MIN` (the generators' answer before the
+division trap; they now exit 79) and *panics* on `x/0` (agreeing with neither). The fuzzer never sees it because the
 generator forces divisors non-zero with `x | 1` — a scope choice, not agreement.
 
 **Reachability blind spots.**
@@ -632,8 +634,8 @@ strongest single argument for unification:
 
 | Implementation | `x / 0` | `INT_MIN / -1` |
 |---|---|---|
-| `src/mlir/lowering.rs` (engine 1) | `0` | `INT_MIN` |
-| `main.mind` native emitter (engine 4) | `0` | `INT_MIN` |
+| `src/mlir/lowering.rs` (engine 1) | trap, exit 79 | trap, exit 79 |
+| `main.mind` native emitter (engine 4) | trap, exit 79 | trap, exit 79 |
 | `src/eval/mlir_export.rs` (engine 2) | bare `arith.divsi` — **target-defined** | bare `arith.divsi` — **target-defined** |
 | `src/eval/mod.rs` (engine 6) | `Err(DivZero)` | **process panic** (release) |
 | `src/eval/ir_interp.rs` (engine 7) | **process panic** | **process panic** |
@@ -643,8 +645,9 @@ strongest single argument for unification:
 | `src/opt/fold.rs` (unwired) | refuse to fold | **would panic** |
 
 Nine implementations, **eight distinct answer-pairs**. Exactly one pair —
-`(0, INT_MIN)` — is the sanctioned contract, and only the two code generators
-hold it. One is target-defined, which is a determinism leak by itself. Two of
+trap with exit status 79 for both (docs/errors.md, "Integer division trap";
+it superseded the earlier `(0, INT_MIN)` contract) — is the sanctioned
+contract, and only the two code generators hold it. One is target-defined, which is a determinism leak by itself. Two of
 them (engines 6 and 7) crash the **shipped compiler process** on an operation
 MIND defines as total; a third crash sits in the unwired folder and a fourth in
 the fuzzer's oracle, hidden only because its generator forces divisors non-zero.

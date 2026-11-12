@@ -16,8 +16,11 @@
 //! the directory must hold the four specified files (`vec`, `string`, `map`,
 //! `io`) and every bundled module file it holds must parse; each module it
 //! supplies replaces the bundled text, every other module keeps its bundled
-//! text. A directory that fails either rule is not used, and the bundled set
-//! applies, as the specification requires.
+//! text. A set but unusable value (not a directory, a required file missing,
+//! a module file unreadable or not parsing) is an error that names the path
+//! and the missing file or the parse error. It never falls back to the
+//! bundled text: a build against a std the user did not ask for is a silent
+//! wrong result. Unset uses the bundled text.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
@@ -73,8 +76,23 @@ type SourceTable = &'static [(&'static str, &'static str)];
 /// the bundled text, or the override directory's file for each module it
 /// supplies. Every reader of std source text goes through here, so `check`,
 /// `test` and the linked substrate objects see the same code.
+///
+/// A set but unusable `MIND_STDLIB_PATH` is a configuration error: this
+/// prints it and exits with status 2 before any compile reads std text.
 pub fn std_sources() -> SourceTable {
-    override_sources().unwrap_or(STDLIB_MIND_SOURCES)
+    match override_sources() {
+        Ok(table) => table.unwrap_or(STDLIB_MIND_SOURCES),
+        Err(message) => {
+            eprintln!("error: {message}");
+            std::process::exit(2)
+        }
+    }
+}
+
+/// Why the directory `root` is not a usable `MIND_STDLIB_PATH` override, or
+/// `None` when it is usable. Reads and parses the directory on every call.
+pub fn stdlib_override_error(root: &Path) -> Option<String> {
+    load_override(root).err()
 }
 
 /// The source of one bundled module (see [`std_sources`]).
@@ -85,35 +103,48 @@ pub fn std_source(module: &str) -> Option<&'static str> {
         .map(|(_, source)| *source)
 }
 
-/// The override table for the current `MIND_STDLIB_PATH`, read and validated
-/// once per distinct value. The texts live for the process: every table entry
-/// is `&'static`, whether bundled or read from the override.
-fn override_sources() -> Option<SourceTable> {
-    static SEEN: Mutex<Vec<(OsString, Option<SourceTable>)>> = Mutex::new(Vec::new());
-    let root = std::env::var_os("MIND_STDLIB_PATH")?;
+/// The override table for the current `MIND_STDLIB_PATH` (`Ok(None)` when it
+/// is unset), read and validated once per distinct value. The texts live for
+/// the process: every table entry is `&'static`, whether bundled or read from
+/// the override.
+fn override_sources() -> Result<Option<SourceTable>, String> {
+    type Seen = Vec<(OsString, Result<SourceTable, String>)>;
+    static SEEN: Mutex<Seen> = Mutex::new(Vec::new());
+    let Some(root) = std::env::var_os("MIND_STDLIB_PATH") else {
+        return Ok(None);
+    };
     let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((_, table)) = seen.iter().find(|(value, _)| *value == root) {
-        return *table;
+        return table.clone().map(Some);
     }
-    let table: Option<SourceTable> =
+    let table: Result<SourceTable, String> =
         load_override(Path::new(&root)).map(|rows| &*Box::leak(rows.into_boxed_slice()));
-    seen.push((root, table));
-    table
+    seen.push((root, table.clone()));
+    table.map(Some)
 }
 
-/// Read an override directory, or `None` when it is not usable: not a
+/// Read an override directory, or the reason it is not usable: not a
 /// directory, a required file missing, a module file unreadable or not
-/// parsing.
-fn load_override(root: &Path) -> Option<Vec<(&'static str, &'static str)>> {
+/// parsing. The reason names the path and the file.
+fn load_override(root: &Path) -> Result<Vec<(&'static str, &'static str)>, String> {
+    let shown = root.display();
     if !root.is_dir() {
-        return None;
+        return Err(format!(
+            "MIND_STDLIB_PATH `{shown}` is not a directory (unset it to use the bundled std)"
+        ));
     }
     let mut supplied: Vec<Option<String>> = Vec::with_capacity(STDLIB_COUNT);
     for (module, _) in STDLIB_MIND_SOURCES {
-        let file = root.join(format!("{}.mind", module.trim_start_matches("std.")));
+        let name = format!("{}.mind", module.trim_start_matches("std."));
+        let file = root.join(&name);
         match std::fs::read_to_string(&file) {
             Ok(text) => {
-                crate::parser::parse(&text).ok()?;
+                if let Err(errors) = crate::parser::parse(&text) {
+                    let first = errors.first().map(ToString::to_string).unwrap_or_default();
+                    return Err(format!(
+                        "MIND_STDLIB_PATH `{shown}`: `{name}` ({module}) does not parse: {first}"
+                    ));
+                }
                 supplied.push(Some(text));
             }
             Err(e)
@@ -122,22 +153,30 @@ fn load_override(root: &Path) -> Option<Vec<(&'static str, &'static str)>> {
             {
                 supplied.push(None);
             }
-            Err(_) => return None,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "MIND_STDLIB_PATH `{shown}` lacks `{name}` ({module}): an override \
+                     directory must hold io.mind, map.mind, string.mind and vec.mind"
+                ));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "MIND_STDLIB_PATH `{shown}`: cannot read `{name}` ({module}): {e}"
+                ));
+            }
         }
     }
-    Some(
-        STDLIB_MIND_SOURCES
-            .iter()
-            .zip(supplied)
-            .map(|(&(module, bundled), text)| {
-                let source: &'static str = match text {
-                    Some(text) => Box::leak(text.into_boxed_str()),
-                    None => bundled,
-                };
-                (module, source)
-            })
-            .collect(),
-    )
+    Ok(STDLIB_MIND_SOURCES
+        .iter()
+        .zip(supplied)
+        .map(|(&(module, bundled), text)| {
+            let source: &'static str = match text {
+                Some(text) => Box::leak(text.into_boxed_str()),
+                None => bundled,
+            };
+            (module, source)
+        })
+        .collect())
 }
 
 /// The `std.<m>` import paths `module` declares at module scope (top level
@@ -405,11 +444,22 @@ mod tests {
             "a module the directory does not supply keeps its bundled text"
         );
 
-        // Negative control: without `io.mind` the directory is not used.
-        std::fs::remove_file(dir.join("io.mind")).expect("remove io.mind");
+        // A module file that does not parse is an error naming the file.
+        std::fs::write(dir.join("keccak.mind"), "fn (").expect("write broken keccak");
+        let err = load_override(&dir).expect_err("a module that does not parse is refused");
         assert!(
-            load_override(&dir).is_none(),
-            "a missing required file must reject the directory"
+            err.contains(&dir.display().to_string())
+                && err.contains("`keccak.mind` (std.keccak) does not parse"),
+            "{err}"
+        );
+        std::fs::remove_file(dir.join("keccak.mind")).expect("remove keccak.mind");
+
+        // Without `io.mind` the directory is an error naming the path and the file.
+        std::fs::remove_file(dir.join("io.mind")).expect("remove io.mind");
+        let err = load_override(&dir).expect_err("a missing required file is refused");
+        assert!(
+            err.contains(&dir.display().to_string()) && err.contains("lacks `io.mind` (std.io)"),
+            "{err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

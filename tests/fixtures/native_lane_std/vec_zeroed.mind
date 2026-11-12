@@ -1,0 +1,6 @@
+import std.vec;
+
+fn main() -> i64 {
+    let p: i64 = vec_zeroed(4);
+    return __mind_load_i64(p);
+}

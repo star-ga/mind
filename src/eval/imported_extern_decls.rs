@@ -74,6 +74,7 @@ fn prepend_called_imports(ir: &mut IRModule) {
             is_varargs: ext.is_varargs,
             vararg_hints: Vec::new(),
             callconv: effective_callconv,
+            binding: ext.binding,
         });
     }
     for decl in decls.into_iter().rev() {

@@ -1,0 +1,293 @@
+// Copyright 2026 STARGA Inc.
+// R-01b vector-leaf walker: which fns are bank fns, and whether each is a leaf.
+// It reads the AST through nb_ast.mind and dispatches on main.mind's SECTION 2
+// kind tags (parts cannot call main.mind): int_lit 1, ident 2, binop 3, call 4,
+// let 6, return 8, block 10, paren 12, neg 14, not 15, if 16, field 17, method 18,
+// struct_lit 19, while 20, assign 21, break 22, continue 23, float_lit 24, cast 25,
+// array_lit 27, index 28, index_assign 29, addr_of 30, deref 31, deref_assign 32,
+// field_assign 33, str_lit 34, enum_ctor 35. An unlisted kind fails closed.
+
+import nb_ast;
+import nb_x86_vex;
+import nb_x86_ymm_bank_checks;
+
+// ---- bank functions: vector leaves ----
+// 1 = fn calls a bank name and is a vector leaf; 0 = not a bank fn; -1 = a bank
+// fn that is refused (printed when report). Leaf rules: no user fn or method
+// call, no float literal, no Layer A op (kinds 60-66: ymm15 + vzeroupper would
+// clobber the bank), no other intrinsic than __mind_load_* / __mind_store_*, and
+// a bank call only in statement position (its result is DiscardOnly). Fail
+// closed: a node kind the walker does not know counts as not a leaf.
+pub fn nbbc_fn_bank(buf: i64, node: i64, report: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let body: i64 = ast_child2(node);
+    if body == 0 {
+        return 0;
+    }
+    let st: i64 = __mind_alloc(32);
+    __mind_store_i64(st + 0, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, 0);
+    __mind_store_i64(st + 24, 0);
+    let _w: i64 = nbbc_block(buf, body, 1, st);
+    if __mind_load_i64(st) == 0 {
+        return 0;
+    }
+    if __mind_load_i64(st + 16) != 0 {
+        return nbbc_refuse(report, 4, buf, __mind_load_i64(st + 16));
+    }
+    if __mind_load_i64(st + 8) != 0 {
+        return nbbc_refuse(report, 3, buf, __mind_load_i64(st + 8));
+    }
+    if __mind_load_i64(st + 24) != 0 {
+        return nbbc_refuse(report, 5, buf, __mind_load_i64(st + 24));
+    }
+    1
+}
+
+// Record the first offending node in walker slot `off` (8 leaf, 16 Layer A, 24 value use).
+pub fn nbbc_mark(st: i64, off: i64, node: i64) -> i64 {
+    if __mind_load_i64(st + off) == 0 {
+        __mind_store_i64(st + off, node)
+    }
+    0
+}
+
+pub fn nbbc_block(buf: i64, blk: i64, tailv: i64, st: i64) -> i64 {
+    if blk == 0 {
+        return 0;
+    }
+    nbbc_stmts(buf, ast_child0(blk), ast_aux(blk), 0, tailv, st)
+}
+
+// The last statement of a value block is the block's value (tailv == 1).
+pub fn nbbc_stmts(buf: i64, a: i64, n: i64, i: i64, tailv: i64, st: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let v: i64 = if i == n - 1 {
+        tailv
+    } else {
+        0
+    };
+    let _s: i64 = nbbc_stmt(buf, __mind_load_i64(a + i * 8), v, st);
+    nbbc_stmts(buf, a, n, i + 1, tailv, st)
+}
+
+pub fn nbbc_stmt(buf: i64, node: i64, isval: i64, st: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == 4 {
+        return nbbc_call(buf, node, isval, st);
+    }
+    if k == 6 {
+        return nbbc_expr(buf, ast_child2(node), st);
+    }
+    if k == 8 {
+        return nbbc_expr(buf, ast_child0(node), st);
+    }
+    if k == 16 {
+        let _c: i64 = nbbc_expr(buf, ast_child0(node), st);
+        let _t: i64 = nbbc_block(buf, ast_child1(node), isval, st);
+        return nbbc_block(buf, ast_child2(node), isval, st);
+    }
+    if k == 20 {
+        let _wc: i64 = nbbc_expr(buf, ast_child0(node), st);
+        return nbbc_block(buf, ast_child1(node), 0, st);
+    }
+    if k == 10 {
+        return nbbc_block(buf, node, isval, st);
+    }
+    if k == 22 {
+        return 0;
+    }
+    if k == 23 {
+        return 0;
+    }
+    if k == 21 {
+        return nbbc_expr(buf, ast_child2(node), st);
+    }
+    if k == 29 {
+        let _b: i64 = nbbc_expr(buf, ast_child0(node), st);
+        let _i: i64 = nbbc_expr(buf, ast_child1(node), st);
+        return nbbc_expr(buf, ast_child2(node), st);
+    }
+    if k == 32 {
+        let _d: i64 = nbbc_expr(buf, ast_child0(node), st);
+        return nbbc_expr(buf, ast_child2(node), st);
+    }
+    if k == 33 {
+        let _f: i64 = nbbc_expr(buf, ast_child0(node), st);
+        return nbbc_expr(buf, ast_child2(node), st);
+    }
+    nbbc_expr(buf, node, st)
+}
+
+// Value context: a bank call here is a DiscardOnly result read as a value.
+pub fn nbbc_expr(buf: i64, node: i64, st: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == 4 {
+        return nbbc_call(buf, node, 1, st);
+    }
+    if k == 18 {
+        return nbbc_mark(st, 8, node);
+    }
+    if k == 24 {
+        return nbbc_mark(st, 8, node);
+    }
+    if k == 3 {
+        let _l: i64 = nbbc_expr(buf, ast_child0(node), st);
+        return nbbc_expr(buf, ast_child1(node), st);
+    }
+    if k == 28 {
+        let _b: i64 = nbbc_expr(buf, ast_child0(node), st);
+        return nbbc_expr(buf, ast_child1(node), st);
+    }
+    if k == 16 {
+        let _c: i64 = nbbc_expr(buf, ast_child0(node), st);
+        let _t: i64 = nbbc_block(buf, ast_child1(node), 1, st);
+        return nbbc_block(buf, ast_child2(node), 1, st);
+    }
+    if k == 19 {
+        return nbbc_fields(buf, ast_child1(node), ast_aux(node), 0, st);
+    }
+    if k == 27 {
+        return nbbc_list(buf, ast_child1(node), ast_aux(node), 0, st);
+    }
+    if k == 35 {
+        if ast_aux(node) == 1 {
+            return nbbc_expr(buf, ast_child1(node), st);
+        }
+        return 0;
+    }
+    if k == 10 {
+        return nbbc_block(buf, node, 1, st);
+    }
+    if nbbc_unary(k) == 1 {
+        return nbbc_expr(buf, ast_child0(node), st);
+    }
+    if nbbc_leaf(k) == 1 {
+        return 0;
+    }
+    nbbc_mark(st, 8, node)
+}
+
+// Childless value kinds: int_lit 1, ident 2, str_lit 34. Any other kind reaching
+// nbbc_expr's default is unknown to the walker and marks the fn not a leaf.
+pub fn nbbc_leaf(k: i64) -> i64 {
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 1;
+    }
+    if k == 34 {
+        return 1;
+    }
+    0
+}
+
+// paren, neg, not, field, cast, addr_of, deref: one operand in child0.
+pub fn nbbc_unary(k: i64) -> i64 {
+    if k == 12 {
+        return 1;
+    }
+    if k == 14 {
+        return 1;
+    }
+    if k == 15 {
+        return 1;
+    }
+    if k == 17 {
+        return 1;
+    }
+    if k == 25 {
+        return 1;
+    }
+    if k == 30 {
+        return 1;
+    }
+    if k == 31 {
+        return 1;
+    }
+    0
+}
+
+pub fn nbbc_list(buf: i64, a: i64, n: i64, i: i64, st: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let _e: i64 = nbbc_expr(buf, __mind_load_i64(a + i * 8), st);
+    nbbc_list(buf, a, n, i + 1, st)
+}
+
+// Struct-literal (name_lo, name_hi, value) triples.
+pub fn nbbc_fields(buf: i64, a: i64, n: i64, i: i64, st: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let _v: i64 = nbbc_expr(buf, __mind_load_i64(a + (i * 3 + 2) * 8), st);
+    nbbc_fields(buf, a, n, i + 1, st)
+}
+
+pub fn nbbc_call(buf: i64, node: i64, isval: i64, st: i64) -> i64 {
+    let callee: i64 = ast_child0(node);
+    let lo: i64 = ast_span_lo(callee);
+    let hi: i64 = ast_span_hi(callee);
+    let _a: i64 = nbbc_list(buf, ast_child1(node), ast_aux(node), 0, st);
+    if nbbc_ymm_name(buf, lo, hi) == 1 {
+        __mind_store_i64(st, 1);
+        if isval == 1 {
+            return nbbc_mark(st, 24, node);
+        }
+        return 0;
+    }
+    if nbv_intrinsic_id(buf, lo, hi) >= 60 {
+        return nbbc_mark(st, 16, node);
+    }
+    if nbbc_mem_name(buf, lo, hi) == 1 {
+        return 0;
+    }
+    nbbc_mark(st, 8, node)
+}
+
+// 1 for a "__mind_ymm_" callee (a bank name; the emitter refuses an unknown one).
+pub fn nbbc_ymm_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 12 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 8745819426754748255 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 3) != 6876272574123503209 {
+        return 0;
+    }
+    1
+}
+
+// 1 for "__mind_load_*" / "__mind_store_*" (inline loads and stores, no call).
+pub fn nbbc_mem_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n > 12 {
+        if __mind_load_i64(buf + lo) == 7809070704261685087 {
+            if __mind_load_i64(buf + lo + 4) == 6873726062461674606 {
+                return 1;
+            }
+        }
+    }
+    if n > 13 {
+        if __mind_load_i64(buf + lo) == 8313473862527180639 {
+            if __mind_load_i64(buf + lo + 5) == 6874026229271584612 {
+                return 1;
+            }
+        }
+    }
+    0
+}

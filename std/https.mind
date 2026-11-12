@@ -1,4 +1,4 @@
-// std.https — authenticated HTTPS GET and POST over the bounded TLS 1.3
+// std/https.mind — authenticated HTTPS GET and POST over the bounded TLS 1.3
 // client, and the client itself (its record pump and handshake state machine).
 //
 // Copyright 2026 STARGA Inc.

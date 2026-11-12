@@ -5,9 +5,9 @@
 //! RFC 0005 Phase D₁ — `MIND_STDLIB_PATH` end-to-end smoke.
 //!
 //! The unit tests in `src/project/stdlib.rs` cover the loader
-//! helper in isolation: env-unset falls back to bundled, env-set
-//! pointing at a real directory parses the on-disk files, env-set
-//! pointing at a non-existent path falls back. Those run in the
+//! helper in isolation: env-unset uses the bundled set, env-set
+//! pointing at a real directory parses the on-disk files, an unusable
+//! directory is an error that names the path and the missing file. Those run in the
 //! library-test binary and exercise `parsed_stdlib_modules_from_env`
 //! directly.
 //!
@@ -25,7 +25,7 @@
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 use libmind::project::module_table::build_module_table;
-use libmind::project::stdlib::{STDLIB_MIND_SOURCES, parsed_stdlib_modules};
+use libmind::project::stdlib::{STDLIB_MIND_SOURCES, parsed_stdlib_modules, stdlib_override_error};
 
 /// Sets `MIND_STDLIB_PATH` for the duration of the closure, then
 /// clears it. The wrapper centralises the unsafe blocks the
@@ -102,47 +102,110 @@ fn env_set_to_repo_std_dir_round_trips() {
 }
 
 #[test]
-fn env_set_to_missing_dir_falls_back_to_bundled() {
-    // A pointed-at dir that doesn't exist must NOT crash and must
-    // produce the bundled set, not an empty one. This is the
-    // "best effort" contract documented in `stdlib.rs` —
-    // user-side breakage of the override surfaces as the override
-    // simply not taking effect, never as a compiler crash.
+fn a_missing_override_dir_is_an_error_naming_the_path() {
+    // spec/v1.0/stdlib.md, "Environment override": a set but unusable
+    // MIND_STDLIB_PATH is an error, never a silent build against the bundled
+    // set. Checked on the path, not through the process environment, so a
+    // parallel test in this binary never sees the bad value.
     let nonexistent = std::path::Path::new("/nonexistent/mind/stdlib/path/that/does/not/exist");
-    with_env("MIND_STDLIB_PATH", Some(nonexistent), || {
-        let mods = parsed_stdlib_modules();
-        assert_eq!(
-            mods.len(),
-            STDLIB_MIND_SOURCES.len(),
-            "missing override dir must fall back to bundled stdlib"
-        );
-    });
+    let err = stdlib_override_error(nonexistent).expect("a missing dir is refused");
+    assert!(
+        err.contains("/nonexistent/mind/stdlib/path/that/does/not/exist")
+            && err.contains("is not a directory"),
+        "{err}"
+    );
 }
 
 #[test]
-fn env_set_to_partial_dir_falls_back_to_bundled() {
-    // A dir that exists but only has *some* of the .mind files
-    // (e.g. user only wanted to fork std.string, forgot to copy
-    // the others) is the most likely real-world misuse. The
-    // contract says "all four or none" — a partial set falls back
-    // to bundled, so the user gets a working build even if their
-    // fork is half-done. The bundled-then-override precedence
-    // doesn't trigger here because the override returns None on
-    // any missing file.
-    let tmp = std::env::temp_dir().join("mind-stdlib-partial-d-test");
+fn a_partial_override_dir_is_an_error_naming_the_missing_file() {
+    // A dir that holds only some of the four specified files (a fork of
+    // std.vec without the other three) is the most likely misuse. It names
+    // the first required file it lacks instead of using the bundled set.
+    let tmp = std::env::temp_dir().join(format!("mind-stdlib-partial-d-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("setup: create partial override dir");
     std::fs::write(tmp.join("vec.mind"), "// only vec, missing the other three")
         .expect("setup: write partial vec.mind");
-
-    with_env("MIND_STDLIB_PATH", Some(&tmp), || {
-        let mods = parsed_stdlib_modules();
-        assert_eq!(
-            mods.len(),
-            STDLIB_MIND_SOURCES.len(),
-            "partial override dir must fall back to bundled stdlib"
-        );
-    });
-
+    let err = stdlib_override_error(&tmp).expect("a partial dir is refused");
+    assert!(
+        err.contains(&tmp.display().to_string()) && err.contains("lacks `io.mind` (std.io)"),
+        "{err}"
+    );
+    let repo_io = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std/io.mind");
+    std::fs::copy(repo_io, tmp.join("io.mind")).expect("setup: copy io.mind");
+    let err = stdlib_override_error(&tmp).expect("still partial");
+    assert!(err.contains("lacks `map.mind` (std.map)"), "{err}");
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// `mindc check` with a set but unusable MIND_STDLIB_PATH exits 2 and names
+/// the path and the missing file or the parse error; it never checks against
+/// the bundled set. Unset, the same program checks clean (the control).
+#[test]
+fn mindc_refuses_an_unusable_override_and_names_it() {
+    let base = std::env::temp_dir().join(format!("mind-stdlib-cli-d-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let prog = base.join("prog");
+    std::fs::create_dir_all(prog.join(".git")).expect("setup: project dir");
+    std::fs::write(
+        prog.join("Mind.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.0.1\"\n",
+    )
+    .expect("setup: Mind.toml");
+    std::fs::write(
+        prog.join("main.mind"),
+        "import std.vec;\n\nfn main() -> i64 {\n    return vec_len(vec_new());\n}\n",
+    )
+    .expect("setup: main.mind");
+    let repo_std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+    let lacking = base.join("lacking");
+    std::fs::create_dir_all(&lacking).expect("setup: lacking dir");
+    for m in ["map", "string", "vec"] {
+        std::fs::copy(
+            repo_std.join(format!("{m}.mind")),
+            lacking.join(format!("{m}.mind")),
+        )
+        .expect("setup: copy module");
+    }
+    let broken = base.join("broken");
+    std::fs::create_dir_all(&broken).expect("setup: broken dir");
+    for m in ["io", "map", "string", "vec"] {
+        std::fs::copy(
+            repo_std.join(format!("{m}.mind")),
+            broken.join(format!("{m}.mind")),
+        )
+        .expect("setup: copy module");
+    }
+    std::fs::write(broken.join("json.mind"), "fn (").expect("setup: broken json.mind");
+    let check = |root: Option<&std::path::Path>| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_mindc"));
+        cmd.arg("check").arg("main.mind").current_dir(&prog);
+        match root {
+            Some(root) => cmd.env("MIND_STDLIB_PATH", root),
+            None => cmd.env_remove("MIND_STDLIB_PATH"),
+        };
+        let out = cmd.output().expect("spawn mindc");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.code(), all)
+    };
+    let missing = base.join("no_such_dir");
+    for (root, item) in [
+        (&missing, "is not a directory".to_string()),
+        (&lacking, "lacks `io.mind` (std.io)".to_string()),
+        (&broken, "`json.mind` (std.json) does not parse".to_string()),
+    ] {
+        let (code, all) = check(Some(root));
+        assert!(
+            code == Some(2) && all.contains(&root.display().to_string()) && all.contains(&item),
+            "MIND_STDLIB_PATH={} must exit 2 naming the path and `{item}`, got {code:?}:\n{all}",
+            root.display()
+        );
+    }
+    let (code, all) = check(None);
+    assert_eq!(code, Some(0), "unset uses the bundled std:\n{all}");
+    let _ = std::fs::remove_dir_all(&base);
 }

@@ -506,6 +506,30 @@ fn read_type_ann<R: Read>(
 
 // ─── Instruction decoder ──────────────────────────────────────────────────────
 
+/// Read an instruction stream: a record count, then each record. An
+/// `OP_EXTERN_BIND` record binds the declaration before it (`format.rs`).
+fn decode_stream<R: Read>(
+    r: &mut R,
+    strings: &[String],
+    depth: usize,
+    limit: usize,
+    version: u8,
+) -> Result<Vec<Instr>, Mic3Error> {
+    let n = read_count(r, limit)?;
+    let mut out = Vec::with_capacity(body_cap(n));
+    for _ in 0..n {
+        let op = read_u8(r)?;
+        #[cfg(feature = "std-surface")]
+        if op == super::format::OP_EXTERN_BIND {
+            let (name, binding) = (read_string(r, strings)?, read_u8(r)?);
+            super::format::bind_last_decl(&mut out, name, binding, || read_string(r, strings))?;
+            continue;
+        }
+        out.push(decode_instr(r, op, strings, depth, limit, version)?);
+    }
+    Ok(out)
+}
+
 #[cfg_attr(not(feature = "std-surface"), allow(unused_variables))]
 // `version` is threaded through for version-aware sub-decoding (e.g. the
 // std-surface While/If region metadata); without that feature it is only
@@ -513,6 +537,7 @@ fn read_type_ann<R: Read>(
 #[cfg_attr(not(feature = "std-surface"), allow(clippy::only_used_in_recursion))]
 fn decode_instr<R: Read>(
     r: &mut R,
+    op: u8,
     strings: &[String],
     depth: usize,
     limit: usize,
@@ -525,8 +550,6 @@ fn decode_instr<R: Read>(
         ));
     }
     let depth = depth + 1;
-
-    let op = read_u8(r)?;
     match op {
         OP_CONST_I64 => {
             let dst = read_vid(r)?;
@@ -773,11 +796,7 @@ fn decode_instr<R: Read>(
             let params = read_named_vids(r, strings, limit)?;
             let ret_id = read_opt_vid(r)?;
             let reap_threshold = read_opt_f64(r)?;
-            let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(body_cap(body_len));
-            for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit, version)?);
-            }
+            let body = decode_stream(r, strings, depth, limit, version)?;
             // Step D (v0x03) — the per-function `value_types` sub-list is
             // TAIL-APPENDED after the body. Bare builds have already refused
             // v0x03 in the top-level version gate, so this read is reached only
@@ -853,16 +872,8 @@ fn decode_instr<R: Read>(
         #[cfg(feature = "std-surface")]
         OP_WHILE => {
             let cond_id = read_vid(r)?;
-            let cond_len = read_count(r, limit)?;
-            let mut cond_instrs = Vec::with_capacity(body_cap(cond_len));
-            for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
-            }
-            let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(body_cap(body_len));
-            for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit, version)?);
-            }
+            let cond_instrs = decode_stream(r, strings, depth, limit, version)?;
+            let body = decode_stream(r, strings, depth, limit, version)?;
             let live_vars = read_named_vids(r, strings, limit)?;
             let init_ids = read_vid_vec(r, limit)?;
             // version 0x02+ serialises the F2 region-exit ids after init_ids;
@@ -885,22 +896,10 @@ fn decode_instr<R: Read>(
         #[cfg(feature = "std-surface")]
         OP_IF => {
             let cond_id = read_vid(r)?;
-            let cond_len = read_count(r, limit)?;
-            let mut cond_instrs = Vec::with_capacity(body_cap(cond_len));
-            for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
-            }
-            let then_len = read_count(r, limit)?;
-            let mut then_instrs = Vec::with_capacity(body_cap(then_len));
-            for _ in 0..then_len {
-                then_instrs.push(decode_instr(r, strings, depth, limit, version)?);
-            }
+            let cond_instrs = decode_stream(r, strings, depth, limit, version)?;
+            let then_instrs = decode_stream(r, strings, depth, limit, version)?;
             let then_result = read_vid(r)?;
-            let else_len = read_count(r, limit)?;
-            let mut else_instrs = Vec::with_capacity(body_cap(else_len));
-            for _ in 0..else_len {
-                else_instrs.push(decode_instr(r, strings, depth, limit, version)?);
-            }
+            let else_instrs = decode_stream(r, strings, depth, limit, version)?;
             let else_result = read_vid(r)?;
             let dst = read_vid(r)?;
             let branch_bindings = read_named_vids(r, strings, limit)?;
@@ -1008,11 +1007,7 @@ fn decode_instr<R: Read>(
         }
         #[cfg(feature = "std-surface")]
         OP_REGION => {
-            let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(body_cap(body_len));
-            for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit, version)?);
-            }
+            let body = decode_stream(r, strings, depth, limit, version)?;
             let result = read_vid(r)?;
             let enter_id = read_vid(r)?;
             let exit_id = read_vid(r)?;
@@ -1051,6 +1046,7 @@ fn decode_instr<R: Read>(
                 is_varargs,
                 vararg_hints,
                 callconv,
+                binding: crate::ast::ExternBinding::Base,
             })
         }
         // break / continue carry the loop-control `live` snapshot
@@ -1208,11 +1204,7 @@ pub fn parse_mic3_prefix(data: &[u8]) -> Result<ParsedMic3Prefix, Mic3Error> {
     }
 
     // Instructions
-    let n_instrs = read_count(&mut r, limit)?;
-    let mut instrs = Vec::with_capacity(bounded_cap(n_instrs, limit));
-    for _ in 0..n_instrs {
-        instrs.push(decode_instr(&mut r, &strings, 0, limit, version)?);
-    }
+    let instrs = decode_stream(&mut r, &strings, 0, limit, version)?;
 
     #[allow(unused_mut)]
     let mut module = IRModule {

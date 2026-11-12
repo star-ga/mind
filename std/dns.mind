@@ -64,7 +64,7 @@ extern "C" {
     unsafe fn close(fd: i32) -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
     unsafe fn uname(buf: *mut u8) -> i32;
-    unsafe fn __errno_location() -> i64;
+    unsafe fn __errno_location() -> *mut i32;
     unsafe fn clock_gettime(clk: i32, ts: *mut u8) -> i32;
 }
 
@@ -249,8 +249,9 @@ pub fn dns_scope_id(r: i64, i: i64) -> i64 {
 // Internals
 // ---------------------------------------------------------------------------
 
-fn dns_zero(p: i64, n: i64) {
-    let _ = memset(p as *mut u8, 0, n);
+fn dns_zero(p: i64, n: i64) -> i64 {
+    memset(p as *mut u8, 0 as i32, n);
+    0
 }
 
 fn dns_new_record() -> i64 {
@@ -558,7 +559,7 @@ fn dns_sockaddr(r: i64, i: i64, port: i64, sa: i64) -> i64 {
 // dns_tcp_socket — a new TCP socket (SOCK_STREAM 1) of address family `domain`
 // (AF_INET 2, AF_INET6 10): the descriptor, or a negative value.
 pub fn dns_tcp_socket(domain: i64) -> i64 {
-    socket(domain as i32, 1, 0) as i64
+    socket(domain as i32, 1 as i32, 0 as i32) as i64
 }
 
 // dns_set_send_timeout — SO_SNDTIMEO (SOL_SOCKET 1, optname 21) on descriptor
@@ -568,7 +569,7 @@ pub fn dns_set_send_timeout(fd: i64, ms: i64) -> i64 {
     let tv: i64 = __mind_alloc(16);
     __mind_store_i64(tv + 0, ms / 1000);
     __mind_store_i64(tv + 8, (ms % 1000) * 1000);
-    let rc: i64 = setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64;
+    let rc: i64 = setsockopt(fd as i32, 1 as i32, 21 as i32, tv as *const u8, 16 as i32) as i64;
     __mind_free(tv);
     rc
 }
@@ -582,7 +583,7 @@ pub fn dns_connect_fd(fd: i64, sa: i64, salen: i64) -> i64 {
 // dns_errno — the calling thread's errno. Read it straight after the call that
 // failed: no other OS call may come between them.
 pub fn dns_errno() -> i64 {
-    __mind_load_i32(__errno_location())
+    __mind_load_i32(__errno_location() as i64)
 }
 
 // dns_close_fd — close(2) descriptor `fd`. Returns 0, or -1.
@@ -744,9 +745,9 @@ pub fn tcp_set_io_timeout(s: i64, ms: i64) -> i64 {
     let tv: i64 = __mind_alloc(16);
     __mind_store_i64(tv + 0, ms / 1000);
     __mind_store_i64(tv + 8, (ms % 1000) * 1000);
-    let mut rc: i64 = setsockopt(fd as i32, 1, 20, tv as *const u8, 16) as i64;
+    let mut rc: i64 = setsockopt(fd as i32, 1 as i32, 20 as i32, tv as *const u8, 16 as i32) as i64;
     if rc == 0 {
-        rc = setsockopt(fd as i32, 1, 21, tv as *const u8, 16) as i64;
+        rc = setsockopt(fd as i32, 1 as i32, 21 as i32, tv as *const u8, 16 as i32) as i64;
     }
     __mind_free(tv);
     if rc != 0 {
@@ -767,7 +768,7 @@ pub fn tcp_write_all(s: i64, buf: i64, len: i64) -> i64 {
     let mut failed: i64 = 0;
     while failed == 0 && done < len {
         let at: i64 = buf + done;
-        let n: i64 = send(fd as i32, at as *const u8, len - done, 16384) as i64;
+        let n: i64 = send(fd as i32, at as *const u8, len - done, 16384 as i32) as i64;
         if n <= 0 {
             failed = 1;
         } else {

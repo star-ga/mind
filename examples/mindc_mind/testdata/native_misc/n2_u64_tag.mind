@@ -1,0 +1,9 @@
+// N2: a u64 binding keeps its unsigned type on the let and on each assignment (an
+// identity conversion in the trace note, note leg). Independent value: 5 + 1 = 6;
+// y = y * 7 = 42; 42 + 6 = 48.
+fn main() -> i64 {
+    let x: u64 = 5;
+    let mut y: u64 = x + 1;
+    y = y * 7;
+    (y as i64) + 6
+}

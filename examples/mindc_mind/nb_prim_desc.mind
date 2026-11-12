@@ -1,0 +1,378 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The primitive scalar type table, shared by main.mind and the LICM self-check
+// part. PART RULE: intrinsics only.
+
+// MIND rule: each declared narrow scalar resolves once to one entry of the primitive
+// type table, and a narrow primitive keeps its width everywhere, extern signatures
+// included. The type code is the position of the name in one names text, in spec
+// order (docs/specs/v1.0.md 2.1). Each code has one row: bits, signed, is_bool and
+// class (0 = INT, 1 = FLOAT). prim_code_of is the only reader of a type spelling;
+// every consumer reads the code and its row.
+
+// The names text "i8 i16 i32 i64 u8 u16 u32 u64 isize usize bool f32 f64",
+// one byte per index. shortcut: a byte chain, not a string literal, because the
+// mic@3 twin does not lower a string literal yet; upgrade when it does.
+pub fn prim_names_len() -> i64 {
+    54
+}
+
+pub fn prim_names_byte(i: i64) -> i64 {
+    if i >= 27 {
+        return prim_names_byte_hi(i);
+    }
+    if i == 0 {
+        return 105;
+    }
+    if i == 1 {
+        return 56;
+    }
+    if i == 2 {
+        return 32;
+    }
+    if i == 3 {
+        return 105;
+    }
+    if i == 4 {
+        return 49;
+    }
+    if i == 5 {
+        return 54;
+    }
+    if i == 6 {
+        return 32;
+    }
+    if i == 7 {
+        return 105;
+    }
+    if i == 8 {
+        return 51;
+    }
+    if i == 9 {
+        return 50;
+    }
+    if i == 10 {
+        return 32;
+    }
+    if i == 11 {
+        return 105;
+    }
+    if i == 12 {
+        return 54;
+    }
+    if i == 13 {
+        return 52;
+    }
+    if i == 14 {
+        return 32;
+    }
+    if i == 15 {
+        return 117;
+    }
+    if i == 16 {
+        return 56;
+    }
+    if i == 17 {
+        return 32;
+    }
+    if i == 18 {
+        return 117;
+    }
+    if i == 19 {
+        return 49;
+    }
+    if i == 20 {
+        return 54;
+    }
+    if i == 21 {
+        return 32;
+    }
+    if i == 22 {
+        return 117;
+    }
+    if i == 23 {
+        return 51;
+    }
+    if i == 24 {
+        return 50;
+    }
+    if i == 25 {
+        return 32;
+    }
+    if i == 26 {
+        return 117;
+    }
+    32
+}
+
+pub fn prim_names_byte_hi(i: i64) -> i64 {
+    if i == 27 {
+        return 54;
+    }
+    if i == 28 {
+        return 52;
+    }
+    if i == 29 {
+        return 32;
+    }
+    if i == 30 {
+        return 105;
+    }
+    if i == 31 {
+        return 115;
+    }
+    if i == 32 {
+        return 105;
+    }
+    if i == 33 {
+        return 122;
+    }
+    if i == 34 {
+        return 101;
+    }
+    if i == 35 {
+        return 32;
+    }
+    if i == 36 {
+        return 117;
+    }
+    if i == 37 {
+        return 115;
+    }
+    if i == 38 {
+        return 105;
+    }
+    if i == 39 {
+        return 122;
+    }
+    if i == 40 {
+        return 101;
+    }
+    if i == 41 {
+        return 32;
+    }
+    if i == 42 {
+        return 98;
+    }
+    if i == 43 {
+        return 111;
+    }
+    if i == 44 {
+        return 111;
+    }
+    if i == 45 {
+        return 108;
+    }
+    if i == 46 {
+        return 32;
+    }
+    if i == 47 {
+        return 102;
+    }
+    if i == 48 {
+        return 51;
+    }
+    if i == 49 {
+        return 50;
+    }
+    if i == 50 {
+        return 32;
+    }
+    if i == 51 {
+        return 102;
+    }
+    if i == 52 {
+        return 54;
+    }
+    if i == 53 {
+        return 52;
+    }
+    32
+}
+
+// The resolver: the code of the primitive named by buf[lo..hi), or -1.
+pub fn prim_code_of(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 2 {
+        return 0 - 1;
+    }
+    if hi - lo > 5 {
+        return 0 - 1;
+    }
+    prim_code_scan(buf, lo, hi - lo, 0, 0)
+}
+
+// Compare the span with the name that starts at text index s (code `code`).
+pub fn prim_code_scan(buf: i64, lo: i64, n: i64, s: i64, code: i64) -> i64 {
+    if s >= prim_names_len() {
+        return 0 - 1;
+    }
+    let e: i64 = prim_word_end(s);
+    if e - s == n {
+        if prim_word_eq(buf, lo, s, n) == 1 {
+            return code;
+        }
+    }
+    prim_code_scan(buf, lo, n, e + 1, code + 1)
+}
+
+pub fn prim_word_end(i: i64) -> i64 {
+    if i >= prim_names_len() {
+        return i;
+    }
+    if prim_names_byte(i) == 32 {
+        return i;
+    }
+    prim_word_end(i + 1)
+}
+
+pub fn prim_word_eq(buf: i64, lo: i64, s: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 1;
+    }
+    if (__mind_load_i64(buf + lo) & 255) != prim_names_byte(s) {
+        return 0;
+    }
+    prim_word_eq(buf, lo + 1, s + 1, n - 1)
+}
+
+// Field f of the row of code c (0 bits, 1 signed, 2 is_bool, 3 class, 4 C ABI
+// registry tag), or -1 for a code outside the table. One row per code, in code
+// order. The registry tag is the MCABI001 wire tag of the scalar.
+pub fn prim_code_field(c: i64, f: i64) -> i64 {
+    // i8 INT
+    if c == 0 {
+        return prim_row(f, 8, 1, 0, 0, 1);
+    }
+    // i16 INT
+    if c == 1 {
+        return prim_row(f, 16, 1, 0, 0, 3);
+    }
+    // i32 INT
+    if c == 2 {
+        return prim_row(f, 32, 1, 0, 0, 5);
+    }
+    // i64 INT
+    if c == 3 {
+        return prim_row(f, 64, 1, 0, 0, 7);
+    }
+    // u8 INT
+    if c == 4 {
+        return prim_row(f, 8, 0, 0, 0, 2);
+    }
+    // u16 INT
+    if c == 5 {
+        return prim_row(f, 16, 0, 0, 0, 4);
+    }
+    // u32 INT
+    if c == 6 {
+        return prim_row(f, 32, 0, 0, 0, 6);
+    }
+    // u64 INT
+    if c == 7 {
+        return prim_row(f, 64, 0, 0, 0, 8);
+    }
+    // isize INT
+    if c == 8 {
+        return prim_row(f, 64, 1, 0, 0, 9);
+    }
+    // usize INT
+    if c == 9 {
+        return prim_row(f, 64, 0, 0, 0, 10);
+    }
+    // bool INT
+    if c == 10 {
+        return prim_row(f, 8, 0, 1, 0, 13);
+    }
+    // f32 FLOAT
+    if c == 11 {
+        return prim_row(f, 32, 1, 0, 1, 11);
+    }
+    // f64 FLOAT
+    if c == 12 {
+        return prim_row(f, 64, 1, 0, 1, 12);
+    }
+    0 - 1
+}
+
+pub fn prim_row(f: i64, bits: i64, is_signed: i64, is_bool: i64, class: i64, ctag: i64) -> i64 {
+    if f == 0 {
+        return bits;
+    }
+    if f == 1 {
+        return is_signed;
+    }
+    if f == 2 {
+        return is_bool;
+    }
+    if f == 3 {
+        return class;
+    }
+    ctag
+}
+
+// The MCABI001 registry tag of code c, or -1 for a code outside the table.
+pub fn prim_code_cabi_tag(c: i64) -> i64 {
+    prim_code_field(c, 4)
+}
+
+pub fn prim_code_bits(c: i64) -> i64 {
+    prim_code_field(c, 0)
+}
+
+pub fn prim_code_signed(c: i64) -> i64 {
+    prim_code_field(c, 1)
+}
+
+pub fn prim_code_is_bool(c: i64) -> i64 {
+    prim_code_field(c, 2)
+}
+
+pub fn prim_code_is_float(c: i64) -> i64 {
+    if prim_code_field(c, 3) == 1 {
+        return 1;
+    }
+    0
+}
+
+// The code of i64. isize has the same row; a consumer that names i64 alone
+// (a widening cast, the i64 type tag) compares this code.
+pub fn prim_code_i64() -> i64 {
+    3
+}
+
+// Narrow integer bits of a code: 8/16/32, or 0 for 64-bit, bool, float and -1.
+pub fn prim_code_narrow_bits(c: i64) -> i64 {
+    if c < 0 {
+        return 0;
+    }
+    if prim_code_is_float(c) == 1 {
+        return 0;
+    }
+    if prim_code_is_bool(c) == 1 {
+        return 0;
+    }
+    let bits: i64 = prim_code_bits(c);
+    if bits < 64 {
+        return bits;
+    }
+    0
+}
+
+// The width code of a code: 8/16/32 signed, -8/-16/-32 unsigned, else 64.
+pub fn prim_code_width(c: i64) -> i64 {
+    let bits: i64 = prim_code_narrow_bits(c);
+    if bits == 0 {
+        return 64;
+    }
+    if prim_code_signed(c) == 1 {
+        return bits;
+    }
+    0 - bits
+}
+
+// The zero-extend mask of an unsigned narrow width: 8 -> 255, 16 -> 65535, 32 -> 4294967295.
+pub fn prim_width_mask(bits: i64) -> i64 {
+    (1 << bits) - 1
+}

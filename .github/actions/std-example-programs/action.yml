@@ -1,0 +1,32 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: std-example-programs
+description: "Run the std example programs halbach_q16, bimap_pairs and detmath_kat."
+# Moved verbatim from the ci.yml step "std example programs (halbach_q16, bimap_pairs, detmath_kat)" (no-god-files order: the workflow file must not grow).
+runs:
+  using: composite
+  steps:
+    - shell: bash -e {0}
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        M="$PWD/target/release/mindc"; W="$RUNNER_TEMP/std-examples"
+        rm -rf "$W"; mkdir -p "$W"; pass=0
+        run_example() { d="$1"; cp -r "examples/$d" "$W/$d"
+          ( cd "$W/$d" && "$M" build --backend mlir --target cpu --emit binary --optimize debug --no-cache --out program ) > "$W/$d.build.log" 2>&1 || { cat "$W/$d.build.log"; echo "::error::build of examples/$d failed"; exit 1; }
+          r=0; ( cd "$W/$d" && ./program ) > "$W/$d.out" 2> "$W/$d.err" || r=$?
+          echo "--- $d stdout"; cat "$W/$d.out"
+          if [ "$r" != 0 ] || [ -s "$W/$d.err" ]; then cat "$W/$d.err"; echo "::error::examples/$d: exit $r, want 0 with empty stderr"; exit 1; fi; }
+        run_example halbach_q16
+        n="$(grep -c -E '^(DECAY|RATIO|SMALLN|SWEEP) PASS ' "$W/halbach_q16.out" || true)"
+        [ "$n" = 4 ] && [ "$(wc -l < "$W/halbach_q16.out")" = 4 ] || { echo "::error::halbach_q16: $n of 4 checks printed PASS, want exactly 4 PASS lines"; exit 1; }
+        pass=$((pass + 1)); echo "ok halbach_q16"
+        run_example bimap_pairs
+        diff examples/bimap_pairs/expected_stdout.txt "$W/bimap_pairs.out" || { echo "::error::bimap_pairs: stdout differs from examples/bimap_pairs/expected_stdout.txt"; exit 1; }
+        pass=$((pass + 1)); echo "ok bimap_pairs"
+        run_example detmath_kat
+        printf '44\n' > "$W/detmath_kat.want"
+        cmp -s "$W/detmath_kat.want" "$W/detmath_kat.out" || { echo "::error::detmath_kat: stdout is not exactly 44 (passed checks)"; exit 1; }
+        pass=$((pass + 1)); echo "ok detmath_kat"
+        [ "$pass" = 3 ] || { echo "::error::std examples: $pass programs passed, want 3"; exit 1; }
+        echo "std examples: 3 programs passed (halbach_q16 4 checks, bimap_pairs 6 lines, detmath_kat 44 checks)"

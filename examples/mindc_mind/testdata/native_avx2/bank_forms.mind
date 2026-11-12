@@ -1,0 +1,64 @@
+// Copyright 2026 STARGA Inc.
+// R-01b register bank: every one of the 14 bank names, on ymm0..7 (2-byte VEX)
+// and ymm8..14 (3-byte VEX when ymm8.. is the rm operand), with disp 0, disp8,
+// disp32 and a negative displacement, and a base that is an expression. Prints
+// 448 bytes computed independently by the harness row.
+
+fn forms(a: i64, b: i64, o: i64) -> i64 {
+    __mind_ymm_vmovdqu_ld(8, a, 0);
+    __mind_ymm_vmovdqu_ld(9, b, 0);
+    __mind_ymm_vpaddd_i32x8_r(10, 8, 9);
+    __mind_ymm_vmovdqu_st(10, o, 0);
+    __mind_ymm_vpsubd_i32x8_r(11, 8, 9);
+    __mind_ymm_vmovdqu_st(11, o, 32);
+    __mind_ymm_vpaddb_i8x32_r(12, 8, 9);
+    __mind_ymm_vmovdqu_st(12, o, 64);
+    __mind_ymm_vpaddq_i64x4_r(13, 8, 9);
+    __mind_ymm_vmovdqu_st(13, o, 96);
+    __mind_ymm_vpsubq_i64x4_r(14, 8, 9);
+    __mind_ymm_vmovdqu_st(14, o, 128);
+    __mind_ymm_vmovdqu_ld(1, a, 32);
+    __mind_ymm_vpaddd_i32x8_m(1, b, 32);
+    __mind_ymm_vmovdqu_st(1, o, 160);
+    __mind_ymm_vmovdqu_ld(2, a, 64);
+    __mind_ymm_vpsubd_i32x8_m(2, b, 200);
+    __mind_ymm_vmovdqu_st(2, o, 192);
+    __mind_ymm_vmovdqu_ld(3, a, 96);
+    __mind_ymm_vpaddb_i8x32_m(3, b, 96);
+    __mind_ymm_vmovdqu_st(3, o, 224);
+    __mind_ymm_vmovdqu_ld(12, a, 128);
+    __mind_ymm_vpaddq_i64x4_m(12, b, 128);
+    __mind_ymm_vmovdqu_st(12, o, 256);
+    __mind_ymm_vmovdqu_ld(13, a, 160);
+    __mind_ymm_vpsubq_i64x4_m(13, b, 160);
+    __mind_ymm_vmovdqu_st(13, o, 288);
+    __mind_ymm_vmovdqu_ld(4, b + 320, -64);
+    __mind_ymm_vmovdqu_st(4, o, 320);
+    __mind_ymm_vmovdqu_ld(5, a, 192);
+    __mind_ymm_vpshufb_i8x32_m(6, 5, b, 224);
+    __mind_ymm_vmovdqu_st(6, o, 352);
+    __mind_ymm_vmovdqu_ld(7, b, 224);
+    __mind_ymm_vpshufb_i8x32_r(14, 5, 7);
+    __mind_ymm_vmovdqu_st(14, o, 384);
+    __mind_ymm_vmovdqu_ld(0, a + 256, 0);
+    __mind_ymm_vmovdqu_st(0, o + 416, 0);
+    0
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(512);
+    let b: i64 = __mind_alloc(512);
+    let o: i64 = __mind_alloc(448);
+    let mut i: i64 = 0;
+    let mut x: i64 = 777;
+    while i < 512 {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(a + i, x / 65536);
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(b + i, x / 65536);
+        i = i + 1;
+    }
+    let _f: i64 = forms(a, b, o);
+    __mind_write(1, o, 448, 0 - 1);
+    0
+}

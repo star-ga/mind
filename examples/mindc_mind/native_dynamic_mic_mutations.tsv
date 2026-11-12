@@ -1,0 +1,4 @@
+name	function	case	expected_detection
+overwrite_first_import_error	nd_import_step	4	normal_exit0_wrong_first_error_byte
+overwrite_first_lexicographic_difference	nd_compare_step	2	normal_exit0_wrong_comparison_bytes
+reverse_sort_termination	nd_sort_step	0	normal_exit0_wrong_symbol_or_version_order

@@ -1,0 +1,44 @@
+// LICM slice 1 keeps the narrow code of a hoisted name. `y` reads `x`, both hoist as a
+// chain, and `<<` on a u8 left masks its count to 7 and wraps to 8 bits where it is read.
+// Independent value: 9 & 7 = 1, so 200 << 1 = 400, which wraps to 144 as a u8.
+// param chain: 2 trips * 144 = 288. local chain: 1 trip * 144. lone shift of the
+// parameter, no chain: 144. (288 + 144 + 144) % 251 = 576 - 502 = 74.
+fn chain_param(a: u8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: u8 = a + 0;
+        let y: u8 = x << 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn chain_local(n: i64) -> i64 {
+    let a: u8 = 200;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: u8 = a + 0;
+        let y: u8 = x << 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn lone(a: u8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let y: u8 = a << 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    (chain_param(200, 2) + chain_local(1) + lone(200, 1)) % 251
+}

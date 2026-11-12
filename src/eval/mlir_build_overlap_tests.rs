@@ -71,7 +71,7 @@ fn overlapped_shared_build_matches_serial_reference() {
     // object, then the link with that object first in the extra list.
     let ir_only = build_all(ADD_MLIR, &tools, &base).expect("MLIR leg");
     assert_eq!(products.llvm_ir, ir_only.llvm_ir, "MLIR leg diverged");
-    let runtime_obj = compile_runtime_support_obj(&tools, None).expect("runtime object");
+    let runtime_obj = compile_runtime_support_obj(&tools, None, ADD_MLIR).expect("runtime object");
     let extra = vec![runtime_obj.path().to_path_buf()];
     run_clang_codegen(&ir_only.llvm_ir, &tools, None, &serial, true, &extra).expect("serial link");
 
@@ -85,4 +85,72 @@ fn overlapped_shared_build_matches_serial_reference() {
         "runtime-support symbols missing from the overlapped .so"
     );
     assert!(a == b, "overlapped build differs from the serial reference");
+}
+
+fn object_has_symbol(path: &std::path::Path, name: &str) -> bool {
+    let bytes = std::fs::read(path).expect("read object");
+    let needle = name.as_bytes();
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+#[test]
+fn sys_twin_object_follows_mlir_text() {
+    let Some(tools) = tools_or_skip() else {
+        return;
+    };
+    let without = compile_runtime_support_obj(&tools, None, ADD_MLIR).expect("twin-free object");
+    let with = compile_runtime_support_obj(
+        &tools,
+        None,
+        "func.func private @__mind_sys_getuid() -> i64\n",
+    )
+    .expect("twin object");
+    assert!(
+        !object_has_symbol(without.path(), "__mind_sys_getuid"),
+        "twin-free runtime object still defines __mind_sys_getuid"
+    );
+    assert!(
+        object_has_symbol(with.path(), "__mind_sys_getuid"),
+        "MLIR that names __mind_sys_ did not compile the twin"
+    );
+    assert!(
+        object_has_symbol(without.path(), "__mind_load_i64"),
+        "twin-free runtime object dropped an unrelated export"
+    );
+}
+
+#[test]
+fn sys_twin_flag_changes_runtime_obj_cache_key() {
+    let Some(tools) = tools_or_skip() else {
+        return;
+    };
+    let plain = vec!["-c".to_string(), "-O2".to_string()];
+    let mut flagged = plain.clone();
+    flagged.push("-DMIND_RAW_SYSCALLS=1".to_string());
+    let bare = runtime_obj_cache_path(&tools, &plain);
+    let marked = runtime_obj_cache_path(&tools, &flagged);
+    if let (Some(bare), Some(marked)) = (bare, marked) {
+        assert_ne!(
+            bare, marked,
+            "runtime-object cache key ignored the syscall define"
+        );
+    }
+}
+
+#[test]
+fn linked_object_scan_matches_the_symbol_exactly() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let named = dir.path().join("named.o");
+    let plain = dir.path().join("plain.o");
+    std::fs::write(&named, b"\0__mind_sys_getuid\0").expect("write named");
+    std::fs::write(&plain, b"\0__mind_sys\0__mind_load_i64\0").expect("write plain");
+    assert!(linked_object_names_sys_twin(&named), "named object missed");
+    assert!(
+        !linked_object_names_sys_twin(&plain),
+        "plain object matched"
+    );
+    assert!(
+        linked_object_names_sys_twin(dir.path().join("absent.o")),
+        "unreadable object must count as named"
+    );
 }

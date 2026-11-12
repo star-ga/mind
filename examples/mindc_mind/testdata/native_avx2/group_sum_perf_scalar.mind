@@ -1,0 +1,97 @@
+// Scalar twin of group_sum_perf.mind: the same rows and taps written as plain
+// MIND loops (no intrinsic). Stdout = the same i64 checksum.
+
+fn gp_setup(a: i64, b: i64, c: i64, off: i64) -> i64 {
+    let mut p: i64 = 0;
+    while p < 4096 {
+        __mind_store_i64(a + p * 8, p * 3 + 1);
+        __mind_store_i64(b + p * 8, p * 5 - 7);
+        __mind_store_i64(c + p * 8, 11 - p);
+        p = p + 1;
+    }
+    let mut j: i64 = 0;
+    while j < 128 {
+        __mind_store_i64(off + j * 8, (j * 3313) % 425728);
+        j = j + 1;
+    }
+    0
+}
+
+fn gp_sum(buf: i64, words: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < words {
+        s = s * 31 + __mind_load_i64(buf + i * 8);
+        i = i + 1;
+    }
+    s
+}
+
+fn gp_rows(a: i64, b: i64, c: i64, bank: i64) -> i64 {
+    let mut p: i64 = 0;
+    while p < 4096 {
+        let x: i64 = __mind_load_i64(a + p * 8);
+        let y: i64 = __mind_load_i64(b + p * 8);
+        let z: i64 = __mind_load_i64(c + p * 8);
+        let d: i64 = bank + p * 8;
+        __mind_store_i64(d, z);
+        __mind_store_i64(d + 32768, y - z);
+        __mind_store_i64(d + 65536, y);
+        __mind_store_i64(d + 98304, y + z);
+        __mind_store_i64(d + 131072, x - y - z);
+        __mind_store_i64(d + 163840, x - y);
+        __mind_store_i64(d + 196608, x - y + z);
+        __mind_store_i64(d + 229376, x - z);
+        __mind_store_i64(d + 262144, x);
+        __mind_store_i64(d + 294912, x + z);
+        __mind_store_i64(d + 327680, x + y - z);
+        __mind_store_i64(d + 360448, x + y);
+        __mind_store_i64(d + 393216, x + y + z);
+        p = p + 1;
+    }
+    0
+}
+
+fn gp_acc(out: i64, bank: i64, off: i64, init: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        let mut s: i64 = 0;
+        if init == 1 {
+            s = __mind_load_i64(out + i * 8);
+        }
+        let mut j: i64 = 0;
+        while j < 64 {
+            s = s + __mind_load_i64(bank + __mind_load_i64(off + j * 8) + i * 8);
+            j = j + 1;
+        }
+        while j < 128 {
+            s = s - __mind_load_i64(bank + __mind_load_i64(off + j * 8) + i * 8);
+            j = j + 1;
+        }
+        __mind_store_i64(out + i * 8, s);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(32768);
+    let b: i64 = __mind_alloc(32768);
+    let c: i64 = __mind_alloc(32768);
+    let off: i64 = __mind_alloc(1024);
+    let bank: i64 = __mind_alloc(425984);
+    let out: i64 = __mind_alloc(256);
+    gp_setup(a, b, c, off);
+    let mut r: i64 = 0;
+    let mut round: i64 = 0;
+    while round < 400 {
+        r = r + gp_rows(a, b, c, bank);
+        r = r + gp_acc(out, bank, off, round % 2);
+        round = round + 1;
+    }
+    let s: i64 = gp_sum(bank, 53248) * 7 + gp_sum(out, 32) + r;
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, s);
+    __mind_write(1, w, 8, 0 - 1);
+    0
+}

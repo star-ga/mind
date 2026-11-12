@@ -103,6 +103,153 @@ pub fn with_bufferize_hint(path: &str, mut stderr: String) -> String {
     stderr
 }
 
+/// The answers of every [`cached_major`] probe in this process, by tool path.
+type Probes = std::sync::Mutex<std::collections::HashMap<String, Option<u32>>>;
+
+fn probed() -> &'static Probes {
+    static SEEN: std::sync::OnceLock<Probes> = std::sync::OnceLock::new();
+    SEEN.get_or_init(Default::default)
+}
+
+/// What an earlier [`cached_major`] probe of `tool` in this process found,
+/// `None` when none ran. Never probes.
+fn probed_major(tool: &str) -> Option<Option<u32>> {
+    probed().lock().ok().and_then(|m| m.get(tool).copied())
+}
+
+/// [`llvm_major`] of `tool`, probed once per process and path: a project build
+/// compiles many modules, and the answer cannot change under a running build.
+fn cached_major(tool: &str) -> Option<u32> {
+    if let Some(major) = probed_major(tool) {
+        return major;
+    }
+    let major = llvm_major(tool);
+    if let Ok(mut m) = probed().lock() {
+        m.insert(tool.to_string(), major);
+    }
+    major
+}
+
+/// The LLVM major the tool at `path` is installed under, read from the file
+/// system alone: an `llvm-<N>` directory on its resolved path
+/// (`/usr/lib/llvm-20/bin/mlir-opt`), else the one clang resource directory
+/// `<prefix>/lib/clang/<N>` beside its `bin`.
+#[cfg(feature = "mlir-subprocess")]
+fn installed_major(path: &std::path::Path) -> Option<u32> {
+    let real = std::fs::canonicalize(path).ok()?;
+    let from_dir = real
+        .components()
+        .rev()
+        .find_map(|c| c.as_os_str().to_str()?.strip_prefix("llvm-")?.parse().ok());
+    if from_dir.is_some() {
+        return from_dir;
+    }
+    let resource = real.parent()?.parent()?.join("lib").join("clang");
+    let mut majors = std::fs::read_dir(resource).ok()?.flatten().filter_map(|e| {
+        e.file_name()
+            .to_str()?
+            .split('.')
+            .next()?
+            .parse::<u32>()
+            .ok()
+    });
+    let major = majors.next()?;
+    majors.next().is_none().then_some(major)
+}
+
+/// The E5004 explanation for a tensor-pipeline failure on the `mlir-opt` at
+/// `path`, of LLVM `major` (`None` when its `--version` states none), or
+/// `None` when that `mlir-opt` is new enough. `newer` is an installed
+/// `mlir-opt` that would do.
+pub fn old_mlir_opt_note(
+    path: &str,
+    major: Option<u32>,
+    newer: Option<(u32, PathBuf)>,
+) -> Option<String> {
+    if major.is_some_and(|m| m >= MIN_MLIR_MAJOR) {
+        return None;
+    }
+    let switch = match newer {
+        Some((m, bin)) => format!("LLVM {m} is installed in {}: {SWITCH}", bin.display()),
+        None => {
+            format!("install mlir-{MIN_MLIR_MAJOR}-tools and clang-{MIN_MLIR_MAJOR}, then {SWITCH}")
+        }
+    };
+    Some(format!(
+        "[{code}] the tensor pipeline (one-shot-bufferize) needs MLIR/LLVM {MIN_MLIR_MAJOR} \
+         or newer; the mlir-opt in use ({path}) is {}. {switch}",
+        found(major),
+        code = crate::diagnostics::capability::NATIVE_TOOLCHAIN_ABSENT
+    ))
+}
+
+fn found(major: Option<u32>) -> String {
+    match major {
+        Some(m) => format!("LLVM {m}"),
+        None => "a version its `--version` output does not state".to_string(),
+    }
+}
+
+/// The one-line warning for running the tensor pipeline on an `mlir-opt`
+/// older than [`MIN_MLIR_MAJOR`]. Such a build is NOT refused: MLIR is an
+/// optional backend and many tensor programs build correctly on LLVM 18.
+pub fn old_mlir_opt_warning(path: &str, major: Option<u32>) -> String {
+    format!(
+        "warning[build]: mlir-opt {path} is {}; the tensor pipeline (one-shot-bufferize) \
+         is supported on MLIR/LLVM {MIN_MLIR_MAJOR} or newer, building anyway",
+        found(major)
+    )
+}
+
+/// For a tensor-pipeline run on the `mlir-opt` at `path`: `None` when it is new
+/// enough, else the [`old_mlir_opt_note`] to append if `mlir-opt` then FAILS.
+/// The first call per path in a process also prints [`old_mlir_opt_warning`]
+/// (once: a project build runs the pipeline for every module).
+pub fn tensor_pipeline_note(path: &str) -> Option<String> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let major = cached_major(path);
+    old_mlir_opt_note(path, major, None)?;
+    let first = WARNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut w| w.insert(path.to_string()))
+        .unwrap_or(false);
+    if first {
+        eprintln!("{}", old_mlir_opt_warning(path, major));
+    }
+    let newer = installed("mlir-opt")
+        .into_iter()
+        .find(|(m, _)| *m >= MIN_MLIR_MAJOR);
+    old_mlir_opt_note(path, major, newer)
+}
+
+/// The toolchain a native build ran with — each tool's resolved path and LLVM
+/// major — as one line, e.g.
+/// `mlir-opt /usr/lib/llvm-20/bin/mlir-opt (LLVM 20); ...`.
+///
+/// Spawns nothing: the major is what this process already probed (the tensor
+/// pipeline's [`tensor_pipeline_note`]), else [`installed_major`]. mindc is a
+/// fresh process per compile, so a `--version` probe here would cost three
+/// process spawns on every successful build.
+#[cfg(feature = "mlir-subprocess")]
+pub fn describe_toolchain(tools: &[(&str, &str)]) -> String {
+    tools
+        .iter()
+        .map(|(name, tool)| {
+            let resolved = which::which(tool).unwrap_or_else(|_| PathBuf::from(tool));
+            let major = probed_major(tool).unwrap_or_else(|| installed_major(&resolved));
+            let path = resolved.display();
+            match major {
+                Some(m) => format!("{name} {path} (LLVM {m})"),
+                None => format!("{name} {path} (LLVM version unknown)"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The refusal for a CPU executable one of whose modules fell back to the
 /// runtime-JIT object, naming the missing tool when that was the `cause`.
 pub fn fallback_link_refusal(cause: FallbackReason) -> String {
@@ -132,6 +279,69 @@ fn missing_tool(cause: FallbackReason) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    /// A fresh directory under the system temp dir for one test.
+    #[cfg(feature = "mlir-subprocess")]
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mind_toolchain_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[cfg(feature = "mlir-subprocess")]
+    fn tool_in(dir: &std::path::Path) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("create bin dir");
+        let tool = dir.join("mlir-opt");
+        std::fs::write(&tool, "").expect("write tool");
+        tool
+    }
+
+    #[cfg(feature = "mlir-subprocess")]
+    #[test]
+    fn reads_the_installed_major_without_running_the_tool() {
+        let root = scratch("installed");
+        assert_eq!(
+            installed_major(&tool_in(&root.join("llvm-21/bin"))),
+            Some(21)
+        );
+        let prefix = root.join("prefix");
+        let tool = tool_in(&prefix.join("bin"));
+        assert_eq!(
+            installed_major(&tool),
+            None,
+            "no resource dir states no major"
+        );
+        std::fs::create_dir_all(prefix.join("lib/clang/19")).expect("resource dir");
+        assert_eq!(installed_major(&tool), Some(19));
+        std::fs::create_dir_all(prefix.join("lib/clang/20")).expect("second resource dir");
+        assert_eq!(
+            installed_major(&tool),
+            None,
+            "two resource dirs are ambiguous"
+        );
+        assert_eq!(installed_major(&root.join("missing")), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(feature = "mlir-subprocess")]
+    #[test]
+    fn the_toolchain_line_prefers_this_process_probe() {
+        let root = scratch("probed");
+        let tool = tool_in(&root.join("llvm-21/bin"));
+        let path = tool.to_str().expect("utf8 path");
+        assert!(describe_toolchain(&[("mlir-opt", path)]).ends_with("(LLVM 21)"));
+        probed()
+            .lock()
+            .expect("lock")
+            .insert(path.to_string(), Some(18));
+        assert_eq!(
+            describe_toolchain(&[("mlir-opt", path)]),
+            format!("mlir-opt {path} (LLVM 18)")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn reads_the_major_version() {
         let out = "Ubuntu LLVM version 18.1.3\n  Optimized build.\n";
@@ -159,5 +369,31 @@ mod tests {
         );
         assert_eq!(bufferize_note(err, 20, None), None, "MLIR 20 needs no note");
         assert_eq!(bufferize_note("error: unknown op", 18, None), None);
+    }
+
+    #[test]
+    fn notes_and_warns_below_the_minimum_and_names_both_versions() {
+        let msg = old_mlir_opt_note("/usr/bin/mlir-opt", Some(18), None).expect("noted");
+        assert!(msg.starts_with("[E5004] "), "{msg}");
+        assert!(msg.contains("needs MLIR/LLVM 20 or newer"), "{msg}");
+        assert!(msg.contains("(/usr/bin/mlir-opt) is LLVM 18"), "{msg}");
+        assert!(msg.contains("mlir-20-tools"), "{msg}");
+        let newer = Some((20, PathBuf::from("/usr/lib/llvm-20/bin")));
+        let msg = old_mlir_opt_note("mlir-opt", Some(18), newer).expect("noted");
+        assert!(
+            msg.contains("LLVM 20 is installed in /usr/lib/llvm-20/bin"),
+            "{msg}"
+        );
+        assert!(
+            old_mlir_opt_note("x", None, None)
+                .expect("unknown noted")
+                .contains("does not state")
+        );
+        assert_eq!(old_mlir_opt_note("x", Some(20), None), None);
+        assert_eq!(old_mlir_opt_note("x", Some(21), None), None);
+        let warning = old_mlir_opt_warning("/usr/bin/mlir-opt", Some(18));
+        assert!(!warning.contains('\n'), "one line: {warning}");
+        assert!(warning.starts_with("warning[build]: "), "{warning}");
+        assert!(warning.contains("is LLVM 18") && warning.contains("building anyway"));
     }
 }

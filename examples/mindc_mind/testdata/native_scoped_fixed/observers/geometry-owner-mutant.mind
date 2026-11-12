@@ -1,0 +1,65 @@
+// STARGA Inc. Geometry ownership observer, not a production context validator.
+// The exact production function is extracted unchanged. nec_new's logical416B
+// object gets16 test-only canary bytes; nec_free records an illegal ownership
+// transfer instead of dereferencing past416. Thus the mutant fails normally.
+pub fn nec_check(ctx:i64)->i64 { if ctx==0{return 0;}1 }
+pub fn nec_new(request:i64)->i64 {
+ let p:i64=__mind_alloc(432);
+ if p==0{return 0;}
+ let mut i:i64=0;
+ while i<416 {__mind_store_i8(p+i,__mind_load_i8(request+i));i=i+1;}
+ __mind_store_i64(p+416,12345);__mind_store_i64(p+424,54321);
+ p
+}
+pub fn nec_free(ctx:i64)->i64 {
+ let flag:i64=__mind_load_i64(ctx+408);
+ __mind_store_i64(flag,__mind_load_i64(flag)+1);
+ __mind_free(ctx);0
+}
+pub fn nsi_io_offset()->i64 {17}
+pub fn nsi_geometry_same(old: i64, request: i64) -> i64 {
+    if old == 0 { return 0; }
+    if nec_check(old) == 0 { return 0; }
+    let current: i64 = nec_new(request);
+    if current == 0 { return 0; }
+    if __mind_load_i64(old) >= 2 {
+        __mind_store_i64(current, __mind_load_i64(old));
+        // Derive the target from the FINAL checked plan, not a supplied pointer.
+        __mind_store_i64(current + 72, __mind_load_i64(current + 184) + nsi_io_offset());
+    }
+    // All ten lowering-context words, including state, argc/argv, literal
+    // window, arena and stack top. Code/metadata sizes in the captured request
+    // legitimately differ; no embedded address is patched to hide a mismatch.
+    let mut i: i64 = 0;
+    let mut equal: i64 = 1;
+    while i < 10 {
+        if __mind_load_i64(old + i * 8) != __mind_load_i64(current + i * 8) { equal = 0; }
+        i = i + 1;
+    }
+    // This comparison temporary is416 bytes from nec_new, even when its
+    // version word is3. It owns no scope and must never use nec_free.
+    nec_free(current);
+    equal
+}
+
+pub fn main()->i64 {
+ let old:i64=__mind_alloc(432);let request:i64=__mind_alloc(416);let flag:i64=__mind_alloc(8);
+ if old==0{return 70;}if request==0{return 70;}if flag==0{return 70;}
+ let mut i:i64=0;while i<416 {__mind_store_i8(request+i,0);i=i+1;}
+ __mind_store_i64(request,1);__mind_store_i64(request+184,4096);__mind_store_i64(request+408,flag);
+ let mut schema:i64=1;let mut failures:i64=0;
+ while schema<=3 {
+  i=0;while i<416 {__mind_store_i8(old+i,__mind_load_i8(request+i));i=i+1;}
+  __mind_store_i64(old,schema);__mind_store_i64(flag,0);
+  if schema>=2{__mind_store_i64(old+72,4113);}
+  let equal:i64=nsi_geometry_same(old,request);
+  if equal!=1{failures=failures+1;}
+  if __mind_load_i64(flag)!=0{failures=failures+1;}
+  __mind_store_i64(old+16,1234);
+  if nsi_geometry_same(old,request)!=0{failures=failures+1;}
+  if __mind_load_i64(flag)!=0{failures=failures+1;}
+  schema=schema+1;
+ }
+ __mind_free(old);__mind_free(request);__mind_free(flag);
+ if failures!=0{return 1;}0
+}

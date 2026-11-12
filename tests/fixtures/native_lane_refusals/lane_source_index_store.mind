@@ -1,0 +1,2 @@
+// lane.source.index_store: an element store.
+fn main() -> i64 { let a = [1, 2]; a[0] = 5; return a[0]; }

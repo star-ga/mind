@@ -46,7 +46,7 @@ fn build(dir: &Path, files: &[(&str, &str)]) -> Output {
 fn build_with(dir: &Path, files: &[(&str, &str)], manifest_tail: &str) -> Output {
     write_project(dir, files, manifest_tail);
     Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(dir)
         .output()
         .expect("run mindc build")
@@ -110,6 +110,23 @@ fn every_substrate_module_compiles_and_links_into_one_executable() {
 }
 
 #[test]
+fn std_cli_reads_the_process_arguments_on_the_mlir_backend() {
+    // std.cli was not a member: `args_from_os` stayed an undefined reference.
+    // argc 3 and argv[1] = "xyz" give 3 * 10 + 3; argv[2] is the empty string.
+    let main = "import std.cli;\n\nfn main() -> i64 {\n    let a: Args = args_from_os();\n    let s: String = args_get(a, 1);\n    let e: String = args_get(a, 2);\n    return args_len(a) * 10 + s.len + e.len;\n}\n";
+    let dir = common::scratch_dir("std_substrate_cli_args");
+    let out = build(&dir, &[("main.mind", main)]);
+    if !common::gate::compiled("std_substrate_cli_args", &out) {
+        return;
+    }
+    let run = Command::new(dir.join("target").join("debug").join("sub"))
+        .args(["xyz", ""])
+        .output()
+        .expect("run the built executable");
+    assert_eq!(run.status.code(), Some(33), "{run:?}");
+}
+
+#[test]
 fn an_imported_but_unused_module_does_not_collide_with_a_program_fn() {
     // std.async defines `pub fn run`; the program imports the module without
     // calling it and defines its own `run`. The archive leaves async unlinked.
@@ -122,17 +139,17 @@ fn an_imported_but_unused_module_does_not_collide_with_a_program_fn() {
 
 #[test]
 fn a_private_helper_sharing_a_name_with_a_used_module_still_links() {
-    // std.toml has a private `is_digit` and std.json a `pub fn push`; the
-    // program uses both modules and defines its own private `is_digit` and
+    // std.toml has a private `toml_is_digit` and std.json a `pub fn push`; the
+    // program uses both modules and defines its own private `toml_is_digit` and
     // `push`. Each colliding non-`pub` fn gets internal linkage.
-    let main = "import std.toml;\nimport std.json;\n\nfn is_digit(c: i64) -> i64 {\n    return c + 1;\n}\n\nfn push(a: i64) -> i64 {\n    return a * 2;\n}\n\nfn main() -> i64 {\n    let d: i64 = toml.toml_max_depth() + json.jv_max_depth();\n    if d <= 0 {\n        return 1;\n    }\n    return push(is_digit(4));\n}\n";
+    let main = "import std.toml;\nimport std.json;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c + 1;\n}\n\nfn push(a: i64) -> i64 {\n    return a * 2;\n}\n\nfn main() -> i64 {\n    let d: i64 = toml.toml_max_depth() + json.jv_max_depth();\n    if d <= 0 {\n        return 1;\n    }\n    return push(toml_is_digit(4));\n}\n";
     let Some(code) = build_and_run("std_substrate_private_collision", &[("main.mind", main)])
     else {
         return;
     };
     assert_eq!(
         code, 10,
-        "the program's own `is_digit` and `push` must be the ones called"
+        "the program's own `toml_is_digit` and `push` must be the ones called"
     );
 }
 
@@ -191,7 +208,7 @@ fn emit_shared_links_the_substrate_archive() {
     let src = dir.join("lib.mind");
     std::fs::write(
         &src,
-        "import std.toml;\n\nfn is_digit(c: i64) -> i64 {\n    return c;\n}\n\npub fn depth() -> i64 {\n    return toml.toml_max_depth() + is_digit(0);\n}\n",
+        "import std.toml;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c;\n}\n\npub fn depth() -> i64 {\n    return toml.toml_max_depth() + toml_is_digit(0);\n}\n",
     )
     .expect("write source");
     let so = dir.join("lib.so");
@@ -299,7 +316,15 @@ fn build_cdylib(
     let so = root.join("lib.so");
     let out = Command::new(common::mindc_bin())
         .current_dir(&root)
-        .args(["build", "--emit", "cdylib", "--no-cache", "--out"])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--emit",
+            "cdylib",
+            "--no-cache",
+            "--out",
+        ])
         .arg(&so)
         .output()
         .expect("run mindc build --emit cdylib");
@@ -323,12 +348,12 @@ fn a_program_fn_named_like_a_libc_call_in_std_still_builds() {
 
 #[test]
 fn a_c_abi_export_colliding_with_a_std_helper_stays_exported() {
-    // `is_digit` is listed in [exports] c_abi and also a private helper of the
+    // `toml_is_digit` is listed in [exports] c_abi and also a private helper of the
     // linked std.toml: the program's export must stay global (std's yields).
-    let main = "import std.toml;\n\nfn is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return toml.toml_max_depth() + is_digit(0);\n}\n";
+    let main = "import std.toml;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return toml.toml_max_depth() + toml_is_digit(0);\n}\n";
     let Some(so) = build_cdylib(
         "std_substrate_c_abi",
-        &["is_digit", "go"],
+        &["toml_is_digit", "go"],
         &[("main.mind", main)],
     ) else {
         return;
@@ -336,7 +361,7 @@ fn a_c_abi_export_colliding_with_a_std_helper_stays_exported() {
     assert!(
         dynamic_symbols(&so)
             .lines()
-            .any(|l| l.ends_with(" T is_digit")),
+            .any(|l| l.ends_with(" T toml_is_digit")),
         "the c_abi export must stay a global symbol; nm -D:\n{}",
         dynamic_symbols(&so)
     );
@@ -405,7 +430,7 @@ fn a_native_source_can_call_into_a_linked_std_module() {
     )
     .expect("write shim.c");
     let out = Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&dir)
         .output()
         .expect("run mindc build");
@@ -446,20 +471,20 @@ fn exports_text_symbol(so: &Path, name: &str) -> bool {
 
 #[test]
 fn a_shared_library_keeps_a_fn_named_like_a_std_helper() {
-    // std.toml has a private `is_digit`, std.json a `pub fn push`. The
+    // std.toml has a private `toml_is_digit`, std.json a `pub fn push`. The
     // library's own non-`pub` fns of those names stay exported: std.toml's
     // helper is the one made internal, and std.json is never linked because
     // nothing calls into it.
     let cases = [
         (
             "std_substrate_shared_helper_unused",
-            "import std.toml;\n\nfn is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return is_digit(1);\n}\n",
-            "is_digit",
+            "import std.toml;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return toml_is_digit(1);\n}\n",
+            "toml_is_digit",
         ),
         (
             "std_substrate_shared_helper_used",
-            "import std.toml;\n\nfn is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return toml.toml_max_depth() + is_digit(1);\n}\n",
-            "is_digit",
+            "import std.toml;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\npub fn go() -> i64 {\n    return toml.toml_max_depth() + toml_is_digit(1);\n}\n",
+            "toml_is_digit",
         ),
         (
             "std_substrate_shared_pub_unused",
@@ -481,15 +506,15 @@ fn a_shared_library_keeps_a_fn_named_like_a_std_helper() {
 
 #[test]
 fn a_native_source_can_call_a_program_fn_named_like_a_std_helper() {
-    // The C object calls the program's private `is_digit`; std.toml, imported
+    // The C object calls the program's private `toml_is_digit`; std.toml, imported
     // but unused, has a private helper of the same name.
     let dir = common::scratch_dir("std_substrate_native_calls_program");
     std::fs::write(
         dir.join("shim.c"),
-        "long is_digit(long);\nlong __mind_nerve_lut_exp_h(void) { return is_digit(41); }\n",
+        "long toml_is_digit(long);\nlong __mind_nerve_lut_exp_h(void) { return toml_is_digit(41); }\n",
     )
     .expect("write shim.c");
-    let main = "import std.toml;\n\nfn is_digit(c: i64) -> i64 {\n    return c + 1;\n}\n\nfn main() -> i64 {\n    return __mind_nerve_lut_exp_h();\n}\n";
+    let main = "import std.toml;\n\nfn toml_is_digit(c: i64) -> i64 {\n    return c + 1;\n}\n\nfn main() -> i64 {\n    return __mind_nerve_lut_exp_h();\n}\n";
     let out = build_with(
         &dir,
         &[("main.mind", main)],
@@ -501,7 +526,7 @@ fn a_native_source_can_call_a_program_fn_named_like_a_std_helper() {
     let run = Command::new(dir.join("target").join("debug").join("sub"))
         .output()
         .expect("run the built executable");
-    assert_eq!(run.status.code(), Some(42), "is_digit(41)");
+    assert_eq!(run.status.code(), Some(42), "toml_is_digit(41)");
 }
 
 /// main imports `util` and std.sha256; `other.mind` is a declared source that
@@ -584,5 +609,98 @@ fn export_lists_do_not_keep_colliding_fns_global_in_an_executable() {
             .expect("run the built executable");
         // 100 + (1 + 1) + 10 * 10
         assert_eq!(run.status.code(), Some(202), "{target}");
+    }
+}
+
+/// The 7-line repro: a program that never imports std.posix keeps its own
+/// `extern "C" close` (i32, libc's -1 on a bad fd).
+#[test]
+fn extern_close_repro_matches_base() {
+    let main = "extern \"C\" { unsafe fn close(fd: i32) -> i32; }\nfn main() -> i64 { let fd: i64 = 0 - 1; let closed: i32 = close(fd as i32); if closed != 0 - 1 { return 1; } return 0; }\n";
+    let Some(code) = build_and_run("std_posix_extern_close_repro", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "libc close(-1) returns -1");
+}
+
+/// An extern whose name is also a std.posix wrapper must still be the
+/// program's declaration. umask is the verifier's A/B name.
+#[test]
+fn extern_umask_is_not_shadowed_by_std_posix() {
+    let main = "extern \"C\" { unsafe fn umask(mask: i32) -> i32; }\nfn main() -> i64 {\n    let old: i32 = umask(0);\n    let restored: i32 = umask(old);\n    if restored != 0 {\n        return 1;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_extern_umask", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(
+        code, 0,
+        "the second umask restores the mask saved by the first"
+    );
+}
+
+/// Importing std.posix and still declaring extern close must not E2004.
+/// The declared close(-1) is libc's -1.
+#[test]
+fn extern_close_wins_beside_std_posix_import() {
+    let main = "import std.posix;\nextern \"C\" { unsafe fn close(fd: i32) -> i32; }\nfn main() -> i64 { let fd: i64 = 0 - 1; let closed: i32 = close(fd as i32); if closed != 0 - 1 { return 1; } return 0; }\n";
+    let Some(code) = build_and_run("std_posix_extern_close_with_import", &[("main.mind", main)])
+    else {
+        return;
+    };
+    assert_eq!(code, 0, "local extern close wins over the imported wrapper");
+}
+
+/// Importing the wrapper calls std.posix, which returns -errno (-EBADF),
+/// not libc's -1.
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn import_std_posix_close_returns_raw_errno() {
+    let main = "import std.posix;\nfn main() -> i64 {\n    if close(0 - 1) != 0 - 9 {\n        return 1;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_import_close", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "imported close(-1) returns -EBADF");
+}
+
+/// A file that does import std.posix can call the wrapper.
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn import_std_posix_getuid_is_callable() {
+    let main = "import std.posix;\nfn main() -> i64 {\n    let a: i64 = getuid();\n    let b: i64 = getuid();\n    if a != b {\n        return 1;\n    }\n    if a < 0 {\n        return 2;\n    }\n    return 0;\n}\n";
+    let Some(code) = build_and_run("std_posix_import_getuid", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0, "imported getuid returns a stable non-negative uid");
+}
+
+/// std.iouring declares its own 2-arg open and must keep compiling.
+#[test]
+fn import_std_iouring_compiles() {
+    let main = "import std.iouring;\nfn main() -> i64 { return 0; }\n";
+    let Some(code) = build_and_run("std_posix_import_iouring", &[("main.mind", main)]) else {
+        return;
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn qualified_posix_call_keeps_its_owner_beside_local_extern() {
+    for (index, qualifier) in ["posix.close", "px.close", "std.posix.close", "posix::close"]
+        .iter()
+        .enumerate()
+    {
+        let main = format!(
+            "import std.posix as px;\nextern \"C\" {{ unsafe fn close(fd: i32) -> i32; }}\nfn main() -> i64 {{\n    if {qualifier}(0 - 1) != 0 - 9 {{ return 1; }}\n    if close((0 - 1) as i32) != 0 - 1 {{ return 2; }}\n    return 0;\n}}\n"
+        );
+        let Some(code) = build_and_run(
+            &format!("std_posix_qualified_extern_{index}"),
+            &[("main.mind", &main)],
+        ) else {
+            return;
+        };
+        assert_eq!(
+            code, 0,
+            "qualified {qualifier} uses std.posix; bare close uses libc"
+        );
     }
 }

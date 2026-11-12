@@ -49,6 +49,10 @@ fn mres_w4(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
 // A byte buffer [ addr | len | cap ] holding "results." with room for `extra`
 // more bytes, or 0 when allocation fails.
 fn mres_key(extra: i64) -> i64 {
+    // deferred: an allocation failure here does not free the other buffer
+    // (d or b), stubbed because no allocation-failure hook of __mind_alloc
+    // exists in the runtime or the test harness - upgrade path: free
+    // both once a fault-injection hook can make one allocation fail.
     let d: i64 = __mind_alloc(8 + extra);
     let b: i64 = __mind_alloc(24);
     if d == 0 {
@@ -62,6 +66,13 @@ fn mres_key(extra: i64) -> i64 {
     __mind_store_i64(b + 8, p);
     __mind_store_i64(b + 16, 8 + extra);
     b
+}
+
+// Free a key buffer from mres_key (k > 0) and its bytes. The record keeps its
+// own copy of every key, so a caller frees its key after the call.
+fn mres_key_free(k: i64) -> i64 {
+    __mind_free(__mind_load_i64(k + 0));
+    __mind_free(k)
 }
 
 // The fixed key for `field`: 0 schema, 1 scorecard_id, 2 score, 3 score_scale,
@@ -160,7 +171,9 @@ fn mres_put_int(h: i64, field: i64, v: i64) -> i64 {
     if k == 0 {
         return mic_record.mrec_e_no_memory();
     }
-    mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), v)
+    let rc: i64 = mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), v);
+    let _ = mres_key_free(k);
+    rc
 }
 
 fn mres_get_int(h: i64, field: i64, out: i64) -> i64 {
@@ -168,7 +181,9 @@ fn mres_get_int(h: i64, field: i64, out: i64) -> i64 {
     if k == 0 {
         return mic_record.mrec_e_no_memory();
     }
-    mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out)
+    let rc: i64 = mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out);
+    let _ = mres_key_free(k);
+    rc
 }
 
 fn mres_get_val(h: i64, field: i64, tag: i64, out: i64) -> i64 {
@@ -176,7 +191,9 @@ fn mres_get_val(h: i64, field: i64, tag: i64, out: i64) -> i64 {
     if k == 0 {
         return mic_record.mrec_e_no_memory();
     }
-    mic_record.mrec_get_val(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), tag, out)
+    let rc: i64 = mic_record.mrec_get_val(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), tag, out);
+    let _ = mres_key_free(k);
+    rc
 }
 
 // A new record holding results.schema = 1, or 0 when allocation fails.
@@ -186,6 +203,10 @@ pub fn mres_new() -> i64 {
         return 0;
     }
     if mres_put_int(h, 0, mres_schema_version()) != 0 {
+        // deferred: would free h with mic_record.mrec_free, stubbed because
+        // this put fails only when an allocation fails and no
+        // allocation-failure hook exists - upgrade path: free h and test it
+        // once a fault-injection hook exists.
         return 0;
     }
     h
@@ -200,7 +221,9 @@ pub fn mres_set_scorecard(h: i64, a: i64, n: i64) -> i64 {
     if k == 0 {
         return mic_record.mrec_e_no_memory();
     }
-    mic_record.mrec_put_str(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), a, n)
+    let rc: i64 = mic_record.mrec_put_str(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), a, n);
+    let _ = mres_key_free(k);
+    rc
 }
 
 // Write the scorecard id's address and length to out and out + 8.
@@ -216,13 +239,23 @@ pub fn mres_set_score(h: i64, value: i64, scale: i64) -> i64 {
         return mic_record.mrec_e_value();
     }
     let ks: i64 = mres_key_fixed(2);
-    let kc: i64 = mres_key_fixed(3);
     if ks == 0 {
         return mic_record.mrec_e_no_memory();
     }
+    let kc: i64 = mres_key_fixed(3);
     if kc == 0 {
+        let _ = mres_key_free(ks);
         return mic_record.mrec_e_no_memory();
     }
+    let rc: i64 = mres_put_score(h, ks, kc, value, scale);
+    let _ = mres_key_free(ks);
+    let _ = mres_key_free(kc);
+    rc
+}
+
+// Write the score under key ks and the scale under key kc, or neither.
+#[protection]
+fn mres_put_score(h: i64, ks: i64, kc: i64, value: i64, scale: i64) -> i64 {
     let sa: i64 = __mind_load_i64(ks + 0);
     let sn: i64 = __mind_load_i64(ks + 8);
     let ca: i64 = __mind_load_i64(kc + 0);
@@ -263,7 +296,9 @@ pub fn mres_set_weights_sha256(h: i64, a: i64) -> i64 {
     if k == 0 {
         return mic_record.mrec_e_no_memory();
     }
-    mic_record.mrec_put_bytes(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), a, 32)
+    let rc: i64 = mic_record.mrec_put_bytes(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), a, 32);
+    let _ = mres_key_free(k);
+    rc
 }
 
 // Write the digest's address and length to out and out + 8. A stored value
@@ -292,7 +327,9 @@ pub fn mres_set_game_actions(h: i64, ga: i64, gn: i64, actions: i64) -> i64 {
     if k < 0 {
         return k;
     }
-    mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), actions)
+    let rc: i64 = mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), actions);
+    let _ = mres_key_free(k);
+    rc
 }
 
 pub fn mres_get_game_actions(h: i64, ga: i64, gn: i64, out: i64) -> i64 {
@@ -300,7 +337,9 @@ pub fn mres_get_game_actions(h: i64, ga: i64, gn: i64, out: i64) -> i64 {
     if k < 0 {
         return k;
     }
-    mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out)
+    let rc: i64 = mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out);
+    let _ = mres_key_free(k);
+    rc
 }
 
 pub fn mres_set_level_actions(h: i64, ga: i64, gn: i64, level: i64, actions: i64) -> i64 {
@@ -314,7 +353,9 @@ pub fn mres_set_level_actions(h: i64, ga: i64, gn: i64, level: i64, actions: i64
     if k < 0 {
         return k;
     }
-    mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), actions)
+    let rc: i64 = mic_record.mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), actions);
+    let _ = mres_key_free(k);
+    rc
 }
 
 pub fn mres_get_level_actions(h: i64, ga: i64, gn: i64, level: i64, out: i64) -> i64 {
@@ -325,5 +366,7 @@ pub fn mres_get_level_actions(h: i64, ga: i64, gn: i64, level: i64, out: i64) ->
     if k < 0 {
         return k;
     }
-    mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out)
+    let rc: i64 = mic_record.mrec_get_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), out);
+    let _ = mres_key_free(k);
+    rc
 }

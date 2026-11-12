@@ -1,0 +1,7 @@
+fn sha256(a: i64, b: i64, c: i64) -> i64 {
+    return a + b + c;
+}
+
+fn main() -> i64 {
+    return sha256(1, 2, 3);
+}

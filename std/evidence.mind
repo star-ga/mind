@@ -1,0 +1,327 @@
+// std/evidence.mind — record governance verdicts of std calls in a caller-owned sink.
+// Author: STARGA Inc.
+//
+// A program that wants evidence of what std decided (a refused path, a refused
+// certificate chain, a child that exited non-zero) creates a sink with
+// evd_new and passes it to the `*_ev` variant of a std call. The variant runs
+// the unchanged std call and appends one fixed-width record of the verdict.
+// Without a sink the plain std call runs and nothing here executes.
+//
+// Sink handle (32 bytes): [ buf | len | cap | dropped ]
+//   buf      cap records of evd_record_bytes() bytes each
+//   len      records stored
+//   cap      records the sink can hold, fixed at evd_new
+//   dropped  records refused because the sink was full
+// Record (40 bytes): five little-endian i64 words
+//   [ module | kind | reason | a | b ]
+//
+// Trust: the program writes these records about itself. They are NOT
+// authenticated: nothing proves which program wrote a record or that it told
+// the truth, and any code that holds the sink handle can append one. They are
+// a deterministic log of std verdicts, not an attestation and not a signature.
+// evidence_record refuses a (module, kind) pair outside evd_pairs(), so a
+// record always names a verdict a std wrapper writes.
+//
+// Determinism: a record holds only the verdict codes and the sizes the caller
+// passed or std returned. No clock, no random value, no pid, no address goes
+// into a record, so the record sequence is a pure function of the call
+// sequence and the verdicts the instrumented functions return. A full sink
+// keeps the first `cap` records and counts the rest in `dropped`; it never
+// grows and never overwrites. A field a record kind does not use is 0.
+//
+// Records live in the sink as native i64 words; evd_le_put / evd_le_get are the
+// byte-by-byte little-endian codec std.evidence_mic writes and reads them with,
+// so the exported bytes do not depend on the host's word order. evd_bytes_copy
+// and evd_bytes_eq are the byte helpers it builds and checks a record with.
+//
+// std.evidence_mic writes a sink as a mic@3 MAP record and reads it back; its
+// error codes (evd_e_*) are defined here.
+
+// ---------------------------------------------------------------------------
+// Codes.
+// ---------------------------------------------------------------------------
+
+pub fn evd_record_bytes() -> i64 {
+    40
+}
+
+pub fn evd_max_cap() -> i64 {
+    65536
+}
+
+// evd_dropped stops here instead of wrapping to a negative count.
+pub fn evd_max_dropped() -> i64 {
+    9223372036854775807
+}
+
+// Module codes (record word 0).
+pub fn evd_mod_fs_checked() -> i64 {
+    1
+}
+
+pub fn evd_mod_procgroup() -> i64 {
+    2
+}
+
+pub fn evd_mod_x509() -> i64 {
+    3
+}
+
+// Kind codes (record word 1).
+// refuse: the call returned an error; reason = that error code.
+pub fn evd_kind_refuse() -> i64 {
+    1
+}
+
+// accept: the call succeeded; reason = 0.
+pub fn evd_kind_accept() -> i64 {
+    2
+}
+
+// fail: std took the request and the OS step failed; reason = the std state.
+pub fn evd_kind_fail() -> i64 {
+    3
+}
+
+// child: the terminal verdict of one child; reason = its procgroup state.
+pub fn evd_kind_child() -> i64 {
+    4
+}
+
+// The valid (module, kind) pairs: the pairs a std wrapper writes, and no
+// others. Bit (module * 8 + kind) is set for each pair:
+//   module 1 fs_checked   kinds 1 refuse, 2 accept           bits  9, 10
+//   module 2 procgroup    kinds 1 refuse, 2 accept, 3 fail,  bits 17, 18, 19,
+//                         4 child                                 20
+//   module 3 x509         kinds 1 refuse, 2 accept           bits 25, 26
+// evidence_record reads it on write and evd_le_valid on load. A new pair
+// sets its bit here.
+fn evd_pairs() -> i64 {
+    102630912
+}
+
+// 1 when (module, kind) is a pair in evd_pairs(), else 0.
+pub fn evd_code_ok(module: i64, kind: i64) -> i64 {
+    if module < 0 || module > 7 || kind < 0 || kind > 7 {
+        return 0;
+    }
+    (evd_pairs() >> (module * 8 + kind)) & 1
+}
+
+// Errors std.evidence_mic returns (it also returns mrec_e_* codes).
+pub fn evd_e_schema() -> i64 {
+    0 - 100
+}
+
+pub fn evd_e_count() -> i64 {
+    0 - 101
+}
+
+pub fn evd_e_records() -> i64 {
+    0 - 102
+}
+
+pub fn evd_e_parent() -> i64 {
+    0 - 103
+}
+
+pub fn evd_e_digest() -> i64 {
+    0 - 104
+}
+
+pub fn evd_e_sink() -> i64 {
+    0 - 105
+}
+
+// A key outside the six std.evidence keys, or a key count that does not match.
+pub fn evd_e_key() -> i64 {
+    0 - 106
+}
+
+// A record whose (module, kind) pair is not in evd_pairs().
+pub fn evd_e_code() -> i64 {
+    0 - 107
+}
+
+// A record whose parent is not the one evd_load_parent expects.
+pub fn evd_e_parent_mismatch() -> i64 {
+    0 - 108
+}
+
+// ---------------------------------------------------------------------------
+// Sink.
+// ---------------------------------------------------------------------------
+
+// A new sink for 1..=evd_max_cap() records. Returns the handle, or 0 for a
+// capacity out of range or when allocation fails.
+pub fn evd_new(cap: i64) -> i64 {
+    if cap < 1 || cap > evd_max_cap() {
+        return 0;
+    }
+    let buf: i64 = __mind_alloc(cap * evd_record_bytes());
+    if buf == 0 {
+        return 0;
+    }
+    let s: i64 = __mind_alloc(32);
+    if s == 0 {
+        __mind_free(buf);
+        return 0;
+    }
+    __mind_store_i64(s + 0, buf);
+    __mind_store_i64(s + 8, 0);
+    __mind_store_i64(s + 16, cap);
+    __mind_store_i64(s + 24, 0);
+    s
+}
+
+// Append one record. Returns 0 when stored, 1 when the sink is full (the
+// record is counted in evd_dropped, which stops at evd_max_dropped()), -1 for
+// a 0 sink or a pair evd_code_ok refuses (nothing is stored or counted).
+pub fn evidence_record(sink: i64, module: i64, kind: i64, reason: i64, a: i64, b: i64) -> i64 {
+    if sink == 0 || evd_code_ok(module, kind) == 0 {
+        return 0 - 1;
+    }
+    let n: i64 = __mind_load_i64(sink + 8);
+    if n >= __mind_load_i64(sink + 16) {
+        let d: i64 = __mind_load_i64(sink + 24);
+        if d < evd_max_dropped() {
+            __mind_store_i64(sink + 24, d + 1)
+        }
+        return 1;
+    }
+    let r: i64 = __mind_load_i64(sink + 0) + n * evd_record_bytes();
+    __mind_store_i64(r + 0, module);
+    __mind_store_i64(r + 8, kind);
+    __mind_store_i64(r + 16, reason);
+    __mind_store_i64(r + 24, a);
+    __mind_store_i64(r + 32, b);
+    __mind_store_i64(sink + 8, n + 1);
+    0
+}
+
+// Records stored, or -1 for a 0 sink.
+pub fn evd_len(sink: i64) -> i64 {
+    if sink == 0 {
+        return 0 - 1;
+    }
+    __mind_load_i64(sink + 8)
+}
+
+// Records refused because the sink was full, or -1 for a 0 sink.
+pub fn evd_dropped(sink: i64) -> i64 {
+    if sink == 0 {
+        return 0 - 1;
+    }
+    __mind_load_i64(sink + 24)
+}
+
+// Word f (0 module, 1 kind, 2 reason, 3 a, 4 b) of record i. Returns -1 for a
+// 0 sink, an index out of range or a field out of range; a stored word can
+// also be -1, so check i < evd_len(sink) first.
+pub fn evd_field(sink: i64, i: i64, f: i64) -> i64 {
+    if sink == 0 || i < 0 || f < 0 || f > 4 {
+        return 0 - 1;
+    }
+    if i >= __mind_load_i64(sink + 8) {
+        return 0 - 1;
+    }
+    __mind_load_i64(__mind_load_i64(sink + 0) + i * evd_record_bytes() + f * 8)
+}
+
+// Write v at d as 8 little-endian bytes, one byte at a time. Returns d + 8.
+pub fn evd_le_put(d: i64, v: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 8 {
+        __mind_store_i8(d + k, (v >> (k * 8)) & 255);
+        k = k + 1;
+    }
+    d + 8
+}
+
+// The i64 stored at a as 8 little-endian bytes.
+pub fn evd_le_get(a: i64) -> i64 {
+    let mut v: i64 = 0;
+    let mut k: i64 = 7;
+    while k >= 0 {
+        v = (v << 8) | (__mind_load_i8(a + k) & 255);
+        k = k - 1;
+    }
+    v
+}
+
+// Copy n bytes from src to dst, one byte at a time. Returns 0.
+pub fn evd_bytes_copy(src: i64, dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// 1 when the n bytes at x and y are equal, else 0.
+pub fn evd_bytes_eq(x: i64, y: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if (__mind_load_i8(x + i) & 255) != (__mind_load_i8(y + i) & 255) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    1
+}
+
+// 1 when the src_len bytes at src hold exactly `count` records (0 <= count
+// <= evd_max_cap(), src_len == count * evd_record_bytes()) and every record's
+// (module, kind) words pass evd_code_ok; 0 otherwise.
+pub fn evd_le_valid(src: i64, src_len: i64, count: i64) -> i64 {
+    if count < 0 || count > evd_max_cap() || src_len != count * evd_record_bytes() {
+        return 0;
+    }
+    let mut r: i64 = 0;
+    while r < count {
+        let w: i64 = src + r * evd_record_bytes();
+        if evd_code_ok(evd_le_get(w), evd_le_get(w + 8)) == 0 {
+            return 0;
+        }
+        r = r + 1;
+    }
+    1
+}
+
+// A sink holding `count` records decoded from the src_len little-endian bytes
+// at src, with `dropped` carried over (std.evidence_mic reads a record back
+// with this). Returns 0 when evd_le_valid refuses the bytes, for a negative
+// dropped, or when allocation fails.
+pub fn evd_from_le(src: i64, src_len: i64, count: i64, dropped: i64) -> i64 {
+    if evd_le_valid(src, src_len, count) == 0 || dropped < 0 {
+        return 0;
+    }
+    let mut cap: i64 = count;
+    if cap < 1 {
+        cap = 1;
+    }
+    let s: i64 = evd_new(cap);
+    if s == 0 {
+        return 0;
+    }
+    let dst: i64 = __mind_load_i64(s + 0);
+    let mut i: i64 = 0;
+    while i < count * 5 {
+        __mind_store_i64(dst + i * 8, evd_le_get(src + i * 8));
+        i = i + 1;
+    }
+    __mind_store_i64(s + 8, count);
+    __mind_store_i64(s + 24, dropped);
+    s
+}
+
+// Release the sink. Returns 1, or 0 for a 0 sink.
+pub fn evd_free(sink: i64) -> i64 {
+    if sink == 0 {
+        return 0;
+    }
+    __mind_free(__mind_load_i64(sink + 0));
+    __mind_free(sink);
+    1
+}

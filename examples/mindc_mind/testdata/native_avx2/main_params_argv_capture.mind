@@ -1,0 +1,47 @@
+// Copyright 2026 STARGA Inc.
+// A ymm program whose entry takes (argc, argv) and also calls __mind_argc/__mind_argv,
+// run as `prog mind-arg`: the entry is the 34-byte argc/argv capture, then the W4b
+// binding, then the ISA guard. Exits 0 when the captured and the bound values agree
+// and one vpaddd_i32x8 sums every lane; else the code of the first failed check.
+
+fn put(p: i64, i: i64, v: i64) -> i64 {
+    if i >= 8 {
+        return 0;
+    }
+    __mind_store_i64(p + 4 * i, v + i);
+    put(p, i + 1, v)
+}
+
+fn lanes(p: i64, i: i64) -> i64 {
+    if i >= 8 {
+        return 1;
+    }
+    let lo: i64 = __mind_load_i8(p + 4 * i) + __mind_load_i8(p + 4 * i + 1) * 256;
+    if lo != 300 + 2 * i {
+        return 0;
+    }
+    lanes(p, i + 1)
+}
+
+fn main(argc: i64, argv: i64) -> i64 {
+    if __mind_argc() != argc {
+        return 1;
+    }
+    if argc != 2 {
+        return 2;
+    }
+    if __mind_argv(1) != __mind_load_i64(argv + 8) {
+        return 3;
+    }
+    let a: i64 = __mind_alloc(128) + 3;
+    let b: i64 = a + 48;
+    let _pa: i64 = put(a, 0, 100);
+    let _pb: i64 = put(b, 0, 200);
+    if __mind_vpaddd_i32x8(a, b) != a {
+        return 4;
+    }
+    if lanes(a, 0) != 1 {
+        return 5;
+    }
+    0
+}

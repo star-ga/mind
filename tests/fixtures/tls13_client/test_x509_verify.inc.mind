@@ -1,0 +1,220 @@
+// === TLS-CLIENT TEST-ONLY VERIFIER =====================================
+// TEST SCAFFOLDING for the std/tls13-client lane, pending
+// the reserved x509 lane (std/x509-auth-r01). This text is spliced by
+// the client transport into a COPY of std/x509.mind at TEST BUILD
+// time, replacing the `x509_verify_server_chain` stub. The shipped
+// std/x509.mind and std/tls13_client*.mind never contain or import it; the
+// production client still calls x509_verify_server_chain unconditionally,
+// and there is no runtime flag, hook, global or peer-controllable input that
+// selects which verifier production code calls. When the x509 lane lands,
+// the real verifier replaces this splice verbatim at the same interface.
+//
+// Checks performed (real, narrow, against the fixture PKI only):
+//   * chain must be exactly [leaf] (fixture shape)     else -5 (malformed)
+//   * anchor must byte-match fixture root DER, parse, be verifiably self-signed
+//     (rsa_pkcs1_sha256_verify), have a subject byte-equal to the leaf
+//     issuer, and verify the leaf's TBS signature with its own RSA key
+//                                                       else -7 (unknown anchor)
+//   * leaf UTCTime notBefore <= now_unix <= notAfter   else -6 (expired window)
+//   * some SAN dNSName must exactly equal the expected identity bytes
+//                                                       else -8 (name mismatch)
+// Signature scheme is pinned to sha256WithRSAEncryption (SHA-1 is never
+// accepted, because only rsa_pkcs1_sha256_verify is ever invoked).
+fn t9v_u8(p: i64) -> i64 {
+    __mind_load_i8(p) & 255
+}
+
+fn t9v_u32(p: i64) -> i64 {
+    (((t9v_u8(p) << 8) | t9v_u8(p + 1)) << 16) | (t9v_u8(p + 2) << 8) | t9v_u8(p + 3)
+}
+
+fn t9v_bytes_eq(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if t9v_u8(a + i) != t9v_u8(b + i) { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+// UTCTime content "YYMMDDHHMMSSZ" -> unix seconds; -1 on malformed input.
+// Days-from-civil (Howard Hinnant's algorithm), valid for years >= 1583.
+fn t9v_utctime_to_unix(p: i64, n: i64) -> i64 {
+    if n != 13 { return 0 - 1; }
+    let mut i: i64 = 0;
+    while i < 12 {
+        let c: i64 = t9v_u8(p + i);
+        if c < 48 || c > 57 { return 0 - 1; }
+        i = i + 1;
+    }
+    if t9v_u8(p + 12) != 90 { return 0 - 1; }
+    let mut y: i64 = (t9v_u8(p) - 48) * 10 + t9v_u8(p + 1) - 48;
+    if y < 50 { y = y + 2000; } else { y = y + 1900; }
+    let m: i64 = (t9v_u8(p + 2) - 48) * 10 + t9v_u8(p + 3) - 48;
+    let d: i64 = (t9v_u8(p + 4) - 48) * 10 + t9v_u8(p + 5) - 48;
+    let hh: i64 = (t9v_u8(p + 6) - 48) * 10 + t9v_u8(p + 7) - 48;
+    let mm: i64 = (t9v_u8(p + 8) - 48) * 10 + t9v_u8(p + 9) - 48;
+    let ss: i64 = (t9v_u8(p + 10) - 48) * 10 + t9v_u8(p + 11) - 48;
+    if m < 1 || m > 12 { return 0 - 1; }
+    if d < 1 || d > 31 { return 0 - 1; }
+    if hh > 23 || mm > 59 || ss > 60 { return 0 - 1; }
+    let mut yy: i64 = y;
+    if m <= 2 { yy = yy - 1; }
+    let era: i64 = yy / 400;
+    let yoe: i64 = yy - era * 400;
+    let mut mp: i64 = m + 9;
+    if m > 2 { mp = m - 3; }
+    let doy: i64 = (153 * mp + 2) / 5 + d - 1;
+    let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days: i64 = era * 146097 + doe - 719468;
+    days * 86400 + ((hh * 60) + mm) * 60 + ss
+}
+
+// Does the leaf carry a SAN dNSName exactly equal to (dns, dns_len)?
+// f holds the 22 x509_parse slots for the leaf.
+fn t9v_san_match(cert: i64, clen: i64, f: i64, dns: i64, dns_len: i64) -> i64 {
+    let t: i64 = __mind_alloc(24);
+    let tbs_off: i64 = __mind_load_i64(f + 0);
+    let tbs_len: i64 = __mind_load_i64(f + 8);
+    if der_tlv(cert, tbs_off, clen, t) != 0 { return 0; }
+    let tbs_end: i64 = tbs_off + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    let mut p: i64 = tbs_off + __mind_load_i64(t + 8);
+    while p < tbs_end {
+        if der_tlv(cert, p, clen, t) != 0 { return 0; }
+        let tag: i64 = __mind_load_i64(t + 0);
+        let elen: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+        if tag == 163 {
+            // [3] extensions -> SEQUENCE OF Extension
+            let a3h: i64 = __mind_load_i64(t + 8);
+            if der_tlv(cert, p + a3h, clen, t) != 0 { return 0; }
+            let xl: i64 = __mind_load_i64(t + 8);
+            let xn: i64 = __mind_load_i64(t + 16);
+            let xp0: i64 = p + a3h + xl;
+            let mut xp: i64 = xp0;
+            let xend: i64 = xp0 + xn;
+            while xp < xend {
+                if der_tlv(cert, xp, clen, t) != 0 { return 0; }
+                let e_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+                if __mind_load_i64(t + 0) != 48 { return 0; }
+                // Extension: OID, [critical BOOLEAN], OCTET STRING value
+                let mut ep: i64 = xp + __mind_load_i64(t + 8);
+                let eend: i64 = xp + e_total;
+                if der_tlv(cert, ep, clen, t) != 0 { return 0; }
+                let oid_off: i64 = ep + __mind_load_i64(t + 8);
+                let oid_len: i64 = __mind_load_i64(t + 16);
+                ep = ep + __mind_load_i64(t + 8) + oid_len;
+                let is_san: i64 = oid_len == 3 && t9v_u8(cert + oid_off) == 85 && t9v_u8(cert + oid_off + 1) == 29 && t9v_u8(cert + oid_off + 2) == 17;
+                if is_san {
+                    // skip optional critical BOOLEAN; find OCTET STRING
+                    let mut stop: i64 = 0;
+                    while stop == 0 {
+                        if ep >= eend { return 0; }
+                        if der_tlv(cert, ep, clen, t) != 0 { return 0; }
+                        let tg: i64 = __mind_load_i64(t + 0);
+                        let hl: i64 = __mind_load_i64(t + 8);
+                        let cl: i64 = __mind_load_i64(t + 16);
+                        if tg == 4 {
+                            // value = SEQUENCE OF GeneralName
+                            if der_tlv(cert, ep + hl, clen, t) != 0 { return 0; }
+                            let mut gp: i64 = ep + hl + __mind_load_i64(t + 8);
+                            let gend: i64 = gp + __mind_load_i64(t + 16);
+                            while gp < gend {
+                                if der_tlv(cert, gp, clen, t) != 0 { return 0; }
+                                if __mind_load_i64(t + 0) == 130 {
+                                    let nl: i64 = __mind_load_i64(t + 16);
+                                    if nl == dns_len {
+                                        if t9v_bytes_eq(cert + gp + __mind_load_i64(t + 8), dns, nl) == 1 { return 1; }
+                                    }
+                                }
+                                gp = gp + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+                            }
+                            stop = 1;
+                        } else {
+                            ep = ep + hl + cl;
+                        }
+                    }
+                }
+                xp = xp + e_total;
+            }
+            return 0;
+        }
+        p = p + elen;
+    }
+    0
+}
+
+pub fn x509_verify_server_chain(chain_addr: i64, anchors_addr: i64, expected_dns_addr: i64, now_unix: i64) -> i64 {
+    // ABI and verdicts match std/x509-auth-r01 a4560566.
+    // 0 accept; -7 unknown anchor; -6 expired; -5 not yet valid; -8 name.
+    let ncert: i64 = __mind_load_i64(chain_addr);
+    if ncert != 1 { return 0 - 5; }
+    let clen: i64 = __mind_load_i64(chain_addr + 16);
+    let cert: i64 = chain_addr + __mind_load_i64(chain_addr + 8);
+    let f: i64 = __mind_alloc(176);
+    if x509_parse(cert, clen, f) != 0 { return 0 - 5; }
+    let iss_off: i64 = __mind_load_i64(f + 32);
+    let iss_len: i64 = __mind_load_i64(f + 40);
+    let sig_off: i64 = __mind_load_i64(f + 144);
+    let sig_len: i64 = __mind_load_i64(f + 152);
+    let tbs_off: i64 = __mind_load_i64(f + 0);
+    let tbs_len: i64 = __mind_load_i64(f + 8);
+    // Anchor selection: every candidate must be well-formed, verifiably
+    // self-signed, and byte-exactly the leaf issuer, and its RSA key must
+    // verify the leaf signature. Otherwise the anchor set lacks the issuer.
+    let acount: i64 = __mind_load_i64(anchors_addr);
+    let pinned: i64 = __mind_alloc(1024);
+    let pinned_len: i64 = tls13ct_fx_anchor_der(pinned);
+    let mut ap: i64 = anchors_addr + 8;
+    let mut ai: i64 = 0;
+    let mut found: i64 = 0;
+    let af: i64 = __mind_alloc(176);
+    while ai < acount {
+        let alen: i64 = __mind_load_i64(ap + 8);
+        let ader: i64 = anchors_addr + __mind_load_i64(ap);
+        ap = ap + 16;
+        ai = ai + 1;
+        if alen < 1 { return 0 - 5; }
+        if alen == pinned_len && t9v_bytes_eq(ader, pinned, alen) == 1 {
+        if x509_verify_self_signed(ader, alen) == 1 {
+            if x509_parse(ader, alen, af) == 0 {
+                let asub_off: i64 = __mind_load_i64(af + 48);
+                let asub_len: i64 = __mind_load_i64(af + 56);
+                if asub_len == iss_len {
+                    if t9v_bytes_eq(cert + iss_off, ader + asub_off, iss_len) == 1 {
+                        let an_off: i64 = __mind_load_i64(af + 96);
+                        let an_len: i64 = __mind_load_i64(af + 104);
+                        let ae_off: i64 = __mind_load_i64(af + 112);
+                        let ae_len: i64 = __mind_load_i64(af + 120);
+                        let mut e_val: i64 = 0;
+                        let mut ei: i64 = 0;
+                        while ei < ae_len {
+                            e_val = (e_val << 8) | t9v_u8(ader + ae_off + ei);
+                            ei = ei + 1;
+                        }
+                        if an_len == 256 {
+                            if rsa_pkcs1_sha256_verify(ader + an_off, an_len, e_val, cert + sig_off, sig_len, cert + tbs_off, tbs_len) == 1 {
+                                found = 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+    if found == 0 { return 0 - 7; }
+    // Validity window against the caller-supplied time.
+    let nb: i64 = t9v_utctime_to_unix(cert + __mind_load_i64(f + 64), __mind_load_i64(f + 72));
+    let na: i64 = t9v_utctime_to_unix(cert + __mind_load_i64(f + 80), __mind_load_i64(f + 88));
+    if nb < 0 || na < 0 { return 0 - 5; }
+    if now_unix < nb { return 0 - 5; }
+    if now_unix > na { return 0 - 6; }
+    // Exact SAN dNSName match against the requested server name.
+    let mut dns_len: i64 = 0;
+    while dns_len < 254 && t9v_u8(expected_dns_addr + dns_len) != 0 { dns_len = dns_len + 1; }
+    if t9v_san_match(cert, clen, f, expected_dns_addr, dns_len) == 0 {
+        return 0 - 8;
+    }
+    0
+}
+// === END TLS-CLIENT TEST-ONLY VERIFIER ==================================

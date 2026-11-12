@@ -1,0 +1,117 @@
+// Author: STARGA Inc. A5 shared-memory rows probe: the 6-argument syscall ABI.
+// Every argument register is proven by a kernel answer that depends on it:
+// rdi (MAP_FIXED_NOREPLACE returns the address asked for), rsi (len 0 is
+// EINVAL), rdx (a PROT_READ|PROT_WRITE page takes stores), r10 (the flags pick
+// anonymous / fixed / shared), r8 (a memfd maps its own bytes, fd -1 without
+// MAP_ANONYMOUS is EBADF), r9 (offset 4096 maps the file's second page; an
+// unaligned offset is EINVAL). Results stay raw: a failure is a negative errno.
+// Exit 0 when every check holds, else the number of the first failed check.
+fn a5_words(buf: i64, i: i64, n: i64, v: i64) -> i64 {
+    let mut k: i64 = i;
+    while k < n {
+        __mind_store_i64(buf + k * 8, v);
+        k = k + 1;
+    }
+    0
+}
+
+fn a5_memfd_checks(name: i64) -> i64 {
+    let fd: i64 = __mind_sys_memfd_create(name, 0);
+    if fd < 0 {
+        return 20;
+    }
+    let data: i64 = __mind_alloc(8192);
+    let _a: i64 = a5_words(data, 0, 512, 1111111111);
+    let _b: i64 = a5_words(data, 512, 1024, 2222222222);
+    if __mind_write(fd, data, 8192, 0 - 1) != 8192 {
+        return 21;
+    }
+    // r8 = fd, r9 = 4096: the second page of the file, PROT_READ, MAP_SHARED.
+    let q: i64 = __mind_sys_mmap(0, 4096, 1, 1, fd, 4096);
+    if q < 0 {
+        return 22;
+    }
+    if __mind_atomic_load_acquire_i64(q + 4088) != 2222222222 {
+        return 23;
+    }
+    if __mind_sys_munmap(q, 4096) != 0 {
+        return 24;
+    }
+    // r9 = 1: an offset that is not page aligned is EINVAL.
+    if __mind_sys_mmap(0, 4096, 1, 1, fd, 1) != 0 - 22 {
+        return 25;
+    }
+    // r8 = -1 without MAP_ANONYMOUS is EBADF.
+    if __mind_sys_mmap(0, 4096, 1, 2, 0 - 1, 0) != 0 - 9 {
+        return 26;
+    }
+    if __mind_sys_close(fd) != 0 {
+        return 27;
+    }
+    0
+}
+
+fn a5_affinity_checks() -> i64 {
+    let mask: i64 = __mind_alloc(16);
+    __mind_store_i64(mask, 0 - 1);
+    __mind_store_i64(mask + 8, 0 - 1);
+    // Every CPU of the first 128: the kernel keeps the allowed ones, answers 0.
+    if __mind_sys_sched_setaffinity(0, 16, mask) != 0 {
+        return 30;
+    }
+    __mind_store_i64(mask, 0);
+    __mind_store_i64(mask + 8, 0);
+    // The empty set is EINVAL.
+    if __mind_sys_sched_setaffinity(0, 16, mask) != 0 - 22 {
+        return 31;
+    }
+    0
+}
+
+fn main() -> i64 {
+    // PROT_READ|PROT_WRITE = 3; MAP_PRIVATE|MAP_ANONYMOUS = 0x22 = 34; fd -1.
+    let p: i64 = __mind_sys_mmap(0, 4096, 3, 34, 0 - 1, 0);
+    if p < 0 {
+        return 1;
+    }
+    if p % 4096 != 0 {
+        return 2;
+    }
+    __mind_store_i64(p, 123456789);
+    let v: i64 = __mind_atomic_load_acquire_i64(p);
+    if v != 123456789 {
+        return 3;
+    }
+    if __mind_cpu_relax() != 0 {
+        return 4;
+    }
+    if __mind_atomic_store_release_i64(p + 8, v + 1) != 0 {
+        return 5;
+    }
+    if __mind_load_i64(p + 8) != 123456790 {
+        return 6;
+    }
+    if __mind_sys_munmap(p, 4096) != 0 {
+        return 7;
+    }
+    // rdi: MAP_FIXED_NOREPLACE (0x100000) at the address just released.
+    let f: i64 = __mind_sys_mmap(p, 4096, 3, 34 + 1048576, 0 - 1, 0);
+    if f != p {
+        return 8;
+    }
+    if __mind_sys_munmap(f, 4096) != 0 {
+        return 9;
+    }
+    // rsi: a zero length is EINVAL.
+    if __mind_sys_mmap(0, 0, 3, 34, 0 - 1, 0) != 0 - 22 {
+        return 10;
+    }
+    let name: i64 = __mind_alloc(16);
+    __mind_store_i64(name, 469903816033);
+    __mind_store_i64(name + 8, 0);
+    let m: i64 = a5_memfd_checks(name);
+    if m != 0 {
+        return m;
+    }
+    a5_affinity_checks()
+}

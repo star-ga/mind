@@ -97,7 +97,7 @@ const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
     ),
     (
         "sha256",
-        "SHA256-001: while-loop bodies (compress_block / sha256 padding); \
+        "SHA256-001: while-loop bodies (sha_compress_block / sha256 padding); \
                  std-surface required for `while`. Idempotence enforced by \
                  idempotence_stdlib_sha256.",
     ),
@@ -145,7 +145,7 @@ fn stability_blas() {
     check_or_skip("blas");
 }
 
-/// `sha256.mind` uses `while` loops in compress_block and sha256, which require
+/// `sha256.mind` uses `while` loops in sha_compress_block and sha256, which require
 /// the `std-surface` feature to be recognised by the formatter's parser.
 #[test]
 #[cfg(feature = "std-surface")]

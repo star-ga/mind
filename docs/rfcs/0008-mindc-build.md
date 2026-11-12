@@ -189,6 +189,16 @@ c_abi = ["my_exported_fn"]
   (RFC 0002 §3, RFC 0003).
 - `optimize` — one of `debug | release`. `release` passes `-O3 -flto -fPIC` to
   the clang link step. Default `debug`.
+- `backend` — the code-generation route, `native | mlir`. Default `native`
+  (0.10.3): the flag, else this key, else `native`; there is no `auto`.
+  `native` selects the native bridge, the same route as `--backend native`.
+  A `--backend` flag that does not agree with this key is refused (E2044):
+  neither input overrides the other. An unknown value is refused at manifest
+  load (E2043). Workspace members refuse `native` (E2043); `mindc run` and
+  `mindc bench` refuse a native selection by name (`backend.native_run`,
+  `backend.native_bench`). The
+  `[targets.<name>] backend` key selects the target class, so a route name in
+  it is refused (E2043).
 
 `[test]`
 

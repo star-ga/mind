@@ -1,0 +1,340 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The branch-write memo of the native if-merge analysis. The merged names of an
+// `if` node (its then-block writes, then its else-only writes, in source order)
+// are a function of the node alone, but every enclosing branch walk recomputed
+// them: in an else-if chain each arm re-walked every later arm, in every pass.
+// One memo per native let cell (word +128) maps an if node to its record
+// [k | lo0 hi0 | lo1 hi1 | ...] and lends one 256-name scratch table.
+// PART RULE: intrinsics and other parts only.
+
+import nb_ast;
+
+// A native let cell: the 16 words +0..+120 (see nb_lower_fn_ctx) and the memo
+// word +128, 0 until the first query.
+pub fn nbwm_cell() -> i64 {
+    let c: i64 = __mind_alloc(136);
+    __mind_store_i64(c + 128, 0);
+    c
+}
+
+// The memo of a let cell, made at its first query. 0 when an allocation is
+// refused: every caller then walks the branches without it.
+pub fn nbwm_of(cell: i64) -> i64 {
+    let w: i64 = __mind_load_i64(cell + 128);
+    if w != 0 {
+        return w;
+    }
+    let nw: i64 = nbwm_new();
+    __mind_store_i64(cell + 128, nw);
+    nw
+}
+
+// Memo words: +0 slot table, +8 slot count (odd), +16 records, +24 scratch
+// table, +32 1 while the scratch table is lent.
+pub fn nbwm_new() -> i64 {
+    let w: i64 = __mind_alloc(40);
+    let scratch: i64 = __mind_alloc(256 * 2 * 8);
+    let slots: i64 = nbwm_slots(63);
+    if w == 0 {
+        return 0;
+    }
+    if scratch == 0 {
+        return 0;
+    }
+    if slots == 0 {
+        return 0;
+    }
+    __mind_store_i64(w, slots);
+    __mind_store_i64(w + 8, 63);
+    __mind_store_i64(w + 16, 0);
+    __mind_store_i64(w + 24, scratch);
+    __mind_store_i64(w + 32, 0);
+    w
+}
+
+// A zeroed slot table of cap (key, record) pairs; 0 if refused.
+pub fn nbwm_slots(cap: i64) -> i64 {
+    let t: i64 = __mind_alloc(cap * 16);
+    if t == 0 {
+        return 0;
+    }
+    let mut s: i64 = 0;
+    while s < cap * 2 {
+        __mind_store_i64(t + s * 8, 0);
+        s = s + 1;
+    }
+    t
+}
+
+// The slot that holds key, or the empty slot where it goes (linear probing;
+// the table is at most half full, so an empty slot always exists).
+pub fn nbwm_probe(t: i64, cap: i64, key: i64, s: i64) -> i64 {
+    let k: i64 = __mind_load_i64(t + s * 16);
+    if k == 0 {
+        return s;
+    }
+    if k == key {
+        return s;
+    }
+    nbwm_probe(t, cap, key, (s + 1) % cap)
+}
+
+// The record of if node key, or 0 if it has none yet.
+pub fn nbwm_find(w: i64, key: i64) -> i64 {
+    let t: i64 = __mind_load_i64(w);
+    let cap: i64 = __mind_load_i64(w + 8);
+    __mind_load_i64(t + nbwm_probe(t, cap, key, (key / 8) % cap) * 16 + 8)
+}
+
+// Put (key, rec) in slot table t of cap slots (nothing for the empty key 0).
+// Returns rec.
+pub fn nbwm_set(t: i64, cap: i64, key: i64, rec: i64) -> i64 {
+    if key == 0 {
+        return rec;
+    }
+    let s: i64 = nbwm_probe(t, cap, key, (key / 8) % cap);
+    __mind_store_i64(t + s * 16, key);
+    __mind_store_i64(t + s * 16 + 8, rec);
+    rec
+}
+
+// Double the slot table (2 cap + 1 slots) and move every entry. 0 if refused.
+pub fn nbwm_grow(w: i64) -> i64 {
+    let old: i64 = __mind_load_i64(w);
+    let ocap: i64 = __mind_load_i64(w + 8);
+    let cap: i64 = ocap * 2 + 1;
+    let t: i64 = nbwm_slots(cap);
+    if t == 0 {
+        return 0;
+    }
+    let mut s: i64 = 0;
+    // No value-if in the loop body: the mic@3 twin flattens a while-body `let` init
+    // with flatten_ast_lv, which has no `if` arm. nbwm_set skips the empty key.
+    while s < ocap {
+        let _m: i64 = nbwm_set(t, cap, __mind_load_i64(old + s * 16), __mind_load_i64(old + s * 16 + 8));
+        s = s + 1;
+    }
+    __mind_store_i64(w, t);
+    __mind_store_i64(w + 8, cap);
+    1
+}
+
+// Store names[0..k) as the record of if node key. Returns the record, or 0 if
+// an allocation is refused (the node then stays without a record).
+pub fn nbwm_put(w: i64, key: i64, names: i64, k: i64) -> i64 {
+    let room: i64 = if (__mind_load_i64(w + 16) + 1) * 2 > __mind_load_i64(w + 8) {
+        nbwm_grow(w)
+    } else {
+        1
+    };
+    if room == 0 {
+        return 0;
+    }
+    let rec: i64 = __mind_alloc(k * 16 + 8);
+    if rec == 0 {
+        return 0;
+    }
+    __mind_store_i64(rec, k);
+    let mut j: i64 = 0;
+    while j < k * 2 {
+        __mind_store_i64(rec + 8 + j * 8, __mind_load_i64(names + j * 8));
+        j = j + 1;
+    }
+    __mind_store_i64(w + 16, __mind_load_i64(w + 16) + 1);
+    nbwm_set(__mind_load_i64(w), __mind_load_i64(w + 8), key, rec)
+}
+
+// A 256-name table for one walk: the memo's scratch table when it is free (the
+// walk must end with nbwm_give), else a new allocation.
+pub fn nbwm_take(w: i64) -> i64 {
+    let free: i64 = if w == 0 {
+        0
+    } else {
+        1 - __mind_load_i64(w + 32)
+    };
+    if free == 1 {
+        __mind_store_i64(w + 32, 1);
+        return __mind_load_i64(w + 24);
+    }
+    __mind_alloc(256 * 2 * 8)
+}
+
+// End the walk on table t: free the scratch table if t is it.
+pub fn nbwm_give(w: i64, t: i64) -> i64 {
+    if w == 0 {
+        return 0;
+    }
+    if t == __mind_load_i64(w + 24) {
+        __mind_store_i64(w + 32, 0)
+    }
+    0
+}
+
+// The else-block statement list of an if node and its length (0, 0 with no else).
+pub fn nbwm_esa(ifnode: i64) -> i64 {
+    if ast_child2(ifnode) == 0 {
+        return 0;
+    }
+    ast_child0(ast_child2(ifnode))
+}
+pub fn nbwm_esl(ifnode: i64) -> i64 {
+    if ast_child2(ifnode) == 0 {
+        return 0;
+    }
+    ast_aux(ast_child2(ifnode))
+}
+
+// ---- If-merge table helpers, moved verbatim from main.mind (leaf-closed) ----
+
+// Zero out a side's placeholder need when that branch DIVERGES (no cf.br edge, so
+// no placeholder/merge value passes — lower.rs 4265/4284 reuse the other side).
+pub fn nb_merge_zero_diverged(mt: i64, nmerged: i64, i: i64, then_falls: i64, else_falls: i64) -> i64 {
+    if i >= nmerged {
+        return 0;
+    }
+    if then_falls == 0 {
+        __mind_store_i64(mt + (i * 5 + 2) * 8, 0)
+    }
+    if else_falls == 0 {
+        __mind_store_i64(mt + (i * 5 + 3) * 8, 0)
+    }
+    nb_merge_zero_diverged(mt, nmerged, i + 1, then_falls, else_falls)
+}
+
+// The merge table stores 5 words per name; nb_merged_names fills a trailing
+// stride-2 (lo,hi) scratch. mt2names returns that scratch base.
+pub fn mt2names(mt: i64) -> i64 {
+    mt + 256 * 5 * 8
+}
+
+// Count placeholders needed on a side (side 0 reads word2, side 1 word3).
+pub fn nb_merge_ph_count(mt: i64, nmerged: i64, i: i64, side: i64, acc: i64) -> i64 {
+    if i >= nmerged {
+        return acc;
+    }
+    let lacks: i64 = __mind_load_i64(mt + (i * 5 + 2 + side) * 8);
+    nb_merge_ph_count(mt, nmerged, i + 1, side, acc + lacks)
+}
+// Convert the "lacks" flags into actual PHYSICAL slots: word2 -> then placeholder
+// slot (from then_ph_base, consecutively) or -1; word3 -> else placeholder slot or
+// -1; word4 = merge slot (from merge_base, consecutively for every name).
+pub fn nb_merge_assign_slots(mt: i64, nmerged: i64, i: i64, then_next: i64, else_next: i64, merge_next: i64) -> i64 {
+    if i >= nmerged {
+        return 0;
+    }
+    let then_lacks: i64 = __mind_load_i64(mt + (i * 5 + 2) * 8);
+    let then_slot: i64 = if then_lacks == 1 {
+        then_next
+    } else {
+        0 - 1
+    };
+    let then_adv: i64 = if then_lacks == 1 {
+        then_next + 1
+    } else {
+        then_next
+    };
+    let else_lacks: i64 = __mind_load_i64(mt + (i * 5 + 3) * 8);
+    let else_slot: i64 = if else_lacks == 1 {
+        else_next
+    } else {
+        0 - 1
+    };
+    let else_adv: i64 = if else_lacks == 1 {
+        else_next + 1
+    } else {
+        else_next
+    };
+    __mind_store_i64(mt + (i * 5 + 2) * 8, then_slot);
+    __mind_store_i64(mt + (i * 5 + 3) * 8, else_slot);
+    __mind_store_i64(mt + (i * 5 + 4) * 8, merge_next);
+    nb_merge_assign_slots(mt, nmerged, i + 1, then_adv, else_adv, merge_next + 1)
+}
+
+pub fn nb_name_record(names: i64, n: i64, lo: i64, hi: i64) -> i64 {
+    __mind_store_i64(names + (n * 2 + 0) * 8, lo);
+    __mind_store_i64(names + (n * 2 + 1) * 8, hi);
+    0
+}
+
+// ---- Else-list id counts ----
+// An if emitter places dst after the else block, so it counts the else list
+// before it lowers it, and every enclosing emitter has counted that list
+// already inside its own else walk: in an else-if chain or a match, each arm
+// used to recount every later arm. A count depends only on the AST, the start
+// id and the let env prefix [0, n) of its cell (names, descriptors, widths;
+// slots are never read), and no walk that reaches the list rewrites that
+// prefix. So one record [cell | start | n | end] per else list gives the same
+// end id as the walk. The key is the list address, never an if node address.
+
+// The end id of the recorded count of else list key (sl statements) from id
+// start in cell at its current env size, or -1 when no record matches. An
+// empty list has no record: it may own no memory, so its address can be the
+// address of the next list.
+pub fn nbwm_cget(w: i64, key: i64, sl: i64, cell: i64, start: i64) -> i64 {
+    if w == 0 {
+        return 0 - 1;
+    }
+    if sl <= 0 {
+        return 0 - 1;
+    }
+    let rec: i64 = nbwm_find(w, key);
+    if rec == 0 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(rec) != cell {
+        return 0 - 1;
+    }
+    if __mind_load_i64(rec + 8) != start {
+        return 0 - 1;
+    }
+    if __mind_load_i64(rec + 16) != __mind_load_i64(cell) {
+        return 0 - 1;
+    }
+    __mind_load_i64(rec + 24)
+}
+
+// Record that the count of else list key (sl statements) from id start in cell
+// at env size n ended at id end. Returns end, also when nothing is stored.
+pub fn nbwm_cput(w: i64, key: i64, sl: i64, cell: i64, start: i64, n: i64, end: i64) -> i64 {
+    if w == 0 {
+        return end;
+    }
+    if sl <= 0 {
+        return end;
+    }
+    let old: i64 = nbwm_find(w, key);
+    let rec: i64 = if old == 0 {
+        nbwm_cnew(w, key)
+    } else {
+        old
+    };
+    if rec == 0 {
+        return end;
+    }
+    __mind_store_i64(rec, cell);
+    __mind_store_i64(rec + 8, start);
+    __mind_store_i64(rec + 16, n);
+    __mind_store_i64(rec + 24, end);
+    end
+}
+
+// A new 4-word count record under key, or 0 if an allocation is refused.
+pub fn nbwm_cnew(w: i64, key: i64) -> i64 {
+    let room: i64 = if (__mind_load_i64(w + 16) + 1) * 2 > __mind_load_i64(w + 8) {
+        nbwm_grow(w)
+    } else {
+        1
+    };
+    if room == 0 {
+        return 0;
+    }
+    let rec: i64 = __mind_alloc(32);
+    if rec == 0 {
+        return 0;
+    }
+    __mind_store_i64(w + 16, __mind_load_i64(w + 16) + 1);
+    nbwm_set(__mind_load_i64(w), __mind_load_i64(w + 8), key, rec)
+}

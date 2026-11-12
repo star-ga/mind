@@ -92,6 +92,12 @@ _STD_DIR = _REPO / "std"
 _MIGRATED = {"_stdlib_manifest.py", "stdlib_manifest_lint.py"}
 
 _LIST_RE = re.compile(r"^_?STD(?:LIB)?_MODULES\s*=\s*(\[[^\]]*\])", re.M)
+MAIN_MIND_LINE_PIN = 68061  # only down: new code goes in a part; re-pin DOWN with every extraction
+_SEED_PRIVATE_PREFIXES = {"arena": ("arena_",), "async": ("async_", "sched_", "snd_"), "blas": ("blas_",), "cli": ("cli_",),
+    "fs": ("fs_",), "io": ("io_",), "io_canon": ("canon_",), "iouring": ("io_", "iouring_", "sys_io_uring_"), "map": ("map_",),
+    "json": ("jv_", "jvsb_", "jvstr_", "jvpr_"), "net": ("net_",), "process": ("proc_",), "reactor": ("reactor_",),
+    "regex": ("rx_",), "ring": ("ring_",), "sha256": ("sha_",), "string": ("string_",), "time": ("time_",),
+    "toml": ("toml_", "tv_"), "tui": ("tui_",), "vec": ("vec_",)}
 
 
 def _both_ways(name_a, set_a, name_b, set_b, errors):
@@ -207,7 +213,7 @@ def _run_on_manifest(manifest_text):
         root = pathlib.Path(td)
         mind = root / "examples" / "mindc_mind"
         (mind / "testdata").mkdir(parents=True)
-        for name in ("stdlib_manifest_lint.py", "_stdlib_manifest.py"):
+        for name in ("stdlib_manifest_lint.py", "_stdlib_manifest.py", "main.mind"):  # main.mind: the line ratchet
             shutil.copyfile(_HERE / name, mind / name)
         (mind / "testdata" / "stdlib_manifest.txt").write_text(
             manifest_text, encoding="utf-8")
@@ -290,6 +296,14 @@ def main(argv):
         return 0
 
     errors = []
+    # ---- 7. main.mind line ratchet (only down); `--main-mind-pin` runs it alone ----
+    main_lines = (_HERE / "main.mind").read_bytes().count(b"\n")
+    if main_lines > MAIN_MIND_LINE_PIN:
+        errors.append(f"main.mind has {main_lines} lines > MAIN_MIND_LINE_PIN {MAIN_MIND_LINE_PIN}: "
+                      "put new compiler code in a COMPILER_COMPONENTS part")
+    if "--main-mind-pin" in argv:
+        print(errors[0] if errors else f"main.mind pin PASS: {main_lines} <= MAIN_MIND_LINE_PIN {MAIN_MIND_LINE_PIN}")
+        return 1 if errors else 0
 
     manifest_all = _stdlib_manifest.all_modules()
     manifest_seed = _stdlib_manifest.seed_modules()
@@ -388,6 +402,16 @@ def main(argv):
                     f"{_first_diff(lst, manifest_seed)})"
                 )
 
+    # ---- 8. seed private fns carry a _SEED_PRIVATE_PREFIXES prefix (the flat image reserves every seed name)
+    seen = {}  # private name -> the seed module that defines it
+    for mod in manifest_seed:
+        prefixes = _SEED_PRIVATE_PREFIXES.get(mod, ())
+        for name in re.findall(r"^[ \t]*fn (\w+)", (_STD_DIR / f"{mod}.mind").read_text(encoding="utf-8"), re.M):
+            if not name.startswith(prefixes):
+                errors.append(f"std/{mod}.mind private fn `{name}` lacks a module prefix {prefixes}")
+            if seen.setdefault(name, mod) != mod: errors.append(f"private fn `{name}` in std/{seen[name]}.mind and std/{mod}.mind")
+    if not seen: errors.append("no private seed fn found: the prefix check would pass vacuously")
+
     # ---- 7. header counts: exactly one canonical line each, equal to rows ---
     counts = (len(manifest_all), len(manifest_seed), len(manifest_bundled))
     manifest_text = _stdlib_manifest.MANIFEST_PATH.read_text(encoding="utf-8")
@@ -399,7 +423,6 @@ def main(argv):
                 f"header-count check accepted its hostile '{name}' variant of the "
                 f"manifest — a guard in count_header_errors has been lost"
             )
-
     if errors:
         print("stdlib_manifest_lint: FAIL")
         for e in errors:
@@ -416,6 +439,7 @@ def main(argv):
         f"exact both ways; seed={len(manifest_seed)} (blob sha256 pinned) "
         f"bundled={len(bundled_actual)} unreachable={len(manifest_all) - len(manifest_bundled)}; "
         f"{n_literals} remaining hand-copied list(s) verified against the manifest; "
+        f"{len(seen)} seed private fn(s) carry their module prefix, no name in two modules; "
         f"header counts SEED/BUNDLED/TOTAL/non-seed stated once each and exact, "
         f"{len(probes)} hostile header variants refused"
     )

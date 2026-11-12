@@ -1,0 +1,163 @@
+// tools/seed_ledger/seed_ledger_mint.mind — the ledger is bound to the minted seed.
+//
+// A ledger with no drifted seed source claims the tree IS the minted seed. The
+// rows alone cannot prove that (rows_sha256 has no key: a hand re-pin rewrites
+// it), so the claim is checked against the seed's own MANIFEST:
+//   (a) the seed sources, joined by "\n" in _selfhost_sources.py order, hash to
+//       combined_source_sha256 (a reordered source list fails this too);
+//   (b) sha256(stage1.elf) equals the hash of the stage the receipt published:
+//       stage2_sha256 when the MANIFEST has the row "published_stage<TAB>stage2"
+//       (a two-hop advance; that receipt has no stage1_sha256 row), and
+//       stage1_sha256 for every other receipt. A receipt without that row is red.
+// check() requires (b) always and (a) when no seed source drifts; the re-pin
+// requires both, and refuses a MANIFEST that changed while stage1.elf did not. Part of the seed drift ledger tool; seed_ledger.mind is the entry.
+
+import std.vec;
+import seed_ledger_bytes;
+import seed_ledger_rows;
+
+pub fn seed_manifest_path() -> i64 {
+    return slice_of("examples/mindc_mind/testdata/selfhost_loop/MANIFEST.txt");
+}
+
+// sha256 hex of the seed sources joined by "\n" (the frozen seed's source image),
+// or 0 when a seed source is missing.
+pub fn composite_digest(src: Vec) -> i64 {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < vec_len(src) {
+        let data: i64 = read_file(vec_get(src, i));
+        if data == 0 {
+            out("MISSING\t");
+            out_slice(vec_get(src, i));
+            out("\n");
+            return 0;
+        }
+        total = total + s_len(data) + 1;
+        i = i + 1;
+    }
+    let buf: i64 = __mind_alloc(total);
+    let mut off: i64 = 0;
+    let mut j: i64 = 0;
+    while j < vec_len(src) {
+        let data: i64 = read_file(vec_get(src, j));
+        off = off + copy_bytes(s_addr(data), buf + off, s_len(data));
+        if j + 1 < vec_len(src) {
+            __mind_store_i8(buf + off, 10);
+            off = off + 1;
+        }
+        j = j + 1;
+    }
+    return sha_hex(buf, off);
+}
+
+// 1 (and one MINT line) when `got` is absent or differs from the MANIFEST value.
+fn mint_differs(manifest: i64, key: String, got: i64, what: String) -> i64 {
+    let mut want: i64 = 0;
+    if manifest != 0 {
+        want = header_value(manifest, key);
+    }
+    if got != 0 && want != 0 && slice_eq(got, want) == 1 {
+        return 0;
+    }
+    out("MINT\t");
+    out(what);
+    out("\tdoes not match testdata/selfhost_loop/MANIFEST.txt\n");
+    return 1;
+}
+
+// 1 when the receipt says the published seed is stage2 (a two-hop advance).
+fn published_stage2(manifest: i64) -> i64 {
+    if manifest == 0 {
+        return 0;
+    }
+    if find(s_addr(manifest), s_len(manifest), 0, "\n# published_stage\tstage2\n") < 0 {
+        return 0;
+    }
+    return 1;
+}
+
+// (b): stage1.elf is the file its MANIFEST pins as the published stage.
+pub fn stage1_mismatch() -> i64 {
+    let elf: i64 = slice_of("examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
+    let mut got: i64 = 0;
+    if read_file(elf) != 0 {
+        got = file_digest(elf);
+    }
+    let manifest: i64 = read_file(seed_manifest_path());
+    if published_stage2(manifest) == 1 {
+        return mint_differs(manifest, "# stage2_sha256\t", got, "stage1.elf sha256 (published stage2)");
+    }
+    return mint_differs(manifest, "# stage1_sha256\t", got, "stage1.elf sha256");
+}
+
+// (a): the seed sources compose to the image the seed was minted from.
+pub fn composite_mismatch(src: Vec) -> i64 {
+    let mut got: i64 = 0;
+    if vec_len(src) > 0 {
+        got = composite_digest(src);
+    }
+    let what: String = "seed sources joined in _selfhost_sources.py order (combined_source_sha256)";
+    return mint_differs(read_file(seed_manifest_path()), "# combined_source_sha256\t", got, what);
+}
+
+// The pinned files bound to the seed: a fixed list, not the ledger's own rows,
+// so a deleted pin row is red (check) and the re-pin cannot drop one.
+pub fn pin_paths() -> Vec {
+    let mut v: Vec = vec_new();
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/selfhost_loop/stage1.elf"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/selfhost_loop/MANIFEST.txt"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/selfhost_loop_bounded/MANIFEST.txt"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/stdlib_manifest.txt"));
+    v = vec_push(v, slice_of("examples/mind_mirror_v04/mirror_gate.py"));
+    v = vec_push(v, slice_of("examples/mind_mirror_v04/testdata/MANIFEST.tsv"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_add.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_if_ret.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_main.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_recursion.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_struct_field.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/_ref_value_if.note"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/backend_native_bridge/MANIFEST.txt"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/backend_native_bridge/add.elf"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/backend_native_bridge/const_return.elf"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/backend_native_bridge/local_call.elf"));
+    v = vec_push(v, slice_of("examples/mindc_mind/testdata/backend_native_bridge/while_sum.elf"));
+    return v;
+}
+
+// The digest the current ledger records for `path`, or 0 when it has no row.
+fn ledger_digest_of(path: i64) -> i64 {
+    let text: i64 = read_file(ledger_path());
+    if text == 0 {
+        return 0;
+    }
+    let lines: Vec = data_lines(text);
+    let mut i: i64 = 0;
+    while i < vec_len(lines) {
+        let f: i64 = vec_get(lines, i);
+        if field_count(f) == 3 && slice_eq(field(f, 2), path) == 1 {
+            return field(f, 1);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// 1 when the seed MANIFEST differs from its ledger row while stage1.elf does
+// not: the MANIFEST values were edited without a new seed (a mint changes both).
+pub fn manifest_without_mint() -> i64 {
+    let manifest: i64 = seed_manifest_path();
+    let elf: i64 = slice_of("examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
+    let m_row: i64 = ledger_digest_of(manifest);
+    let e_row: i64 = ledger_digest_of(elf);
+    if m_row == 0 || e_row == 0 {
+        return 1;
+    }
+    let m_changed: i64 = 1 - slice_eq(file_digest(manifest), m_row);
+    let e_changed: i64 = 1 - slice_eq(file_digest(elf), e_row);
+    if m_changed == 1 && e_changed == 0 {
+        return 1;
+    }
+    return 0;
+}

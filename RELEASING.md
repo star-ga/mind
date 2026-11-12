@@ -12,3 +12,5 @@
 3. Create a tag: `git tag mind-vX.Y.Z && git push --tags`
 4. Draft GitHub release (Release Drafter will prefill if configured).
 5. Note feature compatibility with `mind-runtime` in the release notes.
+6. For every published native ELF, run the evidence anchor step and its tamper test in
+   [`docs/release-evidence-anchor.md`](docs/release-evidence-anchor.md).

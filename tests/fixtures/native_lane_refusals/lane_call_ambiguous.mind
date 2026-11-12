@@ -1,0 +1,4 @@
+import std.string;
+// lane.call.ambiguous: the user image and an imported seed module both define the name.
+fn string_push_capacity(len: i64, cap: i64) -> i64 { return 1; }
+fn main() -> i64 { return string_push_capacity(3, 8); }

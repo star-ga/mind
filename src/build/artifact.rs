@@ -47,6 +47,29 @@ pub(super) fn default_artifact_path(
     }
 }
 
+/// The native backend's artifact path with no `--out` (ruling 1.9): for a
+/// governed build (`governed` = root and manifest), the MLIR path function
+/// above (`target/<profile>/<name>`), so a native build replaces the file an
+/// MLIR build wrote there and a stale binary is never the one that runs; with
+/// no governing manifest, `a.out`. `optimize` is `--release` / `--optimize`,
+/// else the manifest's level.
+pub(crate) fn native_artifact_path(
+    governed: Option<&(PathBuf, crate::project::ProjectManifest)>,
+    optimize: Option<OptimizeLevel>,
+) -> String {
+    match governed {
+        None => "a.out".to_string(),
+        Some((root, manifest)) => default_artifact_path(
+            root,
+            crate::project::artifact_stem(manifest, None),
+            EmitKind::Binary,
+            optimize.unwrap_or(manifest.build.optimize),
+        )
+        .display()
+        .to_string(),
+    }
+}
+
 /// The `[targets.<name>]` block name `build_project` will select for this build.
 ///
 /// Prefer the explicitly-selected block so `build_project` picks THAT block (its

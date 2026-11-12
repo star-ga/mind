@@ -1,19 +1,21 @@
-// Copyright 2025 STARGA Inc.
+// Copyright 2026 STARGA Inc.
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Unit tests for the intrinsic registry and the determinism classifier
-//! (`crate::intrinsics`), in their own file so the registry stays under the
+//! (`crate::intrinsics`). Every runtime-support export is classified, and the
+//! classifier reads the registry rows. This file keeps the registry under the
 //! 800-line ceiling `tests/module_size_ratchet.rs` pins.
 
 use super::*;
 
-/// Every `__mind_*` symbol `runtime-support/mind_intrinsics.c` EXPORTS, in
-/// the order the C file declares them.
+/// Every `__mind_*` symbol `runtime-support/mind_intrinsics.c` EXPORTS, with
+/// the parts it includes (`mind_fs_read.h` holds `__mind_open`), sorted.
 fn exported_runtime_support_intrinsics() -> Vec<String> {
     const C_SRC: &str = include_str!("../../runtime-support/mind_intrinsics.c");
+    const C_PARTS: &str = include_str!("../../runtime-support/mind_fs_read.h");
     let mut names = Vec::new();
-    for line in C_SRC.lines() {
+    for line in C_SRC.lines().chain(C_PARTS.lines()) {
         let line = line.trim_start();
         // `#  define MIND_EXPORT ...` starts with `#`, so macro definitions
         // are skipped and only definition sites are scanned.
@@ -199,6 +201,10 @@ const NAMED_STD_MODULES: &[(&str, &str)] = &[
         include_str!("../../std/https_probe.mind"),
     ),
     ("std.https_io", include_str!("../../std/https_io.mind")),
+    (
+        "std.os_evidence",
+        include_str!("../../std/os_evidence.mind"),
+    ),
 ];
 
 /// Every callee named anywhere in `instrs`, through every nested body.
@@ -312,10 +318,11 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 19,
+        named, 21,
         "dns_resolve, tcp_connect_host(_timeout), dns_tcp_socket, dns_connect_fd, \
          dns_clock_gettime, entropy_fill, \
          https_get(_ca), https_post(_ca), https_get_with_headers, https_post_with_headers, \
-         https_probe, hio_now_unix, hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure"
+         https_probe, hio_now_unix, hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure, \
+         procgroup_spawn_ev, procgroup_wait_all_ev"
     );
 }

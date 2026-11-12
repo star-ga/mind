@@ -1,0 +1,11 @@
+// Regression class (twin-emitter review round 3): native ELF: a loop-body let shadowing an outer name must leave the outer binding untouched.
+fn main() -> i64 {
+    let mut x: i64 = 5;
+    let mut k: i64 = 0;
+    while k < 2 {
+        k = k + 1;
+        let mut x: i64 = 7;
+        x = 3;
+    }
+    return x;
+}

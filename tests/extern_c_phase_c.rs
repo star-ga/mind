@@ -11,7 +11,8 @@
 //! 3. Win64 16-byte struct → `!llvm.ptr` (MEMORY); SysV → `i64, i64`.
 //! 4. Win64 8-byte struct → i64; SysV → i64 (same result, different paths).
 //! 5. Variadic call with f32 hint promotes to f64 in emitted MLIR.
-//! 6. `llvm.func` and `llvm.call` for Win64 carry `cconv = #llvm.cconv<win64cc>`.
+//! 6. `llvm.func` and `llvm.call` for Win64 carry the `win64cc` keyword, and a
+//!    Win64 program builds through `mlir-opt`, `mlir-translate` and `clang`.
 //! 7. SysV `llvm.func` and `llvm.call` do NOT carry a cconv attribute.
 //! 8. Win64 3-byte struct → `!llvm.ptr` (MEMORY, not a valid register size).
 //! 9. Win64 4-byte struct → i32.
@@ -32,6 +33,9 @@ use libmind::ir::{IRModule, Instr};
 use libmind::mlir::lower_ir_to_mlir;
 use libmind::parser;
 use libmind::type_checker::{TypeEnv, check_module_types_in_file};
+
+#[cfg(all(unix, feature = "mlir-build"))]
+mod common;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -161,6 +165,7 @@ fn vararg_f32_hint_promotes_to_f64_in_mlir() {
         // f32 hint — must be promoted to f64 in the emission.
         vararg_hints: vec!["f32".to_string()],
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
 
     let fmt = m.fresh();
@@ -198,8 +203,11 @@ fn vararg_f32_hint_promotes_to_f64_in_mlir() {
 // ── test 6: Win64 llvm.func and llvm.call carry cconv attribute ───────────────
 
 /// An `extern "C" callconv(.win64)` declaration must produce:
-/// - `llvm.func cconv = #llvm.cconv<win64cc> @name(...)` at module level.
-/// - `llvm.call cconv = #llvm.cconv<win64cc> @name(...)` at call sites.
+/// - `llvm.func win64cc @name(...)` at module level.
+/// - `llvm.call win64cc @name(...)` at call sites.
+///
+/// `mlir-opt` refuses `cconv = #llvm.cconv<win64cc>` before the symbol; the
+/// run test `win64_program_builds_and_passes_args_in_win64_registers` builds it.
 #[test]
 fn win64_extern_decl_emits_cconv_attribute() {
     let mut m = IRModule::new();
@@ -210,6 +218,7 @@ fn win64_extern_decl_emits_cconv_attribute() {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: CallConv::Win64,
+        binding: Default::default(),
     });
 
     let arg = m.fresh();
@@ -226,21 +235,19 @@ fn win64_extern_decl_emits_cconv_attribute() {
 
     let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
-    // llvm.func declaration must carry the cconv attribute.
     assert!(
-        text.contains("llvm.func cconv = #llvm.cconv<win64cc> @win_api_fn"),
-        "Win64 llvm.func must carry cconv = #llvm.cconv<win64cc>; got:\n{text}"
+        text.contains("llvm.func win64cc @win_api_fn"),
+        "Win64 llvm.func must carry win64cc; got:\n{text}"
     );
-    // llvm.call must also carry the cconv attribute.
     assert!(
-        text.contains("llvm.call cconv = #llvm.cconv<win64cc> @win_api_fn"),
-        "Win64 llvm.call must carry cconv = #llvm.cconv<win64cc>; got:\n{text}"
+        text.contains("llvm.call win64cc @win_api_fn"),
+        "Win64 llvm.call must carry win64cc; got:\n{text}"
     );
 }
 
 // ── test 7: SysV llvm.func and llvm.call have no cconv attribute ──────────────
 
-/// A SysV extern declaration must NOT carry `cconv = #llvm.cconv<win64cc>`.
+/// A SysV extern declaration must NOT carry a calling-convention keyword.
 /// The absence of a cconv attribute is MLIR's default (C/SysV on Linux).
 #[test]
 fn sysv_extern_decl_has_no_cconv_attribute() {
@@ -252,6 +259,7 @@ fn sysv_extern_decl_has_no_cconv_attribute() {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
 
     let arg = m.fresh();
@@ -269,7 +277,7 @@ fn sysv_extern_decl_has_no_cconv_attribute() {
     let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
-        !text.contains("cconv"),
+        !text.contains("cconv") && !text.contains("win64cc"),
         "SysV extern must not carry any cconv attribute; got:\n{text}"
     );
     assert!(
@@ -339,11 +347,14 @@ fn end_to_end_win64_struct_lower_to_ir() {
     "#;
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
-    // Type-check: must succeed (struct is repr(C)).
+    // The build path refuses the by-value struct (E2040); lowering below still
+    // exercises the Win64 classifier.
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
-    assert!(
-        diags.is_empty(),
-        "type-check must succeed for Win64 repr(C) extern block; diags: {diags:?}"
+    let got: Vec<&str> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        got,
+        ["E2040"],
+        "by-value struct must be refused; diags: {diags:?}"
     );
 
     // Lower to IR.
@@ -380,5 +391,260 @@ fn end_to_end_win64_struct_lower_to_ir() {
         callconv,
         CallConv::Win64,
         "ExternFnDecl must record CallConv::Win64; got {callconv:?}"
+    );
+}
+
+// ── test 11: `extern "C"` resolves from the compile TARGET, not the host ─────
+
+fn lower_under(triple: &str, src: &str) -> IRModule {
+    let target = libmind::target::Target::from_triple(triple).expect("triple");
+    let _guard = libmind::target::CompileTargetGuard::install(target);
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    libmind::eval::lower_to_ir(&module).expect("lowering")
+}
+
+fn decl_of(ir: &IRModule, want: &str) -> (Vec<String>, Option<String>, CallConv) {
+    ir.instrs
+        .iter()
+        .find_map(|instr| match instr {
+            Instr::ExternFnDecl {
+                name,
+                param_types,
+                ret_type,
+                callconv,
+                ..
+            } if name == want => Some((param_types.clone(), ret_type.clone(), *callconv)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no ExternFnDecl for {want}"))
+}
+
+const C_SRC: &str = "extern \"C\" { fn f(x: u32, b: bool) -> u32; }";
+
+/// One host, three targets: the callconv byte is a function of the target.
+/// Resolving `C` from the mindc build host again turns the Windows row red on
+/// a Linux host (and the Linux row red on a Windows host).
+#[test]
+fn c_callconv_follows_the_compile_target_not_the_host() {
+    let names = vec!["u32".to_string(), "bool".to_string()];
+    for (triple, expected) in [
+        ("x86_64-unknown-linux-gnu", CallConv::SysV),
+        ("x86_64-apple-darwin", CallConv::SysV),
+        ("x86_64-w64-windows-gnu", CallConv::Win64),
+    ] {
+        let (params, ret, cc) = decl_of(&lower_under(triple, C_SRC), "f");
+        assert_eq!(cc, expected, "{triple}");
+        assert_eq!(
+            params, names,
+            "{triple}: declared names stay in the evidence"
+        );
+        assert_eq!(ret.as_deref(), Some("u32"), "{triple}");
+    }
+    let mic3 = |triple| libmind::ir::compact::v3::emit_mic3(&lower_under(triple, C_SRC));
+    let linux = mic3("x86_64-unknown-linux-gnu");
+    assert_eq!(
+        linux,
+        mic3("x86_64-unknown-linux-gnu"),
+        "same target, same bytes"
+    );
+    assert_eq!(
+        linux,
+        mic3("x86_64-apple-darwin"),
+        "same ABI row, same bytes"
+    );
+    let windows = mic3("x86_64-w64-windows-gnu");
+    assert_ne!(
+        linux, windows,
+        "the Win64 row records its own callconv byte"
+    );
+    let diffs = linux.iter().zip(&windows).filter(|(a, b)| a != b).count();
+    assert_eq!(
+        (linux.len(), diffs),
+        (windows.len(), 1),
+        "only the callconv byte differs"
+    );
+}
+
+fn codes_under(triple: &str, src: &str) -> Vec<String> {
+    let target = libmind::target::Target::from_triple(triple).expect("triple");
+    let _guard = libmind::target::CompileTargetGuard::install(target);
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    check_module_types_in_file(&module, src, None, &TypeEnv::default())
+        .into_iter()
+        .map(|d| d.code.to_string())
+        .collect()
+}
+
+/// A declared convention with no row on the target is refused (E2039), never
+/// lowered with another row. Each refusal has a same-shape accepted control.
+#[test]
+fn unrealized_callconv_is_refused_with_e2039() {
+    let linux = "x86_64-unknown-linux-gnu";
+    let windows = "x86_64-w64-windows-gnu";
+    let arm = "aarch64-unknown-linux-gnu";
+    let block = |cc: &str, sig: &str| format!("extern \"C\" {cc} {{ fn g({sig}) -> i64; }}");
+    for (triple, cc, sig, refused) in [
+        (linux, "callconv(.aapcs)", "x: i64", true),
+        (linux, "callconv(.sysv)", "x: i64", false),
+        (linux, "", "x: i64", false),
+        (linux, "callconv(.win64)", "x: i64", false),
+        (linux, "callconv(.win64)", "x: i64, ...", true),
+        (linux, "", "x: i64, ...", false),
+        (windows, "callconv(.sysv)", "x: i64", true),
+        (windows, "", "x: i64", false),
+        (arm, "callconv(.aapcs)", "x: i64", false),
+        (arm, "", "x: i64", false),
+        (arm, "callconv(.sysv)", "x: i64", true),
+        (arm, "callconv(.win64)", "x: i64", true),
+    ] {
+        let codes = codes_under(triple, &block(cc, sig));
+        assert_eq!(
+            codes.iter().any(|c| c == "E2039"),
+            refused,
+            "{triple} {cc} ({sig}): {codes:?}"
+        );
+    }
+}
+
+/// Win64 keeps the declared name of each scalar in the evidence (before: u32
+/// was recorded as i32). MLIR stays signless and carries the extension.
+#[test]
+fn win64_tokens_are_declared_names_and_mlir_stays_signless() {
+    let src = "extern \"C\" callconv(.win64) {\n    fn w(a: i8, b: u8, c: i16, d: u16, e: i32, f: u32, g: bool, h: u64, k: f32) -> u32;\n    fn r() -> u32;\n}\nfn main() -> i64 { return r() as i64; }";
+    let ir = lower_under("x86_64-unknown-linux-gnu", src);
+    let (params, ret, cc) = decl_of(&ir, "w");
+    assert_eq!(cc, CallConv::Win64);
+    assert_eq!(
+        params,
+        ["i8", "u8", "i16", "u16", "i32", "u32", "bool", "i64", "f32"]
+            .map(String::from)
+            .to_vec()
+    );
+    assert_eq!(ret.as_deref(), Some("u32"));
+    let text = lower_ir_to_mlir(&ir).expect("lowering must succeed").text;
+    let decl = "llvm.func win64cc @w(i8 {llvm.signext}, i8 {llvm.zeroext}, \
+                i16 {llvm.signext}, i16 {llvm.zeroext}, i32 {llvm.signext}, i32 {llvm.zeroext}, \
+                i1 {llvm.zeroext}, i64, f32) -> i32";
+    assert!(text.contains(decl), "win64 declaration; got:\n{text}");
+    assert!(
+        text.contains("arith.extui") && !text.contains("-> u32"),
+        "the u32 return is read as i32 and zero-extended; got:\n{text}"
+    );
+}
+
+// ── run tests: the emitted MLIR goes through mlir-opt, mlir-translate, clang ──
+
+/// Build `src` to a `.so` with `mindc --emit-shared` (mlir-opt, mlir-translate
+/// and clang all run). `None` only for a tolerated capability gap; any other
+/// build failure panics with the compiler's stderr.
+#[cfg(all(unix, feature = "mlir-build"))]
+fn build_so(target: &str, src: &str) -> Option<std::path::PathBuf> {
+    let dir = common::scratch_dir(target);
+    let (mind, so) = (dir.join("t.mind"), dir.join("t.so"));
+    std::fs::write(&mind, src).expect("write src");
+    let out = std::process::Command::new(common::mindc_bin())
+        .args([
+            mind.to_str().unwrap(),
+            "--emit-shared",
+            so.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run mindc");
+    common::gate::compiled(target, &out).then_some(so)
+}
+
+/// A `callconv(.win64)` call builds end to end (`mlir-opt` refused the old
+/// `cconv = #llvm.cconv<win64cc>` form, so no Win64 program built), and the
+/// convention reaches machine code: the first two integer arguments are set up
+/// in `rcx`/`rdx`, not the System V `rdi`/`rsi`.
+#[cfg(all(unix, target_arch = "x86_64", feature = "mlir-build"))]
+#[test]
+fn win64_program_builds_and_passes_args_in_win64_registers() {
+    let src = "extern \"C\" callconv(.win64) {\n    fn w_add(a: i64, b: i64) -> i64;\n}\n\
+               pub fn t_w() -> i64 {\n    return w_add(40, 2)\n}\n";
+    let Some(so) = build_so("xc-win64-run", src) else {
+        return;
+    };
+    let out = std::process::Command::new("objdump")
+        .args(["-d", "--no-show-raw-insn", so.to_str().unwrap()])
+        .output()
+        .expect("run objdump");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let body: String = text
+        .split("\n\n")
+        .filter(|f| f.contains("<t_w>:"))
+        .collect();
+    assert!(
+        body.contains("$0x28,%ecx") && body.contains("$0x2,%edx") && body.contains("w_add"),
+        "t_w must pass 40 in rcx and 2 in rdx to w_add; got:\n{body}"
+    );
+}
+
+/// An extern `f32`/`f64` return is used at its real type (before: every extern
+/// call result was typed `i64`, so `return %r : i64` after `-> f32` and
+/// `mlir-opt` refused the module). libm's `ldexpf`/`ldexp` are the callees.
+#[cfg(all(unix, feature = "mlir-build"))]
+#[test]
+fn extern_float_returns_keep_their_float_type() {
+    let src = "extern \"C\" {\n    fn ldexpf(x: f32, e: i32) -> f32;\n    fn ldexp(x: f64, e: i32) -> f64;\n}\n\
+               pub fn t_f32() -> f32 {\n    return ldexpf(1.5 as f32, 2)\n}\n\
+               pub fn t_f64() -> f64 {\n    return ldexp(2.25, 3) + 1.0\n}\n\
+               pub fn t_f64_int() -> i64 {\n    return ldexp(2.25, 3) as i64\n}\n";
+    let Some(so) = build_so("xc-float-ret", src) else {
+        return;
+    };
+    let py = format!(
+        "import ctypes\n\
+         lib = ctypes.CDLL(r'{}')\n\
+         lib.t_f32.restype = ctypes.c_float\n\
+         lib.t_f64.restype = ctypes.c_double\n\
+         lib.t_f64_int.restype = ctypes.c_int64\n\
+         print(lib.t_f32(), lib.t_f64(), lib.t_f64_int())\n",
+        so.to_string_lossy()
+    );
+    let out = std::process::Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("python3");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "6.0 19.0 18",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The declared width governs an extern argument: an `f64` literal or variable
+/// passed to an extern `f32` parameter is converted (`arith.truncf`) at the call.
+/// Before: `mlir-opt` refused the call (`f32` vs `f64`). libm `ldexpf` scales
+/// by a power of two, so each result is exact: `0.1` reads back as the `f32`
+/// nearest it (`0.10000000149011612`), not `0.1`.
+#[cfg(all(unix, feature = "mlir-build"))]
+#[test]
+fn extern_f32_argument_takes_the_declared_width() {
+    let src = "extern \"C\" {\n    fn ldexpf(x: f32, e: i32) -> f32;\n}\n\
+               pub fn e_lit() -> f64 {\n    return ldexpf(0.1, 0) as f64\n}\n\
+               pub fn e_param(x: f64) -> f64 {\n    return ldexpf(x * 3.0, 2) as f64\n}\n";
+    let Some(so) = build_so("xc-f32-arg", src) else {
+        return;
+    };
+    let py = format!(
+        "import ctypes\n\
+         lib = ctypes.CDLL(r'{}')\n\
+         f, d = ctypes.c_float, ctypes.c_double\n\
+         lib.e_lit.restype = d\n\
+         lib.e_param.restype = d; lib.e_param.argtypes = [d]\n\
+         print(lib.e_lit() == 0.10000000149011612, lib.e_param(0.1) == f(0.1 * 3.0).value * 4)\n",
+        so.to_string_lossy()
+    );
+    let out = std::process::Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("python3");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "True True",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }

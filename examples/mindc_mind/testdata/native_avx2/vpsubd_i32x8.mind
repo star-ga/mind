@@ -1,0 +1,6 @@
+// Copyright 2026 STARGA Inc.
+// Build-only repro for __mind_vpsubd_i32x8. Dereferences 0/32: run only on the ISA-guard
+// failure path (no AVX2: exit 132 first); objdump shows the VEX.256 op on %ymm15 + one vzeroupper.
+fn main() -> i64 {
+    return __mind_vpsubd_i32x8(0, 32);
+}

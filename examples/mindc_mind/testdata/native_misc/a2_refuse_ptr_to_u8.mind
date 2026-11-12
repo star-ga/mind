@@ -1,0 +1,6 @@
+// A2 fail-closed: a pointer narrowed to u8.
+fn main() -> i64 {
+    let a: i64 = 300;
+    let y: u8 = (a as *mut u8) as u8;
+    y as i64
+}

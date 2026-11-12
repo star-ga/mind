@@ -1,0 +1,39 @@
+// Overlap: every write lands inside one 2304-byte region M that also holds the
+// inputs, so the four-pixel and register paths must step aside and the stored
+// bytes follow the call's sequential order on every CPU. Word w of M starts as
+// 7 * w + 3. Case 1: group 3, 8 pixels, a/b/c planes at M+0/64/128, bank M+8
+// (row 0 overwrites a later pixel's a), plane 64. Case 2: group 4, 4 pixels,
+// plane 8 (rows overlap each other), bank M+1200, x plane at M+1300. Case 3:
+// acc with out == bank + off[0] (M+1500), off = {0, 8, 16} at M+1800, pos 2,
+// neg 1, init 1. Case 4: init 2 (zero), out M+2048, one tap at M+1500.
+// Stdout = M after the four calls; exit = 0. Expected bytes: the sequential
+// model of the call semantics over M (the row comment names it).
+
+fn main() -> i64 {
+    let m: i64 = __mind_alloc(2304);
+    let mut w: i64 = 0;
+    while w < 288 {
+        __mind_store_i64(m + w * 8, 7 * w + 3);
+        w = w + 1;
+    }
+    let ptrs: i64 = m + 1024;
+    __mind_store_i64(ptrs, m);
+    __mind_store_i64(ptrs + 8, m + 64);
+    __mind_store_i64(ptrs + 16, m + 128);
+    __mind_store_i64(ptrs + 24, m + 1300);
+    let r1: i64 = __mind_group_bank_i64(ptrs, m + 8, 64, 8, 3);
+    let r2: i64 = __mind_group_bank_i64(ptrs, m + 1200, 8, 4, 4);
+    __mind_store_i64(m + 1800, 0);
+    __mind_store_i64(m + 1808, 8);
+    __mind_store_i64(m + 1816, 16);
+    let r3: i64 = __mind_group_acc32_i64(m + 1500, m + 1500, m + 1800, 2, 1, 1);
+    __mind_store_i64(m + 1824, 1500);
+    let r4: i64 = __mind_group_acc32_i64(m + 2048, m, m + 1824, 1, 0, 2);
+    // ptrs back to offsets from M, so the bytes do not depend on where M is.
+    __mind_store_i64(ptrs, 0);
+    __mind_store_i64(ptrs + 8, 64);
+    __mind_store_i64(ptrs + 16, 128);
+    __mind_store_i64(ptrs + 24, 1300);
+    __mind_write(1, m, 2304, 0 - 1);
+    r1 + r2 + r3 + r4
+}

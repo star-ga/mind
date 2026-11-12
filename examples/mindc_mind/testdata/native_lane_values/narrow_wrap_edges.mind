@@ -1,0 +1,55 @@
+// W0 width coverage: each narrow primitive wraps at its own boundary, so a
+// descriptor row that names the wrong width (i8 as 16, u16 as 32, ...) moves one
+// bit. Independent value: every wrap lands on the type's own edge, 6 bits set = 63.
+fn wi8(x: i8) -> i64 {
+    let y: i8 = x + 1;
+    y as i64
+}
+
+fn wu8(x: u8) -> i64 {
+    let y: u8 = x + 1;
+    y as i64
+}
+
+fn wi16(x: i16) -> i64 {
+    let y: i16 = x + 1;
+    y as i64
+}
+
+fn wu16(x: u16) -> i64 {
+    let y: u16 = x + 1;
+    y as i64
+}
+
+fn wi32(x: i32) -> i64 {
+    let y: i32 = x + 1;
+    y as i64
+}
+
+fn wu32(x: u32) -> i64 {
+    let y: u32 = x + 1;
+    y as i64
+}
+
+fn main() -> i64 {
+    let mut s: i64 = 0;
+    if wi8(127) == 0 - 128 {
+        s = s + 1;
+    }
+    if wu8(255) == 0 {
+        s = s + 2;
+    }
+    if wi16(32767) == 0 - 32768 {
+        s = s + 4;
+    }
+    if wu16(65535) == 0 {
+        s = s + 8;
+    }
+    if wi32(2147483647) == 0 - 2147483648 {
+        s = s + 16;
+    }
+    if wu32(4294967295) == 0 {
+        s = s + 32;
+    }
+    s
+}

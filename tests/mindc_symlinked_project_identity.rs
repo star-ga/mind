@@ -29,13 +29,8 @@ use std::thread;
 
 const ALPHA: &str = "fn main() -> i64 { 42 }\n";
 const BETA: &str = "fn main() -> i64 { 99 }\n";
-/// A sibling that does not parse. It is the whole point of single-file scoping:
-/// if the build widens to a whole-directory walk this file becomes a
-/// translation unit and the build of an unrelated trivial program fails.
-const HOSTILE_SIBLING: &str = "fn stray( -> i64 {\n";
-/// A *bare* manifest — no `[targets.*].sources`. This is what a prior
-/// standalone build leaves behind in a scratch directory, and also what a
-/// genuine one-file project looks like.
+/// A *bare* manifest — no `[targets.*].sources`. A named entry next to it
+/// builds the project it declares, with the whole-directory module graph.
 const BARE_MANIFEST: &str =
     "[package]\nname = \"adjacent\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"alpha.mind\"\n";
 
@@ -71,7 +66,7 @@ fn aliased_dir() -> Aliased {
 
 fn build(mindc: &Path, cwd: &Path, source: &Path, out: &Path) -> Output {
     Command::new(mindc)
-        .args(["build", "--emit=cdylib", "--out"])
+        .args(["build", "--backend", "mlir", "--emit=cdylib", "--out"])
         .arg(out)
         .arg(source)
         .current_dir(cwd)
@@ -121,16 +116,16 @@ fn concurrent_standalone_builds_through_a_symlinked_directory_leave_no_temporary
     );
 }
 
-/// Both spellings select the same single-file scope next to a genuine adjacent
-/// bare manifest, and the unrelated sibling stays out of the build.
+/// Both spellings select the same project scope next to a genuine adjacent
+/// bare manifest, and that scope holds the sibling the entry imports.
 ///
-/// The sibling does not parse, so a build that widened to a whole-directory
-/// walk fails loudly here instead of quietly producing different bytes.
+/// The entry calls into the sibling, so a build that narrowed the project to
+/// its entry fails loudly here instead of quietly producing different bytes.
 #[test]
-fn symlink_and_canonical_spellings_build_the_same_single_file_artifact() {
+fn symlink_and_canonical_spellings_build_the_same_project_artifact() {
     let d = aliased_dir();
-    fs::write(d.real.join("alpha.mind"), ALPHA).expect("alpha");
-    fs::write(d.real.join("unrelated.mind"), HOSTILE_SIBLING).expect("hostile sibling");
+    fs::write(d.real.join("alpha.mind"), IMPORTING_MAIN).expect("alpha");
+    fs::write(d.real.join("helper.mind"), HELPER).expect("imported sibling");
     fs::write(d.real.join("Mind.toml"), BARE_MANIFEST).expect("adjacent bare manifest");
     let manifest_before = fs::read(d.real.join("Mind.toml")).expect("manifest bytes");
     let mindc = require_mindc();
@@ -166,6 +161,15 @@ fn symlink_and_canonical_spellings_build_the_same_single_file_artifact() {
     assert_eq!(
         canonical_bytes, alias_bytes,
         "the symlink spelling selected a different source scope than the canonical one"
+    );
+    let library =
+        unsafe { libloading::Library::new(&canonical_out) }.expect("load emitted shared library");
+    let entry: libloading::Symbol<'_, unsafe extern "C" fn(i64) -> i64> =
+        unsafe { library.get(b"entry") }.expect("resolve entry");
+    assert_eq!(
+        unsafe { entry(1) },
+        2,
+        "the imported sibling body did not execute"
     );
 }
 

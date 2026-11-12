@@ -59,7 +59,7 @@ fn make_project(dir: &Path, name: &str, source: &str) {
 /// Run `mindc build` in `dir`. Returns exit status.
 fn run_build(mindc: &Path, dir: &Path, extra_args: &[&str]) -> std::process::ExitStatus {
     Command::new(mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .args(extra_args)
         .current_dir(dir)
         .status()

@@ -1,0 +1,117 @@
+// Copyright 2026 STARGA Inc.
+// Scalar twin of bank_forms.mind: each bank op modelled lane by lane from bytes
+// (no i64 overflow: lanes are composed from unsigned 32-bit halves). Builds on
+// both backends (native and MLIR); must print the same 448 bytes as bank_forms.
+
+fn u32at(p: i64) -> i64 {
+    let b0: i64 = __mind_load_i8(p) & 255;
+    let b1: i64 = __mind_load_i8(p + 1) & 255;
+    let b2: i64 = __mind_load_i8(p + 2) & 255;
+    let b3: i64 = __mind_load_i8(p + 3) & 255;
+    b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
+}
+
+// i32 lanes: op 0 = x + y, 1 = x - y (the 4-byte store wraps).
+fn lane32(x: i64, y: i64, o: i64, op: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 8 {
+        let r: i64 = if op == 0 {
+            u32at(x + k * 4) + u32at(y + k * 4)
+        } else {
+            u32at(x + k * 4) - u32at(y + k * 4)
+        };
+        __mind_store_i32(o + k * 4, r);
+        k = k + 1;
+    }
+    0
+}
+
+// i64 lanes from two 32-bit halves with carry / borrow.
+fn lane64(x: i64, y: i64, o: i64, op: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 4 {
+        let p: i64 = k * 8;
+        let mut lo: i64 = u32at(x + p) + u32at(y + p);
+        let mut hi: i64 = u32at(x + p + 4) + u32at(y + p + 4) + lo / 4294967296;
+        if op == 1 {
+            lo = u32at(x + p) - u32at(y + p);
+            hi = u32at(x + p + 4) - u32at(y + p + 4);
+            if lo < 0 {
+                hi = hi - 1;
+            }
+        }
+        __mind_store_i32(o + p, lo);
+        __mind_store_i32(o + p + 4, hi);
+        k = k + 1;
+    }
+    0
+}
+
+fn add8(x: i64, y: i64, o: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(o + i, ((__mind_load_i8(x + i) & 255) + (__mind_load_i8(y + i) & 255)) & 255);
+        i = i + 1;
+    }
+    0
+}
+
+fn copy32(x: i64, o: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(o + i, __mind_load_i8(x + i));
+        i = i + 1;
+    }
+    0
+}
+
+// vpshufb per 128-bit lane: control bit 7 zeroes the byte, else its low 4 bits index the lane.
+fn shuf(src: i64, ctl: i64, o: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 32 {
+        let c: i64 = __mind_load_i8(ctl + j) & 255;
+        let v: i64 = if c >= 128 {
+            0
+        } else {
+            __mind_load_i8(src + (j / 16) * 16 + c % 16)
+        };
+        __mind_store_i8(o + j, v);
+        j = j + 1;
+    }
+    0
+}
+
+fn forms(a: i64, b: i64, o: i64) -> i64 {
+    let _r0: i64 = lane32(a, b, o, 0);
+    let _r1: i64 = lane32(a, b, o + 32, 1);
+    let _r2: i64 = add8(a, b, o + 64);
+    let _r3: i64 = lane64(a, b, o + 96, 0);
+    let _r4: i64 = lane64(a, b, o + 128, 1);
+    let _m0: i64 = lane32(a + 32, b + 32, o + 160, 0);
+    let _m1: i64 = lane32(a + 64, b + 200, o + 192, 1);
+    let _m2: i64 = add8(a + 96, b + 96, o + 224);
+    let _m3: i64 = lane64(a + 128, b + 128, o + 256, 0);
+    let _m4: i64 = lane64(a + 160, b + 160, o + 288, 1);
+    let _c0: i64 = copy32(b + 256, o + 320);
+    let _s0: i64 = shuf(a + 192, b + 224, o + 352);
+    let _s1: i64 = shuf(a + 192, b + 224, o + 384);
+    copy32(a + 256, o + 416)
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(512);
+    let b: i64 = __mind_alloc(512);
+    let o: i64 = __mind_alloc(448);
+    let mut i: i64 = 0;
+    let mut x: i64 = 777;
+    while i < 512 {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(a + i, x / 65536);
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(b + i, x / 65536);
+        i = i + 1;
+    }
+    let _f: i64 = forms(a, b, o);
+    __mind_write(1, o, 448, 0 - 1);
+    0
+}

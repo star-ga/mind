@@ -1,0 +1,58 @@
+// Copyright 2026 STARGA Inc.
+// R-01b register bank: eight accumulators resident in ymm0..7 over a table of
+// 64 rows x 256 bytes, one vpaddd_i32x8_m tap per accumulator per row (literal
+// displacements 0..224). Prints the 8 x 32 accumulator bytes. The same bytes come
+// from bank_acc8_layer_a.mind (Layer A ops) and bank_acc8_scalar.mind (scalar).
+
+fn acc8(tab: i64, n: i64, out: i64) -> i64 {
+    __mind_ymm_vmovdqu_ld(0, out, 0);
+    __mind_ymm_vmovdqu_ld(1, out, 32);
+    __mind_ymm_vmovdqu_ld(2, out, 64);
+    __mind_ymm_vmovdqu_ld(3, out, 96);
+    __mind_ymm_vmovdqu_ld(4, out, 128);
+    __mind_ymm_vmovdqu_ld(5, out, 160);
+    __mind_ymm_vmovdqu_ld(6, out, 192);
+    __mind_ymm_vmovdqu_ld(7, out, 224);
+    let mut j: i64 = 0;
+    while j < n {
+        let s: i64 = tab + j * 256;
+        __mind_ymm_vpaddd_i32x8_m(0, s, 0);
+        __mind_ymm_vpaddd_i32x8_m(1, s, 32);
+        __mind_ymm_vpaddd_i32x8_m(2, s, 64);
+        __mind_ymm_vpaddd_i32x8_m(3, s, 96);
+        __mind_ymm_vpaddd_i32x8_m(4, s, 128);
+        __mind_ymm_vpaddd_i32x8_m(5, s, 160);
+        __mind_ymm_vpaddd_i32x8_m(6, s, 192);
+        __mind_ymm_vpaddd_i32x8_m(7, s, 224);
+        j = j + 1;
+    }
+    __mind_ymm_vmovdqu_st(0, out, 0);
+    __mind_ymm_vmovdqu_st(1, out, 32);
+    __mind_ymm_vmovdqu_st(2, out, 64);
+    __mind_ymm_vmovdqu_st(3, out, 96);
+    __mind_ymm_vmovdqu_st(4, out, 128);
+    __mind_ymm_vmovdqu_st(5, out, 160);
+    __mind_ymm_vmovdqu_st(6, out, 192);
+    __mind_ymm_vmovdqu_st(7, out, 224);
+    0
+}
+
+fn main() -> i64 {
+    let tab: i64 = __mind_alloc(64 * 256);
+    let out: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    let mut x: i64 = 12345;
+    while i < 64 * 64 {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i32(tab + i * 4, x * 2 + (x & 1));
+        i = i + 1;
+    }
+    let mut k: i64 = 0;
+    while k < 64 {
+        __mind_store_i32(out + k * 4, k * 7 - 100);
+        k = k + 1;
+    }
+    let _r: i64 = acc8(tab, 64, out);
+    __mind_write(1, out, 256, 0 - 1);
+    0
+}

@@ -33,7 +33,7 @@ fn build_serial(
         .map_err(BuildError::Internal)?;
     let lowered = crate::mlir::gemm_tuning::for_translator(lowered, &tools.mlir_translate);
     let optimized_mlir = if let Some(pipeline) = combine_pipelines(opts.preset, opts.opt_pipeline) {
-        run_mlir_opt(&lowered, &pipeline, tools)?
+        crate::mlir::staged_opt::run_pipeline(&lowered, &pipeline, tools)?
     } else {
         lowered
     };
@@ -296,4 +296,133 @@ fn missing_translate_and_timeout_match_serial() {
             other => panic!("expected Timeout(mlir-opt), got {other:?}"),
         }
     }
+}
+
+/// A stand-in `mlir-opt` / `mlir-translate`, generated into `dir` at test time
+/// (never a tracked file). It appends `<name> <args>` to `dir/argv.log` and
+/// echoes its input; `--version` answers LLVM 20, so no old-toolchain note is
+/// added. Stage A (`--mlir-print-debuginfo <file>`) records its input path in
+/// `dir/stage_a.path`. With `fail_last`, a run fed on stdin (the last stage)
+/// reads its input, then fails with a diagnostic citing stage A's input file,
+/// as a real stage B failure does.
+#[cfg(unix)]
+fn fake_tool(dir: &Path, name: &str, fail_last: bool) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let last = if fail_last {
+        r#"cat >/dev/null; echo "$(cat "$D/stage_a.path"):3:5: error: boom" >&2; exit 1"#
+    } else {
+        "cat"
+    };
+    let script = format!(
+        "#!/bin/sh\nD=$(dirname \"$0\")\n\
+         if [ \"$1\" = --version ]; then echo 'LLVM version 20.1.8'; exit 0; fi\n\
+         echo \"{name} $*\" >> \"$D/argv.log\"\n\
+         for a in \"$@\"; do f=$a; done\n\
+         case \"$*\" in\n\
+         *--mlir-print-debuginfo*) echo \"$f\" > \"$D/stage_a.path\"; cat \"$f\";;\n\
+         *) {last};;\n\
+         esac\n"
+    );
+    let path = dir.join(name);
+    // A concurrent spawn on another test thread can inherit the writable
+    // descriptor across its fork and make the exec fail with ETXTBSY. Same
+    // handoff as `tests/native_bridge_support`: lock the writer before closing
+    // it; the read-only lock then waits until every inherited writer is closed.
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .expect("create fake tool");
+    std::io::Write::write_all(&mut writer, script.as_bytes()).expect("write fake tool");
+    writer
+        .set_permissions(std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fake tool");
+    fs2::FileExt::lock_exclusive(&writer).expect("lock writable fake tool");
+    drop(writer);
+    let reader = std::fs::File::open(&path).expect("reopen fake tool");
+    fs2::FileExt::lock_exclusive(&reader).expect("lock readable fake tool");
+    path.to_string_lossy().into_owned()
+}
+
+#[cfg(unix)]
+fn fake_tools(dir: &Path, fail_last: bool) -> BuildTools {
+    BuildTools {
+        mlir_opt: fake_tool(dir, "mlir-opt", fail_last),
+        mlir_translate: fake_tool(dir, "mlir-translate", false),
+        clang: String::from("clang"),
+        timeout: Duration::from_secs(120),
+    }
+}
+
+/// The `mlir-opt` argument lines of `dir/argv.log`, in invocation order.
+#[cfg(unix)]
+fn opt_runs(dir: &Path) -> Vec<String> {
+    let log = std::fs::read_to_string(dir.join("argv.log")).expect("argv.log");
+    log.lines()
+        .filter_map(|l| l.strip_prefix("mlir-opt "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A pipeline `staged_opt` cuts before `one-shot-bufferize`.
+const STAGED_PIPELINE: &str =
+    "canonicalize,cse,one-shot-bufferize{bufferize-function-boundaries=true},convert-to-llvm";
+
+/// The concurrent leg runs stage A to completion and streams only stage B,
+/// with exactly the invocations the serial `staged_opt::run_pipeline` makes.
+/// Streaming the whole pipeline in one `mlir-opt` run would skip the dense
+/// constant ordering between the stages, and this test fails on it.
+#[cfg(unix)]
+#[test]
+fn staged_pipeline_streams_only_its_last_stage() {
+    let input = "module {\n}\n";
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tools = fake_tools(dir.path(), false);
+    let out = run_mlir_opt_into_translate(input, STAGED_PIPELINE, &tools).expect("opt ok");
+    assert!(out.pipelined, "fell back to the serial translate");
+    assert_eq!(out.optimized_mlir, "module {\n}");
+    assert_eq!(out.llvm_ir.expect("translate ok"), out.optimized_mlir);
+    let stage_a = std::fs::read_to_string(dir.path().join("stage_a.path")).expect("stage A ran");
+    let expected = [
+        format!(
+            "--pass-pipeline=builtin.module(canonicalize,cse) --mlir-print-debuginfo {}",
+            stage_a.trim()
+        ),
+        String::from(
+            "--pass-pipeline=builtin.module(one-shot-bufferize{bufferize-function-boundaries=true},\
+             convert-to-llvm)",
+        ),
+    ];
+    assert_eq!(opt_runs(dir.path()), expected);
+
+    let serial_dir = tempfile::tempdir().expect("tempdir");
+    let serial_tools = fake_tools(serial_dir.path(), false);
+    let serial = crate::mlir::staged_opt::run_pipeline(input, STAGED_PIPELINE, &serial_tools)
+        .expect("serial ok");
+    assert_eq!(serial, out.optimized_mlir);
+    let serial_runs = opt_runs(serial_dir.path());
+    assert_eq!(serial_runs.len(), 2, "{serial_runs:?}");
+    assert!(serial_runs[0].starts_with("--pass-pipeline=builtin.module(canonicalize,cse) "));
+    assert_eq!(serial_runs[1], expected[1]);
+}
+
+/// A failing last stage is reported by the concurrent leg exactly as by the
+/// serial one: as `mlir-opt`, with stage A's temporary input path written back
+/// as `<stdin>`.
+#[cfg(unix)]
+#[test]
+fn staged_last_stage_failure_reads_as_serial() {
+    let input = "module {\n}\n";
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tools = fake_tools(dir.path(), true);
+    let piped = run_mlir_opt_into_translate(input, STAGED_PIPELINE, &tools)
+        .err()
+        .expect("the last stage fails");
+    let piped = subprocess_failure(piped);
+    let serial = subprocess_failure(
+        crate::mlir::staged_opt::run_pipeline(input, STAGED_PIPELINE, &tools).unwrap_err(),
+    );
+    let expected = String::from("<stdin>:3:5: error: boom");
+    assert_eq!(piped, ("mlir-opt", expected));
+    assert_eq!(piped, serial);
 }

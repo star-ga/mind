@@ -1,0 +1,73 @@
+[
+  {
+    "id": "M01",
+    "case": "C02",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "f811810c8eb752db002ab1cbdd292f40e64938889df8ab29108803fd65722854",
+    "patch_sha256": "5d8102a08d98f671696625a413c28cb2a8a46f342338e1600ac7f3f177d0a3d7"
+  },
+  {
+    "id": "M02",
+    "case": "C04",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "0203832e496e30d0e09d881449f6aa46015f2eb59552653aadef49817b688f64",
+    "patch_sha256": "1d811f61aa948c060d26d3c2bf99e03667c60e74c4cea854868c2048cf4acf89"
+  },
+  {
+    "id": "M03",
+    "case": "C06",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "84ab367020b288ae35b7c2db42ae7e2270df39d4e5ed2e0e28920f83716f9ef0",
+    "patch_sha256": "8dff5cb2150b5883430d7e9ea41ed98d74b5d0277863a057c2b5cef8f237a917"
+  },
+  {
+    "id": "M04",
+    "case": "C12",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "f469f02f5d49cf1aaec7951eb21ae4f6ccbd9d193131af239f2897e77b82d017",
+    "patch_sha256": "4e2b0f335a67d43e88db5576ef13bd90d02ac97d5f50f3d63615eb240b968e85"
+  },
+  {
+    "id": "M05",
+    "case": "C16",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "6973724fabd95e32dd5485d49717564d4140802f5080579803b69f9791c6180e",
+    "patch_sha256": "21a3d0fce90bcd59e9884cebe52af4a9df72c4e91882c060a7a6eb1fd70d3ac8"
+  },
+  {
+    "id": "M06",
+    "case": "C12",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "dc193b76b17dda068906d1761fe3232d83863af5f89bd206cec985fb643bd56f",
+    "patch_sha256": "ef7607d9ef3bd7c9365515c54c8f2a0aa39935ba79a609161c0c0cf4625d12ff"
+  },
+  {
+    "id": "M07",
+    "case": "C12",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "149708d011e84b8cd0e348fcb2f3785558c6e9695eabebff116a696060f69859",
+    "patch_sha256": "6653368dd54424370f43085b2b1d18614e0babd971f93a3f9e21842c6c2cddfc"
+  },
+  {
+    "id": "M08",
+    "case": "C25",
+    "expected_builder_exit": 0,
+    "expected_verifier_exit": 1,
+    "source_sha256": "fa03483196eb53530117254f10e808ebdd149c77518ca9cb9f1f0502206fdcd7",
+    "patch_sha256": "ed9f443aacc883aea20661dbff6a66df166978f8b13167449d3035645c653d89"
+  },
+  {
+    "id": "allocation-zero",
+    "case": "E17",
+    "expected_builder_exit": 0,
+    "source_sha256": "0f0f14b4d3920473fedb3f158ffddd1e68f7d066287b7084ac2f9ac2de3c7995",
+    "patch_sha256": "31904b0e637b7025e28afbf12c10a0e66d1220b2b448c5409e6f60da75987bc7"
+  }
+]

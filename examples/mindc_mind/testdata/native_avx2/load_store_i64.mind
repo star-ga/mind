@@ -1,0 +1,8 @@
+// Copyright 2026 STARGA Inc.
+// Control: alloc + i64 store/load still build & run (exit 42) with the ymm rows
+// registered. Not an AVX2 program -> emits ZERO guard bytes (byte-identity).
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, 42);
+    return __mind_load_i64(p);
+}

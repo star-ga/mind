@@ -1,0 +1,365 @@
+// Copyright 2026 STARGA Inc.
+// Exact i64 group-sum rows (kinds 87, 88): shared encoder helpers. Raw bytes,
+// the 2-byte VEX ymm forms, rel32 jumps patched in place, frame-slot moves, the
+// CPUID AVX2 probe, the shared prologue / epilogue, the call-arity scan the two
+// recognizers use, and the capability mark. Bank kernels: nb_group_sum_bank.mind;
+// accumulators and the emit entry: nb_group_sum_acc.mind.
+// PART RULE: std.string only; the frame-slot rule (rbp - 8 * (id + 1)) is the one
+// main.mind's nb_slot_disp states, and every row fixture reads its slots back.
+
+import std.string;
+
+// Capability mark: GROUP SUM V1. Compiled natively this body is `movabs rax,
+// imm64` whose little-endian immediate spells "nbgsum01". A compatibility mark,
+// not a signature or a pin; the compiler region is not pruned, so it survives
+// without a caller (nb_cap_* precedent). An earlier seed fed a program that calls
+// either name refuses it at nb_calls_all_resolve (exit 3, no artifact).
+pub fn nbg_cap_mark() -> i64 {
+    3544453257955336814
+}
+
+pub fn nbg_push(code: String, b: i64) -> String {
+    string_push_byte(code, b)
+}
+
+pub fn nbg_b2(code: String, a: i64, b: i64) -> String {
+    nbg_push(nbg_push(code, a), b)
+}
+
+pub fn nbg_b3(code: String, a: i64, b: i64, c: i64) -> String {
+    nbg_push(nbg_b2(code, a, b), c)
+}
+
+pub fn nbg_b4(code: String, a: i64, b: i64, c: i64, d: i64) -> String {
+    nbg_push(nbg_b3(code, a, b, c), d)
+}
+
+pub fn nbg_b5(code: String, a: i64, b: i64, c: i64, d: i64, e: i64) -> String {
+    nbg_push(nbg_b4(code, a, b, c, d), e)
+}
+
+// Four little-endian bytes of a two's-complement i32 value.
+pub fn nbg_u32(code: String, v: i64) -> String {
+    let u: i64 = if v < 0 {
+        v + 4294967296
+    } else {
+        v
+    };
+    nbg_b4(code, u % 256, (u / 256) % 256, (u / 65536) % 256, (u / 16777216) % 256)
+}
+
+// 64-bit register-register op `op r/m64, r64` (REX.W, mod 11): rm is the
+// destination of 01 / 29 / 89 / 39 forms, reg the source. Registers 0..15.
+pub fn nbg_rr(code: String, op: i64, rm: i64, reg: i64) -> String {
+    let rex: i64 = 72 + (reg / 8) * 4 + rm / 8;
+    nbg_b3(code, rex, op, 192 + (reg % 8) * 8 + rm % 8)
+}
+
+// mov rax, [rbp + slot]; mov dest, rax. The slot rule is main.mind's nb_slot_disp.
+pub fn nbg_slot(code: String, slot: i64, dest: i64) -> String {
+    let c1: String = nbg_u32(nbg_b3(code, 72, 139, 133), 0 - 8 * (slot + 1));
+    nbg_rr(c1, 137, dest, 0)
+}
+
+// ymm d = ymm s1 <op> ymm s2 (VEX.256.66.0F, ymm0..7): D4 vpaddq, FB vpsubq, EF vpxor.
+pub fn nbg_rrr(code: String, op: i64, d: i64, s1: i64, s2: i64) -> String {
+    nbg_b4(code, 197, 128 + (15 - s1) * 8 + 5, op, 192 + d * 8 + s2)
+}
+
+// VEX.256 op with a [rax + disp] memory operand: pp 2 (F3) for 6F vmovdqu load /
+// 7F vmovdqu store, pp 1 (66) for D4 / FB with vvvv as the first source.
+pub fn nbg_mem(code: String, pp: i64, vvvv: i64, op: i64, reg: i64, disp: i64) -> String {
+    let c2: String = nbg_b3(code, 197, 128 + (15 - vvvv) * 8 + 4 + pp, op);
+    if disp == 0 {
+        return nbg_push(c2, reg * 8);
+    }
+    if disp > 0 {
+        if disp <= 127 {
+            return nbg_b2(c2, 64 + reg * 8, disp);
+        }
+    }
+    nbg_u32(nbg_push(c2, 128 + reg * 8), disp)
+}
+
+// add rsi, imm8 (imm8 <= 127).
+pub fn nbg_add_rsi(code: String, n: i64) -> String {
+    nbg_b4(code, 72, 131, 198, n)
+}
+
+// ---- rel32 jumps: the site is recorded in an 8-byte cell, patched by nbg_link ----
+
+pub fn nbg_poke(code: String, at: i64, v: i64) -> String {
+    let u: i64 = if v < 0 {
+        v + 4294967296
+    } else {
+        v
+    };
+    let a: i64 = string_addr(code);
+    __mind_store_i8(a + at, u % 256);
+    __mind_store_i8(a + at + 1, (u / 256) % 256);
+    __mind_store_i8(a + at + 2, (u / 65536) % 256);
+    __mind_store_i8(a + at + 3, (u / 16777216) % 256);
+    code
+}
+
+// 0F <op> rel32: 84 je, 85 jne, 86 jbe, 83 jae, 8C jl, 8D jge, 8E jle.
+pub fn nbg_jcc(code: String, op: i64, cell: i64) -> String {
+    let c2: String = nbg_b2(code, 15, op);
+    __mind_store_i64(cell, string_len(c2));
+    nbg_u32(c2, 0)
+}
+
+pub fn nbg_jmp(code: String, cell: i64) -> String {
+    let c1: String = nbg_push(code, 233);
+    __mind_store_i64(cell, string_len(c1));
+    nbg_u32(c1, 0)
+}
+
+pub fn nbg_link(code: String, cell: i64, target: i64) -> String {
+    let site: i64 = __mind_load_i64(cell);
+    nbg_poke(code, site, target - (site + 4))
+}
+
+// Patch `cell` to jump to the current end of `code`.
+pub fn nbg_here(code: String, cell: i64) -> String {
+    nbg_link(code, cell, string_len(code))
+}
+
+pub fn nbg_cell() -> i64 {
+    __mind_alloc(8)
+}
+
+// ---- prologue, epilogue, CPU probe ----
+
+// push rbx ; push r12 ; push r14 ; push r15 (callee-saved registers the bodies use).
+pub fn nbg_prologue(code: String) -> String {
+    nbg_b3(nbg_b4(code, 83, 65, 84, 65), 86, 65, 87)
+}
+
+// r8 = 1 when the CPU and OS run AVX2 (CPUID.1:ECX AVX bit 28 and OSXSAVE bit 27,
+// XGETBV XCR0 bits 1-2 set, CPUID.7.0:EBX AVX2 bit 5), else 0. Clobbers rax, rbx,
+// rcx, rdx, so it runs before rbx and rdx are loaded.
+pub fn nbg_cpuid_r8(code: String) -> String {
+    let no: i64 = nbg_cell();
+    let no2: i64 = nbg_cell();
+    let no3: i64 = nbg_cell();
+    let no4: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = nbg_u32(nbg_b3(code, 49, 201, 184), 1);
+    c = nbg_u32(nbg_b4(c, 15, 162, 247, 193), 268435456);
+    c = nbg_jcc(c, 132, no);
+    c = nbg_u32(nbg_b2(c, 247, 193), 134217728);
+    c = nbg_jcc(c, 132, no2);
+    c = nbg_b5(c, 49, 201, 15, 1, 208);
+    c = nbg_b3(nbg_b3(c, 131, 224, 6), 131, 248, 6);
+    c = nbg_jcc(c, 133, no3);
+    c = nbg_u32(nbg_b3(c, 49, 201, 184), 7);
+    c = nbg_u32(nbg_b4(c, 15, 162, 247, 195), 32);
+    c = nbg_jcc(c, 132, no4);
+    c = nbg_u32(nbg_b2(c, 65, 184), 1);
+    c = nbg_jmp(c, done);
+    c = nbg_here(nbg_here(nbg_here(nbg_here(c, no), no2), no3), no4);
+    c = nbg_b3(c, 77, 49, 192);
+    nbg_here(c, done)
+}
+
+// pop r15 ; pop r14 ; pop r12 ; pop rbx ; vzeroupper only when the AVX2 probe
+// passed (a VEX op faults on a CPU without AVX) ; xor eax, eax ; result slot = 0.
+pub fn nbg_epi(code: String, id: i64) -> String {
+    let skip: i64 = nbg_cell();
+    let c1: String = nbg_b3(nbg_b4(code, 65, 95, 65, 94), 65, 92, 91);
+    let c2: String = nbg_jcc(nbg_b4(c1, 73, 131, 248, 1), 133, skip);
+    let c3: String = nbg_here(nbg_b3(c2, 197, 248, 119), skip);
+    nbg_u32(nbg_b5(c3, 49, 192, 72, 137, 133), 0 - 8 * (id + 1))
+}
+
+// ---- call arity from the source text ----
+
+pub fn nbg_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+pub fn nbg_blank(b: i64) -> i64 {
+    if b == 32 {
+        return 1;
+    }
+    if b == 9 {
+        return 1;
+    }
+    if b == 10 {
+        return 1;
+    }
+    if b == 13 {
+        return 1;
+    }
+    0
+}
+
+// Index just past the literal that opened at i - 1 with quote q (backslash
+// escapes skipped), or -1 when the text ends first. Loops in this file keep
+// `return` and nested `if` out of the loop body (r == -2 while scanning): the
+// whole-module mic@3 emitter refuses both inside a `while`.
+pub fn nbg_skip_lit(buf: i64, i0: i64, q: i64) -> i64 {
+    let mut i: i64 = i0;
+    let mut r: i64 = 0 - 2;
+    while r == 0 - 2 {
+        let b: i64 = nbg_byte(buf, i);
+        if b == 0 {
+            r = 0 - 1;
+        }
+        if b == q {
+            r = i + 1;
+        }
+        if b == 92 {
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    r
+}
+
+// Index of the newline at or after i0, -1 when the text ends first.
+pub fn nbg_line_end(buf: i64, i0: i64) -> i64 {
+    let mut i: i64 = i0;
+    let mut r: i64 = 0 - 2;
+    while r == 0 - 2 {
+        let b: i64 = nbg_byte(buf, i);
+        if b == 10 {
+            r = i;
+        }
+        if b == 0 {
+            r = 0 - 1;
+        }
+        i = i + 1;
+    }
+    r
+}
+
+// Index just past the `*/` at or after i0, -1 when the text ends first.
+pub fn nbg_block_end(buf: i64, i0: i64) -> i64 {
+    let mut i: i64 = i0;
+    let mut r: i64 = 0 - 2;
+    while r == 0 - 2 {
+        let b: i64 = nbg_byte(buf, i);
+        if b * 256 + nbg_byte(buf, i + 1) == 10799 {
+            r = i + 2;
+        }
+        if b == 0 {
+            r = 0 - 1;
+        }
+        i = i + 1;
+    }
+    r
+}
+
+// Index just past a `//` (to the newline) or `/* */` comment opening at i, i when
+// none opens there, -1 when the text ends inside one.
+pub fn nbg_skip_comment(buf: i64, i0: i64) -> i64 {
+    if nbg_byte(buf, i0) != 47 {
+        return i0;
+    }
+    let b1: i64 = nbg_byte(buf, i0 + 1);
+    if b1 == 47 {
+        return nbg_line_end(buf, i0 + 2);
+    }
+    if b1 != 42 {
+        return i0;
+    }
+    nbg_block_end(buf, i0 + 2)
+}
+
+// One step of the argument scan over the state cells st = { i, depth, commas,
+// any }: 0 continue, 1 the matching `)` closed, -1 the text ended first.
+pub fn nbg_arity_step(buf: i64, st: i64) -> i64 {
+    let i: i64 = __mind_load_i64(st);
+    let j: i64 = nbg_skip_comment(buf, i);
+    if j < 0 {
+        return 0 - 1;
+    }
+    if j != i {
+        __mind_store_i64(st, j);
+        return 0;
+    }
+    let b: i64 = nbg_byte(buf, i);
+    if b == 0 {
+        return 0 - 1;
+    }
+    let mut k: i64 = i + 1;
+    if b == 34 {
+        k = nbg_skip_lit(buf, k, 34);
+    }
+    if b == 39 {
+        k = nbg_skip_lit(buf, k, 39);
+    }
+    if k < 0 {
+        return 0 - 1;
+    }
+    __mind_store_i64(st, k);
+    let mut depth: i64 = __mind_load_i64(st + 8);
+    if b == 40 {
+        depth = depth + 1;
+    }
+    if b == 91 {
+        depth = depth + 1;
+    }
+    if b == 123 {
+        depth = depth + 1;
+    }
+    if b == 41 {
+        depth = depth - 1;
+    }
+    if b == 93 {
+        depth = depth - 1;
+    }
+    if b == 125 {
+        depth = depth - 1;
+    }
+    __mind_store_i64(st + 8, depth);
+    if depth == 1 {
+        if b == 44 {
+            __mind_store_i64(st + 16, __mind_load_i64(st + 16) + 1)
+        }
+    }
+    if depth > 0 {
+        if nbg_blank(b) == 0 {
+            __mind_store_i64(st + 24, 1)
+        }
+    }
+    if depth > 0 {
+        return 0;
+    }
+    1
+}
+
+// Argument count of the call whose callee span ends at `hi`: blanks, then `(`,
+// then top-level commas up to the matching `)`, string / char literals and
+// comments skipped, nesting by ( [ {. -1 when no `(` follows or the text ends
+// first, so the recognizer answers "not mine" and the call stays unresolved
+// (nb_calls_all_resolve refuses it: exit 3, no artifact).
+pub fn nbg_arity(buf: i64, hi: i64) -> i64 {
+    let mut i: i64 = hi;
+    let mut blank: i64 = 1;
+    while blank == 1 {
+        blank = nbg_blank(nbg_byte(buf, i));
+        i = i + blank;
+    }
+    if nbg_byte(buf, i) != 40 {
+        return 0 - 1;
+    }
+    let st: i64 = __mind_alloc(32);
+    __mind_store_i64(st, i + 1);
+    __mind_store_i64(st + 8, 1);
+    __mind_store_i64(st + 16, 0);
+    __mind_store_i64(st + 24, 0);
+    let mut r: i64 = 0;
+    while r == 0 {
+        r = nbg_arity_step(buf, st);
+    }
+    if r < 0 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(st + 24) == 0 {
+        return 0;
+    }
+    __mind_load_i64(st + 16) + 1
+}

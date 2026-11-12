@@ -26,14 +26,12 @@ use std::time::Instant;
 #[cfg(feature = "mlir-build")]
 use tempfile::NamedTempFile;
 
-/// RFC 0005 Phase 6.5 Stage 1b — runtime-support C stub.
-///
-/// Bundled at compile time (like std/*.mind in Phase C) so the --emit-shared
-/// cdylib path needs no external file at build time.  The text is compiled to
-/// a temporary .o by `compile_runtime_support_obj` and statically linked into
-/// every --emit-shared output, making the .so self-contained.
+// RFC 0005 Phase 6.5 Stage 1b: the bundled runtime-support C stub.
 #[cfg(feature = "mlir-build")]
-const MIND_RUNTIME_SUPPORT_C: &str = include_str!("../../runtime-support/mind_intrinsics.c");
+#[path = "mlir_build_runtime_src.rs"]
+pub(crate) mod runtime_src;
+#[cfg(feature = "mlir-build")]
+use runtime_src::MIND_RUNTIME_SUPPORT_C;
 
 #[cfg(feature = "mlir-build")]
 #[derive(Clone, Debug)]
@@ -136,7 +134,7 @@ pub fn build_all(
 #[path = "mlir_build_overlap.rs"]
 mod overlap;
 #[cfg(feature = "mlir-build")]
-pub use overlap::build_all_with_objects;
+pub use overlap::{build_all_with_objects, linked_object_names_sys_twin};
 
 #[cfg(feature = "mlir-build")]
 fn combine_pipelines(preset: &str, extra: Option<&str>) -> Option<String> {
@@ -256,27 +254,6 @@ pub fn preset_for_mlir(mlir: &str) -> &'static str {
 }
 
 #[cfg(feature = "mlir-build")]
-fn run_mlir_opt(input: &str, pipeline: &str, tools: &BuildTools) -> Result<String, BuildError> {
-    // MLIR 18+ requires pass pipeline to be wrapped with anchor operation
-    let args = vec![format!("--pass-pipeline=builtin.module({pipeline})")];
-    let output = run_command(
-        &tools.mlir_opt,
-        &args,
-        Some(input.as_bytes()),
-        tools.timeout,
-        "mlir-opt",
-    )?;
-    if !output.status.success() {
-        let stderr = decode_to_string(&output.stderr);
-        return Err(BuildError::Subprocess {
-            tool: "mlir-opt",
-            stderr: crate::diagnostics::toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
-        });
-    }
-    Ok(decode_to_string(&output.stdout))
-}
-
-#[cfg(feature = "mlir-build")]
 fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildError> {
     let args = vec![String::from("--mlir-to-llvmir")];
     let output = run_command(
@@ -312,6 +289,7 @@ fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildEr
 pub(crate) fn compile_runtime_support_obj(
     tools: &BuildTools,
     target_triple: Option<&str>,
+    mlir_text: &str,
 ) -> Result<NamedTempFile, BuildError> {
     let src_dir = tempfile::tempdir()?;
     let src_path = src_dir.path().join("mind_intrinsics.c");
@@ -341,14 +319,13 @@ pub(crate) fn compile_runtime_support_obj(
         "-o".into(),
         obj_tmp.path().to_string_lossy().into_owned(),
     ];
-    // Cross-compile: emit the target triple so clang produces the correct
-    // object format (e.g. COFF for *-w64-windows-gnu). Pushed BEFORE the
-    // cache-key computation below so a foreign-target .o can never be served
-    // from a host .o cache entry. host = None ⇒ this vector is byte-identical
-    // to the pre-change form ⇒ identical cache key + identical object bytes
-    // (RFC 0015 byte-identity preserved for the host path).
+    // Push `--target` and, only if MLIR names `__mind_sys_`, `-DMIND_RAW_SYSCALLS=1`.
+    // Both go into the runtime-object cache key. Host None adds no target.
     if let Some(triple) = target_triple {
         args.push(format!("--target={triple}"));
+    }
+    if mlir_text.contains("__mind_sys_") {
+        args.push("-DMIND_RAW_SYSCALLS=1".into());
     }
 
     // ---------------------------------------------------------------------
@@ -764,6 +741,8 @@ fn run_clang_codegen(
         // byte-identity is unaffected (programs that never spawn threads link
         // an unused libpthread, a no-op on glibc).
         args.push("-pthread".into());
+        let libs = crate::project::link::shared_link_args(target_triple);
+        args.extend(libs.map_err(BuildError::Internal)?);
         // Bind every intra-module function reference to THIS module's own
         // definition (closed-world semantics). A MIND `.so` exports all its
         // functions with default ELF visibility; when the library is dlopen'd
@@ -835,7 +814,7 @@ fn run_clang_codegen(
     if !output.status.success() {
         return Err(BuildError::Subprocess {
             tool: "clang",
-            stderr: decode_to_string(&output.stderr),
+            stderr: crate::project::link::failure_text(shared, &output.stderr),
         });
     }
 
@@ -843,10 +822,10 @@ fn run_clang_codegen(
 }
 
 #[cfg(feature = "mlir-build")]
-struct CommandOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    status: std::process::ExitStatus,
+pub(crate) struct CommandOutput {
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) status: std::process::ExitStatus,
 }
 
 /// Spawn `program` with `args`, optionally feed `input` on stdin, and collect
@@ -859,7 +838,7 @@ struct CommandOutput {
 /// dedicated threads while the main thread writes stdin and polls for
 /// termination, eliminating the deadlock.
 #[cfg(feature = "mlir-build")]
-fn run_command(
+pub(crate) fn run_command(
     program: &str,
     args: &[String],
     input: Option<&[u8]>,
@@ -914,7 +893,7 @@ fn write_text_file(path: &Path, contents: &str) -> Result<(), BuildError> {
 }
 
 #[cfg(feature = "mlir-build")]
-fn decode_to_string(bytes: &[u8]) -> String {
+pub(crate) fn decode_to_string(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         String::new()
     } else {

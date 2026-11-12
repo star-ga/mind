@@ -1,0 +1,220 @@
+// tools/seed_ledger/seed_ledger_rows.mind — ledger rows, G2 rows and the seed source list.
+//
+// Parses SEED_LEDGER.tsv / SEED_DRIFT.txt lines and _selfhost_sources.py.
+// Part of the seed drift ledger tool; seed_ledger.mind is the entry.
+
+import std.string;
+import std.vec;
+import seed_ledger_bytes;
+
+// The G2 row key of a seed source: "<g2 table>#<path>".
+pub fn g2_key(path: i64) -> i64 {
+    return slice_cat(slice_of("tests/fixtures/g2_expected_outcomes.tsv#"), path);
+}
+
+// sha256 hex of the G2 table row of `key` (see g2_key), or "-" when absent.
+pub fn g2_digest(key: i64) -> i64 {
+    let mut cut: i64 = 0;
+    while cut < s_len(key) && __mind_load_i8(s_addr(key) + cut) != 35 {
+        cut = cut + 1;
+    }
+    let table: i64 = read_file(slice(s_addr(key), cut));
+    if table == 0 || cut >= s_len(key) {
+        return slice_of("-");
+    }
+    let path: i64 = slice(s_addr(key) + cut + 1, s_len(key) - cut - 1);
+    let mut needle: String = "\n";
+    needle = push_slice(needle, path);
+    needle = string_push_byte(needle, 9);
+    let at: i64 = find(s_addr(table), s_len(table), 0, needle);
+    if at < 0 {
+        return slice_of("-");
+    }
+    let mut end: i64 = find(s_addr(table), s_len(table), at + 1, "\n");
+    if end < 0 {
+        end = s_len(table);
+    }
+    return sha_hex(s_addr(table) + at + 1, end - at - 1);
+}
+
+// The current digest of a ledger row: its file, or its G2 table row.
+pub fn row_digest(role: i64, key: i64) -> i64 {
+    if slice_eq(role, slice_of("g2")) == 1 {
+        return g2_digest(key);
+    }
+    return file_digest(key);
+}
+
+// ---- the seed source list (_selfhost_sources.py) ----------------------------
+
+// Push every "..." token in [from, to) as prefix + token + suffix.
+fn push_tokens(v: Vec, buf: i64, from: i64, to: i64, prefix: String, suffix: String) -> Vec {
+    let mut acc: Vec = v;
+    let mut i: i64 = from;
+    while i < to {
+        if __mind_load_i8(buf + i) == 34 {
+            let mut j: i64 = i + 1;
+            while j < to && __mind_load_i8(buf + j) != 34 {
+                j = j + 1;
+            }
+            let tok: i64 = slice(buf + i + 1, j - i - 1);
+            acc = vec_push(acc, slice_cat(slice_cat(slice_of(prefix), tok), slice_of(suffix)));
+            i = j;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// The one quoted token after `key` (a `NAME = "value"` line).
+fn push_assign(v: Vec, buf: i64, len: i64, key: String) -> Vec {
+    let at: i64 = find(buf, len, 0, key);
+    if at < 0 {
+        return v;
+    }
+    let end: i64 = find(buf, len, at + 1, "\n");
+    return push_tokens(v, buf, at + string_len(key), end, "", "");
+}
+
+// Seed sources in composition order: std seed modules, main, parts, driver.
+pub fn seed_sources(src: i64) -> Vec {
+    let buf: i64 = s_addr(src);
+    let len: i64 = s_len(src);
+    let mut v: Vec = vec_new();
+    let std_key: String = "\nNATIVE_STD_MODULES = (";
+    let std_at: i64 = find(buf, len, 0, std_key);
+    if std_at >= 0 {
+        let std_end: i64 = find(buf, len, std_at, "\n)");
+        v = push_tokens(v, buf, std_at + string_len(std_key), std_end, "std/", ".mind");
+    }
+    v = push_assign(v, buf, len, "\nMAIN = ");
+    let parts_at: i64 = find(buf, len, 0, "\nCOMPILER_COMPONENTS");
+    if parts_at >= 0 {
+        let open: i64 = find(buf, len, parts_at, "for name in (");
+        let close: i64 = find(buf, len, open, "))");
+        v = push_tokens(v, buf, open, close, "examples/mindc_mind/", "");
+    }
+    v = push_assign(v, buf, len, "\nDRIVER = ");
+    return v;
+}
+
+// ---- the ledger ---------------------------------------------------------------
+
+pub fn ledger_path() -> i64 {
+    return slice_of("examples/mindc_mind/testdata/seed_ledger/SEED_LEDGER.tsv");
+}
+
+pub fn drift_path() -> i64 {
+    return slice_of("examples/mindc_mind/testdata/seed_ledger/SEED_DRIFT.txt");
+}
+
+// Ledger row: [role slice, sha slice, path slice] (24 bytes).
+pub fn row(role: i64, sha: i64, path: i64) -> i64 {
+    let r: i64 = __mind_alloc(24);
+    __mind_store_i64(r, role);
+    __mind_store_i64(r + 8, sha);
+    __mind_store_i64(r + 16, path);
+    return r;
+}
+
+pub fn row_field(r: i64, k: i64) -> i64 {
+    return __mind_load_i64(r + 8 * k);
+}
+
+// The line [from, to) as a record [field count, field 0, field 1, field 2];
+// the fields are tab-separated slices and only the first three are kept.
+fn fields(buf: i64, from: i64, to: i64) -> i64 {
+    let rec: i64 = __mind_alloc(32);
+    let mut n: i64 = 0;
+    let mut start: i64 = from;
+    let mut i: i64 = from;
+    while i <= to {
+        if i == to || __mind_load_i8(buf + i) == 9 {
+            if n < 3 {
+                let _ = __mind_store_i64(rec + 8 + 8 * n, slice(buf + start, i - start));
+            }
+            n = n + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    __mind_store_i64(rec, n);
+    return rec;
+}
+
+pub fn field_count(rec: i64) -> i64 {
+    return __mind_load_i64(rec);
+}
+
+pub fn field(rec: i64, k: i64) -> i64 {
+    return __mind_load_i64(rec + 8 + 8 * k);
+}
+
+// Non-comment, non-empty lines as a Vec of field records.
+pub fn data_lines(text: i64) -> Vec {
+    let buf: i64 = s_addr(text);
+    let len: i64 = s_len(text);
+    let mut v: Vec = vec_new();
+    let mut i: i64 = 0;
+    while i < len {
+        let mut e: i64 = find(buf, len, i, "\n");
+        if e < 0 {
+            e = len;
+        }
+        if e > i && __mind_load_i8(buf + i) != 35 {
+            v = vec_push(v, fields(buf, i, e));
+        }
+        i = e + 1;
+    }
+    return v;
+}
+
+// The row lines exactly as the re-pin writes them; rows_sha256 hashes these.
+pub fn serialize_rows(rows: Vec) -> String {
+    let mut s: String = string_new();
+    let mut i: i64 = 0;
+    while i < vec_len(rows) {
+        let r: i64 = vec_get(rows, i);
+        let mut k: i64 = 0;
+        while k < 3 {
+            let f: i64 = row_field(r, k);
+            let mut b: i64 = 0;
+            while b < s_len(f) {
+                s = string_push_byte(s, __mind_load_i8(s_addr(f) + b));
+                b = b + 1;
+            }
+            if k < 2 {
+                s = string_push_byte(s, 9);
+            }
+            k = k + 1;
+        }
+        s = string_push_byte(s, 10);
+        i = i + 1;
+    }
+    return s;
+}
+
+pub fn rows_digest(rows: Vec) -> i64 {
+    let s: String = serialize_rows(rows);
+    return sha_hex(string_addr(s), string_len(s));
+}
+
+pub fn sources_path() -> i64 {
+    return slice_of("examples/mindc_mind/_selfhost_sources.py");
+}
+
+pub fn is_role(r: i64) -> i64 {
+    if slice_eq(r, slice_of("seed")) == 1 || slice_eq(r, slice_of("g2")) == 1 {
+        return 1;
+    }
+    return slice_eq(r, slice_of("pin"));
+}
+
+// The 64 hex bytes after the line prefix `key` in `text`, or 0.
+pub fn header_value(text: i64, key: String) -> i64 {
+    let at: i64 = find(s_addr(text), s_len(text), 0, key);
+    if at < 0 || at + string_len(key) + 64 > s_len(text) {
+        return 0;
+    }
+    return slice(s_addr(text) + at + string_len(key), 64);
+}

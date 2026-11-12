@@ -33,18 +33,18 @@
 # native build — a whole-corpus RESEED event, never a routine edit. The lint pins
 # this with a positive golden below.
 #
-# SEED_BLOB_SHA256 421d99c41cd6b0dcf77c39f67181b9846a2658437d72eb8b590d5c26089bffca
+# SEED_BLOB_SHA256 ef646c3faebec81838902834c5b9c97190fbfad5224331cd145367da40e72873
 #   sha256 of b"".join(read(std/<m>.mind) + b"\n" for each `seed` row in file
 #   order) = the exact stdin image prefix the bridge composes. Recompute with:
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 67
-# TOTAL_COUNT 67
+# BUNDLED_COUNT 76
+# TOTAL_COUNT 76
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
-# 46 modules are not `seed`: the frozen native compiler cannot see them until a
+# 55 modules are not `seed`: the frozen native compiler cannot see them until a
 # reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
@@ -58,7 +58,10 @@ detmath	no	bundled
 dns	no	bundled
 ecdsa_p256	no	bundled
 entropy	no	bundled
+evidence	no	bundled
+evidence_mic	no	bundled
 fs	seed	bundled
+fs_checked	no	bundled
 hkdf	no	bundled
 hpack	no	bundled
 http	no	bundled
@@ -78,10 +81,15 @@ keccak	no	bundled
 llvm	no	bundled
 map	seed	bundled
 mic_record	no	bundled
+mic_record_table	no	bundled
+mic_record_wire	no	bundled
 mic_results	no	bundled
 mlir	no	bundled
 mlkem768	no	bundled
 net	seed	bundled
+os_evidence	no	bundled
+posix	no	bundled
+posix_sys	no	bundled
 process	seed	bundled
 procgroup	no	bundled
 procgroup_sys	no	bundled
@@ -110,6 +118,7 @@ x509	no	bundled
 x509_bignum	no	bundled
 x509_bundle	no	bundled
 x509_der	no	bundled
+x509_evidence	no	bundled
 x509_ext	no	bundled
 x509_name	no	bundled
 x509_p384	no	bundled

@@ -314,7 +314,7 @@ mod run {
         .expect("write Mind.toml");
         std::fs::write(dir.join("main.mind"), PROGRAM).expect("write main.mind");
         let out = Command::new(crate::common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(dir)
             .output()
             .expect("run mindc build");

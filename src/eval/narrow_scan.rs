@@ -289,3 +289,30 @@ pub(crate) fn module_mentions_non_f64_float(module: &ast::Module) -> bool {
         .iter()
         .any(|n| node_mentions(is_non_f64_float_scalar, n))
 }
+
+/// True when `ty` is a declared builtin `Option<…>`/`Result<…>` generic with
+/// explicit args (Finding 5). Such annotations enter `NARROW_LOCALS` so that
+/// `desugar_match_to_if` can recover the DECLARED payload type of a builtin
+/// `Some`/`Ok`/`Err` bind — the prelude registers those payloads as the generic
+/// `[ScalarI64]`, so an `Option<u64>` payload otherwise bound SIGNED
+/// (`u64::MAX` read back as `-1`, `v < 1` wrongly true). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Generic` entry (see the registry
+/// doc-comment), so recording these is byte-identical outside the match-bind
+/// path.
+#[cfg(feature = "std-surface")]
+pub(super) fn is_payload_generic_ty(ty: &crate::ast::TypeAnn) -> bool {
+    matches!(ty, crate::ast::TypeAnn::Generic { name, args }
+        if matches!(name.as_str(), "Option" | "Result") && !args.is_empty())
+}
+
+/// True when `ty` is a declared TUPLE annotation with elements (Finding 6).
+/// Such annotations enter `NARROW_LOCALS` so a numeric tuple index `t.N` can
+/// resolve the receiver's declared element types — both for the bounds check
+/// and to re-materialise a narrow/`u64` element at its true width/signedness
+/// (`let t: (u64, i64) = …; t.0 < 1` must compare UNSIGNED). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Tuple` entry (see the registry
+/// doc-comment).
+#[cfg(feature = "std-surface")]
+pub(super) fn is_tuple_ann_ty(ty: &crate::ast::TypeAnn) -> bool {
+    matches!(ty, crate::ast::TypeAnn::Tuple { elements } if !elements.is_empty())
+}

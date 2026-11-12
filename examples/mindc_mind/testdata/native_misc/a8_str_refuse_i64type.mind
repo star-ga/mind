@@ -1,0 +1,8 @@
+// A8 refusal: a string initializer under an `i64` declared type. mindc-Rust
+// inlines the literal anyway (exit 3 = its length); the native int-const inline
+// requires an int-literal initializer, so this fails closed.
+fn main() -> i64 {
+    __mind_load_i64(BAD + 8)
+}
+
+const BAD: i64 = "abc";

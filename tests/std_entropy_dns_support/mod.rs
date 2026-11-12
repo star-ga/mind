@@ -22,7 +22,7 @@ fn build(dir: &Path, main: &str) -> Output {
     .expect("write Mind.toml");
     std::fs::write(dir.join("main.mind"), main).expect("write main.mind");
     Command::new(crate::common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(dir)
         .output()
         .expect("run mindc build")

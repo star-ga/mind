@@ -144,7 +144,7 @@ fn mlkem_build_tables(zt: i64, gt: i64) -> i64 {
 // ---------------------------------------------------------------------------
 // NTT (FIPS 203 Algorithm 9) — one butterfly layer per helper call so no
 // function body nests 3 loop levels (MLIR block-namer limit, see
-// std/hkdf.mind mem_copy note).  Returns the updated zeta index.
+// the std/hkdf.mind mem_copy note).  Returns the updated zeta index.
 // ---------------------------------------------------------------------------
 
 fn mlkem_ntt_layer(f: i64, zt: i64, len: i64, idx0: i64) -> i64 {

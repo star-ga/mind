@@ -1,0 +1,63 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Stack budget of the RUNNING native compiler (census X1 capacity): the
+// constants of nb_stack_short and nb_stack_tok_cap in main.mind.
+//
+// The native backend has no tail calls, so a recursive walk holds one native
+// frame per element. The front end walked the whole token stream that way
+// (const_find_from: one 512 B frame per token, from token 0, on every
+// program), and the budget was 640 B per token plus 16 MiB. The walks over
+// the token stream, the statement-list parser, the brace skippers, the call
+// patcher and the per-statement alias, field and struct-literal passes are
+// loops now. What still recurses once per element is a list walk with a
+// small frame (the largest: 375 B per empty block statement, 246 B per
+// statement, 1105 B per function).
+//
+// Measured: stack high-water = stack top - the lowest non-zero word of the
+// stack PT_LOAD at exit (zero-fill, never unmapped), bounded profile.
+//   whole compiler            576535 tokens    3.5 MiB      6 B per token
+//     (before: 575814 tokens, 281.2 MiB, 512 B per token)
+//   +25% functions            700257 tokens    4.3 MiB      6 B per token
+//   52-module std seed        656562 tokens    3.5 MiB      6 B per token
+//   densest shapes, bytes per program token as the program grows:
+//     `{ }` statements 187, `;` 126, `s;` 123, `fn h() -> i64 { 0 }` 123,
+//     `s;` in an if or while body 112, flat lists of the capacity corpus 37.
+//   costs that do not grow with the token count (their own caps refuse
+//   more): 4000 chained lets 58.4 MiB.
+// nb_stack_tok_bytes() = 320: the worst measured growth (187 B) with a 71%
+// margin. nb_stack_base() = 64 MiB: above the worst fixed cost (58.4 MiB)
+// before the per-token share is counted. Nesting depth has its own budget
+// (nb_depth_short). A new recursive walk over a list must be a loop, or
+// these constants must be measured again.
+//
+// The rule before (640 B per token and per longest-token unit, plus 16 MiB)
+// stays an upper bound: the loops removed the frames per element. Each loop
+// kept one driver frame per nesting level (measured: under 0.5% of the frames
+// it replaced), which the margin of the rule before covers.
+// nb_stack_short refuses only when both rules find the stack short, so every
+// program admitted before is admitted now (a 500 KB identifier in a small
+// program fits the rule before, not the 64 MiB base of this one).
+
+// Stack bytes budgeted per program token.
+pub fn nb_stack_tok_bytes() -> i64 {
+    320
+}
+// Stack bytes budgeted per unit of the longest token (nb_tok_max_len): the
+// walks over one token's bytes recurse once per byte. Not re-measured here:
+// it keeps the value it had.
+pub fn nb_stack_len_bytes() -> i64 {
+    640
+}
+// Stack bytes budgeted for what does not grow with the token count.
+pub fn nb_stack_base() -> i64 {
+    67108864
+}
+// The rule before: bytes per token and per longest-token unit, and its base.
+pub fn nb_stack_tok_bytes_v1() -> i64 {
+    640
+}
+pub fn nb_stack_base_v1() -> i64 {
+    16777216
+}

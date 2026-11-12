@@ -1,0 +1,275 @@
+// Copyright 2026 STARGA Inc.
+// Synthetic entry stub and the SHA-256 word primitives (round functions and constants).
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import std.string;
+import nb_emit_core;
+
+// synth library entry stub (no `main`): xor edi,edi ; mov eax,60 ; syscall.
+//   31 FF B8 3C 00 00 00 0F 05
+pub fn nb_synth_entry() -> String {
+    let c0: String = string_new();
+    let c1: String = nb_push(c0, 49);
+    let c2: String = nb_push(c1, 255);
+    let c3: String = nb_push(c2, 184);
+    let c4: String = nb_push(c3, 60);
+    let c5: String = nb_push(c4, 0);
+    let c6: String = nb_push(c5, 0);
+    let c7: String = nb_push(c6, 0);
+    let c8: String = nb_push(c7, 15);
+    nb_push(c8, 5)
+}
+
+// No-`main` (library) modules synthesize a 9-byte entry stub at code offset 0
+// (mirrors src/native/mod.rs: synth_lib_entry() is pushed as funcs[0], so the
+// real fns all shift down by its length). Every recorded start offset must add
+// the stub length so the inter-fn rel32 patches (callee_start - (caller_start +
+// rel_off + 4)) stay exact — a uniform shift of all starts cancels in the rel32,
+// and entry_off stays 0 (the stub IS the entry). Gate on the no-main case only:
+// fixtures WITH a real `main` lay it first (entry_idx>=0) and add no stub, so
+// their bytes are unchanged.
+pub fn nb_shift_starts(starts: i64, n_fns: i64, delta: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    __mind_store_i64(starts + k * 8, __mind_load_i64(starts + k * 8) + delta);
+    nb_shift_starts(starts, n_fns, delta, k + 1)
+}
+
+// mask32 — discard bits above bit 31. 4294967295 = 0xFFFF_FFFF.
+pub fn nb_mask32(x: i64) -> i64 {
+    x & 4294967295
+}
+
+// rotr32 — right-rotate in the 32-bit domain (shift-based, NOT subtraction).
+pub fn nb_rotr32(x: i64, n: i64) -> i64 {
+    ((x >> n) | (x << (32 - n))) & 4294967295
+}
+
+// shr32 — logical right-shift in the 32-bit domain.
+pub fn nb_shr32(x: i64, n: i64) -> i64 {
+    (x >> n) & 4294967295
+}
+
+// ch(x,y,z) = (x AND y) XOR (NOT x AND z); NOT x = 0xffffffff - (x & 0xffffffff).
+pub fn nb_ch(x: i64, y: i64, z: i64) -> i64 {
+    let notx: i64 = 4294967295 - (x & 4294967295);
+    nb_mask32((x & y) ^ (notx & z))
+}
+
+// maj(x,y,z) = (x AND y) XOR (x AND z) XOR (y AND z).
+pub fn nb_maj(x: i64, y: i64, z: i64) -> i64 {
+    nb_mask32((x & y) ^ (x & z) ^ (y & z))
+}
+
+// Σ0(a) = ROTR2 ^ ROTR13 ^ ROTR22 ; Σ1(e) = ROTR6 ^ ROTR11 ^ ROTR25.
+pub fn nb_bsig0(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 2) ^ nb_rotr32(x, 13) ^ nb_rotr32(x, 22))
+}
+
+pub fn nb_bsig1(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 6) ^ nb_rotr32(x, 11) ^ nb_rotr32(x, 25))
+}
+
+// σ0(w) = ROTR7 ^ ROTR18 ^ SHR3 ; σ1(w) = ROTR17 ^ ROTR19 ^ SHR10.
+pub fn nb_ssig0(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 7) ^ nb_rotr32(x, 18) ^ nb_shr32(x, 3))
+}
+
+pub fn nb_ssig1(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 17) ^ nb_rotr32(x, 19) ^ nb_shr32(x, 10))
+}
+
+// K[0..63] — FIPS 180-4 §4.2.2 cube-root constants (Rust SHA256_K, decimal).
+pub fn nb_k_word(i: i64) -> i64 {
+    if i == 0 {
+        return 1116352408;
+    }
+    if i == 1 {
+        return 1899447441;
+    }
+    if i == 2 {
+        return 3049323471;
+    }
+    if i == 3 {
+        return 3921009573;
+    }
+    if i == 4 {
+        return 961987163;
+    }
+    if i == 5 {
+        return 1508970993;
+    }
+    if i == 6 {
+        return 2453635748;
+    }
+    if i == 7 {
+        return 2870763221;
+    }
+    if i == 8 {
+        return 3624381080;
+    }
+    if i == 9 {
+        return 310598401;
+    }
+    if i == 10 {
+        return 607225278;
+    }
+    if i == 11 {
+        return 1426881987;
+    }
+    if i == 12 {
+        return 1925078388;
+    }
+    if i == 13 {
+        return 2162078206;
+    }
+    if i == 14 {
+        return 2614888103;
+    }
+    if i == 15 {
+        return 3248222580;
+    }
+    if i == 16 {
+        return 3835390401;
+    }
+    if i == 17 {
+        return 4022224774;
+    }
+    if i == 18 {
+        return 264347078;
+    }
+    if i == 19 {
+        return 604807628;
+    }
+    if i == 20 {
+        return 770255983;
+    }
+    if i == 21 {
+        return 1249150122;
+    }
+    if i == 22 {
+        return 1555081692;
+    }
+    if i == 23 {
+        return 1996064986;
+    }
+    if i == 24 {
+        return 2554220882;
+    }
+    if i == 25 {
+        return 2821834349;
+    }
+    if i == 26 {
+        return 2952996808;
+    }
+    if i == 27 {
+        return 3210313671;
+    }
+    if i == 28 {
+        return 3336571891;
+    }
+    if i == 29 {
+        return 3584528711;
+    }
+    if i == 30 {
+        return 113926993;
+    }
+    if i == 31 {
+        return 338241895;
+    }
+    if i == 32 {
+        return 666307205;
+    }
+    if i == 33 {
+        return 773529912;
+    }
+    if i == 34 {
+        return 1294757372;
+    }
+    if i == 35 {
+        return 1396182291;
+    }
+    if i == 36 {
+        return 1695183700;
+    }
+    if i == 37 {
+        return 1986661051;
+    }
+    if i == 38 {
+        return 2177026350;
+    }
+    if i == 39 {
+        return 2456956037;
+    }
+    if i == 40 {
+        return 2730485921;
+    }
+    if i == 41 {
+        return 2820302411;
+    }
+    if i == 42 {
+        return 3259730800;
+    }
+    if i == 43 {
+        return 3345764771;
+    }
+    if i == 44 {
+        return 3516065817;
+    }
+    if i == 45 {
+        return 3600352804;
+    }
+    if i == 46 {
+        return 4094571909;
+    }
+    if i == 47 {
+        return 275423344;
+    }
+    if i == 48 {
+        return 430227734;
+    }
+    if i == 49 {
+        return 506948616;
+    }
+    if i == 50 {
+        return 659060556;
+    }
+    if i == 51 {
+        return 883997877;
+    }
+    if i == 52 {
+        return 958139571;
+    }
+    if i == 53 {
+        return 1322822218;
+    }
+    if i == 54 {
+        return 1537002063;
+    }
+    if i == 55 {
+        return 1747873779;
+    }
+    if i == 56 {
+        return 1955562222;
+    }
+    if i == 57 {
+        return 2024104815;
+    }
+    if i == 58 {
+        return 2227730452;
+    }
+    if i == 59 {
+        return 2361852424;
+    }
+    if i == 60 {
+        return 2428436474;
+    }
+    if i == 61 {
+        return 2756734187;
+    }
+    if i == 62 {
+        return 3204031479;
+    }
+    3329325298
+}

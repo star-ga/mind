@@ -44,6 +44,7 @@ fn module_with_extern_decl() -> IRModule {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
     // Emit a zero constant so @main has at least one value.
     let id = m.fresh();
@@ -64,6 +65,7 @@ fn module_with_extern_call() -> IRModule {
         is_varargs: true,
         vararg_hints: Vec::new(),
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
     // Synthesise two integer arguments.
     let fmt_ptr = m.fresh();
@@ -206,6 +208,7 @@ fn typecheck_rejects_tensor_in_extern_signature() {
     let module = Module {
         items: vec![Node::ExternBlock {
             callconv: CallConv::C,
+            binding: Default::default(),
             fns: vec![efn],
             span: sp(),
         }],

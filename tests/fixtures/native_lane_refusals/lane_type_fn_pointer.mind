@@ -1,0 +1,3 @@
+// lane.type.fn_pointer: a C function pointer parameter.
+fn f(g: extern "C" fn(i64) -> i64) -> i64 { return 0; }
+fn main() -> i64 { return 0; }

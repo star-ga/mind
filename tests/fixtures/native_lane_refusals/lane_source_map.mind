@@ -1,0 +1,2 @@
+// lane.source.map: a map literal.
+fn main() -> i64 { let m = {1: 2}; return 0; }

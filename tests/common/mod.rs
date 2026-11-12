@@ -176,7 +176,9 @@ pub fn run_build_captured_env(
     env: &[(&str, &Path)],
 ) -> Output {
     let mut cmd = Command::new(mindc);
-    cmd.arg("build").args(extra_args).current_dir(dir);
+    cmd.args(["build", "--backend", "mlir"])
+        .args(extra_args)
+        .current_dir(dir);
     for (key, value) in env {
         cmd.env(key, value);
     }

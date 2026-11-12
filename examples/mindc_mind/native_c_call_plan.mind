@@ -1,0 +1,159 @@
+// Copyright 2026 STARGA Inc.
+// Fixed scalar Linux x86-64 LP64 SysV call plans. No call admission/emission.
+// The caller owns immutable live MCABI001 internal records throughout a call.
+
+// Return scalar tag, 14 for a validated pointer, or -1 for malformed type.
+// A record is 48 readable bytes: i64 length then <=33 prefix type bytes.
+pub fn ncp_pointer_prefix(t: i64, i: i64, prior: i64) -> i64 {
+    if prior == 0 { return 0; }
+    let tag: i64 = __mind_load_i8(t + 8 + i);
+    if tag == 32 { return 1; }
+    if tag == 33 { return 1; }
+    0
+}
+pub fn ncp_type(t: i64) -> i64 {
+    if t == 0 { return 0 - 1; }
+    let n: i64 = __mind_load_i64(t);
+    if n < 1 { return 0 - 1; }
+    if n > 33 { return 0 - 1; }
+    let last: i64 = __mind_load_i8(t + 7 + n);
+    if last > 13 { return 0 - 1; }
+    if n == 1 { return last; }
+    if last == 0 { return 0 - 1; }
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while i < n - 1 {
+        ok = ncp_pointer_prefix(t, i, ok);
+        i = i + 1;
+    }
+    if ok == 0 { return 0 - 1; }
+    14
+}
+pub fn ncp_width(t: i64) -> i64 {
+    if t == 0 { return 0; }
+    if t == 1 { return 8; }
+    if t == 2 { return 8; }
+    if t == 3 { return 16; }
+    if t == 4 { return 16; }
+    if t == 5 { return 32; }
+    if t == 6 { return 32; }
+    if t == 13 { return 8; }
+    64
+}
+// Canonical compiler slot conversion: 0=full bits,1=sign extend,2=zero
+// extend,3=bool. Foreign return high bits are unspecified and must be ignored.
+pub fn ncp_normalize(t: i64) -> i64 {
+    if t == 1 { return 1; }
+    if t == 3 { return 1; }
+    if t == 5 { return 1; }
+    if t == 2 { return 2; }
+    if t == 4 { return 2; }
+    if t == 6 { return 2; }
+    if t == 13 { return 3; }
+    0
+}
+pub fn ncp_result_class(t: i64) -> i64 {
+    if t == 0 { return 0; }
+    if t == 12 { return 2; }
+    1
+}
+pub fn ncp_parameter_error(params: i64, i: i64, prior: i64) -> i64 {
+    if prior != 0 { return prior; }
+    let t: i64 = ncp_type(__mind_load_i64(params + i * 8));
+    if t <= 0 { return 5; }
+    if t == 11 { return 6; }
+    0
+}
+// row: source spans at0/8; convention16;safety24;varargs32;count40;
+// pointer table48;result type56. Row and pointed-to buffers must be live.
+pub fn ncp_validate(row: i64) -> i64 {
+    if row == 0 { return 8; }
+    let convention: i64 = __mind_load_i64(row + 16);
+    if convention != 0 {
+        if convention != 1 { return 1; }
+    }
+    let safety: i64 = __mind_load_i64(row + 24);
+    if safety != 0 {
+        if safety != 1 { return 2; }
+    }
+    if __mind_load_i64(row + 32) != 0 { return 3; }
+    let n: i64 = __mind_load_i64(row + 40);
+    if n < 0 { return 4; }
+    if n > 256 { return 4; }
+    let result: i64 = ncp_type(__mind_load_i64(row + 56));
+    if result < 0 { return 5; }
+    if result == 11 { return 6; }
+    let params: i64 = __mind_load_i64(row + 48);
+    if n > 0 { if params == 0 { return 8; } }
+    let mut error: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        error = ncp_parameter_error(params, i, error);
+        i = i + 1;
+    }
+    error
+}
+// One step of the bounded loop. Types are already checked; counters stay in
+// the fresh plan so the bootstrap MIC emitter needs no nested loop mutation.
+pub fn ncp_location_class(t: i64, gp: i64, sse: i64) -> i64 {
+    if t == 12 {
+        if sse < 8 { return 2; }
+        return 3;
+    }
+    if gp < 6 { return 1; }
+    3
+}
+pub fn ncp_location(kind: i64, gp: i64, sse: i64, stack: i64) -> i64 {
+    if kind == 1 { return gp; }
+    if kind == 2 { return sse; }
+    stack
+}
+pub fn ncp_delta(kind: i64, wanted: i64, amount: i64) -> i64 {
+    if kind == wanted { return amount; }
+    0
+}
+pub fn ncp_place(plan: i64, params: i64, i: i64) -> i64 {
+    let t: i64 = ncp_type(__mind_load_i64(params + i * 8));
+    let slot: i64 = plan + 80 + i * 40;
+    let gp: i64 = __mind_load_i64(plan + 16);
+    let sse: i64 = __mind_load_i64(plan + 24);
+    let stack: i64 = __mind_load_i64(plan + 32);
+    let location_class: i64 = ncp_location_class(t, gp, sse);
+    let location: i64 = ncp_location(location_class, gp, sse, stack);
+    __mind_store_i64(plan + 16, gp + ncp_delta(location_class, 1, 1));
+    __mind_store_i64(plan + 24, sse + ncp_delta(location_class, 2, 1));
+    __mind_store_i64(plan + 32, stack + ncp_delta(location_class, 3, 8));
+    __mind_store_i64(slot, t);
+    __mind_store_i64(slot + 8, location_class);
+    __mind_store_i64(slot + 16, location);
+    __mind_store_i64(slot + 24, ncp_width(t));
+    __mind_store_i64(slot + 32, ncp_normalize(t));
+    0
+}
+// Caller frees the returned allocation. Null means validate refusal or
+// allocation refusal; validate distinguishes the former. No partial plan.
+pub fn ncp_plan(row: i64) -> i64 {
+    if ncp_validate(row) != 0 { return 0; }
+    let n: i64 = __mind_load_i64(row + 40);
+    let params: i64 = __mind_load_i64(row + 48);
+    let result: i64 = ncp_type(__mind_load_i64(row + 56));
+    let plan: i64 = __mind_alloc(80 + n * 40);
+    if plan == 0 { return 0; }
+    __mind_store_i64(plan + 16, 0);
+    __mind_store_i64(plan + 24, 0);
+    __mind_store_i64(plan + 32, 0);
+    let mut i: i64 = 0;
+    while i < n {
+        let _placed: i64 = ncp_place(plan, params, i);
+        i = i + 1;
+    }
+    let stack: i64 = __mind_load_i64(plan + 32);
+    __mind_store_i64(plan, 1);
+    __mind_store_i64(plan + 8, n);
+    __mind_store_i64(plan + 40, ((stack + 15) / 16) * 16);
+    __mind_store_i64(plan + 48, result);
+    __mind_store_i64(plan + 56, ncp_result_class(result));
+    __mind_store_i64(plan + 64, ncp_width(result));
+    __mind_store_i64(plan + 72, ncp_normalize(result));
+    plan
+}

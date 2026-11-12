@@ -18,18 +18,38 @@ use crate::ir::{BinOp, IRModule, Instr, ValueId};
 use crate::types::ConvPadding;
 use crate::types::{DType, ShapeDim};
 
-/// Format an [`IRModule`] into a stable, human-readable string.
+/// Format an [`IRModule`] into a stable, human-readable string: the
+/// `--emit-ir` text form. It leaves out each `extern` declaration (the
+/// self-host IR-text emitter that `tests/g2_differential_mlir.rs` compares
+/// against prints none), and a function prints as its name only.
 pub fn format_ir_module(module: &IRModule) -> String {
+    format_module(module, false)
+}
+
+/// [`format_ir_module`] plus one line per `extern` declaration: its name,
+/// each parameter type string, the return type, varargs, the vararg hints
+/// and the calling convention, in mic@3 wire order. `mindc inspect` prints
+/// this form, so two artifacts that differ only in an extern signature (a
+/// narrow parameter width, a calling convention) diff as text.
+pub fn format_ir_module_full(module: &IRModule) -> String {
+    format_module(module, true)
+}
+
+fn format_module(module: &IRModule, full: bool) -> String {
     let mut out = String::new();
     writeln!(&mut out, "module {{").expect("write to string cannot fail");
     for instr in &module.instrs {
-        format_instr(instr, &mut out);
+        format_instr(instr, &mut out, full);
     }
     writeln!(&mut out, "}}  // next_id = {}", module.next_id).expect("write to string cannot fail");
     out
 }
 
-fn format_instr(instr: &Instr, out: &mut String) {
+// Exhaustive on purpose: a new `Instr` variant is a compile error here until
+// it states how it prints (a catch-all once hid every extern declaration).
+// `full` is read only by the std-surface `ExternFnDecl` arm.
+#[cfg_attr(not(feature = "std-surface"), allow(unused_variables))]
+fn format_instr(instr: &Instr, out: &mut String, full: bool) {
     match instr {
         Instr::ConstI64(id, value) => {
             writeln!(out, "  {} = const.i64 {}", value_name(*id), value).unwrap();
@@ -480,7 +500,62 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
-        _ => {}
+        // Spec "Extern bindings": a non-base binding is printed in both forms
+        // (so `--emit-ir` and `mindc inspect` show it); the declaration line is
+        // printed in the full form only.
+        #[cfg(feature = "std-surface")]
+        Instr::ExternFnDecl {
+            name,
+            param_types,
+            ret_type,
+            is_varargs,
+            vararg_hints,
+            callconv,
+            binding,
+        } => {
+            if full {
+                writeln!(
+                    out,
+                    "  extern fn {name}({}) -> {} varargs={is_varargs} vararg_hints=[{}] \
+                     callconv={}",
+                    param_types.join(", "),
+                    ret_type.as_deref().unwrap_or("void"),
+                    vararg_hints.join(", "),
+                    callconv_name(*callconv),
+                )
+                .unwrap();
+            }
+            match binding {
+                crate::ast::ExternBinding::Base => {}
+                crate::ast::ExternBinding::Library(lib) => {
+                    writeln!(out, "  extern.bind @{name} library({lib:?})").unwrap();
+                }
+                crate::ast::ExternBinding::Address => {
+                    writeln!(out, "  extern.bind @{name} address").unwrap();
+                }
+            }
+        }
+        // deferred: would render each body instruction, printing nothing because
+        // the text form shows a function as its name only (FnDef above) and these
+        // occur inside bodies — upgrade path: render bodies in the full form.
+        Instr::ConstDenseTensor { .. }
+        | Instr::Call { .. }
+        | Instr::Return { .. }
+        | Instr::Param { .. } => {}
+        #[cfg(feature = "std-surface")]
+        Instr::While { .. } | Instr::Break { .. } | Instr::Continue { .. } => {}
+        #[cfg(feature = "std-surface")]
+        Instr::Region { .. } => {}
+    }
+}
+
+#[cfg(feature = "std-surface")]
+fn callconv_name(callconv: crate::ast::CallConv) -> &'static str {
+    match callconv {
+        crate::ast::CallConv::C => "c",
+        crate::ast::CallConv::SysV => "sysv",
+        crate::ast::CallConv::Win64 => "win64",
+        crate::ast::CallConv::Aapcs => "aapcs",
     }
 }
 
@@ -581,6 +656,35 @@ mod tests {
         assert!(text.contains("%1 = const.f64 1.0"), "got:\n{text}");
         // i64 constants are unaffected.
         assert!(text.contains("%2 = const.i64 7"), "got:\n{text}");
+    }
+
+    // Golden: the full form prints an extern declaration with its narrow
+    // parameter spellings in wire order; the `--emit-ir` text form leaves it out.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_decl_with_narrow_params_prints_in_the_full_form_only() {
+        let module = IRModule {
+            canonical_types: None,
+            instrs: vec![Instr::ExternFnDecl {
+                name: "open".to_string(),
+                param_types: ["!llvm.ptr", "i32", "u16", "i8", "bool"]
+                    .map(str::to_string)
+                    .to_vec(),
+                ret_type: Some("i32".to_string()),
+                is_varargs: false,
+                vararg_hints: Vec::new(),
+                callconv: crate::ast::CallConv::SysV,
+                binding: crate::ast::ExternBinding::Base,
+            }],
+            next_id: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            format_ir_module_full(&module),
+            "module {\n  extern fn open(!llvm.ptr, i32, u16, i8, bool) -> i32 varargs=false \
+             vararg_hints=[] callconv=sysv\n}  // next_id = 0\n"
+        );
+        assert_eq!(format_ir_module(&module), "module {\n}  // next_id = 0\n");
     }
 
     #[test]

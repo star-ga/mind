@@ -1,0 +1,2 @@
+// lane.source.nested_function: a function defined inside a function body.
+fn main() -> i64 { fn inner() -> i64 { return 1; } return 0; }

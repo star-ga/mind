@@ -1,0 +1,88 @@
+// Author: STARGA Inc.
+// Parent observer remains alive and returns an ordinary test verdict. The
+// faulted legacy child must reach the specified SIGABRT trap, never return
+// a success/digest. Other signals, timeouts and setup failures are not passes.
+// Assemble with std.sha256 and unchanged std.io_canon (import removed only
+// for the documented combined-file compilation route).
+extern "C" {
+    unsafe fn fork() -> i32;
+    unsafe fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+    unsafe fn _exit(code: i32) -> i32;
+}
+fn sl_expected_trap() -> i64 {
+    return 1;
+}
+fn sl_call(mode: i64) -> i64 {
+    let input: i64 = __mind_alloc(1);
+    let output: i64 = __mind_alloc(32);
+    if input == 0 || output == 0 {
+        return 75;
+    }
+    __mind_store_i8(input, 97);
+    let mut status: i64 = 0;
+    if mode == 1 {
+        status = sha256(input, 1, output);
+    } else {
+        let batch: i64 = canon_new(1);
+        if batch == 0 {
+            return 76;
+        }
+        if canon_push(batch, 1, 2, 3, 4) != 1 {
+            return 77;
+        }
+        status = canon_anchor(batch, output);
+        if status == 1 {
+            status = 0;
+        } else {
+            status = 78;
+        }
+    }
+    if status != 0 {
+        return 79;
+    }
+    return 0;
+}
+pub fn main(argc: i64, argv: i64) -> i64 {
+    if argc != 2 {
+        return 64;
+    }
+    let arg: i64 = __mind_load_i64(argv + 8);
+    let mode: i64 = __mind_load_i8(arg) - 48;
+    if mode < 1 || mode > 2 || __mind_load_i8(arg + 1) != 0 {
+        return 64;
+    }
+    let status: i64 = __mind_alloc(8);
+    if status == 0 {
+        return 75;
+    }
+    __mind_store_i64(status, -1);
+    let pid: i32 = fork();
+    if pid < 0 {
+        return 75;
+    }
+    if pid == 0 {
+        let child: i64 = sl_call(mode);
+        _exit(child as i32);
+        return 80;
+    }
+    if waitpid(pid, status as *mut i32, 0) != pid {
+        return 76;
+    }
+    let actual: i64 = __mind_load_i32(status);
+    __mind_free(status);
+    if sl_expected_trap() == 1 {
+        // SIGABRT=6. The core-dump flag may differ with host core policy;
+        // it is not a different signal or an ordinary successful exit.
+        if (actual & 127) != 6 || (actual >> 8) != 0 {
+            print(1);
+            return 1;
+        }
+    } else {
+        if actual != 0 {
+            print(2);
+            return 2;
+        }
+    }
+    print(0);
+    return 0;
+}

@@ -1,0 +1,6 @@
+id	change	case	expected_detection
+raw_exit	Replace normal adapter return with raw exit_group	stdio_flush	normal exit17 missing5a
+drop_rtld_fini	Pass zero rtld_fini to __libc_start_main	rtld_finalizer	normal exit0 missing44
+ignore_init_failure	Remove init-result rejection	dirty_allocator	normal wrong output or exit
+wrong_stack	Use original C stack instead of dedicated MIND stack	stack_min	normal source-fixture failure
+erase_original_env	Store current libc envp over original kernel envp	env_constructor	normal source-fixture failure

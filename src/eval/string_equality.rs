@@ -5,7 +5,7 @@
 //! Typed string equality normalization before recursive expression lowering.
 //!
 //! `==` and `!=` on two strings compare bytes. An operand is a string when its
-//! declared type says so (see [`facts`] and [`classify`]): a literal, a
+//! declared type says so (see `facts` and `classify`): a literal, a
 //! `string`/`String` parameter or annotated binding, a string constant, call
 //! result (including a method call that lowers to a `string_<method>` or
 //! `<type>_<method>` function), struct field, collection element, an `if` /
@@ -26,14 +26,14 @@
 //! * a string literal `match` arm on a scrutinee not known to be a string
 //!   (an arm on a string compares bytes on every backend);
 //! * in a project build, a call of a function another module refuses such a
-//!   comparison in (see [`project`]);
+//!   comparison in (see `project`);
 //! * a cast to `string` of an integer literal other than the null handle `0`
 //!   (`5 as string`), which no string record is at.
 //!
 //! An operand whose type is known and is not a string makes the comparison an
 //! integer comparison on every backend. A declaration proves what its slot
-//! holds only while nothing else is stored there (see [`slots`] and
-//! [`flows`]): a parameter, result, field, payload, module or local binding,
+//! holds only while nothing else is stored there (see `slots` and
+//! `flows`): a parameter, result, field, payload, module or local binding,
 //! or collection element given a value that may be a string where none is
 //! declared, or an integer other than the null handle where a string is
 //! declared, is read as maybe a string. A value whose type the pass did not
@@ -61,7 +61,7 @@
 //! `.length` on a string reads a member no string record has; it is refused
 //! at check time with the code the build gives it (`E6009`). For `mindc test`
 //! a method call on a string becomes the `string_<method>` call the MLIR
-//! lowering makes for it ([`analyze_interpreted`]).
+//! lowering makes for it (`analyze_interpreted`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,7 +76,7 @@ mod flows;
 mod project;
 #[cfg(test)]
 mod segment_tests;
-mod segments;
+pub mod segments;
 #[cfg(test)]
 mod slot_tests;
 mod slots;
@@ -101,6 +101,9 @@ type Assigned = BTreeSet<String>;
 struct Ordinals {
     equalities: BTreeMap<usize, usize>,
     methods: BTreeMap<usize, usize>,
+    /// Lowering only: each `print` operand that is not a string literal. Its
+    /// numbers follow the equalities', so one target set holds both.
+    print_args: BTreeMap<usize, usize>,
 }
 
 /// Why a comparison is refused.
@@ -122,6 +125,19 @@ pub(crate) enum RefusedKind {
     /// `5 as string`: an integer literal other than the null handle `0` cast
     /// to `string`; no string record is at that address.
     Cast,
+    /// A `print` operand that is a value of the named aggregate kind: a
+    /// runnable artifact would write its handle as an integer.
+    PrintAggregate(&'static str),
+    /// A `print` operand whose type is not known, so it may be a string.
+    PrintUntyped,
+}
+
+impl RefusedKind {
+    /// Whether this refuses a `print` operand. Only a runnable artifact
+    /// refuses one (see `print_blockers`): the interpreter prints every value.
+    pub(crate) fn is_print(self) -> bool {
+        matches!(self, Self::PrintAggregate(_) | Self::PrintUntyped)
+    }
 }
 
 /// A comparison that would compare string handles instead of bytes.
@@ -159,6 +175,17 @@ pub(crate) fn refusal_message(refused: &Refused) -> String {
                     one through it"
                 .to_string();
         }
+        RefusedKind::PrintAggregate(kind) => {
+            return format!(
+                "`print` of {kind}: a runnable artifact would write its handle as an \
+                 integer, not its contents"
+            );
+        }
+        RefusedKind::PrintUntyped => {
+            return "`print` of a value whose type is not known at compile time: it may be \
+                    a string, and a runnable artifact would write its handle as an integer"
+                .to_string();
+        }
         RefusedKind::Callee => {
             let callee = refused.function.as_deref().unwrap_or("?");
             return format!(
@@ -175,10 +202,14 @@ pub(crate) fn refusal_message(refused: &Refused) -> String {
 }
 
 /// The diagnostic code of `refused`: `E6009` (the code the build gives the
-/// same read) for a string member read, `E2038` for every comparison.
+/// same read) for a string member read, the print key for a `print` operand,
+/// `E2038` for every comparison.
 pub(crate) fn refusal_code(refused: &Refused) -> &'static str {
     match refused.kind {
         RefusedKind::Member => crate::type_checker::lowering_refusals::E_STRING_MEMBER,
+        RefusedKind::PrintAggregate(_) | RefusedKind::PrintUntyped => {
+            crate::type_checker::lowering_refusals::E_PRINT_OPERAND
+        }
         _ => crate::type_checker::lowering_refusals::E_STRING_EQUALITY_OPERAND,
     }
 }
@@ -211,6 +242,14 @@ pub(crate) fn refusal_help(refused: &Refused) -> &'static str {
             "cast only a string or the null handle `0` to `string`; write text as a \
              string literal, or build it with the std.string functions"
         }
+        RefusedKind::PrintAggregate(_) => {
+            "print each scalar or string part on its own (`print(p.x)`), or run the \
+             program with the `mind` interpreter"
+        }
+        RefusedKind::PrintUntyped => {
+            "give the value a declared type (an annotated binding such as \
+             `let n: i64 = ...`, a parameter, a field or a function return `-> T`)"
+        }
         RefusedKind::Callee => {
             "declare the compared slots `string` where strings are passed, or \
              compare bytes there with `string_eq(a, b)` from std.string; \
@@ -229,6 +268,57 @@ fn decide(left: Class, right: Class) -> Result<bool, RefusedKind> {
         (Class::Str, _) | (_, Class::Str) => Err(RefusedKind::Mixed),
         (Class::Unknown, Class::Unknown) => Err(RefusedKind::Untyped),
         _ => Ok(false),
+    }
+}
+
+/// Decide one `print` operand from its fact: `Ok(true)` prints the bytes of
+/// a string, `Ok(false)` keeps the integer print of a scalar, and `Err`
+/// refuses a value no runnable artifact prints correctly.
+fn decide_print(fact: facts::Fact) -> Result<bool, RefusedKind> {
+    use facts::Fact;
+    match fact {
+        Fact::Str => Ok(true),
+        Fact::NotStr | Fact::Never => Ok(false),
+        Fact::Record(_) => Err(RefusedKind::PrintAggregate("a struct value")),
+        Fact::Elems(_) => Err(RefusedKind::PrintAggregate(
+            "an array, slice, set or tensor",
+        )),
+        Fact::Map(_) => Err(RefusedKind::PrintAggregate("a map")),
+        Fact::Tuple(_) => Err(RefusedKind::PrintAggregate("a tuple")),
+        Fact::Sum(..) => Err(RefusedKind::PrintAggregate("an `Option` or `Result` value")),
+        Fact::Unknown | Fact::Any | Fact::MaybeStr => Err(RefusedKind::PrintUntyped),
+    }
+}
+
+/// The callee a string `print` operand is wrapped in for lowering.
+const PRINT_TEXT: &str = "__mind_print_text";
+
+/// The expression whose string record a `print` operand writes as bytes: a
+/// string literal, or an operand this pass proved a string. `None` for an
+/// operand printed as an integer.
+pub(crate) fn print_text(arg: &Node) -> Option<&Node> {
+    match arg {
+        Node::Lit(Literal::Str(_), _) => Some(arg),
+        Node::Call { callee, args, .. } if callee == PRINT_TEXT => args.first(),
+        _ => None,
+    }
+}
+
+/// Number every `print` operand that is not a string literal, in the
+/// preorder `rewrite` visits them, after the equalities.
+fn number_print_args(module: &Module, ordinals: &mut Ordinals) {
+    let mut pending: Vec<&Node> = module.items.iter().rev().collect();
+    while let Some(node) = pending.pop() {
+        if let Node::Print { args, .. } = node {
+            for arg in args.iter().filter(|a| print_text(a).is_none()) {
+                let next = ordinals.equalities.len() + ordinals.print_args.len();
+                ordinals
+                    .print_args
+                    .insert(arg as *const Node as usize, next);
+            }
+        }
+        let children = children_ref(node);
+        pending.extend(children.into_iter().rev());
     }
 }
 
@@ -336,11 +426,32 @@ fn has_other_string_form(module: &Module) -> bool {
 /// replaced before its original operands are queued, so the synthesized `!= 0`
 /// comparison is not counted as another source equality, and a desugared
 /// method call keeps its receiver and arguments in their preorder.
-fn rewrite(module: &mut Module, targets: &mut Targets, methods: &mut MethodTargets) {
+fn rewrite(
+    module: &mut Module,
+    targets: &mut Targets,
+    methods: &mut MethodTargets,
+    equalities: usize,
+) {
     let mut next_equality = 0;
     let mut next_method = 0;
+    let mut next_print = equalities;
     let mut pending: Vec<&mut Node> = module.items.iter_mut().rev().collect();
     while let Some(node) = pending.pop() {
+        if let Node::Print { args, .. } = node {
+            for arg in args.iter_mut().filter(|a| print_text(a).is_none()) {
+                let ordinal = next_print;
+                next_print += 1;
+                if targets.remove(&ordinal) {
+                    let span = arg.span();
+                    let text = std::mem::replace(arg, Node::Lit(Literal::Int(0), span));
+                    *arg = Node::Call {
+                        callee: PRINT_TEXT.to_string(),
+                        args: vec![text],
+                        span,
+                    };
+                }
+            }
+        }
         if matches!(node, Node::MethodCall { .. }) {
             let ordinal = next_method;
             next_method += 1;
@@ -437,9 +548,17 @@ pub(crate) fn analyze_interpreted(module: &Module) -> Analysis {
 }
 
 fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
-    let ordinals = equality_ordinals(module);
+    // The interpreter analyses on a thread where the project's module table
+    // may not be installed; read the one its check reads.
+    #[cfg(feature = "cross-module-imports")]
+    let _scope = desugar_methods.then(project::install_scope);
+    let mut ordinals = equality_ordinals(module);
+    if !desugar_methods {
+        number_print_args(module, &mut ordinals);
+    }
     let methods_wanted = desugar_methods && !ordinals.methods.is_empty();
     let decides = !ordinals.equalities.is_empty()
+        || !ordinals.print_args.is_empty()
         || methods_wanted
         || calls_may_be_refused()
         || has_other_string_form(module);
@@ -469,7 +588,12 @@ fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
         };
     }
     let mut rewritten = module.clone();
-    rewrite(&mut rewritten, &mut targets, &mut methods);
+    rewrite(
+        &mut rewritten,
+        &mut targets,
+        &mut methods,
+        ordinals.equalities.len(),
+    );
     assert!(
         targets.is_empty() && methods.is_empty(),
         "string equality normalization lost an analyzed AST target"
@@ -485,8 +609,35 @@ fn analyze_with(module: &Module, desugar_methods: bool) -> Analysis {
 /// lowering), then return the rewritten clone.
 pub(crate) fn normalize(module: &Module) -> Option<Module> {
     let analysis = analyze(module);
-    for refused in &analysis.refused {
-        crate::type_checker::lowering_refusals::string_equality_operand(refused);
+    for refused in analysis.refused.iter().filter(|r| !r.kind.is_print()) {
+        segments::report_refused(refused);
     }
     analysis.rewritten
+}
+
+/// The `print` operands of `module` no runnable artifact prints correctly,
+/// as runnable-artifact blockers: an aggregate value, or a value whose type
+/// is not known. `mindc check` and the interpreter accept them.
+#[cfg(feature = "std-surface")]
+pub(crate) fn print_blockers(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+) -> Vec<crate::diagnostics::Diagnostic> {
+    use crate::diagnostics::{Diagnostic, Span as DiagSpan};
+    if !module.items.iter().any(|item| {
+        crate::type_checker::nerve_walk::any(item, &|n| matches!(n, Node::Print { .. }))
+    }) {
+        return Vec::new();
+    }
+    let refused = analyze(module).refused.into_iter();
+    refused
+        .filter(|r| r.kind.is_print())
+        .map(|r| {
+            let span = DiagSpan::from_offsets(src, r.span.start(), r.span.end(), file);
+            Diagnostic::error("lower", refusal_code(&r), refusal_message(&r))
+                .with_span(span)
+                .with_help(refusal_help(&r))
+        })
+        .collect()
 }

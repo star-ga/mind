@@ -163,9 +163,17 @@ fn cdylib_has_no_undefined_mind_symbols() {
         // not a MIND-semantic symbol. Added when that intrinsic landed; the gate
         // caught it immediately, which is the list working as intended.
         "open",
-        // `close` is pulled in by `read_to_string` (runtime-support/mind_intrinsics.c),
+        // `close` is pulled in by `read_to_string` (runtime-support/mind_fs_read.h),
         // the same POSIX file-I/O class as `open`/`read`/`write` above.
         "close",
+        // `fstat` is pulled in by `is_dir_fd` and the directory check in
+        // `read_to_string` (runtime-support/mind_fs_read.h).  Same POSIX
+        // file-I/O class as `open`/`close`/`lseek` above: the fstat S_ISDIR
+        // test refuses a directory read by file type, never by the size lseek
+        // happens to report.  glibc before 2.33 links it as `__fxstat`; no gate
+        // host or CI runner has such a glibc, so that name is not admitted here
+        // (the gate would name it on one, as it named `open` and `close`).
+        "fstat",
         // `__mind_lseek` positions the file cursor through libc `lseek`.
         // Same POSIX file-I/O class as `open` / `read` / `close`.
         "lseek",

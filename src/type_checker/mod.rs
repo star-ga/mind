@@ -24,7 +24,7 @@ mod duplicate_structs;
 #[cfg(feature = "std-surface")]
 pub(crate) mod extern_declarations;
 #[cfg(feature = "std-surface")]
-mod intrinsic_call_arity;
+pub(crate) mod intrinsic_call_arity;
 #[cfg(feature = "std-surface")]
 use intrinsic_call_arity::std_surface_intrinsic_arity;
 #[cfg(feature = "std-surface")]
@@ -4465,6 +4465,11 @@ pub fn check_module_types_in_file(
     env: &TypeEnv,
 ) -> Vec<Pretty> {
     crate::diagnostics::reset_line_index_cache();
+    // File-local: std.posix exports enter the visible set only when this
+    // module imports them, and a local extern name never does. Body
+    // recursion goes through `_impl`, so this guard covers the walk.
+    #[cfg(feature = "cross-module-imports")]
+    let _file_scope = crate::project::active_module_table::FileScopeGuard::install(module);
     #[cfg(feature = "std-surface")]
     let _slice_aliases = slice_abi::AliasScope::install(&module.items);
     let mut errors = qualified_enums::validate(module, src, file);
@@ -4719,17 +4724,16 @@ fn check_module_types_in_file_impl(
                     Some(vt_ann) => {
                         match infer_expr(value, &tenv) {
                             Ok((vt, _)) => {
+                                // An f64 value bound to an `f32` let converts
+                                // (the declared width governs, as in fn bodies).
                                 let allow_scalar_fill = matches!(
                                     (&vt_ann, &vt),
                                     (ValueType::Tensor(_), ValueType::ScalarI32)
+                                        | (ValueType::ScalarF32, ValueType::ScalarF64)
                                 );
-                                // Implicit integer narrowing (data-loss):
-                                // a wider integer flowing into a narrower
-                                // declared slot truncates at runtime. The
-                                // spec requires an explicit `as` cast
-                                // (AsCast, grammar-syntax.ebnf:240). Emit the
-                                // precise NARROWING_CODE so the FnDef-body
-                                // pass surfaces it inside function bodies too.
+                                // Implicit integer narrowing (data-loss) needs an
+                                // explicit `as` cast (AsCast, grammar-syntax.ebnf:240):
+                                // NARROWING_CODE, as in the FnDef-body pass.
                                 if is_implicit_narrowing(&vt_ann, &vt) {
                                     errs.push(diag_from_span(
                                         src,
@@ -5367,7 +5371,7 @@ fn check_module_types_in_file_impl(
                         code: resolve::SELF_HOST_ONLY_CALL_CODE,
                         severity: Severity::Warning,
                         message: format!(
-                            "`{}` is not registered in mindc's Rust/MLIR intrinsic table \
+                            "`{}` is not registered in any profile of mindc's intrinsic table \
                              (STD_SURFACE_INTRINSICS) — mindc build's default backends cannot \
                              emit this call (native-ELF self-host only, if implemented at all)",
                             c.name
@@ -5732,8 +5736,7 @@ fn check_extern_type_with_repr_c(
         // RFC 0010 Phase B audit fix F-06: unknown Named types are rejected
         // with safety::extern_non_repr_c to prevent silent miscompilation.
         TypeAnn::Named(name) => match name.as_str() {
-            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
-            | "bool" | "usize" | "isize" => Ok(()),
+            other if crate::types::value::prim_scalar(other).is_some() => Ok(()),
             other => {
                 if repr_c.contains(other) {
                     Ok(())

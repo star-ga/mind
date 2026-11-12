@@ -1,0 +1,312 @@
+// Copyright 2026 STARGA Inc.
+// GPU driver extern rows past the frozen nbx_row table (MC-6/A6, rows 54..86).
+// The cuda.h 12.6 macro targets for the legacy default stream, the nbcuda02 mark
+// and the cuMemsetD8_v2 byte fence; the part calls no main.mind fn (nb_part_dispatch).
+
+import nb_emit_core;
+
+// Capability mark: CUDA DRIVER ROWS V2 (MC-6). This compiler binds the second
+// block of libcuda.so.1 rows below. Compiled natively this body is
+// `movabs rax, imm64` whose little-endian immediate spells "nbcuda02"; an
+// earlier seed does not carry it and refuses a program that declares one of
+// these rows (nbx_build finds no row: exit 3, no artifact).
+pub fn nb_cap_cuda_rows_v2() -> i64 {
+    3616497584872579694
+}
+
+// The second driver block of nbx_row, indices 54..=86 (the hook in nbx_row),
+// as nbx_put records with vlen 0 (unversioned, libcuda.so.1). Each
+// name is the cuda.h 12.6 macro target for the legacy default stream: a _v2
+// name wherever cuda.h maps the plain name to it, never _ptsz/_ptds. CUresult
+// is i32; CUstream/CUevent/CUgraph/CUgraphExec/CUfunction handles are *mut u8;
+// CUdeviceptr, size_t and unsigned long long are i64; cuMemsetD8_v2's
+// `unsigned char` is u32 under nbcu_fence. cuMemAllocManaged and
+// cuGetProcAddress have no row and refuse by name.
+pub fn nbcu_row(i: i64, out: i64) -> i64 {
+    // cuStreamBeginCapture_v2(*mut u8, i32) -> i32
+    if i == 54 {
+        return nbx_put(out, 23, 7881692365127382371, 8097827746482709826, 14203900931503476, 0, 0, 0, 66817, 0, 2);
+    }
+    // cuGraphInstantiateWithFlags(*mut *mut u8, *mut u8, i64) -> i32
+    if i == 55 {
+        return nbcu_long(out, 27, 5289601326178071907, 7019269511663874926, 7802038253658793332, 7563105, 0, 0, 50661633, 0, 3);
+    }
+    // cuMemcpyHtoDAsync_v2(i64, *const u8, i64, *mut u8) -> i32
+    if i == 56 {
+        return nbx_put(out, 20, 8750603397483033955, 7960520540512285768, 846618467, 0, 0, 0, 21525431041, 0, 4);
+    }
+    // cuMemcpyDtoHAsync_v2(*mut u8, i64, i64, *mut u8) -> i32
+    if i == 57 {
+        return nbx_put(out, 20, 8750603397483033955, 7960520540579394628, 846618467, 0, 0, 0, 21525366017, 0, 4);
+    }
+    // cuEventDestroy_v2(*mut u8) -> i32
+    if i == 58 {
+        return nbx_put(out, 17, 4932688873932551523, 8529669738831573861, 50, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuStreamDestroy_v2(*mut u8) -> i32
+    if i == 59 {
+        return nbx_put(out, 18, 7881692365127382371, 6879652443155817796, 12918, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuMemHostRegister_v2(*mut u8, i64, u32) -> i32
+    if i == 60 {
+        return nbx_put(out, 20, 8317946671464805731, 7310594991672611444, 846618482, 0, 0, 0, 33752321, 0, 3);
+    }
+    // cuMemAllocHost_v2(*mut *mut u8, i64) -> i32
+    if i == 61 {
+        return nbx_put(out, 17, 7812691391687783779, 8529664258400084847, 50, 0, 0, 0, 198913, 0, 2);
+    }
+    // cuGraphAddKernelNode_v2(*mut *mut u8, *mut u8, *const *const u8, i64, *const u8) -> i32
+    if i == 62 {
+        return nbx_put(out, 23, 4713140573874648419, 7810770566348760164, 14203900930584398, 0, 0, 0, 4411065960705, 0, 5);
+    }
+    // cuGraphExecUpdate_v2(*mut u8, *mut u8, *mut u8) -> i32
+    if i == 63 {
+        return nbx_put(out, 20, 5001370950026360163, 8386094414772266360, 846618469, 0, 0, 0, 84215041, 0, 3);
+    }
+    // cuMemsetD8_v2(i64, u32, i64) -> i32
+    if i == 64 {
+        return nbx_put(out, 13, 8387236794735621475, 216734316612, 0, 0, 0, 0, 50463489, 0, 3);
+    }
+    // cuStreamGetCaptureInfo_v2(*mut u8, *mut i32, *mut i64, *mut *mut u8, *mut *mut u8, *mut i64) -> i32
+    if i == 65 {
+        return nbcu_long(out, 25, 7881692365127382371, 8463513162781844807, 8529658704990659954, 50, 0, 0, 2824684194628865, 0, 6);
+    }
+    // cuDeviceGetAttribute(*mut i32, i32, i32) -> i32
+    if i == 66 {
+        return nbx_put(out, 20, 7305798977751119203, 7598263563990623559, 1702131042, 0, 0, 0, 16844289, 0, 3);
+    }
+    // cuStreamCreate(*mut *mut u8, u32) -> i32
+    if i == 67 {
+        return nbx_put(out, 14, 7881692365127382371, 111550524650051, 0, 0, 0, 0, 133377, 0, 2);
+    }
+    // cuStreamSynchronize(*mut u8) -> i32
+    if i == 68 {
+        return nbx_put(out, 19, 7881692365127382371, 7957704859257305427, 6650473, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuMemFreeHost(*mut u8) -> i32
+    if i == 69 {
+        return nbx_put(out, 13, 7309982580840691043, 500152879205, 0, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuEventCreate(*mut *mut u8, u32) -> i32
+    if i == 70 {
+        return nbx_put(out, 13, 4860631279894623587, 435744236914, 0, 0, 0, 0, 133377, 0, 2);
+    }
+    // cuEventRecord(*mut u8, *mut u8) -> i32
+    if i == 71 {
+        return nbx_put(out, 13, 5941495190463542627, 431416632165, 0, 0, 0, 0, 328961, 0, 2);
+    }
+    // cuEventSynchronize(*mut u8) -> i32
+    if i == 72 {
+        return nbx_put(out, 18, 6013552784501470563, 7597132158588907129, 25978, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuEventElapsedTime(*mut i32, *mut u8, *mut u8) -> i32
+    if i == 73 {
+        return nbx_put(out, 18, 5004746467970479459, 7589801658917347692, 25965, 0, 0, 0, 84215297, 0, 3);
+    }
+    // cuFuncGetAttribute(*mut i32, i32, *mut u8) -> i32
+    if i == 74 {
+        return nbx_put(out, 18, 7297911047242282339, 8458438990456177012, 25972, 0, 0, 0, 83953153, 0, 3);
+    }
+    // cuOccupancyMaxActiveBlocksPerMultiprocessor(*mut i32, *mut u8, i32, i64) -> i32
+    if i == 75 {
+        return nbcu_long(out, 43, 7021240888798967139, 7152130042548020078, 7165064564595648884, 7815237882092745579, 8315161617321978228, 7499635, 12902008321, 0, 4);
+    }
+    // cuLaunchCooperativeKernel(*mut u8, u32, u32, u32, u32, u32, u32, u32, *mut u8, *mut *mut u8) -> i32
+    if i == 76 {
+        return nbcu_long(out, 25, 7521977253061490019, 8386109761144188739, 7308905024651097705, 108, 0, 0, 565157600298241, 38738723328, 10);
+    }
+    // cuGraphDestroy(*mut u8) -> i32
+    if i == 77 {
+        return nbx_put(out, 14, 4929313355988432227, 133519568565093, 0, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuGraphExecDestroy(*mut u8) -> i32
+    if i == 78 {
+        return nbx_put(out, 18, 5001370950026360163, 8247343696398476664, 31087, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuGraphLaunch(*mut u8, *mut u8) -> i32
+    if i == 79 {
+        return nbx_put(out, 13, 5505774108291855715, 448344782177, 0, 0, 0, 0, 328961, 0, 2);
+    }
+    // cuMemcpy2D_v2(*const u8) -> i32
+    if i == 80 {
+        return nbx_put(out, 13, 8750603397483033955, 216734319666, 0, 0, 0, 0, 1025, 0, 1);
+    }
+    // cuMemcpy2DAsync_v2(*const u8, *mut u8) -> i32
+    if i == 81 {
+        return nbx_put(out, 18, 8750603397483033955, 6873458924201264178, 12918, 0, 0, 0, 328705, 0, 2);
+    }
+    // cuMemHostAlloc(*mut *mut u8, i64, u32) -> i32
+    if i == 82 {
+        return nbx_put(out, 14, 8317946671464805731, 109330211553652, 0, 0, 0, 0, 33753345, 0, 3);
+    }
+    // cuMemHostGetDevicePointer_v2(*mut i64, *mut u8, u32) -> i32
+    if i == 83 {
+        return nbcu_long(out, 28, 8317946671464805731, 7599372765919266676, 7310589494247318883, 846618482, 0, 0, 33884673, 0, 3);
+    }
+    // cuStreamEndCapture(*mut u8, *mut *mut u8) -> i32
+    if i == 84 {
+        return nbx_put(out, 18, 7881692365127382371, 8463513162780798533, 25970, 0, 0, 0, 591105, 0, 2);
+    }
+    // cuStreamQuery(*mut u8) -> i32
+    if i == 85 {
+        return nbx_put(out, 13, 7881692365127382371, 521610294609, 0, 0, 0, 0, 1281, 0, 1);
+    }
+    // cuEventQuery(*mut u8) -> i32
+    if i == 86 {
+        return nbx_put(out, 12, 5869437596425614691, 2037540213, 0, 0, 0, 0, 1281, 0, 1);
+    }
+    0
+}
+
+// A row whose name exceeds the record's 24 in-line bytes: the six name words
+// live in their own 48-byte block and the first name word holds its address.
+// shortcut: one 48-byte arena block per nbx_row call of a long row (never freed,
+// at most five per extern lookup); upgrade to a static name table when parts get data.
+pub fn nbcu_long(out: i64, nlen: i64, w0: i64, w1: i64, w2: i64, w3: i64, w4: i64, w5: i64, sig: i64, sig2: i64, arity: i64) -> i64 {
+    let p: i64 = __mind_alloc(48);
+    __mind_store_i64(p, w0);
+    __mind_store_i64(p + 8, w1);
+    __mind_store_i64(p + 16, w2);
+    __mind_store_i64(p + 24, w3);
+    __mind_store_i64(p + 32, w4);
+    __mind_store_i64(p + 40, w5);
+    nbx_put(out, nlen, p, 0, 0, 0, 0, 0, sig, sig2, arity)
+}
+
+// The name bytes of a row record: in-line at +8 up to 24 bytes, else behind
+// the address nbcu_long stored there. nbx_name_eq and nbx_meta read names
+// through it (nb_part_dispatch nbx_row_name).
+pub fn nbcu_name(rec: i64) -> i64 {
+    if __mind_load_i64(rec) > 24 {
+        return __mind_load_i64(rec + 8);
+    }
+    rec + 8
+}
+
+// cuMemsetD8_v2 (row 64) takes `unsigned char`: the row passes it as u32 and
+// the call is admitted only when that argument is provably 0..255, a decimal
+// integer literal in range or `x & m` with a decimal literal mask m in 0..255,
+// through parentheses and unsigned casts. Any other argument is refused by name
+// (nbcu_refuse: extern.byte_arg_unproven, exit 3, no artifact). Returns xr, the
+// lookup result nb_expr goes on to use.
+pub fn nbcu_fence(xr: i64, t: i64, args: i64, n: i64, buf: i64, lcell: i64) -> i64 {
+    if xr < 0 {
+        return xr;
+    }
+    if __mind_load_i64(__mind_load_i64(t + 16) + xr * 40) != 64 {
+        return xr;
+    }
+    if n != 3 {
+        return xr;
+    }
+    let a: i64 = __mind_load_i64(args + 8);
+    if nbcu_byte_arg(buf, a) == 0 {
+        return nbcu_refuse(xr, buf, a, lcell);
+    }
+    xr
+}
+
+// The fence's named refusal: "error[extern]: extern.byte_arg_unproven: <arg>" on
+// stderr unless this lowering is poisoned already, then the poison cell nbx_call
+// uses (lcell + 80 = 1: exit 3, no artifact). The SSA path and its HOME retry
+// each reach the call, so the line may print twice. Returns xr unchanged.
+pub fn nbcu_refuse(xr: i64, buf: i64, node: i64, lcell: i64) -> i64 {
+    if __mind_load_i64(lcell + 80) == 0 {
+        let m: i64 = __mind_alloc(48);
+        __mind_store_i64(m, 8675440804253299301);
+        __mind_store_i64(m + 8, 7286888370044822900);
+        __mind_store_i64(m + 16, 8746604478207456376);
+        __mind_store_i64(m + 24, 8457592366182655348);
+        __mind_store_i64(m + 32, 4210414260988309614);
+        __mind_store_i64(m + 40, 32);
+        let _h: i64 = __mind_write(2, m, 41, 0 - 1);
+        let lo: i64 = __mind_load_i64(node + 8);
+        let _s: i64 = __mind_write(2, buf + lo, __mind_load_i64(node + 16) - lo, 0 - 1);
+        __mind_store_i64(m, 10);
+        let _e: i64 = __mind_write(2, m, 1, 0 - 1);
+    }
+    __mind_store_i64(lcell + 80, 1);
+    xr
+}
+
+// AST node words: +0 kind (1 int literal, 3 binop, 12 paren, 25 cast), +8/+16
+// span, +24 child0, +32 child1, +40 child2, +48 aux (binop operator: 11 is &).
+pub fn nbcu_byte_arg(buf: i64, node: i64) -> i64 {
+    let e: i64 = nbcu_strip(buf, node);
+    if __mind_load_i64(e) == 1 {
+        return nbcu_in_byte(nbcu_lit(buf, e));
+    }
+    if __mind_load_i64(e) != 3 {
+        return 0;
+    }
+    if __mind_load_i64(e + 48) != 11 {
+        return 0;
+    }
+    if nbcu_byte_lit(buf, __mind_load_i64(e + 24)) == 1 {
+        return 1;
+    }
+    nbcu_byte_lit(buf, __mind_load_i64(e + 32))
+}
+pub fn nbcu_byte_lit(buf: i64, node: i64) -> i64 {
+    let e: i64 = nbcu_strip(buf, node);
+    if __mind_load_i64(e) != 1 {
+        return 0;
+    }
+    nbcu_in_byte(nbcu_lit(buf, e))
+}
+// Parentheses and a cast to an unsigned type (target spelled u...) keep a
+// 0..255 value; any other cast (a signed narrow one sign-extends) ends the proof.
+pub fn nbcu_strip(buf: i64, node: i64) -> i64 {
+    let k: i64 = __mind_load_i64(node);
+    if k == 12 {
+        return nbcu_strip(buf, __mind_load_i64(node + 24));
+    }
+    if k != 25 {
+        return node;
+    }
+    let lo: i64 = __mind_load_i64(node + 32);
+    if __mind_load_i64(node + 40) <= lo {
+        return node;
+    }
+    if __mind_load_i8(buf + lo) != 117 {
+        return node;
+    }
+    nbcu_strip(buf, __mind_load_i64(node + 24))
+}
+// An int-literal node's value: a synthetic literal (child1 == 1) carries it in
+// child0; a source literal is its decimal digits (`_` separators skipped).
+// Any other spelling (0x.., a suffix) reads as 256, outside the byte range.
+pub fn nbcu_lit(buf: i64, node: i64) -> i64 {
+    if __mind_load_i64(node + 32) == 1 {
+        return __mind_load_i64(node + 24);
+    }
+    nbcu_digits(buf, __mind_load_i64(node + 8), __mind_load_i64(node + 16), 0)
+}
+pub fn nbcu_digits(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
+    if lo >= hi {
+        return acc;
+    }
+    if acc > 255 {
+        return 256;
+    }
+    let b: i64 = __mind_load_i8(buf + lo);
+    if b == 95 {
+        return nbcu_digits(buf, lo + 1, hi, acc);
+    }
+    if b < 48 {
+        return 256;
+    }
+    if b > 57 {
+        return 256;
+    }
+    nbcu_digits(buf, lo + 1, hi, acc * 10 + (b - 48))
+}
+pub fn nbcu_in_byte(v: i64) -> i64 {
+    if v < 0 {
+        return 0;
+    }
+    if v > 255 {
+        return 0;
+    }
+    1
+}

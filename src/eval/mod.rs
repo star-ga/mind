@@ -67,7 +67,7 @@ pub(crate) mod narrow_scan;
 #[cfg(feature = "std-surface")]
 pub(crate) mod slice_abi;
 #[cfg(feature = "std-surface")]
-pub(crate) mod string_equality;
+pub mod string_equality;
 mod string_record;
 pub mod traits;
 #[cfg(feature = "std-surface")]
@@ -475,6 +475,7 @@ pub fn eval_module_value_with_env_mode(
 
     let normalized = string_record::normalize_module(m)?;
     let m = normalized.as_ref().unwrap_or(m);
+    extern_c_intrinsics::refuse_address_calls(m)?;
     let mut venv: HashMap<String, Value> = env
         .iter()
         .map(|(name, value)| (name.clone(), Value::Int(*value)))
@@ -2197,9 +2198,8 @@ pub(crate) fn eval_value_expr_mode(
         Node::While { cond, body, .. } => {
             loops::run_while(cond, body, &mut env.clone(), tensor_env, mode)
         }
-        // RFC 0010 Phase A: `extern "C"` blocks are declarations, not
-        // expressions. The interpreter returns a unit placeholder; the
-        // actual call site is handled by the MLIR lowering path.
+        // RFC 0010: an `extern "C"` block is a declaration, not an expression;
+        // the interpreter returns a unit placeholder (calls dispatch by name).
         Node::ExternBlock { .. } => Ok(Value::Int(0)),
         // RFC 0010 Phase J-A: `region { ... }` block.
         //

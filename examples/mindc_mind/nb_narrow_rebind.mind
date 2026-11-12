@@ -1,0 +1,433 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// N2 width rebinds for the mic@3 note twin. MIND rule (spec/v1.0 narrow scalars):
+// a value named by a narrow binding is always in the range of its declared type.
+//   - An 8/16-bit parameter arrives in an i64 slot. A C caller does not have to
+//     extend it (SysV leaves bits 8..63 of a char/short argument unspecified,
+//     Win64 leaves every bit above the declared width undefined), so the callee
+//     wraps it once at entry: the twin prepends `let p: T = p;`, which lowers to
+//     the same CONST mask + AND (unsigned) or CONST shift + SHL + SHR (signed).
+//   - An assignment to a narrow local or parameter wraps the new value at the
+//     declared width (a tagged paren, see nrb_wrap).
+//   - A u64 binding carries its unsignedness as an identity `__mind_conv_u64`
+//     conversion on each let initializer and assignment (a cast to the declared
+//     u64 type), so later signed-sensitive ops read it as unsigned.
+// The pass runs on the twin's own parse only; native code never sees it.
+// PART RULE: intrinsics and other parts only.
+
+import nb_ast;
+import nb_prim_desc;
+import nb_opt_licm_facts;
+
+// Marker in the aux word of a width-wrap paren (a parser paren has aux 0).
+pub fn nrb_wrap_tag() -> i64 {
+    7177
+}
+
+// Env code of a u64 binding (not a narrow code, not the wide code 64).
+pub fn nrb_u64_code() -> i64 {
+    164
+}
+
+// Width code of a type leaf: 8/16/32 signed, -8/-16/-32 unsigned, nrb_u64_code()
+// for u64, 64 for i64, usize, bool, every other type and no annotation.
+pub fn nrb_type_code(buf: i64, ty: i64) -> i64 {
+    if ty == 0 {
+        return 64;
+    }
+    let c: i64 = prim_code_of(buf, ast_span_lo(ty), ast_span_hi(ty));
+    if c < 0 {
+        return 64;
+    }
+    if prim_code_is_float(c) == 1 {
+        return 64;
+    }
+    if prim_code_is_bool(c) == 1 {
+        return 64;
+    }
+    let bits: i64 = prim_code_narrow_bits(c);
+    if bits > 0 {
+        if prim_code_signed(c) == 1 {
+            return bits;
+        }
+        return 0 - bits;
+    }
+    // Only the name u64 is tagged unsigned; usize keeps the plain 64 code.
+    if c == 7 {
+        return nrb_u64_code();
+    }
+    64
+}
+
+// 1 iff code is a narrow width code (+-8, +-16, +-32).
+pub fn nrb_is_narrow(code: i64) -> i64 {
+    if code == 8 {
+        return 1;
+    }
+    if code == 16 {
+        return 1;
+    }
+    if code == 32 {
+        return 1;
+    }
+    if code == 0 - 8 {
+        return 1;
+    }
+    if code == 0 - 16 {
+        return 1;
+    }
+    if code == 0 - 32 {
+        return 1;
+    }
+    0
+}
+
+// Number of MIC@3 instructions of a width wrap: CONST mask + AND (unsigned),
+// CONST shift + SHL + SHR (signed), none for 0 and 64.
+pub fn named_narrow_ret_extra(code: i64) -> i64 {
+    if code == 64 {
+        return 0;
+    }
+    if code < 0 {
+        return 2;
+    }
+    if code > 0 {
+        return 3;
+    }
+    0
+}
+
+// Result vid after emit_mic3_named_narrow_return writes at first_id.
+pub fn named_narrow_ret_result(raw_vid: i64, first_id: i64, code: i64) -> i64 {
+    if code < 0 {
+        return first_id + 1;
+    }
+    if code > 0 {
+        return first_id + 2;
+    }
+    raw_vid
+}
+
+// Extra top-level instructions of a statement-sequence plan record of type ty: a
+// type-7 record (a value-if let) adds the width wrap of its code w after its OP_IF.
+pub fn nrb_plan7_extra(ty: i64, w: i64) -> i64 {
+    if ty == 7 {
+        return named_narrow_ret_extra(w);
+    }
+    0
+}
+
+// 1 iff flatten_width_wrap keeps `root` as is: no wrap code, or a failed operand.
+pub fn nrb_keep(code: i64, root: i64) -> i64 {
+    if root < 0 {
+        return 1;
+    }
+    if code == 0 {
+        return 1;
+    }
+    if code == 64 {
+        return 1;
+    }
+    0
+}
+
+// The wrap code of a paren node: its code for a width-wrap paren, else 0.
+pub fn nrb_paren_code(node: i64) -> i64 {
+    if ast_aux(node) == nrb_wrap_tag() {
+        return ast_child1(node);
+    }
+    0
+}
+
+// Instruction count of a paren node whose operand counts `c` (-1 = unsupported).
+pub fn nrb_wrap_count(node: i64, c: i64) -> i64 {
+    if c < 0 {
+        return c;
+    }
+    c + named_narrow_ret_extra(nrb_paren_code(node))
+}
+
+// `e` wrapped at width `code`: a paren (kind 12) tagged in its aux word, the code
+// in child1 and in the narrow-lattice word.
+pub fn nrb_wrap(e: i64, code: i64) -> i64 {
+    let n: i64 = __mind_alloc(64);
+    __mind_store_i64(n, 12);
+    __mind_store_i64(n + 8, ast_span_lo(e));
+    __mind_store_i64(n + 16, ast_span_hi(e));
+    __mind_store_i64(n + 24, e);
+    __mind_store_i64(n + 32, code);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, nrb_wrap_tag());
+    __mind_store_i64(n + 56, code);
+    n
+}
+
+// `e as u64` (kind 25) spelled by the declared type leaf `ty`.
+pub fn nrb_tag_u64(e: i64, ty: i64) -> i64 {
+    let n: i64 = __mind_alloc(64);
+    __mind_store_i64(n, 25);
+    __mind_store_i64(n + 8, ast_span_lo(e));
+    __mind_store_i64(n + 16, ast_span_hi(e));
+    __mind_store_i64(n + 24, e);
+    __mind_store_i64(n + 32, ast_span_lo(ty));
+    __mind_store_i64(n + 40, ast_span_hi(ty));
+    __mind_store_i64(n + 48, 64);
+    __mind_store_i64(n + 56, 0);
+    n
+}
+
+// The new value of a binding with env frame `f` (0 = unknown name) in function fnn.
+pub fn nrb_value(fnn: i64, f: i64, v: i64) -> i64 {
+    if f == 0 {
+        return v;
+    }
+    let code: i64 = __mind_load_i64(f + 24);
+    // A value-if right side lowers to one OP_IF with no trailing wrap: refuse the
+    // function (fail closed to the source note) when the binding needs one.
+    // deferred: would wrap the OP_IF result like a narrow return, refused because each
+    // emit path lowers a value-if assignment itself; upgrade path: one OP_IF wrap helper.
+    if ast_kind(v) == 16 {
+        return nrb_refuse_if(fnn, nrb_is_narrow(code) + nrb_is_u64(code), v);
+    }
+    if nrb_is_narrow(code) == 1 {
+        return nrb_wrap(v, code);
+    }
+    if code == nrb_u64_code() {
+        return nrb_tag_u64(v, __mind_load_i64(f + 32));
+    }
+    v
+}
+
+// 1 iff node is an if (kind 16): a value-if initializer or right side.
+pub fn nrb_is_if(node: i64) -> i64 {
+    if ast_kind(node) == 16 {
+        return 1;
+    }
+    0
+}
+
+pub fn nrb_is_u64(code: i64) -> i64 {
+    if code == nrb_u64_code() {
+        return 1;
+    }
+    0
+}
+
+// Marker in word 5 (child2) of a function's name leaf: the twin refuses that function.
+pub fn nrb_refuse_tag() -> i64 {
+    7178
+}
+
+// Mark fnn refused when need > 0; returns v unchanged.
+pub fn nrb_refuse_if(fnn: i64, need: i64, v: i64) -> i64 {
+    if need > 0 {
+        __mind_store_i64(ast_child0(fnn) + 40, nrb_refuse_tag())
+    }
+    v
+}
+
+// 1 iff the twin must refuse fn_node: a failed name lookup (nidx < 0) or a rebind mark.
+pub fn nrb_twin_refuses(fn_node: i64, nidx: i64) -> i64 {
+    if nidx < 0 {
+        return 1;
+    }
+    if ast_child2(ast_child0(fn_node)) == nrb_refuse_tag() {
+        return 1;
+    }
+    0
+}
+
+// Env frame [parent, name lo, name hi, code, type leaf]; the latest bind wins.
+pub fn nrb_bind(env: i64, name: i64, code: i64, ty: i64) -> i64 {
+    let f: i64 = __mind_alloc(40);
+    __mind_store_i64(f, env);
+    __mind_store_i64(f + 8, ast_span_lo(name));
+    __mind_store_i64(f + 16, ast_span_hi(name));
+    __mind_store_i64(f + 24, code);
+    __mind_store_i64(f + 32, ty);
+    f
+}
+
+pub fn nrb_find(buf: i64, env: i64, name: i64) -> i64 {
+    if env == 0 {
+        return 0;
+    }
+    if nbl_span_eq(buf, ast_span_lo(name), ast_span_hi(name), __mind_load_i64(env + 8), __mind_load_i64(env + 16)) == 1 {
+        return env;
+    }
+    nrb_find(buf, __mind_load_i64(env), name)
+}
+
+// Rewrite one statement list in place; returns the env after it.
+pub fn nrb_stmts(buf: i64, fnn: i64, sa: i64, n: i64, env0: i64) -> i64 {
+    let mut env: i64 = env0;
+    let mut i: i64 = 0;
+    while i < n {
+        env = nrb_stmt(buf, fnn, __mind_load_i64(sa + i * 8), env);
+        i = i + 1;
+    }
+    env
+}
+
+pub fn nrb_block(buf: i64, fnn: i64, b: i64, env: i64) -> i64 {
+    if b == 0 {
+        return 0;
+    }
+    if ast_kind(b) == 10 {
+        let _b: i64 = nrb_stmts(buf, fnn, ast_child0(b), ast_aux(b), env);
+        return 0;
+    }
+    if ast_kind(b) == 16 {
+        let _e: i64 = nrb_stmt(buf, fnn, b, env);
+    }
+    0
+}
+
+pub fn nrb_stmt(buf: i64, fnn: i64, s: i64, env: i64) -> i64 {
+    let k: i64 = ast_kind(s);
+    if k == 6 {
+        let ty: i64 = ast_child1(s);
+        let code: i64 = nrb_type_code(buf, ty);
+        if code == nrb_u64_code() {
+            if ast_kind(ast_child2(s)) != 16 {
+                __mind_store_i64(s + 40, nrb_tag_u64(ast_child2(s), ty))
+            }
+            let _r: i64 = nrb_refuse_if(fnn, nrb_is_if(ast_child2(s)), 0);
+        }
+        return nrb_bind(env, ast_child0(s), code, ty);
+    }
+    if k == 21 {
+        __mind_store_i64(s + 40, nrb_value(fnn, nrb_find(buf, env, ast_child0(s)), ast_child2(s)));
+        return env;
+    }
+    if k == 16 {
+        let _t: i64 = nrb_block(buf, fnn, ast_child1(s), env);
+        let _e: i64 = nrb_block(buf, fnn, ast_child2(s), env);
+        return env;
+    }
+    if k == 20 {
+        let _w: i64 = nrb_block(buf, fnn, ast_child1(s), env);
+        return env;
+    }
+    if k == 10 {
+        let _b: i64 = nrb_block(buf, fnn, s, env);
+    }
+    env
+}
+
+// 1 iff a parameter of code `code` is wrapped at entry: the 8/16-bit widths. An
+// i32/u32 parameter is not: see nrb_fn.
+pub fn nrb_entry_wrap(code: i64) -> i64 {
+    if code == 32 {
+        return 0;
+    }
+    if code == 0 - 32 {
+        return 0;
+    }
+    nrb_is_narrow(code)
+}
+
+// Prepend `let p: T = p;` for each 8/16-bit parameter, then rewrite the body.
+// shortcut: an i32/u32 parameter gets no entry wrap, as in the reference; a MIND
+// caller always passes a value in range (the type check), and a C caller value
+// is wrapped by every narrow use (let, assign, arithmetic) in the twin.
+pub fn nrb_fn(buf: i64, f: i64) -> i64 {
+    let body: i64 = ast_child2(f);
+    if ast_kind(body) != 10 {
+        return 0;
+    }
+    let pa: i64 = ast_child1(f);
+    let np: i64 = ast_aux(f) / 2;
+    let env: i64 = nrb_param_env(buf, pa, np, 0, 0);
+    let n0: i64 = ast_aux(body);
+    let nw: i64 = nrb_param_count(buf, pa, np, 0);
+    if nw == 0 {
+        let _s0: i64 = nrb_stmts(buf, f, ast_child0(body), n0, env);
+        return 0;
+    }
+    let sa: i64 = __mind_alloc((n0 + nw) * 8 + 8);
+    let _p: i64 = nrb_put_prologue(buf, pa, np, 0, sa, 0);
+    let _c: i64 = nrb_copy(sa + nw * 8, ast_child0(body), n0, 0);
+    let nb: i64 = nbl_with(body, 3, sa);
+    __mind_store_i64(nb + 48, n0 + nw);
+    __mind_store_i64(f + 40, nb);
+    let _s: i64 = nrb_stmts(buf, f, sa + nw * 8, n0, env);
+    nw
+}
+
+// The env of the parameters pa[i..np) on top of env.
+pub fn nrb_param_env(buf: i64, pa: i64, np: i64, i: i64, env: i64) -> i64 {
+    if i >= np {
+        return env;
+    }
+    let p: i64 = __mind_load_i64(pa + i * 8);
+    nrb_param_env(buf, pa, np, i + 1, nrb_bind(env, ast_child0(p), nrb_type_code(buf, ast_child1(p)), ast_child1(p)))
+}
+
+// The number of parameters in pa[i..np) wrapped at entry.
+pub fn nrb_param_count(buf: i64, pa: i64, np: i64, i: i64) -> i64 {
+    if i >= np {
+        return 0;
+    }
+    let p: i64 = __mind_load_i64(pa + i * 8);
+    nrb_entry_wrap(nrb_type_code(buf, ast_child1(p))) + nrb_param_count(buf, pa, np, i + 1)
+}
+
+// Write the entry lets of pa[i..np) to sa[j..), in parameter order.
+pub fn nrb_put_prologue(buf: i64, pa: i64, np: i64, i: i64, sa: i64, j: i64) -> i64 {
+    if i >= np {
+        return j;
+    }
+    let p: i64 = __mind_load_i64(pa + i * 8);
+    let code: i64 = nrb_type_code(buf, ast_child1(p));
+    if nrb_entry_wrap(code) == 1 {
+        __mind_store_i64(sa + j * 8, nrb_param_let(p, code));
+        return nrb_put_prologue(buf, pa, np, i + 1, sa, j + 1);
+    }
+    nrb_put_prologue(buf, pa, np, i + 1, sa, j)
+}
+
+// Copy n words from src to dst, from word i on.
+pub fn nrb_copy(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+    nrb_copy(dst, src, n, i + 1)
+}
+
+// `let p: T = p;` for parameter node p of width code `code` (the lattice word of
+// the init is the parameter's code, as the annotation pass gives each use of p).
+pub fn nrb_param_let(p: i64, code: i64) -> i64 {
+    let name: i64 = ast_child0(p);
+    let init: i64 = nbl_ident(ast_span_lo(name), ast_span_hi(name));
+    __mind_store_i64(init + 56, code);
+    let n: i64 = __mind_alloc(64);
+    __mind_store_i64(n, 6);
+    __mind_store_i64(n + 8, ast_span_lo(p));
+    __mind_store_i64(n + 16, ast_span_hi(p));
+    __mind_store_i64(n + 24, nbl_ident(ast_span_lo(name), ast_span_hi(name)));
+    __mind_store_i64(n + 32, ast_child1(p));
+    __mind_store_i64(n + 40, init);
+    __mind_store_i64(n + 48, 0);
+    __mind_store_i64(n + 56, 0);
+    n
+}
+
+// Apply nrb_fn to every function item (kind 5).
+pub fn nrb_rewrite_module(buf: i64, items: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let _f: i64 = nrb_fn_item(buf, __mind_load_i64(items + i * 8));
+    nrb_rewrite_module(buf, items, n, i + 1)
+}
+
+pub fn nrb_fn_item(buf: i64, it: i64) -> i64 {
+    if ast_kind(it) != 5 {
+        return 0;
+    }
+    nrb_fn(buf, it)
+}

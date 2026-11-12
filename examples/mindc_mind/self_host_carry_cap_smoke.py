@@ -65,8 +65,11 @@ def check_carry(lib):
     _b, buf = cbuf(len(names))
     ctypes.memmove(_b, names, len(names))
     _l, lets = cbuf(8)
-    _lc, lcell = cbuf(8, True)
-    rets = [lib.nb_carry_record(carry, ccell, buf, i * 3, i * 3 + 3, i, lets, lcell) for i in range(N)]
+    # 8th arg is entry_n, the COUNT of pre-loop let-env entries (7ff9fc93 replaced
+    # the old count-cell pointer). Passing a buffer address here made the lookup
+    # walk ~2^47 entries and SIGSEGV. The let-env is empty, so the count is 0.
+    entry_n = 0
+    rets = [lib.nb_carry_record(carry, ccell, buf, i * 3, i * 3 + 3, i, lets, entry_n) for i in range(N)]
     final = rd(ccell)
     recorded = sum(1 for r in rets if r == 0)
     refused = sum(1 for r in rets if r == -1)

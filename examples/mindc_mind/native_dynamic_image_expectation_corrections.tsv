@@ -1,0 +1,2 @@
+id	field	original	corrected	reason
+12	runtime_exit	127	1	GNU loader missing-version diagnostic exits 1; missing-symbol case 13 remains 127. Original frozen packet retained.

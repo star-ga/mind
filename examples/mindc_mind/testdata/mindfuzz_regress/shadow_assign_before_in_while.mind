@@ -1,0 +1,13 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// The shadow sits in a while body (loop-carried outer name).
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    let mut x: i64 = 0;
+    while a < 3 {
+        x = 5;
+        let mut x: i64 = 7;
+        x = 9;
+        a = a + 1;
+    }
+    return x;
+}

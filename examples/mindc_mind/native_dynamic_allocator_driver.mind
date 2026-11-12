@@ -1,0 +1,24 @@
+// Copyright 2026 STARGA Inc. Standalone diagnostic, no compiler admission.
+fn main() -> i64 {
+    let request: i64 = __mind_alloc(80);
+    let metadata: i64 = __mind_alloc(64);
+    let mut count: i64 = 0;
+    while count < 80 {
+        let got: i64 = __mind_read(0, request + count, 80 - count, 0 - 1);
+        if got <= 0 {
+            return 111;
+        }
+        count = count + got;
+    }
+    let code: String = nda_emit(request, metadata);
+    if __mind_write(1, metadata, 64, 0 - 1) != 64 {
+        return 112;
+    }
+    if string_len(code) == 0 {
+        return 2;
+    }
+    if __mind_write(1, string_addr(code), string_len(code), 0 - 1) != string_len(code) {
+        return 113;
+    }
+    0
+}

@@ -1,0 +1,274 @@
+import std.sha256;
+
+// STARGA Inc. NSF_STDIN_V2 source compiler transport.
+// This adapter is not a compiler qualification or an official CLI integration.
+
+pub fn nsc_read_once(p:i64,n:i64)->i64 {
+ __mind_read(0,p,n,0-1)
+}
+
+pub fn nsc_write_once(fd:i64,p:i64,n:i64)->i64 {
+ __mind_write(fd,p,n,0-1)
+}
+
+// Return 1 after an exact read, 0 for a clean short EOF, and -1 for I/O failure.
+pub fn nsc_read_exact(p:i64,n:i64)->i64 {
+ let mut i:i64=0;
+ while i<n {
+  let left:i64=n-i;
+  let k:i64=nsc_read_once(p+i,left);
+  if k==0{return 0;}
+  if k<0{return 0-1;}
+  if k>left{return 0-1;}
+  i=i+k;
+ }
+ 1
+}
+
+pub fn nsc_write_exact(fd:i64,p:i64,n:i64)->i64 {
+ let mut i:i64=0;
+ while i<n {
+  let left:i64=n-i;
+  let k:i64=nsc_write_once(fd,p+i,left);
+  if k<=0{return 0;}
+  if k>left{return 0;}
+  i=i+k;
+ }
+ 1
+}
+
+pub fn nsc_set_malformed(p:i64)->i64 {
+ __mind_store_i8(p,109);__mind_store_i8(p+1,97);
+ __mind_store_i8(p+2,108);__mind_store_i8(p+3,102);
+ __mind_store_i8(p+4,111);__mind_store_i8(p+5,114);
+ __mind_store_i8(p+6,109);__mind_store_i8(p+7,101);
+ __mind_store_i8(p+8,100);__mind_store_i8(p+9,32);
+ __mind_store_i8(p+10,105);__mind_store_i8(p+11,110);
+ __mind_store_i8(p+12,112);__mind_store_i8(p+13,117);
+ __mind_store_i8(p+14,116);__mind_store_i8(p+15,10);
+ 16
+}
+
+pub fn nsc_set_refused(p:i64)->i64 {
+ __mind_store_i8(p,115);__mind_store_i8(p+1,111);
+ __mind_store_i8(p+2,117);__mind_store_i8(p+3,114);
+ __mind_store_i8(p+4,99);__mind_store_i8(p+5,101);
+ __mind_store_i8(p+6,47);__mind_store_i8(p+7,105);
+ __mind_store_i8(p+8,109);__mind_store_i8(p+9,97);
+ __mind_store_i8(p+10,103);__mind_store_i8(p+11,101);
+ __mind_store_i8(p+12,32);__mind_store_i8(p+13,114);
+ __mind_store_i8(p+14,101);__mind_store_i8(p+15,102);
+ __mind_store_i8(p+16,117);__mind_store_i8(p+17,115);
+ __mind_store_i8(p+18,101);__mind_store_i8(p+19,100);
+ __mind_store_i8(p+20,10);
+ 21
+}
+
+pub fn nsc_set_allocation(p:i64)->i64 {
+ __mind_store_i8(p,97);__mind_store_i8(p+1,108);
+ __mind_store_i8(p+2,108);__mind_store_i8(p+3,111);
+ __mind_store_i8(p+4,99);__mind_store_i8(p+5,97);
+ __mind_store_i8(p+6,116);__mind_store_i8(p+7,105);
+ __mind_store_i8(p+8,111);__mind_store_i8(p+9,110);
+ __mind_store_i8(p+10,32);__mind_store_i8(p+11,114);
+ __mind_store_i8(p+12,101);__mind_store_i8(p+13,102);
+ __mind_store_i8(p+14,117);__mind_store_i8(p+15,115);
+ __mind_store_i8(p+16,101);__mind_store_i8(p+17,100);
+ __mind_store_i8(p+18,10);
+ 19
+}
+
+pub fn nsc_set_io(p:i64)->i64 {
+ __mind_store_i8(p,105);__mind_store_i8(p+1,110);
+ __mind_store_i8(p+2,112);__mind_store_i8(p+3,117);
+ __mind_store_i8(p+4,116);__mind_store_i8(p+5,47);
+ __mind_store_i8(p+6,111);__mind_store_i8(p+7,117);
+ __mind_store_i8(p+8,116);__mind_store_i8(p+9,112);
+ __mind_store_i8(p+10,117);__mind_store_i8(p+11,116);
+ __mind_store_i8(p+12,32);__mind_store_i8(p+13,102);
+ __mind_store_i8(p+14,97);__mind_store_i8(p+15,105);
+ __mind_store_i8(p+16,108);__mind_store_i8(p+17,117);
+ __mind_store_i8(p+18,114);__mind_store_i8(p+19,101);
+ __mind_store_i8(p+20,10);
+ 21
+}
+
+pub fn nsc_error(control:i64,code:i64)->i64 {
+ let p:i64=control+168;
+ let mut n:i64=0;
+ if code==64{n=nsc_set_malformed(p);}
+ if code==65{n=nsc_set_refused(p);}
+ if code==70{n=nsc_set_allocation(p);}
+ if code==74{n=nsc_set_io(p);}
+ if n>0{nsc_write_exact(2,p,n);}
+ 0
+}
+
+pub fn nsc_fail(control:i64,source:i64,image:i64,code:i64)->i64 {
+ if image!=0{__mind_free(image);}
+ if source!=0{__mind_free(source);}
+ nsc_error(control,code);
+ __mind_free(control);
+ code
+}
+
+pub fn nsc_magic_ok(p:i64)->i64 {
+ if __mind_load_i8(p)!=77{return 0;}
+ if __mind_load_i8(p+1)!=73{return 0;}
+ if __mind_load_i8(p+2)!=78{return 0;}
+ if __mind_load_i8(p+3)!=68{return 0;}
+ if __mind_load_i8(p+4)!=78{return 0;}
+ if __mind_load_i8(p+5)!=83{return 0;}
+ if __mind_load_i8(p+6)!=73{return 0;}
+ if __mind_load_i8(p+7)!=50{return 0;}
+ 1
+}
+
+pub fn nsc_diag_zero(p:i64)->i64 {
+ if __mind_load_i64(p)!=0{return 0;}
+ if __mind_load_i64(p+8)!=0{return 0;}
+ if __mind_load_i64(p+16)!=0{return 0;}
+ if __mind_load_i64(p+24)!=0{return 0;}
+ 1
+}
+
+pub fn nsc_elf_ok(p:i64,n:i64)->i64 {
+ if p==0{return 0;}
+ if n<4{return 0;}
+ if __mind_load_i8(p)!=127{return 0;}
+ if __mind_load_i8(p+1)!=69{return 0;}
+ if __mind_load_i8(p+2)!=76{return 0;}
+ if __mind_load_i8(p+3)!=70{return 0;}
+ 1
+}
+
+pub fn nsc_compile_once(source:i64,length:i64,hash:i64,user_lo:i64,policy:i64,diagnostic:i64)->String {
+ let image:String=nsf_compile(source,length,hash,user_lo,0,policy,diagnostic);
+ if string_len(image)==0{return image;}
+ // The lower-level image API accepts a caller-supplied note. Here the digest
+ // was computed from the complete source, so validate and bind that claim
+ // before publishing type 2. Type 1 would incorrectly claim an IR trace hash.
+ let off:i64=hm_source_note_offset(image);
+ if off<0{
+  __mind_free(string_addr(image));
+  __mind_store_i64(diagnostic,7);
+  return string_new();
+ }
+ let note:i64=string_addr(image)+off;
+ let mut i:i64=0;
+ while i<32{
+  if __mind_load_i8(note+20+i)!=__mind_load_i8(hash+i){
+   __mind_free(string_addr(image));
+   __mind_store_i64(diagnostic,7);
+   return string_new();
+  }
+  i=i+1;
+ }
+ __mind_store_i32(note+8,2);
+ image
+}
+
+// Dedicated process entry only: ignore SIGPIPE so write errors are observed.
+// Linux x86-64 kernel sigaction is [handler, flags, restorer, mask], four words.
+pub fn nsc_install_sigpipe_policy(p:i64)->i64 {
+ __mind_store_i64(p,1);
+ __mind_store_i64(p+8,0);
+ __mind_store_i64(p+16,0);
+ __mind_store_i64(p+24,0);
+ __mind_sys_rt_sigaction(13,p,0,8)
+}
+
+pub fn main()->i64 {
+ // Layout: header 0, payload prefix 32, EOF byte 48, policy 56,
+ // digest 104, diagnostics 136, error text 168, signal action 200.
+ let control:i64=__mind_alloc(256);
+ if control==0{return 70;}
+ let mut clear:i64=0;
+ while clear<256 {
+  __mind_store_i8(control+clear,0);
+  clear=clear+1;
+ }
+
+ // If signal setup fails, do not risk another SIGPIPE while reporting it.
+ if nsc_install_sigpipe_policy(control+200)!=0 {
+  __mind_free(control);
+  return 74;
+ }
+
+ let header_read:i64=nsc_read_exact(control,32);
+ if header_read==0{return nsc_fail(control,0,0,64);}
+ if header_read!=1{return nsc_fail(control,0,0,74);}
+ if nsc_magic_ok(control)!=1{return nsc_fail(control,0,0,64);}
+ if __mind_load_i64(control+8)!=32{return nsc_fail(control,0,0,64);}
+ if __mind_load_i64(control+16)!=0{return nsc_fail(control,0,0,64);}
+ let nested_length:i64=__mind_load_i64(control+24);
+ if nested_length<17{return nsc_fail(control,0,0,64);}
+ if nested_length>4194320{return nsc_fail(control,0,0,64);}
+
+ let prefix_read:i64=nsc_read_exact(control+32,16);
+ if prefix_read==0{return nsc_fail(control,0,0,64);}
+ if prefix_read!=1{return nsc_fail(control,0,0,74);}
+ let user_lo:i64=__mind_load_i64(control+32);
+ let source_length:i64=__mind_load_i64(control+40);
+ if source_length<1{return nsc_fail(control,0,0,64);}
+ if source_length>4194304{return nsc_fail(control,0,0,64);}
+ if source_length!=nested_length-16{return nsc_fail(control,0,0,64);}
+ if user_lo<0{return nsc_fail(control,0,0,64);}
+ if user_lo>=source_length{return nsc_fail(control,0,0,64);}
+
+ let source:i64=__mind_alloc(source_length+16);
+ if source==0{return nsc_fail(control,0,0,70);}
+ let source_read:i64=nsc_read_exact(source,source_length);
+ if source_read==0{return nsc_fail(control,source,0,64);}
+ if source_read!=1{return nsc_fail(control,source,0,74);}
+ let mut sentinel:i64=0;
+ while sentinel<16 {
+  __mind_store_i8(source+source_length+sentinel,0);
+  sentinel=sentinel+1;
+ }
+
+ let eof_read:i64=nsc_read_once(control+48,1);
+ if eof_read==1{return nsc_fail(control,source,0,64);}
+ if eof_read!=0{return nsc_fail(control,source,0,74);}
+
+ let policy:i64=control+56;
+ __mind_store_i64(policy,1);
+ __mind_store_i64(policy+8,268435456);
+ __mind_store_i64(policy+16,268435456);
+ __mind_store_i64(policy+24,67108864);
+ __mind_store_i64(policy+32,4096);
+ __mind_store_i64(policy+40,268435456);
+ let digest:i64=control+104;
+ let hash_status:i64=sha256(source,source_length,digest);
+ if hash_status==2{return nsc_fail(control,source,0,70);}
+ if hash_status!=0 {
+  return nsc_fail(control,source,0,65);
+ }
+ let diagnostic:i64=control+136;
+ __mind_store_i64(diagnostic,0);
+ __mind_store_i64(diagnostic+8,0);
+ __mind_store_i64(diagnostic+16,0);
+ __mind_store_i64(diagnostic+24,0);
+
+ let image:String=nsc_compile_once(source,source_length,digest,user_lo,policy,diagnostic);
+ let image_addr:i64=string_addr(image);
+ let image_length:i64=string_len(image);
+ if __mind_load_i64(diagnostic)==2 {
+  return nsc_fail(control,source,image_addr,70);
+ }
+ if nsc_diag_zero(diagnostic)!=1 {
+  return nsc_fail(control,source,image_addr,65);
+ }
+ if image_length<=0{return nsc_fail(control,source,image_addr,65);}
+ if nsc_elf_ok(image_addr,image_length)!=1 {
+  return nsc_fail(control,source,image_addr,65);
+ }
+ if nsc_write_exact(1,image_addr,image_length)!=1 {
+  return nsc_fail(control,source,image_addr,74);
+ }
+
+ __mind_free(image_addr);
+ __mind_free(source);
+ __mind_free(control);
+ 0
+}

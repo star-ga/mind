@@ -1,0 +1,72 @@
+[
+  {
+    "id": "M01",
+    "purpose": "fixed-type-comparison",
+    "case": "C12",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "19808bb5f469f1c605af01e577fed62fc7ce29c37c171a2afe61fea2e5af35eb",
+    "patch_sha256": "895ec3719bdecfc696c08309d2e1bdb76975010f357ca4b100f0ddacf66f8486"
+  },
+  {
+    "id": "M02",
+    "purpose": "u8-promotion",
+    "case": "C03",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "95f68eef852fd5c7135ea4a19396ae9d02d61f05a2ed60deb9ed4afd4e0ea19b",
+    "patch_sha256": "c11ebb4658c8daae0377e7cb57d669cd9bf0683a8cf71ef7c94dcd6bc3788f11"
+  },
+  {
+    "id": "M03",
+    "purpose": "f32-promotion",
+    "case": "C06",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "5394f14bc90db24ae51145139bb0a93e1f89ad660378462d1e2699a51328253a",
+    "patch_sha256": "f20edcec1659c3eba4ca204f724c191e6e6613023ecd1cbbca938efd47b19274"
+  },
+  {
+    "id": "M04",
+    "purpose": "independent-register-pools",
+    "case": "C10",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "0b13ff391b96787a2d6a26456bd10dac5ad435543ee193765c3cbc2b20dd68cb",
+    "patch_sha256": "b64bc7645b8343d9c546488e5c26b40c46edaab06619079c84a02cdd95c1856c"
+  },
+  {
+    "id": "M05",
+    "purpose": "sse-register-count",
+    "case": "C10",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "9d244bb13df93784ebc56d3e5d158821d0a7dd86fad0819c25bf37b3667c0d4f",
+    "patch_sha256": "cfb582f6a14a52d872bf9316a6927243e52c6a259896a7abd092407ded34b23f"
+  },
+  {
+    "id": "M06",
+    "purpose": "reserved-zero",
+    "case": "C01",
+    "expected_exit": 1,
+    "expected_stdout": "0\n",
+    "expected_stderr": "",
+    "source_sha256": "ad36662e4485bedb6cd827ebd14296285fc31612a1970d27311c50581d04132e",
+    "patch_sha256": "ae2d703c250a23145b2dc5bbd1566a45ab4eaf152367e616b0c508eb6e3a8e55"
+  },
+  {
+    "id": "allocation-zero",
+    "purpose": "zero-return-allocation",
+    "case": "C65",
+    "expected_exit": 0,
+    "expected_stdout": "1\n",
+    "expected_stderr": "",
+    "source_sha256": "0f0f14b4d3920473fedb3f158ffddd1e68f7d066287b7084ac2f9ac2de3c7995",
+    "patch_sha256": "f217d3a590681a325a33ae3cbd16752e1b17e9881be2875270d0ba7b80e091d3"
+  }
+]

@@ -1,0 +1,39 @@
+// __mind_group_acc32_i64 against the N2 oracle's acc32 rows (the scalar oracle
+// program native_avx2_i64_scalar.mind writes out[i] = i + 8, i < 32, at bytes
+// 896..1152). Call 1: init 0 over a garbage-filled out, pos taps A (i + 10) and
+// B (5), neg taps C (3) and D (4) read from off[pos + j]; offsets in bytes, A
+// not 32-byte aligned. Call 2: init 1 over out = i, one pos tap E (8).
+// Stdout = out1 then out2 (each the oracle's 256 bytes); exit = 0.
+
+fn gs_block(dst: i64, base: i64, step: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(dst + i * 8, base + step * i);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(1312);
+    gs_block(bank + 8, 10, 1);
+    gs_block(bank + 264, 5, 0);
+    gs_block(bank + 528, 3, 0);
+    gs_block(bank + 784, 4, 0);
+    gs_block(bank + 1048, 8, 0);
+    let off: i64 = __mind_alloc(40);
+    __mind_store_i64(off, 8);
+    __mind_store_i64(off + 8, 264);
+    __mind_store_i64(off + 16, 528);
+    __mind_store_i64(off + 24, 784);
+    __mind_store_i64(off + 32, 1048);
+    let out1: i64 = __mind_alloc(256);
+    gs_block(out1, 1000, 7);
+    let out2: i64 = __mind_alloc(256);
+    gs_block(out2, 0, 1);
+    let r1: i64 = __mind_group_acc32_i64(out1, bank, off, 2, 2, 0);
+    let r2: i64 = __mind_group_acc32_i64(out2, bank, off + 32, 1, 0, 1);
+    __mind_write(1, out1, 256, 0 - 1);
+    __mind_write(1, out2, 256, 0 - 1);
+    r1 + r2
+}

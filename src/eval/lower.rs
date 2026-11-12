@@ -37,8 +37,10 @@ use crate::ast::Literal;
 use crate::ast::TensorElemOp;
 use crate::ast::TypeAnn;
 use crate::eval::materialization::{
-    MaterializationBudget, MaterializationLimits, MaterializationRefusal,
+    ConstRefusal, MaterializationBudget, MaterializationLimits, MaterializationRefusal,
 };
+#[cfg(feature = "std-surface")]
+use crate::eval::narrow_scan::{is_payload_generic_ty, is_tuple_ann_ty};
 
 #[cfg(feature = "cross-module-imports")]
 #[path = "canonical_lowering.rs"]
@@ -1259,7 +1261,7 @@ pub fn lower_to_ir_with_limits(
     limits: MaterializationLimits,
 ) -> Result<IRModule, MaterializationRefusal> {
     let mut context = LoweringContext::new(limits);
-    let ir = lower_to_ir_inner(module, &mut context);
+    let ir = lower_entry::lower_module(module, &mut context);
     context.refusal.map_or(Ok(ir), Err)
 }
 
@@ -1807,7 +1809,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
             } => {
                 // Phase 17.4 soundness guard: the named-`const`-array path is
                 // i64-only (`Instr::ConstArray.values: Vec<i64>`, materialised
-                // via `extract_array_lit_values` which coerces any non-integer
+                // via `extract_array_lit_values`, which coerced any non-integer
                 // literal to 0). A float element type therefore silently zeroed
                 // the whole table — a deterministic-wrong miscompile. Fail
                 // closed instead. f64 aggregates are Phase 17.3; upgrade path:
@@ -1843,7 +1845,11 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
                     if !context.charge_static_elements(elems.len(), false) {
                         continue;
                     }
-                    let data: Vec<u64> = elems.iter().map(|e| dense_elem_bits(e, &dtype)).collect();
+                    let op = "const_dense_array";
+                    let Some(data) = lower_entry::dense_bits(elems, &dtype, op, value, context)
+                    else {
+                        continue;
+                    };
                     let shape = vec![ShapeDim::Known(*length as usize)];
                     ir.const_dense_defs
                         .insert(name.clone(), (data.clone(), dtype.clone(), shape.clone()));
@@ -1872,7 +1878,15 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
                     if !context.charge_static_elements(element_count, false) {
                         continue;
                     }
-                    let values = extract_array_lit_values(value);
+                    let Some(values) = fixed_array::const_array_values(value) else {
+                        lower_entry::refuse_const(
+                            context,
+                            ConstRefusal::NonConstant,
+                            "const_array",
+                            value,
+                        );
+                        continue;
+                    };
                     ir.const_array_defs.insert(name.clone(), values.clone());
                     let id = ir.fresh();
                     ir.instrs.push(Instr::ConstArray {
@@ -2008,6 +2022,9 @@ fn lower_tensor_binding(
     context: &mut LoweringContext,
 ) -> ValueId {
     if let Some((dtype, shape)) = parse_tensor_ann(dtype, dims) {
+        if let Some(id) = lower_entry::const_fill(ir, value, &dtype, &shape, context) {
+            return id;
+        }
         match value {
             ast::Node::Lit(Literal::Int(n), _) => {
                 let id = ir.fresh();
@@ -2055,28 +2072,9 @@ fn lower_tensor_binding(
             // emit when the element count matches a fully-known shape; otherwise
             // fall through so the type checker reports the shape/literal mismatch.
             ast::Node::ArrayLit { elements, .. } => {
-                let expected: usize = shape
-                    .iter()
-                    .map(|d| match d {
-                        ShapeDim::Known(n) => *n,
-                        _ => 0,
-                    })
-                    .product();
-                if expected == elements.len() {
-                    if !context.charge_static_elements(expected, false) {
-                        return ir.fresh();
-                    }
-                    let data: Vec<u64> = elements
-                        .iter()
-                        .map(|e| dense_elem_bits(e, &dtype))
-                        .collect();
-                    let id = ir.fresh();
-                    ir.instrs.push(Instr::ConstDenseTensor {
-                        dst: id,
-                        dtype,
-                        shape,
-                        data,
-                    });
+                if let Some(id) =
+                    lower_entry::dense_literal(ir, elements, &dtype, &shape, value, context)
+                {
                     return id;
                 }
             }
@@ -2222,18 +2220,18 @@ fn scalar_int64_cast_signed(ty: &TypeAnn) -> Option<bool> {
 ///     sign-extends in one i64-carried value (same as `scalar_int_cast_width`).
 ///   * narrow UNSIGNED (`u8`/`u16`/`u32`) → a single `BitAnd` against the i64
 ///     const mask `(1 << W) - 1` (zero-extend, same as `scalar_uint_cast_width`).
-///   * `i64`/`u64`/pointers/floats/handles/unresolved names/no annotation → unchanged
-///     (`val` returned verbatim, so i64 locals and the keystone are byte-identical).
+///   * `f32` over an `f64` value → `__mind_conv_f32` (`fixed_array::f32_literal`).
+///   * `i64`/`u64`/pointers/other floats/handles/no annotation → unchanged (`val` verbatim).
 ///
-/// No new IR opcode and no mic@1/mic@3 layout change (only `ConstI64`/`BinOp`),
-/// so no version bump. Gated to `std-surface` because the narrow scalar types and
-/// the `Shl`/`Shr`/`BitAnd` ops only exist there.
+/// No new IR opcode, no mic@1/mic@3 layout change, no version bump. Gated to
+/// `std-surface` (the narrow scalar types and `Shl`/`Shr`/`BitAnd` live there).
 #[cfg(feature = "std-surface")]
 fn mask_narrow_let(ir: &mut IRModule, ann: &Option<TypeAnn>, val: ValueId) -> ValueId {
     let ty = match ann {
         Some(t) => t,
         None => return val,
     };
+    let val = fixed_array::f32_literal(ir, ty, val);
     // Signed narrow widths: shift-pair sign-extend.
     if let Some(width) = scalar_int_cast_width(ty) {
         if width < 64 {
@@ -2310,33 +2308,6 @@ fn is_narrow_scalar_ty(ty: &TypeAnn) -> bool {
         || matches!(scalar_uint_cast_width(ty), Some(w) if w < 64)
 }
 
-/// True when `ty` is a declared builtin `Option<…>`/`Result<…>` generic with
-/// explicit args (Finding 5). Such annotations enter `NARROW_LOCALS` so that
-/// `desugar_match_to_if` can recover the DECLARED payload type of a builtin
-/// `Some`/`Ok`/`Err` bind — the prelude registers those payloads as the generic
-/// `[ScalarI64]`, so an `Option<u64>` payload otherwise bound SIGNED
-/// (`u64::MAX` read back as `-1`, `v < 1` wrongly true). Every other
-/// `NARROW_LOCALS` reader is a no-op on a `Generic` entry (see the registry
-/// doc-comment), so recording these is byte-identical outside the match-bind
-/// path.
-#[cfg(feature = "std-surface")]
-fn is_payload_generic_ty(ty: &TypeAnn) -> bool {
-    matches!(ty, TypeAnn::Generic { name, args }
-        if matches!(name.as_str(), "Option" | "Result") && !args.is_empty())
-}
-
-/// True when `ty` is a declared TUPLE annotation with elements (Finding 6).
-/// Such annotations enter `NARROW_LOCALS` so a numeric tuple index `t.N` can
-/// resolve the receiver's declared element types — both for the bounds check
-/// and to re-materialise a narrow/`u64` element at its true width/signedness
-/// (`let t: (u64, i64) = …; t.0 < 1` must compare UNSIGNED). Every other
-/// `NARROW_LOCALS` reader is a no-op on a `Tuple` entry (see the registry
-/// doc-comment).
-#[cfg(feature = "std-surface")]
-fn is_tuple_ann_ty(ty: &TypeAnn) -> bool {
-    matches!(ty, TypeAnn::Tuple { elements } if !elements.is_empty())
-}
-
 /// True when `ty` is a sub-i64 integer that reaches a fn SIGNATURE as
 /// `TypeAnn::Named` (`i8`/`u8`/`i16`/`u16`) — the widths lowered by the
 /// i64-SLOT narrow-signature ABI: the MLIR `func.func` signature stays
@@ -2388,18 +2359,17 @@ thread_local! {
     /// carries no annotation — without re-masking, `c` silently keeps the full i64
     /// value (`300` instead of `44`), a SILENT MISCOMPILE that spans top-level,
     /// branch and loop bodies. `Assign` lowering consults this map and re-applies
-    /// `mask_narrow_let`. Populated with genuinely narrow scalars (see
-    /// `is_narrow_scalar_ty`) plus two DECLARED-annotation kinds used to type
-    /// derived reads: Finding 5 — `Option<…>`/`Result<…>` generics (see
-    /// `is_payload_generic_ty`), read by `desugar_match_to_if` to type a
-    /// builtin `Some`/`Ok`/`Err` payload bind; Finding 6 — tuple annotations
-    /// (see `is_tuple_ann_ty`), read by the numeric tuple index `t.N` to
-    /// resolve element types. Every other reader is a no-op on a
-    /// `Generic`/`Tuple` entry: `mask_narrow_let` falls through all width arms,
+    /// `mask_narrow_let`. Populated with genuinely narrow scalars, `f32` lets and
+    /// float params, plus two DECLARED-annotation kinds for derived reads: Finding
+    /// 5 — `Option<…>`/`Result<…>` generics (`is_payload_generic_ty`), read by
+    /// `desugar_match_to_if` to type a builtin `Some`/`Ok`/`Err` payload bind;
+    /// Finding 6 — tuple annotations (`is_tuple_ann_ty`), read by the numeric
+    /// tuple index `t.N` to resolve element types. Other readers are no-ops on
+    /// these entries (`mask_narrow_let` only converts an `f64` value for `f32`),
     /// `infer_narrow_arith_ty` filters to `is_named_narrow_sig_ty`. An all-i64
-    /// module leaves the map empty and the masking is a no-op (zero extra IR,
-    /// byte-identical hot path). Scoped per fn body and restored on exit via
-    /// `NarrowLocalsGuard`, so it never leaks across fns.
+    /// module leaves the map empty (zero extra IR, byte-identical hot path).
+    /// Scoped per fn body and restored on exit via `NarrowLocalsGuard`, so it
+    /// never leaks across fns.
     #[cfg(feature = "std-surface")]
     static NARROW_LOCALS: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -2433,9 +2403,8 @@ impl Drop for NarrowLocalsGuard {
     }
 }
 
-/// Begin a fresh narrow-locals scope for a fn body, seeded with its narrow
-/// params. Returns the restore guard. Cheap (one HashMap swap) and only inserts
-/// narrow-typed params, so a non-narrow fn keeps an empty map.
+/// Begin a fresh narrow-locals scope for a fn body, seeded with its narrow and
+/// float params (`fixed_array::is_f64` reads a float param). Returns the guard.
 #[cfg(feature = "std-surface")]
 fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
     NARROW_LOCALS.with(|n| {
@@ -2446,6 +2415,7 @@ fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
                 if is_narrow_scalar_ty(&prm.ty)
                     || is_payload_generic_ty(&prm.ty)
                     || is_tuple_ann_ty(&prm.ty)
+                    || scalar_float_cast_width(&prm.ty).is_some()
                 {
                     m.insert(prm.name.clone(), prm.ty.clone());
                 }
@@ -2571,15 +2541,16 @@ fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
         // carrier of unsignedness through lowering. Conflating "needs masking" with
         // "needs tracking" dropped the tag on every reassignment:
         //     let mut y: u64 = 5; y = 0 - 1; y >> 63   ==>  -1, correct answer 1
-        // while the same value written as a direct literal answered 1. No branch, no
-        // loop, default backend. `mask_narrow_let` has always emitted the right thing
-        // for u64; it was simply never reached from the assign path.
+        // while the same value written as a direct literal answered 1 (default
+        // backend; `mask_narrow_let` was never reached from the assign path).
         //
         // Same predicate pairing already used at the narrow-arith site below, so this
         // is the established spelling of "narrow OR u64", not a new concept. An
         // all-i64 module still records nothing, so the keystone stays byte-identical.
+        // A declared `f32` too, so `a = <f64 value>` converts (`f32_literal`).
         Some(ty)
             if is_narrow_scalar_ty(ty)
+                || scalar_float_cast_width(ty) == Some(32)
                 || matches!(scalar_int64_cast_signed(ty), Some(false))
                 || is_payload_generic_ty(ty)
                 || is_tuple_ann_ty(ty) =>
@@ -6517,8 +6488,8 @@ pub(super) fn lower_expr_inner(
             let canonical_semantic = context.canonical_finish_function(ret_id);
 
             // Add function definition to IR, propagating the REAP threshold
-            // from the AST attribute if present.
-            ir.instrs.push(Instr::FnDef {
+            // from the AST attribute if present (std.posix: under its link name).
+            ir.push_fn_def(Instr::FnDef {
                 name: name.clone(),
                 params: param_pairs,
                 ret_id,
@@ -8003,9 +7974,9 @@ pub(super) fn lower_expr_inner(
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types, context))
                 .collect();
             // mangled instance (`id$i64`) and queue that instance for emission.
-            // A non-generic callee (or a shape outside the bounded slice) keeps
-            // the original name, so non-generic call lowering is byte-identical.
-            let name = try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
+            // A non-generic callee (or a shape outside the bounded slice) keeps its
+            // name (std.posix: its link name), so other call lowering is byte-identical.
+            let name = lower_entry::call_name(ir, callee, args, *span);
             let dst = ir.fresh();
             #[cfg(feature = "cross-module-imports")]
             context.canonical_record_call(*span, canonical_identity.as_ref(), &arg_ids, dst);
@@ -8140,6 +8111,14 @@ pub(super) fn lower_expr_inner(
         // meaningful to the type-checker.
         ast::Node::Ref { inner, .. } => {
             lower_expr(inner, ir, env, struct_env, receiver_types, context)
+        }
+        // Spec 3.3: `as q16` has no run-time conversion on this route (0.10.4).
+        ast::Node::As {
+            ty: TypeAnn::Named(t),
+            ..
+        } if t.eq_ignore_ascii_case("q16") => {
+            lower_entry::refuse_const(context, ConstRefusal::Q16Unsupported, "cast_as_q16", node);
+            ir.fresh()
         }
         // A cast `<expr> as <ty>`. Scalars and raw pointers are all carried as
         // i64 SSA values, so for pointers / f-types / aliases the target type is
@@ -9295,20 +9274,18 @@ pub(super) fn lower_expr_inner(
                 describe_receiver(receiver),
             )
         }
-        // RFC 0010 Phase A — `extern "C" { fn decls }` block.
-        //
-        // Emits one `Instr::ExternFnDecl` per declared symbol so the MLIR
-        // lowerer knows to emit `llvm.func @name(...)` declarations and to
-        // use `llvm.call` (not `func.call`) for calls to those names.
-        //
-        // Narrow integer parameters keep their source name (`i8`/`u32`/`bool`).
-        // Pointers lower to `!llvm.ptr`. The call site truncates to that width
-        // and the declaration carries signext or zeroext. f64 stays `f64`.
-        // An i64 parameter stays one i64 slot.
-        //
-        // Gated to `std-surface` — default builds never construct this.
+        // RFC 0010 — `extern "C" [bind(..)] { fn decls }`: one `Instr::ExternFnDecl`
+        // per symbol, with the block's binding, so MLIR lowering uses `llvm.call`.
+        // Narrow integers keep their source name (`i8`/`u32`/`bool`); the call
+        // truncates to that width and the declaration carries signext/zeroext.
+        // Pointers are `!llvm.ptr`; f64 and i64 stay one slot. `std-surface` only.
         #[cfg(feature = "std-surface")]
-        ast::Node::ExternBlock { fns, callconv, .. } => {
+        ast::Node::ExternBlock {
+            fns,
+            callconv,
+            binding,
+            ..
+        } => {
             // RFC 0010 Phase B/C: use the repr_c_structs registry (populated by
             // any preceding StructDef nodes with `#[repr(C)]`) to emit correct
             // ABI-classified types for struct-valued parameters.
@@ -9339,6 +9316,7 @@ pub(super) fn lower_expr_inner(
                     is_varargs: efn.is_varargs,
                     vararg_hints: Vec::new(),
                     callconv: effective_callconv,
+                    binding: binding.clone(),
                 });
             }
             let id = ir.fresh();
@@ -9905,15 +9883,14 @@ pub(super) fn lower_expr_inner(
         #[cfg(feature = "std-surface")]
         ast::Node::Print { args, .. } => {
             for arg in args {
-                match arg {
-                    // String label: reuse the tested String-literal lowering
-                    // (returns a 3-field `{addr,len,cap}` record), then write
-                    // its bytes with `print_bytes(addr, len)` — no newline, so
-                    // the next numeric arg stays parseable on its own line. No
-                    // pointer bits reach stdout: only the string BYTES and the
-                    // decimal i64 values are written.
-                    ast::Node::Lit(Literal::Str(_), _) => {
-                        let rec = lower_expr(arg, ir, env, struct_env, receiver_types, context);
+                match super::string_equality::print_text(arg) {
+                    // A string literal or a proven string value (see
+                    // `string_equality`): its `{addr,len,cap}` record's bytes go
+                    // out via `print_bytes(addr, len)` — no newline, so the next
+                    // numeric arg stays parseable on its own line. No pointer
+                    // bits reach stdout: only string BYTES and decimal i64s.
+                    Some(text) => {
+                        let rec = lower_expr(text, ir, env, struct_env, receiver_types, context);
                         // addr = __mind_load_i64(rec + 0)
                         let addr = ir.fresh();
                         ir.instrs.push(Instr::legacy_call(
@@ -9947,7 +9924,7 @@ pub(super) fn lower_expr_inner(
                     }
                     // Numeric (i64) arg: printI64(v); printNewline() — one value
                     // per line for unambiguous downstream parsing.
-                    _ => {
+                    None => {
                         let v = lower_expr(arg, ir, env, struct_env, receiver_types, context);
                         let sink = ir.fresh();
                         ir.instrs
@@ -11820,61 +11797,11 @@ fn lower_lettuple_stmt(
     last
 }
 
-/// Extract a compile-time i64 value from a literal expression node.
-/// Returns `None` for non-literal (runtime) expressions.
-fn extract_const_i64(node: &ast::Node) -> Option<i64> {
-    match node {
-        ast::Node::Lit(Literal::Int(n), _) => Some(*n),
-        ast::Node::Neg { operand, .. } => extract_const_i64(operand).map(|v| -v),
-        _ => None,
-    }
-}
-
-/// Extract a constant numeric element as f64 (int literals widen to float),
-/// honouring a leading unary `-`. Used to materialise dense tensor literals.
-fn extract_const_f64(node: &ast::Node) -> Option<f64> {
-    match node {
-        ast::Node::Lit(Literal::Float(f), _) => Some(*f),
-        ast::Node::Lit(Literal::Int(n), _) => Some(*n as f64),
-        ast::Node::Neg { operand, .. } => extract_const_f64(operand).map(|v| -v),
-        _ => None,
-    }
-}
-
-/// Encode one dense-tensor-literal element to the `u64` bit pattern stored in
-/// `Instr::ConstDenseTensor` (must mirror `render_dense_elem` in the MLIR
-/// backend): f32 → its u32 IEEE bits, f64 → all 64 bits, i32 → two's-complement
-/// low-32, i64 as-is, Q16.16 → `round(v * 2^16)` as i32. Preserves the EXACT
-/// element bits (the old i64 ConstArray path coerced floats to 0).
-fn dense_elem_bits(node: &ast::Node, dtype: &DType) -> u64 {
-    match dtype {
-        DType::F32 | DType::F16 | DType::BF16 => {
-            (extract_const_f64(node).unwrap_or(0.0) as f32).to_bits() as u64
-        }
-        DType::F64 => extract_const_f64(node).unwrap_or(0.0).to_bits(),
-        DType::I32 => ((extract_const_i64(node).unwrap_or(0) as i32) as u32) as u64,
-        DType::Q16 => {
-            let q = (extract_const_f64(node).unwrap_or(0.0) * 65536.0).round() as i32;
-            (q as u32) as u64
-        }
-        DType::I64 => extract_const_i64(node).unwrap_or(0) as u64,
-    }
-}
-
-/// Extract the element value list from an `ArrayLit` node iteratively.
-/// Non-literal elements default to 0.  Returns an empty Vec for non-ArrayLit RHS.
+/// The spec 3.2 fold of an integer constant expression, or `None` (a runtime
+/// value, a division by zero, an overflow). Every caller is under `std-surface`.
 #[cfg(feature = "std-surface")]
-fn extract_array_lit_values(node: &ast::Node) -> Vec<i64> {
-    match node {
-        ast::Node::ArrayLit { elements, .. } => {
-            let mut out = Vec::with_capacity(elements.len());
-            for elem in elements {
-                out.push(extract_const_i64(elem).unwrap_or(0));
-            }
-            out
-        }
-        _ => Vec::new(),
-    }
+fn extract_const_i64(node: &ast::Node) -> Option<i64> {
+    crate::opt::fold::const_int(node)
 }
 
 /// Create a sub-IRModule for branch/body lowering that inherits the metadata
@@ -12182,35 +12109,43 @@ pub(crate) fn extern_type_to_mlir_multi(
     ty: &crate::ast::TypeAnn,
     repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
 ) -> Vec<String> {
+    if let Some(token) = extern_scalar_token(ty) {
+        return vec![token.to_string()];
+    }
+    extern_non_scalar_tokens(ty, repr_c, sysv_classify_struct)
+}
+
+/// The token of a primitive scalar under every convention: a narrow integer
+/// keeps its declared name (the extension reads its sign), a 64-bit integer
+/// is one i64 slot, a float keeps its name. MLIR emission makes it signless.
+#[cfg(feature = "std-surface")]
+fn extern_scalar_token(ty: &crate::ast::TypeAnn) -> Option<&'static str> {
+    let d = crate::types::value::scalar_desc_of(ty)?;
+    if d.is_narrow_int() || d.class == crate::types::value::ScalarClass::Float {
+        Some(d.name())
+    } else {
+        Some("i64")
+    }
+}
+
+#[cfg(feature = "std-surface")]
+type ReprCStructs = std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>;
+
+/// Pointer, callback and struct tokens shared by both x86-64 classifiers.
+/// Any aggregate that slipped past the type checker becomes one i64.
+#[cfg(feature = "std-surface")]
+fn extern_non_scalar_tokens(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &ReprCStructs,
+    classify: fn(&[crate::ast::TypeAnn], &ReprCStructs) -> Vec<String>,
+) -> Vec<String> {
     use crate::ast::TypeAnn;
     match ty {
-        TypeAnn::ScalarF32 => vec!["f32".to_string()],
-        TypeAnn::ScalarF64 => vec!["f64".to_string()],
-        TypeAnn::RawPtr { .. } => vec!["!llvm.ptr".to_string()],
-        // RFC 0010 Phase B: callback function pointer -> opaque !llvm.ptr.
-        TypeAnn::FnPtr { .. } => vec!["!llvm.ptr".to_string()],
-        TypeAnn::Named(name) => {
-            match name.as_str() {
-                "f32" => return vec!["f32".to_string()],
-                "f64" => return vec!["f64".to_string()],
-                "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => {
-                    return vec![name.clone()];
-                }
-                "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
-                _ => {}
-            }
-            // Check for repr(C) struct — apply SysV classification.
-            if let Some(fields) = repr_c.get(name.as_str()) {
-                sysv_classify_struct(fields, repr_c)
-            } else {
-                vec!["i64".to_string()]
-            }
-        }
-        TypeAnn::ScalarI64 => vec!["i64".to_string()],
-        TypeAnn::ScalarI32 => vec!["i32".to_string()],
-        TypeAnn::ScalarU32 => vec!["u32".to_string()],
-        TypeAnn::ScalarBool => vec!["bool".to_string()],
-        // Fallback: any aggregate that slipped past the type-checker becomes i64.
+        TypeAnn::RawPtr { .. } | TypeAnn::FnPtr { .. } => vec!["!llvm.ptr".to_string()],
+        TypeAnn::Named(name) => match repr_c.get(name.as_str()) {
+            Some(fields) => classify(fields, repr_c),
+            None => vec!["i64".to_string()],
+        },
         _ => vec!["i64".to_string()],
     }
 }
@@ -12237,27 +12172,17 @@ pub fn classify_scalar_field(
     repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
 ) -> (Option<SysVClass>, usize) {
     use crate::ast::TypeAnn;
+    // A nested repr(C) struct or an unknown name defers to MEMORY class.
+    let _ = repr_c;
+    if let Some(d) = crate::types::value::scalar_desc_of(ty) {
+        let class = match d.class {
+            crate::types::value::ScalarClass::Int => SysVClass::Integer,
+            crate::types::value::ScalarClass::Float => SysVClass::Float,
+        };
+        return (Some(class), d.bytes());
+    }
     match ty {
-        TypeAnn::ScalarI32 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
-            (Some(SysVClass::Integer), 4)
-        }
-        TypeAnn::ScalarI64 => (Some(SysVClass::Integer), 8),
-        TypeAnn::ScalarF32 => (Some(SysVClass::Float), 4),
-        TypeAnn::ScalarF64 => (Some(SysVClass::Float), 8),
         TypeAnn::RawPtr { .. } | TypeAnn::FnPtr { .. } => (Some(SysVClass::Integer), 8),
-        TypeAnn::Named(name) => match name.as_str() {
-            "i8" | "u8" => (Some(SysVClass::Integer), 1),
-            "i16" | "u16" => (Some(SysVClass::Integer), 2),
-            "i32" | "u32" | "bool" => (Some(SysVClass::Integer), 4),
-            "i64" | "u64" | "usize" | "isize" => (Some(SysVClass::Integer), 8),
-            "f32" => (Some(SysVClass::Float), 4),
-            "f64" => (Some(SysVClass::Float), 8),
-            _other => {
-                // Nested repr(C) struct or unknown — Phase B defers to MEMORY class.
-                let _ = repr_c; // used in future phases
-                (None, 0)
-            }
-        },
         _ => (None, 0),
     }
 }
@@ -12411,33 +12336,21 @@ pub fn win64_classify_struct(
     }
 }
 
-/// RFC 0010 Phase C — resolve `CallConv::C` to the platform-default ABI.
-///
-/// On Linux/macOS x86_64: resolves to `CallConv::SysV`.
-/// On Windows x86_64: resolves to `CallConv::Win64`.
-/// `CallConv::Aapcs` is passed through (Phase D will handle it; Phase C
-/// callers fall back to SysV for the MLIR emission).
+/// RFC 0010 Phase C — resolve `CallConv::C` from the COMPILE TARGET
+/// (`crate::target::compile_target`), never from the host mindc was built
+/// for. The same source and target give the same evidence byte on any host.
 #[cfg(feature = "std-surface")]
 pub(crate) fn resolve_callconv(cc: crate::ast::CallConv) -> crate::ast::CallConv {
-    use crate::ast::CallConv;
     match cc {
-        CallConv::C => {
-            if cfg!(target_os = "windows") {
-                CallConv::Win64
-            } else {
-                CallConv::SysV
-            }
-        }
+        crate::ast::CallConv::C => crate::target::compile_target().c_callconv(),
         other => other,
     }
 }
 
-/// RFC 0010 Phase C — ABI-aware type classifier dispatcher.
-///
-/// Routes to `extern_type_to_mlir_multi` (SysV) or
-/// `extern_type_to_mlir_multi_win64` (Win64) based on the resolved callconv.
-/// `CallConv::Aapcs` is not yet implemented (Phase D); it falls back to SysV
-/// with a runtime note so callers can test the dispatch path today.
+/// RFC 0010 Phase C — ABI-aware type classifier dispatcher. Scalars keep
+/// their declared name under every convention; only a struct classifies per
+/// ABI. AAPCS has no struct classifier: the checker refuses a by-value struct
+/// (E2040) and AAPCS on x86-64 (E2039), so a struct here fails closed.
 #[cfg(feature = "std-surface")]
 pub(crate) fn extern_type_to_mlir_multi_for(
     ty: &crate::ast::TypeAnn,
@@ -12449,7 +12362,12 @@ pub(crate) fn extern_type_to_mlir_multi_for(
         CallConv::Win64 => extern_type_to_mlir_multi_win64(ty, repr_c),
         CallConv::SysV | CallConv::C => extern_type_to_mlir_multi(ty, repr_c),
         CallConv::Aapcs => {
-            // Phase D deferred. Fall back to SysV for now.
+            if let crate::ast::TypeAnn::Named(name) = ty {
+                assert!(
+                    !repr_c.contains_key(name),
+                    "by-value struct `{name}` under AAPCS has no classifier (E2040)"
+                );
+            }
             extern_type_to_mlir_multi(ty, repr_c)
         }
     }
@@ -12474,40 +12392,17 @@ pub(crate) fn extern_type_to_mlir_multi_for(
 /// `u8`/`u16`/`u32`/`bool` unsigned) so signedness survives to the extension
 /// choice — it is normalized to a signless MLIR type at every emission point.
 ///
-/// Scope matches the audit finding exactly: only the SysV / C (and the
-/// Aapcs→SysV fallback) path is narrowed here. Win64 is left verbatim to its
-/// existing classifier (`extern_type_to_mlir_multi_win64`), which already maps
-/// scalars to their real narrow width. Struct / pointer / float / `i64`
-/// returns fall through to the unchanged first-ABI-slot behavior — the SysV
-/// struct classifier never emits `i8`/`i16`/`i32`, so a narrow-int return token
-/// on this path is unambiguously a scalar at the consuming call site.
-///
-/// Params keep the scalar name (`i8`/`u32`/`bool`) so the call site can attach
-/// sign extension or zero extension. Win64 stays on its own classifier.
-/// Upgrade path: mirror the narrow extend pair on the Win64 call path once a
-/// Win64 narrow-return artifact is exercised end-to-end.
+/// Every convention keeps the scalar name, so the call site attaches sign
+/// or zero extension from the declared type. A by-value struct is refused by
+/// the checker (E2040), so a narrow-int token here is always a scalar.
 #[cfg(feature = "std-surface")]
 pub(crate) fn extern_c_ret_token(
     ty: &crate::ast::TypeAnn,
     repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
     callconv: crate::ast::CallConv,
 ) -> String {
-    use crate::ast::{CallConv, TypeAnn};
-    if !matches!(callconv, CallConv::Win64) {
-        let token = match ty {
-            TypeAnn::Named(name) => match name.as_str() {
-                "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => Some(name.clone()),
-                _ => None,
-            },
-            TypeAnn::ScalarI32 => Some("i32".to_string()),
-            TypeAnn::ScalarU32 => Some("u32".to_string()),
-            TypeAnn::ScalarBool => Some("bool".to_string()),
-            _ => None,
-        };
-        if let Some(tok) = token {
-            return tok;
-        }
-    }
+    // The scalar row decides the token in the classifier; a return takes the
+    // first ABI slot.
     extern_type_to_mlir_multi_for(ty, repr_c, callconv)
         .into_iter()
         .next()
@@ -12529,35 +12424,10 @@ pub fn extern_type_to_mlir_multi_win64(
     ty: &crate::ast::TypeAnn,
     repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
 ) -> Vec<String> {
-    use crate::ast::TypeAnn;
-    match ty {
-        TypeAnn::ScalarF32 => vec!["f32".to_string()],
-        TypeAnn::ScalarF64 => vec!["f64".to_string()],
-        TypeAnn::RawPtr { .. } => vec!["!llvm.ptr".to_string()],
-        TypeAnn::FnPtr { .. } => vec!["!llvm.ptr".to_string()],
-        TypeAnn::Named(name) => {
-            match name.as_str() {
-                "f32" => return vec!["f32".to_string()],
-                "f64" => return vec!["f64".to_string()],
-                "i8" | "u8" => return vec!["i8".to_string()],
-                "i16" | "u16" => return vec!["i16".to_string()],
-                "i32" | "u32" | "bool" => return vec!["i32".to_string()],
-                "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
-                _ => {}
-            }
-            // Check for repr(C) struct — apply Win64 classification.
-            if let Some(fields) = repr_c.get(name.as_str()) {
-                win64_classify_struct(fields, repr_c)
-            } else {
-                vec!["i64".to_string()]
-            }
-        }
-        TypeAnn::ScalarI32 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
-            vec!["i32".to_string()]
-        }
-        TypeAnn::ScalarI64 => vec!["i64".to_string()],
-        _ => vec!["i64".to_string()],
+    if let Some(token) = extern_scalar_token(ty) {
+        return vec![token.to_string()];
     }
+    extern_non_scalar_tokens(ty, repr_c, win64_classify_struct)
 }
 
 #[cfg(test)]

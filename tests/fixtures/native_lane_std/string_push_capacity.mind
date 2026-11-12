@@ -1,0 +1,5 @@
+import std.string;
+
+fn main() -> i64 {
+    return string_push_capacity(3, 8) + string_push_capacity(9223372036854775807, 1);
+}

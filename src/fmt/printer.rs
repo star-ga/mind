@@ -18,9 +18,8 @@
 #[cfg(feature = "std-surface")]
 use crate::ast::BitOp;
 use crate::ast::{
-    Attribute, BinOp, CallConv, EnumVariant, ExternFn, Field, FnDefData, Literal, LogicalOp,
-    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TraitMethodSig,
-    TypeAnn,
+    Attribute, BinOp, EnumVariant, ExternFn, Field, FnDefData, Literal, LogicalOp, MatchArm,
+    Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TraitMethodSig, TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -1679,9 +1678,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_region_inline(p, body, *span);
         }
         // RFC 0010 Phase A: emit the extern "C" block in canonical form.
-        Node::ExternBlock { callconv, fns, .. } => {
-            emit_extern_block(p, callconv, fns);
-        }
+        Node::ExternBlock {
+            callconv,
+            binding,
+            fns,
+            ..
+        } => emit_extern_block(p, super::extern_block_clauses(*callconv, binding), fns),
         // #267: closure `|caps; params| -> R { body }`. `mindc fmt` runs on the
         // pre-desugar AST, so a source closure round-trips through this emitter.
         Node::Closure(data, span) => {
@@ -2096,16 +2098,11 @@ fn emit_type_ann(p: &mut Printer, ty: &TypeAnn) {
 // RFC 0010 Phase A: extern "C" block emitter
 // ---------------------------------------------------------------------------
 
-fn emit_extern_block(p: &mut Printer, callconv: &CallConv, fns: &[ExternFn]) {
+fn emit_extern_block(p: &mut Printer, clauses: String, fns: &[ExternFn]) {
     let ind = p.indent_str();
     p.push(&ind);
     p.push("extern \"C\"");
-    match callconv {
-        CallConv::C => {}
-        CallConv::SysV => p.push(" callconv(.sysv)"),
-        CallConv::Win64 => p.push(" callconv(.win64)"),
-        CallConv::Aapcs => p.push(" callconv(.aapcs)"),
-    }
+    p.push(&clauses);
     p.push(" {\n");
     p.indent += 1;
     for efn in fns {

@@ -1,0 +1,14 @@
+// Reduced from std/hkdf.mind: hkdf_expand's value-if inside a loop.
+// The unchanged frozen seed refuses this even without intrinsic calls.
+// Both backends must eventually build/run it with exit 0. MLIR already does.
+fn main() -> i64 {
+    let mut written: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= 1 {
+        let remaining: i64 = 32 - written;
+        let tocopy: i64 = if remaining < 32 { remaining } else { 32 };
+        written = written + tocopy;
+        i = i + 1;
+    }
+    written - 32
+}

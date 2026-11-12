@@ -1,0 +1,17 @@
+// Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    a = (a + a);
+    if a >= 5 {
+        let mut k6: i64 = 0;
+        while k6 < 1 {
+            k6 = (k6 + 1);
+            a = a;
+            if a >= 3 {
+                a = k6;
+            }
+        }
+    }
+    let mut zcall: i64 = 0;
+    return zcall + a;
+}

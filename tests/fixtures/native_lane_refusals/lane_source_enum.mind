@@ -1,0 +1,2 @@
+// lane.source.enum: an enum declared in a function body.
+fn main() -> i64 { enum E { A, B } return 0; }

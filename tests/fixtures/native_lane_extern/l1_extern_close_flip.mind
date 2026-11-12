@@ -1,0 +1,21 @@
+// l1_extern_close_flip.mind — L1's extern-refusal fixture, flipped at L2a.
+//
+// L1's request_corpus.txt row `w3_extern_close` was refused=native-lane-v1
+// (lane.extern.unimplemented) with the comment "flips at the C-ABI extern lane".
+// This file is that flip: close is row 0 of the closed nbx_row table, so a
+// correctly-typed declaration now builds under a compiler carrying nbextc01.
+// The L1 corpus row (wrong signature close(fd: i64) -> i64) stays refused as
+// lane.extern.signature_mismatch naming close, and is updated when both
+// lanes merge (the second merge owns the request_corpus.txt edit).
+//
+// flips at L2
+extern "C" {
+    fn close(fd: i32) -> i32;
+}
+
+fn main() -> i64 {
+    let fd: i64 = 0 - 1;
+    let r: i64 = close(fd as i32) as i64;
+    if r != 0 - 1 { return 1; }
+    return 0;
+}

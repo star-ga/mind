@@ -1,0 +1,14 @@
+// N2: arithmetic on a u8 call result in a single-expression body is u8 arithmetic,
+// wrapped in the code and in the trace note (note leg). Independent value:
+// h() + 100 = 300 & 255 = 44; 44 + 6 = 50.
+fn h() -> u8 {
+    200
+}
+
+fn g() -> i64 {
+    (h() + 100) as i64
+}
+
+fn main() -> i64 {
+    g() + 6
+}

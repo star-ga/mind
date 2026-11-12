@@ -26,7 +26,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ExternPolicy, collect_extern_symbols, find_nondeterministic_call_ext};
+use super::{ExternPolicy, find_nondeterministic_call_ext};
 use crate::ir::{IRModule, Instr, instr_bodies};
 
 /// The determinism of one top-level function of a lowered module.
@@ -125,6 +125,84 @@ pub fn reported_determinism(stored: bool, rederived: Option<bool>, calls_outside
     rederived.unwrap_or(stored) && !declined
 }
 
+/// Every `extern "C"` symbol declared anywhere in the module.
+///
+/// Needed because the determinism classifier is a REGISTRY lookup: a name it does
+/// not recognise returns "deterministic". For a user function that is correct —
+/// its body is in the module and is classified on its own merits. For an
+/// `extern "C"` symbol it is default-ADMIT on an unknown, which is backwards for
+/// an ATTESTATION: the callee's body is outside the artifact entirely, so nothing
+/// in the module can witness what it does. Measured before this: a program
+/// declaring libc `time()` or `getenv()` and calling it emitted evidence attesting
+/// `determinism: deterministic`.
+pub(super) fn collect_extern_symbols(
+    instrs: &[crate::ir::Instr],
+) -> std::collections::BTreeSet<String> {
+    use crate::ir::Instr;
+    // `mut` is dead in the `--no-default-features` build for the same reason the
+    // worklist note below gives: `Instr::ExternFnDecl` does not exist there, so
+    // nothing inserts and the set is provably empty. Empty is the CORRECT answer
+    // in that configuration (an IR with no extern declarations has no
+    // unclassified externs to taint), not a silenced gap.
+    #[cfg_attr(not(feature = "std-surface"), allow(unused_mut))]
+    let mut out = std::collections::BTreeSet::new();
+    // An explicit worklist, not recursion. Two reasons, both load-bearing:
+    // the traversal runs over UNTRUSTED decoded IR (`parse_mic3` on a consumer
+    // artifact), so an arbitrarily deep nest must not be able to exhaust the
+    // stack before the classifier reaches a verdict; and under
+    // `--no-default-features` — the configuration the CI clippy gate builds —
+    // every `out`-writing arm below is compiled out, leaving a recursive helper
+    // whose accumulator is threaded purely through its own calls
+    // (`clippy::only_used_in_recursion`, which an item-level `allow` does not
+    // suppress). Order is irrelevant: the result is a `BTreeSet`, so the set
+    // and every downstream lookup are identical whatever order the streams are
+    // visited in.
+    let mut worklist: Vec<&[Instr]> = vec![instrs];
+    while let Some(stream) = worklist.pop() {
+        for instr in stream {
+            match instr {
+                #[cfg(feature = "std-surface")]
+                Instr::ExternFnDecl { name, binding, .. } => {
+                    out.insert(name.clone());
+                    if *binding == crate::ast::ExternBinding::Address {
+                        out.insert(format!("{name} bind(.address)"));
+                    }
+                }
+                Instr::FnDef { body, .. } => worklist.push(body),
+                #[cfg(feature = "std-surface")]
+                Instr::While {
+                    cond_instrs, body, ..
+                } => {
+                    worklist.push(cond_instrs);
+                    worklist.push(body);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::If {
+                    cond_instrs,
+                    then_instrs,
+                    else_instrs,
+                    ..
+                } => {
+                    worklist.push(cond_instrs);
+                    worklist.push(then_instrs);
+                    worklist.push(else_instrs);
+                }
+                // RFC 0010 Phase J-A `region { }` carries a full nested stream.
+                // `scan_scope` already descends into it, so an `extern "C"`
+                // DECLARED inside a region and CALLED there would otherwise be
+                // absent from this set and hit `extern_call_is_unclassified`'s
+                // default-ADMIT — the exact forge the extern check exists to
+                // close, one nesting level down. Descended here for the same
+                // reason `scan_scope` descends.
+                #[cfg(feature = "std-surface")]
+                Instr::Region { body, .. } => worklist.push(body),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +278,39 @@ mod tests {
                 want,
                 "stored={stored} rederived={rederived:?} outside={outside}"
             );
+        }
+    }
+
+    /// Spec "Extern bindings" E2/E3: the binding is tested before the registry
+    /// name. `__mind_calloc` is a Pure row: base keeps `deterministic`, an
+    /// address binding of the same name taints. The loader rows veto shipping.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn an_address_binding_taints_whatever_its_name() {
+        use crate::ast::ExternBinding;
+        let module = |name: &str, binding| {
+            let mut m = IRModule::new();
+            m.instrs.push(Instr::ExternFnDecl {
+                name: name.into(),
+                param_types: vec!["!llvm.ptr".into()],
+                ret_type: Some("i64".into()),
+                is_varargs: false,
+                vararg_hints: vec![],
+                callconv: crate::ast::CallConv::C,
+                binding,
+            });
+            m.instrs.push(call(1, name));
+            m
+        };
+        let base = module("__mind_calloc", ExternBinding::Base);
+        assert_eq!(super::super::ir_first_nondeterministic_call(&base), None);
+        let addr = module("__mind_calloc", ExternBinding::Address);
+        let got = super::super::ir_first_nondeterministic_call(&addr);
+        assert_eq!(got.as_deref(), Some("__mind_calloc"));
+        for loader in ["dlopen", "dlsym", "dlclose", "dlerror"] {
+            let m = module(loader, ExternBinding::Base);
+            let veto = super::super::ir_first_hard_nondeterministic_call(&m);
+            assert_eq!(veto.as_deref(), Some(loader), "the loader reads host state");
         }
     }
 }

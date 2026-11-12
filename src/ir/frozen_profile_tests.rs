@@ -14,7 +14,8 @@ fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
     collect_fn_names(instrs, &mut defined);
     let module = IRModule::new();
     let mut aggs = std::collections::BTreeSet::new();
-    admit_instrs_in(instrs, &defined, &module, &mut aggs)
+    // false: this helper mirrors profile_frozen_admits, which keeps every refusal.
+    admit_instrs_in(instrs, &defined, &module, &mut aggs, false)
 }
 
 fn fndef(body: Vec<Instr>) -> Instr {
@@ -271,15 +272,18 @@ fn source_admits(src: &str) -> Result<(), FrozenProfileRejection> {
     profile_frozen_admits_source(&module)
 }
 
-/// The IR half cannot see a declared f32: both literals lower to `ConstF64` and the
-/// compare to a bare `Lt`, so the IR predicate admits it. The source half refuses it.
+/// A declared f32 reaches the IR as `__mind_conv_f32` (the binding takes the declared
+/// width), which the IR half refuses as a call. The source half names the construct.
 #[test]
 fn declared_f32_comparison_is_rejected_on_the_source() {
     let src = "fn main() -> i64 { let x: f32 = 1.0; let y: f32 = 2.0; \
                    if x < y { return 1; } return 0; }";
     let module = crate::parser::parse(src).expect("parses");
     let ir = crate::eval::lower_to_ir(&module).expect("lowers");
-    assert_eq!(profile_frozen_admits(&ir), Ok(()), "IR half is type-blind");
+    assert_eq!(
+        profile_frozen_admits(&ir).unwrap_err().construct,
+        "call.undefined_or_builtin"
+    );
     assert_eq!(
         source_admits(src).unwrap_err().construct,
         "type.non_f64_float"
@@ -621,5 +625,29 @@ fn lowered_scalar_op_array_is_refused() {
             Err("binop.array_operand"),
             "{op} with the array on the right"
         );
+    }
+}
+
+/// Spec "Extern bindings" E4: the admission keys on the binding, not the
+/// constructor. A base declaration stays admitted; a `bind` clause is refused.
+#[cfg(feature = "std-surface")]
+#[test]
+fn an_extern_bind_clause_is_refused_by_its_binding() {
+    let decl = |binding| Instr::ExternFnDecl {
+        name: "add2".into(),
+        param_types: vec!["i64".into(), "i64".into()],
+        ret_type: Some("i64".into()),
+        is_varargs: false,
+        vararg_hints: vec![],
+        callconv: crate::ast::CallConv::C,
+        binding,
+    };
+    assert_eq!(admits(&[decl(crate::ast::ExternBinding::Base)]), Ok(()));
+    for binding in [
+        crate::ast::ExternBinding::Address,
+        crate::ast::ExternBinding::Library("libz.so.1".into()),
+    ] {
+        let err = admits(&[decl(binding)]).unwrap_err();
+        assert_eq!(err.construct, "extern.bind_clause");
     }
 }

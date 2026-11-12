@@ -187,16 +187,6 @@ fn gf_reduce_fold(t: i64) -> i64 {
     0
 }
 
-// gf_copy16_from_t — copy the low 16 limbs of the product buffer into o.
-fn gf_copy16_from_t(o: i64, t: i64) -> i64 {
-    let mut i: i64 = 0;
-    while i < 16 {
-        __mind_store_i64(o + i * 8, __mind_load_i64(t + i * 8));
-        i = i + 1;
-    }
-    0
-}
-
 // fmul — o = a * b (mod p).  Reads a and b fully into the product buffer before
 // writing o, so o may safely alias a and/or b.  The carry-normalization runs on
 // a LOCAL result buffer `r` copied to `o` at the very end (the "operate local,
@@ -215,7 +205,7 @@ fn fmul(o: i64, a: i64, b: i64) -> i64 {
     gf_zero31(t);
     gf_mac(t, a, b);
     gf_reduce_fold(t);
-    gf_copy16_from_t(r, t);
+    gf_copy16(r, t);
     car25519(r);
     car25519(r);
     gf_copy16(o, r);

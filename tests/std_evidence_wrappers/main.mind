@@ -1,0 +1,310 @@
+// Checks for the `_ev` std variants (std.os_evidence, std.x509_evidence) and the
+// end-to-end leg.
+// The checks make OS calls (open, getdents, fork, exec), which the `mindc test`
+// interpreter refuses ("unsupported operation"), so they run only in the
+// program built in this directory, which also runs the end-to-end leg:
+//     `./program <cases_native.bin> <out.mic3> w` writes an evidence record,
+//     `mindc verify <out.mic3>` reads it, and
+//     `./program <cases_native.bin> <out.mic3> r` loads it back and compares.
+// Exit 0 = every check passed (it then prints the number of check groups
+// that ran, 4); any other exit is the id of the first failed check. The x509 vectors are the committed tests/x509/testdata/cases_native.bin.
+
+import std.fs;
+import std.mic_record;
+import std.evidence;
+import std.evidence_mic;
+import std.procgroup;
+import std.os_evidence;
+import std.x509_evidence;
+
+fn b(a: i64, i: i64) -> i64 {
+    __mind_load_i8(a + i) & 255
+}
+
+// 1 when the n bytes at x and y are equal.
+fn same(x: i64, y: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if b(x, i) != b(y, i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    1
+}
+
+fn w1(d: i64, p: i64, c: i64) -> i64 {
+    __mind_store_i8(d + p, c);
+    p + 1
+}
+
+// One little-endian i64 word, byte by byte.
+fn w8(d: i64, p: i64, v: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 8 {
+        __mind_store_i8(d + p + k, (v >> (k * 8)) & 255);
+        k = k + 1;
+    }
+    p + 8
+}
+
+fn ws(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
+    w1(d, w1(d, w1(d, w1(d, p, c0), c1), c2), c3)
+}
+
+fn nx_path() -> i64 {
+    let path: i64 = __mind_alloc(8);
+    let _ = w8(path, 0, 0);
+    // "/nx-evd": a path that does not exist.
+    let _ = w1(path, w1(path, w1(path, ws(path, 0, 47, 110, 120, 45), 101), 118), 100);
+    path
+}
+
+fn check_fs() -> i64 {
+    let s: i64 = evd_new(4);
+    let slot: i64 = __mind_alloc(8);
+    let path: i64 = nx_path();
+    if fs_read_dir_checked_ev(path, 7, 16, 4096, slot, s) != 0 - 2 || evd_len(s) != 1 {
+        return 30;
+    }
+    if evd_field(s, 0, 0) != evd_mod_fs_checked() || evd_field(s, 0, 1) != evd_kind_refuse() || evd_field(s, 0, 2) != 2 || evd_field(s, 0, 3) != 7 || evd_field(s, 0, 4) != 0 {
+        return 31;
+    }
+    if fs_read_dir_checked_ev(path, 0, 16, 4096, slot, s) != 0 - 22 || evd_field(s, 1, 2) != 22 {
+        return 32;
+    }
+    // "/" lists; the record carries the listed entry count.
+    __mind_store_i8(path + 1, 0);
+    if fs_read_dir_checked_ev(path, 1, 4096, 1048576, slot, s) != 0 || evd_len(s) != 3 {
+        return 33;
+    }
+    let n: i64 = __mind_load_i64(__mind_load_i64(slot) + 8);
+    if n < 1 || evd_field(s, 2, 1) != evd_kind_accept() || evd_field(s, 2, 2) != 0 || evd_field(s, 2, 4) != n {
+        return 34;
+    }
+    if fs_read_dir_checked_ev(path, 1, 4096, 1048576, slot, 0) != 0 || evd_len(s) != 3 {
+        return 35;
+    }
+    0
+}
+
+// Workspace [ count | (off, len) * count | DER ... ] from the case pack.
+fn x509_blob(src: i64, pos: i64, w: i64) -> i64 {
+    let cnt: i64 = __mind_load_i64(src + pos);
+    __mind_store_i64(w, cnt);
+    let mut p: i64 = pos + 8;
+    let mut off: i64 = 8 + 16 * cnt;
+    let mut i: i64 = 0;
+    while i < cnt {
+        let ln: i64 = __mind_load_i64(src + p);
+        __mind_store_i64(w + 8 + i * 16, off);
+        __mind_store_i64(w + 16 + i * 16, ln);
+        let mut k: i64 = 0;
+        while k < ln {
+            __mind_store_i8(w + off + k, __mind_load_i8(src + p + 8 + k));
+            k = k + 1;
+        }
+        off = off + ln;
+        p = p + 8 + ln + (8 - ln % 8) % 8;
+        i = i + 1;
+    }
+    p
+}
+
+// A fresh budget cell of 64 signature verifications (the x509_path default).
+fn budget64() -> i64 {
+    let c: i64 = __mind_alloc(8);
+    __mind_store_i64(c, 64);
+    c
+}
+
+// One accept and one refuse vector (inline anchors, mode 0) from the pack at
+// the C-string path cases.
+fn check_x509(cases: i64) -> i64 {
+    let s: i64 = evd_new(8);
+    if x509_verify_server_chain_budget_ev(0, 0, 0, 0, budget64(), s) != 0 - 1 || evd_field(s, 0, 1) != evd_kind_refuse() || evd_field(s, 0, 2) != 1 || evd_field(s, 0, 3) != 0 {
+        return 40;
+    }
+    let f: i64 = read_to_string(cases);
+    let src: i64 = __mind_load_i64(f + 0);
+    if __mind_load_i64(f + 8) < 8 {
+        return 41;
+    }
+    let ncases: i64 = __mind_load_i64(src);
+    let chain: i64 = __mind_alloc(131072);
+    let anchors: i64 = __mind_alloc(131072);
+    let mut pos: i64 = 8;
+    let mut c: i64 = 0;
+    let mut accepted: i64 = 0;
+    let mut refused: i64 = 0;
+    while c < ncases {
+        let want: i64 = __mind_load_i64(src + pos);
+        let at: i64 = __mind_load_i64(src + pos + 8);
+        let mode: i64 = __mind_load_i64(src + pos + 16);
+        let dns: i64 = src + pos + 24;
+        pos = x509_blob(src, x509_blob(src, pos + 280, chain), anchors);
+        if mode == 0 && ((want == 0 && accepted == 0) || (want < 0 && refused == 0)) {
+            let n: i64 = evd_len(s);
+            if x509_verify_server_chain_budget_ev(chain, anchors, dns, at, budget64(), s) != want || evd_len(s) != n + 1 {
+                return 42;
+            }
+            if evd_field(s, n, 2) != 0 - want || evd_field(s, n, 3) != __mind_load_i64(chain) || evd_field(s, n, 4) != 0 {
+                return 43;
+            }
+            if want == 0 {
+                accepted = 1;
+                if evd_field(s, n, 1) != evd_kind_accept() {
+                    return 44;
+                }
+                // The budget passes through: a cell pointer 0 is refused -1
+                // exactly as x509_verify_server_chain_budget refuses it.
+                if x509_verify_server_chain_budget_ev(chain, anchors, dns, at, 0, s) != 0 - 1 || evd_field(s, n + 1, 2) != 1 {
+                    return 47;
+                }
+            } else {
+                refused = 1;
+                if evd_field(s, n, 1) != evd_kind_refuse() {
+                    return 45;
+                }
+            }
+        }
+        c = c + 1;
+    }
+    if accepted != 1 || refused != 1 {
+        return 46;
+    }
+    0
+}
+
+// "true" (exits 0) or "false" (exits 1), found through PATH.
+fn prog(ok: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    let _ = w8(p, 0, 0);
+    if ok == 1 {
+        let _ = ws(p, 0, 116, 114, 117, 101);
+    } else {
+        let _ = w1(p, ws(p, 0, 102, 97, 108, 115), 101);
+    }
+    p
+}
+
+fn check_procgroup() -> i64 {
+    let s: i64 = evd_new(8);
+    if procgroup_spawn_ev(0, 0, 0, 0, s) != 0 - 1 || evd_field(s, 0, 1) != evd_kind_refuse() || evd_field(s, 0, 2) != 1 {
+        return 50;
+    }
+    if procgroup_wait_all_ev(0, 1000, s) != 0 - 1 || evd_field(s, 1, 1) != evd_kind_refuse() || evd_field(s, 1, 3) != 0 {
+        return 51;
+    }
+    let g: i64 = procgroup_new(2);
+    if procgroup_spawn_ev(g, prog(1), 0, 0, s) != 0 || evd_field(s, 2, 1) != evd_kind_accept() || evd_field(s, 2, 3) != 0 {
+        return 52;
+    }
+    if procgroup_spawn_ev(g, prog(0), 0, 0, s) != 1 || evd_field(s, 3, 1) != evd_kind_accept() || evd_field(s, 3, 3) != 1 {
+        return 53;
+    }
+    if procgroup_spawn_ev(g, prog(1), 0, 0, s) != 0 - 1 || evd_field(s, 4, 1) != evd_kind_refuse() {
+        return 54;
+    }
+    if procgroup_wait_all_ev(g, 10000, s) != 1 || evd_len(s) != 7 {
+        return 55;
+    }
+    if evd_field(s, 5, 1) != evd_kind_child() || evd_field(s, 5, 2) != procgroup_state_ok() || evd_field(s, 5, 3) != 0 {
+        return 56;
+    }
+    if evd_field(s, 6, 2) != procgroup_state_exit_nonzero() || evd_field(s, 6, 3) != 1 {
+        return 57;
+    }
+    0
+}
+
+// The end-to-end sink: one fs refusal, one x509 refusal, one accepted spawn
+// and its child verdict.
+fn e2e_sink() -> i64 {
+    let s: i64 = evd_new(8);
+    let _ = fs_read_dir_checked_ev(nx_path(), 7, 16, 4096, __mind_alloc(8), s);
+    let _ = x509_verify_server_chain_budget_ev(0, 0, 0, 0, budget64(), s);
+    let g: i64 = procgroup_new(1);
+    let _ = procgroup_spawn_ev(g, prog(1), 0, 0, s);
+    let _ = procgroup_wait_all_ev(g, 10000, s);
+    s
+}
+
+fn e2e_parent() -> i64 {
+    let p: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(p + i, 255 - i);
+        i = i + 1;
+    }
+    p
+}
+
+fn e2e_write(path: i64) -> i64 {
+    let e: i64 = evd_export(e2e_sink(), e2e_parent(), 32);
+    if e <= 0 {
+        return 60;
+    }
+    if write_string(path, mrec_buf_addr(e), mrec_buf_len(e)) < 0 {
+        return 61;
+    }
+    0
+}
+
+fn e2e_read(path: i64) -> i64 {
+    let f: i64 = read_to_string(path);
+    let n: i64 = __mind_load_i64(f + 8);
+    // The record must name the build it was written for.
+    let r: i64 = evd_load_parent(__mind_load_i64(f + 0), n, e2e_parent(), 32);
+    if r <= 0 {
+        return 62;
+    }
+    let s: i64 = e2e_sink();
+    if evd_len(r) != 4 || evd_len(s) != 4 {
+        return 63;
+    }
+    let mut i: i64 = 0;
+    while i < 20 {
+        if evd_field(r, i / 5, i % 5) != evd_field(s, i / 5, i % 5) {
+            return 64;
+        }
+        i = i + 1;
+    }
+    let e: i64 = evd_export(r, e2e_parent(), 32);
+    if mrec_buf_len(e) != n || same(mrec_buf_addr(e), __mind_load_i64(f + 0), n) != 1 {
+        return 65;
+    }
+    0
+}
+
+pub fn main(argc: i64, argv: i64) -> i64 {
+    if argc != 4 {
+        return 2;
+    }
+    let cases: i64 = __mind_load_i64(argv + 8);
+    let out: i64 = __mind_load_i64(argv + 16);
+    let mode: i64 = __mind_load_i64(argv + 24);
+    let mut rc: i64 = check_fs();
+    let mut ran: i64 = 1;
+    if rc == 0 {
+        rc = check_x509(cases);
+        ran = ran + 1;
+    }
+    if rc == 0 {
+        rc = check_procgroup();
+        ran = ran + 1;
+    }
+    if rc == 0 {
+        if b(mode, 0) == 119 {
+            rc = e2e_write(out);
+        } else {
+            rc = e2e_read(out);
+        }
+        ran = ran + 1;
+    }
+    // CI requires this count, so a run that skipped a group cannot pass.
+    if rc == 0 {
+        print("evd_wrapper_groups_passed ", ran);
+    }
+    rc
+}

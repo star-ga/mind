@@ -209,7 +209,7 @@ fn cli_build_unknown_target_exits_2() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .args(["build", "--target=quantumfpga"])
+        .args(["build", "--backend", "mlir", "--target=quantumfpga"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -237,7 +237,7 @@ fn cli_build_unknown_emit_exits_2() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .args(["build", "--emit=dll"])
+        .args(["build", "--backend", "mlir", "--emit=dll"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -263,7 +263,7 @@ fn cli_build_missing_source_exits_1() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -284,7 +284,7 @@ fn cli_build_invalid_manifest_exits_2() {
     fs::write(td.path().join("Mind.toml"), "this is not valid toml %%%").unwrap();
 
     let output = Command::new(&bin)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -319,7 +319,7 @@ fn cli_build_release_flag_accepted() {
     let out = td.path().join("target/release/hello");
 
     let output = Command::new(&bin)
-        .args(["build", "--release"])
+        .args(["build", "--backend", "mlir", "--release"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -360,7 +360,7 @@ fn cli_build_debug_puts_artifact_in_debug_subdir() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         // No --release flag → debug profile
         .current_dir(td.path())
         .output()
@@ -396,7 +396,11 @@ fn cli_build_custom_out_path() {
     let custom_out = td.path().join("my_custom_binary");
 
     let output = Command::new(&bin)
-        .args(["build", &format!("--out={}", custom_out.display())])
+        .args([
+            "build",
+            "--backend=mlir",
+            &format!("--out={}", custom_out.display()),
+        ])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -428,7 +432,7 @@ fn cli_build_emit_cdylib_produces_so() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .args(["build", "--emit=cdylib"])
+        .args(["build", "--backend", "mlir", "--emit=cdylib"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -462,7 +466,7 @@ fn cli_build_target_cpu_is_default() {
 
     // --target=cpu should succeed or fail at build level (1), never at CLI parsing (2).
     let output = Command::new(&bin)
-        .args(["build", "--target=cpu"])
+        .args(["build", "--backend", "mlir", "--target=cpu"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -489,7 +493,7 @@ fn cli_build_target_gpu_returns_clear_error() {
     .unwrap();
 
     let output = Command::new(&bin)
-        .args(["build", "--target=gpu"])
+        .args(["build", "--backend", "mlir", "--target=gpu"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -533,7 +537,7 @@ optimize = "release"
     .unwrap();
 
     let output = Command::new(&bin)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -578,6 +582,7 @@ fn cli_build_self_build_smoke() {
     let output = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             src.to_str().unwrap(),
             "--emit=cdylib",
             &format!("--out={}", out.display()),
@@ -643,6 +648,7 @@ fn cli_build_single_file_binary_ignores_broken_sibling() {
     let output = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             entry.to_str().unwrap(),
             "--release",
             "--emit=binary",
@@ -666,15 +672,19 @@ fn cli_build_single_file_binary_ignores_broken_sibling() {
     );
 
     // --emit=object: must compile clean (exit 0), same sibling present. Run it a
-    // SECOND time to also cover the leftover-manifest path — the first build
-    // wrote a synthetic `Mind.toml` into the tempdir, and a co-located bare
-    // manifest must still be treated as a single-file build, not a project whose
+    // SECOND time: a standalone build removes its temporary `Mind.toml`, so no
+    // leftover manifest can turn the scratch directory into a project whose
     // sibling `.mind` files are all translation units.
     let out_obj = td.path().join("triv.o");
     for pass in 0..2 {
+        assert!(
+            !td.path().join("Mind.toml").exists(),
+            "a standalone build left its temporary manifest behind (pass {pass})"
+        );
         let output = Command::new(&bin)
             .args([
                 "build",
+                "--backend=mlir",
                 entry.to_str().unwrap(),
                 "--release",
                 "--emit=object",
@@ -689,4 +699,38 @@ fn cli_build_single_file_binary_ignores_broken_sibling() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    // A killed build leaves its temporary manifest behind (planted here with
+    // the exact text the build writes). It is not a project: the next build
+    // stays single-file, ignores the broken sibling, and removes the leftover.
+    let leftover = td.path().join("Mind.toml");
+    fs::write(
+        &leftover,
+        libmind::build::temporary_manifest("triv", "triv.mind"),
+    )
+    .unwrap();
+    let output = Command::new(&bin)
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            entry.to_str().unwrap(),
+            "--release",
+            "--emit=object",
+        ])
+        .arg(format!("--out={}", out_obj.display()))
+        .output()
+        .expect("spawn mindc");
+    assert!(
+        output.status.success(),
+        "a leftover temporary manifest widened the build: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !leftover.exists(),
+        "the leftover temporary manifest was not removed"
+    );
 }
+
+#[path = "mindc_build_phase_a/backend.rs"]
+mod backend;

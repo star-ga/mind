@@ -37,8 +37,10 @@
 #
 # Build the .so first (combine deps in dependency order, stripping imports):
 #   cat std/sha256.mind                                     > /tmp/tls13hs.mind
+#   grep -v '^import ' std/sha512.mind                    >> /tmp/tls13hs.mind
+#   grep -v '^import ' std/ecdsa_p256.mind                >> /tmp/tls13hs.mind
 #   grep -v '^import std.sha256;' std/hkdf.mind            >> /tmp/tls13hs.mind
-#   grep -v '^import std.sha256;' std/x509.mind            >> /tmp/tls13hs.mind
+#   grep -v '^import ' std/x509.mind                       >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
 #                                                          >> /tmp/tls13hs.mind
 #   grep -vE '^import std\.' std/aes_gcm.mind              >> /tmp/tls13hs.mind
@@ -55,6 +57,28 @@ import ctypes
 import hashlib
 import hmac as _pyhmac
 import sys
+
+# Folded tls client transport and the two offline fixture tools.
+# The no-mode invocation below remains the handshake known-answer driver.
+#   python3 tests/tls13_handshake_driver.py client [--native] [--shipped]
+#   python3 tests/tls13_handshake_driver.py make-fixture-keys
+#   python3 tests/tls13_handshake_driver.py regenerate
+
+from _tls13_client_modes import (  # client, make-fixture-keys, regenerate
+    _tls13_client_api,
+    _tls13_make_keys_run,
+    _tls13_regenerate_main,
+)
+
+if __name__ == "__main__" and len(sys.argv) >= 2 and sys.argv[1] in (
+    "client", "make-fixture-keys", "regenerate",
+):
+    _mode = sys.argv[1]
+    if _mode == "client":
+        raise SystemExit(_tls13_client_api().main())
+    if _mode == "make-fixture-keys":
+        raise SystemExit(_tls13_make_keys_run())
+    raise SystemExit(_tls13_regenerate_main())
 
 so_path = sys.argv[1]
 T = ctypes.CDLL(so_path)

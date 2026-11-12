@@ -1,0 +1,12 @@
+import std.ring;
+
+fn main() -> i64 {
+    let r: i64 = ring_new(16);
+    ring_push(r, 65);
+    ring_push(r, 66);
+    let a: i64 = ring_pop(r);
+    let b: i64 = ring_pop(r);
+    let n: i64 = ring_len(r);
+    ring_free(r);
+    return a + b + n;
+}

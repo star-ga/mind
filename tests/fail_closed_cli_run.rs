@@ -47,7 +47,7 @@ fn build_fails_closed_on_source_check_rejects() {
     );
 
     let build = mindc()
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .arg(&src)
         .output()
         .expect("spawn build");
@@ -76,7 +76,7 @@ fn build_fails_closed_on_unregistered_mind_intrinsic() {
     let artifact = dir.join("a4");
 
     let build = mindc()
-        .args(["build", "--out"])
+        .args(["build", "--backend", "mlir", "--out"])
         .arg(&artifact)
         .arg(&src)
         .output()
@@ -112,7 +112,7 @@ fn build_still_succeeds_on_valid_source() {
         &[("ok.mind", "fn main() -> i64 { return 42; }\n")],
     );
     let out = mindc()
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .arg(dir.join("ok.mind"))
         .output()
         .expect("spawn build");

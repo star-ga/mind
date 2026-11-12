@@ -37,6 +37,7 @@ _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parent.parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import compiler_library  # noqa: E402
 
 SO = resolve_so()
 
@@ -53,7 +54,7 @@ def build_check_elf(lib) -> bytes:
     std_dir = _REPO / "std"
     parts = [(std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES]
     std_blob = b"\n".join(parts) + b"\n"
-    main = (_HERE / "main.mind").read_bytes()
+    main = compiler_library()
     driver = (_HERE / "check_driver.mind").read_bytes()
     combined = std_blob + main + b"\n" + driver
     user_lo = len(std_blob)

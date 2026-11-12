@@ -45,7 +45,7 @@ fn run(target: &str, main: &str) -> Option<i32> {
     )
     .expect("write main.mind");
     let out = Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&dir)
         .output()
         .expect("run mindc build");

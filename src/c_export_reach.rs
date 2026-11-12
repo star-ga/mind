@@ -26,7 +26,12 @@ use crate::ir::{IRModule, Instr};
 #[test]
 fn mic_decoded_module_does_not_reach_c_export() {
     let mindc = include_str!("bin/mindc.rs");
-    assert_decoded_body_does_not_lower(mindc, "fn run_inspect(", "parse_mic3_envelope(");
+    let mic3_output = include_str!("bin/mindc/mic3_output.rs");
+    assert_decoded_body_does_not_lower(
+        mic3_output,
+        "pub(super) fn run_inspect(",
+        "parse_mic3_envelope(",
+    );
     assert_decoded_body_does_not_lower(mindc, "fn run_verify(", "parse_mic3_envelope(");
     for sig in [
         "fn mindc_main(",
@@ -41,8 +46,8 @@ fn mic_decoded_module_does_not_reach_c_export() {
     let conformance = include_str!("conformance.rs");
     assert_decoded_body_does_not_lower(conformance, "pub fn run_value_oracle(", "parse_mic3_body(");
 
-    let ir = include_str!("ir/mod.rs");
-    assert_decoded_body_does_not_lower(ir, "pub fn load(", "parse_mic3_envelope(");
+    let ir_load = include_str!("ir/mic_load.rs");
+    assert_decoded_body_does_not_lower(ir_load, "pub fn load(", "parse_mic3_envelope(");
 
     let lowering = include_str!("mlir/lowering.rs");
     assert!(
@@ -157,6 +162,7 @@ fn assert_mic_round_trip_drops_import_provenance() {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: crate::ast::CallConv::C,
+        binding: Default::default(),
     });
     let bytes = crate::ir::compact::emit_mic3(&live);
     let decoded = crate::ir::compact::parse_mic3(&bytes).expect("mic@3 round trip");

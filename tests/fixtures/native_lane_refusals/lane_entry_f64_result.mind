@@ -1,0 +1,2 @@
+// lane.entry.f64_result: the entry function returns f64.
+fn main() -> f64 { return 1.0; }

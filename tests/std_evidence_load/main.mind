@@ -1,0 +1,220 @@
+// Load-side checks for std.evidence_mic: evd_load refuses a changed, added or
+// removed field, an extra key and an undefined code, and evd_load_parent a
+// record that names another parent. Two runners use this one
+// file: `mindc test tests/std_evidence_load/main.mind` runs the #[test]
+// functions, and the program built in this directory runs every check (exit 0
+// = all passed, else the id of the first failed check). The input is the
+// 237-byte export of filled_sink(), which tests/std_evidence_kat pins byte for
+// byte against a hand-derived copy; the offsets below are offsets into it. The
+// 32-byte digests were computed with an independent SHA-256 over the
+// hand-derived preimage (see tests/std_evidence_kat/main.mind).
+
+import std.mic_record;
+import std.evidence;
+import std.evidence_mic;
+
+fn b(a: i64, i: i64) -> i64 {
+    __mind_load_i8(a + i) & 255
+}
+
+fn w1(d: i64, p: i64, c: i64) -> i64 {
+    __mind_store_i8(d + p, c);
+    p + 1
+}
+
+fn ws(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
+    w1(d, w1(d, w1(d, w1(d, p, c0), c1), c2), c3)
+}
+
+// "std.evidence.parent" at k; returns its length 19.
+fn parent_key(k: i64) -> i64 {
+    let p: i64 = ws(k, ws(k, ws(k, ws(k, 0, 115, 116, 100, 46), 101, 118, 105, 100), 101, 110, 99, 101), 46, 112, 97, 114);
+    w1(k, w1(k, w1(k, p, 101), 110), 116)
+}
+
+// The same sink as tests/std_evidence_kat: records (1,1,22,5,7) (2,2,0,3,0)
+// stored, the third dropped.
+fn filled_sink() -> i64 {
+    let s: i64 = evd_new(2);
+    let _ = evidence_record(s, 1, 1, 22, 5, 7);
+    let _ = evidence_record(s, 2, 2, 0, 3, 0);
+    let _ = evidence_record(s, 3, 1, 9, 9, 9);
+    s
+}
+
+// The 237 export bytes of filled_sink() with no parent, or 0.
+fn export_bytes() -> i64 {
+    let e: i64 = evd_export(filled_sink(), 0, 0);
+    if e <= 0 || mrec_buf_len(e) != 237 {
+        return 0;
+    }
+    mrec_buf_addr(e)
+}
+
+// The record at a (n bytes) decoded, edited and encoded again: mode 1 adds a
+// zero 32-byte std.evidence.parent, mode 2 removes it, mode 3 adds the valid
+// application key "app.x" = Int 7. The mrec buffer, or 0 when an edit failed.
+fn edited(a: i64, n: i64, mode: i64) -> i64 {
+    let h: i64 = mrec_decode(a, n);
+    let k: i64 = __mind_alloc(32);
+    let z: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(z + i, 0);
+        i = i + 1;
+    }
+    let _ = parent_key(k);
+    let mut rc: i64 = 0;
+    if mode == 1 {
+        rc = mrec_put_bytes(h, k, 19, z, 32);
+    }
+    if mode == 2 {
+        rc = mrec_remove(h, k, 19);
+    }
+    if mode == 3 {
+        rc = mrec_put_int(h, k, w1(k, ws(k, 0, 97, 112, 112, 46), 120), 7);
+    }
+    if h <= 0 || rc != 0 {
+        return 0;
+    }
+    mrec_encode(h)
+}
+
+// Each negative control first proves the untampered bytes load.
+fn check_tamper() -> i64 {
+    let want: i64 = export_bytes();
+    if want == 0 || evd_load(want, 237) <= 0 {
+        return 27;
+    }
+    // A record byte (word 2 of record 0 = 22) changed: the digest refuses it.
+    let rec0: i64 = 14 + 21 + 54 + 23 + 1 + 20 + 1 + 1;
+    __mind_store_i8(want + rec0 + 16, 23);
+    if evd_load(want, 237) != evd_e_digest() {
+        return 28;
+    }
+    __mind_store_i8(want + rec0 + 16, 22);
+    // Schema Int 1 is zigzag 2 in the last byte; Int 2 (zigzag 4) is refused.
+    __mind_store_i8(want + 236, 4);
+    if evd_load(want, 237) != evd_e_schema() {
+        return 29;
+    }
+    __mind_store_i8(want + 236, 2);
+    check_tamper_fields(want)
+}
+
+// Every field evd_load returns is covered, no extra key passes, no undefined
+// code and no pair outside evd_pairs() passes. want holds the 237-byte expected export, which loads.
+fn check_tamper_fields(want: i64) -> i64 {
+    // dropped Int 1 (zigzag 2 at byte 111) read as dropped 2 (zigzag 4).
+    __mind_store_i8(want + 111, 4);
+    if evd_load(want, 237) != evd_e_digest() {
+        return 90;
+    }
+    __mind_store_i8(want + 111, 2);
+    let e1: i64 = edited(want, 237, 1);
+    if e1 <= 0 || mrec_buf_len(e1) != 291 || evd_load(mrec_buf_addr(e1), 291) != evd_e_digest() {
+        return 91;
+    }
+    let zp: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(zp + i, 0);
+        i = i + 1;
+    }
+    // A zero parent is hashed as a parent: digest starts 246 208.
+    let ez: i64 = evd_export(filled_sink(), zp, 32);
+    if ez <= 0 || b(mrec_buf_addr(ez), 57) != 246 || b(mrec_buf_addr(ez), 58) != 208 || evd_load(mrec_buf_addr(ez), mrec_buf_len(ez)) <= 0 {
+        return 92;
+    }
+    let e2: i64 = edited(mrec_buf_addr(ez), mrec_buf_len(ez), 2);
+    if e2 <= 0 || mrec_buf_len(e2) != 237 || evd_load(mrec_buf_addr(e2), 237) != evd_e_digest() {
+        return 93;
+    }
+    let e3: i64 = edited(want, 237, 3);
+    if e3 <= 0 || evd_load(mrec_buf_addr(e3), mrec_buf_len(e3)) != evd_e_key() {
+        return 94;
+    }
+    // Record 0 starts at byte 135: module word, then kind word at 143.
+    __mind_store_i8(want + 135, 9);
+    if evd_load(want, 237) != evd_e_code() {
+        return 95;
+    }
+    __mind_store_i8(want + 135, 1);
+    __mind_store_i8(want + 143, 5);
+    if evd_load(want, 237) != evd_e_code() {
+        return 96;
+    }
+    __mind_store_i8(want + 143, 1);
+    // (x509, child): both codes are defined, the pair is not.
+    __mind_store_i8(want + 135, 3);
+    __mind_store_i8(want + 143, 4);
+    if evd_load(want, 237) != evd_e_code() {
+        return 88;
+    }
+    __mind_store_i8(want + 135, 1);
+    __mind_store_i8(want + 143, 1);
+    if evd_load(want, 237) <= 0 {
+        return 97;
+    }
+    0
+}
+
+// evd_load_parent refuses a record that names another parent, or none, and
+// any expected pair other than (0, 0) and (> 0, 32).
+fn check_parent() -> i64 {
+    let p: i64 = __mind_alloc(32);
+    let q: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(p + i, i + 1);
+        __mind_store_i8(q + i, i + 1);
+        i = i + 1;
+    }
+    // q differs from p in the last byte only.
+    __mind_store_i8(q + 31, 0);
+    let e: i64 = evd_export(filled_sink(), p, 32);
+    let none: i64 = export_bytes();
+    if e <= 0 || none == 0 {
+        return 84;
+    }
+    let a: i64 = mrec_buf_addr(e);
+    let n: i64 = mrec_buf_len(e);
+    // Controls: the named parent and no parent load; evd_load takes both.
+    if evd_load_parent(a, n, p, 32) <= 0 || evd_load_parent(none, 237, 0, 0) <= 0 || evd_load(a, n) <= 0 || evd_load(none, 237) <= 0 {
+        return 85;
+    }
+    if evd_load_parent(a, n, q, 32) != evd_e_parent_mismatch() || evd_load_parent(none, 237, p, 32) != evd_e_parent_mismatch() || evd_load_parent(a, n, 0, 0) != evd_e_parent_mismatch() {
+        return 86;
+    }
+    if evd_load_parent(a, n, p, 31) != evd_e_parent() || evd_load_parent(a, n, 0, 32) != evd_e_parent() || evd_load_parent(a, n, p, 0) != evd_e_parent() || evd_load_parent(a, n, 0 - 8, 32) != evd_e_parent() {
+        return 87;
+    }
+    // A refused record keeps its own error when the parent is right.
+    __mind_store_i8(a + n - 1, 4);
+    if evd_load_parent(a, n, p, 32) != evd_e_schema() {
+        return 83;
+    }
+    0
+}
+
+#[test]
+fn test_evidence_parent() {
+    assert check_parent() == 0;
+}
+
+#[test]
+fn test_evidence_tamper() {
+    assert check_tamper() == 0;
+}
+
+fn main() -> i64 {
+    let mut rc: i64 = check_tamper();
+    if rc == 0 {
+        rc = check_parent();
+    }
+    // CI requires this count, so a run that skipped a group cannot pass.
+    if rc == 0 {
+        print("evd_load_groups_passed ", 2);
+    }
+    rc
+}

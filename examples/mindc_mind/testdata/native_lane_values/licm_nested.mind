@@ -1,0 +1,24 @@
+// LICM slice 1, nested While: `c` hoists out of the inner loop and again out of the
+// outer one; `base` hoists out of the inner loop only (`row` varies per outer pass);
+// `k` stays (j is carried).
+fn g(a: i64, n: i64, m: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let row: i64 = i * m;
+        let mut j: i64 = 0;
+        while j < m {
+            let c: i64 = a * 2 + 1;
+            let base: i64 = row + 7;
+            let k: i64 = base + j;
+            s = s + k * c;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    g(3, 4, 5) % 253
+}

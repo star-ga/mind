@@ -192,10 +192,10 @@ pub struct Unresolved {
 
 /// A call that resolves (never blocks `mindc check`) but whose callee is only
 /// accepted through `call_resolvable`'s blanket `__mind_*` acceptance rather
-/// than a registered, arity-checked `STD_SURFACE_INTRINSICS` entry — today
-/// that's the native-ELF self-host-only intrinsics (`__mind_argc`/
-/// `__mind_argv`), but it also catches a genuinely-misspelled
-/// `__mind_*` name, which otherwise had zero diagnostic coverage at all.
+/// than a registered, arity-checked `STD_SURFACE_INTRINSICS` entry — a
+/// runtime symbol no registry row names (`__mind_now_ns`), and a
+/// genuinely-misspelled `__mind_*` name, which otherwise had zero
+/// diagnostic coverage at all.
 pub struct SelfHostOnlyCall {
     pub name: String,
     pub span: crate::ast::Span,
@@ -884,16 +884,16 @@ impl<'a> Resolver<'a> {
                 let qualified_call = qcall(*span, callee);
                 // Advisory, orthogonal to the resolvable/unresolved decision
                 // below: a callee that resolves ONLY through the blanket
-                // `__mind_*` acceptance in `call_resolvable` (not a registered
-                // `STD_SURFACE_INTRINSICS` entry) gets zero arity/existence
+                // `__mind_*` acceptance in `call_resolvable` (registered in no
+                // profile of `STD_SURFACE_INTRINSICS`) gets zero arity/existence
                 // checking from either this pass or the type-checker's
                 // `check_std_surface_intrinsic`. Flag it as a Warning so
-                // `mindc check` stays green (no behavior change for legitimate
-                // self-host-only callers like `std/cli.mind`/`std/fs.mind`)
-                // but the gap is no longer silent.
+                // `mindc check` stays green but the gap is no longer silent. A
+                // registered native-only row is arity-checked (any profile), so
+                // it is not in this domain.
                 #[cfg(feature = "std-surface")]
                 if callee.starts_with("__mind_")
-                    && super::std_surface_intrinsic_arity(callee).is_none()
+                    && crate::intrinsics::registered_intrinsic_arity(callee).is_none()
                 {
                     self.self_host_only.push(SelfHostOnlyCall {
                         name: callee.clone(),

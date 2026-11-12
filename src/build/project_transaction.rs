@@ -3,13 +3,15 @@
 
 //! Preparation shared by manifest-backed and standalone build transactions.
 
-use super::{BuildError, build_synthetic_manifest};
-use crate::project::{ProjectManifest, load_manifest};
+use super::BuildError;
+use crate::project::{ProjectManifest, find_project_root_for_file_checked, load_manifest};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 pub(super) use crate::project::build_lock::ManifestEdit;
-use crate::project::build_lock::ProjectBuildLock;
+use crate::project::build_lock::{
+    ProjectBuildLock, lock_cwd_project, remove_leftover, temporary_manifest,
+};
 
 /// What the project-transaction boundary hands the rest of a build.
 pub(super) struct BuildTransaction {
@@ -78,39 +80,42 @@ pub(super) fn open_explicit(
     match probed_root {
         Some(root) => {
             let lock = lock_project(&root)?;
-            // Re-audit the manifest after the lock, not before: the `Mind.toml`
-            // the probe saw may have been a concurrent standalone build's
-            // temporary manifest, which that build removes while still holding
-            // this lock. A root that is the entry's own directory and now has no
-            // manifest is that case, and the build proceeds on a synthesised
-            // single-file manifest. Any other root is a genuine project whose
-            // manifest disappearing is a real error, so it falls through to
-            // `load_manifest` and fails loudly. Both arms depend on `root` and
-            // `entry_dir` being one identity; a lexical `entry_dir` made the
-            // co-location test false for every standalone build under a
-            // symlinked parent.
-            let manifest = if root == *entry_dir && !root.join("Mind.toml").exists() {
-                single_file_manifest(entry_path)?
-            } else {
-                load_manifest(&root)
-                    .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?
-            };
-            // A named file sitting directly next to a *bare* manifest (one
-            // declaring no `[targets.*].sources` list) is a single-file build:
-            // that manifest is either a real one-file project or a leftover
-            // synthetic `Mind.toml` from a prior `mindc build <file>` in a
-            // scratch directory. Otherwise the next build of a trivial file
-            // there adopts the leftover as a "project" and compiles every
-            // unrelated sibling as a translation unit. A genuine multi-file
-            // project keeps the whole-directory walk: its entry lives in a
-            // subtree (root != the file's own dir) or it declares sources.
-            let declares_sources = manifest.targets.values().any(|t| t.sources.is_some());
-            let single_file = !declares_sources && root == *entry_dir;
+            // A temporary manifest is never a project. Its writer removes it
+            // before releasing this lock, so a marked one still here belongs to
+            // a killed build and is removed now. A manifest in the entry's own
+            // directory that vanished while we waited was a live standalone
+            // build's. Either way the search runs again from the entry, upward
+            // past this directory, so a real project above is still found and
+            // none at all gives a standalone build. Each pass removes a file or
+            // finds one absent, so the search ends. A vanished manifest of any
+            // other root is a real project losing it, and `load_manifest`
+            // fails loudly. `root` and `entry_dir` must be one identity; a
+            // lexical `entry_dir` made the co-location test false for every
+            // standalone build under a symlinked parent.
+            let manifest_path = root.join("Mind.toml");
+            let removed =
+                remove_leftover(&manifest_path).map_err(|e| BuildError::failed(e.to_string()))?;
+            if removed || (root == *entry_dir && !manifest_path.exists()) {
+                drop(lock);
+                let reprobed = find_project_root_for_file_checked(entry_dir).map_err(|e| {
+                    BuildError::Invalid(format!("cannot discover project root: {e:#}"))
+                })?;
+                return open_explicit(reprobed, entry_dir, entry_path);
+            }
+            let manifest = load_manifest(&root)
+                .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
+            // One build rule: a named entry inside a project builds THAT
+            // project, with the same module graph as `mindc build` with no
+            // path, only the entry changes. Scoping a co-located bare manifest
+            // to the entry alone dropped every module the entry imports, and
+            // the build failed at the first call into one (`E2003`). The
+            // leftover temporary manifest that scoping guarded against carries
+            // the marker and was removed above, so only a real manifest is here.
             Ok(BuildTransaction {
                 root,
                 manifest,
                 lock,
-                single_file,
+                single_file: false,
             })
         }
         None => {
@@ -121,19 +126,107 @@ pub(super) fn open_explicit(
             // read the root — the input snapshot, the cache root, the manifest
             // write — but as the root of that synthesised single-file project.
             let lock = lock_project(entry_dir)?;
-            // No governing manifest in-bounds — synthesise a single-file
-            // manifest rooted at the entry file's OWN directory (never cwd nor
-            // a distant ancestor), so source collection stays scoped to it
-            // rather than to whatever tree happens to sit above.
-            let manifest = single_file_manifest(entry_path)?;
-            Ok(BuildTransaction {
-                root: entry_dir.to_path_buf(),
-                manifest,
-                lock,
-                single_file: true,
-            })
+            standalone(entry_dir.to_path_buf(), lock, entry_path)
         }
     }
+}
+
+/// Open the build transaction for `mindc build` with no path: the project the
+/// current directory is in, by the same rule as [`open_explicit`] (see
+/// `build_lock::lock_cwd_project`): a temporary manifest is never a project.
+pub(super) fn open_project() -> Result<BuildTransaction, BuildError> {
+    let lock = lock_cwd_project()
+        .map_err(|e| BuildError::Invalid(format!("cannot locate Mind.toml: {e}")))?;
+    let root = lock.root().to_path_buf();
+    let manifest =
+        load_manifest(&root).map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
+    Ok(BuildTransaction {
+        root,
+        manifest,
+        lock,
+        single_file: false,
+    })
+}
+
+/// The resolved explicit entry of `mindc build [PATH]`, or `None` when no path
+/// was named.
+///
+/// One path at most. The modules an entry imports come from its project, so a
+/// second path could only be ignored or read as an undeclared source set; both
+/// are refused as bad usage.
+pub(super) fn resolve_explicit_entry(
+    paths: &[PathBuf],
+) -> Result<Option<(PathBuf, PathBuf)>, BuildError> {
+    let first = match paths {
+        [] => return Ok(None),
+        [first] => first,
+        _ => {
+            let named: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            return Err(BuildError::Invalid(format!(
+                "usage: `mindc build [PATH]` takes at most one entry path, got {}: {}. \
+                 Modules the entry imports come from its project (Mind.toml), never from \
+                 extra paths on the command line",
+                paths.len(),
+                named.join(" ")
+            )));
+        }
+    };
+    std::env::current_dir()
+        .map_err(|error| anyhow::Error::new(error).context("cannot read current directory"))
+        .and_then(|cwd| canonical_explicit_entry(first, &cwd))
+        .map(Some)
+        .map_err(|error| BuildError::Invalid(format!("cannot resolve explicit entry: {error:#}")))
+}
+
+/// A build with no governing manifest: a synthesised single-file project rooted
+/// at the entry's own directory (never cwd nor a distant ancestor), so source
+/// collection stays scoped to the entry rather than whatever tree sits above.
+fn standalone(
+    root: PathBuf,
+    lock: ProjectBuildLock,
+    entry_path: &Path,
+) -> Result<BuildTransaction, BuildError> {
+    refuse_local_imports(entry_path, &root)?;
+    Ok(BuildTransaction {
+        root,
+        manifest: single_file_manifest(entry_path)?,
+        lock,
+        single_file: true,
+    })
+}
+
+/// Refuse a standalone entry that imports a local (non-`std`) module.
+///
+/// A standalone build compiles exactly the named entry, so a local import has
+/// no module to bind to. Without this refusal the build failed later, at the
+/// first call into that module (`E2003 unsupported call`), and never said that
+/// a project was missing. An unreadable or unparsable entry is left to the
+/// stage that already reports it.
+fn refuse_local_imports(entry_path: &Path, root: &Path) -> Result<(), BuildError> {
+    let Ok(source) = std::fs::read_to_string(entry_path) else {
+        return Ok(());
+    };
+    let Ok((_, imports)) = crate::parser::parse_with_imports(&source) else {
+        return Ok(());
+    };
+    let local: Vec<String> = imports
+        .into_iter()
+        .filter(|path| path.split('.').next() != Some("std"))
+        .collect();
+    if local.is_empty() {
+        return Ok(());
+    }
+    Err(BuildError::refused(
+        "E2042",
+        format!(
+            "local import(s) {} in {} require an enclosing Mind.toml project, and no Mind.toml \
+         governs {}: add a Mind.toml there (or in a parent directory) so the build compiles \
+         the imported module(s) with the entry",
+            local.join(", "),
+            entry_path.display(),
+            root.display()
+        ),
+    ))
 }
 
 fn single_file_manifest(entry: &Path) -> Result<ProjectManifest, BuildError> {
@@ -152,11 +245,11 @@ fn single_file_manifest(entry: &Path) -> Result<ProjectManifest, BuildError> {
     } else {
         format!("pkg_{stem}")
     };
-    toml::from_str(&build_synthetic_manifest(&pkg_name, "src/main.mind"))
+    toml::from_str(&temporary_manifest(&pkg_name, "src/main.mind"))
         .map_err(|e| BuildError::Invalid(format!("synthetic manifest: {e}")))
 }
 
-pub(super) fn lock_project(root: &Path) -> Result<ProjectBuildLock, BuildError> {
+fn lock_project(root: &Path) -> Result<ProjectBuildLock, BuildError> {
     ProjectBuildLock::acquire(root)
         .map_err(|e| BuildError::failed(format!("cannot lock project build: {e}")))
 }

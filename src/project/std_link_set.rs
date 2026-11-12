@@ -201,8 +201,8 @@ mod tests {
 
     /// The native link set IS the build's substrate closure for every shipped
     /// module, and the no-native-linker closure agrees with it apart from the
-    /// imported module itself (std.cli and std.io are bundled non-members,
-    /// which an explicit import admits anyway).
+    /// imported module itself (a bundled non-member, which an explicit import
+    /// admits anyway).
     #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
     #[test]
     fn link_set_is_the_substrate_closure_for_every_shipped_module() {

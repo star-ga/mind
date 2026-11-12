@@ -125,7 +125,7 @@ fn json_reporter_reports_a_missing_project_for_local_imports() {
     let diags = items(&out);
     assert_eq!(diags.len(), 1, "exactly one diagnostic: {diags:?}");
     assert_eq!(diags[0]["severity"], "error", "{diags:?}");
-    assert_eq!(diags[0]["rule_id"], "type_check::E2003", "{diags:?}");
+    assert_eq!(diags[0]["rule_id"], "type_check::E2042", "{diags:?}");
     assert!(
         diags[0]["message"]
             .as_str()

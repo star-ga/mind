@@ -1,3 +1,4 @@
+// std/tls13_client_core.mind
 // Internal bounded state storage for std.tls13_client. The public facade keeps
 // the original API names. State is caller-owned and must be state_size() bytes.
 // Scalar fields: status 0, error 8, tick used/budget 16/24, now 32, suite 40,

@@ -1,0 +1,13 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// Two shadows in a row, then an assign: the merge keeps the pre-shadow write.
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    let mut x: i64 = 0;
+    if a >= 1 {
+        x = 5;
+        let mut x: i64 = 7;
+        let mut x: i64 = 8;
+        x = 9;
+    }
+    return x;
+}

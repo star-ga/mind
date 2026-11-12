@@ -137,6 +137,7 @@ fn manifest_build_remains_the_positive_control() {
         &root,
         &[
             "build",
+            "--backend=mlir",
             "main.mind",
             "--emit",
             "cdylib",
@@ -208,6 +209,7 @@ fn duplicate_basenames_link_distinct_objects_and_execute() {
         &root,
         &[
             "build",
+            "--backend=mlir",
             "main.mind",
             "--emit",
             "cdylib",
@@ -235,7 +237,14 @@ fn no_manifest_import_is_explicitly_unsupported() {
         "no-manifest import unexpectedly resolved"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("E2003"), "{stderr}");
+    // With import discovery the missing project is named at the import
+    // (E2042); without it the unresolved call is all that can be refused.
+    let code = if cfg!(feature = "cross-module-imports") {
+        "E2042"
+    } else {
+        "E2003"
+    };
+    assert!(stderr.contains(code), "{stderr}");
     assert!(stderr.contains("Mind.toml"), "{stderr}");
 }
 

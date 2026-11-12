@@ -126,8 +126,8 @@ fn emit_gate_marker(line: &str) {
 /// in the example dir) it is reused; a stub or absent artifact triggers a
 /// rebuild, and a failed rebuild (no MLIR toolchain) returns `None` to skip.
 /// True when `so` is older than any input that determines its bytes, or when that
-/// cannot be established. Mirrors the input set of the Python resolver's `_stamp()`
-/// (`examples/mindc_mind/_selfhost_so.py`), which caches on the same four files.
+/// cannot be established. Covers the compiler files of the Python resolver's stamp
+/// (`examples/mindc_mind/_selfhost_so.py`): every top-level compiler-dir `.mind`.
 ///
 /// Fails STALE on any unreadable mtime: an oracle we cannot prove current is exactly
 /// the one that must not be trusted.
@@ -144,19 +144,19 @@ fn is_stale(so: &Path, compiler: &Path) -> bool {
     // against it, staleness is undecidable and the artifact must not be trusted.
     // Using the path the caller already holds removes the exception rather than
     // documenting it.
-    let src_stale = [
-        "examples/mindc_mind/main.mind",
-        "examples/mindc_mind/selfhost_driver.mind",
-        "Mind.toml",
-    ]
-    .iter()
-    .any(
-        |rel| match fs::metadata(root.join(rel)).and_then(|m| m.modified()) {
-            Ok(input_mtime) => input_mtime > so_mtime,
-            // Unreadable input -> undecidable -> stale. No exceptions.
-            Err(_) => true,
-        },
-    );
+    // main.mind, the driver and every part: each top-level compiler-dir .mind, plus Mind.toml.
+    let entries: std::io::Result<Vec<fs::DirEntry>> =
+        fs::read_dir(root.join("examples/mindc_mind")).and_then(Iterator::collect);
+    let Ok(entries) = entries else {
+        return true; // Unreadable input -> undecidable -> stale. No exceptions.
+    };
+    let mind = entries.iter().map(fs::DirEntry::path);
+    let inputs = mind.filter(|p| p.extension().is_some_and(|x| x == "mind"));
+    let mut inputs = inputs.chain([root.join("Mind.toml")]);
+    let src_stale = inputs.any(|p| match fs::metadata(&p).and_then(|m| m.modified()) {
+        Ok(input_mtime) => input_mtime > so_mtime,
+        Err(_) => true,
+    });
     let compiler_stale = match fs::metadata(compiler).and_then(|m| m.modified()) {
         Ok(bin_mtime) => bin_mtime > so_mtime,
         Err(_) => true,
@@ -189,13 +189,13 @@ fn oracle_so_path(bin: &Path) -> Option<PathBuf> {
                 }
             }
         }
-
-        // Oracle absent or is a stub — rebuild from source.
+        // Oracle absent or a stub: rebuild from source (the MLIR self-host build).
         let out =
             std::env::temp_dir().join(format!("g2_libmindc_mind_built_{}.so", std::process::id()));
         let r = Command::new(bin)
             .args([
                 "build",
+                "--backend=mlir",
                 "--release",
                 "--emit=cdylib",
                 &format!("--out={}", out.display()),
@@ -806,9 +806,9 @@ fn write_coverage_report(rows: &[(PathBuf, Outcome)], report_path: &Path) -> Str
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn g2_1_differential_coverage() {
-    println!(
-        "g2_differential_mlir: SKIP -- differential harness dlopen()s a Linux \
-         ELF and is gated to #[cfg(target_os = \"linux\")]"
+    crate::common::gate::skipped(
+        "g2_differential_mlir",
+        "differential harness dlopen()s a Linux ELF; gated to target_os = linux",
     );
 }
 

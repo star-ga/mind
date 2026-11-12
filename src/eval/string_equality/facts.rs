@@ -123,6 +123,9 @@ pub(super) struct Bound {
     /// annotated `let` or a parameter); `None` for a name an assignment
     /// cannot store into here (a capture or a module-level binding).
     pub(super) site: Option<(usize, bool)>,
+    /// For a parameter, the fact of its declared type, whatever is stored
+    /// into it: lowering picks a method on it by that type.
+    pub(super) shape: Option<Fact>,
 }
 
 /// Facts in scope, shared copy-on-write: a statement's sub-walks clone the
@@ -262,6 +265,10 @@ pub(super) struct Decls {
     pub(super) project_fns: std::sync::Arc<Fns>,
     /// The project functions whose own module refuses a comparison in them.
     pub(super) project_refusing: std::sync::Arc<BTreeSet<String>>,
+    /// The fact of each `const` the modules of the project build declare,
+    /// for a name this module reads but does not declare (see
+    /// [`super::project`]).
+    pub(super) project_consts: std::sync::Arc<BTreeMap<String, Fact>>,
     /// Every function the interpreter's merged module defines, by source
     /// name (empty for a build): a method on a string desugars to the
     /// `string_<method>` call only where one runs.
@@ -281,8 +288,9 @@ impl Decls {
         #[cfg(feature = "cross-module-imports")]
         if let Some(project) = super::project::current() {
             let fns = project.fns.clone();
-            let mut decls = Self::seeded_items(module, items, fns, project.slots.shared());
+            let mut decls = Self::seeded_items(module, items, fns, project.current_seed());
             decls.project_refusing = project.refusing.clone();
+            decls.project_consts = project.consts.clone();
             return decls;
         }
         Self::seeded_items(module, items, Default::default(), Contradicted::default())
@@ -315,6 +323,7 @@ impl Decls {
             contradicted,
             project_fns,
             project_refusing: Default::default(),
+            project_consts: Default::default(),
             supplied: Default::default(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
@@ -491,7 +500,8 @@ impl Decls {
         let elems = |element: &TypeAnn| Fact::Elems(Box::new(self.typed_fact(element)));
         let never = || Box::new(Fact::Never);
         match self.resolve(ty) {
-            TypeAnn::Named(n) if n == "string" || n == "String" => Fact::Str,
+            // `String` resolves to its owner-qualified name under `import std.string`.
+            TypeAnn::Named(n) if super::classify::is_string_record(&n) => Fact::Str,
             TypeAnn::Named(n) if SCALAR_NAMES.contains(&n.as_str()) => Fact::NotStr,
             TypeAnn::Named(n) if n == "bytes" || n.starts_with("bytes[") => {
                 Fact::Elems(Box::new(Fact::NotStr))
@@ -590,7 +600,11 @@ impl Decls {
                 Variant::None.build(Fact::Never)
             }
             None if self.returns.contains_key(name) || self.is_variant(name) => Fact::NotStr,
-            None => Fact::Unknown,
+            None => self
+                .project_consts
+                .get(name)
+                .cloned()
+                .unwrap_or(Fact::Unknown),
         }
     }
 
@@ -662,16 +676,21 @@ impl Decls {
     /// Bind the local binding `name` (see [`site`]), whose initial value has
     /// `fact`, as every store into it leaves it (see [`Self::local_fact`]).
     pub(super) fn bind_local(&self, env: &mut Env, name: &String, fact: Fact, declared: bool) {
+        self.bind_site(env, name, fact, declared, None);
+    }
+
+    fn bind_site(
+        &self,
+        env: &mut Env,
+        name: &String,
+        fact: Fact,
+        declared: bool,
+        shape: Option<Fact>,
+    ) {
         let at = site(name);
         let fact = self.local_fact(at, fact, declared);
-        self.bind_bound(
-            env,
-            name,
-            Bound {
-                fact,
-                site: Some((at, declared)),
-            },
-        );
+        let site = Some((at, declared));
+        self.bind_bound(env, name, Bound { fact, site, shape });
     }
 
     /// The fact of the local binding at `site` whose initial value has
@@ -714,15 +733,16 @@ impl Decls {
     ) -> Env {
         let stored = owner.and_then(|name| self.contradicted.params.get(name));
         for (index, param) in params.iter().enumerate() {
+            let declared = match &param.ty {
+                TypeAnn::Named(name) if type_params.contains(name) => Fact::Any,
+                ty => self.typed_fact(ty),
+            };
             let typed = if stored.is_some_and(|at| at.contains(&index)) {
                 Fact::MaybeStr
             } else {
-                match &param.ty {
-                    TypeAnn::Named(name) if type_params.contains(name) => Fact::Any,
-                    ty => self.typed_fact(ty),
-                }
+                declared.clone()
             };
-            self.bind_local(&mut env, &param.name, typed, true);
+            self.bind_site(&mut env, &param.name, typed, true, Some(declared));
         }
         env
     }

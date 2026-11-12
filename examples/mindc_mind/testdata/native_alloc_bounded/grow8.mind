@@ -1,0 +1,18 @@
+// Naive append (verifier repro, W11c round 2): one buffer grown by 8 bytes per
+// step with __mind_realloc for 30000 steps (peak 240 KB live, ~3.6 GB requested
+// in total). The block ends at the bump cursor, so realloc must grow it in
+// place instead of copying it into an ever larger fresh block each step.
+// Expected exit 11, empty stdout.
+fn main() -> i64 {
+    let mut buf: i64 = __mind_alloc(8);
+    let mut i: i64 = 1;
+    let mut s: i64 = 0;
+    while i < 30000 {
+        buf = __mind_realloc(buf, i * 8 + 8);
+        __mind_store_i64(buf + i * 8, i);
+        s = s + __mind_load_i64(buf + i * 8) - i;
+        i = i + 1;
+    }
+    let f: i64 = __mind_free(buf);
+    s + f + 11
+}

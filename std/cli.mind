@@ -93,20 +93,20 @@ fn cli_cstr_len(addr: i64, i: i64) -> i64 {
     cli_cstr_len(addr, i + 1)
 }
 
-// args_from_os_rec — push argv[i..argc) into `a` as borrowed String views.
-fn args_from_os_rec(a: Args, i: i64, argc: i64) -> Args {
+// cli_args_from_os_rec — push argv[i..argc) into `a` as borrowed String views.
+fn cli_args_from_os_rec(a: Args, i: i64, argc: i64) -> Args {
     if i >= argc {
         return a;
     }
     let ptr: i64 = __mind_argv(i);
     let n: i64 = cli_cstr_len(ptr, 0);
     let s: String = String { addr: ptr, len: n, cap: 0 };
-    args_from_os_rec(args_push(a, s), i + 1, argc)
+    cli_args_from_os_rec(args_push(a, s), i + 1, argc)
 }
 
 // args_from_os — the real OS argv as an Args value.
 pub fn args_from_os() -> Args {
-    args_from_os_rec(args_new(), 0, __mind_argc())
+    cli_args_from_os_rec(args_new(), 0, __mind_argc())
 }
 
 // ---------------------------------------------------------------------------
@@ -117,8 +117,8 @@ pub fn args_from_os() -> Args {
 // to the long/short flag names byte-by-byte via std.string equality.
 // ---------------------------------------------------------------------------
 
-// is_double_dash — does `s` exactly equal `--` (the flag-end sentinel)?
-fn is_double_dash(s: String) -> i64 {
+// cli_is_double_dash — does `s` exactly equal `--` (the flag-end sentinel)?
+fn cli_is_double_dash(s: String) -> i64 {
     if s.len != 2 {
         return 0;
     }
@@ -141,7 +141,7 @@ pub fn args_flag_end_idx(a: Args) -> i64 {
     let mut i: i64 = 0;
     while i < n {
         let s: String = args_get(a, i);
-        if is_double_dash(s) == 1 {
+        if cli_is_double_dash(s) == 1 {
             return i;
         }
         i = i + 1;
@@ -209,12 +209,12 @@ pub fn args_flag_value_idx(a: Args, long: String, short: String) -> i64 {
     return -1;
 }
 
-// equals_value — if `entry` begins with `flag` followed by `=`,
+// cli_equals_value — if `entry` begins with `flag` followed by `=`,
 // return a String view of everything after the `=`; otherwise return
 // the empty sentinel (cap=0, len=0).  `flag.len == 0` short-circuits
 // to empty so callers can skip either the long or short check by
 // passing `string_new()`.
-fn equals_value(entry: String, flag: String) -> String {
+fn cli_equals_value(entry: String, flag: String) -> String {
     if flag.len == 0 {
         return string_new();
     }
@@ -264,11 +264,11 @@ pub fn args_flag_value(a: Args, long: String, short: String) -> String {
             return string_new();
         }
         // Equals form: entry starts with `flag=`.
-        let lv: String = equals_value(s, long);
+        let lv: String = cli_equals_value(s, long);
         if lv.len > 0 {
             return lv;
         }
-        let sv: String = equals_value(s, short);
+        let sv: String = cli_equals_value(s, short);
         if sv.len > 0 {
             return sv;
         }
@@ -344,7 +344,7 @@ pub fn args_first_positional_idx(a: Args) -> i64 {
         if after_sep == 1 {
             return i;
         }
-        if is_double_dash(s) == 1 {
+        if cli_is_double_dash(s) == 1 {
             after_sep = 1;
             i = i + 1;
             continue

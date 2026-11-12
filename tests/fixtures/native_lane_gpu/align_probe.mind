@@ -1,0 +1,94 @@
+// Two cuLaunchKernel calls in one frame. The odd overflow count needs the
+// 8-byte pad; the second call needs the cleanup to drop that pad too. Each
+// frame below has its own pair, so a broken pad fails in that frame rather
+// than being repaired by `mov rsp, rbp` on the way out.
+extern "C" {
+    fn cuLaunchKernel(f: *mut u8, gx: u32, gy: u32, gz: u32, bx: u32, by: u32, bz: u32, shared: u32, stream: *mut u8, kparams: *mut *mut u8, extra: *mut *mut u8) -> i32;
+}
+
+fn two_plain(f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    let a: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if a != 0 { return 100 + a; }
+    let b: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if b != 0 { return 200 + b; }
+    return 0;
+}
+
+fn two_locals(f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    let x: i64 = 1;
+    let y: i64 = 2;
+    let z: i64 = 3;
+    let a: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if a != 0 { return 100 + a; }
+    let b: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if b != 0 { return 200 + b; }
+    if x + y + z != 6 { return 8; }
+    return 0;
+}
+
+fn two_nine(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    if a + b + c + d + e != 15 { return 9; }
+    let first: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if first != 0 { return 100 + first; }
+    let second: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if second != 0 { return 200 + second; }
+    return 0;
+}
+
+fn two_loop(f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 2 {
+        let a: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+        if a != 0 { return 100 + a; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn two_expr(f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    let a: i64 = (cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64) + 0;
+    if a != 0 { return 100 + a; }
+    let b: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if b != 0 { return 200 + b; }
+    return 0;
+}
+
+fn two_rec(n: i64, f: i64, stream: i64, kp: i64, ex: i64) -> i64 {
+    let a: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if a != 0 { return 100 + a; }
+    let b: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if b != 0 { return 200 + b; }
+    if n < 2 { return 0; }
+    return two_rec(n - 1, f, stream, kp, ex);
+}
+
+fn main() -> i64 {
+    let fnp: i64 = __mind_alloc(8);
+    __mind_store_i64(fnp, 3);
+    let stream: i64 = __mind_alloc(8);
+    __mind_store_i64(stream, 1);
+    let slot: i64 = __mind_alloc(8);
+    __mind_store_i64(slot, 1);
+    let kp: i64 = __mind_alloc(8);
+    __mind_store_i64(kp, slot);
+    let ex: i64 = __mind_alloc(8);
+    __mind_store_i64(ex, slot);
+    let f: i64 = __mind_load_i64(fnp);
+    let a: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if a != 0 { return 100 + a; }
+    let b: i64 = cuLaunchKernel(f as *mut u8, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 1 as u32, 0 as u32, stream as *mut u8, kp as *mut *mut u8, ex as *mut *mut u8) as i64;
+    if b != 0 { return 200 + b; }
+    let p: i64 = two_plain(f, stream, kp, ex);
+    if p != 0 { return 300 + p; }
+    let locs: i64 = two_locals(f, stream, kp, ex);
+    if locs != 0 { return 400 + locs; }
+    let wide: i64 = two_nine(1, 2, 3, 4, 5, f, stream, kp, ex);
+    if wide != 0 { return 500 + wide; }
+    let looped: i64 = two_loop(f, stream, kp, ex);
+    if looped != 0 { return 600 + looped; }
+    let expr: i64 = two_expr(f, stream, kp, ex);
+    if expr != 0 { return 700 + expr; }
+    let rec: i64 = two_rec(3, f, stream, kp, ex);
+    if rec != 0 { return 800 + rec; }
+    return 42;
+}

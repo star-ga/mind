@@ -1,0 +1,122 @@
+// STARGA Inc. Exact source-extracted staged-state helper controls.
+pub fn ast_span_lo(node: i64) -> i64 {
+    __mind_load_i64(node + 8)
+}
+
+pub fn ast_span_hi(node: i64) -> i64 {
+    __mind_load_i64(node + 16)
+}
+
+pub fn nb_fc_scope(ctx: i64) -> i64 {
+    if ctx == 0 { return 0; }
+    if __mind_load_i64(ctx) != 3 { return 0; }
+    __mind_load_i64(ctx + 416)
+}
+
+pub fn nb_fc_unit(scope: i64, lo: i64, hi: i64) -> i64 {
+    if lo < 0 { return 0 - 1; }
+    if hi <= lo { return 0 - 1; }
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(scope + 32) {
+        let row: i64 = __mind_load_i64(scope + 40) + i * 32;
+        let start: i64 = __mind_load_i64(row);
+        let end: i64 = start + __mind_load_i64(row + 8);
+        if lo >= start { if hi <= end { return i; } }
+        i = i + 1;
+    }
+    0 - 1
+}
+
+pub fn nb_fc_begin(ctx: i64, node: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 1; }
+    let unit: i64 = nb_fc_unit(scope, ast_span_lo(node), ast_span_hi(node));
+    if unit < 0 { return 0; }
+    __mind_store_i64(scope + 72, unit);
+    __mind_store_i64(scope + 80, __mind_load_i64(scope + 56));
+    __mind_store_i64(scope + 96, 0);
+    1
+}
+
+pub fn nb_fc_rollback(ctx: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope != 0 { __mind_store_i64(scope + 56, __mind_load_i64(scope + 56)); }
+    0
+}
+
+pub fn nb_fc_frame(ctx: i64, frame: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 0; }
+    let mut i: i64 = __mind_load_i64(scope + 80);
+    while i < __mind_load_i64(scope + 56) {
+        __mind_store_i64(__mind_load_i64(scope + 48) + i * 64 + 48, frame);
+        i = i + 1;
+    }
+    0
+}
+
+pub fn nb_fc_rebase(ctx: i64, base: i64, bytes: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(ctx);
+    if scope == 0 { return 1; }
+    let mut i: i64 = __mind_load_i64(scope + 80);
+    while i < __mind_load_i64(scope + 56) {
+        let row: i64 = __mind_load_i64(scope + 48) + i * 64;
+        let off: i64 = __mind_load_i64(row);
+        if off < 0 { return 0; }
+        if off > bytes - 64 { return 0; }
+        if base > 4194304 - off { return 0; }
+        if __mind_load_i64(row + 48) < 16 { return 0; }
+        __mind_store_i64(row, base + off);
+        i = i + 1;
+    }
+    1
+}
+
+pub fn eq(a:i64,b:i64)->i64 {if a==b{return 0;}1}
+pub fn main()->i64 {
+ let ctx:i64=__mind_alloc(432);let scope:i64=__mind_alloc(128);let units:i64=__mind_alloc(64);
+ let rows:i64=__mind_alloc(256);let node:i64=__mind_alloc(64);
+ if ctx==0{return 70;}if scope==0{return 70;}if units==0{return 70;}if rows==0{return 70;}if node==0{return 70;}
+ let mut i:i64=0;while i<432{__mind_store_i8(ctx+i,0);i=i+1;}
+ i=0;while i<128{__mind_store_i8(scope+i,0);i=i+1;}
+ i=0;while i<256{__mind_store_i8(rows+i,0);i=i+1;}
+ __mind_store_i64(ctx,3);__mind_store_i64(ctx+416,scope);
+ __mind_store_i64(scope+32,2);__mind_store_i64(scope+40,units);__mind_store_i64(scope+48,rows);
+ __mind_store_i64(units,0);__mind_store_i64(units+8,100);
+ __mind_store_i64(units+32,101);__mind_store_i64(units+40,100);
+ let mut failures:i64=0;
+ failures=failures+eq(nb_fc_scope(0),0);
+ failures=failures+eq(nb_fc_scope(ctx),scope);
+ __mind_store_i64(ctx,2);failures=failures+eq(nb_fc_scope(ctx),0);__mind_store_i64(ctx,3);
+ failures=failures+eq(nb_fc_unit(scope,0,100),0);
+ failures=failures+eq(nb_fc_unit(scope,101,201),1);
+ failures=failures+eq(nb_fc_unit(scope,99,102),0-1);
+ failures=failures+eq(nb_fc_unit(scope,100,101),0-1);
+ failures=failures+eq(nb_fc_unit(scope,0-1,1),0-1);
+ failures=failures+eq(nb_fc_unit(scope,12,12),0-1);
+ __mind_store_i64(scope+56,1);__mind_store_i64(scope+96,1);
+ __mind_store_i64(node+8,110);__mind_store_i64(node+16,120);
+ failures=failures+eq(nb_fc_begin(ctx,node),1);
+ failures=failures+eq(__mind_load_i64(scope+72),1);
+ failures=failures+eq(__mind_load_i64(scope+80),1);
+ failures=failures+eq(__mind_load_i64(scope+96),0);
+ __mind_store_i64(scope+56,3);
+ __mind_store_i64(rows,0);__mind_store_i64(rows+64,64);__mind_store_i64(rows+128,128);
+ __mind_store_i64(rows+48,99);nb_fc_frame(ctx,32);
+ failures=failures+eq(__mind_load_i64(rows+48),99);
+ failures=failures+eq(__mind_load_i64(rows+64+48),32);
+ failures=failures+eq(__mind_load_i64(rows+128+48),32);
+ failures=failures+eq(nb_fc_rebase(ctx,100,192),1);
+ failures=failures+eq(__mind_load_i64(rows),0);
+ failures=failures+eq(__mind_load_i64(rows+64),164);
+ failures=failures+eq(__mind_load_i64(rows+128),228);
+ nb_fc_rollback(ctx);failures=failures+eq(__mind_load_i64(scope+56),1);
+ __mind_store_i64(scope+56,2);__mind_store_i64(rows+64,0);__mind_store_i64(rows+64+48,16);
+ failures=failures+eq(nb_fc_rebase(ctx,0,64),1);
+ __mind_store_i64(rows+64,1);failures=failures+eq(nb_fc_rebase(ctx,0,64),0);
+ __mind_store_i64(rows+64,0-1);failures=failures+eq(nb_fc_rebase(ctx,0,64),0);
+ __mind_store_i64(rows+64,0);__mind_store_i64(rows+64+48,0);failures=failures+eq(nb_fc_rebase(ctx,0,64),0);
+ __mind_store_i64(rows+64+48,16);failures=failures+eq(nb_fc_rebase(ctx,4194305,64),0);
+ __mind_free(node);__mind_free(rows);__mind_free(units);__mind_free(scope);__mind_free(ctx);
+ if failures!=0{return 1;}0
+}

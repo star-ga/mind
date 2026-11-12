@@ -1,0 +1,6 @@
+extern "C" { unsafe fn close(fd:i32)->i32; }
+fn scfc_bad(fd:i32)->i64 {
+ let fd:bool=true;
+ close(fd) as i64
+}
+fn main()->i64 { scfc_bad((0-1) as i32) }

@@ -1,0 +1,12 @@
+// A8: `;`-terminated and `;`-less consts interleaved with fns, a const
+// directly followed by `pub fn`, and a hex-free decimal at the i64 edge.
+// Expected exit 7: (BIG - (BIG - 4)) + A + B = 4 + 1 + 2.
+const A: i64 = 1;
+const B: i64 = 2
+pub fn edge() -> i64 {
+    BIG - (BIG - 4)
+}
+const BIG: i64 = 9223372036854775807
+fn main() -> i64 {
+    edge() + A + B
+}

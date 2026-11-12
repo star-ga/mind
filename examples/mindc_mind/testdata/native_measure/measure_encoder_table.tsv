@@ -1,0 +1,14 @@
+# M-A3 G-ENC table: each asm is encoded with llvm-mc --triple=x86_64 -x86-asm-syntax=intel and must
+# equal hex, and hex must occur in the ELF the native compiler emits for fixture.
+# The whole guard (nbm_entry_guard, 148 bytes: the rows below plus jb rel8 +0x0d to the
+# refusal, jb rel8 +0x75 to guard_ok and the 81-byte message) has sha256
+# 592357b436f020b5de89842f8b923560ca935672402d474477d814483457fa42.
+# name	fixture	asm	hex
+rdtscp_v1	measure_rdtscp.mind	rdtscp; shl rdx, 32; or rax, rdx	0f 01 f9 48 c1 e2 20 48 09 d0
+lfence_v1	measure_rdtscp.mind	lfence; xor rax, rax	0f ae e8 48 31 c0
+guard_max_leaf	measure_rdtscp.mind	push rbx; push rdx; mov eax, 0x80000000; cpuid; cmp eax, 0x80000001	53 52 b8 00 00 00 80 0f a2 3d 01 00 00 80
+guard_rdtscp_bit	measure_rdtscp.mind	mov eax, 0x80000001; cpuid; bt edx, 27	b8 01 00 00 80 0f a2 0f ba e2 1b
+guard_refusal_write	measure_rdtscp.mind	mov eax, 1; mov edi, 2; lea rsi, [rip + 0x13]; mov edx, 81; syscall	b8 01 00 00 00 bf 02 00 00 00 48 8d 35 13 00 00 00 ba 51 00 00 00 0f 05
+guard_refusal_exit	measure_rdtscp.mind	mov eax, 231; mov edi, 132; syscall	b8 e7 00 00 00 bf 84 00 00 00 0f 05
+guard_ok	measure_rdtscp.mind	pop rdx; pop rbx	5a 5b
+perf_event_open	measure_perf_event_open.mind	mov eax, 298; syscall	b8 2a 01 00 00 0f 05

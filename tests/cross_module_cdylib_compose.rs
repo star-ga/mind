@@ -296,7 +296,7 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
     std::fs::write(proj.join("src").join("main.mind"), MAIN_MIND).expect("write main.mind");
 
     let compile_out = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&proj)
         .output()
         .expect("spawn mindc build");

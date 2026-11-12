@@ -1,0 +1,66 @@
+// Author: STARGA Inc. Full-width i64 <-> f64 conversion edges (NaN, +-inf, +-2^63,
+// rounding). Each result is written as 8 little-endian bytes to stdout.
+fn put(buf: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(buf + i * 8, v);
+    0
+}
+fn f2i(x: f64) -> i64 {
+    x as i64
+}
+fn i2f(k: i64) -> i64 {
+    let f: f64 = k as f64;
+    __mind_f64_to_bits(f)
+}
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(512);
+    let nan: f64 = __mind_bits_to_f64(9221120237041090560);
+    let nnan: f64 = __mind_bits_to_f64(0 - 2251799813685248);
+    let pinf: f64 = __mind_bits_to_f64(9218868437227405312);
+    let ninf: f64 = __mind_bits_to_f64(0 - 4503599627370496);
+    let big: f64 = __mind_bits_to_f64(5085969321953787526);
+    let nbig: f64 = 0.0 - big;
+    let a: f64 = 9.7;
+    let b: f64 = 0.0 - 9.7;
+    let c: f64 = 0.5;
+    let d: f64 = 0.0 - 0.5;
+    let two63: f64 = __mind_bits_to_f64(4890909195324358656);
+    let ntwo63: f64 = 0.0 - two63;
+    let below: f64 = __mind_bits_to_f64(4890909195324358655);
+    let nbelow: f64 = 0.0 - below;
+    let negzero: f64 = __mind_bits_to_f64(0 - 9223372036854775807 - 1);
+    let tiny: f64 = __mind_bits_to_f64(1);
+    put(buf, 0, nan as i64);
+    put(buf, 1, nnan as i64);
+    put(buf, 2, pinf as i64);
+    put(buf, 3, ninf as i64);
+    put(buf, 4, big as i64);
+    put(buf, 5, nbig as i64);
+    put(buf, 6, a as i64);
+    put(buf, 7, b as i64);
+    put(buf, 8, c as i64);
+    put(buf, 9, d as i64);
+    put(buf, 10, two63 as i64);
+    put(buf, 11, ntwo63 as i64);
+    put(buf, 12, below as i64);
+    put(buf, 13, nbelow as i64);
+    put(buf, 14, negzero as i64);
+    put(buf, 15, tiny as i64);
+    put(buf, 16, f2i(nan));
+    put(buf, 17, f2i(big));
+    put(buf, 18, f2i(nbig));
+    put(buf, 19, i2f(9007199254740993));
+    put(buf, 20, i2f(9223372036854775807));
+    put(buf, 21, i2f(0 - 9223372036854775807 - 1));
+    put(buf, 22, i2f(0 - 1));
+    put(buf, 23, i2f(0));
+    put(buf, 24, i2f(9007199254740995));
+    put(buf, 25, i2f(0 - 9007199254740993));
+    let m: i64 = 0 - 123456789;
+    let mf: f64 = m as f64;
+    put(buf, 26, mf as i64);
+    let q: f64 = (7 as f64) / (2 as f64);
+    put(buf, 27, __mind_f64_to_bits(q));
+    put(buf, 28, (q * 4.0) as i64);
+    __mind_write(1, buf, 29 * 8, 0 - 1);
+    0
+}

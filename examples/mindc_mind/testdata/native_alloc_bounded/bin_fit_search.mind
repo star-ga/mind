@@ -1,0 +1,29 @@
+// A free block that fits must be found even when it is not the head of its
+// size bin (W11c round 3). a (400 MB) and b (300 MB) share one size bin
+// [2^28, 2^29); c (800 MB) fills most of the address space left under the
+// 2 GiB cap. After free(a) and free(b) the bin head is b, which is too small
+// for a 350 MB request; a, behind it, fits. An allocator that only looks at
+// the bin head has to bump the cursor for 350 MB more and runs out (exit 70);
+// one that searches the bin reuses a. Expected exit 23, empty stdout.
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(400000000);
+    let p1: i64 = __mind_alloc(8);
+    let b: i64 = __mind_alloc(300000000);
+    let p2: i64 = __mind_alloc(8);
+    let c: i64 = __mind_alloc(800000000);
+    let p3: i64 = __mind_alloc(8);
+    __mind_store_i64(a + 399999992, 1);
+    __mind_store_i64(b + 299999992, 3);
+    __mind_store_i64(c + 799999992, 2);
+    let fa: i64 = __mind_free(a);
+    let fb: i64 = __mind_free(b);
+    let d: i64 = __mind_alloc(350000000);
+    __mind_store_i64(d + 349999992, 5);
+    let v: i64 = __mind_load_i64(d + 349999992) + __mind_load_i64(c + 799999992);
+    let f1: i64 = __mind_free(d);
+    let f2: i64 = __mind_free(c);
+    let f3: i64 = __mind_free(p1);
+    let f4: i64 = __mind_free(p2);
+    let f5: i64 = __mind_free(p3);
+    v + fa + fb + f1 + f2 + f3 + f4 + f5 + 16
+}

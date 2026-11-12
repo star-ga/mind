@@ -1109,7 +1109,7 @@ pub fn rx_capture(rx_h: i64, inp_addr: i64, inp_len: i64, group: i64) -> i64 {
     // For group=0: find the first match and return the matched bytes.
     // Capture groups > 0: not fully implemented in Phase 1 NFA sim without
     // sub-match tracking; return empty string for group > 0.
-    let sb: i64 = jvsb_new_rx();
+    let sb: i64 = rx_sb_new();
     if group != 0 {
         return sb;
     }
@@ -1124,7 +1124,7 @@ pub fn rx_capture(rx_h: i64, inp_addr: i64, inp_len: i64, group: i64) -> i64 {
             if end >= 0 {
                 let mut ci: i64 = start;
                 while ci < end {
-                    let _ = jvsb_push_rx(sb, __mind_load_i8(inp_addr + ci));
+                    let _ = rx_sb_push(sb, __mind_load_i8(inp_addr + ci));
                     ci = ci + 1;
                 }
                 done = 1;
@@ -1137,7 +1137,7 @@ pub fn rx_capture(rx_h: i64, inp_addr: i64, inp_len: i64, group: i64) -> i64 {
 }
 
 // Minimal string builder for rx_capture (duplicated to avoid cross-module dep).
-fn jvsb_new_rx() -> i64 {
+fn rx_sb_new() -> i64 {
     let h: i64 = __mind_alloc(24);
     __mind_store_i64(h + 0, 0);
     __mind_store_i64(h + 8, 0);
@@ -1145,7 +1145,7 @@ fn jvsb_new_rx() -> i64 {
     h
 }
 
-fn jvsb_push_rx(h: i64, b: i64) -> i64 {
+fn rx_sb_push(h: i64, b: i64) -> i64 {
     let old_len: i64 = __mind_load_i64(h + 8);
     let old_cap: i64 = __mind_load_i64(h + 16);
     let old_dat: i64 = __mind_load_i64(h + 0);

@@ -118,7 +118,7 @@ fn a_native_build_aborts_on_a_false_parenthesised_assert() {
         )
         .expect("write main.mind");
         let out = Command::new(common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(&dir)
             .output()
             .expect("run mindc build");
@@ -168,7 +168,7 @@ fn a_failing_native_assert_reports_its_span_and_message() {
             format!("fn main() -> i64 {{\n    let x: i64 = 3;\n    {body}\n    return 5;\n}}\n");
         std::fs::write(dir.join("main.mind"), &source).expect("write main.mind");
         let out = Command::new(common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(&dir)
             .output()
             .expect("run mindc build");

@@ -1,0 +1,37 @@
+// N2: an i32/u32 parameter gets no entry wrap (only 8/16-bit parameters do).
+// A MIND caller can pass an integer literal outside the range (the check accepts it),
+// so each use must still read the value at the declared width. Independent value:
+// fs(2147483648): x is i32 -2147483648 -> x < 0 (1) + (x + 0 < 0) (2) + (x as i64 < 0) (4) = 7.
+// fu(4294967301): x is u32 5 -> x == 5 (8) + (x + 0 == 5) (16) + (x as i64 == 5) (32) = 56.
+// 7 + 56 = 63.
+fn fs(x: i32) -> i64 {
+    let mut s: i64 = 0;
+    if x < 0 {
+        s = s + 1;
+    }
+    if x + 0 < 0 {
+        s = s + 2;
+    }
+    if (x as i64) < 0 {
+        s = s + 4;
+    }
+    s
+}
+
+fn fu(x: u32) -> i64 {
+    let mut s: i64 = 0;
+    if x == 5 {
+        s = s + 8;
+    }
+    if x + 0 == 5 {
+        s = s + 16;
+    }
+    if (x as i64) == 5 {
+        s = s + 32;
+    }
+    s
+}
+
+fn main() -> i64 {
+    fs(2147483648) + fu(4294967301)
+}

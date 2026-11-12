@@ -14,6 +14,15 @@ Four invariants, all through the SHIPPING `mindc build --backend=native` path
       the construct and carries file/source/caret context.
   (4) MALFORMED source    -> exit != 0, NO artifact, the same structured parser
       diagnostic carries file/source/caret context.
+  (5) SECOND FENCE        -> a whole-array binop fed straight to the pure-MIND
+      compiler (no Rust fence in front) emits no ELF, while an element-read
+      program fed the same way runs to its value. The compiler is --stage1, or
+      one hop of the self-host loop: the committed seed compiling THIS tree.
+      The case prints the sha256 of the compiler it fed and of the committed
+      seed, so a mutation run shows it ran a compiler other than the seed.
+
+  --stage1 PATH  the native compiler for every case: (1)-(4) run mindc with
+                 MINDC_NATIVE_ELF=PATH, (5) feeds PATH directly.
 
 This is the regression coverage for the fail-close diagnostic: without it, a
 future driver/bridge change could silently revert to the 0-byte generic message
@@ -23,8 +32,11 @@ Exit: 0 all pass; 1 a gate failed; 2 BLOCKED (missing mindc / stage1.elf).
 
 Run:  python3 examples/mindc_mind/self_host_native_diag_smoke.py
 """
+import argparse
+import hashlib
 import os
 import pathlib
+import struct
 import subprocess
 import sys
 import tempfile
@@ -38,6 +50,35 @@ SCALAR = "fn main() -> i64 { return 7 + 35; }\n"
 TENSOR = "fn sink(x: Tensor<f32, [4]>) -> i64 { return 0; }\nfn main() -> i64 { return 0; }\n"
 TRAIT = "trait Greet { fn hi(self) -> i64; }\nfn main() -> i64 { return 0; }\n"
 MALFORMED = "fn main( -> i64 { return 0; }\n"
+WHOLE_ARRAY = "fn main() -> i64 { let a = [8, 6]; let b = [2, 3]; let c = a + b; return c[0]; }\n"
+ELEMENTS = "fn main() -> i64 { let a = [5, 6]; return a[1] + a[0]; }\n"
+
+
+def tree_stage1() -> bytes:
+    """One hop of the self-host loop: the committed seed compiles this tree."""
+    sys.path.insert(0, str(_HERE))
+    import self_host_loop_smoke as loop  # noqa: E402
+    _combined, image, _user_lo = loop.build_seed()
+    return loop.run_elf(STAGE1, image)
+
+
+def compile_direct(stage1: pathlib.Path, src: str) -> bytes:
+    """Feed an unseeded image straight to the compiler; return its stdout."""
+    body = src.encode()
+    image = struct.pack("<qq", 0, len(body)) + body
+    r = subprocess.run([str(stage1)], input=image, capture_output=True, timeout=600)
+    return r.stdout
+
+
+def run_elf_bytes(elf: bytes):
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
+        f.write(elf)
+        p = f.name
+    os.chmod(p, 0o755)
+    try:
+        return subprocess.run([p], timeout=10).returncode
+    finally:
+        os.unlink(p)
 
 
 def build_native(src: str):
@@ -48,13 +89,25 @@ def build_native(src: str):
         sp.write_text(src)
         r = subprocess.run(
             [str(MINDC), "build", "--backend=native", f"--out={op}", str(sp)],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=120, env=ENV,
         )
         art = op.read_bytes() if op.exists() and op.stat().st_size > 0 else None
         return r.returncode, (r.stderr or ""), art
 
 
+ENV = dict(os.environ)
+
+
 def main() -> int:
+    global STAGE1
+    ap = argparse.ArgumentParser(description="RI-D1a native diagnostic gate")
+    ap.add_argument("--stage1", type=pathlib.Path, default=None,
+                    help="native compiler for every case (default: the committed seed)")
+    args = ap.parse_args()
+    if args.stage1 is not None:
+        STAGE1 = args.stage1.resolve()
+        ENV["MINDC_NATIVE_ELF"] = str(STAGE1)
+    print(f"  stage1 = {STAGE1}")
     if not MINDC.exists():
         print(f"BLOCKED: mindc not found at {MINDC}")
         return 2
@@ -108,6 +161,27 @@ def main() -> int:
     print(f"  {'PASS' if ok else 'FAIL'}  malformed: exit={ec} "
           f"artifact={'YES' if art else 'NO'} context={malformed_context}  "
           f"stderr={err.strip()[:100]!r}")
+    fails += 0 if ok else 1
+
+    # (5) SECOND FENCE -> the pure-MIND compiler itself refuses an array operand
+    with tempfile.TemporaryDirectory() as td:
+        if args.stage1 is not None:
+            direct = STAGE1
+        else:
+            direct = pathlib.Path(td) / "stage1.elf"
+            direct.write_bytes(tree_stage1())
+            direct.chmod(0o755)
+        fed_sha = hashlib.sha256(direct.read_bytes()).hexdigest()
+        refused = compile_direct(direct, WHOLE_ARRAY)
+        control = compile_direct(direct, ELEMENTS)
+        got = run_elf_bytes(control) if control[:4] == b"\x7fELF" else None
+    wrote = refused[:4] == b"\x7fELF"
+    ok = not wrote and got == 11
+    print(f"  {'PASS' if ok else 'FAIL'}  second fence: whole-array binop "
+          f"elf={'YES' if wrote else 'NO'}(want NO)  element read result={got}(want 11)")
+    seed = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
+    seed_sha = hashlib.sha256(seed.read_bytes()).hexdigest()
+    print(f"        compiler sha256={fed_sha}  committed seed sha256={seed_sha}")
     fails += 0 if ok else 1
 
     if fails:

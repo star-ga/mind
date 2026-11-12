@@ -23,20 +23,20 @@ pub fn build_all_with_objects(
     opts: &BuildOptions<'_>,
     extra_objects: &[std::path::PathBuf],
 ) -> Result<BuildProducts, BuildError> {
-    // The runtime-support object depends only on `tools` and the target
-    // triple — never on the MLIR — so it is started on its own thread before
-    // the mlir-opt / mlir-translate leg and joined right before the shared
-    // link that consumes it. Its cache probe (or cold clang compile) then
-    // overlaps the MLIR leg instead of running after it. Output-identical by
-    // construction: the same inputs reach the same tool, and the object is
-    // still linked in full. Each subprocess keeps its own `tools.timeout`.
-    // A scoped thread is joined on every exit path, so an mlir-opt /
-    // mlir-translate error returns exactly as before (the overlapped object
-    // is discarded and its temp file removed).
+    // The define check is local, so the runtime object still overlaps the
+    // MLIR leg and is joined before the shared link. A linked object that
+    // names `__mind_sys_` counts the same as the entry MLIR naming it.
+    let sys_text: &str = if mlir_src.contains("__mind_sys_")
+        || !extra_objects.iter().any(linked_object_names_sys_twin)
+    {
+        mlir_src
+    } else {
+        "__mind_sys_"
+    };
     std::thread::scope(|scope| {
-        let runtime_job = opts
-            .emit_shared
-            .map(|_| scope.spawn(|| compile_runtime_support_obj(tools, opts.target_triple)));
+        let runtime_job = opts.emit_shared.map(|_| {
+            scope.spawn(|| compile_runtime_support_obj(tools, opts.target_triple, sys_text))
+        });
 
         let preset_name = opts.preset;
         let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
@@ -89,4 +89,14 @@ pub fn build_all_with_objects(
             llvm_ir,
         })
     })
+}
+
+/// True when the object at `path` names a `__mind_sys_` symbol. An unreadable
+/// object counts as named, so a failed read does not drop a twin the module may need.
+pub fn linked_object_names_sys_twin(path: impl AsRef<std::path::Path>) -> bool {
+    const NEEDLE: &[u8] = b"__mind_sys_";
+    let Ok(bytes) = std::fs::read(path.as_ref()) else {
+        return true;
+    };
+    bytes.windows(NEEDLE.len()).any(|window| window == NEEDLE)
 }

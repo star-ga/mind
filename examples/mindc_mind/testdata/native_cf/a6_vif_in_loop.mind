@@ -1,0 +1,36 @@
+// A6: a value-if used as a value inside a while body (let init, assignment
+// RHS, call argument), including one whose branch binds a let.
+// expect: exit=52
+// stdout: CBCCDE
+// note: 2
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 6 {
+        i = i + 1;
+        let w: i64 = if i % 2 == 0 {
+            10
+        } else {
+            1
+        };
+        acc = acc + (if i > 3 {
+            let t: i64 = w * 2;
+            t
+        } else {
+            w
+        });
+        out(if i < 4 {
+            i % 2 + 1
+        } else {
+            let k: i64 = i - 2;
+            k
+        })
+    }
+    return acc - 2;
+}

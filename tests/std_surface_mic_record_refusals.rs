@@ -10,6 +10,12 @@
 //! then cut or patched, so each case differs from a valid record in one
 //! place.
 //!
+//! The last test repeats decode, insert and remove many times and bounds the
+//! resident set and its peak: a decode frees its cursor, a refused decode
+//! (a bad tag after a valid 1 MiB entry, a key out of order, trailing bytes)
+//! frees its partial record, a growing table frees its old tables, and remove
+//! frees the entry.
+//!
 //! Gate: `cargo test --no-default-features --features
 //!        "mlir-build std-surface cross-module-imports" --test std_surface_mic_record_refusals`
 
@@ -21,7 +27,7 @@
 
 mod common;
 
-use common::mic_record::{Lib, Val, head, load, reference, uleb};
+use common::mic_record::{Lib, Val, head, load, ptr, reference, uleb};
 use libmind::ir::compact::v3::{Mic3NonCanonical, mic3_canonical_check};
 use std::sync::OnceLock;
 
@@ -273,4 +279,95 @@ fn non_canonical_maps_are_refused() {
     let empty = head(&[0]);
     assert_eq!(lib.count(lib.decode(&empty)), 0, "an empty MAP is a record");
     assert_eq!(lib.decode(&[empty, vec![0x4D]].concat()), e("trailing"));
+}
+
+/// Decode, insert and remove free what the record no longer holds. Each leg
+/// repeats one path many times and bounds the growth of the resident set and
+/// of its peak. A leg that leaked its cursor, its partly built record (with
+/// its value copies), its old tables or its removed entries grows by 8 MiB or
+/// more, four times the bound.
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_insert_and_remove_free_what_they_no_longer_hold() {
+    use common::mic_record::rss_growth_kib;
+    let Some(lib) = lib() else { return };
+    const BOUND_KIB: i64 = 2048;
+    let free = |h: i64| assert_eq!(lib.call("mrec_free", &[h]), 0, "mrec_free");
+    assert_eq!(lib.call("mrec_free", &[0]), lib.err("handle"), "0 handle");
+
+    // A valid decode: the cursor (48 heap bytes) is freed, the record by
+    // mrec_free.
+    let rec = valid();
+    let grown = rss_growth_kib(200_000, || {
+        let r = lib.decode(&rec);
+        assert!(r > 0, "the positive control must decode: {r}");
+        free(r);
+    });
+    assert!(grown < BOUND_KIB, "valid decode: resident grew {grown} KiB");
+
+    // A valid first entry with a 1 MiB Bytes value, then a second entry with
+    // tag 3: the decode is refused after the record holds the 1 MiB copy.
+    let big = vec![0x5Au8; 1 << 20];
+    let bad_tag = [
+        head(&[2]),
+        uleb(5),
+        b"a.big".to_vec(),
+        vec![0x02],
+        uleb(big.len() as u64),
+        big,
+        uleb(3),
+        b"b.bad".to_vec(),
+        vec![0x03, 0x00],
+    ]
+    .concat();
+    let tag = lib.err("tag");
+    let grown = rss_growth_kib(64, || assert_eq!(lib.decode(&bad_tag), tag));
+    assert!(
+        grown < BOUND_KIB,
+        "bad second tag: resident grew {grown} KiB"
+    );
+
+    // Refused after the record holds entries: out of order at the second
+    // entry, and bytes after the last one. The partial record is freed.
+    let entry = |k: &[u8]| [uleb(3), k.to_vec(), vec![0x01, 0x02]].concat();
+    let unsorted = [head(&[2]), entry(b"b.k"), entry(b"a.k")].concat();
+    let trailing = [valid(), vec![0x00]].concat();
+    let (order, trail) = (lib.err("order"), lib.err("trailing"));
+    let grown = rss_growth_kib(25_000, || {
+        assert_eq!(lib.decode(&unsorted), order);
+        assert_eq!(lib.decode(&trailing), trail);
+    });
+    assert!(
+        grown < BOUND_KIB,
+        "refused decode: resident grew {grown} KiB"
+    );
+
+    // 1024 inserts pass seven growth points (8 -> 16 -> ... -> 1024); each
+    // old table (8 KiB in all) is freed.
+    let keys: Vec<Vec<u8>> = (0..1024)
+        .map(|i| format!("k.{i:04}").into_bytes())
+        .collect();
+    let grown = rss_growth_kib(1_200, || {
+        let h = lib.new_record();
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(lib.put_int(h, k, i as i64), 0);
+        }
+        assert_eq!(lib.count(h), 1024);
+        free(h);
+    });
+    assert!(grown < BOUND_KIB, "table growth: resident grew {grown} KiB");
+
+    // Put and remove the same key: the removed entry is freed.
+    let h = lib.new_record();
+    let remove = |h: i64| lib.call("mrec_remove", &[h, ptr(b"a.b"), 3]);
+    let grown = rss_growth_kib(100_000, || {
+        assert_eq!(lib.put_int(h, b"a.b", 7), 0);
+        assert_eq!(remove(h), 0);
+    });
+    assert_eq!(lib.count(h), 0);
+    free(h);
+    assert!(
+        grown < BOUND_KIB,
+        "put and remove: resident grew {grown} KiB"
+    );
 }

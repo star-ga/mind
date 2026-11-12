@@ -1,0 +1,72 @@
+// native_body.mind — statements of main() for the native harness, appended by
+// the native build transport after `let cases_hex: String = "<hex>";` (closing brace is
+// here).  Replays every manifest case against x509_verify_server_chain and
+// exits with the number of failed cases.
+
+let src: i64 = __mind_alloc(1048576);
+nat_unhex(cases_hex, src);
+let ncases: i64 = nat_ld(src);
+let mut pos: i64 = 8;
+let mut fails: i64 = 0;
+let mut c: i64 = 0;
+let ws: i64 = __mind_alloc(131072);
+let ws2: i64 = __mind_alloc(131072);
+// In-memory bundle loading tests on native backend
+let bder_buf: i64 = __mind_alloc(65536);
+let bder_len: i64 = nat_unhex(bundle_der_hex, bder_buf);
+let bder_blob: i64 = x509_load_anchors(bder_buf, bder_len);
+if bder_blob <= 0 {
+    print("FAIL bundle_der_load");
+    fails = fails + 1;
+} else {
+    print("PASS bundle_der_load");
+}
+
+let bpem_buf: i64 = __mind_alloc(65536);
+let bpem_len: i64 = nat_unhex(bundle_pem_hex, bpem_buf);
+let bpem_blob: i64 = x509_load_anchors(bpem_buf, bpem_len);
+if bpem_blob <= 0 {
+    print("FAIL bundle_pem_load");
+    fails = fails + 1;
+} else {
+    print("PASS bundle_pem_load");
+}
+
+
+while c < ncases {
+    let want: i64 = nat_ld(src + pos);
+    let now: i64 = nat_ld(src + pos + 8);
+    let mode: i64 = nat_ld(src + pos + 16);
+    let dns: i64 = src + pos + 24;
+    pos = pos + 24 + 256;
+    pos = nat_blob(src, pos, ws);
+    pos = nat_blob(src, pos, ws2);
+    let mut anchor_ptr: i64 = ws2;
+    if mode == 1 { anchor_ptr = bder_blob; }
+    if mode == 2 { anchor_ptr = bpem_blob; }
+    let mut rc: i64 = -1;
+    if anchor_ptr > 0 { rc = x509_verify_server_chain(ws, anchor_ptr, dns, now); }
+    if rc != want {
+        print("FAIL case", c);
+        print("got", rc);
+        print("want", want);
+        fails = fails + 1;
+    } else {
+        print("PASS case", c);
+    }
+    c = c + 1;
+}
+
+let bbad_buf: i64 = __mind_alloc(65536);
+let bbad_len: i64 = nat_unhex(bundle_bad_hex, bbad_buf);
+let bbad_res: i64 = x509_load_anchors(bbad_buf, bbad_len);
+if bbad_res >= 0 {
+    print("FAIL bundle_bad_fail_closed");
+    fails = fails + 1;
+} else {
+    print("PASS bundle_bad_fail_closed");
+}
+
+print("native fails:", fails);
+fails
+}

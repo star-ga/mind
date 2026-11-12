@@ -44,6 +44,7 @@ format	Format Check
 docs	Documentation
 mindcraft_self_host	Mindcraft self-host (RFC 0008 Phase G — KEYSTONE) (LLVM 
 executable_miscompile_gate	Executable miscompile gate (compile + run + assert) (LLVM 
+std_mind_programs	std MIND program checks (LLVM 20)
 executable_semantics_tier	Executable-semantics test tier (mlir-build) (LLVM 
 mindcraft_check	Mindcraft check (RFC 0007 Phase 6)
 conformance	Core v1 conformance suite

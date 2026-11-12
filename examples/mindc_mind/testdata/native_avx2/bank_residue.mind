@@ -1,0 +1,29 @@
+// Copyright 2026 STARGA Inc.
+// R-01b vzeroall residue: dirty() leaves bytes in ymm3 (its exit vzeroupper keeps
+// the low 128 bits); probe() stores ymm3 before writing it, so the vzeroall after
+// its prologue must make that store 32 zero bytes.
+
+fn dirty(src: i64) -> i64 {
+    __mind_ymm_vmovdqu_ld(3, src, 0);
+    0
+}
+
+fn probe(o: i64) -> i64 {
+    __mind_ymm_vmovdqu_st(3, o, 0);
+    0
+}
+
+fn main() -> i64 {
+    let src: i64 = __mind_alloc(32);
+    let o: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(src + i, 90 + i);
+        __mind_store_i8(o + i, 238);
+        i = i + 1;
+    }
+    let _d: i64 = dirty(src);
+    let _p: i64 = probe(o);
+    __mind_write(1, o, 32, 0 - 1);
+    0
+}

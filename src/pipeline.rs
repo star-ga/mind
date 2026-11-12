@@ -523,6 +523,16 @@ fn compile_source_with_name_and_limits(
     // `--emit-obj` / `--emit-shared` paths; inspection surfaces ignore it.
     let mut runnable_blockers =
         crate::eval::abi_gate::check_runnable_lowerable(&module, &ir, source, source_name);
+    // E2041: a native-only intrinsic is refused by name before MLIR lowering or
+    // the link (one rule, read off the registry profiles). MLIR route only.
+    #[cfg(all(feature = "std-surface", feature = "mlir-build"))]
+    runnable_blockers.extend(
+        crate::type_checker::intrinsic_call_arity::mlir_unlowered_intrinsic_calls(
+            &module,
+            source,
+            source_name,
+        ),
+    );
     #[cfg(feature = "cross-module-imports")]
     runnable_blockers.extend(
         crate::import_collision_gate::check_imported_local_fn_collisions(
@@ -566,6 +576,14 @@ fn compile_source_with_name_and_limits(
     // arm in a later `match` — a SILENT miscompile. Require qualification
     // (`Enum::V(x)`). Inert unless a payload variant name collides across enums.
     runnable_blockers.extend(crate::eval::abi_gate::check_ambiguous_bare_ctor(
+        &module,
+        source,
+        source_name,
+    ));
+    // Fail-closed on a `print` operand written as a handle: an aggregate, or a
+    // value of unknown type that may be a string. Inert without a `print`.
+    #[cfg(feature = "std-surface")]
+    runnable_blockers.extend(crate::eval::string_equality::print_blockers(
         &module,
         source,
         source_name,

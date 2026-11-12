@@ -88,7 +88,7 @@ def main() -> int:
         try:
             proc = subprocess.run(
                 [
-                    str(mindc), "build", str(source), "--no-cache",
+                    str(mindc), "build", "--backend", "mlir", str(source), "--no-cache",
                     "--release", "--emit", "cdylib", "--out", str(so),
                 ],
                 cwd=pathlib.Path(td),

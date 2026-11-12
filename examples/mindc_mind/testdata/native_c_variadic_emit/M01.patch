@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -55 +55 @@
+-    if conversion == 1 { return nce_load_scalar(code, 1, disp); }
++    if conversion == 1 { return nce_load_scalar(code, 2, disp); }

@@ -1,0 +1,331 @@
+// Copyright 2026 STARGA Inc.
+// Part-dispatch check: composed after main.mind and COMPILER_COMPONENTS (the minted
+// unit), so it calls main.mind's hooks and the part chains directly. Exit 0 = every
+// check holds; otherwise the exit status is the sum of the failed groups' bits:
+//   1 the ymm guard bit (flags 2, 3) is not exactly the 239-byte ISA guard
+//   2 the rdtscp guard bit (flags 4, 5) changed the entry code
+//   4 the guard output does not follow the argv capture + binding, or bit 0 is misread
+//     when bits 1/2 are set (holds for every lane, stub or not)
+//   8 entry bytes differ from the owned-guard + bit-0 build
+//  16 a non-entry fn was touched, or the argv-capture positive control emitted nothing
+//  32 intrinsic ids: a frozen name moved, a part claimed one, an owned name lost its
+//     kind, or a stub claimed a ledger name
+//  64 an owned kind (60..67, 68, 69, 84..86, 90..93) emitted nothing or failed
+//     nbp_kind_ok at its arity, a stub kind emitted bytes or passed it, a kind
+//     outside 60..99 failed it, an MC-6 extern row (54..86) is missing, one past
+//     86 appeared, or the guard scan fired
+// 128 tc twin: a frozen tc name was lost, a registered native-only name kept E2024,
+//     or an unregistered __mind_ name lost it
+// Groups 1, 2, 8 and the stub rows of 32/64/128 pin the E1 stubs: an emitter lane
+// updates its own part's rows here when that part stops being a stub (owned: the ymm
+// rows 60..66 + ISA guard bit 1, and cpu_features 67). No while and
+// no bitwise operator, so the bare-surface formatter parses this file. Every emitter
+// call gets a fresh code String: a push may realloc, so a String is used once.
+
+pub fn pdc_mark(t: i64, g: i64, ok: i64) -> i64 {
+    if ok == 1 {
+        return 0;
+    }
+    __mind_store_i64(t + g * 8, 1);
+    0
+}
+
+pub fn pdc_zero(t: i64, g: i64) -> i64 {
+    if g > 7 {
+        return 0;
+    }
+    __mind_store_i64(t + g * 8, 0);
+    pdc_zero(t, g + 1)
+}
+
+pub fn pdc_status(t: i64, g: i64, w: i64) -> i64 {
+    if g > 7 {
+        return 0;
+    }
+    __mind_load_i64(t + g * 8) * w + pdc_status(t, g + 1, w * 2)
+}
+
+pub fn pdc_eq(a: i64, b: i64) -> i64 {
+    if a == b {
+        return 1;
+    }
+    0
+}
+
+pub fn pdc_le0(a: i64) -> i64 {
+    if a <= 0 {
+        return 1;
+    }
+    0
+}
+
+// A packed callee name in fresh memory (the words the tc twin also takes).
+pub fn pdc_name(w0: i64, w1: i64, w2: i64, w3: i64) -> i64 {
+    let b: i64 = __mind_alloc(40);
+    __mind_store_i64(b, w0);
+    __mind_store_i64(b + 8, w1);
+    __mind_store_i64(b + 16, w2);
+    __mind_store_i64(b + 24, w3);
+    __mind_store_i64(b + 32, 0);
+    b
+}
+
+// A fresh 3-byte code String (owned, spare capacity).
+pub fn pdc_code() -> String {
+    nb_push(nb_push(nb_push(string_new(), 72), 49), 192)
+}
+
+// Entry prefix for flag words f..7 at n_params np (groups 4, 8, 16).
+pub fn pdc_entry(t: i64, f: i64, np: i64) -> i64 {
+    if f > 7 {
+        return 0;
+    }
+    let low: i64 = f % 2;
+    let e: String = nb_entry_prefix(pdc_code(), 1, f, np);
+    pdc_mark(t, 2, string_eq(e, nbp_entry_guard(nb_entry_prefix(pdc_code(), 1, low, np), f)));
+    pdc_mark(t, 3, string_eq(e, pdc_guard(nb_entry_prefix(pdc_code(), 1, low, np), f)));
+    pdc_mark(t, 4, string_eq(nb_entry_prefix(pdc_code(), 0, f, np), pdc_code()));
+    pdc_entry(t, f + 1, np)
+}
+
+// `code` followed by what the owned guards give for flag word f: the ISA guard when
+// bit 1 (ymm rows) is set; bit 2 (rdtscp) is still a stub.
+pub fn pdc_guard(code: String, f: i64) -> String {
+    let y: String = if (f / 2) % 2 == 1 {
+        nbc_isa_guard(code)
+    } else {
+        code
+    };
+    if (f / 4) % 2 == 1 {
+        return nbm_entry_guard(y);
+    }
+    y
+}
+
+// Owned kinds k..67, fed three argument slots, emit a sequence and pass nbp_kind_ok
+// at their registry arity only (vpshufb 63 three, cpu_features 67 none, else two).
+pub fn pdc_owned(t: i64, k: i64, ids: i64) -> i64 {
+    if k > 67 {
+        return 0;
+    }
+    let n: i64 = 2 + pdc_eq(k, 63) - 2 * pdc_eq(k, 67);
+    pdc_mark(t, 6, nbp_kind_ok(k, n) * pdc_eq(nbp_kind_ok(k, n + 1), 0));
+    pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nbp_emit_intrinsic(pdc_code(), k, ids, 4, 0)) - 3), 0));
+    pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nb_emit_intrinsic(pdc_code(), k, ids, 4)) - 3), 0));
+    pdc_owned(t, k + 1, ids)
+}
+
+// Kinds k..99 are part-owned: an unowned (stub) kind emits nothing and fails
+// nbp_kind_ok, so its call site poisons (group 64).
+pub fn pdc_emit(t: i64, k: i64) -> i64 {
+    if k > 99 {
+        return 0;
+    }
+    if pdc_shm_owned(t, k) == 1 {
+        return pdc_emit(t, k + 1);
+    }
+    if pdc_measure_kind(k) == 1 {
+        return pdc_emit(t, k + 1);
+    }
+    pdc_mark(t, 6, pdc_eq(string_len(nbp_emit_intrinsic(pdc_code(), k, 0, 0, 0)), 0));
+    pdc_mark(t, 6, pdc_eq(string_len(nb_emit_intrinsic(pdc_code(), k, 0, 0)), 0));
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(k, 1), 0));
+    pdc_emit(t, k + 1)
+}
+
+// A5 (nb_shm) owns kinds 84-86 and 90-92 (k / 3 is 28 or 30): each emits bytes for
+// operand slots named by a zeroed ids buffer and passes nbp_kind_ok at exactly its
+// arity (group 64). 1 = owned and checked.
+pub fn pdc_shm_owned(t: i64, k: i64) -> i64 {
+    if pdc_eq(k / 3, 28) + pdc_eq(k / 3, 30) == 0 {
+        return 0;
+    }
+    let ids: i64 = pdc_slots();
+    pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nbp_emit_intrinsic(pdc_code(), k, ids, 0, 0)) - 3), 0));
+    pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nb_emit_intrinsic(pdc_code(), k, ids, 0)) - 3), 0));
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(k, pdc_shm_arity(k)), 1) * pdc_eq(nbp_kind_ok(k, pdc_shm_arity(k) + 1), 0));
+    1
+}
+
+// The ledger arity of an A5 kind: 84 none, 85 one, 86 and 91 two, 92 three, 90 six.
+pub fn pdc_shm_arity(k: i64) -> i64 {
+    if k == 84 {
+        return 0;
+    }
+    if k == 85 {
+        return 1;
+    }
+    if k == 92 {
+        return 3;
+    }
+    if k == 90 {
+        return 6;
+    }
+    2
+}
+
+// Six distinct slot ids 1..6 (sys_mmap reads six), so every operand load has its own disp.
+pub fn pdc_slots() -> i64 {
+    let ids: i64 = __mind_alloc(48);
+    __mind_store_i64(ids, 1);
+    __mind_store_i64(ids + 8, 2);
+    __mind_store_i64(ids + 16, 3);
+    __mind_store_i64(ids + 24, 4);
+    __mind_store_i64(ids + 32, 5);
+    __mind_store_i64(ids + 40, 6);
+    ids
+}
+
+// A5 bytes (group 64): the atomics are exactly __mind_load_i64 / __mind_store_i64
+// (plus the defined 0); the sys rows are the shared nb_emit_syscall with this row's
+// number and arity, then the result store. Under an emission ctx every part kind emits
+// nothing (the frozen raw-syscall rule).
+pub fn pdc_shm_bytes(t: i64) -> i64 {
+    let ids: i64 = pdc_slots();
+    let ld: String = nb_emit_intrinsic_ctx(pdc_code(), 3, ids, 7, 0);
+    pdc_mark(t, 6, string_eq(nbs_emit(pdc_code(), 85, ids, 7, 0), ld));
+    let st: String = nb_store_rax(nb_emit_free_xor(nb_emit_intrinsic_ctx(pdc_code(), 2, ids, 7, 0)), nb_slot_disp(7));
+    pdc_mark(t, 6, string_eq(nbs_emit(pdc_code(), 86, ids, 7, 0), st));
+    pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 90, ids, 7, 0), nb_store_rax(nb_emit_syscall(pdc_code(), 9, ids, 6), nb_slot_disp(7))));
+    pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 91, ids, 7, 0), nb_store_rax(nb_emit_syscall(pdc_code(), 11, ids, 2), nb_slot_disp(7))));
+    pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 92, ids, 7, 0), nb_store_rax(nb_emit_syscall(pdc_code(), 203, ids, 3), nb_slot_disp(7))));
+    pdc_mark(t, 6, pdc_eq(string_len(nbs_emit(pdc_code(), 84, ids, 7, 1)), 0));
+    pdc_mark(t, 6, pdc_eq(string_len(nbs_sys_emit(pdc_code(), 90, ids, 7, 1)), 0));
+    pdc_shm_literal(t, ids)
+}
+
+// A5 literal bytes (group 64) after pdc_code (48 31 c0), slots 1..6, dst 7, as objdump
+// decodes them. 84: f3 90 pause ; 48 31 c0 xor rax,rax ; 48 89 85 c0 ff ff ff mov
+// [rbp-0x40],rax. 90: 48 8b bd f0 / 48 8b b5 e8 / 48 8b 95 e0 / 4c 8b 95 d8 / 4c 8b 85 d0
+// / 4c 8b 8d c8 (each + ff ff ff) = mov rdi rsi rdx r10 r8 r9,[rbp-0x10..-0x38] ;
+// b8 09 00 00 00 mov eax,9 ; 0f 05 syscall ; then the same store. Words are LE.
+pub fn pdc_shm_literal(t: i64, ids: i64) -> i64 {
+    let st: i64 = 72057592972937544;
+    pdc_mark(t, 6, string_eq(nbs_emit(pdc_code(), 84, ids, 7, 0), nb_le(nb_le(pdc_code(), 825460560115, 5), st, 7)));
+    let a: String = nb_le(nb_le(nb_le(pdc_code(), 72057593781914440, 7), 72057593647172424, 7), 72057593510857544, 7);
+    let b: String = nb_le(nb_le(nb_le(a, 72057593376639820, 7), 72057593241373516, 7), 72057593107680076, 7);
+    pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 90, ids, 7, 0), nb_le(nb_le(b, 1423867557972408, 7), st, 7)));
+    0
+}
+
+pub fn pdc_tsc_code(f: i64) -> String {
+    if (f / 4) % 2 == 1 {
+        return nbm_entry_guard(pdc_code());
+    }
+    pdc_code()
+}
+
+// Flags 4 and 5 both append exactly the measurement part's guard (group 2).
+
+pub fn pdc_tsc_guard_ok() -> i64 {
+    let g: String = nbm_entry_guard(pdc_code());
+    let same: i64 = string_eq(nbp_entry_guard(pdc_code(), 4), g) * string_eq(nbp_entry_guard(pdc_code(), 5), g);
+    same * pdc_eq(string_len(g), 151)
+}
+
+pub fn pdc_measure_kind(k: i64) -> i64 {
+    if k == 68 {
+        return 1;
+    }
+    if k == 69 {
+        return 1;
+    }
+    if k == 93 {
+        return 1;
+    }
+    0
+}
+
+// Kinds k..99 are part-owned: an unowned (stub) kind emits nothing and fails
+// nbp_kind_ok, so its call site poisons (group 64). No part kind passes at one
+// argument (68/69 take none, 93 takes five).
+
+pub fn pdc_measure_emit(t: i64) -> i64 {
+    let ids: i64 = __mind_alloc(40);
+    __mind_store_i64(ids, 0);
+    __mind_store_i64(ids + 8, 1);
+    __mind_store_i64(ids + 16, 2);
+    __mind_store_i64(ids + 24, 3);
+    __mind_store_i64(ids + 32, 4);
+    pdc_mark(t, 6, pdc_eq(string_len(nb_emit_intrinsic(pdc_code(), 68, ids, 5)), 20));
+    pdc_mark(t, 6, pdc_eq(string_len(nb_emit_intrinsic(pdc_code(), 69, ids, 5)), 16));
+    pdc_mark(t, 6, pdc_eq(string_len(nb_emit_intrinsic(pdc_code(), 93, ids, 5)), 52));
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(68, 0) * nbp_kind_ok(69, 0) * nbp_kind_ok(93, 5), 1));
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(68, 5) + nbp_kind_ok(69, 5) + nbp_kind_ok(93, 0), 0));
+    0
+}
+
+// Extern rows i..127 past the frozen 0..53 table (nbx_find scans 128): the MC-6
+// driver rows 54..86 (nbcu_row), none past them.
+pub fn pdc_rows(t: i64, out: i64, i: i64) -> i64 {
+    if i > 127 {
+        return 0;
+    }
+    let mut want: i64 = 0;
+    if i < 87 {
+        want = 1;
+    }
+    pdc_mark(t, 6, pdc_eq(nbx_row(i, out), want));
+    pdc_mark(t, 6, pdc_eq(nbx_row_part(i, out), want));
+    pdc_rows(t, out, i + 1)
+}
+
+pub fn pdc_ids(t: i64) -> i64 {
+    let alloc: i64 = pdc_name(7016437169844477791, 1668246636, 0, 0);
+    let exitg: i64 = pdc_name(8313473862527180639, 6878238496719336313, 483006575207, 0);
+    let unreg: i64 = pdc_name(7304667545996189535, 7595150838737493809, 8529646606136734835, 49);
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(alloc, 0, 12), 1));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(exitg, 0, 21), 51));
+    pdc_mark(t, 5, pdc_le0(nbp_intrinsic_id(alloc, 0, 12)));
+    pdc_mark(t, 5, pdc_le0(nbp_intrinsic_id(exitg, 0, 21)));
+    pdc_mark(t, 5, pdc_le0(nbp_sys_intrinsic_id(exitg, 0, 21)));
+    pdc_mark(t, 5, pdc_le0(nb_intrinsic_id(unreg, 0, 25)));
+    // Owned: vpaddd 60, cpu_features 67, ymm_vmovdqu_ld 70, cpu_relax 84, sys_mmap 90.
+    // Measurement is live: rdtscp 68, lfence 69, sys_perf_event_open 93.
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(8529646644640964447, 3704597053274612080, 3700786, 0), 0, 19), 60));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(7160552357920333663, 8463496687873127792, 54384477300082, 0), 0, 22), 67));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(8241416268489252703, 3564141091419812964, 0, 0), 0, 16), 68));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(7809070704261685087, 3564141044174841190, 0, 0), 0, 16), 69));
+    pdc_mark(t, 5, pdc_le0(nb_intrinsic_id(pdc_name(8241416268489252703, 3636198685457740900, 0, 0), 0, 16)));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(8745819426754748255, 7239095966972734829, 431314924913, 0), 0, 21), 70));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(7160552357920333663, 8674333540258641264, 0, 0), 0, 16), 84));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(8313473862527180639, 31632320005895033, 0, 0), 0, 15), 90));
+    pdc_mark(t, 5, pdc_eq(nb_intrinsic_id(pdc_name(8313473862527180639, 6874307661230207865, 8101799208335799909, 28261), 0, 26), 93));
+    pdc_mark(t, 5, pdc_eq(nbp_sys_intrinsic_id(pdc_name(8313473862527180639, 6874307661230207865, 8101799208335799909, 28261), 0, 26), 93));
+    pdc_mark(t, 5, pdc_le0(nb_intrinsic_id(pdc_name(8313473862527180639, 6874307661230207865, 8101799208335799909, 28261), 0, 25)));
+    0
+}
+
+pub fn pdc_tc(t: i64) -> i64 {
+    pdc_mark(t, 7, pdc_eq(tc_is_std_surface_intrinsic(8313473862527180639, 30243645292508025, 0, 0, 15), 1));
+    pdc_mark(t, 7, pdc_eq(tc_is_std_surface_intrinsic(7304667545996189535, 7595150838737493809, 8529646606136734835, 49, 25), 0));
+    // A registered native-only name (vpaddd) is outside the Rust/MLIR table yet raises
+    // no E2024 (any-profile registration); the misspelled __mind_vpadd_i32x8 still does.
+    pdc_mark(t, 7, pdc_eq(tc_is_std_surface_intrinsic(8529646644640964447, 3704597053274612080, 3700786, 0, 19), 0));
+    pdc_mark(t, 7, pdc_eq(tc_is_self_host_only_call(8529646644640964447, 3704597053274612080, 3700786, 0, 19), 0));
+    pdc_mark(t, 7, pdc_eq(tc_is_self_host_only_call(8529646644640964447, 3617350784135750000, 14456, 0, 18), 1));
+    0
+}
+
+pub fn main() -> i64 {
+    let t: i64 = __mind_alloc(64);
+    pdc_zero(t, 0);
+    pdc_mark(t, 0, string_eq(nbp_entry_guard(pdc_code(), 2), pdc_guard(pdc_code(), 2)) * string_eq(nbp_entry_guard(pdc_code(), 3), pdc_guard(pdc_code(), 3)));
+    pdc_mark(t, 0, pdc_eq(string_len(nbp_entry_guard(pdc_code(), 2)), 242));
+    pdc_mark(t, 1, pdc_tsc_guard_ok());
+    pdc_entry(t, 0, 0);
+    pdc_entry(t, 0, 2);
+    let with_argv: i64 = string_len(nb_entry_prefix(pdc_code(), 1, 1, 0));
+    pdc_mark(t, 4, pdc_eq(pdc_le0(with_argv - string_len(nb_entry_prefix(pdc_code(), 1, 0, 0))), 0));
+    pdc_ids(t);
+    pdc_owned(t, 60, pdc_name(1, 2, 3, 0));
+    pdc_emit(t, 68);
+    pdc_measure_emit(t);
+    pdc_shm_bytes(t);
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(59, 1) * nbp_kind_ok(100, 1) * nbp_kind_ok(1008, 3) * nbp_kind_ok(1, 1), 1));
+    pdc_rows(t, __mind_alloc(128), 54);
+    pdc_mark(t, 6, pdc_eq(nbx_row(53, __mind_alloc(128)), 1));
+    pdc_mark(t, 6, pdc_eq(nbp_fns_use_guard(0, 0, 0), 0));
+    pdc_tc(t);
+    pdc_status(t, 0, 1)
+}

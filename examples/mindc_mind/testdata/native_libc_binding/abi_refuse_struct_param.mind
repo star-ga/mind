@@ -1,0 +1,14 @@
+// Refusal row: a by-value repr(C) struct parameter (E2040). Pass a pointer.
+#[repr(C)]
+struct Pair {
+    a: f32,
+    b: f32,
+}
+
+extern "C" {
+    fn pair_sum(p: Pair) -> f32;
+}
+
+pub fn t_pair() -> i64 {
+    return 0
+}

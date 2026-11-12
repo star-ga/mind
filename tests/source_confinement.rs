@@ -189,7 +189,7 @@ fn build_uses_the_validated_project_entry() {
     .expect("helper");
     let build = Command::new(common::mindc_bin())
         .current_dir(&root)
-        .args(["build", "--no-cache"])
+        .args(["build", "--backend", "mlir", "--no-cache"])
         .output()
         .expect("run mindc build");
     assert!(
@@ -222,7 +222,7 @@ fn build_refuses_an_escaping_manifest_entry() {
     .expect("outside");
     let build = Command::new(common::mindc_bin())
         .current_dir(&root)
-        .args(["build", "--no-cache"])
+        .args(["build", "--backend", "mlir", "--no-cache"])
         .output()
         .expect("run mindc build");
     let diagnostics = format!(
@@ -240,4 +240,101 @@ fn build_refuses_an_escaping_manifest_entry() {
             || diagnostics.contains("manifest entry"),
         "build lacked a confinement diagnostic: {diagnostics}"
     );
+}
+
+/// A project with a broken `.mind` file in `docs/` that nothing imports, and
+/// two `docs/` files on one module key (`crate.docs.notes`). `main` is the
+/// entry text.
+fn stray_docs_project(name: &str, main: &str) -> std::path::PathBuf {
+    let root = common::scratch_dir(name).join("project");
+    fs::create_dir_all(root.join("docs/notes")).expect("docs");
+    fs::create_dir_all(root.join(".git")).expect("project boundary");
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n"
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("manifest");
+    fs::write(root.join("main.mind"), main).expect("entry");
+    fs::write(
+        root.join("helper.mind"),
+        "export { value }\nfn value() -> i64 { return 41; }\n",
+    )
+    .expect("helper");
+    fs::write(
+        root.join("docs/stray.mind"),
+        "export { stray_value }\nfn stray_value() -> i64 { return missing_name; }\n",
+    )
+    .expect("stray");
+    fs::write(
+        root.join("docs/notes.mind"),
+        "fn note() -> i64 { return 1; }\n",
+    )
+    .expect("notes");
+    fs::write(
+        root.join("docs/notes/mod.mind"),
+        "fn note() -> i64 { return 2; }\n",
+    )
+    .expect("mod");
+    root
+}
+
+/// Run `mindc <args>` in `root`; return success and the combined output.
+fn mindc_in(root: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let output = Command::new(common::mindc_bin())
+        .current_dir(root)
+        .args(args)
+        .output()
+        .expect("run mindc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (output.status.success(), text)
+}
+
+/// `mindc check` (type-check pass only) of the project's entry.
+fn check_entry(root: &std::path::Path) -> (bool, String) {
+    let entry = root.join("main.mind");
+    let entry = entry.to_str().expect("entry path");
+    mindc_in(root, &["check", "--no-fmt", "--no-lint", entry])
+}
+
+#[test]
+fn check_and_build_ignore_a_stray_docs_file() {
+    let main = "import helper;\n\nfn main() -> i64 {\n    return value() + 1;\n}\n";
+    let root = stray_docs_project("stray_docs_ignored", main);
+    let (ok, out) = check_entry(&root);
+    assert!(ok, "check analysed a stray docs file: {out}");
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = mindc_in(&root, &["build", "--backend", "mlir", "--no-cache"]);
+        assert!(ok, "build compiled a stray docs file: {out}");
+        assert!(!out.contains("stray.mind"), "build named the stray: {out}");
+    }
+}
+
+#[test]
+fn check_and_build_see_an_imported_docs_file() {
+    // Without the import the stray's function is not in scope.
+    let main = "import helper;\n\nfn main() -> i64 {\n    return value() + stray_value();\n}\n";
+    let root = stray_docs_project("stray_docs_unimported", main);
+    let (ok, out) = check_entry(&root);
+    assert!(
+        !ok && out.contains("stray_value"),
+        "unimported fn resolved: {out}"
+    );
+
+    let main = format!("import docs.stray;\n{main}");
+    let root = stray_docs_project("stray_docs_imported", &main);
+    let (ok, out) = check_entry(&root);
+    assert!(ok, "check did not see the imported docs file: {out}");
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = mindc_in(&root, &["build", "--backend", "mlir", "--no-cache"]);
+        assert!(!ok, "build skipped the imported broken docs file: {out}");
+        assert!(
+            out.contains("stray.mind"),
+            "build did not name the stray: {out}"
+        );
+    }
 }

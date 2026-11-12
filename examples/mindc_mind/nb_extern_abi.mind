@@ -1,0 +1,185 @@
+// Copyright 2026 STARGA Inc.
+// Native-route (x86-64) extern ABI rows. The route realizes one row: SysV
+// (`extern "C"` resolves to it on x86-64). The mic@3 note records the declared
+// callconv byte (1 SysV, 2 Win64, 3 Aapcs) and the varargs flag of each extern fn.
+// A block with no realized row is refused by name (E2039); a by-value #[repr(C)]
+// struct parameter or return in an extern signature is refused (E2040).
+// PART RULE: intrinsics only. Every function reads source bytes [p, p + len).
+
+pub fn nxa_byte(p: i64, i: i64) -> i64 {
+    __mind_load_i8(p + i)
+}
+
+pub fn nxa_space(c: i64) -> i64 {
+    if c == 32 {
+        return 1;
+    }
+    if c == 9 {
+        return 1;
+    }
+    if c == 10 {
+        return 1;
+    }
+    if c == 13 {
+        return 1;
+    }
+    0
+}
+
+pub fn nxa_ident_byte(c: i64) -> i64 {
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    if c == 95 {
+        return 1;
+    }
+    0
+}
+
+// First index at or after i that is not a space byte (len if none).
+pub fn nxa_skip(p: i64, i: i64, len: i64) -> i64 {
+    let mut j: i64 = i;
+    let mut r: i64 = len;
+    while j < len {
+        if nxa_space(nxa_byte(p, j)) == 0 {
+            r = j;
+            j = len;
+        }
+        j = j + 1;
+    }
+    r
+}
+
+// 1 when the n low bytes of `word` stand at i as a whole word (ident boundaries).
+pub fn nxa_word_at(p: i64, i: i64, len: i64, n: i64, word: i64) -> i64 {
+    if i + n > len {
+        return 0;
+    }
+    let mut k: i64 = 0;
+    let mut ok: i64 = 1;
+    while k < n {
+        if nxa_byte(p, i + k) != ((word >> (k * 8)) & 255) {
+            ok = 0;
+            k = n;
+        }
+        k = k + 1;
+    }
+    if ok == 0 {
+        return 0;
+    }
+    if i > 0 {
+        if nxa_ident_byte(nxa_byte(p, i - 1)) == 1 {
+            return 0;
+        }
+    }
+    if i + n < len {
+        if nxa_ident_byte(nxa_byte(p, i + n)) == 1 {
+            return 0;
+        }
+    }
+    1
+}
+
+// 1 when a line comment or a string literal starts at i.
+pub fn nxa_opaque(p: i64, i: i64, len: i64) -> i64 {
+    let c: i64 = nxa_byte(p, i);
+    if c == 34 {
+        return 1;
+    }
+    if c == 47 {
+        if i + 1 < len {
+            if nxa_byte(p, i + 1) == 47 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// Index just past the line comment or string literal that starts at i.
+pub fn nxa_past(p: i64, i: i64, len: i64) -> i64 {
+    if nxa_byte(p, i) == 34 {
+        return nxa_past_str(p, i, len);
+    }
+    nxa_past_line(p, i, len)
+}
+
+// End of the string literal that starts at i (len if it is not closed).
+pub fn nxa_past_str(p: i64, i: i64, len: i64) -> i64 {
+    let mut j: i64 = i + 1;
+    let mut r: i64 = len;
+    while j < len {
+        let c: i64 = nxa_byte(p, j);
+        if c == 92 {
+            j = j + 1;
+        }
+        if c == 34 {
+            r = j + 1;
+            j = len;
+        }
+        j = j + 1;
+    }
+    r
+}
+
+// End of the line comment that starts at i (the newline, or len).
+pub fn nxa_past_line(p: i64, i: i64, len: i64) -> i64 {
+    let mut j: i64 = i + 1;
+    let mut r: i64 = len;
+    while j < len {
+        if nxa_byte(p, j) == 10 {
+            r = j;
+            j = len;
+        }
+        j = j + 1;
+    }
+    r
+}
+
+// The index after j: len when stop is 1, past a comment or string, else j + 1.
+pub fn nxa_adv(p: i64, j: i64, len: i64, stop: i64) -> i64 {
+    if stop == 1 {
+        return len;
+    }
+    if nxa_opaque(p, j, len) == 1 {
+        return nxa_past(p, j, len);
+    }
+    j + 1
+}
+
+// 1 when the code byte at j (outside comments and strings) equals c.
+pub fn nxa_find_at(p: i64, j: i64, len: i64, c: i64) -> i64 {
+    if nxa_opaque(p, j, len) == 1 {
+        return 0;
+    }
+    if nxa_byte(p, j) == c {
+        return 1;
+    }
+    0
+}
+
+// Index of the first code byte equal to c at or after i (len if none).
+pub fn nxa_find(p: i64, i: i64, len: i64, c: i64) -> i64 {
+    let mut j: i64 = i;
+    let mut r: i64 = len;
+    while j < len {
+        let hit: i64 = nxa_find_at(p, j, len, c);
+        if hit == 1 {
+            r = j;
+        }
+        j = nxa_adv(p, j, len, hit);
+    }
+    r
+}

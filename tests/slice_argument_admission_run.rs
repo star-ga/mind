@@ -540,6 +540,7 @@ fn run_imported_project(sources_list: bool) {
     let built = mindc(
         &[
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",

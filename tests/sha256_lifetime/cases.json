@@ -1,0 +1,474 @@
+{
+  "cases": [
+    {
+      "id": 1,
+      "description": "raw KAT 0 bytes",
+      "profile": "both",
+      "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": 2,
+      "description": "raw KAT 3 bytes",
+      "profile": "both",
+      "expected_sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    {
+      "id": 3,
+      "description": "raw KAT 56 bytes",
+      "profile": "both",
+      "expected_sha256": "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    },
+    {
+      "id": 4,
+      "description": "raw KAT 55 bytes",
+      "profile": "both",
+      "expected_sha256": "2900465fcb533e05a158fd2b3be0e5e3b03740d83060aa3580e0d98a96bf2384"
+    },
+    {
+      "id": 5,
+      "description": "raw KAT 56 bytes",
+      "profile": "both",
+      "expected_sha256": "31454ff48ef36af2f08fd511bdc37d9d5855ac23e992e5ff5445cb6b7674a674"
+    },
+    {
+      "id": 6,
+      "description": "raw KAT 63 bytes",
+      "profile": "both",
+      "expected_sha256": "5f6401b96532c36de4e65beec0409b69b1d181864c8009b7a04f43e5d56350d1"
+    },
+    {
+      "id": 7,
+      "description": "raw KAT 64 bytes",
+      "profile": "both",
+      "expected_sha256": "94eb5de4943613fd048dc93393ab06877405faa39c11f53e9386083339833e7e"
+    },
+    {
+      "id": 8,
+      "description": "raw KAT 65 bytes",
+      "profile": "both",
+      "expected_sha256": "fc518669b6eb4b4dd91827ecacef86689c725bd5bab888fd3b26dbb196eec954"
+    },
+    {
+      "id": 9,
+      "description": "raw KAT 119 bytes",
+      "profile": "both",
+      "expected_sha256": "b0dc41b1a384e2f1203f0351b38fbeaafceef577ce1191d5bfc25da39f721eae"
+    },
+    {
+      "id": 10,
+      "description": "raw KAT 120 bytes",
+      "profile": "both",
+      "expected_sha256": "5df24dd802ac26132ce608dcb5f09841eef039ee0f152acf98d26d17fe4e88e6"
+    },
+    {
+      "id": 11,
+      "description": "raw KAT 128 bytes",
+      "profile": "both",
+      "expected_sha256": "0aedd4856f8eba0963627336ad5144a9a7dbe12498e6066f0165fc97d8ddee4c"
+    },
+    {
+      "id": 12,
+      "description": "raw KAT 256 bytes",
+      "profile": "both",
+      "expected_sha256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+    },
+    {
+      "id": 13,
+      "description": "raw KAT 1000000 bytes",
+      "profile": "both",
+      "expected_sha256": "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+    },
+    {
+      "id": 14,
+      "description": "raw KAT 4194304 bytes",
+      "profile": "both",
+      "expected_sha256": "e6d6899207ceb4cabe72b20d4704be0ec2764663f1fdc61c9e87cf94f81bc11e"
+    },
+    {
+      "id": 15,
+      "description": "raw repeated 32 x 4096 bytes",
+      "profile": "both",
+      "expected_sha256": "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec"
+    },
+    {
+      "id": 16,
+      "description": "raw negative length",
+      "profile": "both"
+    },
+    {
+      "id": 17,
+      "description": "raw length above signed bit-count bound",
+      "profile": "both"
+    },
+    {
+      "id": 18,
+      "description": "raw negative empty-input address",
+      "profile": "both"
+    },
+    {
+      "id": 19,
+      "description": "raw nonempty null input",
+      "profile": "both"
+    },
+    {
+      "id": 20,
+      "description": "raw input end overflow",
+      "profile": "both"
+    },
+    {
+      "id": 21,
+      "description": "raw zero output",
+      "profile": "both"
+    },
+    {
+      "id": 22,
+      "description": "raw negative output",
+      "profile": "both"
+    },
+    {
+      "id": 23,
+      "description": "raw output end overflow",
+      "profile": "both"
+    },
+    {
+      "id": 24,
+      "description": "raw maximum admitted length / first-allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 25,
+      "description": "raw exact input-end boundary / first-allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 26,
+      "description": "raw exact output-end boundary / first-allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 27,
+      "description": "wrapper abc / transfer ownership",
+      "profile": "both"
+    },
+    {
+      "id": 28,
+      "description": "wrapper empty / transfer ownership",
+      "profile": "both"
+    },
+    {
+      "id": 29,
+      "description": "wrapper all byte values / transfer ownership",
+      "profile": "both"
+    },
+    {
+      "id": 30,
+      "description": "wrapper negative length",
+      "profile": "both"
+    },
+    {
+      "id": 31,
+      "description": "wrapper excessive length",
+      "profile": "both"
+    },
+    {
+      "id": 32,
+      "description": "wrapper nonempty null data",
+      "profile": "both"
+    },
+    {
+      "id": 33,
+      "description": "wrapper negative data",
+      "profile": "both"
+    },
+    {
+      "id": 34,
+      "description": "wrapper last 8-byte load end overflow",
+      "profile": "both"
+    },
+    {
+      "id": 35,
+      "description": "wrapper stride start overflow",
+      "profile": "both"
+    },
+    {
+      "id": 36,
+      "description": "wrapper exact 8-byte end boundary / first-allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 37,
+      "description": "raw padded allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 38,
+      "description": "raw state allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 39,
+      "description": "raw schedule allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 40,
+      "description": "wrapper conversion allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 41,
+      "description": "wrapper digest allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 42,
+      "description": "wrapper padded allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 43,
+      "description": "wrapper state allocation refusal",
+      "profile": "observer-only"
+    },
+    {
+      "id": 44,
+      "description": "wrapper schedule allocation refusal",
+      "profile": "observer-only"
+    }
+  ],
+  "real_count": 32,
+  "observer_count": 44,
+  "mutations": [
+    {
+      "id": "M01",
+      "observed": true,
+      "source_sha256": "8eb67bbc41850bf2f8afa8395723f378b346319578e09c2c398d7400b1666f5e",
+      "subject_sha256": "4271e5f107397ff97b194dba3ecae05b505a89a466ebdf2e1d3e8bae645eece9",
+      "packet_sha256": "35619b5d89172f3e8a50556a822ce0999be1c195ae6cf40b009ccad2210725e6",
+      "expected_exit": 1,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit schedule release",
+      "replacement_before": "    __mind_free(w_addr);",
+      "replacement_after": "    // MUTATION: omitted schedule release."
+    },
+    {
+      "id": "M02",
+      "observed": true,
+      "source_sha256": "063767e44e799c068858cb026925c84b3bcc5713796619ffbd127b48b6d8ddeb",
+      "subject_sha256": "ab36329187d1af35e61b0967e9b232f2fc438dac9d2bcaf4e1f3e8494f37f75f",
+      "packet_sha256": "f2247f1e4029fca6f90fe099bb3784b3b81958ee8e741d5944584c0705c2bddf",
+      "expected_exit": 39,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit state release when schedule refuses",
+      "replacement_before": "    if w_addr == 0 {\n        __mind_free(h_addr);",
+      "replacement_after": "    if w_addr == 0 {\n        // MUTATION: omitted state release."
+    },
+    {
+      "id": "M03",
+      "observed": true,
+      "source_sha256": "95f402c4f32d17b05d5f36bb15ced4e25278c586b7354e3ca66f9f8cdb87d142",
+      "subject_sha256": "06bd03da9cc98f8a8501988673ce1b03479bb9648a9a0843c5fc8278f2afa8db",
+      "packet_sha256": "765edf3c8d0fba11c97fda36601d10f6631530ca3d04f320aba1cf201b5cb429",
+      "expected_exit": 38,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit padded release when state refuses",
+      "replacement_before": "    if h_addr == 0 {\n        __mind_free(buf);",
+      "replacement_after": "    if h_addr == 0 {\n        // MUTATION: omitted padded release."
+    },
+    {
+      "id": "M04",
+      "observed": true,
+      "source_sha256": "9ea30166b8d747c81fae1a376e8d1c8cb1710000303bb0ae786ee6e0937a428d",
+      "subject_sha256": "18c0caf96a2b48164d87b970e97bcc4edd0345199e9f7a04623c991f43d379db",
+      "packet_sha256": "affee53bfe0799c2c063d667fe1653813b7fbc0b8e43d19e9f0681f70ca0c0fd",
+      "expected_exit": 27,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit wrapper conversion release",
+      "replacement_before": "    let status: i64 = sha256(scratch, len, out);\n    __mind_free(scratch);",
+      "replacement_after": "    let status: i64 = sha256(scratch, len, out);\n    // MUTATION: omitted conversion release."
+    },
+    {
+      "id": "M05",
+      "observed": true,
+      "source_sha256": "46f22530fdbe71d484040d62377627d27edad3f8a51103490155efc2c8cd5059",
+      "subject_sha256": "af60aba4eeb50cedfd3d75ed7ae60218ce528c801bd8ff9ed81dee63134cfbc0",
+      "packet_sha256": "b559b52b77171c759d2d9dbe252886e15dd3f7fb4fa333a8a520d5ef18fae6d6",
+      "expected_exit": 42,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit wrapper digest release on raw refusal",
+      "replacement_before": "    if status != 0 {\n        __mind_free(out);",
+      "replacement_after": "    if status != 0 {\n        // MUTATION: omitted digest release."
+    },
+    {
+      "id": "M06",
+      "observed": true,
+      "source_sha256": "a1dcccf92217095adb866ef30b902badb6f59ebade9077698db47800d51e9be2",
+      "subject_sha256": "6ae8c0d3101a2e1c57f3075838bb765c465dfae5197a3a3a1978bb140e283872",
+      "packet_sha256": "75827f707fec3090ba2715f5b31e415b2d6948a9f79a4c53d87b87353449d4ca",
+      "expected_exit": 1,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "wrong SHA padding byte",
+      "replacement_before": "    __mind_store_i8(buf + in_len, 128);",
+      "replacement_after": "    __mind_store_i8(buf + in_len, 0);"
+    },
+    {
+      "id": "M07",
+      "observed": true,
+      "source_sha256": "20bae2e4e4df76f5869dcda7d67b13ea0a70dd0a59f895bd4df4b668e6396e16",
+      "subject_sha256": "2d6cda7d309128b0433185fee043217aa2c11d5799241c0dcd8704b1bfe60c46",
+      "packet_sha256": "95538f34262573ae34ba85cb103da1aab128746c21782eea889fe64bcd860af1",
+      "expected_exit": 16,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "wrong negative length return",
+      "replacement_before": "    if in_len < 0 {\n        return 1;",
+      "replacement_after": "    if in_len < 0 {\n        return 0;"
+    },
+    {
+      "id": "M08",
+      "observed": true,
+      "source_sha256": "d31a80db211f0cd9457267d3b0ba11dabeab43cf51ed1737864ef5a1db43f1db",
+      "subject_sha256": "8bb32c729b746041f4550aad8427970d473e0756c736eb1e8d3abd1185245c08",
+      "packet_sha256": "de55da5b02d69808aaf96f00c7aec667d2e9e57afe3742ef945a34f0e3c4edc5",
+      "expected_exit": 26,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "refuse representable final output byte",
+      "replacement_before": "    if out_addr > 9223372036854775776 {",
+      "replacement_after": "    if out_addr > 9223372036854775775 {"
+    }
+  ],
+  "builds": [
+    {
+      "id": "real",
+      "observed": false,
+      "source_sha256": "a7459823e12bdc5f26e58d1c388f8ef7e21fd81b3583ee7de1ddcefd9d75fd96",
+      "subject_sha256": "95f170a12259dc6ee69c607ea26eb30a1954487f6ca158f25b8fd626436f99c6",
+      "packet_sha256": "00d3ff3bfc607836f2fe3cdec56b228e2c9bb5f6678103c493842e41addd3932",
+      "expected_exit": 0,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": ""
+    },
+    {
+      "id": "observed",
+      "observed": true,
+      "source_sha256": "df1424d51aefe673b2ac6088d2898180184471aadc46c9b77d81ca391473e773",
+      "subject_sha256": "95f170a12259dc6ee69c607ea26eb30a1954487f6ca158f25b8fd626436f99c6",
+      "packet_sha256": "f336cc8602292f70dd7ade0ad382ffc00454060c48fd1b2c4e9ca58db0650183",
+      "expected_exit": 0,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": ""
+    },
+    {
+      "id": "M01",
+      "observed": true,
+      "source_sha256": "8eb67bbc41850bf2f8afa8395723f378b346319578e09c2c398d7400b1666f5e",
+      "subject_sha256": "4271e5f107397ff97b194dba3ecae05b505a89a466ebdf2e1d3e8bae645eece9",
+      "packet_sha256": "35619b5d89172f3e8a50556a822ce0999be1c195ae6cf40b009ccad2210725e6",
+      "expected_exit": 1,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit schedule release",
+      "replacement_before": "    __mind_free(w_addr);",
+      "replacement_after": "    // MUTATION: omitted schedule release."
+    },
+    {
+      "id": "M02",
+      "observed": true,
+      "source_sha256": "063767e44e799c068858cb026925c84b3bcc5713796619ffbd127b48b6d8ddeb",
+      "subject_sha256": "ab36329187d1af35e61b0967e9b232f2fc438dac9d2bcaf4e1f3e8494f37f75f",
+      "packet_sha256": "f2247f1e4029fca6f90fe099bb3784b3b81958ee8e741d5944584c0705c2bddf",
+      "expected_exit": 39,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit state release when schedule refuses",
+      "replacement_before": "    if w_addr == 0 {\n        __mind_free(h_addr);",
+      "replacement_after": "    if w_addr == 0 {\n        // MUTATION: omitted state release."
+    },
+    {
+      "id": "M03",
+      "observed": true,
+      "source_sha256": "95f402c4f32d17b05d5f36bb15ced4e25278c586b7354e3ca66f9f8cdb87d142",
+      "subject_sha256": "06bd03da9cc98f8a8501988673ce1b03479bb9648a9a0843c5fc8278f2afa8db",
+      "packet_sha256": "765edf3c8d0fba11c97fda36601d10f6631530ca3d04f320aba1cf201b5cb429",
+      "expected_exit": 38,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit padded release when state refuses",
+      "replacement_before": "    if h_addr == 0 {\n        __mind_free(buf);",
+      "replacement_after": "    if h_addr == 0 {\n        // MUTATION: omitted padded release."
+    },
+    {
+      "id": "M04",
+      "observed": true,
+      "source_sha256": "9ea30166b8d747c81fae1a376e8d1c8cb1710000303bb0ae786ee6e0937a428d",
+      "subject_sha256": "18c0caf96a2b48164d87b970e97bcc4edd0345199e9f7a04623c991f43d379db",
+      "packet_sha256": "affee53bfe0799c2c063d667fe1653813b7fbc0b8e43d19e9f0681f70ca0c0fd",
+      "expected_exit": 27,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit wrapper conversion release",
+      "replacement_before": "    let status: i64 = sha256(scratch, len, out);\n    __mind_free(scratch);",
+      "replacement_after": "    let status: i64 = sha256(scratch, len, out);\n    // MUTATION: omitted conversion release."
+    },
+    {
+      "id": "M05",
+      "observed": true,
+      "source_sha256": "46f22530fdbe71d484040d62377627d27edad3f8a51103490155efc2c8cd5059",
+      "subject_sha256": "af60aba4eeb50cedfd3d75ed7ae60218ce528c801bd8ff9ed81dee63134cfbc0",
+      "packet_sha256": "b559b52b77171c759d2d9dbe252886e15dd3f7fb4fa333a8a520d5ef18fae6d6",
+      "expected_exit": 42,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "omit wrapper digest release on raw refusal",
+      "replacement_before": "    if status != 0 {\n        __mind_free(out);",
+      "replacement_after": "    if status != 0 {\n        // MUTATION: omitted digest release."
+    },
+    {
+      "id": "M06",
+      "observed": true,
+      "source_sha256": "a1dcccf92217095adb866ef30b902badb6f59ebade9077698db47800d51e9be2",
+      "subject_sha256": "6ae8c0d3101a2e1c57f3075838bb765c465dfae5197a3a3a1978bb140e283872",
+      "packet_sha256": "75827f707fec3090ba2715f5b31e415b2d6948a9f79a4c53d87b87353449d4ca",
+      "expected_exit": 1,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "wrong SHA padding byte",
+      "replacement_before": "    __mind_store_i8(buf + in_len, 128);",
+      "replacement_after": "    __mind_store_i8(buf + in_len, 0);"
+    },
+    {
+      "id": "M07",
+      "observed": true,
+      "source_sha256": "20bae2e4e4df76f5869dcda7d67b13ea0a70dd0a59f895bd4df4b668e6396e16",
+      "subject_sha256": "2d6cda7d309128b0433185fee043217aa2c11d5799241c0dcd8704b1bfe60c46",
+      "packet_sha256": "95538f34262573ae34ba85cb103da1aab128746c21782eea889fe64bcd860af1",
+      "expected_exit": 16,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "wrong negative length return",
+      "replacement_before": "    if in_len < 0 {\n        return 1;",
+      "replacement_after": "    if in_len < 0 {\n        return 0;"
+    },
+    {
+      "id": "M08",
+      "observed": true,
+      "source_sha256": "d31a80db211f0cd9457267d3b0ba11dabeab43cf51ed1737864ef5a1db43f1db",
+      "subject_sha256": "8bb32c729b746041f4550aad8427970d473e0756c736eb1e8d3abd1185245c08",
+      "packet_sha256": "de55da5b02d69808aaf96f00c7aec667d2e9e57afe3742ef945a34f0e3c4edc5",
+      "expected_exit": 26,
+      "expected_stdout_hex": "",
+      "expected_stderr_hex": "",
+      "description": "refuse representable final output byte",
+      "replacement_before": "    if out_addr > 9223372036854775776 {",
+      "replacement_after": "    if out_addr > 9223372036854775775 {"
+    }
+  ],
+  "meaning": "MIND verdicts; normal specific mutation exits required; crash/build failure never detection"
+}

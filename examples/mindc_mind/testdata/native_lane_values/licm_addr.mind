@@ -1,0 +1,19 @@
+// LICM slice 1 must NOT hoist `t` (native-only row: references are native-only):
+// its operand's address is taken and the loop writes through it.
+fn ad(n: i64) -> i64 {
+    let mut a: i64 = 5;
+    let p: i64 = &a;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        *p = i + 10;
+        let t: i64 = a * 2;
+        s = s + t;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    ad(6) % 221
+}

@@ -254,6 +254,7 @@ pub fn direct_import() -> i64 { return string_eq("same", "same") }
         .current_dir(&root)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",
@@ -296,6 +297,7 @@ pub fn direct_import() -> i64 { return string_eq("same", "same") }
         .current_dir(&root)
         .args([
             "build",
+            "--backend=mlir",
             "--emit",
             "cdylib",
             "--no-cache",

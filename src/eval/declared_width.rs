@@ -270,7 +270,7 @@ fn kind_name(kind: NarrowScalar) -> String {
 
 /// Materialise `value` at the width `ty` declares.
 ///
-/// * a non-narrowing declared type returns `value` verbatim;
+/// * a non-narrowing declared type returns `value` verbatim (`f32`: rounded);
 /// * an i64-carried scalar under a narrowing type is truncated and re-extended
 ///   by `apply_narrow_kind` — sign-extend for `i8`/`i16`/`i32`,
 ///   zero-extend for `u8`/`u16`/`u32`;
@@ -285,7 +285,7 @@ pub(crate) fn narrow(
     name: &str,
 ) -> Result<Value, EvalError> {
     let Some(kind) = narrow_kind(ty) else {
-        return Ok(value);
+        return Ok(super::float_ops::declared_f32(ty, value));
     };
     narrow_with(kind, value, what, name)
 }

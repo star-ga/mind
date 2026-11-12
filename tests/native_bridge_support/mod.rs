@@ -17,7 +17,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 use std::sync::OnceLock;
 
 pub const MINDC: &str = env!("CARGO_BIN_EXE_mindc");
@@ -87,6 +86,22 @@ impl Project {
     }
 
     pub fn build_native_emit(&self, entry_rel: &str, emit: &str) -> (i32, String, Option<Vec<u8>>) {
+        self.build_with(entry_rel, emit, native_compiler())
+    }
+
+    /// Build through the historical (unmarked) compiler on every host: the
+    /// drain fixture carries no lane marker, so admission takes the
+    /// historical branch. For refusal controls only; it runs no MIND code.
+    pub fn build_native_historical(&self, entry_rel: &str) -> (i32, String, Option<Vec<u8>>) {
+        self.build_with(entry_rel, "binary", historical_compiler())
+    }
+
+    fn build_with(
+        &self,
+        entry_rel: &str,
+        emit: &str,
+        compiler: PathBuf,
+    ) -> (i32, String, Option<Vec<u8>>) {
         let out = self.root().join("out.elf");
         let _ = std::fs::remove_file(&out);
         let mut args: Vec<String> = vec!["build".into()];
@@ -106,7 +121,7 @@ impl Project {
             .arg(&out)
             .current_dir(self.root())
             .env("MINDC_STD_DIR", repo_path("std"))
-            .env("MINDC_NATIVE_ELF", native_compiler())
+            .env("MINDC_NATIVE_ELF", compiler)
             .env(
                 "MIND_NATIVE_TEST_CAPTURE",
                 self.root().join("native-image.bin"),
@@ -134,6 +149,11 @@ fn native_compiler() -> PathBuf {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 fn native_compiler() -> PathBuf {
+    historical_compiler()
+}
+
+/// The host-native drain fixture, built once per test binary on any host.
+fn historical_compiler() -> PathBuf {
     static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
     FIXTURE
         .get_or_init(|| {

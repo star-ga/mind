@@ -1,0 +1,2035 @@
+// Copyright 2026 STARGA Inc.
+
+// Source-derived libc declaration binding; no call admission/emission.
+
+// See native_libc_binding.md for exact buffers, ownership and obligations.
+
+pub fn ncb_zero(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+pub fn ncb_copy(dst: i64, src: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+pub fn ncb_same_step(same: i64, a: i64, b: i64, i: i64) -> i64 {
+    if same == 0 {
+        return 0;
+    }
+    if __mind_load_i8(a + i) != __mind_load_i8(b + i) {
+        return 0;
+    }
+    1
+}
+
+pub fn ncb_same(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut same: i64 = 1;
+    while i < n {
+        same = ncb_same_step(same, a, b, i);
+        i = i + 1;
+    }
+    same
+}
+
+pub fn ncb_error(diag: i64, error: i64, offset: i64, registry: i64) -> i64 {
+    __mind_store_i64(diag, error);
+    __mind_store_i64(diag + 8, offset);
+    __mind_store_i64(diag + 16, registry);
+    0
+}
+
+pub fn ncb_input(source: i64, n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    if n > 4194304 {
+        return 0;
+    }
+    if source < 0 {
+        return 0;
+    }
+    if source == 0 {
+        if n != 0 {
+            return 0;
+        }
+    }
+    if source > 9223372036854775807 - n {
+        return 0;
+    }
+    1
+}
+
+pub fn ncb_type_key(ty: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ty);
+    if n < 1 {
+        return 0 - 1;
+    }
+    if n > 3 {
+        return 0 - 1;
+    }
+    let mut bits: i64 = n << 32;
+    let mut i: i64 = 0;
+    while i < n {
+        bits = bits | (__mind_load_i8(ty + 8 + i) << (8 * i));
+        i = i + 1;
+    }
+    bits
+}
+
+pub fn ncb_contract_1(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 0);
+    __mind_store_i64(p + 8, 0);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 16);
+    __mind_store_i64(p + 48, 6876836593842610015);
+    __mind_store_i64(p + 56, 7957695015157985132);
+    __mind_store_i64(p + 64, 8589935905);
+    __mind_store_i64(p + 72, 0);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 13);
+    __mind_store_i64(p + 120, 0);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 8589935905);
+    __mind_store_i64(p + 216, 0);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_2(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 1);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 499985704287);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967296);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 0);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967296);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_3(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 3);
+    __mind_store_i64(p + 40, 13);
+    __mind_store_i64(p + 48, 7306913835266305123);
+    __mind_store_i64(p + 56, 435627324532);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935137);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 22);
+    __mind_store_i64(p + 128, 5);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589951777);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_4(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 435728378979);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_5(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 6);
+    __mind_store_i64(p + 40, 11);
+    __mind_store_i64(p + 48, 7021779658357042275);
+    __mind_store_i64(p + 56, 6645614);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967302);
+    __mind_store_i64(p + 80, 4294967302);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 1);
+    __mind_store_i64(p + 136, 21);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967302);
+    __mind_store_i64(p + 224, 4294967302);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_6(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 8);
+    __mind_store_i64(p + 48, 8244230979769560163);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 8589935137);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 9);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 8589951009);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_7(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 4);
+    __mind_store_i64(p + 48, 846230884);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 1);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 1);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_8(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 6);
+    __mind_store_i64(p + 48, 125796981695334);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_9(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 2);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 465809859430);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 4294967303);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 22);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 5);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 4294967367);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_10(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 1);
+    __mind_store_i64(p + 40, 9);
+    __mind_store_i64(p + 48, 7594316253610599526);
+    __mind_store_i64(p + 56, 114);
+    __mind_store_i64(p + 64, 8589935137);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 8);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 8589951009);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_11(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 28559141924005222);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 12885041184);
+    __mind_store_i64(p + 88, 12885041184);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 11);
+    __mind_store_i64(p + 136, 12);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 3);
+    __mind_store_i64(p + 184, 3);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 12884975904);
+    __mind_store_i64(p + 232, 12884975904);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_12(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 461229747302);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 21);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_13(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 0);
+    __mind_store_i64(p + 8, 0);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 4);
+    __mind_store_i64(p + 48, 1802661734);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 0);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 23);
+    __mind_store_i64(p + 120, 0);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 0);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_14(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 5);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 499851228006);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935137);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 3);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589951521);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_15(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 4);
+    __mind_store_i64(p + 8, 4);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 5);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 32758249777558374);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 8589935137);
+    __mind_store_i64(p + 96, 4294967301);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 2);
+    __mind_store_i64(p + 136, 3);
+    __mind_store_i64(p + 144, 21);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 3);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589934880);
+    __mind_store_i64(p + 232, 8589951521);
+    __mind_store_i64(p + 240, 4294967301);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_16(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 427055215462);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_17(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 28263390660289895);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 23);
+    __mind_store_i64(p + 120, 23);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_18(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 9);
+    __mind_store_i64(p + 48, 7596844060941509991);
+    __mind_store_i64(p + 56, 116);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935137);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 22);
+    __mind_store_i64(p + 128, 7);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 1);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967302);
+    __mind_store_i64(p + 224, 8589952033);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_19(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 0);
+    __mind_store_i64(p + 8, 0);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 6);
+    __mind_store_i64(p + 48, 110404104906087);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 0);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 20);
+    __mind_store_i64(p + 120, 0);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 2);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967302);
+    __mind_store_i64(p + 216, 0);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_20(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 4);
+    __mind_store_i64(p + 48, 1819044203);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 23);
+    __mind_store_i64(p + 128, 17);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_21(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 461262648172);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967303);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967303);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 24);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 24);
+    __mind_store_i64(p + 136, 22);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967303);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967303);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_22(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 4);
+    __mind_store_i64(p + 40, 12);
+    __mind_store_i64(p + 48, 8242536627837953389);
+    __mind_store_i64(p + 56, 1702125925);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 8589935136);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 1);
+    __mind_store_i64(p + 120, 25);
+    __mind_store_i64(p + 128, 21);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 3);
+    __mind_store_i64(p + 176, 1);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 8589934880);
+    __mind_store_i64(p + 224, 4294967302);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_23(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 9);
+    __mind_store_i64(p + 48, 7306365213525041518);
+    __mind_store_i64(p + 56, 112);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 8589935136);
+    __mind_store_i64(p + 80, 8589935137);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 4);
+    __mind_store_i64(p + 128, 5);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 8589951776);
+    __mind_store_i64(p + 224, 8589951777);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_24(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 2);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 4);
+    __mind_store_i64(p + 48, 1852141679);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 8589935136);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 1);
+    __mind_store_i64(p + 120, 2);
+    __mind_store_i64(p + 128, 21);
+    __mind_store_i64(p + 136, 19);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 3);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 5);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 8589934880);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 4294967367);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_25(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 4);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 2);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 1);
+    __mind_store_i64(p + 40, 6);
+    __mind_store_i64(p + 48, 127961812791407);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 4294967301);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 1);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 2);
+    __mind_store_i64(p + 136, 21);
+    __mind_store_i64(p + 144, 19);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 3);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 5);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589934880);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 4294967367);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_26(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 2);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 216450230640);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 8589935905);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 14);
+    __mind_store_i64(p + 128, 21);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 8589935905);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_27(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 5);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 2);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 465809142384);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967303);
+    __mind_store_i64(p + 88, 4294967303);
+    __mind_store_i64(p + 96, 4294967303);
+    __mind_store_i64(p + 104, 4294967303);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 22);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 5);
+    __mind_store_i64(p + 184, 5);
+    __mind_store_i64(p + 192, 5);
+    __mind_store_i64(p + 200, 5);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967367);
+    __mind_store_i64(p + 232, 4294967367);
+    __mind_store_i64(p + 240, 4294967367);
+    __mind_store_i64(p + 248, 4294967367);
+    0
+}
+
+pub fn ncb_contract_28(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 32204027246765426);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 8589935137);
+    __mind_store_i64(p + 72, 8589935137);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 10);
+    __mind_store_i64(p + 120, 9);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 8589951265);
+    __mind_store_i64(p + 216, 8589951009);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_29(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 4);
+    __mind_store_i64(p + 8, 4);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 1);
+    __mind_store_i64(p + 40, 8);
+    __mind_store_i64(p + 48, 8386095501601039730);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 8589935136);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 2);
+    __mind_store_i64(p + 136, 1);
+    __mind_store_i64(p + 144, 2);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 3);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 3);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589934880);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 8589934880);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_30(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 28263390660289907);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 23);
+    __mind_store_i64(p + 128, 23);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967301);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_31(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 9);
+    __mind_store_i64(p + 48, 7596844060941510003);
+    __mind_store_i64(p + 56, 116);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 22);
+    __mind_store_i64(p + 128, 6);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 1);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967302);
+    __mind_store_i64(p + 224, 8589952032);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_32(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 2);
+    __mind_store_i64(p + 8, 2);
+    __mind_store_i64(p + 16, 3);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 6);
+    __mind_store_i64(p + 48, 119165719898483);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 8589935137);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 18);
+    __mind_store_i64(p + 120, 17);
+    __mind_store_i64(p + 128, 18);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 4);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 4);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967366);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 4294967366);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_33(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 1);
+    __mind_store_i64(p + 8, 1);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 5);
+    __mind_store_i64(p + 48, 461497265525);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 0);
+    __mind_store_i64(p + 88, 0);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 19);
+    __mind_store_i64(p + 120, 19);
+    __mind_store_i64(p + 128, 0);
+    __mind_store_i64(p + 136, 0);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 2);
+    __mind_store_i64(p + 168, 1);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967302);
+    __mind_store_i64(p + 216, 4294967302);
+    __mind_store_i64(p + 224, 0);
+    __mind_store_i64(p + 232, 0);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_34(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 1);
+    __mind_store_i64(p + 40, 8);
+    __mind_store_i64(p + 48, 8386102103099862645);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935136);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 1);
+    __mind_store_i64(p + 128, 2);
+    __mind_store_i64(p + 136, 21);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 3);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589934880);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_35(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 4);
+    __mind_store_i64(p + 8, 4);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 6);
+    __mind_store_i64(p + 48, 110404087406967);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 4294967301);
+    __mind_store_i64(p + 88, 8589935137);
+    __mind_store_i64(p + 96, 4294967301);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 0);
+    __mind_store_i64(p + 120, 22);
+    __mind_store_i64(p + 128, 23);
+    __mind_store_i64(p + 136, 16);
+    __mind_store_i64(p + 144, 21);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 1);
+    __mind_store_i64(p + 176, 1);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967302);
+    __mind_store_i64(p + 224, 4294967302);
+    __mind_store_i64(p + 232, 8589952289);
+    __mind_store_i64(p + 240, 4294967301);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract_36(p: i64) -> i64 {
+    __mind_store_i64(p + 0, 3);
+    __mind_store_i64(p + 8, 3);
+    __mind_store_i64(p + 16, 1);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, 7);
+    __mind_store_i64(p + 48, 28263429381382519);
+    __mind_store_i64(p + 56, 0);
+    __mind_store_i64(p + 64, 4294967301);
+    __mind_store_i64(p + 72, 4294967301);
+    __mind_store_i64(p + 80, 8589935905);
+    __mind_store_i64(p + 88, 4294967301);
+    __mind_store_i64(p + 96, 0);
+    __mind_store_i64(p + 104, 0);
+    __mind_store_i64(p + 112, 23);
+    __mind_store_i64(p + 120, 23);
+    __mind_store_i64(p + 128, 15);
+    __mind_store_i64(p + 136, 21);
+    __mind_store_i64(p + 144, 0);
+    __mind_store_i64(p + 152, 0);
+    __mind_store_i64(p + 160, 0);
+    __mind_store_i64(p + 168, 0);
+    __mind_store_i64(p + 176, 0);
+    __mind_store_i64(p + 184, 0);
+    __mind_store_i64(p + 192, 0);
+    __mind_store_i64(p + 200, 0);
+    __mind_store_i64(p + 208, 4294967301);
+    __mind_store_i64(p + 216, 4294967301);
+    __mind_store_i64(p + 224, 8589935905);
+    __mind_store_i64(p + 232, 4294967301);
+    __mind_store_i64(p + 240, 0);
+    __mind_store_i64(p + 248, 0);
+    0
+}
+
+pub fn ncb_contract(id: i64, p: i64) -> i64 {
+    if id == 1 {
+        return ncb_contract_1(p);
+    }
+    if id == 2 {
+        return ncb_contract_2(p);
+    }
+    if id == 3 {
+        return ncb_contract_3(p);
+    }
+    if id == 4 {
+        return ncb_contract_4(p);
+    }
+    if id == 5 {
+        return ncb_contract_5(p);
+    }
+    if id == 6 {
+        return ncb_contract_6(p);
+    }
+    if id == 7 {
+        return ncb_contract_7(p);
+    }
+    if id == 8 {
+        return ncb_contract_8(p);
+    }
+    if id == 9 {
+        return ncb_contract_9(p);
+    }
+    if id == 10 {
+        return ncb_contract_10(p);
+    }
+    if id == 11 {
+        return ncb_contract_11(p);
+    }
+    if id == 12 {
+        return ncb_contract_12(p);
+    }
+    if id == 13 {
+        return ncb_contract_13(p);
+    }
+    if id == 14 {
+        return ncb_contract_14(p);
+    }
+    if id == 15 {
+        return ncb_contract_15(p);
+    }
+    if id == 16 {
+        return ncb_contract_16(p);
+    }
+    if id == 17 {
+        return ncb_contract_17(p);
+    }
+    if id == 18 {
+        return ncb_contract_18(p);
+    }
+    if id == 19 {
+        return ncb_contract_19(p);
+    }
+    if id == 20 {
+        return ncb_contract_20(p);
+    }
+    if id == 21 {
+        return ncb_contract_21(p);
+    }
+    if id == 22 {
+        return ncb_contract_22(p);
+    }
+    if id == 23 {
+        return ncb_contract_23(p);
+    }
+    if id == 24 {
+        return ncb_contract_24(p);
+    }
+    if id == 25 {
+        return ncb_contract_25(p);
+    }
+    if id == 26 {
+        return ncb_contract_26(p);
+    }
+    if id == 27 {
+        return ncb_contract_27(p);
+    }
+    if id == 28 {
+        return ncb_contract_28(p);
+    }
+    if id == 29 {
+        return ncb_contract_29(p);
+    }
+    if id == 30 {
+        return ncb_contract_30(p);
+    }
+    if id == 31 {
+        return ncb_contract_31(p);
+    }
+    if id == 32 {
+        return ncb_contract_32(p);
+    }
+    if id == 33 {
+        return ncb_contract_33(p);
+    }
+    if id == 34 {
+        return ncb_contract_34(p);
+    }
+    if id == 35 {
+        return ncb_contract_35(p);
+    }
+    if id == 36 {
+        return ncb_contract_36(p);
+    }
+    1
+}
+
+pub fn ncb_find_step(src: i64, row: i64, catalog: i64, id: i64, found: i64) -> i64 {
+    if found != 0 {
+        return found;
+    }
+    let _load: i64 = ncb_contract(id, catalog);
+    let lo: i64 = __mind_load_i64(row);
+    let n: i64 = __mind_load_i64(row + 8) - lo;
+    if n != __mind_load_i64(catalog + 40) {
+        return 0;
+    }
+    if ncb_same(src + lo, catalog + 48, n) == 0 {
+        return 0;
+    }
+    id
+}
+
+pub fn ncb_find(src: i64, row: i64, catalog: i64) -> i64 {
+    let mut found: i64 = 0;
+    let mut id: i64 = 1;
+    while id <= 36 {
+        found = ncb_find_step(src, row, catalog, id, found);
+        id = id + 1;
+    }
+    found
+}
+
+pub fn ncb_param_same(row: i64, catalog: i64, i: i64, same: i64) -> i64 {
+    if same == 0 {
+        return 0;
+    }
+    let ty: i64 = __mind_load_i64(__mind_load_i64(row + 48) + i * 8);
+    if ncb_type_key(ty) != __mind_load_i64(catalog + 72 + i * 8) {
+        return 0;
+    }
+    1
+}
+
+pub fn ncb_shape(row: i64, catalog: i64) -> i64 {
+    let cc: i64 = __mind_load_i64(row + 16);
+    if cc != 0 {
+        if cc != 1 {
+            return 0;
+        }
+    }
+    let safety: i64 = __mind_load_i64(row + 24);
+    if safety < 0 {
+        return 0;
+    }
+    if safety > 1 {
+        return 0;
+    }
+    if __mind_load_i64(row + 32) != 0 {
+        return 0;
+    }
+    let np: i64 = __mind_load_i64(row + 40);
+    if np != __mind_load_i64(catalog) {
+        return 0;
+    }
+    if ncb_type_key(__mind_load_i64(row + 56)) != __mind_load_i64(catalog + 64) {
+        return 0;
+    }
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while i < np {
+        same = ncb_param_same(row, catalog, i, same);
+        i = i + 1;
+    }
+    same
+}
+
+pub fn ncb_text_len(kind: i64) -> i64 {
+    if kind == 0 {
+        return 11;
+    }
+    if kind == 1 {
+        return 9;
+    }
+    if kind == 2 {
+        return 9;
+    }
+    if kind == 3 {
+        return 10;
+    }
+    if kind == 4 {
+        return 10;
+    }
+    if kind == 5 {
+        return 10;
+    }
+    if kind == 6 {
+        return 10;
+    }
+    if kind == 7 {
+        return 9;
+    }
+    if kind == 8 {
+        return 27;
+    }
+    0
+}
+
+pub fn ncb_text_0(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (892219950 >> 0) & 255);
+    __mind_store_i8(p + 8, (892219950 >> 8) & 255);
+    __mind_store_i8(p + 9, (892219950 >> 16) & 255);
+    __mind_store_i8(p + 10, (892219950 >> 24) & 255);
+    0
+}
+
+pub fn ncb_text_1(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (13358 >> 0) & 255);
+    __mind_store_i8(p + 8, (13358 >> 8) & 255);
+    0
+}
+
+pub fn ncb_text_2(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (14638 >> 0) & 255);
+    __mind_store_i8(p + 8, (14638 >> 8) & 255);
+    0
+}
+
+pub fn ncb_text_3(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (3617070 >> 0) & 255);
+    __mind_store_i8(p + 8, (3617070 >> 8) & 255);
+    __mind_store_i8(p + 9, (3617070 >> 16) & 255);
+    0
+}
+
+pub fn ncb_text_4(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (3617326 >> 0) & 255);
+    __mind_store_i8(p + 8, (3617326 >> 8) & 255);
+    __mind_store_i8(p + 9, (3617326 >> 16) & 255);
+    0
+}
+
+pub fn ncb_text_5(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (3355438 >> 0) & 255);
+    __mind_store_i8(p + 8, (3355438 >> 8) & 255);
+    __mind_store_i8(p + 9, (3355438 >> 16) & 255);
+    0
+}
+
+pub fn ncb_text_6(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (14178491315080263 >> 0) & 255);
+    __mind_store_i8(p + 1, (14178491315080263 >> 8) & 255);
+    __mind_store_i8(p + 2, (14178491315080263 >> 16) & 255);
+    __mind_store_i8(p + 3, (14178491315080263 >> 24) & 255);
+    __mind_store_i8(p + 4, (14178491315080263 >> 32) & 255);
+    __mind_store_i8(p + 5, (14178491315080263 >> 40) & 255);
+    __mind_store_i8(p + 6, (14178491315080263 >> 48) & 255);
+    __mind_store_i8(p + 7, (3420974 >> 0) & 255);
+    __mind_store_i8(p + 8, (3420974 >> 8) & 255);
+    __mind_store_i8(p + 9, (3420974 >> 16) & 255);
+    0
+}
+
+pub fn ncb_text_7(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (31370365487966572 >> 0) & 255);
+    __mind_store_i8(p + 1, (31370365487966572 >> 8) & 255);
+    __mind_store_i8(p + 2, (31370365487966572 >> 16) & 255);
+    __mind_store_i8(p + 3, (31370365487966572 >> 24) & 255);
+    __mind_store_i8(p + 4, (31370365487966572 >> 32) & 255);
+    __mind_store_i8(p + 5, (31370365487966572 >> 40) & 255);
+    __mind_store_i8(p + 6, (31370365487966572 >> 48) & 255);
+    __mind_store_i8(p + 7, (13870 >> 0) & 255);
+    __mind_store_i8(p + 8, (13870 >> 8) & 255);
+    0
+}
+
+pub fn ncb_text_8(p: i64) -> i64 {
+    __mind_store_i8(p + 0, (13286732089355311 >> 0) & 255);
+    __mind_store_i8(p + 1, (13286732089355311 >> 8) & 255);
+    __mind_store_i8(p + 2, (13286732089355311 >> 16) & 255);
+    __mind_store_i8(p + 3, (13286732089355311 >> 24) & 255);
+    __mind_store_i8(p + 4, (13286732089355311 >> 32) & 255);
+    __mind_store_i8(p + 5, (13286732089355311 >> 40) & 255);
+    __mind_store_i8(p + 6, (13286732089355311 >> 48) & 255);
+    __mind_store_i8(p + 7, (33053971340682348 >> 0) & 255);
+    __mind_store_i8(p + 8, (33053971340682348 >> 8) & 255);
+    __mind_store_i8(p + 9, (33053971340682348 >> 16) & 255);
+    __mind_store_i8(p + 10, (33053971340682348 >> 24) & 255);
+    __mind_store_i8(p + 11, (33053971340682348 >> 32) & 255);
+    __mind_store_i8(p + 12, (33053971340682348 >> 40) & 255);
+    __mind_store_i8(p + 13, (33053971340682348 >> 48) & 255);
+    __mind_store_i8(p + 14, (15249359641259384 >> 0) & 255);
+    __mind_store_i8(p + 15, (15249359641259384 >> 8) & 255);
+    __mind_store_i8(p + 16, (15249359641259384 >> 16) & 255);
+    __mind_store_i8(p + 17, (15249359641259384 >> 24) & 255);
+    __mind_store_i8(p + 18, (15249359641259384 >> 32) & 255);
+    __mind_store_i8(p + 19, (15249359641259384 >> 40) & 255);
+    __mind_store_i8(p + 20, (15249359641259384 >> 48) & 255);
+    __mind_store_i8(p + 21, (55175019703860 >> 0) & 255);
+    __mind_store_i8(p + 22, (55175019703860 >> 8) & 255);
+    __mind_store_i8(p + 23, (55175019703860 >> 16) & 255);
+    __mind_store_i8(p + 24, (55175019703860 >> 24) & 255);
+    __mind_store_i8(p + 25, (55175019703860 >> 32) & 255);
+    __mind_store_i8(p + 26, (55175019703860 >> 40) & 255);
+    0
+}
+
+pub fn ncb_text(kind: i64, p: i64) -> i64 {
+    if kind == 0 {
+        return ncb_text_0(p);
+    }
+    if kind == 1 {
+        return ncb_text_1(p);
+    }
+    if kind == 2 {
+        return ncb_text_2(p);
+    }
+    if kind == 3 {
+        return ncb_text_3(p);
+    }
+    if kind == 4 {
+        return ncb_text_4(p);
+    }
+    if kind == 5 {
+        return ncb_text_5(p);
+    }
+    if kind == 6 {
+        return ncb_text_6(p);
+    }
+    if kind == 7 {
+        return ncb_text_7(p);
+    }
+    if kind == 8 {
+        return ncb_text_8(p);
+    }
+    1
+}
+
+pub fn ncb_mask(catalog: i64, slot: i64) -> i64 {
+    let mut mask: i64 = 1;
+    let kind: i64 = __mind_load_i64(catalog + 16);
+    if kind == 2 {
+        mask = mask | 2;
+    }
+    if kind == 3 {
+        mask = mask | 4;
+    }
+    if (__mind_load_i64(catalog + 64 + slot * 8) >> 32) > 1 {
+        mask = mask | 8;
+    }
+    let action: i64 = __mind_load_i64(catalog + 160 + slot * 8);
+    if action == 1 {
+        mask = mask | 16;
+    }
+    if action == 2 {
+        mask = mask | 16;
+    }
+    if __mind_load_i64(catalog + 24) == 1 {
+        mask = mask | 32;
+    }
+    mask
+}
+
+pub fn ncb_slot(out: i64, catalog: i64, i: i64) -> i64 {
+    let slot: i64 = out + 192 + i * 40;
+    __mind_store_i64(slot, __mind_load_i64(catalog + 64 + i * 8));
+    __mind_store_i64(slot + 8, __mind_load_i64(catalog + 208 + i * 8));
+    __mind_store_i64(slot + 16, __mind_load_i64(catalog + 160 + i * 8));
+    __mind_store_i64(slot + 24, __mind_load_i64(catalog + 112 + i * 8));
+    __mind_store_i64(slot + 32, ncb_mask(catalog, i));
+    0
+}
+
+pub fn ncb_lib_varargs(catalog: i64) -> i64 {
+    if __mind_load_i64(catalog + 16) == 2 {
+        return 1;
+    }
+    0
+}
+
+pub fn ncb_release(registry: i64, snapshot: i64, wire: i64, catalog: i64) -> i64 {
+    let _r: i64 = nb_cabi_free(registry);
+    __mind_free(registry);
+    __mind_free(snapshot);
+    __mind_free(wire);
+    __mind_free(catalog);
+    0
+}
+pub fn ncb_size(n: i64, wn: i64, slots: i64, name: i64, version: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    if n > 4194304 {
+        return 0;
+    }
+    if wn < 12 {
+        return 0;
+    }
+    if wn > 8388608 {
+        return 0;
+    }
+    if slots < 1 {
+        return 0;
+    }
+    if slots > 6 {
+        return 0;
+    }
+    if name < 1 {
+        return 0;
+    }
+    if name > 16 {
+        return 0;
+    }
+    if version < 1 {
+        return 0;
+    }
+    if version > 16 {
+        return 0;
+    }
+    let fixed: i64 = 192 + slots * 40 + name + version + ncb_text_len(7) + ncb_text_len(8);
+    if n > 16777216 - fixed {
+        return 0;
+    }
+    if wn > 16777216 - fixed - n {
+        return 0;
+    }
+    fixed + n + wn
+}
+pub fn ncb_header(out: i64, total: i64, source: i64, wire: i64, row: i64, index: i64, id: i64, catalog: i64) -> i64 {
+    __mind_store_i64(out, 3544385976669455181);
+    __mind_store_i64(out + 8, total);
+    __mind_store_i64(out + 16, 1);
+    __mind_store_i64(out + 24, 1);
+    __mind_store_i64(out + 32, index);
+    __mind_store_i64(out + 40, 0);
+    __mind_store_i64(out + 48, 0);
+    __mind_store_i64(out + 56, __mind_load_i64(catalog + 16));
+    __mind_store_i64(out + 64, ncb_lib_varargs(catalog));
+    __mind_store_i64(out + 72, __mind_load_i64(catalog + 8));
+    __mind_store_i64(out + 80, __mind_load_i64(catalog + 24));
+    __mind_store_i64(out + 88, __mind_load_i64(row + 16));
+    __mind_store_i64(out + 96, __mind_load_i64(row + 24));
+    __mind_store_i64(out + 104, __mind_load_i64(row + 32));
+    __mind_store_i64(out + 112, __mind_load_i64(catalog));
+    __mind_store_i64(out + 120, source);
+    __mind_store_i64(out + 128, wire);
+    __mind_store_i64(out + 136, __mind_load_i64(catalog + 40));
+    __mind_store_i64(out + 144, ncb_text_len(__mind_load_i64(catalog + 32)));
+    __mind_store_i64(out + 152, ncb_text_len(7));
+    __mind_store_i64(out + 160, ncb_text_len(8));
+    __mind_store_i64(out + 168, __mind_load_i64(catalog) + 1);
+    __mind_store_i64(out + 176, id);
+    __mind_store_i64(out + 184, 0);
+    0
+}
+pub fn ncb_payload(out: i64, snapshot: i64, n: i64, wire: i64, wn: i64, catalog: i64) -> i64 {
+    let slots: i64 = __mind_load_i64(catalog) + 1;
+    let mut i: i64 = 0;
+    while i < slots {
+        let _s: i64 = ncb_slot(out, catalog, i);
+        i = i + 1;
+    }
+    let base: i64 = out + 192 + slots * 40;
+    let _src: i64 = ncb_copy(base, snapshot, n);
+    let _wire: i64 = ncb_copy(base + n, wire, wn);
+    let name: i64 = __mind_load_i64(catalog + 40);
+    let _name: i64 = ncb_copy(base + n + wn, catalog + 48, name);
+    let version: i64 = __mind_load_i64(catalog + 32);
+    let vlen: i64 = ncb_text_len(version);
+    let _version: i64 = ncb_text(version, base + n + wn + name);
+    let _soname: i64 = ncb_text(7, base + n + wn + name + vlen);
+    let _interp: i64 = ncb_text(8, base + n + wn + name + vlen + ncb_text_len(7));
+    0
+}
+pub fn ncb_row_binding(registry: i64, index: i64, diag: i64) -> i64 {
+    let count: i64 = __mind_load_i64(registry + 24);
+    if index < 0 {
+        return ncb_error(diag, 4, 0, 0);
+    }
+    if index >= count {
+        return ncb_error(diag, 4, 0, 0);
+    }
+    let row: i64 = __mind_load_i64(__mind_load_i64(registry + 16) + index * 8);
+    let catalog: i64 = __mind_alloc(256);
+    if catalog == 0 {
+        return ncb_error(diag, 7, 0, 0);
+    }
+    let source: i64 = __mind_load_i64(registry);
+    let n: i64 = __mind_load_i64(registry + 8);
+    let id: i64 = ncb_find(source, row, catalog);
+    if id == 0 {
+        __mind_free(catalog);
+        return ncb_error(diag, 5, __mind_load_i64(row), 0);
+    }
+    if ncb_shape(row, catalog) == 0 {
+        __mind_free(catalog);
+        return ncb_error(diag, 6, __mind_load_i64(row), 0);
+    }
+    let wire: String = nb_cabi_encode(registry);
+    let wn: i64 = string_len(wire);
+    let total: i64 = ncb_size(n, wn, __mind_load_i64(catalog) + 1, __mind_load_i64(catalog + 40), ncb_text_len(__mind_load_i64(catalog + 32)));
+    if total == 0 {
+        __mind_free(string_addr(wire));
+        __mind_free(catalog);
+        return ncb_error(diag, 8, 0, 0);
+    }
+    let out: i64 = __mind_alloc(total);
+    if out == 0 {
+        __mind_free(string_addr(wire));
+        __mind_free(catalog);
+        return ncb_error(diag, 7, 0, 0);
+    }
+    let _head: i64 = ncb_header(out, total, n, wn, row, index, id, catalog);
+    let _body: i64 = ncb_payload(out, source, n, string_addr(wire), wn, catalog);
+    __mind_free(string_addr(wire));
+    __mind_free(catalog);
+    out
+}
+pub fn ncb_build(source: i64, n: i64, row: i64, profile: i64, diag: i64) -> i64 {
+    let _clear: i64 = ncb_zero(diag, 32);
+    if profile != 1 {
+        return ncb_error(diag, 2, 0, 0);
+    }
+    if ncb_input(source, n) == 0 {
+        return ncb_error(diag, 1, 0, 0);
+    }
+    let snapshot: i64 = __mind_alloc(n + 8);
+    if snapshot == 0 {
+        return ncb_error(diag, 7, 0, 0);
+    }
+    let _copy: i64 = ncb_copy(snapshot, source, n);
+    __mind_store_i64(snapshot + n, 0);
+    let registry: i64 = nb_cabi_build(snapshot, n);
+    if registry == 0 {
+        __mind_free(snapshot);
+        return ncb_error(diag, 7, 0, 0);
+    }
+    let error: i64 = __mind_load_i64(registry + 32);
+    if error != 0 {
+        let _e: i64 = ncb_error(diag, 3, __mind_load_i64(registry + 40), error);
+        let _release: i64 = ncb_release(registry, snapshot, 0, 0);
+        return 0;
+    }
+    let out: i64 = ncb_row_binding(registry, row, diag);
+    let _release: i64 = ncb_release(registry, snapshot, 0, 0);
+    out
+}
+pub fn ncb_check(plan: i64, length: i64, source: i64, n: i64, row: i64, profile: i64, diag: i64) -> i64 {
+    let _clear: i64 = ncb_zero(diag, 32);
+    if length < 192 {
+        let _e: i64 = ncb_error(diag, 1, 0, 0);
+        return 1;
+    }
+    if length > 16777216 {
+        let _e: i64 = ncb_error(diag, 1, 0, 0);
+        return 1;
+    }
+    if plan <= 0 {
+        let _e: i64 = ncb_error(diag, 1, 0, 0);
+        return 1;
+    }
+    if plan > 9223372036854775807 - length {
+        let _e: i64 = ncb_error(diag, 1, 0, 0);
+        return 1;
+    }
+    let fresh: i64 = ncb_build(source, n, row, profile, diag);
+    if fresh == 0 {
+        return __mind_load_i64(diag);
+    }
+    let size: i64 = __mind_load_i64(fresh + 8);
+    let mut same: i64 = 0;
+    if size == length {
+        same = ncb_same(plan, fresh, size);
+    }
+    __mind_free(fresh);
+    if same == 0 {
+        let _e: i64 = ncb_error(diag, 9, 0, 0);
+        return 9;
+    }
+    0
+}
+pub fn ncb_free(plan: i64) -> i64 {
+    __mind_free(plan);
+    0
+}
+// Explicit low32 view only. This helper grants no permission to emit a call.
+pub fn ncb_low32_view(value: i64, action: i64, out: i64) -> i64 {
+    __mind_store_i64(out, 0);
+    if action != 1 {
+        if action != 2 {
+            return 1;
+        }
+    }
+    let lo: i64 = value & 4294967295;
+    let mut result: i64 = lo;
+    if action == 2 {
+        if lo >= 2147483648 {
+            result = lo - 4294967296;
+        }
+    }
+    __mind_store_i64(out, result);
+    0
+}

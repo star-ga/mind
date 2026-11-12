@@ -36,7 +36,7 @@ use crate::eval::module_bindings::{forwarder_target, symbol_owner};
 use super::facts::Decls;
 use super::slots::Contradicted;
 use super::walk::fixpoint;
-use super::{MethodTargets, Ordinals, Refused, Targets};
+use super::{MethodTargets, Ordinals, Refused, RefusedKind, Targets};
 
 /// The module an item of the merged module belongs to, in the order the
 /// analyses report refusals: the entry first, so a refusal cites the test.
@@ -301,4 +301,56 @@ impl StdScope {
     pub(super) fn install(_name: &str) -> Self {
         StdScope
     }
+}
+
+thread_local! {
+    /// The functions holding a kept untyped comparison; `None` outside
+    /// [`lower_seeded_reference`].
+    static KEPT: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Disarms the `KEPT` cell on every exit of the seeded lowering, a panic included.
+struct KeptGuard;
+
+impl Drop for KeptGuard {
+    fn drop(&mut self) {
+        KEPT.with(|k| *k.borrow_mut() = None);
+    }
+}
+
+/// Lower `module` as the reference generator does: the merged std set and the
+/// entry source are one module, so its facts are module-wide, while the build
+/// decides each module alone. Only an `Untyped` refusal keeps the integer
+/// compare (the lowering the note is defined on); its function is listed in
+/// source order. Every other refusal still panics, and the general refusal sink
+/// is not armed.
+pub fn lower_seeded_reference(
+    module: &Module,
+) -> (
+    Result<crate::ir::IRModule, crate::eval::materialization::MaterializationRefusal>,
+    Vec<String>,
+) {
+    KEPT.with(|k| *k.borrow_mut() = Some(Vec::new()));
+    let _guard = KeptGuard;
+    let lowered = crate::eval::lower::lower_to_ir(module);
+    let kept = KEPT.with(|k| k.borrow_mut().take()).unwrap_or_default();
+    (lowered, kept)
+}
+
+/// Report one refused comparison: kept and listed in the seeded reference
+/// mode when `Untyped`, else through the check-time refusal sink.
+pub(super) fn report_refused(refused: &Refused) {
+    if refused.kind == RefusedKind::Untyped {
+        let kept = KEPT.with(|k| match k.borrow_mut().as_mut() {
+            Some(list) => {
+                list.push(refused.function.clone().unwrap_or_default());
+                true
+            }
+            None => false,
+        });
+        if kept {
+            return;
+        }
+    }
+    crate::type_checker::lowering_refusals::string_equality_operand(refused);
 }

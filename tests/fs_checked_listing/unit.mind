@@ -1,0 +1,244 @@
+// Author: STARGA Inc. Independent expected fields; no parser result as oracle.
+// Compile after the exact candidate module. Tests inspect private block helpers
+// deliberately; this does not replace end-to-end syscall/ownership controls.
+
+fn fct_expect(id: i64, got: i64, wanted: i64) -> i64 {
+    if got != wanted {
+        print(id);
+        print(got);
+        print(wanted);
+        return 1;
+    }
+    0
+}
+
+fn fct_zero(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// Linux dirent64 fixture: one 24-byte entry with one name byte and NUL.
+fn fct_record(p: i64, name: i64, kind: i64) -> i64 {
+    let _ = fct_zero(p, 24);
+    __mind_store_i64(p, 1);
+    __mind_store_i8(p + 16, 24);
+    __mind_store_i8(p + 18, kind);
+    __mind_store_i8(p + 19, name);
+    0
+}
+
+fn fct_block_case(which: i64) -> i64 {
+    let list: i64 = __mind_alloc(24);
+    let block: i64 = __mind_alloc(4104);
+    if list == 0 || block == 0 {
+        // Harness allocation failure is a distinct normal failure, never a kill.
+        print(9000 + which);
+        print(0);
+        print(1);
+        return 1;
+    }
+    let _ = fct_zero(list, 24);
+    let _ = fct_zero(block, 4104);
+    let _ = fct_record(block, 97, 8);
+    let mut nbytes: i64 = 24;
+    let mut max_entries: i64 = 4;
+    let mut max_names: i64 = 32;
+    let mut wanted: i64 = 0;
+    let mut count: i64 = 1;
+    let mut first: i64 = 97;
+    let mut flags: i64 = 2;
+    if which == 2 {
+        __mind_store_i8(block + 19, 255);
+        first = 255;
+    }
+    if which == 3 {
+        __mind_store_i8(block + 18, 0);
+        flags = 0;
+    }
+    if which == 4 {
+        __mind_store_i8(block + 18, 4);
+        flags = 1;
+    }
+    if which == 5 {
+        let _ = fct_record(block, 46, 4);
+        count = 0;
+    }
+    if which == 6 {
+        let _ = fct_record(block, 46, 4);
+        __mind_store_i8(block + 20, 46);
+        count = 0;
+    }
+    if which == 7 {
+        let _ = fct_record(block + 24, 98, 8);
+        nbytes = 48;
+        count = 2;
+    }
+    if which == 8 {
+        nbytes = 19;
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 9 {
+        __mind_store_i8(block + 16, 0);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 10 {
+        __mind_store_i8(block + 16, 16);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 11 {
+        __mind_store_i8(block + 16, 32);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 12 {
+        __mind_store_i8(block + 16, 23);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 13 {
+        let mut j: i64 = 19;
+        while j < 24 {
+            __mind_store_i8(block + j, 97);
+            j = j + 1;
+        }
+        // The zero at 24 is outside this record and must not terminate its name.
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 14 {
+        __mind_store_i8(block + 19, 0);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 15 {
+        __mind_store_i8(block + 19, 47);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 16 {
+        nbytes = 4097;
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 17 {
+        nbytes = 0;
+        wanted = 0 - 5;
+        count = 0;
+    }
+    if which == 18 {
+        nbytes = 25;
+        wanted = 0 - 5;
+    }
+    if which == 19 {
+        max_entries = 0;
+        wanted = 0 - 75;
+        count = 0;
+    }
+    if which == 20 {
+        max_names = 1;
+        wanted = 0 - 75;
+        count = 0;
+    }
+    if which == 21 {
+        max_entries = 1;
+        max_names = 2;
+    }
+    if which == 22 {
+        let _ = fct_record(block + 24, 98, 8);
+        nbytes = 48;
+        max_names = 3;
+        wanted = 0 - 75;
+    }
+    if which == 23 {
+        let _ = fct_record(block + 24, 98, 8);
+        nbytes = 48;
+        max_entries = 1;
+        wanted = 0 - 75;
+    }
+    if which == 24 {
+        __mind_store_i8(block + 17, 128);
+        wanted = 0 - 5;
+        count = 0;
+    }
+    let actual: i64 = fsc_block(list, block, nbytes, max_entries, max_names, block + 4096);
+    let mut failures: i64 = fct_expect(1000 + which, actual, wanted);
+    failures = failures + fct_expect(1100 + which, __mind_load_i64(list + 8), count);
+    if count > 0 && __mind_load_i64(list + 8) == count {
+        let entry: i64 = __mind_load_i64(__mind_load_i64(list));
+        let name: i64 = __mind_load_i64(entry);
+        failures = failures + fct_expect(1200 + which, __mind_load_i8(name) & 255, first);
+        failures = failures + fct_expect(1300 + which, __mind_load_i64(entry + 8), 1);
+        failures = failures + fct_expect(1400 + which, __mind_load_i64(entry + 16), flags);
+        failures = failures + fct_expect(1500 + which, __mind_load_i8(name + 1) & 255, 0);
+        // Mutating the borrowed buffer must not alter retained copied names.
+        __mind_store_i8(block + 19, 120);
+        failures = failures + fct_expect(1600 + which, __mind_load_i8(name) & 255, first);
+        if count == 2 {
+            let second: i64 = __mind_load_i64(__mind_load_i64(list) + 8);
+            failures = failures + fct_expect(1700 + which, __mind_load_i8(__mind_load_i64(second)) & 255, 98);
+        }
+    }
+    let _ = fs_dir_list_free(list);
+    __mind_free(block);
+    failures
+}
+
+fn fct_argument_case(which: i64) -> i64 {
+    let work: i64 = __mind_alloc(64);
+    if work == 0 {
+        return fct_expect(9100 + which, 0, 1);
+    }
+    let _ = fct_zero(work, 64);
+    __mind_store_i8(work, 46);
+    __mind_store_i64(work + 32, 713);
+    let mut path: i64 = work;
+    let mut path_len: i64 = 1;
+    let mut entries: i64 = 8;
+    let mut names: i64 = 64;
+    let mut out: i64 = work + 32;
+    let mut wanted: i64 = 0 - 22;
+    if which == 1 { path = 0; }
+    if which == 2 { path_len = 0; }
+    if which == 3 { path_len = 4096; wanted = 0 - 36; }
+    if which == 4 { path = 9223372036854775807; }
+    if which == 5 { out = 0; }
+    if which == 6 { out = work + 33; }
+    if which == 7 { out = work; }
+    if which == 8 { entries = 0 - 1; }
+    if which == 9 { names = 0 - 1; }
+    if which == 10 { entries = 9223372036854775807; wanted = 0 - 75; }
+    if which == 11 { names = 9223372036854775807; wanted = 0 - 75; }
+    if which == 12 { path_len = 2; }
+    let actual: i64 = fs_read_dir_checked(path, path_len, entries, names, out);
+    let mut failures: i64 = fct_expect(2000 + which, actual, wanted);
+    failures = failures + fct_expect(2100 + which, __mind_load_i64(work + 32), 713);
+    failures = failures + fct_expect(2200 + which, __mind_load_i8(work) & 255, 46);
+    __mind_free(work);
+    failures
+}
+
+pub fn main() -> i64 {
+    let mut failures: i64 = 0;
+    let mut which: i64 = 1;
+    while which <= 24 {
+        failures = failures + fct_block_case(which);
+        which = which + 1;
+    }
+    which = 1;
+    while which <= 12 {
+        failures = failures + fct_argument_case(which);
+        which = which + 1;
+    }
+    if failures != 0 {
+        return 1;
+    }
+    print(0);
+    0
+}

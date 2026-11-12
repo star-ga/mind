@@ -1,0 +1,15 @@
+// print: inside a loop and a branch; an empty literal writes nothing; the
+// escapes \t \n \" \\ decode before the write.
+// expect: (0, b"0\n1\n2\ndone\ttab\nq\"b\\")
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        print(i);
+        i = i + 1;
+    }
+    if i == 3 {
+        print("", "done");
+    }
+    print("\ttab\n", "q\"b\\");
+    0
+}

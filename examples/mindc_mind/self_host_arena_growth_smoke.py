@@ -44,6 +44,8 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 _FROZEN = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
+sys.path.insert(0, str(_HERE))
+from _selfhost_sources import compiler_library  # noqa: E402
 
 _STDLIB_MODULES = [
     "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
@@ -61,7 +63,7 @@ def build_grown_stdin() -> bytes:
     std_blob = b"\n".join(
         (std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES
     ) + b"\n"
-    main = (_HERE / "main.mind").read_bytes()
+    main = compiler_library()
     growth = b"".join(
         (
             f"pub fn zz_arena_growth_probe_{i}(x: i64) -> i64 {{\n"

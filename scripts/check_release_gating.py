@@ -65,7 +65,11 @@ WHAT IS CHECKED
       test --test evidence_release_smoke` with release.yml's feature selection
       and `--release --locked --target`; and both run the shared post-build smoke
       action on the packaged archive. Step/job `env:` blocks and the toolchain
-      action are not compared.
+      action are not compared. Each Linux target also carries the same
+      `image` (the build image), `glibc_floor` and `floor_image` in both
+      matrices, both images pinned by `@sha256:` digest, and both jobs run the
+      glibc-floor smoke action: the v0.10.2 Linux asset was built on the
+      runner's own glibc 2.39 and did not start on older distributions.
 
 A second mode resolves dependency graphs and so needs cargo:
   --keystone-pqc-free  every feature selection (`--no-default-features`,
@@ -83,7 +87,6 @@ Usage:
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import shlex
 import subprocess
@@ -103,10 +106,15 @@ from gate_runner_wiring_lint import (  # noqa: E402
     strip_shell_comment,
 )
 from workflow_scan import (  # noqa: E402
+    CARGO_RE,
+    LOCKFILE,
+    NON_RESOLVING,
     blocks,
     job_display_name,
+    lockfile_ignored,
     name_prefix,
     scalar_list,
+    unlocked_cargo_commands,
     workflow_jobs,
 )
 
@@ -118,20 +126,13 @@ CI_YML = WORKFLOW_DIR / "ci.yml"
 DEFAULT_WORKFLOW = "ci.yml"
 MANIFEST = ROOT / ".github" / "required-ci-jobs.tsv"
 VERIFIER = ROOT / "scripts" / "verify_ci_green.py"
-LOCKFILE = "Cargo.lock"
 ACTIONS_DIR = ROOT / ".github" / "actions"
-# A cargo (or cross) call: optional `+toolchain` / global flags, then the subcommand.
-CARGO_RE = re.compile(
-    r"(?<![A-Za-z0-9_./-])(?:cargo|cross)((?:\s+[+-]\S+)*)\s+([A-Za-z][A-Za-z0-9_-]*)"
-    r"(?![A-Za-z0-9_-])"
-)
-# Subcommands that never resolve the dependency graph. Every other subcommand,
-# plugins included, must be locked: a list of the RESOLVING ones missed `deny`.
-NON_RESOLVING = frozenset({"fmt", "help", "version"})
-LOCK_FLAG_RE = re.compile(r"(?<![A-Za-z0-9_-])--(?:locked|frozen)(?![A-Za-z0-9_-])")
-LOCK_EXEMPT_RE = re.compile(r"^#\s*lockfile-exempt:\s*(\S.{19,})$")
 RELEASE_PROFILE_JOB = "release_profile"
 SMOKE_ACTION = "./.github/actions/release-artifact-smoke"
+FLOOR_ACTION = "./.github/actions/glibc-floor-smoke"
+# Per-target Linux build environment both matrices must carry, value for value.
+FLOOR_KEYS = ("image", "glibc_floor", "floor_image")
+DIGEST_PIN_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 KEYSTONE_JOBS = ("mindcraft_self_host", "cross_substrate_identity")
 PQC_CRATES = ("fips204", "fips205")
 # `${{ matrix.target }}` is folded to `${{matrix.target}}` so it stays one token.
@@ -457,47 +458,6 @@ def check_manifest_matches_workflows(
             )
 
 
-def unlocked_cargo_commands(path: Path) -> tuple[list[str], list[str]]:
-    """(unlocked resolving commands, stale exemptions) in one workflow's run blocks."""
-    unlocked: list[str] = []
-    stale: list[str] = []
-    exempt_at: int | None = None
-    for lineno, cmd in join_continuations(run_block_lines(path.read_text(encoding="utf-8"))):
-        if cmd.startswith("#"):
-            if LOCK_EXEMPT_RE.match(cmd):
-                exempt_at = lineno
-            continue
-        hits = []
-        for seg in split_segments(strip_shell_comment(cmd)):
-            for m in CARGO_RE.finditer(seg):
-                # Only flags before a bare `--` are cargo's; after it they are libtest's.
-                own = re.split(r"\s--(?:\s|$)", seg[m.start():], maxsplit=1)[0]
-                if m.group(2) not in NON_RESOLVING and not LOCK_FLAG_RE.search(own):
-                    hits.append(f"{path.relative_to(ROOT)}:{lineno}: {seg.strip()}")
-                    break
-        if exempt_at is not None and not hits:
-            stale.append(f"{path.relative_to(ROOT)}:{exempt_at}")
-        if exempt_at is None:
-            unlocked.extend(hits)
-        exempt_at = None
-    return unlocked, stale
-
-
-def lockfile_ignored(gitignore: Path) -> list[str]:
-    """Non-negated .gitignore patterns that match the root Cargo.lock."""
-    if not gitignore.is_file():
-        return []
-    hits = []
-    for raw in gitignore.read_text(encoding="utf-8").splitlines():
-        pat = raw.strip()
-        if not pat or pat.startswith(("#", "!")):
-            continue
-        bare = pat.removeprefix("**/").removeprefix("/").rstrip("/")
-        if fnmatch.fnmatchcase(LOCKFILE, bare):
-            hits.append(pat)
-    return hits
-
-
 def check_lockfile(errors: list[str], ran: set[str]) -> None:
     _ran(ran, "R7")
     tracked = subprocess.run(
@@ -678,8 +638,32 @@ def check_release_profile(errors: list[str], ran: set[str]) -> None:
                   f"{[' '.join(n) for n in RELEASE_ARGS]} and release.yml's selection "
                   f"({describe(rel_key[2]) if rel_key else 'underivable'}); lacks {missing}.")
     for label, body in (("release.yml build", rel_build), ("ci.yml release_profile", ci)):
-        if f"uses: {SMOKE_ACTION}" not in code(body):
-            _fail(errors, "R8", f"{label} does not run {SMOKE_ACTION} on its archive.")
+        for action in (SMOKE_ACTION, FLOOR_ACTION):
+            if f"uses: {action}" not in code(body):
+                _fail(errors, "R8", f"{label} does not run {action} on its archive.")
+    check_floor_environment(errors, matrix_rows(rel_build), matrix_rows(ci))
+
+
+def check_floor_environment(errors: list[str], rel_rows: list[dict[str, str]],
+                            ci_rows: list[dict[str, str]]) -> None:
+    """Each Linux target builds in the same digest-pinned image, against the same
+    glibc floor, in release.yml and in ci.yml release_profile."""
+    rel = {r.get("target", ""): r for r in rel_rows if r.get("os", "").startswith("ubuntu")}
+    ci = {r.get("target", ""): r for r in ci_rows}
+    if not rel:
+        _fail(errors, "R8", "release.yml has no Linux leg to check a glibc floor on.")
+    for target in sorted(set(rel) | set(ci)):
+        for key in FLOOR_KEYS:
+            want, got = rel.get(target, {}).get(key, ""), ci.get(target, {}).get(key, "")
+            if not want or want != got:
+                _fail(errors, "R8", f"{target}: `{key}` is {want!r} in release.yml and {got!r} "
+                      "in release_profile; the pre-tag smoke must build and check exactly "
+                      "what ships.")
+            elif key != "glibc_floor" and not DIGEST_PIN_RE.search(want):
+                _fail(errors, "R8", f"{target}: `{key}` {want!r} is not pinned by @sha256 "
+                      "digest; a tag can move to an image with a newer glibc.")
+            elif key == "glibc_floor" and not re.fullmatch(r"[0-9]+\.[0-9]+", want):
+                _fail(errors, "R8", f"{target}: glibc_floor {want!r} is not MAJOR.MINOR.")
 
 
 def tree_packages(sel: tuple[bool, bool, str]) -> set[str] | None:

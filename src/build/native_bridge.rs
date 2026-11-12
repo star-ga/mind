@@ -11,7 +11,36 @@
 
 #[cfg(feature = "std-surface")]
 use std::collections::BTreeSet;
+#[cfg(feature = "std-surface")]
+use std::env::consts::{ARCH, OS};
 use std::process;
+
+use crate::project::Backend;
+use crate::project::toolchain_pin::{
+    MLIR_SELECTION_HINT, backend_line, governing_backend, governing_manifest,
+    native_request_refusal, select_backend,
+};
+
+#[cfg(feature = "std-surface")]
+mod admission;
+#[cfg(feature = "std-surface")]
+mod alloc_guard;
+#[cfg(feature = "std-surface")]
+mod child;
+#[cfg(feature = "std-surface")]
+mod entry;
+#[cfg(feature = "std-surface")]
+use entry::{check_entry_binds_main_params, check_entry_is_not_no_main_stub};
+#[cfg(feature = "std-surface")]
+mod namespace;
+#[cfg(feature = "std-surface")]
+mod open_host;
+#[cfg(feature = "std-surface")]
+mod outcome;
+#[cfg(feature = "std-surface")]
+mod seed;
+#[cfg(feature = "std-surface")]
+mod shadow;
 
 #[cfg(feature = "std-surface")]
 /// The `native_seed` column of the committed std manifest, in FILE ORDER.
@@ -40,44 +69,103 @@ pub(crate) fn frozen_std_seed_modules() -> Vec<&'static str> {
         .collect()
 }
 
-/// Refuse native requests when the build lacks the closure-admission surface.
-#[cfg(not(feature = "std-surface"))]
-pub fn run_native_backend_bridge(_paths: &[String], _out: &Option<String>, _emit: &Option<String>) {
-    eprintln!(
-        "error[backend-native]: the native backend is not available in this build \
-         (feature `std-surface` is disabled), so closure admission cannot run. \
-         Refusing rather than emitting an unadmitted artifact. \
-         (backend.native_unavailable)"
-    );
+/// Print a native refusal (its key included), then the MLIR selection sentence;
+/// exit 3 with no artifact. Never a fallback to the other backend.
+pub fn refuse_native(msg: &str) -> ! {
+    eprintln!("error[backend-native]: {msg}\n  {MLIR_SELECTION_HINT}");
     process::exit(3);
 }
+
+/// The backend of a `build` / `run` / `bench`, its `backend:` line printed first
+/// on stderr. A flag/manifest disagreement or a bad manifest exits 2.
+pub fn select_route(paths: &[String], flag: Option<&str>) -> Backend {
+    let declared = governing_backend(paths).map_err(|e| format!("{e:#}"));
+    match declared.and_then(|declared| select_backend(flag, declared)) {
+        Ok((backend, source)) => {
+            eprintln!("{}", backend_line(backend, source));
+            backend
+        }
+        Err(msg) => {
+            eprintln!("error[build]: {msg}");
+            process::exit(2);
+        }
+    }
+}
+
+/// One `mindc build` on the native backend, as the command line gave it: `out`
+/// (none: a governed build takes the MLIR path function), the `emit`, `target`,
+/// `package` and `workspace_root` requests (refused by name unless binary, cpu,
+/// absent, false), `optimize` (output directory only) and `profile`.
+pub struct NativeRequest<'a> {
+    pub paths: &'a [String],
+    pub out: Option<&'a str>,
+    pub emit: Option<&'a str>,
+    pub target: Option<&'a str>,
+    pub package: Option<&'a str>,
+    pub workspace_root: bool,
+    pub optimize: Option<crate::project::OptimizeLevel>,
+    pub profile: &'a str,
+}
+
+/// Refuse by name what the native backend cannot honor (exit 3; the host is
+/// checked before the seed starts); then build. A manifest `[build] emit` /
+/// `target` counts as the request when the flag is absent.
+pub fn run_native_build(req: &NativeRequest<'_>) {
+    let governed = governing_manifest(req.paths)
+        .unwrap_or_else(|e| refuse_native(&format!("{e:#} (backend.native_manifest)")));
+    let build = governed.as_ref().map(|(_, manifest)| &manifest.build);
+    let emit = req.emit.or(build.map(|b| b.emit.as_str()));
+    let target = req.target.or(build.map(|b| b.target.as_str()));
+    if let Some(msg) = native_request_refusal(target, req.package, req.workspace_root, emit) {
+        refuse_native(&msg);
+    }
+    let out = req.out.map_or_else(
+        || super::artifact::native_artifact_path(governed.as_ref(), req.optimize),
+        str::to_string,
+    );
+    run_native_backend_bridge_profile(req.paths, &out, req.profile);
+}
+
+/// Refuse native requests when the build lacks the closure-admission surface.
+#[cfg(not(feature = "std-surface"))]
+fn run_native_backend_bridge_profile(_paths: &[String], _out: &str, _profile: &str) {
+    refuse_native(
+        "the native backend is not available in this build (feature `std-surface` is \
+         disabled), so closure admission cannot run. Refusing rather than emitting an \
+         unadmitted artifact. (backend.native_unavailable)",
+    );
+}
+
+/// The committed BOUNDED-profile compiler seed (see `NativeLayout::BOUNDED`).
+pub const BOUNDED_SEED_PATH: &str = "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf";
 
 /// Compose and validate the captured source image, then invoke the pure-MIND
 /// native compiler. Its stdout is the executable artifact without wrapper bytes.
 /// `MINDC_NATIVE_ELF` overrides the committed seed; unsupported programs refuse.
+///
+/// `profile` selects the memory layout of the emitted image (`--native-profile`):
+/// `default` sends the v1 header (historical layout, byte-identical images);
+/// `bounded` sends `NativeLayout::BOUNDED` in a v2 header, runs the committed
+/// bounded seed unless `MINDC_NATIVE_ELF` overrides it, and refuses an artifact
+/// whose arena/stack segments do not match the requested layout.
 #[cfg(feature = "std-surface")]
-pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &Option<String>) {
-    use std::io::Write as _;
-
-    // EXECUTABLE TARGETS ONLY. The frozen compiler emits a static ET_EXEC and
-    // this bridge asserts that shape before writing. Until it can emit a library
-    // container, a library request is REFUSED rather than satisfied with an
-    // executable wearing a library name -- measured before this guard:
-    // `--emit=cdylib` wrote a 397-byte ET_EXEC to `o.so` and reported success.
-    // A library target follows its own contract; it does not silently become an
-    // executable, and it must not inherit the entry-`main` requirement either.
-    match emit.as_deref() {
-        None | Some("binary") => {}
-        Some(other) => {
-            eprintln!(
-                "error[backend-native]: --emit={other} is not supported by the native \
-                 backend, which emits a static executable (ET_EXEC). Refusing rather than \
-                 writing an executable under a library name. Use --backend mlir for library \
-                 emission."
-            );
+fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: &str) {
+    let layout = match crate::build::native_image::NativeLayout::from_profile(profile) {
+        Ok(l) => l,
+        Err(msg) => {
+            eprintln!("error[backend-native]: {msg}");
+            process::exit(2);
+        }
+    };
+    if let Some(l) = &layout {
+        if let Err(msg) = l.validate() {
+            eprintln!("error[backend-native]: invalid native layout: {msg}");
             process::exit(2);
         }
     }
+
+    // EXECUTABLE TARGETS ONLY: `run_native_build` refused `--emit cdylib|object`
+    // (before that guard, `--emit=cdylib` wrote a 397-byte ET_EXEC to `o.so`).
 
     // EXACTLY ONE argv path, and it is the ENTRY. Siblings are never taken from
     // argv: the image's module order is a wire contract (the frozen compiler
@@ -134,13 +222,12 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         match crate::build::native_scope::resolve_native_sources(entry_path, &entry_src, "cpu") {
             Ok(pair) => pair,
             Err(refusal) => {
-                eprintln!(
-                    "error[backend-native]: {} ({})\n  \
+                refuse_native(&format!(
+                    "{} ({})\n  \
                      This is a refusal, not a fallback: the native backend never compiles \
                      a program whose source set it could not resolve.",
                     refusal.detail, refusal.kind
-                );
-                process::exit(3);
+                ));
             }
         };
     let user_sources: Vec<Vec<u8>> = source_set.ordered().iter().map(|s| s.to_vec()).collect();
@@ -179,34 +266,38 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         );
         process::exit(2);
     }
-    let std_dir = std::env::var("MINDC_STD_DIR").unwrap_or_else(|_| "std".to_string());
-    let mut std_sources: Vec<Vec<u8>> = Vec::with_capacity(std_modules.len());
-    for m in std_modules.iter() {
-        let p = format!("{std_dir}/{m}.mind");
-        match std::fs::read(&p) {
-            Ok(b) => std_sources.push(b),
-            Err(e) => {
-                eprintln!(
-                    "error[backend-native]: cannot read std module '{p}': {e} \
-                     (set MINDC_STD_DIR to the std/ directory)"
-                );
-                process::exit(2);
-            }
-        }
-    }
+    // `MINDC_STD_DIR` when set, otherwise the copy embedded in this binary,
+    // verified against the manifest's SEED_BLOB_SHA256 pin before use.
+    let std_sources = seed::std_seed_sources(&std_modules).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
+        process::exit(2);
+    });
 
     // Composition goes through `native_image` so the single-file path and the
     // coming multi-module path build the image with the SAME code. With one
     // source the joiner contributes nothing, which is what makes "single-file
     // bytes did not move" a mechanical check instead of an argument.
     let std_blob = crate::build::native_image::compose_std_blob(&std_sources);
-    let image = crate::build::native_image::compose_image(&std_blob, &user_sources);
+    // Layout and feature admission are independent: a memory limit is not a
+    // compiler capability. Only the selected compiler's distinct lane marker
+    // chooses the candidate profile; unmarked seeds retain the old contract.
+    let lane_v1 = seed::compiler_supports_native_lane_v1(layout.is_some());
+    let extern_fixed = seed::compiler_supports_extern_fixed(layout.is_some());
+    let print = seed::compiler_supports_native_print(layout.is_some());
+    // Admission and the image both see a dynamic alloc or realloc size through its guard.
+    let mut user_sources = alloc_guard::route_dynamic_sizes(user_sources, lane_v1);
 
     // Admission and emission use the same captured, composed user region.
     // The exhaustive frozen-profile allowlist checks every retained user body,
-    // including uncalled functions. The current bridge does not admit calls into
-    // the seed standard library: unresolved edges and seed-name collisions refuse.
+    // including uncalled functions. Only native-lane-v1 admits calls into the
+    // seed standard library, walking each reached seed body (`LaneSeed`); the
+    // historical profile refuses unresolved edges. Seed-name collisions refuse
+    // (a user function that is an exact private copy of a private seed helper
+    // is not a collision; see `namespace::identical_private_seed_copies`).
     // The seed compiler's own refusal is a second fence, with no backend fallback.
+    if lane_v1 {
+        open_host::host_open_errors(&mut user_sources);
+    }
     let fence_source = crate::build::native_image::compose_user_region(&user_sources);
 
     // ADMISSION over the merged program. The fence must reason about the same
@@ -252,62 +343,122 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
     if let crate::build::native_scope::NativeSourceSet::Project { sources, .. } = &source_set {
         let offenders = crate::build::native_scope::owner_sensitive_imported_bodies(sources);
         if !offenders.is_empty() {
-            eprintln!(
-                "error[backend-native]: imported module(s) {offenders:?} carry an \
+            refuse_native(&format!(
+                "imported module(s) {offenders:?} carry an \
                  owner-bearing declaration, whose meaning depends on which module \
                  declares it. \
                  The merged image is lowered under a single owner, so an imported body \
                  would be lowered under an owner that is not its own. Refusing rather \
                  than binding it to the wrong owner. (scope.owner_sensitive_imported_body)"
-            );
-            process::exit(3);
+            ));
         }
     }
-    let (merged_ast, merged_ir) = match admit_merged_program(&paths[0], &fence_source, &reserved) {
+    let seed = crate::ir::native_lane_profile::LaneSeed::new(&std_modules, &std_sources)
+        .binding_seed_externs(seed::compiler_binds_seed_externs(layout.is_some()))
+        .with_print(print);
+    let (merged_ast, merged_ir, omit_seed) = match admit_merged_program(
+        &paths[0],
+        &fence_source,
+        &reserved,
+        &seed,
+        lane_v1,
+        extern_fixed,
+        layout.is_some(),
+    ) {
         Ok(lowered) => lowered,
         Err(msg) => {
-            eprintln!("error[backend-native]: {msg}");
-            process::exit(3);
+            refuse_native(&msg);
         }
     };
+    // DIALECT FENCE: an import the frozen compiler would read as a DIFFERENT
+    // extent than the admission parser did. Admission above reasoned about the
+    // Rust parse; the ELF is built from the frozen parse of the same bytes, so
+    // where the two disagree on where an item ends they compile different
+    // programs. Refused before the frozen compiler ever sees the image.
+    let unterminated = unterminated_imports(&merged_ast, &fence_source);
+    if !unterminated.is_empty() {
+        refuse_native(&unterminated_import_refusal(&paths[0], &unterminated));
+    }
+    // An entry `main` with parameters would run with them all 0 unless the
+    // compiler binds them to argc/argv: refuse every shape but
+    // `main(argc: i64, argv: i64)`, whose binding is verified on the artifact.
+    let main_params = match admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        Ok(m) => m,
+        Err(msg) => {
+            refuse_native(&msg);
+        }
+    };
+    // A nested binding that re-declares an enclosing name would be merged into
+    // the outer binding by the frozen compiler: refuse, never miscompile.
+    // `admit_merged_program` already proved the image is UTF-8, so this is exact.
+    let fence_text = String::from_utf8_lossy(&fence_source);
+    let origins = shadow::origins(&source_set, &paths[0]);
+    // A compiler carrying the scoped-nested-bindings mark gives each nested
+    // `let` its own storage; the proven shadow shapes are then admitted.
+    let bounded = layout.is_some();
+    let compiler_scopes = || seed::compiler_scopes_nested_bindings(bounded);
+    if let Err(msg) =
+        admission::refuse_shadowing(&merged_ast, &fence_text, &origins, &compiler_scopes)
+    {
+        refuse_native(&msg);
+    }
     // Whole-module admission over that single lowering. The image is not pruned,
     // so an uncalled out-of-profile body still becomes bytes in the
     // artifact; reachability informs diagnostics, it does not narrow admission.
     // enforced-by: RI-D1-PROFILE
     // The source check covers what the IR cannot carry (a declared f32 width).
-    match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
-        .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
-    {
-        Ok(()) => {}
-        Err(rejection) => {
-            eprintln!(
-                "error[backend-native]: `{}` is not in the frozen native profile \
+    // The candidate path already checked its complete typed profile before
+    // namespace selection. Never apply its additions to an unmarked compiler.
+    if !lane_v1 {
+        match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
+            .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
+        {
+            Ok(()) => {}
+            Err(rejection) => {
+                refuse_native(&format!(
+                    "`{}` is not in the frozen native profile \
                  (out-of-profile construct: {}).\n  \
                  The native backend is proven byte-identical only on the frozen \
                  construct allowlist. Rerun with `--backend mlir` for the full \
                  surface. This is a refusal, not a fallback: silently compiling an \
                  unproven construct is the failure this fence exists to prevent.",
-                paths[0], rejection.construct
-            );
-            process::exit(3);
+                    paths[0], rejection.construct
+                ));
+            }
         }
     }
 
-    // The stdin image was composed above by `native_image::compose_image`.
+    // Compose only after namespace and type admission. A closed private-helper
+    // collision omits the WHOLE unused seed, never renames a user symbol or
+    // drops a user body. The ordinary path keeps the exact historical bytes.
+    let selected_std = if omit_seed {
+        crate::build::native_image::compose_std_blob(&[])
+    } else {
+        std_blob
+    };
+    let image = crate::build::native_image::compose_image_with_layout(
+        &selected_std,
+        &user_sources,
+        layout.as_ref(),
+    );
     let image = image.bytes;
 
-    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target).
-    let elf = std::env::var("MINDC_NATIVE_ELF")
-        .unwrap_or_else(|_| "examples/mindc_mind/testdata/selfhost_loop/stage1.elf".to_string());
-    if !std::path::Path::new(&elf).exists() {
-        eprintln!(
-            "error[backend-native]: pure-MIND compiler ELF not found at '{elf}' \
-             (set MINDC_NATIVE_ELF)"
-        );
-        process::exit(2);
+    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target):
+    // `MINDC_NATIVE_ELF` when set, otherwise the embedded seed of the requested
+    // profile, verified against its committed MANIFEST pin before it runs.
+    // The committed seed is an x86-64 Linux ELF: on any other host, refuse before
+    // it starts. `MINDC_NATIVE_ELF` is a test-only substitution hook (not the seed).
+    let substituted = std::env::var_os("MINDC_NATIVE_ELF").is_some();
+    if let Some(msg) = crate::project::toolchain_pin::native_host_gate(ARCH, OS, substituted) {
+        refuse_native(&msg);
     }
+    let compiler = seed::compiler_elf(layout.is_some()).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
+        process::exit(2);
+    });
+    let elf = compiler.path.display().to_string();
 
-    let mut child = match std::process::Command::new(&elf)
+    let child = match std::process::Command::new(&elf)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -315,37 +466,27 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
     {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error[backend-native]: failed to spawn compiler ELF '{elf}': {e}");
+            // execve failing before its point of no return (ENOMEM, EACCES,
+            // ENOEXEC, ...) surfaces here, not as a child status.
+            drop(compiler);
+            eprintln!(
+                "error[backend-native][{}]: failed to spawn compiler ELF '{elf}': {e}; no \
+                 artifact written (native backend is fail-closed — no MLIR fallback).",
+                child::CHILD_FAILURE_CODE
+            );
             process::exit(2);
         }
     };
-    if let Some(mut si) = child.stdin.take() {
-        if let Err(e) = si.write_all(&image) {
-            eprintln!("error[backend-native]: failed to stream source image to compiler: {e}");
-            process::exit(2);
-        }
-    }
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("error[backend-native]: compiler ELF did not complete: {e}");
-            process::exit(2);
-        }
+    // Stream, drain and ALWAYS reap. A broken pipe is only a symptom of the
+    // child's fate (a loader ENOMEM under an address-space cap ends in SIGSEGV
+    // before stdin is read), so the report carries the reaped outcome.
+    let run = child::supervise(child, &image, child::REAP_GRACE);
+    // Remove an unpacked embedded seed now: every later exit skips destructors.
+    drop(compiler);
+    let elf_bytes = match outcome::finish_compiler_run(run) {
+        Ok(bytes) => bytes,
+        Err(code) => process::exit(code),
     };
-
-    // Fail-closed: propagate the pure-MIND compiler's diagnostic + exit; no artifact.
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(1);
-        if !output.stderr.is_empty() {
-            let _ = std::io::stderr().write_all(&output.stderr);
-        }
-        eprintln!(
-            "error[backend-native]: pure-MIND compiler rejected the program (exit {code}); \
-             no artifact written (native backend is fail-closed — no MLIR fallback)."
-        );
-        process::exit(if code == 0 { 1 } else { code });
-    }
-    let elf_bytes = output.stdout;
     // A real static ELF (magic + ET_EXEC), never an empty/garbage artifact.
     if elf_bytes.len() < 256 || &elf_bytes[0..4] != b"\x7fELF" {
         eprintln!(
@@ -355,19 +496,66 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         );
         process::exit(1);
     }
+    // BACKSTOP: admission already proved the program defines `main` (a missing
+    // root is refused as closure.missing_entry_root), so an artifact whose entry
+    // is the frozen compiler's no-`main` library stub means the compiler did not
+    // see the `main` that was admitted. Whatever the cause, that artifact is a
+    // silent `exit(0)` and never a correct build of this program.
+    if let Err(why) = check_entry_is_not_no_main_stub(&elf_bytes, layout.as_ref()) {
+        refuse_native(&format!(
+            "`{}`: {why}; the source declares `main`, so this \
+             artifact would not run the admitted program. No artifact written. \
+             (native.entry_is_no_main_stub)",
+            paths[0]
+        ));
+    }
+    // W4b: `main(argc: i64, argv: i64)` was admitted on condition that the
+    // compiler binds both parameters; a seed without the binding is refused here.
+    if main_params == admission::MainParams::ArgcArgv
+        && let Err(why) = check_entry_binds_main_params(&elf_bytes, layout.as_ref())
+    {
+        refuse_native(&format!(
+            "`{}`: the entry `fn main` declares parameter(s) \
+             [\"argc\", \"argv\"], but {why} (a silent miscompile). Use a compiler seed \
+             that binds `main(argc, argv)`, declare `fn main()`, or rerun with \
+             `--backend mlir`. No artifact written. (native.entry_main_has_params)",
+            paths[0]
+        ));
+    }
 
-    let out_path = out.clone().unwrap_or_else(|| "a.out".to_string());
-    if let Err(e) = std::fs::write(&out_path, &elf_bytes) {
+    // The artifact must carry exactly the requested layout. A seed that predates
+    // v2 headers (or ignores them) would otherwise hand back a default-layout
+    // image for a bounded request -- one that cannot load under the cap.
+    if let Some(l) = &layout {
+        let want = l.expected_bss_segments().to_vec();
+        match crate::build::native_image::rw_load_segments(&elf_bytes) {
+            Some(got) if got == want => {}
+            got => {
+                eprintln!(
+                    "error[backend-native]: compiler '{elf}' produced an image whose \
+                     arena/stack segments {got:?} do not match the requested `{profile}` \
+                     layout {want:?} (vaddr, memsz); refusing to write. Use a seed built \
+                     for explicit layouts."
+                );
+                process::exit(1);
+            }
+        }
+    }
+
+    let _ = std::path::Path::new(out_path)
+        .parent()
+        .map(std::fs::create_dir_all);
+    if let Err(e) = std::fs::write(out_path, &elf_bytes) {
         eprintln!("error[backend-native]: cannot write output '{out_path}': {e}");
         process::exit(2);
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(md) = std::fs::metadata(&out_path) {
+        if let Ok(md) = std::fs::metadata(out_path) {
             let mut perm = md.permissions();
             perm.set_mode(perm.mode() | 0o755);
-            let _ = std::fs::set_permissions(&out_path, perm);
+            let _ = std::fs::set_permissions(out_path, perm);
         }
     }
     eprintln!(
@@ -376,6 +564,52 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         out_path,
         elf_bytes.len()
     );
+}
+
+#[cfg(feature = "std-surface")]
+/// The `import`/`use` items whose extent the frozen compiler reads differently.
+///
+/// The Rust parser treats the `;` after an import path as optional; the frozen
+/// compiler's `parse_use` (`examples/mindc_mind/main.mind`, `skip_to_semi`) ends
+/// the item at the next `;` TOKEN, wherever that is. The two agree exactly when
+/// the first non-whitespace byte at or after the Rust item's end is that `;`.
+/// Anything else -- a newline then `fn main`, a comment, end of input -- makes the
+/// frozen parse swallow source the Rust parse admitted as separate items.
+///
+/// Every `Import` node is checked, at any depth (a statement-position import is
+/// consumed with the same scan). A comment between the path and its `;` is
+/// refused although harmless: over-refusal is the safe direction here.
+fn unterminated_imports(ast: &crate::ast::Module, text: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::Import { span, .. } = node {
+                let end = span.end().min(text.len());
+                let start = span.start().min(end);
+                let next = text[end..].iter().find(|b| !b.is_ascii_whitespace());
+                let terminated = text[..end].last() == Some(&b';') || next == Some(&b';');
+                if !terminated {
+                    out.push(
+                        String::from_utf8_lossy(&text[start..end])
+                            .trim()
+                            .to_string(),
+                    );
+                }
+            }
+        });
+    }
+    out
+}
+
+#[cfg(feature = "std-surface")]
+fn unterminated_import_refusal(path: &str, items: &[String]) -> String {
+    format!(
+        "`{path}`: import item(s) {items:?} are not `;`-terminated. The frozen native \
+         compiler ends an `import`/`use` item at the next `;` token, so it would swallow \
+         the items that follow (including `main`) and emit a different program than the \
+         one admitted. Write the `;` (e.g. `import helper;`), or rerun with `--backend mlir`. \
+         No artifact written. (native.import_not_semicolon_terminated)"
+    )
 }
 
 #[cfg(feature = "std-surface")]
@@ -389,7 +623,12 @@ fn admit_merged_program(
     path: &str,
     merged: &[u8],
     reserved: &BTreeSet<String>,
-) -> Result<(crate::ast::Module, crate::ir::IRModule), String> {
+    seed: &crate::ir::native_lane_profile::LaneSeed,
+    lane_v1: bool,
+    extern_fixed: bool,
+    bounded: bool,
+) -> Result<(crate::ast::Module, crate::ir::IRModule, bool), String> {
+    let (std_modules, std_sources) = (seed.modules(), seed.sources());
     let text = std::str::from_utf8(merged)
         .map_err(|e| format!("`{path}`: source is not valid UTF-8: {e}"))?;
     let ast = match crate::parser::parse(text) {
@@ -402,7 +641,7 @@ fn admit_merged_program(
             let diagnostics = crate::parser::parse_with_diagnostics_in_file(text, Some(path))
                 .err()
                 .unwrap_or_default();
-            let rendered = render_diagnostics(&diagnostics, text);
+            let rendered = admission::render(&diagnostics, text);
             if rendered.is_empty() {
                 return Err(format!(
                     "`{path}`: the merged module set does not parse as one translation unit"
@@ -411,16 +650,7 @@ fn admit_merged_program(
             return Err(rendered);
         }
     };
-    // The check-time lowering refusals (E2038 string equality, E2300, E2301)
-    // run BEFORE lowering, as `mindc build` runs them through the type check.
-    // This path lowers the merged image directly; without the gate a refused
-    // construct reached lowering's fail-closed backstop, which aborts the
-    // process with a panic (exit 101) instead of refusing the build.
-    let mut refusals = Vec::new();
-    crate::type_checker::lowering_refusals::check(&ast, text, Some(path), &mut refusals);
-    if !refusals.is_empty() {
-        return Err(render_diagnostics(&refusals, text));
-    }
+    admission::refuse_check_time_lowering(&ast, text, path)?;
     // A lowering refusal propagates as an explicit refusal. It is never
     // unwrapped and never becomes an empty successful module.
     //
@@ -430,28 +660,134 @@ fn admit_merged_program(
     // native-backend diagnostic like every other refusal here rather than as a
     // panic or an empty module. `InvalidLoweringReceiver` in particular is the
     // structured form of the old "refusing to emit const 0" abort.
-    let ir = crate::eval::lower_to_ir(&ast)
-        .map_err(|refusal| format!("`{path}`: {refusal} (lower.materialization_refused)"))?;
+    // The name checks the MLIR path runs before lowering, plus symbolic
+    // dimensions read as values: each used to reach a lowering `panic!` (exit
+    // 101). Lowering then runs behind a panic boundary for anything else.
+    admission::refuse_unresolved_names(&ast, text, path)?;
+    admission::refuse_symbolic_dims_read_as_values(&ast, text, path)?;
+    let lane_error = |r: crate::ir::native_lane_profile::LaneProfileRejection| {
+        let seed_text = r.seed_module.as_deref().and_then(|m| seed.text(m));
+        format!(
+            "`{path}` is outside candidate native-lane-v1 ({}){}. No artifact written.",
+            r.construct,
+            admission::lane_rejection_site(&r, text, seed_text)
+        )
+    };
+    let ir = if lane_v1 {
+        // Specific guards own their pinned kinds. The lane fence still runs
+        // on a program those guards accept, and it still refuses first for
+        // every other construct. `lane_guards_before_fence` names a whole-array
+        // binop `binop.array_operand` before the source fence below.
+        let lowering =
+            admission::lane_guards_before_fence(path, &ast, text, merged, std_sources, reserved)?;
+        crate::build::native_scope::refuse_non_seed_std_imports(&ast, text, path, std_modules)?;
+        crate::ir::native_lane_profile::profile_lane_admits_source_seeded(&ast, seed, extern_fixed)
+            .map_err(lane_error)?;
+        match lowering {
+            admission::LaneLowering::Ready(ir) => *ir,
+            admission::LaneLowering::FenceMayOwn(lower_error) => return Err(lower_error),
+        }
+    } else {
+        admission::lower_without_panicking(&ast, path)?
+    };
+    if lane_v1 {
+        let edges = crate::ir::native_lane_profile::profile_lane_admits_seeded(
+            &ast,
+            &ir,
+            seed,
+            extern_fixed,
+        )
+        .map_err(lane_error)?;
+        // A dynamic image's file-backed RW load counts against
+        // `rw_load_segments`; refuse the bounded profile until that check
+        // filters BSS loads (report concern 6).
+        if bounded && !(edges.externs.is_empty() && edges.seed_externs.is_empty()) {
+            return Err(format!(
+                "`{path}`: a user `extern \"C\"` block cannot be combined with the \
+                 bounded native profile (scope.bounded_extern). No artifact written."
+            ));
+        }
+        // Extern names are terminal edges of the closure, exactly like
+        // intrinsics: they have no body in this image and must not be read as
+        // a missing user definition.
+        let mut bindings = namespace::intrinsic_bindings(&ir);
+        bindings.extend(edges.externs);
+        bindings.extend(edges.print);
+        // Omission sees the intrinsic and extern bindings only: a seed call
+        // keeps the seed.
+        let omit_seed =
+            namespace::omit_private_seed_in(&ast, std_modules, std_sources, reserved, &bindings)
+                .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+        let empty = BTreeSet::new();
+        // Admitted seed functions are terminal edges, like intrinsics.
+        let terminal: std::collections::BTreeMap<_, _> =
+            bindings.into_iter().chain(edges.seed).collect();
+        crate::ir::native_closure::admit_native_lane_closure(
+            &ast,
+            &ir,
+            "main",
+            if omit_seed { &empty } else { reserved },
+            &terminal,
+        )
+        .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+        return Ok((ast, ir, omit_seed));
+    }
     // Closure admission runs for its ownership, ambiguity and unresolved-edge
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
     // full lowering, not a reachability-narrowed subset.
-    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", reserved)
-        .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+    //
+    // A seed-name collision is an ambiguity only when the two definitions
+    // differ. Names whose user definition is an exact private copy of the
+    // seed's private definition leave the reserved set; every other collision
+    // keeps its refusal. The image itself is unchanged.
+    let copies = namespace::identical_private_seed_copies(&ast, text, std_sources, reserved);
+    let reserved: BTreeSet<String> = reserved.difference(&copies).cloned().collect();
+    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", &reserved)
+        .map_err(|r| historical_closure_refusal(&r))?;
     let _ = path;
-    Ok((ast, ir))
+    Ok((ast, ir, false))
 }
 
 #[cfg(feature = "std-surface")]
-/// Render diagnostics against the merged image text, one per line block.
-fn render_diagnostics(diagnostics: &[crate::diagnostics::Diagnostic], text: &str) -> String {
-    let emitter = crate::diagnostics::DiagnosticEmitter::new(
-        crate::diagnostics::DiagnosticFormat::Human,
-        crate::diagnostics::ColorChoice::Never,
-    );
-    diagnostics
-        .iter()
-        .map(|diagnostic| emitter.render_human(diagnostic, Some(text)))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// The historical closure refusal, naming the compiler selection when the
+/// unresolved callee is a compiler intrinsic.
+///
+/// Only a compiler carrying the native-lane-v1 mark binds intrinsics. An
+/// unmarked compiler gets the historical frozen profile, which binds none: the
+/// closure refuses the edge here, and the frozen fence would refuse the same
+/// call as `call.undefined_or_builtin`. That strictness is deliberate and this
+/// adds an explanation, never a binding. The unmarked seeds' intrinsic
+/// lowering is not proven in every value position. Measured on the d2a716ff
+/// embedded bounded seed (sha256 `e9de4480…`): a store whose result is the tail
+/// value of a helper (`deep_dirty_then_tail` in
+/// `native_lane_value_shapes_smoke.py`) exits 19 natively against 17 on MLIR,
+/// because the seed reads a stale stack slot. Binding intrinsics here would
+/// turn this refusal into that silent wrong result.
+///
+/// Without the note the refusal read as a forgotten user definition, and a
+/// qualification round filed it against this closure rather than against the
+/// compiler selection. The kind label, the first line and the refused set are
+/// unchanged. A callee outside the lane's exact intrinsic table gets no note.
+fn historical_closure_refusal(r: &crate::ir::native_closure::ClosureRejection) -> String {
+    let refusal = format!("{} ({})", r.detail, r.kind);
+    // `reachable_from` words an unresolved edge "`caller` calls `callee`, ...";
+    // identifiers carry no backtick, so the split is unambiguous.
+    let intrinsic = (r.kind == "closure.unresolved_edge")
+        .then(|| r.detail.split_once(" calls `"))
+        .flatten()
+        .and_then(|(_, rest)| rest.split_once('`'))
+        .map(|(callee, _)| callee)
+        .filter(|callee| crate::ir::native_lane_profile::intrinsic_arity(callee).is_some());
+    match intrinsic {
+        None => refusal,
+        Some(callee) => format!(
+            "{refusal}\n  `{callee}` is a compiler intrinsic. The selected native compiler does \
+             not carry the native-lane-v1 compatibility mark, so the historical frozen \
+             profile applies, and it binds no compiler intrinsic. Only native-lane-v1 admits \
+             intrinsic calls (docs/native-closure-lane.md). This is a refusal, not a missing \
+             definition: use a native compiler that carries the mark, or `--backend mlir`. \
+             No artifact written."
+        ),
+    }
 }

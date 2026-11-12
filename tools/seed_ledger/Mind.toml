@@ -1,0 +1,10 @@
+[package]
+name = "seed_ledger"
+version = "0.1.0"
+authors = ["STARGA Inc."]
+license = "Apache-2.0"
+description = "Seed drift ledger guard: one sha256 row per seed-bound file"
+
+[build]
+target = "cpu"
+entry = "seed_ledger.mind"

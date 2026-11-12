@@ -1,0 +1,361 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// AST access, name facts and the Pure predicate for the LICM pass
+// (nb_opt_licm.mind). A walk of a subtree records, per name, whether it is
+// assigned (`N = v`), let-bound or address-taken (`&N`); a node kind the walk
+// does not know marks the whole record unknown, and every query on an unknown
+// record answers "yes", so an unfamiliar tree only forgoes hoists.
+// PART RULE: intrinsics only.
+
+// Word k of an AST node: 0 kind, 1 span lo, 2 span hi, 3-5 children, 6 aux.
+pub fn nbl_f(node: i64, k: i64) -> i64 {
+    __mind_load_i64(node + k * 8)
+}
+
+// A copy of node (all eight words, the per-kind annotation word included)
+// with word k set to v.
+pub fn nbl_with(node: i64, k: i64, v: i64) -> i64 {
+    let n: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(n + i * 8, __mind_load_i64(node + i * 8));
+        i = i + 1;
+    }
+    __mind_store_i64(n + k * 8, v);
+    n
+}
+
+// A copy of name leaf `leaf` spanning [lo, hi), the per-kind annotation word
+// included: a renamed reference keeps the narrow-lattice code the annotation
+// pass cached on the name it replaces, so a shift or an add that reads it
+// masks and wraps exactly as the declared tree did.
+pub fn nbl_respan(leaf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = nbl_with(leaf, 1, lo);
+    __mind_store_i64(n + 16, hi);
+    n
+}
+
+// A fresh name leaf (kind 2, ast_ident) spanning [lo, hi), annotation word 0
+// (the init of `let X: T = H`: the let wraps to its declared type itself).
+pub fn nbl_ident(lo: i64, hi: i64) -> i64 {
+    let n: i64 = __mind_alloc(64);
+    __mind_store_i64(n, 2);
+    __mind_store_i64(n + 8, lo);
+    __mind_store_i64(n + 16, hi);
+    __mind_store_i64(n + 24, 0);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    __mind_store_i64(n + 56, 0);
+    n
+}
+
+// 1 iff the source bytes [alo, ahi) and [blo, bhi) are equal.
+pub fn nbl_span_eq(buf: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    if ahi - alo != bhi - blo {
+        return 0;
+    }
+    nbl_bytes_eq(buf, alo, blo, 0, ahi - alo)
+}
+
+pub fn nbl_bytes_eq(buf: i64, a: i64, b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if (__mind_load_i64(buf + a + i) & 255) != (__mind_load_i64(buf + b + i) & 255) {
+        return 0;
+    }
+    nbl_bytes_eq(buf, a, b, i + 1, n)
+}
+
+// 1 iff leaf names [lo, hi).
+pub fn nbl_named(buf: i64, leaf: i64, lo: i64, hi: i64) -> i64 {
+    if leaf == 0 {
+        return 0;
+    }
+    nbl_span_eq(buf, nbl_f(leaf, 1), nbl_f(leaf, 2), lo, hi)
+}
+
+// 1 iff leaf's text starts with `{`: a hidden name (a span from a body brace),
+// which no identifier spells.
+pub fn nbl_hidden(buf: i64, leaf: i64) -> i64 {
+    if leaf == 0 {
+        return 0;
+    }
+    if nbl_f(leaf, 2) <= nbl_f(leaf, 1) {
+        return 0;
+    }
+    if (__mind_load_i64(buf + nbl_f(leaf, 1)) & 255) == 123 {
+        return 1;
+    }
+    0
+}
+
+// acc = [cap, n, unknown, (bit, lo, hi) * cap]; bit 1 assigned, 2 let-bound,
+// 8 address taken. Entries past cap are only counted (the sizing pass).
+pub fn nbl_acc_new(cap: i64) -> i64 {
+    let acc: i64 = __mind_alloc(24 + cap * 24);
+    __mind_store_i64(acc, cap);
+    __mind_store_i64(acc + 8, 0);
+    __mind_store_i64(acc + 16, 0);
+    acc
+}
+
+pub fn nbl_acc_add(acc: i64, bit: i64, leaf: i64) -> i64 {
+    if leaf == 0 {
+        __mind_store_i64(acc + 16, 1);
+        return 0;
+    }
+    let n: i64 = __mind_load_i64(acc + 8);
+    let _e: i64 = nbl_acc_put(acc, n, bit, leaf);
+    __mind_store_i64(acc + 8, n + 1);
+    0
+}
+
+// Entry n of acc when it fits (bit, the leaf's span).
+pub fn nbl_acc_put(acc: i64, n: i64, bit: i64, leaf: i64) -> i64 {
+    if n >= __mind_load_i64(acc) {
+        return 0;
+    }
+    __mind_store_i64(acc + 24 + n * 24, bit);
+    __mind_store_i64(acc + 32 + n * 24, nbl_f(leaf, 1));
+    __mind_store_i64(acc + 40 + n * 24, nbl_f(leaf, 2));
+    0
+}
+
+pub fn nbl_walk_list(acc: i64, sa: i64, n: i64, stride: i64, off: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        let _w: i64 = nbl_walk(acc, __mind_load_i64(sa + i * stride + off));
+        i = i + 1;
+    }
+    0
+}
+
+// Every node kind a function body holds (main.mind's ast_* tags); a call's
+// args, a block's statements and array elements are 8-byte node arrays, a
+// struct literal's fields are (name lo, name hi, value) triples. A field,
+// method or cast keeps spans, not nodes, in its other words.
+pub fn nbl_walk(acc: i64, node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = nbl_f(node, 0);
+    let c0: i64 = nbl_f(node, 3);
+    let c1: i64 = nbl_f(node, 4);
+    let c2: i64 = nbl_f(node, 5);
+    if k == 1 {
+        return 0;
+    }
+    if k == 2 {
+        return 0;
+    }
+    if k == 22 {
+        return 0;
+    }
+    if k == 23 {
+        return 0;
+    }
+    if k == 24 {
+        return 0;
+    }
+    if k == 34 {
+        return 0;
+    }
+    if k == 6 {
+        return nbl_acc_add(acc, 2, c0) + nbl_walk(acc, c2);
+    }
+    if k == 21 {
+        return nbl_acc_add(acc, 1, c0) + nbl_walk(acc, c2);
+    }
+    if k == 30 {
+        if c0 != 0 {
+            if nbl_f(c0, 0) == 2 {
+                let _t: i64 = nbl_acc_add(acc, 8, c0);
+            }
+        }
+        return nbl_walk(acc, c0);
+    }
+    if k == 10 {
+        return nbl_walk_list(acc, c0, nbl_f(node, 6), 8, 0);
+    }
+    if k == 4 {
+        return nbl_walk_list(acc, c1, nbl_f(node, 6), 8, 0);
+    }
+    if k == 27 {
+        return nbl_walk_list(acc, c1, nbl_f(node, 6), 8, 0);
+    }
+    if k == 19 {
+        return nbl_walk_list(acc, c1, nbl_f(node, 6), 24, 16);
+    }
+    if k == 8 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 12 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 14 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 15 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 17 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 18 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 25 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 31 {
+        return nbl_walk(acc, c0);
+    }
+    if k == 3 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1);
+    }
+    if k == 28 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1);
+    }
+    if k == 20 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1);
+    }
+    if k == 35 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1);
+    }
+    if k == 32 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c2);
+    }
+    if k == 33 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c2);
+    }
+    if k == 16 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1) + nbl_walk(acc, c2);
+    }
+    if k == 29 {
+        return nbl_walk(acc, c0) + nbl_walk(acc, c1) + nbl_walk(acc, c2);
+    }
+    __mind_store_i64(acc + 16, 1);
+    0
+}
+
+// The name facts of subtree node (counted once, then filled exactly).
+pub fn nbl_facts(node: i64) -> i64 {
+    let probe: i64 = nbl_acc_new(0);
+    let _c: i64 = nbl_walk(probe, node);
+    let acc: i64 = nbl_acc_new(__mind_load_i64(probe + 8));
+    let _f: i64 = nbl_walk(acc, node);
+    acc
+}
+
+// 1 iff the facts saw a node kind the walk does not know.
+pub fn nbl_facts_unknown(acc: i64) -> i64 {
+    __mind_load_i64(acc + 16)
+}
+
+// 1 iff acc may hold a fact in `bits` for name [lo, hi) (always when unknown).
+pub fn nbl_acc_has(buf: i64, acc: i64, bits: i64, lo: i64, hi: i64) -> i64 {
+    if __mind_load_i64(acc + 16) != 0 {
+        return 1;
+    }
+    nbl_acc_has_from(buf, acc, bits, lo, hi, 0)
+}
+
+pub fn nbl_acc_has_from(buf: i64, acc: i64, bits: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= __mind_load_i64(acc + 8) {
+        return 0;
+    }
+    let e: i64 = acc + 24 + i * 24;
+    if (__mind_load_i64(e) & bits) != 0 {
+        if nbl_span_eq(buf, __mind_load_i64(e + 8), __mind_load_i64(e + 16), lo, hi) == 1 {
+            return 1;
+        }
+    }
+    nbl_acc_has_from(buf, acc, bits, lo, hi, i + 1)
+}
+
+// 1 iff binop tag op is slice-1 Pure and total: + - * (1-3), comparisons (5-10),
+// & | ^ << >> (11-15). Division (4) and remainder (16) trap: never hoisted.
+pub fn nbl_op_ok(op: i64) -> i64 {
+    if op < 1 {
+        return 0;
+    }
+    if op == 4 {
+        return 0;
+    }
+    if op > 15 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff E holds only integer literals (1), names (2), parentheses (12) and
+// slice-1 binops (3).
+pub fn nbl_pure(e: i64) -> i64 {
+    if e == 0 {
+        return 0;
+    }
+    let k: i64 = nbl_f(e, 0);
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 1;
+    }
+    if k == 12 {
+        return nbl_pure(nbl_f(e, 3));
+    }
+    if k != 3 {
+        return 0;
+    }
+    if nbl_op_ok(nbl_f(e, 6)) == 0 {
+        return 0;
+    }
+    nbl_pure(nbl_f(e, 3)) * nbl_pure(nbl_f(e, 4))
+}
+
+// 1 iff E computes something (a bare name only aliases a slot: nothing to move).
+pub fn nbl_has_code(e: i64) -> i64 {
+    let k: i64 = nbl_f(e, 0);
+    if k == 2 {
+        return 0;
+    }
+    if k == 12 {
+        return nbl_has_code(nbl_f(e, 3));
+    }
+    1
+}
+
+// 0 after a top-level break (22), continue (23) or return (8): no candidate
+// follows one.
+pub fn nbl_falls_through(k: i64) -> i64 {
+    if k == 22 {
+        return 0;
+    }
+    if k == 23 {
+        return 0;
+    }
+    if k == 8 {
+        return 0;
+    }
+    1
+}
+
+// While s with its body nb (s itself when the body is unchanged).
+pub fn nbl_rebody(s: i64, body: i64, nb: i64) -> i64 {
+    if nb == body {
+        return s;
+    }
+    nbl_with(s, 4, nb)
+}
+
+// Statement q of the statements r contributes to its list.
+pub fn nbl_item(r: i64, q: i64) -> i64 {
+    if nbl_f(r, 0) == 0 - 20 {
+        return __mind_load_i64(nbl_f(r, 3) + q * 8);
+    }
+    r
+}

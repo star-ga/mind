@@ -1,0 +1,2 @@
+// lane.source.match: a match expression.
+fn main() -> i64 { let x: i64 = 1; let y = match x { 1 => 2, _ => 3 }; return y; }

@@ -1,0 +1,6 @@
+id	change	case	expected_original_exit
+widen_end	pass oe+1048576 to the emitted bound instead of oe	overflow_one_over	70
+repeat_slots	remove initialized alloc entry comparison branch	repeat_alloc_slot	0
+foreign_adopt	return a fresh allocation for foreign realloc without copying	foreign	0
+reuse_zero	return immediately from zero_mark instead of clearing reused bytes	zero_reuse	0
+replace_mapping	replace MAP_FIXED_NOREPLACE flags with destructive MAP_FIXED	collision_first	70

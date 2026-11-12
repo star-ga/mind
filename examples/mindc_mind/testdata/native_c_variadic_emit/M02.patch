@@ -1,0 +1,5 @@
+--- original.mind
++++ mutant.mind
+@@ -59 +59 @@
+-    if conversion == 5 { return ncve_load_bool(code, disp); }
++    if conversion == 5 { return nce_load_scalar(code, 13, disp); }

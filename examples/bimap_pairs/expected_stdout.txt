@@ -1,0 +1,6 @@
+US United States
+JP Japan
+GB United Kingdom
+200 OK
+404 Not Found
+500 Server Error

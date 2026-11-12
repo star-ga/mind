@@ -129,9 +129,10 @@ BYTEID_CASES = [
     ),
 ]
 
-# Non-dyadic / exponent float branch MUST fail closed (0 bytes) — nb_float_lit_bits is
-# inexact, so emitting would be a silent miscompile.
-FAILCLOSED_CASES = [
+# W8b: non-dyadic / exponent float branches now lower to correctly rounded bits
+# (nb_float_lit_bits -> nb_dec2f64_bits), so they are byte-identity cases against
+# the Rust mic@3 oracle like the dyadic ones; nothing in this family refuses.
+BYTEID_CASES += [
     (
         "vif_nondyadic",
         b"fn pick(c: i64) -> f64 {\n"
@@ -141,6 +142,7 @@ FAILCLOSED_CASES = [
         b"fn main() -> i64 {\n"
         b"    return 0;\n"
         b"}\n",
+        0,
     ),
     (
         "vif_exponent",
@@ -151,8 +153,10 @@ FAILCLOSED_CASES = [
         b"fn main() -> i64 {\n"
         b"    return 0;\n"
         b"}\n",
+        0,
     ),
 ]
+FAILCLOSED_CASES = []
 
 
 def main() -> int:

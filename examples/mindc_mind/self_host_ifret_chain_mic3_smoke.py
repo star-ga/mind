@@ -95,7 +95,7 @@ def run_binary(src):
         op = pathlib.Path(td) / "p.bin"
         sp.write_text(src)
         r = subprocess.run(
-            [str(MINDC), "build", str(sp), "--release", "--emit=binary", f"--out={op}"],
+            [str(MINDC), "build", "--backend", "mlir", str(sp), "--release", "--emit=binary", f"--out={op}"],
             capture_output=True,
         )
         if r.returncode != 0 or not op.exists():

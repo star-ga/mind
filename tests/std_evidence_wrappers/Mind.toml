@@ -1,0 +1,10 @@
+[package]
+name = "std_evidence_wrappers"
+version = "0.0.1"
+
+[build]
+entry = "main.mind"
+
+[targets.cpu]
+backend = "cpu"
+sources = ["main.mind"]

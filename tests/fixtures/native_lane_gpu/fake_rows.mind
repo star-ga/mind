@@ -1,0 +1,65 @@
+// The driver-row program run against the test-only fake libcuda.so.1
+// (fake_driver.c): every out-param shape (a *mut i32, three *mut *mut u8
+// handles, a *mut i64 device pointer), the void** argument arrays, and the
+// 11-argument cuLaunchKernel whose every stack argument contributes to its
+// result (1920). Each failing step exits its own number; all steps pass
+// exits 42, identically on the native and the MLIR backend.
+extern "C" {
+    fn cuInit(flags: u32) -> i32;
+    fn cuDeviceGet(device: *mut i32, ordinal: i32) -> i32;
+    fn cuCtxCreate_v2(pctx: *mut *mut u8, flags: u32, dev: i32) -> i32;
+    fn cuCtxSynchronize() -> i32;
+    fn cuModuleLoadData(module: *mut *mut u8, image: *const u8) -> i32;
+    fn cuModuleGetFunction(hfunc: *mut *mut u8, hmod: *mut u8, name: *const u8) -> i32;
+    fn cuMemAlloc_v2(dptr: *mut i64, bytesize: i64) -> i32;
+    fn cuMemcpyHtoD_v2(dst: i64, src: *const u8, count: i64) -> i32;
+    fn cuMemcpyDtoH_v2(dst: *mut u8, src: i64, count: i64) -> i32;
+    fn cuMemFree_v2(dptr: i64) -> i32;
+    fn cuLaunchKernel(f: *mut u8, gx: u32, gy: u32, gz: u32, bx: u32, by: u32, bz: u32, shared: u32, stream: *mut u8, kparams: *mut *mut u8, extra: *mut *mut u8) -> i32;
+    fn cuModuleUnload(hmod: *mut u8) -> i32;
+    fn cuCtxDestroy_v2(ctx: *mut u8) -> i32;
+}
+fn main() -> i64 {
+    if cuInit(0 as u32) as i64 != 0 { return 1; }
+    let dev: i64 = __mind_alloc(8);
+    if cuDeviceGet(dev as *mut i32, 2 as i32) as i64 != 6 { return 2; }
+    if __mind_load_i32(dev) != 7 { return 3; }
+    let ctx: i64 = __mind_alloc(8);
+    if cuCtxCreate_v2(ctx as *mut *mut u8, 5 as u32, __mind_load_i32(dev) as i32) as i64 != 12 { return 4; }
+    if __mind_load_i64(ctx) != 17 { return 5; }
+    let img: i64 = __mind_alloc(8);
+    __mind_store_i64(img, 46);
+    let hmod: i64 = __mind_alloc(8);
+    if cuModuleLoadData(hmod as *mut *mut u8, img as *const u8) as i64 != 0 { return 6; }
+    if __mind_load_i64(hmod) != 34 { return 7; }
+    let name: i64 = __mind_alloc(8);
+    __mind_store_i64(name, 110382293411190);
+    let hfn: i64 = __mind_alloc(8);
+    if cuModuleGetFunction(hfn as *mut *mut u8, __mind_load_i64(hmod) as *mut u8, name as *const u8) as i64 != 119 { return 8; }
+    if __mind_load_i64(hfn) != 51 { return 9; }
+    let da: i64 = __mind_alloc(8);
+    if cuMemAlloc_v2(da as *mut i64, 64) as i64 != 2 { return 10; }
+    if __mind_load_i64(da) != 4660 { return 11; }
+    let buf: i64 = __mind_alloc(16);
+    if cuMemcpyHtoD_v2(__mind_load_i64(da), buf as *const u8, 32) as i64 != 2 { return 12; }
+    if cuMemcpyDtoH_v2(buf as *mut u8, __mind_load_i64(da), 32) as i64 != 2 { return 13; }
+    if __mind_load_i64(buf) != 11 { return 14; }
+    let p0: i64 = __mind_alloc(8);
+    __mind_store_i64(p0, 3);
+    let e0: i64 = __mind_alloc(8);
+    __mind_store_i64(e0, 5);
+    let kparams: i64 = __mind_alloc(16);
+    __mind_store_i64(kparams, p0);
+    __mind_store_i64(kparams + 8, p0);
+    let extra: i64 = __mind_alloc(16);
+    __mind_store_i64(extra, e0);
+    let stream: i64 = __mind_alloc(8);
+    __mind_store_i64(stream, 9);
+    let r: i64 = cuLaunchKernel(__mind_load_i64(hfn) as *mut u8, 1 as u32, 2 as u32, 3 as u32, 4 as u32, 5 as u32, 6 as u32, 7 as u32, stream as *mut u8, kparams as *mut *mut u8, extra as *mut *mut u8) as i64;
+    if r != 1920 { return 15; }
+    if cuCtxSynchronize() as i64 != 4 { return 16; }
+    if cuMemFree_v2(__mind_load_i64(da)) as i64 != 4 { return 17; }
+    if cuModuleUnload(__mind_load_i64(hmod) as *mut u8) as i64 != 2 { return 18; }
+    if cuCtxDestroy_v2(__mind_load_i64(ctx) as *mut u8) as i64 != 3 { return 19; }
+    return 42;
+}

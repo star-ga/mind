@@ -1,0 +1,8 @@
+--- original.mind
++++ mutant.mind
+@@ -77 +77 @@
+-    let p1: String = nb_push(nb_push(nb_push(nb_push(nb_push(code, 243), 68), 15), 90), 189);
++    let p1: String = nb_push(nb_push(nb_push(nb_push(nb_push(code, 243), 64), 15), 90), 133);
+@@ -79 +79 @@
+-    let p2: String = nb_push(nb_push(nb_push(nb_push(nb_push(nb_push(converted, 242), 68), 15), 17), 188), 36);
++    let p2: String = nb_push(nb_push(nb_push(nb_push(nb_push(nb_push(converted, 242), 64), 15), 17), 132), 36);

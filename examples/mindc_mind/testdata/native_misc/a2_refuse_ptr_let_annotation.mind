@@ -1,0 +1,8 @@
+// A2 boundary: a pointer-TYPED let annotation is not parsed by the native port
+// (only pointer CAST expressions are); it must refuse, not mis-parse.
+fn main() -> i64 {
+    let a: i64 = 300;
+    let p: *const u8 = a as *const u8;
+    let q: i64 = p as i64;
+    q - 290
+}

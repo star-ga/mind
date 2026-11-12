@@ -1,0 +1,358 @@
+// Copyright 2026 STARGA Inc.
+// Numeric-literal decode, part 1: integer span parse and the radix-2^16 big-number helpers.
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import nb_emit_core;
+
+pub fn is_digit(b: i64) -> i64 {
+    if b >= 48 {
+        if b <= 57 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Decode a char-literal escape byte (the char AFTER the backslash) to its value,
+// matching parser::parse_char_lit's escape table exactly: `\n \t \r \0 \\ \' \"`;
+// any other `\X` is the literal byte X.
+pub fn char_escape_value(e: i64) -> i64 {
+    if e == 110 {
+        return 10;
+    }
+    if e == 116 {
+        return 9;
+    }
+    if e == 114 {
+        return 13;
+    }
+    if e == 48 {
+        return 0;
+    }
+    if e == 92 {
+        return 92;
+    }
+    if e == 39 {
+        return 39;
+    }
+    if e == 34 {
+        return 34;
+    }
+    e
+}
+
+// Decode a char-literal span (the lexer folds a well-formed `'X'` / `'\X'` char
+// literal to a tk_int token whose span BEGINS with a `'`, byte 39). The span shape
+// is already validated by the lexer, so a plain literal is `'X'` (value = X at
+// lo+1) and an escape is `'\X'` (value = char_escape_value(X at lo+2)). Returns the
+// character's byte value — the same i64 the equivalent integer literal would yield,
+// so it reuses the int-lit AST + every emit arm with zero new AST kind.
+pub fn parse_char_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    let b1: i64 = load_byte(buf, lo + 1);
+    if b1 == 92 {
+        return char_escape_value(load_byte(buf, lo + 2));
+    }
+    b1
+}
+
+pub fn parse_int_span(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
+    // Char-literal span: a `'`-leading tk_int span (byte 39) is a folded char
+    // literal, not decimal digits — decode it to the byte value. A real integer
+    // literal always begins with a digit, and every recursive call advances lo past
+    // the first byte, so this fires only at a genuine char-literal entry.
+    if lo < hi {
+        if load_byte(buf, lo) == 39 {
+            return parse_char_span(buf, lo, hi);
+        }
+    }
+    if lo >= hi {
+        return acc;
+    }
+    let b: i64 = load_byte(buf, lo);
+    // Digit separator `_` (byte 95): the lexer's scan_dec_end folds an `_`
+    // sitting between two digits into the literal token span (`1_000_000`), so
+    // the raw span carries the `_`s. The Rust oracle drops them at parse time
+    // (parser/mod.rs digits() accumulates only ascii digits, the `_` is
+    // consumed but never pushed), so `1_000_000 == 1000000`. Mirror that here:
+    // skip the `_` without folding it into the accumulator (no `*10`, no digit).
+    if b == 95 {
+        return parse_int_span(buf, lo + 1, hi, acc);
+    }
+    parse_int_span(buf, lo + 1, hi, acc * 10 + (b - 48))
+}
+
+// 10^n (n>=0) via recursion (self-host subset: no while).
+pub fn nb_pow10(n: i64) -> i64 {
+    if n <= 0 {
+        return 1;
+    }
+    nb_pow10(n - 1) * 10
+}
+
+// Divide `q` by 5 exactly, `k` times (strips the 5^k factor of den = 10^k).
+pub fn nb_strip_pow5(q: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return q;
+    }
+    nb_strip_pow5(q / 5, k - 1)
+}
+
+// Index of the highest set bit of q>0 (q in [2^b, 2^(b+1)) -> returns b).
+pub fn nb_msb_index(q: i64) -> i64 {
+    if q <= 1 {
+        return 0;
+    }
+    nb_msb_index(q / 2) + 1
+}
+
+// IEEE-754 f64 bits for q * 2^(-k), q>0, sign 0. q normalises to a 53-bit mantissa
+// (implicit leading 1 at bit 52); biased exponent = 1023 + (b - k). Shifts are
+// native-ELF-supported (nb_arith_rax_mem shl/shr), so this self-compiles.
+pub fn nb_ratio_to_f64_bits(q: i64, k: i64) -> i64 {
+    if q <= 0 {
+        return 0;
+    }
+    let b: i64 = nb_msb_index(q);
+    let mant: i64 = if b <= 52 {
+        q << (52 - b)
+    } else {
+        q >> (b - 52)
+    };
+    let frac: i64 = mant - (1 << 52);
+    let biased: i64 = 1023 + (b - k);
+    (biased << 52) | frac
+}
+
+// Index of the '.' (byte 46) in [lo,hi); returns hi when absent (no fractional part).
+pub fn nb_find_dot(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return hi;
+    }
+    if load_byte(buf, lo) == 46 {
+        return lo;
+    }
+    nb_find_dot(buf, lo + 1, hi)
+}
+
+// ---- W8b: correctly rounded decimal -> IEEE-754 binary64 (exact, integer-only) ----
+// value = D * 10^e10 (D = the literal's digit string, e10 = exponent - fraction
+// digits) is formed EXACTLY as a ratio of two bignums N / Den. A shift t makes the
+// quotient q = floor(N * 2^t / Den) land in [2^54, 2^56); a restoring binary long
+// division produces q and the remainder (sticky). q, t and the sticky bit then round
+// to nearest, ties to even, into the 52-bit fraction — normal, subnormal, overflow to
+// +inf and underflow to +0 all fall out of the same formula
+//   bits = ((e_eff + 1022) << 52) + mant.
+// No host float and no float op: main.mind stays float-free, so self-compile bytes
+// only move by the code size of these helpers. Bignum layout: word 0 = used limb
+// count (always trimmed: the top limb is non-zero), words 1.. = base-2^30 limbs,
+// little-endian. Every limb product fits i64 (2^30 * 10^9 < 2^60).
+pub fn nb_d2f_mask() -> i64 {
+    1073741823
+}
+
+pub fn nb_f64_inf_bits() -> i64 {
+    2047 << 52
+}
+
+pub fn bn_zero_from(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return b;
+    }
+    __mind_store_i64(b + i * 8, 0);
+    bn_zero_from(b, i + 1, n)
+}
+
+pub fn bn_new(cap: i64) -> i64 {
+    let b: i64 = __mind_alloc((cap + 1) * 8);
+    bn_zero_from(b, 0, cap + 1)
+}
+
+pub fn bn_len(b: i64) -> i64 {
+    __mind_load_i64(b)
+}
+
+pub fn bn_limb(b: i64, i: i64) -> i64 {
+    __mind_load_i64(b + (i + 1) * 8)
+}
+
+pub fn bn_set_limb(b: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(b + (i + 1) * 8, v);
+    0
+}
+
+// Limb i, or 0 past the used length n.
+pub fn bn_limb_or0(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    bn_limb(b, i)
+}
+
+// Drop zero top limbs so the length is canonical (bn_cmp relies on it).
+pub fn bn_trim(b: i64) -> i64 {
+    let n: i64 = bn_len(b);
+    if n <= 0 {
+        return 0;
+    }
+    if bn_limb(b, n - 1) != 0 {
+        return 0;
+    }
+    __mind_store_i64(b, n - 1);
+    bn_trim(b)
+}
+
+// Append a final carry limb (carry < 2^30) when non-zero.
+pub fn bn_push_carry(b: i64, n: i64, carry: i64) -> i64 {
+    if carry == 0 {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, n, carry);
+    __mind_store_i64(b, n + 1);
+    0
+}
+
+pub fn bn_muladd_rec(b: i64, m: i64, i: i64, n: i64, carry: i64) -> i64 {
+    if i >= n {
+        return bn_push_carry(b, n, carry);
+    }
+    let v: i64 = bn_limb(b, i) * m + carry;
+    let _s: i64 = bn_set_limb(b, i, v & nb_d2f_mask());
+    bn_muladd_rec(b, m, i + 1, n, v >> 30)
+}
+
+// b = b * m + a   (0 < m <= 10^9, 0 <= a < 2^30), in place.
+pub fn bn_muladd(b: i64, m: i64, a: i64) -> i64 {
+    bn_muladd_rec(b, m, 0, bn_len(b), a)
+}
+
+// b = b * 10^k, nine decimal digits per limb pass.
+pub fn bn_mul_pow10(b: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return 0;
+    }
+    if k >= 9 {
+        let _m: i64 = bn_muladd(b, 1000000000, 0);
+        return bn_mul_pow10(b, k - 9);
+    }
+    bn_muladd(b, nb_pow10(k), 0)
+}
+
+pub fn bn_shl_bits(b: i64, bs: i64, i: i64, n: i64, carry: i64) -> i64 {
+    if i >= n {
+        return bn_push_carry(b, n, carry);
+    }
+    let v: i64 = bn_limb(b, i);
+    let _s: i64 = bn_set_limb(b, i, ((v << bs) & nb_d2f_mask()) | carry);
+    bn_shl_bits(b, bs, i + 1, n, v >> (30 - bs))
+}
+
+// Move limb i to limb i+ws, top limb first (so nothing is overwritten unread).
+pub fn bn_shl_words(b: i64, ws: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, i + ws, bn_limb(b, i));
+    bn_shl_words(b, ws, i - 1)
+}
+
+pub fn bn_zero_low(b: i64, i: i64, ws: i64) -> i64 {
+    if i >= ws {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, i, 0);
+    bn_zero_low(b, i + 1, ws)
+}
+
+// b = b << k (k >= 0), in place.
+pub fn bn_shl(b: i64, k: i64) -> i64 {
+    if bn_len(b) == 0 {
+        return 0;
+    }
+    let ws: i64 = k / 30;
+    let bs: i64 = k - ws * 30;
+    let _a: i64 = bn_shl_bits(b, bs, 0, bn_len(b), 0);
+    let n2: i64 = bn_len(b);
+    let _w: i64 = bn_shl_words(b, ws, n2 - 1);
+    let _z: i64 = bn_zero_low(b, 0, ws);
+    __mind_store_i64(b, n2 + ws);
+    0
+}
+
+pub fn bn_shr1_rec(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let nxt: i64 = bn_limb_or0(b, i + 1, n);
+    let _s: i64 = bn_set_limb(b, i, (bn_limb(b, i) >> 1) | ((nxt & 1) << 29));
+    bn_shr1_rec(b, i + 1, n)
+}
+
+// b = b >> 1, in place.
+pub fn bn_shr1(b: i64) -> i64 {
+    let _r: i64 = bn_shr1_rec(b, 0, bn_len(b));
+    bn_trim(b)
+}
+
+pub fn bn_cmp_rec(a: i64, b: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let x: i64 = bn_limb(a, i);
+    let y: i64 = bn_limb(b, i);
+    if x > y {
+        return 1;
+    }
+    if x < y {
+        return 0 - 1;
+    }
+    bn_cmp_rec(a, b, i - 1)
+}
+
+// -1 / 0 / 1 for a < b / a == b / a > b (both trimmed).
+pub fn bn_cmp(a: i64, b: i64) -> i64 {
+    let na: i64 = bn_len(a);
+    let nb: i64 = bn_len(b);
+    if na > nb {
+        return 1;
+    }
+    if na < nb {
+        return 0 - 1;
+    }
+    bn_cmp_rec(a, b, na - 1)
+}
+
+pub fn bn_sub_rec(a: i64, b: i64, i: i64, na: i64, nb: i64, borrow: i64) -> i64 {
+    if i >= na {
+        return 0;
+    }
+    let v: i64 = bn_limb(a, i) - bn_limb_or0(b, i, nb) - borrow;
+    if v < 0 {
+        let _s: i64 = bn_set_limb(a, i, v + 1073741824);
+        return bn_sub_rec(a, b, i + 1, na, nb, 1);
+    }
+    let _t: i64 = bn_set_limb(a, i, v);
+    bn_sub_rec(a, b, i + 1, na, nb, 0)
+}
+
+// a = a - b, requires a >= b.
+pub fn bn_sub(a: i64, b: i64) -> i64 {
+    let _r: i64 = bn_sub_rec(a, b, 0, bn_len(a), bn_len(b), 0);
+    bn_trim(a)
+}
+
+pub fn bn_bitlen(b: i64) -> i64 {
+    let n: i64 = bn_len(b);
+    if n == 0 {
+        return 0;
+    }
+    (n - 1) * 30 + nb_msb_index(bn_limb(b, n - 1)) + 1
+}
+
+// One restoring-division step at quotient bit i (c = bn_cmp(r, d)).
+pub fn bn_div_step(r: i64, d: i64, c: i64, q: i64, i: i64) -> i64 {
+    if c < 0 {
+        return q;
+    }
+    let _s: i64 = bn_sub(r, d);
+    q + (1 << i)
+}

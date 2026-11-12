@@ -1,0 +1,233 @@
+// Author: STARGA Inc.
+// Exact known-answer and failure-contract checks for std/sha256.mind.
+// Assemble after the module, without importing a separately bundled std.sha256.
+// Expected digests are fixed bytes; no external hash/runtime verifier is used.
+fn sm_fail(id: i64) -> i64 {
+    print(id);
+    return 1;
+}
+fn sm_word(p: i64, off: i64, expected: i64) -> i64 {
+    if __mind_load_i64(p + off) != expected {
+        return 0;
+    }
+    return 1;
+}
+fn sm_guard(p: i64) -> i64 {
+    if __mind_load_i64(p) != 714134952123 || __mind_load_i64(p + 40) != 714134952123 {
+        return 0;
+    }
+    return 1;
+}
+fn sm_fill(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(p + i, (i * 37 + 11) & 255);
+        i = i + 1;
+    }
+    return 0;
+}
+pub fn main() -> i64 {
+    let input: i64 = __mind_alloc(1048576);
+    let output: i64 = __mind_alloc(48);
+    if input == 0 || output == 0 {
+        return sm_fail(1);
+    }
+    __mind_store_i64(output, 714134952123);
+    __mind_store_i64(output + 40, 714134952123);
+    sm_fill(input, 1048576);
+    if sha256_checked(0, 0, output + 8) != 0 {
+        return sm_fail(10);
+    }
+    if sha256(0, 0, output + 8) != 0 {
+        return sm_fail(9);
+    }
+    if sm_word(output + 8, 0, 1449310910991872227) != 1 || sm_word(output + 8, 8, 2646268962349054874) != 1 || sm_word(output + 8, 16, 5517924826087534119) != 1 || sm_word(output + 8, 24, 6176777564751238564) != 1 || sm_guard(output) != 1 {
+        return sm_fail(110);
+    }
+    if sha256_checked(input, 1, output + 8) != 0 {
+        return sm_fail(11);
+    }
+    if sm_word(output + 8, 0, -372393075126382617) != 1 || sm_word(output + 8, 8, 164404472827481085) != 1 || sm_word(output + 8, 16, 887097275694207928) != 1 || sm_word(output + 8, 24, -6430159180554588908) != 1 || sm_guard(output) != 1 {
+        return sm_fail(111);
+    }
+    if sha256_checked(input, 3, output + 8) != 0 {
+        return sm_fail(12);
+    }
+    if sm_word(output + 8, 0, 5041345544915361715) != 1 || sm_word(output + 8, 8, 1776843996709172080) != 1 || sm_word(output + 8, 16, -191090517550905607) != 1 || sm_word(output + 8, 24, 4562512238620613771) != 1 || sm_guard(output) != 1 {
+        return sm_fail(112);
+    }
+    if sha256_checked(input, 55, output + 8) != 0 {
+        return sm_fail(13);
+    }
+    if sm_word(output + 8, 0, 377831551687589929) != 1 || sm_word(output + 8, 8, -2024965912687454047) != 1 || sm_word(output + 8, 16, 3867008992953776048) != 1 || sm_word(output + 8, 24, -8925079383222656896) != 1 || sm_guard(output) != 1 {
+        return sm_fail(113);
+    }
+    if sha256_checked(input, 56, output + 8) != 0 {
+        return sm_fail(14);
+    }
+    if sm_word(output + 8, 0, -978702173689920207) != 1 || sm_word(output + 8, 8, -7098302220850589712) != 1 || sm_word(output + 8, 16, -7438294347655848) != 1 || sm_word(output + 8, 24, 8405533806497056084) != 1 || sm_guard(output) != 1 {
+        return sm_fail(114);
+    }
+    if sha256_checked(input, 63, output + 8) != 0 {
+        return sm_fail(15);
+    }
+    if sm_word(output + 8, 0, 7909220783069684831) != 1 || sm_word(output + 8, 8, 7609747192749483748) != 1 || sm_word(output + 8, 16, -5257530023815818831) != 1 || sm_word(output + 8, 24, -3364079151320182880) != 1 || sm_guard(output) != 1 {
+        return sm_fail(115);
+    }
+    if sha256_checked(input, 64, output + 8) != 0 {
+        return sm_fail(16);
+    }
+    if sm_word(output + 8, 0, -210764744441861228) != 1 || sm_word(output + 8, 8, -8717091380011627260) != 1 || sm_word(output + 8, 16, 4536551564109284724) != 1 || sm_word(output + 8, 24, 9096852579027551891) != 1 || sm_guard(output) != 1 {
+        return sm_fail(116);
+    }
+    if sha256_checked(input, 65, output + 8) != 0 {
+        return sm_fail(17);
+    }
+    if sm_word(output + 8, 0, 5569804532860735996) != 1 || sm_word(output + 8, 8, 7531970952799131865) != 1 || sm_word(output + 8, 16, -177689072698166628) != 1 || sm_word(output + 8, 24, 6109676700501222971) != 1 || sm_guard(output) != 1 {
+        return sm_fail(117);
+    }
+    if sha256_checked(input, 119, output + 8) != 0 {
+        return sm_fail(18);
+    }
+    if sm_word(output + 8, 0, -1017104727243891536) != 1 || sm_word(output + 8, 8, -6143314841365692640) != 1 || sm_word(output + 8, 16, -3057643093534314756) != 1 || sm_word(output + 8, 24, -5900152431842573633) != 1 || sm_guard(output) != 1 {
+        return sm_fail(118);
+    }
+    if sha256_checked(input, 120, output + 8) != 0 {
+        return sm_fail(19);
+    }
+    if sm_word(output + 8, 0, 1379979464054534749) != 1 || sm_word(output + 8, 8, 4726792472796653100) != 1 || sm_word(output + 8, 16, -3518977000671153938) != 1 || sm_word(output + 8, 24, -1835129994931744104) != 1 || sm_guard(output) != 1 {
+        return sm_fail(119);
+    }
+    if sha256_checked(input, 127, output + 8) != 0 {
+        return sm_fail(20);
+    }
+    if sm_word(output + 8, 0, -2991756733872216305) != 1 || sm_word(output + 8, 8, 6860647729204545790) != 1 || sm_word(output + 8, 16, 5505667503385556075) != 1 || sm_word(output + 8, 24, -5856128685638215618) != 1 || sm_guard(output) != 1 {
+        return sm_fail(120);
+    }
+    if sha256_checked(input, 128, output + 8) != 0 {
+        return sm_fail(21);
+    }
+    if sm_word(output + 8, 0, 701029301647371530) != 1 || sm_word(output + 8, 8, -6249780578498682269) != 1 || sm_word(output + 8, 16, 8000335329198463911) != 1 || sm_word(output + 8, 24, 5543612113672234241) != 1 || sm_guard(output) != 1 {
+        return sm_fail(121);
+    }
+    if sha256_checked(input, 129, output + 8) != 0 {
+        return sm_fail(22);
+    }
+    if sm_word(output + 8, 0, -1676747210729515185) != 1 || sm_word(output + 8, 8, 6536804535814027117) != 1 || sm_word(output + 8, 16, 7900697469709014257) != 1 || sm_word(output + 8, 24, 9211332578240723155) != 1 || sm_guard(output) != 1 {
+        return sm_fail(122);
+    }
+    if sha256_checked(input, 1024, output + 8) != 0 {
+        return sm_fail(23);
+    }
+    if sm_word(output + 8, 0, -194702309423793409) != 1 || sm_word(output + 8, 8, 6827422774722278101) != 1 || sm_word(output + 8, 16, -4408925111459267864) != 1 || sm_word(output + 8, 24, 5169750524620318907) != 1 || sm_guard(output) != 1 {
+        return sm_fail(123);
+    }
+    if sha256_checked(input, 4096, output + 8) != 0 {
+        return sm_fail(24);
+    }
+    if sm_word(output + 8, 0, 1165512232190755918) != 1 || sm_word(output + 8, 8, 4924467516824704717) != 1 || sm_word(output + 8, 16, 6515429063933902369) != 1 || sm_word(output + 8, 24, -1439619136232728524) != 1 || sm_guard(output) != 1 {
+        return sm_fail(124);
+    }
+    if sha256_checked(input, 65536, output + 8) != 0 {
+        return sm_fail(25);
+    }
+    if sm_word(output + 8, 0, 5653587436571836783) != 1 || sm_word(output + 8, 8, 5102954681448860001) != 1 || sm_word(output + 8, 16, -1514265681278277689) != 1 || sm_word(output + 8, 24, -8609768105081169693) != 1 || sm_guard(output) != 1 {
+        return sm_fail(125);
+    }
+    if sha256_checked(input, 1048576, output + 8) != 0 {
+        return sm_fail(26);
+    }
+    if sm_word(output + 8, 0, 4653730330120651066) != 1 || sm_word(output + 8, 8, 599815076629812676) != 1 || sm_word(output + 8, 16, -1611306539877105421) != 1 || sm_word(output + 8, 24, 3261701431063903622) != 1 || sm_guard(output) != 1 {
+        return sm_fail(126);
+    }
+    // Raw ABI rejects invalid arithmetic without changing any output byte.
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(output + 8 + i, 90);
+        i = i + 1;
+    }
+    if sha256_checked(input, -1, output + 8) != -1 {
+        return sm_fail(200);
+    }
+    if sha256_checked(input, 1152921504606846976, output + 8) != -1 {
+        return sm_fail(201);
+    }
+    if sha256_checked(0, 1, output + 8) != -1 {
+        return sm_fail(202);
+    }
+    if sha256_checked(-1, 0, output + 8) != -1 {
+        return sm_fail(203);
+    }
+    if sha256_checked(9223372036854775800, 8, output + 8) != -1 {
+        return sm_fail(204);
+    }
+    if sha256_checked(input, 1, 0) != -1 {
+        return sm_fail(205);
+    }
+    if sha256_checked(input, 1, 9223372036854775776) != -1 {
+        return sm_fail(206);
+    }
+    i = 0;
+    while i < 32 {
+        if __mind_load_i8(output + 8 + i) != 90 {
+            return sm_fail(210);
+        }
+        i = i + 1;
+    }
+    if sm_guard(output) != 1 {
+        return sm_fail(211);
+    }
+    // Overlap is valid: every input byte must be consumed before output writes.
+    sm_fill(input, 129);
+    if sha256_checked(input, 129, input + 0) != 0 {
+        return sm_fail(220);
+    }
+    if sm_word(input + 0, 0, -1676747210729515185) != 1 || sm_word(input + 0, 8, 6536804535814027117) != 1 || sm_word(input + 0, 16, 7900697469709014257) != 1 || sm_word(input + 0, 24, 9211332578240723155) != 1 {
+        return sm_fail(230);
+    }
+    sm_fill(input, 129);
+    if sha256_checked(input, 129, input + 32) != 0 {
+        return sm_fail(221);
+    }
+    if sm_word(input + 32, 0, -1676747210729515185) != 1 || sm_word(input + 32, 8, 6536804535814027117) != 1 || sm_word(input + 32, 16, 7900697469709014257) != 1 || sm_word(input + 32, 24, 9211332578240723155) != 1 {
+        return sm_fail(231);
+    }
+    sm_fill(input, 129);
+    if sha256_checked(input, 129, input + 100) != 0 {
+        return sm_fail(222);
+    }
+    if sm_word(input + 100, 0, -1676747210729515185) != 1 || sm_word(input + 100, 8, 6536804535814027117) != 1 || sm_word(input + 100, 16, 7900697469709014257) != 1 || sm_word(input + 100, 24, 9211332578240723155) != 1 {
+        return sm_fail(232);
+    }
+    // bytes stores elements with an eight-byte stride. Only the returned
+    // 32-byte buffer remains caller-owned after the ergonomic wrapper.
+    let record: i64 = __mind_alloc(24);
+    let data: i64 = __mind_alloc(24);
+    if record == 0 || data == 0 {
+        return sm_fail(240);
+    }
+    __mind_store_i64(record, data);
+    __mind_store_i64(record + 8, 3);
+    __mind_store_i64(record + 16, 3);
+    __mind_store_i64(data, 97);
+    __mind_store_i64(data + 8, 98);
+    __mind_store_i64(data + 16, 99);
+    let result: i64 = hash(record);
+    if result == 0 {
+        return sm_fail(241);
+    }
+    if sm_word(result, 0, -1527000031757436742) != 1 || sm_word(result, 8, 2531777658719584577) != 1 || sm_word(result, 16, -7171393520880516176) != 1 || sm_word(result, 24, -5974868289610903372) != 1 {
+        return sm_fail(242);
+    }
+    __mind_free(result);
+    __mind_store_i64(record + 8, -1);
+    if hash(record) != 0 {
+        return sm_fail(243);
+    }
+    __mind_free(data);
+    __mind_free(record);
+    __mind_free(input);
+    __mind_free(output);
+    print(0);
+    return 0;
+}

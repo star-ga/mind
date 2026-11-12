@@ -90,12 +90,19 @@ fi
 
 offenders=0
 scanned=0
-# Historical cutoff on main before exact author identity enforcement (2026-10-28).
+# Historical cutoffs before exact author identity enforcement (the rule landed
+# 2026-10-31). An ancestor of an anchor predates the rule and is exempt from the
+# identity check only; the message rules above still apply to it.
+# Main's line, 2026-10-28:
 IDENTITY_ANCHOR="2d6e74f852f396ad9326a088a8d0af5ac1cf4e74"
-has_anchor=0
-if git cat-file -e "${IDENTITY_ANCHOR}^{commit}" 2>/dev/null; then
-  has_anchor=1
-fi
+# The compiler-delivery line's last pre-rule merge, 2026-10-28: it carries 58
+# commits authored 2026-10-15..22 as "STARGA Inc." that cannot be re-authored
+# without rewriting published history.
+IDENTITY_ANCHOR_DELIVERY="18125e0d29231f56132f750dad4cef13c508d7d4"
+anchors=""
+for a in "$IDENTITY_ANCHOR" "$IDENTITY_ANCHOR_DELIVERY"; do
+  git cat-file -e "${a}^{commit}" 2>/dev/null && anchors="$anchors $a"
+done
 COMMITTER_REGEX="${EXPECTED_COMMITTER_IDENTITY_REGEX:-$EXPECTED_AUTHOR_IDENTITY_REGEX}"
 
 while read -r sha; do
@@ -116,9 +123,10 @@ while read -r sha; do
   fi
   id_err=""
   check_id=1
-  if [ "$FORCE_IDENTITY" -eq 0 ] && [ "$has_anchor" -eq 1 ] &&
-     git merge-base --is-ancestor "$sha" "$IDENTITY_ANCHOR" 2>/dev/null; then
-    check_id=0
+  if [ "$FORCE_IDENTITY" -eq 0 ]; then
+    for a in $anchors; do
+      git merge-base --is-ancestor "$sha" "$a" 2>/dev/null && { check_id=0; break; }
+    done
   fi
   if [ "$check_id" -eq 1 ]; then
     author_ident=$(git log -1 --format='%an <%ae>' "$sha")

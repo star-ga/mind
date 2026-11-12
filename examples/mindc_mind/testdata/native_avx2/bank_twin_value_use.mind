@@ -1,0 +1,19 @@
+// Copyright 2026 STARGA Inc.
+// R-01b positive twin of bank_refuse_value_use.mind: the fixed form builds and runs.
+
+fn bank(p: i64) -> i64 {
+    __mind_ymm_vmovdqu_ld(3, p, 0);
+    __mind_ymm_vmovdqu_st(3, p, 32);
+    0
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(96);
+    let mut i: i64 = 0;
+    while i < 12 {
+        __mind_store_i64(p + i * 8, i * 3 + 5);
+        i = i + 1;
+    }
+    let _b: i64 = bank(p);
+    __mind_load_i64(p + 32) + __mind_load_i64(p + 56) + __mind_load_i64(p + 64)
+}

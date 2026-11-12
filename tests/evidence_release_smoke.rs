@@ -22,6 +22,8 @@
 //! it, so the smoke runs on what ships, not on a test-profile rebuild. Seeds are
 //! the fixed, public TEST values the signing suite uses; no key is read.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -74,8 +76,12 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        Self::with(REFERENCE_PROGRAM)
+    }
+
+    fn with(program: &str) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("p.mind"), REFERENCE_PROGRAM).expect("write source");
+        std::fs::write(dir.path().join("p.mind"), program).expect("write source");
         Self { dir }
     }
 
@@ -101,6 +107,14 @@ impl Scratch {
             cmd.env(key, value);
         }
         cmd.output().expect("spawn mindc")
+    }
+
+    /// `mindc <args>` in the scratch dir with `seeds` set: (exit code, output).
+    fn cli(&self, args: &[&str], seeds: &[(&str, &str)]) -> (Option<i32>, String) {
+        let mut cmd = self.mindc();
+        cmd.args(args).envs(seeds.iter().copied());
+        let out = cmd.output().expect("spawn mindc");
+        (out.status.code(), text(&out))
     }
 }
 
@@ -184,6 +198,59 @@ fn without_both_signing_features_the_seeds_are_refused_with_no_artifact() {
     );
 }
 
+#[cfg(any(feature = "std-surface", feature = "evidence-mldsa"))]
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Native AVX2 rows and `__mind_cpu_features_v1`: docs/compiler/NATIVE_EVIDENCE_RECIPE.md.
+#[cfg(feature = "std-surface")]
+mod ymm {
+    use super::*;
+    use libmind::ir::compact::{mic3_evidence_report, parse_mic3_prefix};
+
+    pub(super) const YMM_PROGRAM: &str = include_str!("fixtures/evidence/ymm_vpaddd_i32x8.mind");
+    /// `trace_hash` of its body, the same in builds with and without signing.
+    const YMM_TRACE_HASH: &str = "41baab4d926e5e10c9b6ee50d1fcbed8a28355ef8d202e63f2c4414e9d67ca93";
+    const CPUF_PROGRAM: &str = include_str!("fixtures/evidence/cpu_features_probe.mind");
+
+    #[test]
+    fn ymm_unsigned_body_is_pinned_with_or_without_signing_compiled_in() {
+        let s = Scratch::with(YMM_PROGRAM);
+        let (rc, log) = s.cli(&["p.mind", "--emit-evidence", "u.mic3"], &[]);
+        assert_eq!(rc, Some(0), "{log}");
+        let bytes = std::fs::read(s.path("u.mic3")).expect("read artifact");
+        let report = mic3_evidence_report(&bytes).expect("evidence report");
+        let end = parse_mic3_prefix(&bytes).expect("body").consumed;
+        let named = bytes[..end]
+            .windows(19)
+            .any(|w| w == b"__mind_vpaddd_i32x8");
+        assert!(named, "the row name is in the hashed body");
+        println!("ymm trace_hash={}", hex(&report.trace_hash));
+        assert!(report.trace_hash_valid);
+        assert_eq!(hex(&report.trace_hash), YMM_TRACE_HASH, "the body moved");
+    }
+
+    #[test]
+    fn cpu_features_is_world_class_and_require_deterministic_refuses_it() {
+        let s = Scratch::with(CPUF_PROGRAM);
+        let emit = ["p.mind", "--emit-evidence", "e.mic3"];
+        let (rc, log) = s.cli(&emit, &[]);
+        assert_eq!((rc, s.path("e.mic3").exists()), (Some(1), false), "{log}");
+        assert!(log.contains("`__mind_cpu_features_v1()`"), "{log}");
+        let (rc, log) = s.cli(&[&emit[..], &["--allow-nondeterministic"]].concat(), &[]);
+        assert_eq!(rc, Some(0), "{log}");
+        let gate = ["verify", "e.mic3", "--require-deterministic"];
+        let (rc, log) = s.cli(&gate, &[]);
+        assert_eq!(rc, Some(1), "{log}");
+        assert!(log.contains("artifact is nondeterministic"), "{log}");
+        let c = Scratch::with(&CPUF_PROGRAM.replace("__mind_cpu_features_v1()", "3"));
+        assert_eq!(c.cli(&emit, &[]).0, Some(0), "control emit");
+        let (rc, log) = c.cli(&gate, &[]);
+        assert_eq!(rc, Some(0), "control: {log}");
+    }
+}
+
 #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
 mod signing {
     use super::*;
@@ -197,10 +264,6 @@ mod signing {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex seed"))
             .collect()
-    }
-
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     fn uleb_read(bytes: &[u8], at: &mut usize) -> usize {
@@ -363,5 +426,102 @@ mod signing {
                 "named refusal: {bare}"
             );
         }
+    }
+
+    /// ELF + compiler hashed, hybrid-signed evidence naming both, pinned verify.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn ymm_program_hybrid_signed_evidence_recipe() {
+        let s = Scratch::with(crate::ymm::YMM_PROGRAM);
+        let (elf, compiler) = native_identity(&s);
+        let attrs = [
+            format!("starga.native.elf_sha256={elf}"),
+            format!("starga.native.compiler_sha256={compiler}"),
+            "starga.native.isa=x86-64-v3".to_string(),
+        ];
+        let emit = |out: &str, seeds: &[(&str, &str)]| {
+            let mut args = vec!["p.mind", "--target", "cpu", "--emit-evidence", out];
+            args.extend(attrs.iter().flat_map(|a| ["--evidence-attr", a.as_str()]));
+            s.cli(&args, seeds)
+        };
+        let label = format!("self-check ok, {SCHEME}-signed");
+        let (rc, log) = emit("signed.mic3", BOTH_LEGS);
+        assert_eq!((rc, log.contains(&label)), (Some(0), true), "{log}");
+        assert_eq!(emit("again.mic3", BOTH_LEGS).0, Some(0));
+        assert_eq!(emit("plain.mic3", &[]).0, Some(0));
+        let read = |n: &str| std::fs::read(s.path(n)).expect("read artifact");
+        let (signed, plain) = (read("signed.mic3"), read("plain.mic3"));
+        assert_eq!(signed, read("again.mic3"), "RNG-free signing");
+        let end = parse_mic3_prefix(&signed).expect("body").consumed;
+        let mut kept = map_entries(&signed[end..]);
+        kept.retain(|(k, _)| !k.starts_with("signature."));
+        assert_eq!(encode(&signed[..end], &kept), plain, "only signature.*");
+        let seed87: [u8; 32] = unhex(TEST_MLDSA87_SEED).try_into().expect("32 bytes");
+        let pk87 = hex(&mldsa::public_key_87(&seed87));
+        let pk_slh = hex(&slhdsa::public_key(&unhex(TEST_SLHDSA_SEED)));
+        let mut pin = vec!["--require-deterministic", "--require-signed"];
+        for k in [&pk87, &pk_slh] {
+            pin.extend(["--signer-pubkey", k.as_str()]);
+        }
+        let ok = verify(&s, "signed.mic3", &pin);
+        assert_eq!(ok.status.code(), Some(0), "pinned verify: {}", text(&ok));
+        let at = signed.windows(9).position(|w| w == b"x86-64-v3");
+        let mut forged = signed.clone();
+        forged[at.expect("isa attribute") + 8] = b'4';
+        std::fs::write(s.path("forged.mic3"), &forged).expect("write forged");
+        let bad = verify(&s, "forged.mic3", &pin);
+        assert_eq!(bad.status.code(), Some(1), "forged: {}", text(&bad));
+    }
+
+    /// One leg, a retired Ed25519 seed, or the transition key never yields the hybrid.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn ymm_signing_refuses_partial_and_retired_seeds() {
+        let s = Scratch::with(crate::ymm::YMM_PROGRAM);
+        let args = ["p.mind", "--emit-evidence", "x.mic3"];
+        let ed = ("MIND_EVIDENCE_ED25519_KEY", TEST_MLDSA87_SEED);
+        let all = [BOTH_LEGS[0], BOTH_LEGS[1], ed];
+        for seeds in [&BOTH_LEGS[..1], &BOTH_LEGS[1..], &all[..]] {
+            let (rc, log) = s.cli(&args, seeds);
+            assert_eq!((rc, s.path("x.mic3").exists()), (Some(1), false), "{log}");
+            let retired = log.contains("signing.retired_scheme");
+            assert!(seeds.len() < 3 || retired, "{log}");
+        }
+        let (rc, log) = s.cli(&args, &[("MIND_EVIDENCE_MLDSA_KEY", TEST_MLDSA87_SEED)]);
+        println!("MLDSA_KEY alone: rc={rc:?} {}", log.trim_end());
+        assert!(!log.contains(SCHEME), "not the hybrid: {log}");
+    }
+
+    /// (ELF, compiler) sha256 via `MIND_TEST_STAGE2`.
+    ///
+    /// The stage2 is the toolchain this step needs: the committed bounded seed
+    /// predates the AVX2 rows, so it cannot build the program. Its absence goes
+    /// through `common::gate::skipped`: a `ran=0` marker on an ordinary run, a
+    /// failure under `MIND_BENCH_REQUIRE=1`.
+    #[cfg(feature = "std-surface")]
+    fn native_identity(s: &Scratch) -> (String, String) {
+        use crate::common::gate;
+        use sha2::{Digest, Sha256};
+        let sha = |p: &Path| hex(&Sha256::digest(std::fs::read(p).expect("read ELF")));
+        let Some(compiler) = std::env::var_os("MIND_TEST_STAGE2").map(PathBuf::from) else {
+            gate::skipped(
+                "evidence_release_smoke::native_identity",
+                "MIND_TEST_STAGE2 names no stage2 compiler that knows the AVX2 rows",
+            );
+            let seed = repo("examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf");
+            return ("0".repeat(64), sha(&seed));
+        };
+        let mut cmd = s.mindc();
+        let a = "build p.mind --target cpu --emit binary --no-cache --out p.elf --backend native";
+        cmd.args(a.split(' ')).args(["--native-profile", "bounded"]);
+        cmd.env("MINDC_STD_DIR", repo("std"));
+        let out = cmd.env("MINDC_NATIVE_ELF", &compiler).output();
+        let out = out.expect("spawn mindc build");
+        assert_eq!(out.status.code(), Some(0), "native build: {}", text(&out));
+        let run = Command::new(s.path("p.elf")).output().expect("run ELF");
+        assert_eq!(run.status.code(), Some(42), "native ELF result");
+        let (elf, comp) = (sha(&s.path("p.elf")), sha(&compiler));
+        println!("native elf_sha256={elf} compiler_sha256={comp}");
+        (elf, comp)
     }
 }

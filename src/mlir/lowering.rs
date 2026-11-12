@@ -74,6 +74,10 @@ const VEC_Q16_LANES: usize = 8;
 #[cfg(feature = "std-surface")]
 const MIND_INTRINSIC_PREFIX: &str = "__mind_";
 
+// W2-trap integer-division trap: exit status, guard emission, trampoline.
+#[path = "div_trap.rs"]
+mod div_trap;
+
 /// The closed set of `__mind_*` intrinsics the `Instr::Call` arm lowers inline
 /// (as opposed to emitting a generic `func.call` / `llvm.call` to the
 /// runtime-support bridge).
@@ -353,7 +357,7 @@ enum ValueKind {
 }
 
 /// `extern "C"` fn signature stored in `LoweringContext::extern_c_fns`:
-/// (param_types, ret_type, is_varargs, vararg_hints, callconv).
+/// (param_types, ret_type, is_varargs, vararg_hints, callconv, binding).
 #[cfg(feature = "std-surface")]
 type ExternCFnSig = (
     Vec<String>,
@@ -361,6 +365,7 @@ type ExternCFnSig = (
     bool,
     Vec<String>,
     crate::ast::CallConv,
+    crate::ast::ExternBinding,
 );
 
 struct LoweringContext {
@@ -397,7 +402,7 @@ struct LoweringContext {
     /// Phase B adds `vararg_hints` for precise per-position typing of extra
     /// variadic arguments beyond the declared parameter list.
     /// Phase C adds `callconv` so the `llvm.func` / `llvm.call` emitter can
-    /// attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations. Gated.
+    /// attach the `win64cc` keyword for Win64 declarations. Gated.
     #[cfg(feature = "std-surface")]
     extern_c_fns: std::collections::BTreeMap<String, ExternCFnSig>,
     /// RFC 0005 Gap 1 (collision fix): function-global monotonic counter that
@@ -1521,7 +1526,8 @@ impl LoweringContext {
             Instr::ConstTensor(id, dtype, shape, fill) => {
                 let dtype_str = dtype.as_str();
                 let tensor_ty = tensor_type(shape, dtype_str);
-                let fill_value = format_fill(*fill, dtype);
+                let fill_value = format_fill(*fill, dtype)
+                    .map_err(|op| MlirLowerError::UnsupportedOp { instr_index, op })?;
                 self.emit_line(&format!(
                     "    %fill{} = arith.constant {} : {}",
                     id.0, fill_value, dtype_str
@@ -2060,17 +2066,18 @@ impl LoweringContext {
                         } else if !unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self
-                                .const_i64_map
-                                .get(rhs)
-                                .is_some_and(|&v| v != -1 && v != 0)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| {
+                                // elide only if the divisor AS `ity` is not -1/0
+                                let n = if ity == "i32" { v as i32 as i64 } else { v };
+                                n != -1 && n != 0
+                            })
                         {
                             // Signed narrow div/rem determinism — INT_MIN/-1 AND
                             // divisor-0, the same two x86-#DE-vs-AArch64 divergences
-                            // closed for i64. Substitute divisor 1 on either case
-                            // (never traps); the common emit forces the result to 0
-                            // when the divisor was 0 (`x/0 == 0`, `x%0 == 0`).
-                            // Elided for a constant divisor that is neither -1 nor 0.
+                            // closed for i64. Since W2-trap a zero divisor exits
+                            // with MIND_DIV_TRAP_EXIT_CODE; MIN/-1 keeps the
+                            // divisor-1 result (see the guard call below).
+                            // Elided for a constant divisor (as `ity`) not -1 or 0.
                             // INT_MIN(ity) built as 1<<(w-1). Unsigned narrow div has
                             // no INT_MIN/-1 case but IS routed (this arm is
                             // signed-only) — its div-by-zero is the unsigned guard
@@ -2123,25 +2130,28 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
+                            // W2-trap: zero traps; narrow MIN/-1 keeps the divisor-1
+                            // result, as the native backend does (div_trap.rs).
+                            self.emit_div_trap_guard(&format!("%disz{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else if unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && self.const_i64_map.get(rhs).is_none_or(|&v| v == 0)
+                            && self.const_i64_map.get(rhs).is_none_or(|&v| {
+                                (if ity == "i32" { v as i32 as i64 } else { v }) == 0
+                            })
                         {
                             // Unsigned narrow div/rem determinism — divisor-0.
                             // x86 `divl`/`divq` raise #DE on a zero divisor
                             // (SIGFPE / process crash), while AArch64 `udiv`
                             // returns 0 with no trap — a cross-substrate
                             // divergence and a crash where the deterministic
-                            // contract (matching the signed and i64 arms) is
-                            // `x/0 == 0`, `x%0 == 0`. Substitute divisor 1 when
-                            // the divisor is 0 (never traps); the common emit
-                            // forces the result to 0 via `div_zero_guard`.
+                            // contract is the W2 division trap (div_trap.rs); the
+                            // divisor is still substituted with 1 (never UB).
                             // Unsigned division has NO INT_MIN/-1 overflow case,
                             // so unlike the signed arm this only guards zero.
-                            // Elided for a constant divisor known to be nonzero.
+                            // Elided for a constant divisor nonzero as an `ity`.
                             // Gated; an i64-only program never reaches this arm,
                             // so keystone/canary bytes are unchanged.
                             self.emit_line(&format!(
@@ -2160,6 +2170,7 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
+                            self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
                         } else {
@@ -2339,9 +2350,8 @@ impl LoweringContext {
                         let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
                         #[cfg(not(feature = "std-surface"))]
                         let is_shift = false;
-                        // Set by the signed-div guard to the i1 "divisor == 0"
-                        // flag; the common emit then forces the RESULT to 0 so
-                        // `x / 0 == 0` (and `x % 0 == 0`) deterministically.
+                        // Set by the div guards to the i1 "divisor == 0" flag
+                        // (that path traps first; see emit_div_trap_guard).
                         let mut div_zero_guard: Option<String> = None;
                         let rhs_ref = if is_shift {
                             self.emit_line(&format!(
@@ -2362,9 +2372,8 @@ impl LoweringContext {
                             // zero divisor while AArch64 `udiv` returns 0 — a
                             // cross-substrate divergence + a crash where the
                             // deterministic contract (matching the signed i64 and
-                            // narrow arms) is `x/0 == 0`, `x%0 == 0`. Substitute
-                            // divisor 1 when it is 0 (never traps); the common emit
-                            // forces the result to 0 via `div_zero_guard`. Unsigned
+                            // narrow arms) is the W2 division trap (div_trap.rs);
+                            // divisor 1 is still substituted (never UB). Unsigned
                             // division has NO INT_MIN/-1 overflow case, so unlike the
                             // signed arm below this guards zero only. Elided for a
                             // constant divisor known nonzero. Gated; an i64-only
@@ -2386,6 +2395,7 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
+                            self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
                         } else if matches!(op, BinOp::Div | BinOp::Mod)
@@ -2403,18 +2413,9 @@ impl LoweringContext {
                             //     while AArch64 `sdiv` returns INT_MIN.
                             //   * divisor == 0: x86 `idiv` raises #DE while AArch64
                             //     `sdiv` returns 0.
-                            // Substitute divisor 1 on EITHER case (never traps): the
-                            // overflow case then yields the wrapping result on every
-                            // substrate (INT_MIN/1 == INT_MIN; INT_MIN%1 == 0). For
-                            // the zero case the divisor-1 substitution alone gives
-                            // `x/1 == x`, so the common emit additionally forces the
-                            // RESULT to 0 via `div_zero_guard`, making `x/0 == 0` and
-                            // `x%0 == 0` deterministically. (Provisional total
-                            // semantics — could be revisited to a deterministic trap
-                            // via the spec; 0 is the conventional, non-crashing
-                            // choice.) INT_MIN built as 1<<63 to dodge any
-                            // most-negative-literal parse edge. Inert for the gates
-                            // (no canary/keystone path divides).
+                            // W2-trap: EITHER case traps (div_trap.rs) before the
+                            // division; divisor 1 is still substituted (never UB).
+                            // INT_MIN built as 1<<63 (most-negative-literal edge).
                             self.emit_line(&format!(
                                 "    %done{0} = arith.constant 1 : i64",
                                 dst.0
@@ -2456,16 +2457,14 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
+                            self.emit_div_trap_guard(&format!("%dsub{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else {
                             rhs_base.clone()
                         };
                         if let Some(disz) = &div_zero_guard {
-                            // Force the result to 0 when the original divisor was 0
-                            // (the divisor was substituted to 1 above to avoid the
-                            // trap, which would otherwise give x/1 == x). Net:
-                            // `x / 0 == 0`, `x % 0 == 0`, deterministic everywhere.
+                            // Select 0 for a zero divisor (that path already trapped).
                             self.emit_line(&format!(
                                 "    %ddt{0} = {1} {2}, {3} : i64",
                                 dst.0, mlir_op, lhs_ref, rhs_ref
@@ -3505,55 +3504,38 @@ impl LoweringContext {
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`
                 // i64-ABI path used by the std-surface runtime bridge.
-                if let Some((param_types, ret_type, is_varargs, vararg_hints, callconv)) =
+                if let Some((param_types, ret_type, is_varargs, vararg_hints, callconv, bind)) =
                     self.extern_c_fns.get(name).cloned()
                 {
-                    // Build arg list with declared types for concrete params;
-                    // for varargs extras: use vararg_hints by offset index,
-                    // then fall back to "i64".
-                    // RFC 0010 Phase C / R-03: f32 in a varargs position must
-                    // be promoted to f64 per C11 §6.5.2.2p6 default argument
-                    // promotions. Vararg positions are indices >= n_concrete.
-                    let n_concrete = param_types.len();
-                    let param_type_str: Vec<String> = args
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| {
-                            if i < n_concrete {
-                                param_types[i].clone()
-                            } else {
-                                // varargs position: use hint if available,
-                                // then fall back to "i64". Promote f32→f64.
-                                let vidx = i - n_concrete;
-                                let hint = vararg_hints
-                                    .get(vidx)
-                                    .cloned()
-                                    .unwrap_or_else(|| "i64".to_string());
-                                // R-03: f32 in vararg position → f64.
-                                if hint == "f32" {
-                                    "f64".to_string()
-                                } else {
-                                    hint
-                                }
-                            }
-                        })
-                        .collect();
+                    // `bind(.address)`: args[0] is the code address (null traps 78).
+                    let (callee, fn_ty, args) =
+                        extern_narrow_args::callee(self, *dst, name, &bind, args);
+                    crate::project::link::record_extern(name, &bind, true);
+                    let param_type_str = extern_narrow_args::call_param_types(
+                        &param_types,
+                        &vararg_hints,
+                        args.len(),
+                    );
                     // Pointer slots become `!llvm.ptr`. Narrow slots are truncated
                     // to the declared C width; the `llvm.func` line carries
                     // `llvm.signext` or `llvm.zeroext`.
-                    let (arg_refs, param_type_str) =
+                    let (mut arg_refs, mut param_type_str) =
                         extern_narrow_args::adapt_call_args(self, *dst, args, &param_type_str);
+                    if !fn_ty.is_empty() {
+                        extern_narrow_args::widen_for_indirect(
+                            self,
+                            *dst,
+                            &mut arg_refs,
+                            &mut param_type_str,
+                            &param_types,
+                        );
+                    }
                     let ret_tok = ret_type.as_deref().unwrap_or("i64");
                     let call_ret_ty = extern_ret_mlir_ty(ret_tok);
-                    // IR-audit #1: a narrow SCALAR return (SysV/C only) is
-                    // read at its real width, then sign/zero-extended to the i64
-                    // MIND value. Win64 is left verbatim (its classifier path is
-                    // out of this fix's scope).
-                    let narrow_ext = if matches!(callconv, crate::ast::CallConv::Win64) {
-                        None
-                    } else {
-                        extern_ret_narrow_ext(ret_tok)
-                    };
+                    // IR-audit #1: a narrow SCALAR return is read at its real
+                    // width, then sign/zero-extended to the i64 MIND value from
+                    // its declared name, under every convention.
+                    let narrow_ext = extern_ret_narrow_ext(ret_tok);
                     let varargs_suffix = if is_varargs { ", ..." } else { "" };
                     // RFC 0010 Phase C: emit cconv attribute for Win64 calls.
                     let cconv_attr = cconv_attr_for(callconv);
@@ -3562,9 +3544,8 @@ impl LoweringContext {
                         // address the std-surface ABI threads everywhere else.
                         let raw = format!("%ptrret_{}", dst.0);
                         self.emit_line(&format!(
-                            "    {raw} = llvm.call{} @{}({}) : ({}{}) -> !llvm.ptr",
+                            "    {raw} = llvm.call{} {callee}({}) : {fn_ty}({}{}) -> !llvm.ptr",
                             cconv_attr,
-                            name,
                             arg_refs.join(", "),
                             param_type_str.join(", "),
                             varargs_suffix,
@@ -3578,9 +3559,8 @@ impl LoweringContext {
                         // at their real width, then extend to the i64 MIND value.
                         let raw = format!("%narrowret_{}", dst.0);
                         self.emit_line(&format!(
-                            "    {raw} = llvm.call{} @{}({}) : ({}{}) -> {}",
+                            "    {raw} = llvm.call{} {callee}({}) : {fn_ty}({}{}) -> {}",
                             cconv_attr,
-                            name,
                             arg_refs.join(", "),
                             param_type_str.join(", "),
                             varargs_suffix,
@@ -3592,17 +3572,16 @@ impl LoweringContext {
                         ));
                     } else {
                         self.emit_line(&format!(
-                            "    %{} = llvm.call{} @{}({}) : ({}{}) -> {}",
+                            "    %{} = llvm.call{} {callee}({}) : {fn_ty}({}{}) -> {}",
                             dst.0,
                             cconv_attr,
-                            name,
                             arg_refs.join(", "),
                             param_type_str.join(", "),
                             varargs_suffix,
                             call_ret_ty,
                         ));
                     }
-                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    extern_narrow_args::record_ret(self, *dst, call_ret_ty);
                 } else {
                     // NARROW-INT CALL ABI: type the call against the callee's
                     // declared signature (`fn_signatures`) instead of a hardcoded
@@ -3655,9 +3634,9 @@ impl LoweringContext {
                                 }
                             }
                             ("i1", _) => "arith.extui",
-                            // float<->int or unexpected pairing: a type error the
-                            // checker should already reject; pass through so the
-                            // failure stays loud at mlir-opt rather than masked.
+                            // The declared width governs: an f64 into `f32` is `as f32`.
+                            ("f64", "f32") => "arith.truncf",
+                            // float<->int or another pairing: loud at mlir-opt.
                             _ => "",
                         };
                         if op.is_empty() {
@@ -3922,14 +3901,12 @@ impl LoweringContext {
                     self.emit_line(&format!("    return %{} : {}", v.0, ty));
                 }
                 // RFC 0012 §5.1 + NARROW-INT ABI: return the value at its real
-                // ABI width — `f64`/`f32` for a scalar-float result, `i32` for a
-                // narrow result, else the i64 ABI slot — then reconcile against
-                // the function's declared return slot (`fn_ret_abi`): an i64-wide
-                // value flowing into an `-> i32` result is `arith.trunci`-narrowed
-                // (two's-complement low-32 — exactly `as i32`), and a narrow value
-                // flowing into an `-> i64` result is `extsi`/`extui`-widened.
-                // Byte-identical to the legacy path for i64 fns (no narrow values,
-                // `fn_ret_abi` == `"i64"`, so the reconcile collapses to a no-op).
+                // ABI width (`f64`/`f32`, `i32`, else the i64 slot), then reconcile
+                // against the declared return slot (`fn_ret_abi`): the declared
+                // width governs, so an i64 value into `-> i32` is `arith.trunci`
+                // (exactly `as i32`), an f64 value into `-> f32` is `arith.truncf`
+                // (exactly `as f32`), and a narrow value into `-> i64` is
+                // `extsi`/`extui`-widened. i64 fns: the reconcile is a no-op.
                 Some(v) => {
                     let val_ty = match self.values.get(v) {
                         Some(ValueKind::ScalarF64) => "f64",
@@ -3937,13 +3914,14 @@ impl LoweringContext {
                         Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
                         _ => "i64",
                     };
-                    let ret = self.fn_ret_abi.as_deref().unwrap_or(val_ty);
-                    if ret == "i32" && val_ty == "i64" {
+                    let ret = &*self.fn_ret_abi.clone().unwrap_or(val_ty.into());
+                    if (ret, val_ty) == ("i32", "i64") || (ret, val_ty) == ("f32", "f64") {
+                        let op = if ret == "f32" { "truncf" } else { "trunci" };
                         self.emit_line(&format!(
-                            "    %nret{0} = arith.trunci %{0} : i64 to i32",
+                            "    %nret{0} = arith.{op} %{0} : {val_ty} to {ret}",
                             v.0
                         ));
-                        self.emit_line(&format!("    return %nret{} : i32", v.0));
+                        self.emit_line(&format!("    return %nret{} : {ret}", v.0));
                     } else if ret == "i64" && val_ty == "i32" {
                         let ext = if matches!(self.values.get(v), Some(ValueKind::ScalarU32)) {
                             "extui"
@@ -5361,7 +5339,9 @@ impl LoweringContext {
                 is_varargs,
                 vararg_hints,
                 callconv,
+                binding,
             } => {
+                crate::project::link::record_extern(name, binding, false);
                 self.extern_c_fns.insert(
                     name.clone(),
                     (
@@ -5370,6 +5350,7 @@ impl LoweringContext {
                         *is_varargs,
                         vararg_hints.clone(),
                         *callconv,
+                        binding.clone(),
                     ),
                 );
             }
@@ -11406,6 +11387,8 @@ pub fn lower_ir_to_mlir_with_entry(
         // call. `(worker_fp, argbuf, struct_bytes, n_bands) -> void`.
         out.push_str("  llvm.func @__mind_blas_mt_dispatch(!llvm.ptr, !llvm.ptr, i64, i64)\n");
     }
+    // W2-trap: the `@__mind_div_trap` trampoline, iff a guard was emitted.
+    div_trap::append_trampoline(&ctx, &mut out)?;
     // Heap-allocation externs for the int8 BLIS macro-kernel's scratch panels
     // (C-scratch / packed-A / packed-B). Emitted once, before any function body
     // that calls @malloc / @free, so the `llvm.call`s resolve. Declared only
@@ -11437,10 +11420,15 @@ pub fn lower_ir_to_mlir_with_entry(
     // per `extern "C"` symbol referenced via `Instr::ExternFnDecl`. Emitted
     // before `@main` so `llvm.call` ops resolve. Sorted (BTreeMap) for
     // deterministic MLIR text.
-    // Phase C: attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations.
+    // Phase C: attach the `win64cc` keyword for Win64 declarations.
     // Gated; default build emits none.
     #[cfg(feature = "std-surface")]
-    for (name, (param_types, ret_type, is_varargs, _vararg_hints, callconv)) in &ctx.extern_c_fns {
+    for (name, (param_types, ret_type, is_varargs, _vararg_hints, callconv, bind)) in
+        &ctx.extern_c_fns
+    {
+        if *bind == crate::ast::ExternBinding::Address {
+            continue; // `bind(.address)` declares a signature, not a symbol.
+        }
         let params_str = if param_types.is_empty() {
             String::new()
         } else {
@@ -11539,19 +11527,16 @@ pub fn lower_ir_to_mlir_with_entry(
     Ok(MlirModule { text: out })
 }
 
-/// RFC 0010 Phase C — return the MLIR `cconv` attribute string for a calling
-/// convention, including the leading space separator for inline use.
-///
-/// For Win64: `" cconv = #llvm.cconv<win64cc>"` (space-prefixed for use in
-/// `llvm.func cconv = ... @name(...)` and `llvm.call cconv = ... @name(...)`).
-/// For all other conventions (SysV, C, Aapcs): empty string (no attribute,
-/// which is the MLIR LLVM dialect default i.e. C calling convention / SysV
-/// on x86_64 Linux/macOS).
+/// RFC 0010 Phase C — the MLIR calling-convention keyword for a convention,
+/// space-prefixed for inline use: `llvm.func win64cc @name(..)` and
+/// `llvm.call win64cc @name(..)` for Win64. The parser takes the bare keyword
+/// before the symbol; `cconv = #llvm.cconv<..>` there is refused. SysV, C and
+/// Aapcs give the empty string (the dialect default, the C convention).
 #[cfg(feature = "std-surface")]
 fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
     use crate::ast::CallConv;
     match callconv {
-        CallConv::Win64 => " cconv = #llvm.cconv<win64cc>",
+        CallConv::Win64 => " win64cc",
         // SysV, C (platform default), Aapcs (Phase D) — no cconv attribute.
         _ => "",
     }
@@ -11568,14 +11553,10 @@ mod extern_narrow_args;
 /// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
 /// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
 /// through untouched.
-#[cfg(feature = "std-surface")]
 fn extern_ret_mlir_ty(tok: &str) -> &str {
-    match tok {
-        "u8" => "i8",
-        "u16" => "i16",
-        "u32" => "i32",
-        "bool" => "i8",
-        other => other,
+    match crate::types::value::prim_scalar(tok).filter(|d| d.is_narrow_int()) {
+        Some(d) => d.signless(),
+        None => tok,
     }
 }
 
@@ -11584,21 +11565,17 @@ fn extern_ret_mlir_ty(tok: &str) -> &str {
 /// i64 MIND value; `None` for any non-narrow return (`i64`/`f32`/`f64`/ptr/
 /// struct-register), which is used verbatim. Signed widths sign-extend
 /// (`arith.extsi`); `u*`/`bool` zero-extend (`arith.extui`, giving `_Bool`
-/// the canonical `{0,1}`). This is only ever consulted on the SysV/C path — the
-/// SysV struct classifier never emits `i8`/`i16`/`i32`, so a narrow-int token
-/// here is unambiguously a scalar return.
+/// the canonical `{0,1}`). Every convention uses it: the checker refuses a
+/// by-value struct (E2040), so a narrow-int token is always a scalar return.
 #[cfg(feature = "std-surface")]
 fn extern_ret_narrow_ext(tok: &str) -> Option<(&'static str, &'static str)> {
-    match tok {
-        "i8" => Some(("arith.extsi", "i8")),
-        "i16" => Some(("arith.extsi", "i16")),
-        "i32" => Some(("arith.extsi", "i32")),
-        "u8" => Some(("arith.extui", "i8")),
-        "u16" => Some(("arith.extui", "i16")),
-        "u32" => Some(("arith.extui", "i32")),
-        "bool" => Some(("arith.extui", "i8")),
-        _ => None,
-    }
+    let d = extern_narrow_args::narrow(tok)?;
+    let op = if d.signed {
+        "arith.extsi"
+    } else {
+        "arith.extui"
+    };
+    Some((op, d.signless()))
 }
 
 /// Convenience helper: verify, canonicalize, and lower into MLIR text.
@@ -12056,18 +12033,17 @@ fn known_dim(dim: &ShapeDim) -> Option<usize> {
     }
 }
 
-fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
-    // `F64` is a float dtype: its fill keeps the fractional value (`format_number`)
-    // and its zero is `0.0`. Omitting it routed `F64` through the integer arms,
-    // which TRUNCATED a fractional fill to an int and emitted `0` (not `0.0`) for
-    // an `f64` tensor element — wrong value / invalid MLIR. Same F64-into-integer
-    // class as `Relu`/`ReluGrad`/`select_arith_op`.
-    match (fill, dtype) {
+fn format_fill(fill: Option<f64>, dtype: &DType) -> Result<String, String> {
+    // `F64` keeps a fractional fill (the integer arm once truncated it: wrong value).
+    // Q16.16 fills lower as dense Q(x) constants (spec 3.3); an inexact integer fill refuses.
+    Ok(match (fill, dtype) {
+        (_, DType::Q16) => return Err("Q16Unsupported: scalar Q16.16 tensor fill".into()),
         (Some(v), DType::F64 | DType::F32 | DType::F16 | DType::BF16) => format_number(v),
-        (Some(v), _) => format_number(v.trunc()),
+        (Some(v), _) if crate::opt::fold::exact_int_fill(v, dtype) => (v as i64).to_string(),
+        (Some(v), _) => return Err(format!("InexactIntegerFill: {v} for {}", dtype.as_str())),
         (None, DType::F64 | DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
         (None, _) => "0".to_string(),
-    }
+    })
 }
 
 /// Render one element of a dense tensor literal from its stored `u64` bit
@@ -12154,68 +12130,9 @@ fn fmt_block_args_typed(items: &[(String, String)]) -> String {
     }
 }
 
-/// Replace every occurrence of `%{init_id}` with `%{arg_name}` in `text`
-/// for each `(init_id, arg_name, _post_id)` triple.
-///
-/// Boundary rule: a match is valid only when the character immediately
-/// after the digit run is NOT another ASCII digit.  This prevents `%1`
-/// from being substituted inside `%10`, `%11`, etc.
-///
-/// The substitution is applied from largest init_id to smallest so that
-/// multi-digit ids (e.g. `%12`) are processed before single-digit ones
-/// (e.g. `%1`) and thus can never be partially clobbered.
+// Boundary-safe `%<id>` rewriting for the std-surface While / value-`if` lowering.
 #[cfg(feature = "std-surface")]
-fn substitute_ids(text: &str, args: &[(usize, String, usize)]) -> String {
-    // Sort descending by init_id so longer numeric ids are replaced first.
-    let mut sorted: Vec<&(usize, String, usize)> = args.iter().collect();
-    sorted.sort_by_key(|b| std::cmp::Reverse(b.0));
-
-    let mut result = text.to_owned();
-    for (init_id, arg_name, _) in &sorted {
-        result = substitute_one(&result, *init_id, arg_name);
-    }
-    result
-}
-
-/// Return `%{arg_name}` if `id` matches any `init_id` in `args`, otherwise
-/// return `%{id}`.
+#[path = "id_subst.rs"]
+mod id_subst;
 #[cfg(feature = "std-surface")]
-fn substitute_single_id(id: usize, args: &[(usize, String, usize)]) -> String {
-    for (init_id, arg_name, _) in args {
-        if *init_id == id {
-            return format!("%{arg_name}");
-        }
-    }
-    format!("%{id}")
-}
-
-/// Replace all boundary-safe occurrences of `%{id}` in `text` with
-/// `%{replacement}`.  A match is boundary-safe when the character
-/// immediately following the digit run is not an ASCII digit.
-/// Gated on `std-surface`: its only caller is the std-surface let-init
-/// inlining used by the value-`if` branch rewriter.
-#[cfg(feature = "std-surface")]
-fn substitute_one(text: &str, id: usize, replacement: &str) -> String {
-    let needle = format!("%{id}");
-    let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let nlen = needle.len();
-    let mut pos = 0usize;
-    while pos < bytes.len() {
-        // Fast check: does the slice starting here begin with needle?
-        if bytes.len() - pos >= nlen && &bytes[pos..pos + nlen] == needle.as_bytes() {
-            // Boundary check: char after the needle must not be an ASCII digit.
-            let after = pos + nlen;
-            let next_is_digit = after < bytes.len() && bytes[after].is_ascii_digit();
-            if !next_is_digit {
-                out.push('%');
-                out.push_str(replacement);
-                pos += nlen;
-                continue;
-            }
-        }
-        out.push(bytes[pos] as char);
-        pos += 1;
-    }
-    out
-}
+use id_subst::{substitute_ids, substitute_single_id};

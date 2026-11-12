@@ -9,9 +9,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
-
 //! RFC 0016 evidence anchored on the canonical mic@3 IR — the full-fidelity
 //! serialization of the artifact `mindc` actually produces and ships.
 //!
@@ -51,12 +49,11 @@
 //! bytes (RFC 0016 §5.4). The mic@2.1 MAP remains the evidence *container*
 //! (it carries the `evidence_chain.*` keys and Ed25519 signing, §6); this module
 //! supplies the value those keys must hold for a compiled artifact.
-
 use crate::deps::mini_sha256;
 use crate::ir::IRModule;
 use crate::ir::compact::{Mic3EncodeError, emit_mic3, emit_mic3_checked};
-
 pub mod reach;
+use reach::collect_extern_symbols;
 
 /// The RFC 0016 §3.2/§3.3 `trace_hash` for a compiled artifact's **IR link**:
 /// SHA-256 of the canonical mic@3 bytes of `ir`.
@@ -306,79 +303,6 @@ pub fn ir_first_hard_nondeterministic_call(module: &IRModule) -> Option<String> 
     find_nondeterministic_call_ext(&module.instrs, &externs, ExternPolicy::Ignore)
 }
 
-/// Every `extern "C"` symbol declared anywhere in the module.
-///
-/// Needed because the determinism classifier is a REGISTRY lookup: a name it does
-/// not recognise returns "deterministic". For a user function that is correct —
-/// its body is in the module and is classified on its own merits. For an
-/// `extern "C"` symbol it is default-ADMIT on an unknown, which is backwards for
-/// an ATTESTATION: the callee's body is outside the artifact entirely, so nothing
-/// in the module can witness what it does. Measured before this: a program
-/// declaring libc `time()` or `getenv()` and calling it emitted evidence attesting
-/// `determinism: deterministic`.
-fn collect_extern_symbols(instrs: &[crate::ir::Instr]) -> std::collections::BTreeSet<String> {
-    use crate::ir::Instr;
-    // `mut` is dead in the `--no-default-features` build for the same reason the
-    // worklist note below gives: `Instr::ExternFnDecl` does not exist there, so
-    // nothing inserts and the set is provably empty. Empty is the CORRECT answer
-    // in that configuration (an IR with no extern declarations has no
-    // unclassified externs to taint), not a silenced gap.
-    #[cfg_attr(not(feature = "std-surface"), allow(unused_mut))]
-    let mut out = std::collections::BTreeSet::new();
-    // An explicit worklist, not recursion. Two reasons, both load-bearing:
-    // the traversal runs over UNTRUSTED decoded IR (`parse_mic3` on a consumer
-    // artifact), so an arbitrarily deep nest must not be able to exhaust the
-    // stack before the classifier reaches a verdict; and under
-    // `--no-default-features` — the configuration the CI clippy gate builds —
-    // every `out`-writing arm below is compiled out, leaving a recursive helper
-    // whose accumulator is threaded purely through its own calls
-    // (`clippy::only_used_in_recursion`, which an item-level `allow` does not
-    // suppress). Order is irrelevant: the result is a `BTreeSet`, so the set
-    // and every downstream lookup are identical whatever order the streams are
-    // visited in.
-    let mut worklist: Vec<&[Instr]> = vec![instrs];
-    while let Some(stream) = worklist.pop() {
-        for instr in stream {
-            match instr {
-                #[cfg(feature = "std-surface")]
-                Instr::ExternFnDecl { name, .. } => {
-                    out.insert(name.clone());
-                }
-                Instr::FnDef { body, .. } => worklist.push(body),
-                #[cfg(feature = "std-surface")]
-                Instr::While {
-                    cond_instrs, body, ..
-                } => {
-                    worklist.push(cond_instrs);
-                    worklist.push(body);
-                }
-                #[cfg(feature = "std-surface")]
-                Instr::If {
-                    cond_instrs,
-                    then_instrs,
-                    else_instrs,
-                    ..
-                } => {
-                    worklist.push(cond_instrs);
-                    worklist.push(then_instrs);
-                    worklist.push(else_instrs);
-                }
-                // RFC 0010 Phase J-A `region { }` carries a full nested stream.
-                // `scan_scope` already descends into it, so an `extern "C"`
-                // DECLARED inside a region and CALLED there would otherwise be
-                // absent from this set and hit `extern_call_is_unclassified`'s
-                // default-ADMIT — the exact forge the extern check exists to
-                // close, one nesting level down. Descended here for the same
-                // reason `scan_scope` descends.
-                #[cfg(feature = "std-surface")]
-                Instr::Region { body, .. } => worklist.push(body),
-                _ => {}
-            }
-        }
-    }
-    out
-}
-
 /// True when a call to `name` must be treated as world-touching because it
 /// crosses the artifact boundary: an `extern "C"` symbol that the intrinsic
 /// registry does not explicitly classify as pure.
@@ -414,9 +338,15 @@ fn collect_extern_symbols(instrs: &[crate::ir::Instr]) -> std::collections::BTre
 ///      drifted 173 `safe fn` declarations (95 in std/llvm.mind, 78 in
 ///      std/mlir.mind) away from its documented meaning. Do not build the second
 ///      instance of that mistake.
+///
+/// A call through an address binding is unclassified whatever its name: the
+/// name does not say which code runs. `collect_extern_symbols` marks it with a
+/// `"<name> bind(.address)"` key (a space never occurs in a symbol name), and
+/// the binding is tested BEFORE the registry name (spec "Extern bindings", E2).
 fn extern_call_is_unclassified(name: &str, externs: &std::collections::BTreeSet<String>) -> bool {
     externs.contains(name)
-        && crate::intrinsics::intrinsic_determinism(name) != Some(crate::intrinsics::Det::Pure)
+        && (externs.contains(&format!("{name} bind(.address)"))
+            || crate::intrinsics::intrinsic_determinism(name) != Some(crate::intrinsics::Det::Pure))
 }
 
 /// The constants provable at a single SSA namespace's call sites.
@@ -763,6 +693,7 @@ mod tests {
                 is_varargs: false,
                 vararg_hints: Vec::new(),
                 callconv: crate::ast::CallConv::C,
+                binding: Default::default(),
             });
             let a = m.fresh();
             m.instrs.push(Instr::ConstI64(a, 0));
@@ -816,6 +747,7 @@ mod tests {
             is_varargs: false,
             vararg_hints: Vec::new(),
             callconv: crate::ast::CallConv::C,
+            binding: Default::default(),
         });
         let a = m.fresh();
         m.instrs.push(Instr::ConstI64(a, 0));
