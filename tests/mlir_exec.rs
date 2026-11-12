@@ -54,7 +54,12 @@ fn mlir_exec_scalar_add() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("3"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("3"),
+        "stdout: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(all(feature = "mlir-exec", feature = "cpu-exec"))]

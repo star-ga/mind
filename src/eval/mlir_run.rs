@@ -192,9 +192,11 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
         .spawn()
         .map_err(|e| format!("{runner_name} failed to spawn: {e}"))?;
     {
-        let stdin = child
+        // Taken, so the pipe closes with this block: the runner reads its
+        // module to end of input and never starts while the pipe is open.
+        let mut stdin = child
             .stdin
-            .as_mut()
+            .take()
             .ok_or("Failed to open stdin for the MLIR runner")?;
         stdin
             .write_all(optimized_mlir.as_bytes())
