@@ -228,6 +228,7 @@ fn assert_native(stem: &str, program: &str, expected: i64) {
 }
 
 /// The native leg of a refused call: the build must fail to link `symbol`.
+/// An executable names a MIND function `mind.<name>` at the object level.
 fn assert_native_link_refuses(stem: &str, program: &str, symbol: &str) {
     let dir = native_project(stem, program);
     let built = common::run_build_captured(&common::require_mindc(), &dir, &[]);
@@ -243,7 +244,7 @@ fn assert_native_link_refuses(stem: &str, program: &str, symbol: &str) {
         return;
     }
     assert!(
-        log.contains(&format!("undefined reference to `{symbol}'")),
+        log.contains(&format!("undefined reference to `mind.{symbol}'")),
         "expected the linker's missing-symbol refusal for {symbol}:\n{log}"
     );
 }
@@ -256,7 +257,8 @@ fn assert_parity(stem: &str, program: &str, expected: i64) {
 /// pr365 explicit-import-readmits-unlinkable-ambient-std and pr346
 /// std-import-transitive-admits-unlinkable-ambient: `import std.toml` plus
 /// `vec_free` passed `mindc test` while `mindc build` failed with
-/// "undefined reference to `vec_free'".
+/// "undefined reference to `vec_free'" (`mind.vec_free` since the MIND
+/// object symbol namespace).
 #[test]
 fn an_import_reaching_std_vec_does_not_admit_its_unlinkable_fns() {
     assert_interpreter_refuses("toml_vec_free", TOML_VEC_FREE);

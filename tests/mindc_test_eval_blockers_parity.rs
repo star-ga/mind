@@ -299,7 +299,8 @@ fn ambient_std_admits_only_what_runtime_support_links() {
     // The linkable control keeps passing: ambient admission is the linkable
     // surface, not nothing.
     assert_interpreter("ambient_vec_len", AMBIENT_VEC_LEN_CONTROL, 5);
-    // Native leg: the artifact must FAIL TO LINK with the missing symbol.
+    // Native leg: the artifact must FAIL TO LINK with the missing symbol. An
+    // executable names a MIND function `mind.<name>` at the object level.
     let dir = scratch("ambient-vec-free-native");
     fs::create_dir_all(dir.join(".git")).expect("project boundary");
     fs::write(
@@ -322,7 +323,7 @@ fn ambient_std_admits_only_what_runtime_support_links() {
         return;
     }
     assert!(
-        log.contains("undefined reference to `vec_free'"),
+        log.contains("undefined reference to `mind.vec_free'"),
         "expected the linker's missing-symbol refusal:\n{log}"
     );
 }
