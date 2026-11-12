@@ -345,13 +345,10 @@ fn discover_project(
 ) -> Result<Option<ProjectScope>> {
     let entry_dir = entry.parent().unwrap_or_else(|| Path::new("."));
     // A temporary manifest is never a project (`build_lock::lock_cwd_project`).
-    let project_root = loop {
-        let Some(root) = find_project_root_for_file_checked(entry_dir)? else {
-            return Ok(None);
-        };
-        if !super::build_lock::clear_temporary_manifest(&root)? {
-            break root;
-        }
+    let Some(project_root) =
+        super::build_lock::governing_root(|| find_project_root_for_file_checked(entry_dir))?
+    else {
+        return Ok(None);
     };
     let project_root = canonical_project_root(&project_root)?;
     let manifest = load_manifest(&project_root)?;

@@ -464,17 +464,25 @@ pub fn governing_backend(paths: &[String]) -> Result<Option<Backend>> {
 
 /// The root and manifest that govern `mindc build <paths>` (see
 /// [`governing_backend`] for the discovery); `None` when none governs or loads.
+///
+/// The route is chosen before the build takes its lock, so this search follows
+/// the build's rule itself (`build_lock::governing_root`): a temporary manifest
+/// of a concurrent standalone build is never a project.
 pub fn governing_manifest(paths: &[String]) -> Result<Option<(PathBuf, super::ProjectManifest)>> {
-    let root = match paths.first() {
-        None => super::find_project_root().ok(),
+    let entry_dir = match paths.first() {
+        None => None,
         Some(entry) => {
             let entry = std::path::absolute(entry)?;
             match super::canonical_dir(entry.parent().unwrap_or(entry.as_path()))? {
-                Some(dir) => super::find_project_root_for_file_checked(&dir)?,
-                None => None,
+                Some(dir) => Some(dir),
+                None => return Ok(None),
             }
         }
     };
+    let root = super::build_lock::governing_root(|| match &entry_dir {
+        None => Ok(super::find_project_root().ok()),
+        Some(dir) => super::find_project_root_for_file_checked(dir),
+    })?;
     let Some(root) = root else { return Ok(None) };
     match super::load_manifest(&root) {
         Ok(manifest) => Ok(Some((root, manifest))),
