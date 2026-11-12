@@ -1237,20 +1237,7 @@ jobs:
 
       - name: Install qemu-user (the value-shape gate's Westmere / Haswell runner)
         if: ${{ !cancelled() }}
-        # native_lane_value_shapes_smoke.py runs its ISA rows under `qemu-x86_64
-        # -cpu Westmere | Haswell | qemu64`: no AVX gives the scalar path and the
-        # ISA guard's exit 132. The gate is BLOCKED (exit 2) when that runner is
-        # absent, and this job never installed it, so the step below stopped at
-        # its first qemu row. The gate resolves QEMU_X86_64, else PATH, else
-        # /usr/local/bin/qemu-x86_64. The rows were recorded with QEMU 8.2.2, the
-        # Ubuntu 24.04 package. The last line runs the tool with no pipe, so an
-        # absent runner fails this step by name.
-        run: |
-          if ! command -v qemu-x86_64 >/dev/null; then
-            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update -qq
-            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y --no-install-recommends qemu-user
-          fi
-          qemu-x86_64 --version
+        uses: ./.github/actions/qemu-user
 
       - name: Native-lane-v1 value-shape gate (native_lane_value_shapes_smoke.py)
         if: ${{ !cancelled() }}
