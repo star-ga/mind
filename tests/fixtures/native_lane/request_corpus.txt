@@ -749,19 +749,19 @@ fn main() -> i64 { let p = __mind_alloc(600000000); return 0; }
 === w3_alloc_f64_bounded | refused=native-lane-v1 (lane.type.mismatch) | red=3 | bounded | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
 fn main() -> i64 { return __mind_alloc(8.0); }
 
-=== w3_extern_close | refused=native-lane-v1 (lane.extern.compiler_unmarked) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the committed seed carries no nbextc01; a marked compiler refuses it by name, tests/native_lane_extern_fixed.rs)
+=== w3_extern_close | refused=native-lane-v1 (lane.extern.signature_mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the committed seed carries nbextc01 from the 0.10.3 seed advance, so the closed extern table refuses it by name, tests/native_lane_extern_fixed.rs)
 extern "C" { fn close(fd: i64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_close_f64 | refused=native-lane-v1 (lane.extern.compiler_unmarked) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+=== w3_extern_close_f64 | refused=native-lane-v1 (lane.extern.type) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
 extern "C" { fn close(fd: f64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_close_variadic | refused=native-lane-v1 (lane.extern.compiler_unmarked) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+=== w3_extern_close_variadic | refused=native-lane-v1 (lane.extern.varargs) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
 extern "C" { fn close(fd: i64, ...) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_open | refused=native-lane-v1 (lane.extern.compiler_unmarked) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (the committed seed carries no nbextc01; a marked compiler refuses it by name, tests/native_lane_extern_fixed.rs)
+=== w3_extern_open | refused=native-lane-v1 (lane.extern.unknown_symbol) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (the committed seed carries nbextc01 from the 0.10.3 seed advance, so the closed extern table refuses it by name, tests/native_lane_extern_fixed.rs)
 extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; } fn main() -> i64 { return open(0, 0, 0); }
 
-=== w3_extern_open_f64_ret | refused=native-lane-v1 (lane.extern.compiler_unmarked) | red=- | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body
+=== w3_extern_open_f64_ret | refused=native-lane-v1 (lane.extern.unknown_symbol) | red=- | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body
 extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> f64; } fn main() -> i64 { return 0; }
 
 === w3_entry_extra_param | refused=native.entry_main_has_params | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_bridge_refusals.rs::an_entry_main_with_an_extra_parameter_is_refused
