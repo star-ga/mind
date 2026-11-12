@@ -264,7 +264,7 @@ fn directory_read_is_the_zero_record_in_both_engines() {
 
     // std/fs.mind reader compiled by mindc run
     let root2 = dir_parity_project("dir_parity_run");
-    let out = run_out(&root2, &["run"]);
+    let out = run_out(&root2, &["run", "--backend", "mlir"]);
     if !common::gate::compiled("file_read_under_test::dir_parity", &out) {
         // Legal capability skip (no native backend / no MLIR toolchain).
         return;
