@@ -10098,6 +10098,14 @@ pub fn es_push(s: EmitState, b: i64) -> EmitState {
 pub fn es_append_region(s: EmitState, fragment: EmitState) -> EmitState {
     EmitState { buf: string_push_str(s.buf, fragment.buf), next_id: s.next_id, last_id: s.last_id, lets: s.lets }
 }
+// A nested branch OP_IF emitted in place: s + count 2 + synth, as es_new's state.
+pub fn es_onto(s: EmitState, synth: i64) -> EmitState {
+    EmitState { buf: es_buf(emit_mic3_const_i64(emit_uleb128(s, 2), synth, 0)), next_id: 0, last_id: 0 - 1, lets: env_new() }
+}
+// The bytes of r after s, with s's ids and env (es_append_region without a copy).
+pub fn es_resume(s: EmitState, r: EmitState) -> EmitState {
+    EmitState { buf: r.buf, next_id: s.next_id, last_id: s.last_id, lets: s.lets }
+}
 
 // ===== ASCII byte constants =====
 
@@ -25437,12 +25445,8 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         return s;
     }
     // --- cond ---
-    // NESTED-IF cond (the parse-time && / || desugar): the oracle lowers it as
-    // ONE nested OP_IF in the cond region — cond_count=1, cond_id = the inner
-    // if's dst, no synth const. Probe-emit the inner if into a scratch state to
-    // learn its dst, then append those exact bytes below. Re-emitting the
-    // nested region doubled work per level (2^depth) and exhausted the arena
-    // on a 15-arm integer match despite its tiny source.
+    // NESTED-IF cond (&& / || desugar): ONE nested OP_IF (cond_count=1, cond_id = its dst,
+    // no synth). cond_id precedes its bytes: emit it into scratch once, then append.
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0 - 1);
     let cp: EmitState = if ast_kind(cond_expr) == ast_if() {
@@ -25495,8 +25499,9 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let then_synth: i64 = after_cond;
     let tcell: i64 = __mind_alloc(8);
     __mind_store_i64(tcell, 0 - 1);
+    // A nested branch if is emitted in place (es_onto): a copy per level was O(n^2).
     let tp: EmitState = if ast_kind(then_expr) == ast_if() {
-        emit_if_value_node(es_new(), then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, tcell)
+        emit_if_value_node(es_onto(s4, then_synth), then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, tcell)
     } else {
         es_new()
     };
@@ -25505,7 +25510,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         return s;
     }
     let nested_then: i64 = __mind_load_i64(tcell);
-    let then_root: i64 = if nested_then >= 0 {
+    let then_root: i64 = if ast_kind(then_expr) == ast_if() {
         nested_then
     } else {
         flatten_branch(then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1)
@@ -25520,12 +25525,10 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     } else {
         count_nonparam_nodes(then_expr, buf, params_addr, n_params)
     };
-    let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
-    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let s7: EmitState = if nested_then >= 0 {
-        es_append_region(s6, tp)
+    let s7: EmitState = if ast_kind(then_expr) == ast_if() {
+        es_resume(s4, tp)
     } else {
-        emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0)
+        emit_mic3_tree_body(emit_mic3_const_i64(emit_uleb128(s4, then_nonparam + 1), then_synth, 0), nodes, then_n, vidbuf, 0, 0, 0, 0, 0)
     };
     let s8: EmitState = emit_uleb128(s7, then_root);
     let after_then: i64 = if nested_then >= 0 {
@@ -25534,13 +25537,12 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         after_cond + 1 + then_nonparam
     };
 
-    // --- else: synth ConstI64(after_then, 0) FIRST, then the else-expr tree (or
-    // one nested OP_IF, mirroring the then branch) ---
+    // --- else: synth ConstI64(after_then, 0), then the tree or ONE nested OP_IF ---
     let else_synth: i64 = after_then;
     let ecell: i64 = __mind_alloc(8);
     __mind_store_i64(ecell, 0 - 1);
     let ep: EmitState = if ast_kind(else_expr) == ast_if() {
-        emit_if_value_node(es_new(), else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, ecell)
+        emit_if_value_node(es_onto(s8, else_synth), else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, ecell)
     } else {
         es_new()
     };
@@ -25549,7 +25551,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
         return s;
     }
     let nested_else: i64 = __mind_load_i64(ecell);
-    let else_root: i64 = if nested_else >= 0 {
+    let else_root: i64 = if ast_kind(else_expr) == ast_if() {
         nested_else
     } else {
         flatten_branch(else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1)
@@ -25564,12 +25566,10 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     } else {
         count_nonparam_nodes(else_expr, buf, params_addr, n_params)
     };
-    let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
-    let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
-    let s11: EmitState = if nested_else >= 0 {
-        es_append_region(s10, ep)
+    let s11: EmitState = if ast_kind(else_expr) == ast_if() {
+        es_resume(s8, ep)
     } else {
-        emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0)
+        emit_mic3_tree_body(emit_mic3_const_i64(emit_uleb128(s8, else_nonparam + 1), else_synth, 0), nodes, else_n, vidbuf, 0, 0, 0, 0, 0)
     };
     let s12: EmitState = emit_uleb128(s11, else_root);
     let after_else: i64 = if nested_else >= 0 {
