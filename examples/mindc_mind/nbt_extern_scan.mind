@@ -124,32 +124,54 @@ pub fn nxa_repr_c_end(p: i64, j: i64) -> i64 {
     1
 }
 
-// 1 when the identifier at [lo, lo + n) names a struct declared with #[repr(C)].
-pub fn nxa_repr_c_struct(p: i64, len: i64, lo: i64, n: i64) -> i64 {
+// The number of names in tab that equal the identifier at [lo, lo + n). tab
+// holds the name start of each of the cnt #[repr(C)] structs (nxa_rc_scan).
+pub fn nxa_repr_c_struct(p: i64, len: i64, lo: i64, n: i64, tab: i64, cnt: i64) -> i64 {
     let mut k: i64 = 0;
     let mut r: i64 = 0;
-    while k < len {
-        let hit: i64 = nxa_rcs_hit(p, len, lo, n, k);
-        if hit == 1 {
-            r = 1;
-        }
-        k = nxa_adv(p, k, len, hit);
+    while k < cnt {
+        r = r + nxa_name_same(p, len, lo, n, __mind_load_i64(tab + k * 8));
+        k = k + 1;
     }
     r
 }
 
-// 1 when the `struct` declaration at k names [lo, lo + n) and follows #[repr(C)].
-pub fn nxa_rcs_hit(p: i64, len: i64, lo: i64, n: i64, k: i64) -> i64 {
+// The number of `struct` declarations after #[repr(C)] in [p, p + len). With a
+// table, entry c gets the name start of declaration c. One pass over the bytes:
+// a lookup per extern type over the whole region cost time as the square of it.
+pub fn nxa_rc_scan(p: i64, len: i64, tab: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut c: i64 = 0;
+    while k < len {
+        let hit: i64 = nxa_rc_at(p, len, k);
+        let _s: i64 = nxa_rc_put(p, len, tab, c, k, hit);
+        c = c + hit;
+        k = nxa_adv(p, k, len, 0);
+    }
+    c
+}
+
+// 1 when a `struct` declaration that follows #[repr(C)] starts at k.
+pub fn nxa_rc_at(p: i64, len: i64, k: i64) -> i64 {
     if nxa_opaque(p, k, len) == 1 {
         return 0;
     }
     if nxa_word_at(p, k, len, 6, 127970521019507) == 0 {
         return 0;
     }
-    if nxa_name_same(p, len, lo, n, nxa_skip(p, k + 6, len)) == 0 {
+    nxa_repr_c_before(p, nxa_decl_start(p, len, k))
+}
+
+// Store the name start of the hit at k as entry c of tab (nothing for no hit or no table).
+pub fn nxa_rc_put(p: i64, len: i64, tab: i64, c: i64, k: i64, hit: i64) -> i64 {
+    if hit == 0 {
         return 0;
     }
-    nxa_repr_c_before(p, nxa_decl_start(p, len, k))
+    if tab == 0 {
+        return 0;
+    }
+    __mind_store_i64(tab + c * 8, nxa_skip(p, k + 6, len));
+    0
 }
 
 // 1 when the n bytes at s equal the n bytes at lo and end at an identifier boundary.
@@ -214,12 +236,15 @@ pub fn nxa_ident_len(p: i64, lo: i64, len: i64) -> i64 {
 // E-code of the first extern refusal in [p, p + len): 2039 (no ABI row on this
 // route), 2040 (by-value #[repr(C)] struct), else 0.
 pub fn nxa_refusal(p: i64, len: i64) -> i64 {
+    let cnt: i64 = nxa_rc_scan(p, len, 0);
+    let tab: i64 = __mind_alloc(cnt * 8 + 8);
+    let _f: i64 = nxa_rc_scan(p, len, tab);
     let mut i: i64 = 0;
     let mut r: i64 = 0;
     while i < len {
         let hit: i64 = nxa_extern_hit(p, i, len);
         if hit == 1 {
-            r = nxa_block_code(p, len, i);
+            r = nxa_block_code(p, len, i, tab, cnt);
         }
         i = nxa_refusal_next(p, len, i, hit, r);
     }
@@ -249,20 +274,20 @@ pub fn nxa_refusal_next(p: i64, len: i64, i: i64, hit: i64, r: i64) -> i64 {
 }
 
 // E-code of the extern block at i (0 when it has no refusal).
-pub fn nxa_block_code(p: i64, len: i64, i: i64) -> i64 {
+pub fn nxa_block_code(p: i64, len: i64, i: i64, tab: i64, cnt: i64) -> i64 {
     let hb: i64 = nxa_find(p, i, len, 123);
     if nxa_header_cc(p + i, hb - i) != 1 {
         return 2039;
     }
-    nxa_block_types(p, len, hb, nxa_find(p, hb, len, 125))
+    nxa_block_types(p, len, hb, nxa_find(p, hb, len, 125), tab, cnt)
 }
 
 // 2040 when a signature in the block (hb, rb) takes a #[repr(C)] struct by value, else 0.
-pub fn nxa_block_types(p: i64, len: i64, hb: i64, rb: i64) -> i64 {
+pub fn nxa_block_types(p: i64, len: i64, hb: i64, rb: i64, tab: i64, cnt: i64) -> i64 {
     let mut j: i64 = hb + 1;
     let mut r: i64 = 0;
     while j < rb {
-        let hit: i64 = nxa_ty_hit(p, len, rb, j);
+        let hit: i64 = nxa_ty_hit(p, len, rb, j, tab, cnt);
         if hit == 1 {
             r = 2040;
         }
@@ -272,7 +297,7 @@ pub fn nxa_block_types(p: i64, len: i64, hb: i64, rb: i64) -> i64 {
 }
 
 // 1 when the `:` or `->` at j (outside comments and strings) is followed by a #[repr(C)] struct name.
-pub fn nxa_ty_hit(p: i64, len: i64, rb: i64, j: i64) -> i64 {
+pub fn nxa_ty_hit(p: i64, len: i64, rb: i64, j: i64, tab: i64, cnt: i64) -> i64 {
     if nxa_opaque(p, j, rb) == 1 {
         return 0;
     }
@@ -283,7 +308,7 @@ pub fn nxa_ty_hit(p: i64, len: i64, rb: i64, j: i64) -> i64 {
     let lo: i64 = nxa_skip(p, t, rb);
     let n: i64 = nxa_ident_len(p, lo, rb);
     if n > 0 {
-        if nxa_repr_c_struct(p, len, lo, n) == 1 {
+        if nxa_repr_c_struct(p, len, lo, n, tab, cnt) > 0 {
             return 1;
         }
     }
