@@ -24,6 +24,8 @@
 
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
+mod common;
+
 use libmind::project::module_table::build_module_table;
 use libmind::project::stdlib::{STDLIB_MIND_SOURCES, parsed_stdlib_modules, stdlib_override_error};
 
@@ -121,7 +123,7 @@ fn a_partial_override_dir_is_an_error_naming_the_missing_file() {
     // A dir that holds only some of the four specified files (a fork of
     // std.vec without the other three) is the most likely misuse. It names
     // the first required file it lacks instead of using the bundled set.
-    let tmp = std::env::temp_dir().join(format!("mind-stdlib-partial-d-{}", std::process::id()));
+    let tmp = common::scratch_dir("std_surface_phase_d_env_override").join("mind-stdlib-partial-d");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("setup: create partial override dir");
     std::fs::write(tmp.join("vec.mind"), "// only vec, missing the other three")
@@ -143,7 +145,7 @@ fn a_partial_override_dir_is_an_error_naming_the_missing_file() {
 /// the bundled set. Unset, the same program checks clean (the control).
 #[test]
 fn mindc_refuses_an_unusable_override_and_names_it() {
-    let base = std::env::temp_dir().join(format!("mind-stdlib-cli-d-{}", std::process::id()));
+    let base = common::scratch_dir("std_surface_phase_d_env_override").join("mind-stdlib-cli-d");
     let _ = std::fs::remove_dir_all(&base);
     let prog = base.join("prog");
     std::fs::create_dir_all(prog.join(".git")).expect("setup: project dir");

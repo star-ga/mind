@@ -55,7 +55,7 @@ fn runtime_src(k: i64) -> String {
 /// masked compile failure — build emits a JIT launcher stub — is caught here so
 /// it can never be mistaken for a clean run).
 fn build_and_run(mindc: &Path, src: &str, native: bool) -> i32 {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = common::scratch_dir("array_oob_trap_run").join(format!(
         "mind_oob_{}_{}",
         if native { "nat" } else { "mlir" },
         // vary by content so parallel cases never collide on one path
@@ -107,7 +107,7 @@ fn build_and_run(mindc: &Path, src: &str, native: bool) -> i32 {
 
 /// True iff `mindc check` rejects the program with an out-of-bounds diagnostic.
 fn check_rejects(mindc: &Path, src: &str) -> (bool, String) {
-    let dir = std::env::temp_dir().join(format!("mind_oob_chk_{}", src.len()));
+    let dir = common::scratch_dir("array_oob_trap_run").join(format!("mind_oob_chk_{}", src.len()));
     let _ = std::fs::create_dir_all(&dir);
     let srcf = dir.join("main.mind");
     std::fs::write(&srcf, src).expect("write src");
@@ -339,7 +339,7 @@ fn q16_and_integer_fill_constants_refuse_by_name() {
         13,
         "integer fill control"
     );
-    let dir = std::env::temp_dir().join("mind_q16_fill_emit");
+    let dir = common::scratch_dir("array_oob_trap_run").join("mind_q16_fill_emit");
     let _ = std::fs::create_dir_all(&dir);
     let srcf = dir.join("main.mind");
     std::fs::write(
@@ -416,7 +416,8 @@ fn integer_fill_beyond_binary64_refuses_by_name() {
 
 /// `mindc --emit-ir` on a program: (exit 0, compiler output).
 fn emit_ir(mindc: &Path, src: &str) -> (bool, String) {
-    let dir = std::env::temp_dir().join(format!("mind_nested_lit_{}", src.len()));
+    let dir =
+        common::scratch_dir("array_oob_trap_run").join(format!("mind_nested_lit_{}", src.len()));
     let _ = std::fs::create_dir_all(&dir);
     let srcf = dir.join("main.mind");
     std::fs::write(&srcf, src).expect("write src");
@@ -486,7 +487,8 @@ fn build_only(mindc: &Path, src: &str, native: bool) -> (bool, String) {
         src.hash(&mut h);
         h.finish()
     };
-    let dir = std::env::temp_dir().join(format!("mind_oob_ref_{native}_{key}"));
+    let dir =
+        common::scratch_dir("array_oob_trap_run").join(format!("mind_oob_ref_{native}_{key}"));
     let _ = std::fs::create_dir_all(&dir);
     let (srcf, out) = (dir.join("main.mind"), dir.join("p.bin"));
     let _ = std::fs::remove_file(&out);

@@ -7,6 +7,8 @@
 //! a reseed/loop stops being byte-identical. These tests shell out to the built
 //! binary so they exercise the real CLI end to end.
 
+mod common;
+
 use std::process::Command;
 
 fn mindc() -> Command {
@@ -14,7 +16,7 @@ fn mindc() -> Command {
 }
 
 fn emit_evidence(src_text: &str, tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir();
+    let dir = common::scratch_dir("mindc_inspect");
     let src = dir.join(format!("mindc_inspect_{tag}.mind"));
     let art = dir.join(format!("mindc_inspect_{tag}.mic3"));
     std::fs::write(&src, src_text).unwrap();
@@ -101,7 +103,7 @@ fn inspect_diff_detects_divergence_and_identity() {
 
 #[test]
 fn inspect_malformed_artifact_exits_1_not_panic() {
-    let dir = std::env::temp_dir();
+    let dir = common::scratch_dir("mindc_inspect");
     let bad = dir.join("mindc_inspect_bad.mic3");
     std::fs::write(&bad, b"not a mic3 artifact at all").unwrap();
     let out = mindc().arg("inspect").arg(&bad).output().unwrap();
@@ -173,8 +175,7 @@ fn check_note_of(elf_path: &std::path::Path) {
     assert_eq!(elf[name_at], b'D');
     let mut broken = elf.clone();
     broken[name_at] = b'E';
-    let bad =
-        std::env::temp_dir().join(format!("mindc_inspect_badnote_{}.elf", std::process::id()));
+    let bad = common::scratch_dir("mindc_inspect").join("mindc_inspect_badnote.elf");
     std::fs::write(&bad, &broken).unwrap();
     let out = mindc().arg("inspect").arg(&bad).output().unwrap();
     assert_eq!(out.status.code(), Some(1), "a broken note must be refused");
@@ -208,9 +209,9 @@ fn check_note_of(elf_path: &std::path::Path) {
 #[cfg(feature = "std-surface")]
 #[test]
 fn inspect_prints_extern_decls_with_narrow_params() {
-    let dir = std::env::temp_dir();
-    let src = dir.join(format!("mindc_inspect_extern_{}.mind", std::process::id()));
-    let art = dir.join(format!("mindc_inspect_extern_{}.mic3", std::process::id()));
+    let dir = common::scratch_dir("mindc_inspect");
+    let src = dir.join("mindc_inspect_extern.mind");
+    let art = dir.join("mindc_inspect_extern.mic3");
     std::fs::write(
         &src,
         "extern \"C\" {\n    unsafe fn open(pathname: *const u8, flags: i32, mode: i32) -> i32;\n    \
