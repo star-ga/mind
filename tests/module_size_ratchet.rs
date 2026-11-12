@@ -140,7 +140,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/ast/mod.rs", 1168),
     ("src/bin/mind-ai.rs", 1101),
     ("src/bin/mindc.rs", 3008),
-    ("src/build/mod.rs", 895),
+    ("src/build/mod.rs", 892),
     ("src/check/mod.rs", 896),
     ("src/deps/mod.rs", 1060),
     ("src/doc/mod.rs", 888),

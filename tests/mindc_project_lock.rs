@@ -230,3 +230,209 @@ fn test_treats_a_leftover_temporary_manifest_as_absent() {
     );
     assert_eq!(refusal(&killed), refusal(&control));
 }
+
+/// A search for the project made before the build lock meets a LIVE standalone
+/// build: its lock held and its temporary manifest written (or still empty,
+/// between creation and write). The writer removes that file, then releases
+/// the lock. Each test plays that build, so the window the CI race needed is
+/// held open: `/proc/locks` shows when the build under test waits on the lock.
+#[cfg(target_os = "linux")]
+mod live_standalone_build {
+    use super::{MODIFIED_MIND, common, require_mindc};
+    use libmind::build::{BuildOpts, run_build, temporary_manifest};
+    use libmind::project::EmitKind;
+    use std::fs::{self, File, OpenOptions};
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::process::ExitStatusExt;
+    use std::path::Path;
+    use std::process::{Command, ExitStatus, Output, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    /// Take `root`'s project build lock the way a build takes it.
+    fn hold_build_lock(root: &Path) -> File {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join(".mind-build.lock"))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&file).unwrap();
+        file
+    }
+
+    /// True once process `pid` waits on the lock `held` (a `->` line of
+    /// `/proc/locks`), false when `ended` says it finished without waiting.
+    fn waits_on(pid: u32, held: &File, mut ended: impl FnMut() -> bool) -> bool {
+        let inode = held.metadata().unwrap().ino().to_string();
+        let pid = pid.to_string();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            let locks = fs::read_to_string("/proc/locks").unwrap();
+            let waiting = locks.lines().any(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                fields.contains(&"->")
+                    && fields.contains(&pid.as_str())
+                    && fields
+                        .iter()
+                        .any(|f| f.contains(':') && f.rsplit(':').next() == Some(inode.as_str()))
+            });
+            if waiting {
+                return true;
+            }
+            if ended() {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("process {pid} neither waited on the build lock nor ended");
+    }
+
+    /// The backend of `mindc build <file>` is selected before the build takes
+    /// its lock. That search found the live manifest and read it after its
+    /// writer removed it (`manifest error: Failed to read <dir>/Mind.toml`).
+    /// It must wait the live build out: no route is chosen while the manifest
+    /// exists, and the route is never read from it.
+    #[test]
+    fn route_selection_waits_out_a_live_standalone_build() {
+        let mindc = require_mindc();
+        for text in [temporary_manifest("alpha", "alpha.mind"), String::new()] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().canonicalize().unwrap();
+            let source = root.join("beta.mind");
+            fs::write(&source, MODIFIED_MIND).unwrap();
+            let held = hold_build_lock(&root);
+            let manifest = root.join("Mind.toml");
+            fs::write(&manifest, &text).unwrap();
+            let log = tempfile::NamedTempFile::new().unwrap();
+            let mut build = Command::new(&mindc)
+                .args(["build", "--backend", "mlir", "--emit=cdylib", "--out"])
+                .arg(root.join("beta.so"))
+                .arg(&source)
+                .current_dir(&root)
+                .stdout(Stdio::null())
+                .stderr(log.reopen().unwrap())
+                .spawn()
+                .unwrap();
+            let waited = waits_on(build.id(), &held, || build.try_wait().unwrap().is_some());
+            let early = fs::read_to_string(log.path()).unwrap();
+            fs::remove_file(&manifest).unwrap();
+            drop(held);
+            let status = build.wait().unwrap();
+            let stderr = fs::read(log.path()).unwrap();
+            let all = String::from_utf8_lossy(&stderr).into_owned();
+            assert!(waited, "{text:?}: the build did not wait: {all}");
+            assert!(
+                !early.contains("backend:"),
+                "{text:?}: a route was chosen while the live manifest existed: {early}"
+            );
+            assert!(!all.contains("manifest error"), "{text:?}: {all}");
+            assert!(all.contains("backend: mlir (from flag)"), "{text:?}: {all}");
+            assert!(!manifest.exists());
+            let output = Output {
+                status,
+                stdout: Vec::new(),
+                stderr,
+            };
+            common::gate::compiled("mindc_project_lock", &output);
+        }
+    }
+
+    /// A named build one directory below a live standalone build, inside one
+    /// repository, probes its root before it takes a lock. The probe found the
+    /// live manifest, waited on its lock, and then read the removed file:
+    /// `manifest error: Failed to read <root>/Mind.toml`. The probe follows the
+    /// rule of the lock, so the build is standalone in its own directory.
+    #[test]
+    fn a_named_build_below_a_live_standalone_build_is_standalone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::create_dir(root.join("sub")).unwrap();
+        let source = root.join("sub/beta.mind");
+        fs::write(&source, MODIFIED_MIND).unwrap();
+        let held = hold_build_lock(&root);
+        let manifest = root.join("Mind.toml");
+        fs::write(&manifest, temporary_manifest("alpha", "alpha.mind")).unwrap();
+        let opts = BuildOpts {
+            paths: vec![source],
+            emit: Some(EmitKind::Cdylib),
+            out: Some(root.join("sub/beta.so")),
+            no_cache: true,
+            ..BuildOpts::default()
+        };
+        let build = thread::spawn(move || match run_build(&opts) {
+            Ok(_) => (0, String::new()),
+            Err(error) => (error.exit_code(), error.render()),
+        });
+        let waited = waits_on(std::process::id(), &held, || build.is_finished());
+        fs::remove_file(&manifest).unwrap();
+        drop(held);
+        let (code, rendered) = build.join().expect("the build panicked");
+        assert!(waited, "the build did not wait: {rendered}");
+        assert!(!rendered.contains("manifest error"), "{rendered}");
+        assert!(!root.join("sub/Mind.toml").exists());
+        let output = Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: rendered.into_bytes(),
+        };
+        common::gate::compiled("mindc_project_lock", &output);
+    }
+
+    /// The search `open_explicit` makes again after a wait follows the same
+    /// rule. Here the entry's own project loses its manifest while the build
+    /// waits on that project's lock, so the build searches again and meets a
+    /// live standalone build one directory up. Read as a project, that root
+    /// failed after its writer removed the file (`manifest error`).
+    #[test]
+    fn the_search_after_a_wait_waits_out_a_live_standalone_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let sub = root.join("sub");
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::create_dir(&sub).unwrap();
+        let source = sub.join("beta.mind");
+        fs::write(&source, MODIFIED_MIND).unwrap();
+        let own = sub.join("Mind.toml");
+        fs::write(
+            &own,
+            "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"beta.mind\"\n",
+        )
+        .unwrap();
+        let held_root = hold_build_lock(&root);
+        let live = root.join("Mind.toml");
+        fs::write(&live, temporary_manifest("alpha", "alpha.mind")).unwrap();
+        let held_sub = hold_build_lock(&sub);
+        let opts = BuildOpts {
+            paths: vec![source],
+            emit: Some(EmitKind::Cdylib),
+            out: Some(sub.join("beta.so")),
+            no_cache: true,
+            ..BuildOpts::default()
+        };
+        let build = thread::spawn(move || match run_build(&opts) {
+            Ok(_) => (0, String::new()),
+            Err(error) => (error.exit_code(), error.render()),
+        });
+        let waited_sub = waits_on(std::process::id(), &held_sub, || build.is_finished());
+        fs::remove_file(&own).unwrap();
+        drop(held_sub);
+        let waited_root = waits_on(std::process::id(), &held_root, || build.is_finished());
+        fs::remove_file(&live).unwrap();
+        drop(held_root);
+        let (code, rendered) = build.join().expect("the build panicked");
+        assert!(
+            waited_sub && waited_root,
+            "the build did not wait: {rendered}"
+        );
+        assert!(!rendered.contains("manifest error"), "{rendered}");
+        let output = Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: rendered.into_bytes(),
+        };
+        common::gate::compiled("mindc_project_lock", &output);
+    }
+}

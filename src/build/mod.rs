@@ -47,12 +47,14 @@ use anyhow::{Context, Result};
 pub use crate::project::build_lock::temporary_manifest;
 use artifact::{default_artifact_path, legacy_opts_from, legacy_target_name};
 use driver_error::classify_driver_error;
-use project_transaction::{ManifestEdit, open_explicit, open_project, resolve_explicit_entry};
+use project_transaction::{
+    ManifestEdit, open_explicit, open_project, probe_root, resolve_explicit_entry,
+};
 use source_key::compile_cache_material_from_snapshots as cache_material_from;
 
 use crate::project::{
     BuildTarget, EmitKind, OptimizeLevel, build_input_snapshot::BuildInputSnapshot,
-    build_project_locked_with_snapshot as build_snapshot, find_project_root_for_file_checked,
+    build_project_locked_with_snapshot as build_snapshot,
 };
 
 use cache::{
@@ -159,16 +161,11 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     let explicit_entry = resolve_explicit_entry(&opts.paths)?;
     let (project_root, manifest, build_lock, single_file) =
         if let Some((entry_dir, first_path)) = explicit_entry.clone() {
-            // The root is probed before any lock is held and re-audited after
-            // it, inside `open_explicit` — see that function for the window
-            // that ordering opens.
-            let opened = open_explicit(
-                find_project_root_for_file_checked(&entry_dir).map_err(|error| {
-                    BuildError::Invalid(format!("cannot discover project root: {error:#}"))
-                })?,
-                &entry_dir,
-                &first_path,
-            )?;
+            // The root is probed before any lock is held, by the rule of the
+            // lock (`probe_root`), and re-audited after it, inside
+            // `open_explicit` — see that function for the window that ordering
+            // opens.
+            let opened = open_explicit(probe_root(&entry_dir)?, &entry_dir, &first_path)?;
             (
                 opened.root,
                 opened.manifest,
