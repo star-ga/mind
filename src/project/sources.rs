@@ -483,6 +483,24 @@ pub fn resolve_sources(
     }
 }
 
+/// The source set `mindc build` compiles for the project at `project_root`
+/// when it is given no path and no `--target`; `mindc check` with no path
+/// analyses exactly these files. `None` when the manifest is the temporary
+/// one of a standalone build (never a project), or when it resolves no source
+/// set (the build reports that manifest): the caller then keeps every file.
+pub fn default_source_set(
+    project_root: &Path,
+    manifest: &super::ProjectManifest,
+) -> Option<Vec<PathBuf>> {
+    if super::build_lock::is_temporary_manifest(&project_root.join("Mind.toml")) {
+        return None;
+    }
+    let block = manifest.targets.get(manifest.build.target.as_str());
+    let declared = block.and_then(|target| target.sources.as_deref());
+    let set = resolve_sources(project_root, &manifest.build.entry, declared, false);
+    set.ok().map(|(files, _declared)| files)
+}
+
 /// [`resolve_sources`] for a file that `check` or `test` analyses inside the
 /// project: the same set, plus what that file imports. A file the entry
 /// already reaches adds nothing, so check and build see one source set.

@@ -29,9 +29,12 @@
 //!
 //! The directory walk of `mindc check` that applies the filter is here too.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use crate::project::{ProjectManifest, default_source_set};
 
 /// A compiled set of gitignore rules loaded from one or more ignore files.
 #[derive(Default)]
@@ -246,6 +249,42 @@ pub(super) fn collect_mind_files(
         }
     }
     Ok(())
+}
+
+/// The file set of a check with no path in `project`: the files of the
+/// filtered walk that are in the source set the project's build compiles, so
+/// check and build read one set (the ignore filter applies as it does to
+/// every walk). One stderr line counts the walked `*.mind` files outside the
+/// set, so no file leaves the check without a notice. `None` when the
+/// manifest gives no source set; the caller then walks as it does with no
+/// project.
+pub(super) fn project_set(
+    (root, manifest): (PathBuf, ProjectManifest),
+    filter: Option<&GitignoreFilter>,
+    repo_root: Option<&Path>,
+) -> Result<Option<Vec<PathBuf>>, String> {
+    let Some(set) = default_source_set(&root, &manifest) else {
+        return Ok(None);
+    };
+    let mut walked = Vec::new();
+    collect_mind_files(&root, &mut walked, filter, repo_root)
+        .map_err(|e| format!("{}: {e}", root.display()))?;
+    // Match on canonical paths; keep the walk's spelling for diagnostics.
+    let canonical = |path: &PathBuf| path.canonicalize().unwrap_or_else(|_| path.clone());
+    let members: BTreeSet<PathBuf> = set.iter().map(canonical).collect();
+    let is_member = |path: &PathBuf| members.contains(&canonical(path));
+    let (mut files, outside): (Vec<PathBuf>, Vec<PathBuf>) =
+        walked.into_iter().partition(is_member);
+    files.sort();
+    if !outside.is_empty() {
+        eprintln!(
+            "note[check]: {} .mind file(s) below {} are not in the project source set; \
+             this check did not examine them (give a file or a directory to check them)",
+            outside.len(),
+            root.display()
+        );
+    }
+    Ok(Some(files))
 }
 
 /// Return `true` if `path` should be included in the check run.

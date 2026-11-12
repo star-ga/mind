@@ -338,3 +338,76 @@ fn check_and_build_see_an_imported_docs_file() {
         );
     }
 }
+
+/// A project in the common layout: the entry is in `src/` and `docs/` is at
+/// the project root. `src/sub/b.mind` is valid; `src/docs/stray.mind` and
+/// `docs/outside.mind` each have a type error. `main` is the entry text.
+fn src_layout_project(name: &str, main: &str) -> std::path::PathBuf {
+    let root = common::scratch_dir(name).join("project");
+    fs::create_dir_all(root.join("src/sub")).expect("src/sub");
+    fs::create_dir_all(root.join("src/docs")).expect("src/docs");
+    fs::create_dir_all(root.join("docs")).expect("docs");
+    fs::create_dir_all(root.join(".git")).expect("project boundary");
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n"
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("manifest");
+    fs::write(root.join("src/main.mind"), main).expect("entry");
+    fs::write(
+        root.join("src/sub/a.mind"),
+        "export { a_value }\nfn a_value() -> i64 { return 42; }\n",
+    )
+    .expect("a");
+    fs::write(
+        root.join("src/sub/b.mind"),
+        "export { b_value }\nfn b_value() -> i64 { return 7; }\n",
+    )
+    .expect("b");
+    fs::write(
+        root.join("src/docs/stray.mind"),
+        "export { stray_value }\nfn stray_value() -> i64 { return missing_name; }\n",
+    )
+    .expect("stray");
+    fs::write(
+        root.join("docs/outside.mind"),
+        "export { outside_value }\nfn outside_value() -> i64 { return missing_name; }\n",
+    )
+    .expect("outside");
+    root
+}
+
+#[test]
+fn project_check_and_build_take_one_source_set_in_the_src_layout() {
+    // The set is the entry and `sub/a.mind`. Three files are outside it.
+    let main = "import sub.a;\n\nfn main() -> i64 {\n    return a_value();\n}\n";
+    let root = src_layout_project("src_layout_scoped", main);
+    let (ok, out) = mindc_in(&root, &["check", "--no-fmt", "--no-lint"]);
+    assert!(ok, "the project check read a file the build ignores: {out}");
+    assert!(
+        out.contains("note[check]: 3 .mind file(s) below"),
+        "no notice of the files outside the source set: {out}"
+    );
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = mindc_in(&root, &["build", "--backend", "mlir", "--no-cache"]);
+        assert!(ok, "build compiled a file outside the source set: {out}");
+    }
+
+    // An import puts the broken `src/docs` module in the set: the project
+    // check and the build both report it. `docs/outside.mind` stays out.
+    let main = format!("import docs.stray;\n{main}");
+    let root = src_layout_project("src_layout_imported", &main);
+    let (ok, out) = mindc_in(&root, &["check", "--no-fmt", "--no-lint"]);
+    assert!(!ok, "the project check lost an imported module: {out}");
+    assert!(
+        out.contains("stray.mind") && out.contains("missing_name"),
+        "the imported module was not reported: {out}"
+    );
+    assert!(!out.contains("outside.mind"), "{out}");
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = mindc_in(&root, &["build", "--backend", "mlir", "--no-cache"]);
+        assert!(!ok, "build skipped the imported broken module: {out}");
+        assert!(out.contains("stray.mind"), "build did not name it: {out}");
+    }
+}

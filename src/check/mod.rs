@@ -29,12 +29,14 @@ use std::path::{Path, PathBuf};
 
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
-use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
+use crate::project::{
+    MindcraftConfig, ProjectManifest, RuleSeverity, find_project_root, load_manifest,
+};
 use crate::type_checker::check_module_types_in_file;
 
 use gitignore::{
     build_gitignore_filter_from, collect_mind_files, find_git_root, find_git_root_from,
-    should_include,
+    project_set, should_include,
 };
 
 // ---------------------------------------------------------------------------
@@ -188,11 +190,15 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
         return run_check_fix(opts);
     }
 
-    let config = load_check_config();
+    let project = load_check_project();
+    let config = project
+        .as_ref()
+        .map(|(_, m)| m.mindcraft.clone())
+        .unwrap_or_default();
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
 
-    let files = match resolve_paths(&opts.paths, &config) {
+    let files = match resolve_paths(&opts.paths, &config, project) {
         Ok(f) => f,
         Err(e) => {
             let first = opts.paths.first().map(Path::new);
@@ -282,11 +288,15 @@ const MAX_FIX_ITERATIONS: usize = 5;
 /// Re-check until no fixable diagnostics remain or `MAX_FIX_ITERATIONS` is
 /// reached.  Prints a summary line and returns the exit code.
 fn run_check_fix(opts: &CheckOptions) -> i32 {
-    let config = load_check_config();
+    let project = load_check_project();
+    let config = project
+        .as_ref()
+        .map(|(_, m)| m.mindcraft.clone())
+        .unwrap_or_default();
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
 
-    let files = match resolve_paths(&opts.paths, &config) {
+    let files = match resolve_paths(&opts.paths, &config, project) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("error[check]: {e}");
@@ -511,23 +521,31 @@ fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Config loading
+// Project and config loading
 // ---------------------------------------------------------------------------
 
-fn load_check_config() -> MindcraftConfig {
-    if let Ok(root) = find_project_root() {
-        if let Ok(manifest) = load_manifest(&root) {
-            return manifest.mindcraft;
-        }
-    }
-    MindcraftConfig::default()
+/// The project that governs the current directory (the root `mindc build`
+/// takes there) and its manifest, read once for the config and the file set.
+fn load_check_project() -> Option<(PathBuf, ProjectManifest)> {
+    let root = find_project_root().ok()?;
+    let manifest = load_manifest(&root).ok()?;
+    Some((root, manifest))
 }
 
 // ---------------------------------------------------------------------------
 // Path resolution with VCS filtering
 // ---------------------------------------------------------------------------
 
-fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathBuf>, String> {
+/// The files `paths` name, sorted. A path is never narrowed: a file is itself and a
+/// directory is every `*.mind` file below it, in a project's source set or
+/// not. With no path, a project's check takes the source set its build
+/// compiles (`gitignore::project_set`) and reports how many files that leaves
+/// out; outside a project it takes every file below the current directory.
+fn resolve_paths(
+    paths: &[String],
+    config: &MindcraftConfig,
+    project: Option<(PathBuf, ProjectManifest)>,
+) -> Result<Vec<PathBuf>, String> {
     let roots: Vec<PathBuf> = if paths.is_empty() {
         vec![std::env::current_dir().map_err(|e| format!("cannot read current directory: {e}"))?]
     } else {
@@ -559,6 +577,12 @@ fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathB
     } else {
         None
     };
+
+    if let Some(project) = project.filter(|_| paths.is_empty()) {
+        if let Some(set) = project_set(project, filter.as_ref(), repo_root.as_deref())? {
+            return Ok(set);
+        }
+    }
 
     let mut out: Vec<PathBuf> = Vec::new();
     for root in roots {

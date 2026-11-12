@@ -73,7 +73,7 @@ mod artifact;
 mod sources;
 
 pub use artifact::{DEFAULT_TARGET_BLOCK, artifact_dir, artifact_stem, profile_name};
-pub use sources::{collect_sources, resolve_sources};
+pub use sources::{collect_sources, default_source_set, resolve_sources};
 
 /// RFC 0005 Phase C — std/*.mind sources baked into the binary at
 /// compile time. The project loader prepends these to the module

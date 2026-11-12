@@ -211,11 +211,11 @@ enum Command {
     },
     /// Run format-check + lint + type-check over MIND source files.
     ///
-    /// Exit code 0 = all passes clean; 1 = one or more error-severity
-    /// diagnostics detected.
+    /// Exit code 0 = all passes clean; 1 = one or more error-severity diagnostics detected.
+    /// A path is never narrowed: a file or a directory that you give is checked in full.
     Check {
-        /// Files or directories to check.  Directories are walked recursively
-        /// for *.mind files.  Defaults to the current directory when omitted.
+        /// Files or directories; a directory is every *.mind file below it. With no path in a
+        /// project: the source set `mindc build` compiles (a note counts the files left out).
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
         /// Diagnostic reporter: human (default), json, or lsp.

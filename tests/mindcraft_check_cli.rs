@@ -25,6 +25,7 @@
 //! 8. Multi-file directory walk produces a sorted diagnostic stream.
 
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use tempfile::tempdir;
@@ -351,4 +352,108 @@ fn json_reporter_empty_result_is_empty_array() {
         "empty directory should produce []"
     );
     assert_eq!(out.status.code(), Some(0));
+}
+
+// ---------------------------------------------------------------------------
+// Tests 10-12: the file set of a project check (no feature needed)
+// ---------------------------------------------------------------------------
+
+/// A module with one type error: it returns a name that nothing declares.
+fn broken(function: &str) -> String {
+    format!("fn {function}() -> i64 {{\n    missing_name\n}}\n")
+}
+
+/// A project in the common layout: the entry is in `src/` and `docs/` is at
+/// the project root. `src/main.mind` is the whole program. Nothing imports
+/// `src/docs/stray.mind` or `docs/outside.mind`, and each has a type error.
+fn write_src_layout_project(root: &Path) {
+    fs::create_dir_all(root.join("src/docs")).expect("mkdir src/docs");
+    fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("src/main.mind"), "fn main() -> i64 {\n    0\n}\n").expect("write entry");
+    fs::write(root.join("src/docs/stray.mind"), broken("stray_value")).expect("write stray");
+    fs::write(root.join("docs/outside.mind"), broken("outside_value")).expect("write outside");
+}
+
+/// `mindc check --no-fmt --no-lint <args>` in `dir`: exit code, stdout, stderr.
+fn type_check_in(dir: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    let out = mindc()
+        .current_dir(dir)
+        .args(["check", "--no-fmt", "--no-lint"])
+        .args(args)
+        .output()
+        .expect("failed to spawn mindc check");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (out.status.code(), stdout, stderr)
+}
+
+#[test]
+fn project_check_with_no_path_takes_the_build_source_set() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+
+    // The build compiles `src/main.mind` only, so the check reads it only.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the project check read a file outside the source set:\n{stdout}{stderr}"
+    );
+    assert!(!stdout.contains("missing_name"), "{stdout}");
+    // The two files left out are counted: no file leaves the check silently.
+    assert!(
+        stderr.contains("note[check]: 2 .mind file(s) below"),
+        "no notice of the files outside the source set: {stderr}"
+    );
+
+    // Positive control: a module in the entry's directory is in the set (the
+    // build compiles it), so its error is reported. The strays stay out.
+    fs::write(dir.path().join("src/sibling.mind"), broken("sibling_value")).expect("write sibling");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a member's error was lost:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("sibling.mind") && stdout.contains("missing_name"),
+        "the member was not reported: {stdout}"
+    );
+    assert!(
+        !stdout.contains("stray.mind") && !stdout.contains("outside.mind"),
+        "a file outside the source set was read: {stdout}"
+    );
+}
+
+#[test]
+fn a_temporary_manifest_does_not_scope_the_check() {
+    // A standalone build writes this manifest for its own duration; a killed
+    // build leaves it. It is never a project, so it gives no source set.
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("sub")).expect("mkdir sub");
+    fs::write(
+        dir.path().join("Mind.toml"),
+        "# mindc: temporary manifest of a standalone build; removed when that build returns\n\
+         [package]\nname = \"main\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n",
+    )
+    .expect("write temporary manifest");
+    fs::write(
+        dir.path().join("main.mind"),
+        "fn main() -> i64 {\n    0\n}\n",
+    )
+    .expect("write entry");
+    fs::write(dir.path().join("sub/other.mind"), broken("other_value")).expect("write other");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a temporary manifest narrowed the check:\n{stdout}{stderr}"
+    );
+    assert!(stdout.contains("other.mind"), "{stdout}{stderr}");
 }
