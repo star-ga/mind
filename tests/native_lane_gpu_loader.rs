@@ -24,10 +24,13 @@
 mod native_lane_extern_support;
 
 use native_lane_extern_support::{
-    Case, MINDC, build_align_libcuda, build_apart, build_fake_libcuda, builds_apart, call_cleanups,
-    clang_shim, compiler_library, compiler_source, exit_code_or_signal, extern_corpus, gpu_fixture,
-    mc6_cases, memset_program, mint_library, mint_stage1, repo, run_with_env, self_host_refusal,
+    Case, build_align_libcuda, build_apart, build_fake_libcuda, builds_apart, call_cleanups,
+    compiler_library, compiler_source, exit_code_or_signal, extern_corpus, gpu_fixture, mc6_cases,
+    memset_program, mint_library, mint_stage1, run_with_env, self_host_refusal,
 };
+// The MLIR leg of the two both-backend tests.
+#[cfg(feature = "mlir-build")]
+use native_lane_extern_support::{MINDC, clang_shim, repo};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -241,6 +244,7 @@ fn the_libcuda_only_import_emits_no_version_tables() {
 /// The fake driver library: the out-param shapes, the void** arrays and the
 /// 11-argument call run identically on the native and the MLIR backend and
 /// exit 42, every stack argument contributing to the checked result.
+#[cfg(feature = "mlir-build")]
 #[test]
 fn the_fake_driver_library_runs_alike_on_both_backends() {
     runs_alike_on_both_backends("fake_rows.mind");
@@ -251,6 +255,7 @@ fn the_fake_driver_library_runs_alike_on_both_backends() {
 /// image from a second build directory, each row one GLOB_DAT import (long
 /// names in full), BIND_NOW, no version tags, and the NEEDED list and dynamic
 /// size of the other libcuda-only image (gpu_only.mind).
+#[cfg(feature = "mlir-build")]
 #[test]
 fn the_mc6_driver_rows_run_alike_and_import_once_each() {
     let image = runs_alike_on_both_backends("fake_rows2.mind");
@@ -280,6 +285,9 @@ fn the_mc6_driver_rows_run_alike_and_import_once_each() {
 }
 
 /// Runs `fixture` natively and through MLIR on the fake driver: the native image.
+/// A build without `mlir-build` has no MLIR leg (E5003), so the two tests that
+/// compare the backends exist only with the feature, like the parity file.
+#[cfg(feature = "mlir-build")]
 fn runs_alike_on_both_backends(fixture: &str) -> Vec<u8> {
     let dir = tempfile::tempdir().unwrap();
     let lib = build_fake_libcuda(dir.path());
