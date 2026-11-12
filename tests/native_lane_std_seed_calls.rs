@@ -47,7 +47,7 @@ fn build(name: &str, native: bool) -> (tempfile::TempDir, Output, PathBuf) {
         cmd.args(["--backend", "native", "--emit", "binary", "--out"]);
         cmd.arg(&artifact);
     } else {
-        cmd.arg("--emit=binary")
+        cmd.args(["--backend", "mlir", "--emit=binary"])
             .arg(format!("--out={}", artifact.display()));
     }
     let output = cmd
