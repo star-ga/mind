@@ -110,6 +110,7 @@ import argparse
 import ast
 import os
 import pathlib
+import re
 import shlex
 import signal
 import subprocess
@@ -349,8 +350,6 @@ def corpus() -> list[str]:
 
 def _code_without_prose(src: str) -> str:
     """The gate's executable code with docstrings (and, via unparse, comments) gone."""
-    import ast
-
     tree = ast.parse(src)
     for node in ast.walk(tree):
         body = getattr(node, "body", None)
@@ -372,7 +371,8 @@ def compiler_dependent(rel: str,
         code = _code_without_prose(src)
     except SyntaxError:
         return True  # unparseable: assume it runs something, never assume it does not
-    return any(m in code for m in handles)
+    # A handle is a whole name: `_selfhost_so` is not the source-capture helper `_selfhost_sources`.
+    return any(re.search(re.escape(m) + r"(?![A-Za-z0-9])", code) for m in handles)
 
 
 # The env-var handles the ENV-POINTED leg sets, in the one place that sets them.
