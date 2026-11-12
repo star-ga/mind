@@ -96,7 +96,7 @@ runs:
         ./mindc --version
         # The program uses only constructs the native seed admits today (no string
         # values), so the floor check does not depend on a later seed.
-        printf '%s\n' 'fn main() -> i64 {' '    let a: i64 = 40;' '    return a + 2' '}' > hello.mind
+        printf '%s\n' 'fn main() -> i64 {' '    let a: i64 = 40;' '    return a + 2;' '}' > hello.mind
         case "$(uname -m)" in
           x86_64)
             ./mindc build --backend native hello.mind --out hello
