@@ -542,9 +542,15 @@ mod tests {
         write("types.mind", "struct T { x: i64 }\n");
         write("docs/stray.mind", "fn broken( {\n");
         write("tests/t.mind", "import docs.stray;\n");
+        // Root-relative names with `/` on every host: a path's own separator
+        // is the host's (`docs\stray.mind` on Windows).
         let rel = |set: &[std::path::PathBuf]| -> Vec<String> {
-            let strip = |p: &std::path::PathBuf| p.strip_prefix(&root).expect("in root").to_owned();
-            set.iter().map(|p| strip(p).display().to_string()).collect()
+            let name = |p: &std::path::PathBuf| {
+                let rel = p.strip_prefix(&root).expect("in root");
+                let parts = rel.components().map(|c| c.as_os_str().to_string_lossy());
+                parts.collect::<Vec<_>>().join("/")
+            };
+            set.iter().map(name).collect()
         };
 
         // Positive control: the walk sees the stray file.
