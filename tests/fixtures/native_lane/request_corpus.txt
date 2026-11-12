@@ -774,7 +774,7 @@ fn main() -> i64 {
     __mind_load_i64(p)
 }
 
-=== a_mem_ops | refused=native-lane-v1 (lane.call.unknown) | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_byte_word_memory_ops_build_and_run
+=== a_mem_ops | exit=0 | red=3 | default | native intrinsic admission request, tests/native_intrinsic_admission.rs::native_byte_word_memory_ops_build_and_run (refused as lane.call.unknown until __mind_load_i16 got its lane row)
 fn main() -> i64 {
     let p: i64 = __mind_alloc(64);
     __mind_store_i8(p, 42);

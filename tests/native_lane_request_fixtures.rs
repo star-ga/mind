@@ -340,7 +340,7 @@ fn wave3_programs_match_mlir_on_the_lane() {
 fn request_programs_match_mlir_on_the_lane() {
     let a = green_group("native intrinsic admission request");
     let e = green_group("value-if inside while request");
-    assert!(a == 0 || a == 6, "admission request GREEN records ran: {a}");
+    assert!(a == 0 || a == 7, "admission request GREEN records ran: {a}");
     assert!(e == 0 || e == 7, "value-if request GREEN records ran: {e}");
 }
 
@@ -460,7 +460,7 @@ fn ported_refusals_are_named_and_write_nothing() {
         assert_refused(&case, &native_build(&p, &case, &Compiler::Lane), text);
         ran += 1;
     }
-    assert_eq!(ran, 123, "refusal records checked");
+    assert_eq!(ran, 122, "refusal records checked");
 }
 
 #[test]
@@ -471,9 +471,9 @@ fn the_corpus_is_complete_and_well_formed() {
     ids.dedup();
     assert_eq!(ids.len(), cases.len(), "duplicate record id");
     let count = |f: &dyn Fn(&Case) -> bool| cases.iter().filter(|c| f(c)).count();
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Exit(_))), 51);
+    assert_eq!(count(&|c| matches!(c.expect, Expect::Exit(_))), 52);
     assert_eq!(count(&|c| c.expect == Expect::Parity), 5);
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 123);
+    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 122);
     assert_eq!(count(&|c| c.bounded), 3);
     assert_eq!(count(&|c| c.red), 141);
     for case in &cases {
@@ -534,5 +534,5 @@ fn red_leg_a_pre_lane_compiler_refuses_every_red_record() {
     println!(
         "{TARGET} RED leg: {green} GREEN records and {refused} other records refused (exit 3)"
     );
-    assert_eq!((green, refused), (47, 94), "RED records checked");
+    assert_eq!((green, refused), (48, 93), "RED records checked");
 }
