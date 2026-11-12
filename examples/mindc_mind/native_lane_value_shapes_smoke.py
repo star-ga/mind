@@ -73,8 +73,8 @@ TOOLS = {
     "MLIR_TRANSLATE": "/usr/lib/llvm-20/bin/mlir-translate",
     "CLANG": "/usr/lib/llvm-20/bin/clang",
 }
-
-LLVM_BIN = pathlib.Path(os.environ.get("MLIR_OPT", TOOLS["MLIR_OPT"])).parent
+# llvm-mc / llvm-objcopy: beside $MLIR_OPT, else in the LLVM 20 dir, else on PATH (the LLVM 23 leg).
+LLVM_PATH = os.pathsep.join([str(pathlib.Path(p).parent) for p in (os.environ.get("MLIR_OPT"), TOOLS["MLIR_OPT"]) if p] + [os.environ.get("PATH", os.defpath)])
 
 DIRTY = (
     "fn dirty(a: i64) -> i64 { let b: i64 = a + 1; let c: i64 = b * 3; let d: i64 = c + b; "
@@ -623,13 +623,13 @@ def _encoder_table(row: dict, compiler: str, case_dir: pathlib.Path) -> list[str
     bad = [f"A {t[0]}: emitted {got} != {t[2]}" for t, got in zip(rows, recs) if got != t[2]]
     bad += [f"A: {len(recs)} records for {len(rows)} rows"] if len(recs) != len(rows) else []
     work = case_dir / "row"
+    if not all((llvm := {t: shutil.which(t, path=LLVM_PATH) for t in ("llvm-mc", "llvm-objcopy")}).values()):
+        return bad + [f"B: no stage B, {llvm}: not beside $MLIR_OPT, in /usr/lib/llvm-20/bin or on PATH"]
     for t in rows:
         if t[3].startswith("llvm-mc"):
             work.with_suffix(".s").write_text(".intel_syntax noprefix\n" + t[1].replace(" ; ", "\n") + "\n")
-            subprocess.run([str(LLVM_BIN / "llvm-mc"), "--triple=x86_64", "-filetype=obj", str(work.with_suffix(".s")),
-                            "-o", str(work.with_suffix(".o"))], check=True, capture_output=True)
-            subprocess.run([str(LLVM_BIN / "llvm-objcopy"), "-O", "binary", "--only-section=.text", str(work.with_suffix(".o")),
-                            str(work.with_suffix(".bin"))], check=True, capture_output=True)
+            subprocess.run([llvm["llvm-mc"], "--triple=x86_64", "-filetype=obj", str(work.with_suffix(".s")), "-o", str(work.with_suffix(".o"))], check=True, capture_output=True)
+            subprocess.run([llvm["llvm-objcopy"], "-O", "binary", "--only-section=.text", str(work.with_suffix(".o")), str(work.with_suffix(".bin"))], check=True, capture_output=True)
             got = work.with_suffix(".bin").read_bytes().hex()
         else:
             work.with_suffix(".bin").write_bytes(bytes.fromhex(t[2]))
