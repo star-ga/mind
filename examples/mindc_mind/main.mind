@@ -33747,20 +33747,12 @@ pub fn nb_own_stack_ph(ph: i64, n: i64, i: i64, best_va: i64, best_sz: i64) -> i
 // Nesting budget of the RUNNING native compiler for a whole program (census X1
 // capacity: deep trees). The parser, the mic@3 twin and the emitters recurse
 // once per nesting level of an expression or a block, not once per token, so
-// nb_stack_short (which budgets the per-token walks) let deep trees through: a
-// 40000-term `1 + 1 + ...` chain, 40000 nested parentheses or calls and a
-// 40000-deep unary minus or `as` chain each SIGSEGVed the bounded compiler
-// (384 MiB stack). Measured peak stack on the bounded compiler: ~15.5 KiB per
-// binary / unary / `as` operator level, <= 13 KiB per bracket level, <= 5.5 KiB
-// per else-if arm, <= 4 KiB per nested block, ~39 KiB per if expression
-// nested in a parenthesised condition. nb_nest_units charges every level along
-// the deepest path at or above that (KiB units: 16 per operator, `as` and `(` /
-// `[`, 8 per `else`, 4 per `{`, 2 per statement `if` and 24 per `if` inside an
-// expression); the program is
-// refused (clean rc 3) when that path, at 1.25 KiB per unit, plus 32 MiB could
-// overflow the compiler's own stack. Flat statement lists add nothing (`;`,
-// `,` and a `}` that ends a statement reset the level's chain): their walks
-// are per token, which nb_stack_short budgets. The scan's tables are reclaimed.
+// nb_stack_short let deep trees through (SIGSEGV on the bounded compiler).
+// nb_nest_units charges every level along the deepest path (the units and
+// their measurements are in nb_stack_budget.mind); the program is refused
+// (clean rc 3) when that path, at 1.25 KiB per unit, plus 32 MiB could
+// overflow the compiler's own stack. Flat statement lists add nothing: their
+// walks are per token, which nb_stack_short budgets. The scan's tables are reclaimed.
 pub fn nb_depth_short(src: i64, tokens: Vec) -> i64 {
     let ckpt: i64 = nb_arena_mark();
     let units: i64 = nb_nest_units(src, tokens);
@@ -33946,12 +33938,18 @@ pub fn nb_nest_tok(src: i64, tokens: Vec, n: i64, i: i64, st: i64) -> i64 {
         __mind_store_i64(lv + 16, e);
         return nb_nest_max(st, base + e);
     }
+    let arm: i64 = if i > 0 {
+        nb_stack_arm_units(tok_kind(tokens, i - 1), k)
+    } else {
+        0
+    };
+    __mind_store_i64(lv, base + arm);
     let u: i64 = nb_nest_op_units(src, tokens, i, k);
     if u == 0 {
         return 0;
     }
     __mind_store_i64(lv + 8, ops + u);
-    nb_nest_max(st, base + ops + u)
+    nb_nest_max(st, base + arm + ops + u)
 }
 
 // Units of an `if`: 2 where it starts a statement (after `;`, `{`, `}` or

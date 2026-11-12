@@ -61,3 +61,34 @@ pub fn nb_stack_tok_bytes_v1() -> i64 {
 pub fn nb_stack_base_v1() -> i64 {
     16777216
 }
+
+// ---- Nesting units (nb_nest_units and nb_depth_short in main.mind) ----
+// Measured peak stack on the bounded compiler (384 MiB stack): ~15.5 KiB per
+// binary / unary / `as` operator level, <= 13 KiB per bracket level, <= 5.5 KiB
+// per else-if arm, <= 4 KiB per nested block, ~39 KiB per if expression nested
+// in a parenthesised condition. A 40000-term `1 + 1 + ...` chain, 40000 nested
+// parentheses or calls and a 40000-deep unary minus or `as` chain each
+// SIGSEGVed that compiler before the budget. The units (1 unit = 1.25 KiB of
+// budget): 16 per operator, `as` and `(` / `[`, 8 per `else`, 4 per `{`, 2 per
+// statement `if`, 24 per `if` inside an expression. `;`, `,` and a `}` that
+// ends a statement reset the level's chain.
+//
+// A match arm is one more level: the parser desugars `match` to a right-nested
+// if chain, so arm j sits j levels deep in the parser, the twin and the
+// emitters. Measured (stack high-water at exit, bounded compiler, `k => k,`
+// arms): 1024 arms 8.2 MiB, 4096 arms 32.7 MiB, 16384 arms 130.6 MiB = 7968 B
+// per arm, where the token rule budgets 5 tokens x 320 B = 1600 B. A 65536-arm
+// match passed both budgets and overflowed the stack (SIGSEGV). Each `=>` now
+// adds nb_stack_arm_units() to the base of its brace level, so every later arm
+// of the same match is charged one level deeper, and `,` does not reset it.
+
+// Units a match arm adds to the base of its level: 8 (10 KiB for 7.8 KiB measured).
+pub fn nb_stack_arm_units(prev: i64, k: i64) -> i64 {
+    if k != 17 {
+        return 0;
+    }
+    if prev != 11 {
+        return 0;
+    }
+    8
+}

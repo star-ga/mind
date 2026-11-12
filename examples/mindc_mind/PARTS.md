@@ -208,6 +208,10 @@ later arm at each arm and had no other caller. `MAIN_MIND_LINE_PIN` went down to
 `nb_value_if_memo.mind` holds `nbvi_value_if`, the `is_value_if_expr` test of
 `nb_stmt` with each answer kept in the fn's branch memo under the odd key node + 1;
 its import and the two-step test take four lines of `main.mind` (67925, pin 67925).
+`nb_stack_budget.mind` holds `nb_stack_arm_units`: each `=>` adds 8 nesting units
+to the base of its brace level (a match arm is one level of the desugared if
+chain, 7968 B of stack measured per arm), so a match too deep for the compiler's
+own stack is refused (rc 3). The nesting-unit notes moved there with it (pin 67923).
 
 ## Twin-shaped loops and the extern scan part (0.10.3)
 
