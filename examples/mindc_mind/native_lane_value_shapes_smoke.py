@@ -151,7 +151,9 @@ GROUP_SUM = "testdata/native_avx2/group_sum_"
 # `--direct-compile s.mind --compiler <stage2> --out s`, `./s | xxd -p`, sliced);
 # remainder = those oracle rows with pixels >= n left at -1; none / alias = the
 # sequential call semantics stated in nb_group_sum_bank.mind / nb_group_sum_acc.mind.
-GS_WESTMERE = [os.environ.get("QEMU_X86_64", "/usr/local/bin/qemu-x86_64"), "-cpu", "Westmere"]
+# qemu-user runner: QEMU_X86_64, else PATH, else the default install path; an absent runner is BLOCKED.
+QEMU = os.environ.get("QEMU_X86_64") or shutil.which("qemu-x86_64") or "/usr/local/bin/qemu-x86_64"
+GS_WESTMERE = [QEMU, "-cpu", "Westmere"]
 
 
 def _gs_hex(name: str) -> bytes:
@@ -159,8 +161,6 @@ def _gs_hex(name: str) -> bytes:
 
 
 MEASURE = "testdata/native_measure/"
-# qemu-user runner: QEMU_X86_64, else PATH, else the default install path; an absent runner is BLOCKED.
-QEMU = os.environ.get("QEMU_X86_64") or shutil.which("qemu-x86_64") or "/usr/local/bin/qemu-x86_64"
 # M-A4 LICM (nb_opt_licm.mind): each fixture with the native_opt declaration absent and present,
 # front door + MLIR; every build must give the value computed independently (the fixture header).
 LICM_DIRECTIVE = "// mind: native_opt = full\n"
@@ -338,8 +338,8 @@ NATIVE_ONLY_CASES = [
 # guard's failure path (exit 132, isa.avx2_missing) runs before any ymm op, which
 # is how the build-only repros (they dereference 0) are run safely.
 AVX2 = "testdata/native_avx2/"
-WESTMERE = ["/usr/local/bin/qemu-x86_64", "-cpu", "Westmere"]
-HASWELL = ["/usr/local/bin/qemu-x86_64", "-cpu", "Haswell"]
+WESTMERE = [QEMU, "-cpu", "Westmere"]
+HASWELL = [QEMU, "-cpu", "Haswell"]
 ISA_FAIL = {"runner_prefix": WESTMERE, "expect_exit": 132, "stderr_required": "isa.avx2_missing"}
 MAIN_PARAMS = "488b3c24488d742408"  # mov rdi,[rsp] ; lea rsi,[rsp+8]
 ARGV_CAPTURE = "488b042448b9" + (1 << 24).to_bytes(8, "little").hex() + "48894108" "488d442408" "48894110" "48c70110000000"
