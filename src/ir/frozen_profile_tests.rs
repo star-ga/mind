@@ -274,16 +274,21 @@ fn source_admits(src: &str) -> Result<(), FrozenProfileRejection> {
 
 /// A declared f32 reaches the IR as `__mind_conv_f32` (the binding takes the declared
 /// width), which the IR half refuses as a call. The source half names the construct.
+/// The typed-let adapter is `std-surface` only: without it both literals lower to
+/// `ConstF64`, the IR half cannot see the declared width and admits the program.
 #[test]
 fn declared_f32_comparison_is_rejected_on_the_source() {
     let src = "fn main() -> i64 { let x: f32 = 1.0; let y: f32 = 2.0; \
                    if x < y { return 1; } return 0; }";
     let module = crate::parser::parse(src).expect("parses");
     let ir = crate::eval::lower_to_ir(&module).expect("lowers");
+    #[cfg(feature = "std-surface")]
     assert_eq!(
         profile_frozen_admits(&ir).unwrap_err().construct,
         "call.undefined_or_builtin"
     );
+    #[cfg(not(feature = "std-surface"))]
+    assert_eq!(profile_frozen_admits(&ir), Ok(()), "IR half is type-blind");
     assert_eq!(
         source_admits(src).unwrap_err().construct,
         "type.non_f64_float"
