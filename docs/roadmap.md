@@ -3728,11 +3728,19 @@ Python package and no wasm32 target; the C ABI is the only open foreign interfac
 *Why:* adoption starts with a single install step, and the funnel needs one open binding
 before any commercial one.
 
+*Driving demo (added 2026-11-11):* a web page runs a released MIND model, compiled to wasm32,
+in the visitor's browser and shows its result hash next to the hashes of the native x86-64,
+AArch64 and GPU builds. Controls for batch size, thread count and device change the run but
+never the hash, and any value on the page opens to its exact integer arithmetic. The page
+supplies the few WASI imports the program uses; the compute is the `.wasm` file mindc emits,
+with no second runtime.
+
 **Gates:** `wasm32-wasip1` output for each Core fixture gives the same result hash as
 the x86 and ARM runs, and the `.wasm` file has the same sha256 when built on x86-64
 and on AArch64; mutation control: a fixture whose wasm result differs turns the
 cross-substrate suite red; after the licence decision, the binding installs from a
-package index on Linux x86-64 and AArch64 and runs a documented example in CI.
+package index on Linux x86-64 and AArch64 and runs a documented example in CI; the demo
+model run in a current browser gives the same result hash as its native runs.
 
 ### GP-09 — Conformance grows beyond the Core v1 operator set
 
@@ -4131,3 +4139,35 @@ unchanged.
 ### Open questions — answer before this gets a milestone
 
 - Do AD.3 and Phase 21 (forward-only training) share one optimiser interface?
+
+## Sign-factor low-rank matrix-vector rung for MIND-BLAS (proposed, 2026-11-11)
+
+**Status:** proposed; nothing built. The surface is decided in
+[RFC 0006](rfcs/0006-mind-blas.md) before implementation.
+
+Add one rung to the deterministic kernel ladder: a layer whose weight matrix is stored as two
+sign matrices and three scale vectors, W ≈ diag(h) · U · diag(l) · Vᵀ · diag(g), where U
+(d_out × r) and V (d_in × r) hold only +1 and −1. The forward pass is
+y = h ⊙ U(l ⊙ Vᵀ(g ⊙ x)). The two large products are additions and subtractions only; the
+three scalings are Q16.16 multiplies with the existing Q16.16 rounding rule. Work per layer
+falls from d_out · d_in to r · (d_in + d_out), and the signs pack eight to a byte. Recent
+research reports this layout for weights at and below one bit per weight.
+
+*Why:* integer addition is exact and associative, so the result cannot depend on thread count,
+split reductions, batch size or vector width. The int8 and ternary rungs already have this
+property; this rung keeps it with less memory and less work per layer.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| SF.1 | RFC 0006 entry: packed sign-matrix layout, a `__mind_blas_*` sign-matrix GEMV with an integer accumulator whose width the RFC fixes from d_in and the input range, and a fused three-scale wrapper | A compile-time bound proves the accumulator cannot overflow for the declared shapes; a shape past the bound is refused, never wrapped |
+| SF.2 | Scalar reference, then AVX2 and NEON kernels | Same output bytes from the scalar reference, x86-64 AVX2 and AArch64 NEON on every fixture shape; bit-exact parity with a dense reference built from the same signs and scales; mutation control: flipping one sign bit in a fixture changes the pinned output hash |
+| SF.3 | Benchmarks | Criterion numbers on decode-shaped GEMV cases against the dense int8 GEMV on the same shapes, reported with the 7-field machine-state rule |
+
+### Firewall — do not cross it
+
+- The compiler owns the kernel and its determinism, not the factorization. Training and the
+  conversion from a dense model run offline; only the resulting integer artifact is compiled
+  and hashed.
+- Model quality is the model owner's gate, not the compiler's.
