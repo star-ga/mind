@@ -139,6 +139,12 @@ fn an_image_without_a_bindable_seed_call_never_parses_the_seed() {
         let seed = LaneSeed::new(&["sha256"], &garbage);
         let _ = profile_lane_admits_source_seeded(&ast, &seed, false);
         assert!(seed.parsed.get().is_none(), "{source}");
+        // The IR leg too: it parsed all 21 seed modules on every native build.
+        if !source.contains("missing(") {
+            let ir = crate::eval::lower_to_ir(&ast).expect("fixture lowers");
+            let _ = profile_lane_admits_seeded(&ast, &ir, &seed, false);
+            assert!(seed.parsed.get().is_none(), "IR leg: {source}");
+        }
     }
     let err = admit_with(SHA, &["sha256"], &garbage).unwrap_err();
     assert_eq!(err.construct, "lane.seed.unparsed");
