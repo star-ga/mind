@@ -42,8 +42,8 @@ mod identity;
 
 #[cfg(test)]
 use identity::canonicalize_dir_with_missing_fallback;
-pub use identity::find_project_root_for_file;
 pub(crate) use identity::{canonical_dir, find_project_root_for_file_checked};
+pub use identity::{find_project_root_for_file, governing_project_root};
 
 /// Per-target executable link driver (ELF / PE-COFF / Mach-O dispatch). Only the
 /// host ELF arm is wired today; the others fail loud until their slice lands.

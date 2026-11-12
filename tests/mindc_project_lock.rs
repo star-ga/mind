@@ -231,6 +231,72 @@ fn test_treats_a_leftover_temporary_manifest_as_absent() {
     assert_eq!(refusal(&killed), refusal(&control));
 }
 
+/// `mindc lock`, `fetch` and `clean` find their project by the rule of the
+/// build lock: a leftover temporary manifest is no project, so none of them
+/// writes a lock file into, fetches for, or cleans a standalone directory.
+#[test]
+fn package_commands_treat_a_leftover_temporary_manifest_as_absent() {
+    let files = [("alpha.mind", SIMPLE_MIND)];
+    for command in ["lock", "fetch", "clean"] {
+        let [control, killed] = leftover_vs_control("alpha", &files, "alpha.mind", &[command]);
+        assert_eq!(stderr_of(&killed), stderr_of(&control), "{command}");
+    }
+}
+
+/// `mindc fmt` reads its config from the project of the current directory by
+/// the rule of the build lock: a leftover temporary manifest below a real
+/// project does not hide that project's `[mindcraft.format]`.
+#[test]
+fn fmt_config_is_never_read_from_a_leftover_temporary_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mindc = require_mindc();
+    fs::write(
+        tmp.path().join("Mind.toml"),
+        "[package]\nname = \"formatted\"\nversion = \"0.1.0\"\n\n\
+         [mindcraft.format]\nindent_width = 2\n",
+    )
+    .unwrap();
+    let sub = tmp.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(
+        sub.join("alpha.mind"),
+        "fn main() -> i64 {\n    return 42;\n}\n",
+    )
+    .unwrap();
+    let fmt = |dir: &Path, args: &[&str]| {
+        Command::new(&mindc)
+            .arg("fmt")
+            .args(args)
+            .arg("alpha.mind")
+            .current_dir(dir)
+            .output()
+            .expect("spawn mindc fmt")
+    };
+    let formatted = fmt(&sub, &[]);
+    assert!(formatted.status.success(), "{}", stderr_of(&formatted));
+    // Positive control: under the default config the formatted file differs.
+    let bare = tempfile::tempdir().unwrap();
+    fs::copy(sub.join("alpha.mind"), bare.path().join("alpha.mind")).unwrap();
+    let default_config = fmt(bare.path(), &["--check"]);
+    assert_eq!(
+        default_config.status.code(),
+        Some(1),
+        "the project config changed nothing"
+    );
+    let leftover = sub.join("Mind.toml");
+    fs::write(
+        &leftover,
+        libmind::build::temporary_manifest("alpha", "alpha.mind"),
+    )
+    .unwrap();
+    let checked = fmt(&sub, &["--check"]);
+    assert!(checked.status.success(), "{}", stderr_of(&checked));
+    assert!(
+        !leftover.exists(),
+        "the leftover temporary manifest was not removed"
+    );
+}
+
 /// A search for the project made before the build lock meets a LIVE standalone
 /// build: its lock held and its temporary manifest written (or still empty,
 /// between creation and write). The writer removes that file, then releases

@@ -177,7 +177,7 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     // bare `mindc build --backend native` inside a project could not build at all
     // even though the manifest names its entry.
     let resolved_entry: String = if paths.is_empty() {
-        match crate::project::find_project_root().and_then(|root| {
+        match crate::project::governing_project_root().and_then(|root| {
             let manifest = crate::project::load_manifest(&root)?;
             Ok(root.join(&manifest.build.entry))
         }) {

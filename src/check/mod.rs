@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
-use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
+use crate::project::{MindcraftConfig, RuleSeverity, governing_project_root, load_manifest};
 use crate::type_checker::check_module_types_in_file;
 
 use gitignore::GitignoreFilter;
@@ -576,7 +576,7 @@ fn emit_lsp_diagnostics(diags: &[CheckDiagnostic]) -> Result<String, serde_json:
 // ---------------------------------------------------------------------------
 
 fn load_check_config() -> MindcraftConfig {
-    if let Ok(root) = find_project_root() {
+    if let Ok(root) = governing_project_root() {
         if let Ok(manifest) = load_manifest(&root) {
             return manifest.mindcraft;
         }

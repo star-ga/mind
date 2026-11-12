@@ -1062,8 +1062,8 @@ fn run_mindc_test(
 ///
 /// Returns `Some(root)` when a workspace root is found, `None` otherwise.
 fn detect_workspace_root() -> Option<std::path::PathBuf> {
-    use libmind::project::find_project_root;
-    let root = find_project_root().ok()?;
+    use libmind::project::governing_project_root;
+    let root = governing_project_root().ok()?;
     let text = std::fs::read_to_string(root.join("Mind.toml")).ok()?;
     if text.contains("[workspace]") {
         Some(root)
@@ -1305,8 +1305,8 @@ fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: V
 // ---------------------------------------------------------------------------
 
 fn run_mindc_lock(check: bool, update_pkg: Option<&str>) {
-    use libmind::project::{find_project_root, load_manifest};
-    let root = match find_project_root() {
+    use libmind::project::{governing_project_root, load_manifest};
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[lock]: cannot find Mind.toml: {e}");
@@ -1334,8 +1334,8 @@ fn run_mindc_lock(check: bool, update_pkg: Option<&str>) {
 }
 
 fn run_mindc_fetch(update: bool) {
-    use libmind::project::find_project_root;
-    let root = match find_project_root() {
+    use libmind::project::governing_project_root;
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[fetch]: cannot find Mind.toml: {e}");
@@ -1354,9 +1354,9 @@ fn run_mindc_fetch(update: bool) {
 
 fn run_mindc_clean(cache: bool, all: bool) {
     use libmind::build::cache::clean_all_caches;
-    use libmind::project::find_project_root;
+    use libmind::project::governing_project_root;
 
-    let root = match find_project_root() {
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[clean]: cannot find Mind.toml: {e}");
