@@ -73,8 +73,8 @@ TOOLS = {
     "MLIR_TRANSLATE": "/usr/lib/llvm-20/bin/mlir-translate",
     "CLANG": "/usr/lib/llvm-20/bin/clang",
 }
-# llvm-mc / llvm-objcopy: beside $MLIR_OPT, else in the LLVM 20 dir, else on PATH (the LLVM 23 leg).
-LLVM_PATH = os.pathsep.join([str(pathlib.Path(p).parent) for p in (os.environ.get("MLIR_OPT"), TOOLS["MLIR_OPT"]) if p] + [os.environ.get("PATH", os.defpath)])
+# llvm-mc / llvm-objcopy: only beside $MLIR_OPT when it is set, else the LLVM 20 dir, then PATH (LLVM 23 leg).
+LLVM_PATH = str(pathlib.Path(os.environ["MLIR_OPT"]).parent) if os.environ.get("MLIR_OPT") else os.pathsep.join([str(pathlib.Path(TOOLS["MLIR_OPT"]).parent), os.environ.get("PATH", os.defpath)])
 
 DIRTY = (
     "fn dirty(a: i64) -> i64 { let b: i64 = a + 1; let c: i64 = b * 3; let d: i64 = c + b; "
@@ -624,7 +624,7 @@ def _encoder_table(row: dict, compiler: str, case_dir: pathlib.Path) -> list[str
     bad += [f"A: {len(recs)} records for {len(rows)} rows"] if len(recs) != len(rows) else []
     work = case_dir / "row"
     if not all((llvm := {t: shutil.which(t, path=LLVM_PATH) for t in ("llvm-mc", "llvm-objcopy")}).values()):
-        return bad + [f"B: no stage B, {llvm}: not beside $MLIR_OPT, in /usr/lib/llvm-20/bin or on PATH"]
+        return bad + [f"B: no stage B, {llvm}: not found in {LLVM_PATH}"]
     for t in rows:
         if t[3].startswith("llvm-mc"):
             work.with_suffix(".s").write_text(".intel_syntax noprefix\n" + t[1].replace(" ; ", "\n") + "\n")
