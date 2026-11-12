@@ -515,6 +515,8 @@ const BARE_LEGACY_PARSE_SKIPS: &[&str] = &[
     // grammar, so the bare parser stops first (measured legacy-parse, bare tier, key 358705e65cfe).
     "examples/mindc_mind/nb_branch_memo.mind",
     "examples/mindc_mind/nb_exit.mind",
+    // Its statement-list walk is a `while` loop (measured legacy-parse, bare tier, key ed4a76d76a82).
+    "examples/mindc_mind/nb_exit_carry.mind",
     "examples/mindc_mind/nb_narrow_rebind.mind",
     "examples/mindc_mind/nbx_bind.mind",
     "examples/mindc_mind/testdata/native_lane_values/print_flow.mind",
