@@ -3729,18 +3729,23 @@ Python package and no wasm32 target; the C ABI is the only open foreign interfac
 before any commercial one.
 
 *Driving demo (added 2026-11-11):* a web page runs a released MIND model, compiled to wasm32,
-in the visitor's browser and shows its result hash next to the hashes of the native x86-64,
-AArch64 and GPU builds. Controls for batch size, thread count and device change the run but
-never the hash, and any value on the page opens to its exact integer arithmetic. The page
-supplies the few WASI imports the program uses; the compute is the `.wasm` file mindc emits,
-with no second runtime.
+in the visitor's browser and shows its result hash. Next to it, the page shows the result
+hashes of the native x86-64 and AArch64 builds. Those two hashes are recorded results from the
+release CI evidence: the page labels them "recorded", not "live", and links each one to its CI
+log. `wasm32-wasip1` has no threads and no GPU path, so batch size is the only live control; a
+change of batch size changes the run but never the hash. Any value on the page opens to its
+exact integer arithmetic. The page supplies the few WASI imports the program uses; the compute
+is the `.wasm` file mindc emits, with no second runtime.
 
 **Gates:** `wasm32-wasip1` output for each Core fixture gives the same result hash as
 the x86 and ARM runs, and the `.wasm` file has the same sha256 when built on x86-64
 and on AArch64; mutation control: a fixture whose wasm result differs turns the
 cross-substrate suite red; after the licence decision, the binding installs from a
-package index on Linux x86-64 and AArch64 and runs a documented example in CI; the demo
-model run in a current browser gives the same result hash as its native runs.
+package index on Linux x86-64 and AArch64 and runs a documented example in CI; CI downloads
+pinned browser engines (one pinned version of Chrome for Testing and one pinned version of
+Firefox ESR, both named in the workflow) and runs the demo page headless in each, and the demo
+model gives there the same result hash as its recorded x86-64 and AArch64 runs; the page
+recomputes one shown value from its integer trace, and the result equals the module output.
 
 ### GP-09 — Conformance grows beyond the Core v1 operator set
 
@@ -4149,21 +4154,28 @@ Add one rung to the deterministic kernel ladder: a layer whose weight matrix is 
 sign matrices and three scale vectors, W ≈ diag(h) · U · diag(l) · Vᵀ · diag(g), where U
 (d_out × r) and V (d_in × r) hold only +1 and −1. The forward pass is
 y = h ⊙ U(l ⊙ Vᵀ(g ⊙ x)). The two large products are additions and subtractions only; the
-three scalings are Q16.16 multiplies with the existing Q16.16 rounding rule. Work per layer
-falls from d_out · d_in to r · (d_in + d_out), and the signs pack eight to a byte. Recent
-research reports this layout for weights at and below one bit per weight.
+three scalings are Q16.16 multiplies with the existing Q16.16 rounding rule. The layout
+targets weights at and below one bit per weight.
+
+Break-even values. A dense layer does d_out · d_in multiply-adds; the rung does
+r · (d_in + d_out) additions or subtractions, so it does less work only when
+r < d_in · d_out / (d_in + d_out). Dense int8 weights take d_in · d_out bytes; the signs pack
+eight to a byte and take r · (d_in + d_out) / 8 bytes, plus the three scale vectors, so the
+rung uses less memory only when r is below about 8 · d_in · d_out / (d_in + d_out). Outside
+these ranges the rung does more work or uses more memory than dense int8.
 
 *Why:* integer addition is exact and associative, so the result cannot depend on thread count,
 split reductions, batch size or vector width. The int8 and ternary rungs already have this
-property; this rung keeps it with less memory and less work per layer.
+property; this rung keeps it, with less memory and less work per layer inside the break-even
+ranges above.
 
 ### Order of work
 
 | Step | Work | Gate |
 |---|---|---|
-| SF.1 | RFC 0006 entry: packed sign-matrix layout, a `__mind_blas_*` sign-matrix GEMV with an integer accumulator whose width the RFC fixes from d_in and the input range, and a fused three-scale wrapper | A compile-time bound proves the accumulator cannot overflow for the declared shapes; a shape past the bound is refused, never wrapped |
-| SF.2 | Scalar reference, then AVX2 and NEON kernels | Same output bytes from the scalar reference, x86-64 AVX2 and AArch64 NEON on every fixture shape; bit-exact parity with a dense reference built from the same signs and scales; mutation control: flipping one sign bit in a fixture changes the pinned output hash |
-| SF.3 | Benchmarks | Criterion numbers on decode-shaped GEMV cases against the dense int8 GEMV on the same shapes, reported with the 7-field machine-state rule |
+| SF.1 | RFC 0006 entry: packed sign-matrix layout, a `__mind_blas_*` sign-matrix GEMV with an integer accumulator whose width the RFC fixes from d_in and the input range, and a fused three-scale wrapper | A compile-time bound covers every stage, not only the accumulator: the post-scale input range of g ⊙ x, accumulator 1 (the sum over d_in), the output of the l scaling, accumulator 2 (the sum over r) and the output of the h scaling. A declared shape or input range past any bound is refused at compile time; a run-time input outside the declared range trips a guard and is refused. No stage wraps, and no stage saturates silently |
+| SF.2 | Scalar reference, then AVX2 and NEON kernels | Same output bytes from the scalar reference, x86-64 AVX2 and AArch64 NEON on every fixture shape; bit-exact parity with the staged reference: scalar code with dense unpacked loops computes y_ref = h ⊙ U(l ⊙ Vᵀ(g ⊙ x)) with the same Q16.16 rounding at each of the three stages (a materialised dense W rounds differently and is not the reference); with every scale set to 1.0 (no rounding), the materialised dense W gives the same output; mutation control: the fixture flips one sign bit in a column whose g ⊙ x entry and l entry are both nonzero, and the gate asserts that the pinned output hash changes |
+| SF.3 | Benchmarks | Criterion numbers on decode-shaped GEMV cases against the dense int8 GEMV on the same shapes, reported with the 7-field machine-state rule; the report gives the range of r where the rung beats dense int8 and says that the rung may lose outside that range |
 
 ### Firewall — do not cross it
 
