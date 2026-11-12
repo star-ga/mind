@@ -48,7 +48,7 @@ pub fn compiler_library() -> String {
 
 /// `main_source (\n part)*` in `COMPILER_COMPONENTS` order, as
 /// `SourceBundle.library_bytes` joins them, when it imports a part; one
-/// importing none (`base_compiler_source`) goes alone.
+/// importing none goes alone.
 fn with_imported_parts(main_source: &str) -> String {
     let parts = compiler_components();
     let imported = |p: &String| main_source.contains(&format!("\nimport {};", &p[..p.len() - 5]));
@@ -590,87 +590,6 @@ pub fn extern_corpus() -> Vec<(&'static str, String, Option<i32>)> {
 pub fn run_with_env(binary: &Path, vars: &[(&str, &str)]) -> (i32, Vec<u8>) {
     let ran = capture(binary, vars);
     (finished_code(binary, ran.status), ran.stdout)
-}
-
-/// `(revision, main.mind)` of the nearest ancestor of HEAD whose compiler
-/// source does not name `libcuda.so.1`. The walk is the property "before the
-/// driver rows"; it never returns HEAD, and it never reads the worktree copy
-/// of the file. It follows the compiler's own line ([`compiler_parent`]).
-pub fn base_compiler_source() -> (String, String) {
-    fn git(args: &[&str]) -> Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(repo())
-            .output()
-            .expect("git")
-    }
-    let head = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout).unwrap();
-    let head = head.trim().to_string();
-    assert_eq!(head.len(), 40, "HEAD is not a commit id: {head}");
-    let mut rev = head.clone();
-    // Ends at the pre-driver compiler, or fails closed at a commit with no parent.
-    loop {
-        let found = git(&[
-            "grep",
-            "-F",
-            "-q",
-            "-e",
-            "libcuda.so.1",
-            &rev,
-            "--",
-            "examples/mindc_mind/main.mind",
-        ]);
-        match found.status.code() {
-            Some(1) => {
-                assert_ne!(
-                    rev, head,
-                    "HEAD has no driver rows, so this walk would compare it to itself"
-                );
-                let spec = format!("{rev}:examples/mindc_mind/main.mind");
-                let show = git(&["show", &spec]);
-                assert!(
-                    show.status.success(),
-                    "git show {spec}: {}",
-                    String::from_utf8_lossy(&show.stderr)
-                );
-                let text = String::from_utf8(show.stdout).unwrap();
-                assert!(
-                    !text.contains("libcuda.so.1"),
-                    "{rev} was selected as the base but its main.mind names the driver"
-                );
-                return (rev, text);
-            }
-            Some(0) => {}
-            other => panic!(
-                "git grep {rev}: exit {other:?}: {}",
-                String::from_utf8_lossy(&found.stderr)
-            ),
-        }
-        rev = compiler_parent(&rev, git);
-    }
-}
-
-/// Same main.mind blob, else the first parent. A pull_request first parent is the base.
-fn compiler_parent(rev: &str, git: fn(&[&str]) -> Output) -> String {
-    let blob = |r: &str| {
-        let spec = format!("{r}:examples/mindc_mind/main.mind");
-        let out = git(&["rev-parse", &spec]);
-        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        out.status.success().then_some(text)
-    };
-    let listed = git(&["rev-list", "--parents", "-n", "1", rev]);
-    let err = String::from_utf8_lossy(&listed.stderr).into_owned();
-    assert!(listed.status.success(), "{err}");
-    let line = String::from_utf8(listed.stdout).unwrap();
-    let parents: Vec<String> = line.split_whitespace().skip(1).map(String::from).collect();
-    assert!(!parents.is_empty(), "no parent of {rev}: shallow or root");
-    let own = blob(rev);
-    for parent in &parents {
-        if own.is_some() && blob(parent) == own {
-            return parent.clone();
-        }
-    }
-    parents[0].clone()
 }
 
 fn cc_shared(dir: &Path, source: &str, extra: &[&str], why: &str) -> PathBuf {

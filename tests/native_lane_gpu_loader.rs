@@ -24,10 +24,9 @@
 mod native_lane_extern_support;
 
 use native_lane_extern_support::{
-    Case, MINDC, base_compiler_source, build_align_libcuda, build_apart, build_fake_libcuda,
-    builds_apart, call_cleanups, clang_shim, compiler_library, compiler_source,
-    exit_code_or_signal, extern_corpus, gpu_fixture, mc6_cases, memset_program, mint_library,
-    mint_stage1, repo, run_with_env, self_host_refusal,
+    Case, MINDC, build_align_libcuda, build_apart, build_fake_libcuda, builds_apart, call_cleanups,
+    clang_shim, compiler_library, compiler_source, exit_code_or_signal, extern_corpus, gpu_fixture,
+    mc6_cases, memset_program, mint_library, mint_stage1, repo, run_with_env, self_host_refusal,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -335,6 +334,21 @@ fn runs_alike_on_both_backends(fixture: &str) -> Vec<u8> {
 /// libc-only import, exactly the ruling's "identical_pairs stays all equal" force.
 #[test]
 fn removing_the_driver_rows_keeps_libc_only_bytes() {
+    let rows_removed = Case::with_compiler(mint_library(&library_without_driver_rows()));
+    let fresh = Case::new(true);
+    for (name, src, _) in identity_programs() {
+        let a = std::fs::read(fresh.builds(&src)).unwrap();
+        let b = std::fs::read(rows_removed.builds(&src)).unwrap();
+        assert!(
+            a == b,
+            "{name}: a program with no libcuda import changed its ELF bytes"
+        );
+    }
+}
+
+/// This checkout's compiler library with its 46 driver rows deleted: the
+/// compiler before the driver rows, as a property of the source.
+fn library_without_driver_rows() -> String {
     let source = compiler_library();
     let lines: Vec<&str> = source.lines().collect();
     let (mut kept, mut removed, mut k) = (Vec::new(), 0, 0);
@@ -362,18 +376,8 @@ fn removing_the_driver_rows_keeps_libc_only_bytes() {
         kept.push(lines[k]);
         k += 1;
     }
-    let stripped = kept.join("\n") + "\n";
     assert_eq!(removed, 46, "13 nbx_row driver rows + 33 MC-6 rows");
-    let rows_removed = Case::with_compiler(mint_library(&stripped));
-    let fresh = Case::new(true);
-    for (name, src, _) in identity_programs() {
-        let a = std::fs::read(fresh.builds(&src)).unwrap();
-        let b = std::fs::read(rows_removed.builds(&src)).unwrap();
-        assert!(
-            a == b,
-            "{name}: a program with no libcuda import changed its ELF bytes"
-        );
-    }
+    kept.join("\n") + "\n"
 }
 
 /// How a mutant must fail: a build refusal (the MIND compiler rejects the
@@ -574,15 +578,16 @@ fn identity_programs() -> Vec<(&'static str, String, bool)> {
     out
 }
 
-/// Head's libc-only and no-extern images match the compiler from before the
+/// Head's libc-only and no-extern images match the compiler without the
 /// driver rows. Always emitting the `libcuda.so.1` string (the guard's
 /// mutant) moves every libc-only image and leaves the two no-extern images.
+/// The base is this checkout with the rows deleted, not a revision: a
+/// squashed history has no commit with the extern lane and without the rows.
 #[test]
 fn libc_only_bytes_match_the_compiler_before_the_driver_rows() {
-    let (base_rev, base_src) = base_compiler_source();
+    let base_lib = library_without_driver_rows();
     let head_src = compiler_source();
     assert!(head_src.contains("libcuda.so.1"));
-    assert!(!base_src.contains("libcuda.so.1"));
     let from = "    if has_cu == 1 {\n        s = nbx_ztext(s, cu, 12);\n    }\n";
     assert_eq!(
         head_src.matches(from).count(),
@@ -590,12 +595,10 @@ fn libc_only_bytes_match_the_compiler_before_the_driver_rows() {
         "the libcuda string gate moved"
     );
     let mutant_src = head_src.replacen(from, "    s = nbx_ztext(s, cu, 12);\n", 1);
-    println!("libc-only identity base={base_rev}");
     let (base_c, head_c, mut_c) = std::thread::scope(|scope| {
-        let base_src = base_src.clone();
         let head_src = head_src.clone();
         let mutant_src = mutant_src.clone();
-        let b = scope.spawn(move || mint_stage1(&base_src));
+        let b = scope.spawn(move || mint_library(&base_lib));
         let h = scope.spawn(move || mint_stage1(&head_src));
         let m = scope.spawn(move || mint_stage1(&mutant_src));
         (b.join().unwrap(), h.join().unwrap(), m.join().unwrap())
