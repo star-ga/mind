@@ -360,6 +360,70 @@ fn native_no_path_build_treats_a_leftover_temporary_manifest_as_absent() {
     assert_eq!(stderr_of(&killed), stderr_of(&control));
 }
 
+/// `mindc test` with no path detects a workspace by the rule of the build
+/// lock: a leftover temporary manifest below a workspace root is no project,
+/// so it does not hide the workspace: the members' tests are the ones found.
+#[test]
+fn workspace_detection_skips_a_leftover_temporary_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mindc = require_mindc();
+    let workspace = tmp.path();
+    fs::write(
+        workspace.join("Mind.toml"),
+        "[workspace]\nmembers = [\"member\"]\n",
+    )
+    .unwrap();
+    let member = workspace.join("member");
+    fs::create_dir(&member).unwrap();
+    fs::write(
+        member.join("Mind.toml"),
+        "[package]\nname = \"member\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"t.mind\"\n",
+    )
+    .unwrap();
+    fs::write(
+        member.join("t.mind"),
+        "#[test]\nfn in_member() {\n    assert 7 == 7, \"seven\";\n}\n",
+    )
+    .unwrap();
+    let scratch = workspace.join("scratch");
+    fs::create_dir(&scratch).unwrap();
+    fs::write(
+        scratch.join("s.mind"),
+        "#[test]\nfn in_scratch() {\n    assert 7 == 7, \"seven\";\n}\n",
+    )
+    .unwrap();
+    let list = || {
+        Command::new(&mindc)
+            .args(["test", "--list"])
+            .current_dir(&scratch)
+            .output()
+            .expect("spawn mindc test")
+    };
+    let control = list();
+    assert!(control.status.success(), "{}", stderr_of(&control));
+    let listed = String::from_utf8_lossy(&control.stdout).into_owned();
+    // Positive control: the workspace is detected from below its root, so the
+    // member's test is listed and the scratch directory's is not.
+    assert!(
+        listed.contains("in_member") && !listed.contains("in_scratch"),
+        "{listed}"
+    );
+    let leftover = scratch.join("Mind.toml");
+    fs::write(&leftover, libmind::build::temporary_manifest("s", "s.mind")).unwrap();
+    let killed = list();
+    assert!(
+        !leftover.exists(),
+        "the leftover temporary manifest was not removed"
+    );
+    assert_eq!(
+        killed.status.code(),
+        control.status.code(),
+        "{}",
+        stderr_of(&killed)
+    );
+    assert_eq!(String::from_utf8_lossy(&killed.stdout), listed);
+}
+
 /// A search for the project made before the build lock meets a LIVE standalone
 /// build: its lock held and its temporary manifest written (or still empty,
 /// between creation and write). The writer removes that file, then releases
