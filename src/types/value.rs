@@ -205,6 +205,7 @@ mod table_tests {
     }
 
     /// The text of the self-host function `name` in nb_prim_desc.mind.
+    #[cfg(feature = "std-surface")]
     fn self_host_fn(text: &str, name: &str) -> String {
         let start = text
             .find(&format!("pub fn {name}("))
@@ -233,6 +234,7 @@ mod table_tests {
     /// `prim_names_byte` / `prim_names_byte_hi` and one `prim_row(f, bits,
     /// signed, is_bool, class, ctag)` per code in `prim_code_field`. Returns the
     /// names text, the rows and the C ABI registry tag column.
+    #[cfg(feature = "std-surface")]
     fn self_host_rows() -> (String, Vec<Row>, Vec<u8>) {
         let text = read("examples/mindc_mind/nb_prim_desc.mind");
         let len: usize = self_host_fn(&text, "prim_names_len")
@@ -285,6 +287,7 @@ mod table_tests {
 
     /// The MCABI001 tag the Rust registry writes for the scalar `name`: the
     /// last descriptor byte of `extern "C" { fn probe() -> name; }`.
+    #[cfg(feature = "std-surface")]
     fn rust_registry_tag(name: &str) -> u8 {
         use crate::ir::native_c_abi::{NativeCAbi, SymbolContext};
         let source = format!("extern \"C\" {{ fn probe() -> {name}; }}");
@@ -310,6 +313,8 @@ mod table_tests {
         assert_eq!(rust_rows(), spec);
     }
 
+    // The registry tag comes from the C ABI descriptor, which exists only with `std-surface`.
+    #[cfg(feature = "std-surface")]
     #[test]
     fn self_host_rows_equal_the_spec_table() {
         let (names, host, tags) = self_host_rows();
