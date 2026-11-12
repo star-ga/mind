@@ -431,6 +431,37 @@ fn project_check_with_no_path_takes_the_build_source_set() {
 }
 
 #[test]
+fn a_path_operand_is_never_narrowed_to_the_source_set() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+
+    // Each operand covers a file that is not in the project's source set. The
+    // check reads that file and fails on it: nothing is dropped.
+    let cases: [(&str, &[&str]); 6] = [
+        ("src/docs", &["stray.mind"]),
+        ("docs", &["outside.mind"]),
+        ("src", &["stray.mind"]),
+        (".", &["stray.mind", "outside.mind"]),
+        ("src/docs/stray.mind", &["stray.mind"]),
+        ("docs/outside.mind", &["outside.mind"]),
+    ];
+    for (operand, reported) in cases {
+        let (code, stdout, stderr) = type_check_in(dir.path(), &[operand]);
+        assert_eq!(
+            code,
+            Some(1),
+            "`mindc check {operand}` passed over a broken file:\n{stdout}{stderr}"
+        );
+        for file in reported {
+            assert!(
+                stdout.contains(file) && stdout.contains("missing_name"),
+                "`mindc check {operand}` did not report {file}:\n{stdout}{stderr}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_temporary_manifest_does_not_scope_the_check() {
     // A standalone build writes this manifest for its own duration; a killed
     // build leaves it. It is never a project, so it gives no source set.
