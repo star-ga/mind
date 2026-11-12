@@ -59,6 +59,7 @@ import nb_print;
 import nb_arr_fold;
 import nb_branch_memo;
 import nb_exit_carry;
+import nb_value_if_memo;
 import nbt_fvc_names;
 
 // ===========================================================================
@@ -43898,8 +43899,11 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     if k == ast_if() {
         // A value if-EXPRESSION used as a statement goes through the value path
         // (then_result/else_result = the branch values); a plain if-statement
-        // (diverging or unit) through nb_if_stmt.
-        if is_any_value_if_expr(node) == 1 {
+        // (diverging or unit) through nb_if_stmt. nbvi_value_if: is_value_if_expr, memoized.
+        if nbvi_value_if(node, nbwm_of(lcell)) == 1 {
+            return nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+        }
+        if is_mixed_value_if_expr(node) == 1 {
             return nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
         }
         return nb_if_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);

@@ -92,7 +92,7 @@ _STD_DIR = _REPO / "std"
 _MIGRATED = {"_stdlib_manifest.py", "stdlib_manifest_lint.py"}
 
 _LIST_RE = re.compile(r"^_?STD(?:LIB)?_MODULES\s*=\s*(\[[^\]]*\])", re.M)
-MAIN_MIND_LINE_PIN = 67921  # only down: new code goes in a part; re-pin DOWN with every extraction
+MAIN_MIND_LINE_PIN = 67925  # only down: new code goes in a part; re-pin DOWN with every extraction
 _SEED_PRIVATE_PREFIXES = {"arena": ("arena_",), "async": ("async_", "sched_", "snd_"), "blas": ("blas_",), "cli": ("cli_",),
     "fs": ("fs_",), "io": ("io_",), "io_canon": ("canon_",), "iouring": ("io_", "iouring_", "sys_io_uring_"), "map": ("map_",),
     "json": ("jv_", "jvsb_", "jvstr_", "jvpr_"), "net": ("net_",), "process": ("proc_",), "reactor": ("reactor_",),

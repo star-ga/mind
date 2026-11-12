@@ -197,7 +197,7 @@ count walk made instead of a new walk per enclosing arm.
 more (a `match` arm desugars to an `if` with two jump records, and the router's
 jump estimate does not count arms).
 
-## The exit-carry part (0.10.3)
+## The exit-carry and value-if parts (0.10.3)
 
 `nb_exit_carry.mind` holds the branch-exit-carry pre-gate of the native router
 (`nb_stmts_branch_exit_carry`, called by `hm_fn_pregate`). One bottom-up walk makes
@@ -205,6 +205,9 @@ three facts of each statement list (loop exit, assign, exit-carry branch); it
 replaces `nb_block_loop_exit` and `nb_block_any_assign`, which re-walked every
 later arm at each arm and had no other caller. `MAIN_MIND_LINE_PIN` went down to
 67921.
+`nb_value_if_memo.mind` holds `nbvi_value_if`, the `is_value_if_expr` test of
+`nb_stmt` with each answer kept in the fn's branch memo under the odd key node + 1;
+its import and the two-step test take four lines of `main.mind` (67925, pin 67925).
 
 ## Twin-shaped loops and the extern scan part (0.10.3)
 
