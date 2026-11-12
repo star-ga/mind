@@ -26,8 +26,12 @@
 //! This is intentionally not a full git-core reimplementation. It covers the
 //! patterns encountered in typical `.gitignore` files: `target/`, `*.o`,
 //! `build/**`, `!src/generated/keep.mind`, etc.
+//!
+//! The directory walk of `mindc check` that applies the filter is here too.
 
-use std::path::Path;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// A compiled set of gitignore rules loaded from one or more ignore files.
 #[derive(Default)]
@@ -213,6 +217,91 @@ fn glob_inner(pat: &[u8], txt: &[u8]) -> bool {
         (Some(&p), Some(&t)) if p == t => glob_inner(&pat[1..], &txt[1..]),
         _ => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// The filtered walk of `mindc check`
+// ---------------------------------------------------------------------------
+
+/// Walk `dir` recursively, collecting `*.mind` files that pass the filter.
+pub(super) fn collect_mind_files(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    filter: Option<&GitignoreFilter>,
+    repo_root: Option<&Path>,
+) -> io::Result<()> {
+    let mut children: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    children.sort();
+
+    for child in children {
+        if child.is_dir() {
+            collect_mind_files(&child, out, filter, repo_root)?;
+        } else if child.extension().is_some_and(|ext| ext == "mind")
+            && should_include(&child, filter, repo_root)
+        {
+            out.push(child);
+        }
+    }
+    Ok(())
+}
+
+/// Return `true` if `path` should be included in the check run.
+pub(super) fn should_include(
+    path: &Path,
+    filter: Option<&GitignoreFilter>,
+    repo_root: Option<&Path>,
+) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    let rel = match repo_root {
+        Some(root) => path.strip_prefix(root).unwrap_or(path),
+        None => path,
+    };
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    !filter.is_ignored(&rel_str)
+}
+
+/// Build a [`GitignoreFilter`] from the repo's `.gitignore` and
+/// `.git/info/exclude` (if present), rooted at `root`.
+pub(super) fn build_gitignore_filter_from(root: Option<&Path>) -> GitignoreFilter {
+    let mut f = GitignoreFilter::default();
+    if let Some(r) = root {
+        f.load_file(&r.join(".gitignore"));
+        f.load_file(&r.join(".git/info/exclude"));
+    } else {
+        // Fallback: look in current directory.
+        f.load_file(Path::new(".gitignore"));
+    }
+    f
+}
+
+/// Walk upward from `start` to find the git repository root (dir that contains
+/// `.git`). Returns `None` if not inside a git repo.
+pub(super) fn find_git_root_from(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
+    // Canonicalize so relative paths work.
+    if let Ok(abs) = cur.canonicalize() {
+        cur = abs;
+    }
+    loop {
+        if cur.join(".git").exists() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+/// Walk upward from CWD to find the git repository root (dir that contains
+/// `.git`). Returns `None` if not inside a git repo.
+pub(super) fn find_git_root() -> Option<PathBuf> {
+    let cur = std::env::current_dir().ok()?;
+    find_git_root_from(&cur)
 }
 
 // ---------------------------------------------------------------------------

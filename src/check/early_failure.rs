@@ -20,7 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{CheckDiagnostic, CheckPhase, CheckSeverity, ReporterKind, emit_lsp_diagnostics};
+use super::reporter::emit_lsp_diagnostics;
+use super::{CheckDiagnostic, CheckPhase, CheckSeverity, ReporterKind};
 
 /// Report `message` through `reporter` and return exit code 1.
 ///
