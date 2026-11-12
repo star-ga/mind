@@ -716,7 +716,11 @@ fn socket_neighbours_outside_the_table_refuse_by_name() {
             "fn getsockname(fd: i32, addr: *mut u8, len: *mut u8) -> i32;",
             "getsockname",
         ),
-        ("fn freeaddrinfo(res: *mut u8);", "freeaddrinfo"),
+        // freeaddrinfo has a table row now (row 87); getnameinfo has none.
+        (
+            "fn getnameinfo(addr: *const u8, len: i32, host: *mut u8, hostlen: i32, flags: i32) -> i32;",
+            "getnameinfo",
+        ),
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
         case.refuses_named(&source, name, name);
