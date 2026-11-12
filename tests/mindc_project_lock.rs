@@ -297,6 +297,54 @@ fn fmt_config_is_never_read_from_a_leftover_temporary_manifest() {
     );
 }
 
+/// `mindc check` reads its rule severities by the same rule: a leftover
+/// temporary manifest below a real project does not hide `[mindcraft.rules]`.
+#[test]
+fn check_config_is_never_read_from_a_leftover_temporary_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mindc = require_mindc();
+    fs::write(
+        tmp.path().join("Mind.toml"),
+        "[package]\nname = \"checked\"\nversion = \"0.1.0\"\n\n\
+         [mindcraft.rules]\n\"lint::trailing_whitespace\" = \"error\"\n",
+    )
+    .unwrap();
+    let sub = tmp.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let source = "fn main() -> i64 { 42 } \n";
+    fs::write(sub.join("alpha.mind"), source).unwrap();
+    let check = |dir: &Path| {
+        Command::new(&mindc)
+            .args(["check", "--no-fmt", "--no-typecheck", "alpha.mind"])
+            .current_dir(dir)
+            .output()
+            .expect("spawn mindc check")
+    };
+    let control = check(&sub);
+    assert_eq!(control.status.code(), Some(1), "{}", stderr_of(&control));
+    // Positive control: under the default config the rule only warns.
+    let bare = tempfile::tempdir().unwrap();
+    fs::write(bare.path().join("alpha.mind"), source).unwrap();
+    let default_config = check(bare.path());
+    assert_eq!(
+        default_config.status.code(),
+        Some(0),
+        "the project config changed nothing"
+    );
+    let leftover = sub.join("Mind.toml");
+    fs::write(
+        &leftover,
+        libmind::build::temporary_manifest("alpha", "alpha.mind"),
+    )
+    .unwrap();
+    let killed = check(&sub);
+    assert_eq!(killed.status.code(), Some(1), "{}", stderr_of(&killed));
+    assert!(
+        !leftover.exists(),
+        "the leftover temporary manifest was not removed"
+    );
+}
+
 /// A search for the project made before the build lock meets a LIVE standalone
 /// build: its lock held and its temporary manifest written (or still empty,
 /// between creation and write). The writer removes that file, then releases
