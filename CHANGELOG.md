@@ -7,6 +7,521 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-13
+
+### Added
+- **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
+  (Linux).** `https_get(url)` / `https_post(url, body, content_type)` (and
+  `https_get_ca` / `https_post_ca` with a CA bundle path) resolve the host with
+  `tcp_connect_host`, draw the TLS randoms and key share from `entropy_fill`,
+  run the TLS 1.3 client, authenticate the chain against the system CA bundle
+  (`/etc/ssl/certs/ca-certificates.crt`) at the system clock, and speak
+  HTTP/1.1: Host header, Content-Length and chunked bodies, a body that ends
+  with close_notify, bounded URL / header block (32 KiB) / body (8 MiB) /
+  request body, a 30 s socket timeout and a 120 s deadline on the monotonic
+  clock (every read and write is limited to the time left, so one read cannot
+  run past it). Redirects are not
+  followed: a 3xx is returned. Each call returns a response record whose error
+  is 0 or a named `https_err_*` code (wrong hostname, certificate validity,
+  unknown anchor, other chain refusal, CertificateVerify, unsupported leaf key,
+  truncated, body too large, malformed response, ...); a refusal carries no
+  status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
+  rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
+  is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
+  checked.** A qualified call to one of the
+  six request functions (`https.https_get(...)`) is a world read, like
+  `entropy_fill`: the determinism veto refuses it without
+  `--allow-nondeterministic`.
+  - Request headers: `https_get_with_headers(url, headers, ca_path)` and
+    `https_post_with_headers(url, headers, body, content_type, ca_path)` send a
+    caller block of `name: value` CRLF lines (for example `X-API-Key` and
+    `Cookie`) after the client's own headers; `ca_path` 0 is the system bundle.
+    A line that is not `token: value` CRLF, a byte outside HTAB and printable
+    ASCII, a block over 16 KiB, or a header the client writes itself (Host,
+    User-Agent, Accept, Connection, Content-Type, Content-Length) or that
+    changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect) is
+    refused with `https_err_request_headers` (-19) before any connection.
+  - Response headers: `https_header_nth` / `https_header_count` read every
+    header of a name; `https_set_cookie_count`, `https_set_cookie` (the whole
+    value) and `https_set_cookie_pair` (the `name=value` a later request sends
+    back) capture Set-Cookie. `https_free` releases a response record.
+  - Strict framing: a chunk size takes leading zeros and is refused at the
+    digit that passes the 8 MiB body cap (`https_err_body_too_large`), so it
+    cannot overflow; a chunk extension and a response header value holding a
+    control byte (NUL, bare CR or LF, DEL) are refused (`https_err_response`).
+  - Error classes: `https_error_class(r)` is `https_class_none()` (0) for a
+    complete response, `https_class_before_send()` (1) when the call failed
+    before any request byte was written (a refused URL, header block, body or
+    CA bundle, name resolution, the TCP connect, the TLS handshake), so the
+    same request is safe to retry, and `https_class_after_send()` (2) when the
+    client had begun to write the request and the response is missing,
+    partial or garbled, so the server may have acted and the caller must pause
+    and never count it as a result. A failure is never a success: it carries
+    no status or body. The client marks the request as begun before its first
+    write, so a write that fails partway (a reset during the body) is
+    after-send; application data that arrives before any request byte is
+    written (with the server's handshake flight) answers no request and is
+    refused (`https_err_response`, before-send).
+  - `std.https_probe`: `https_probe(url, url_len, timeout_ms)` resolves the
+    URL's host and opens and closes one TCP connection to its port, sending
+    nothing, with a distinct code per failure: `https_probe_err_url`,
+    `_dns_again` (EAI_AGAIN: the resolver or network is down), `_dns`,
+    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. A qualified
+    call to it is a world read.
+  - The TLS 1.3 client's record pump and handshake state machine move from
+    `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
+    the HTTPS driver: the import chain under the state machine is already five
+    modules deep, the arch-mind DEPTH ceiling. The EncryptedExtensions and
+    Certificate parsers move to `std.tls13_client_api`; every name is kept.
+    New modules `std.https_url` (error codes, bounds, URL, request) and
+    `std.https_http1` (response record and parser).
+  - `std/https.mind` is split along its seams so no file passes the size
+    ceiling: `std.https_record` (the record layer: validate and open one
+    record, act on its content type; handshake content is returned in a
+    pending record that `tls13c_handle_record` parses) and `std.https_io` (the
+    clocks, the request deadline, the socket time budget and the CA bundle
+    file; `hio_now_unix`, `hio_now_mono_ms`, `hio_remaining_ms`, `hio_arm` and
+    `hio_io_failure` are qualified world reads). `std.https` keeps every public name and the handshake state
+    machine with the driver: each caller of the hello, finished, X.509 path and
+    client API modules stays in the top module so the import chain stays at
+    five. `tls13c_x509_blob` moves to `std.tls13_client_api`. The loopback test
+    server is split into five fixture files the harness appends in order.
+  - The client now discards whole post-handshake NewSessionTicket messages
+    (any other post-handshake message is refused), holds one full record of
+    decrypted application data (16 KiB, was 2 KiB, so a record of the RFC 8446
+    maximum of 2^14 plaintext bytes no longer ends the connection with E_OVF)
+    and opens no further record until it is read, so a body of any size
+    streams through that fixed window. It records the presented leaf key
+    (`tls13c_leaf_key_kind`, `tls13c_leaf_rsa_len`) outside the ranges key
+    erasure clears, so the evidence survives the refusal it names, and
+    reports its inbound space (`tls13c_in_space`). `tls13c_state_size()` is
+    102400 and does not depend on the body size. The per-record scratch
+    buffers (record copy, plaintext, AEAD nonce and inner plaintext, in
+    `std.tls13_record` too) and the chain and anchor tables are released, so
+    memory does not grow with the number of records.
+  - CA bundles: `x509_load_anchors` accepts blank lines and `#` comment lines
+    between PEM blocks (other text is still refused), decodes into one buffer,
+    and holds up to `x509_max_anchors()` (1024) anchors in at most 4 MiB. The
+    32-anchor cap in `x509_verify_server_chain` is replaced by a bounded search
+    over the whole set: each anchor is parsed once and only one whose subject
+    issues a supplied certificate enters the path search.
+  - `std.dns`: `tcp_set_io_timeout` (SO_RCVTIMEO and SO_SNDTIMEO) and
+    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream; `dns_free` releases
+    a `dns_resolve` record; the socket descriptor calls `dns_tcp_socket`,
+    `dns_set_send_timeout`, `dns_connect_fd`, `dns_errno` and `dns_close_fd`
+    (`std.https_probe` makes its socket calls through them, so it makes no OS
+    call of its own; a call to `dns_tcp_socket` or `dns_connect_fd` is a world
+    read); `dns_clock_gettime` and `dns_read_path` (a bounded whole-file read
+    that closes its descriptor), through which `std.https_io` reads the clocks
+    and the CA bundle, so it makes no OS call of its own either (a call to
+    `dns_clock_gettime` is a world read). `dns_resolve`, `tcp_connect_host(_timeout)` and
+    the host-layout probe release every per-call allocation (the name copy,
+    hints and out-slot, the `uname` buffer, the socket address, the timeout
+    value, the record the connect call resolves) on the success and every
+    error path (`tests/std_dns_free_run.rs`).
+  - `tests/std_https_loopback.rs`: a hermetic loopback TLS 1.3 server in MIND
+    (test-only RSA-2048 chain, `tests/https_loopback/`) proves GET, POST,
+    chunked, a multi-record body and an unfollowed 301, and the named refusals;
+    an ignored test is the manual release smoke against
+    `https://three.arcprize.org/`.
+  - `tests/std_https_openssl.rs`: the client against `openssl s_server` on
+    127.0.0.1 with the same chain, through a TCP proxy that records every
+    server record: a full 16 KiB record, a 5 MiB Content-Length body and a
+    5 MiB chunked body compared byte for byte, X-API-Key, Cookie, Content-Type
+    and the POST body asserted at the server, two Set-Cookie headers captured,
+    and the refusals of malformed chunk sizes (eleven forms), control bytes in
+    a response header, malformed request header blocks (nine forms, before any
+    connection), a body truncated by close_notify, by a missing last chunk and
+    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf;
+    and the framing guards, each beside an accepted control: a repeated
+    Content-Length, a transfer coding other than chunked, a Content-Length
+    over 18 digits (one that would wrap i64), and CR, LF, SP and other control
+    bytes in the URL request target (refused before any connection); an 8 MiB
+    POST body (the request maximum) reaches s_server whole, and the same
+    request is refused after-send when a proxy resets the connection while the
+    body is written. Every refusal is checked with its error class.
+  - `tests/std_https_network_safe.rs`: the loopback server in MIND and a step
+    client under a preloaded resolver: a DNS outage between two requests (the
+    probe reports it, the request fails before-send, and after the outage the
+    same request returns the exact body), a refused port and a full accept
+    queue (probe codes), a TLS refusal before the request and a cut after it,
+    a body framed by the connection, which is complete only on close_notify:
+    a fatal alert, a warning alert and a TCP close are refused after-send; and
+    a response that arrives before any request byte is written (a recorded
+    server flight, response and close_notify replayed right after the client's
+    ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
+- **`std.procgroup` — run many child processes and wait for all of them (`#351`,
+  `59ac0915`)** (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
+  `procgroup_spawn` / `procgroup_wait_all` start up to 4096 children, capture
+  each child's stdout through its own pipe (drained while the children run),
+  and wait for all of them with one deadline; a child still running at the
+  deadline is killed with `SIGKILL` and reported timed out. Every spawned slot
+  ends in one state (ok, non-zero exit, signal, timed out, spawn failed, lost),
+  and `procgroup_wait_all` returns how many are not ok. `procgroup_self_exe()`
+  plus `procgroup_task_index()` let one `mindc build` executable run itself N
+  times in parallel. Bundled and linked like the other substrate modules; not
+  in the native seed. `tests/std_procgroup_run.rs` builds a program with
+  `mindc build` that spawns 25 copies of itself. `procgroup_spawn`,
+  `procgroup_wait_all` and `procgroup_task_index` are classified as world
+  readers (`src/intrinsics.rs`), so the flat `mindc <file>` path refuses an
+  artifact for a program that calls them unless `--allow-nondeterministic` is
+  given, and attests it `nondeterministic`. `std.procgroup` itself makes no
+  OS call: every pipe, fork, exec, wait, kill, read, poll, clock and
+  environment call is a primitive of the new effect module
+  `std.procgroup_sys` (`std/procgroup_sys.mind`, not in the native seed;
+  every function in it is one straight-line OS call, with the deadline
+  arithmetic, the poll-until-deadline step and the environment save and
+  restore in `std.procgroup`, and the C-string helpers in
+  `std.procgroup_text`), and
+  the primitives that read the world are classified the same way.
+- **`std.entropy` and `std.dns` for `mindc build` executables (`#349`)**: `entropy_fill`
+  reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
+  read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
+  `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
+  bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
+  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
+  is `dns_err_unknown`), and a failed call returns no entries. It reads `struct addrinfo`
+  in the layout of the host uname(2) names: Linux (`ai_addr` at +24, AF_INET6 = 10) or
+  Darwin (`ai_addr` at +32, `sa_len` / `sa_family` bytes, AF_INET6 = 30); on any other
+  host, or when uname fails, it returns `dns_err_platform` without calling getaddrinfo.
+  `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
+  a per-connect timeout and return a std.net TcpStream handle; they use Linux socket
+  constants and return 0 on any other host. `getrandom` and `getaddrinfo` are classified
+  as world reads, and so are `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
+  `tcp_connect_host_timeout`, because a caller's IR holds only the call: a program that
+  calls one is refused by the determinism veto without `--allow-nondeterministic` and,
+  with it, attested `nondeterministic`.
+  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
+  `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
+- **X.509 path validation and a TLS 1.3 client in std (`#346`).** `import std.x509;` and
+  `import std.tls13_client;` resolve, link and run in `mindc build` executables
+  and under `mindc test`.
+  - `std.x509` validates a server chain (`x509_verify_server_chain`) from
+    the leaf through intermediates to a caller-supplied anchor set: RSA PKCS#1
+    v1.5 (2048/3072/4096-bit), RSA-PSS, ECDSA P-256/P-384, validity against the
+    caller's `now_unix`, DNS/IP name constraints, keyUsage and serverAuth EKU,
+    RFC 6125 hostname matching (a wildcard only as the complete left-most
+    label, IP SAN for IP literals), the inner and outer signature algorithm
+    identifiers equal, SHA-1 refused, and in-memory DER/PEM trust
+    anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
+    Limits: no revocation checking, DNS/IP-only name constraints, at most 8
+    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
+    fail closed. The path search treats a certificate repeated in the chain
+    (same DER) as one candidate issuer and spends at most 64 signature
+    verifications, anchor and bag issuers alike, failing -13 past that, so a
+    peer's certificate bag cannot multiply the work;
+    `x509_verify_server_chain_budget` takes that budget from the caller.
+    The RSA-PSS salt-length bound comes from the issuer's modulus
+    (`n_len - 34` for SHA-256: 222, 350 and 478 for RSA-2048, 3072 and 4096), so
+    long-salt signatures under larger keys verify and one past the key's bound
+    is refused as an unsupported parameter (-2).
+    Anchors are trusted key bindings: their self-signature and
+    validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
+    constraints apply to the path below them.
+  - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,
+    `x509_path`, `x509_bundle` and `x509_bignum` (the RSA bignum, which
+    `rsa_pss` now imports instead of `x509`). `x509_verify_server_chain` is
+    in `x509_path` and `x509_parse` in `x509_der`; `std/x509.mind` imports
+    the whole validator.
+  - `std/tls13_client.mind` (with `_core`, `_hello`, `_api`): a bounded
+    sans-IO TLS 1.3 client. The caller owns I/O, entropy, time and the tick
+    budget; DNS-only SNI, caller ALPN, one HelloRetryRequest, fragmented
+    handshake reassembly, latched fail-closed refusal, and every chain
+    authenticated by `x509_verify_server_chain`. CertificateVerify supports
+    `rsa_pss_rsae_sha256` only, with an RSA-2048 leaf key that `x509_rsa_spki`
+    decodes strictly as rsaEncryption (NULL or absent parameters, 0 unused
+    bits, exactly two positive minimal INTEGERs); `x509_parse` and the chain
+    verifier share that decoder. Every other leaf key is refused: a non-RSA
+    key (ECDSA included) and RSA-1024 at CertificateVerify (E_CV), RSA-3072
+    and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
+    server key) keeps its known answer at the RSA-PSS verify primitive, not
+    through the client.
+    The 2048-byte application receive buffer reclaims bytes the reader has
+    already consumed before its bound check, so a long stream of small records
+    is read in full; a record that does not fit the unread bytes still fails
+    closed (E_OVF).
+  - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
+    only; issuer signatures inside the chain keep ECDSA P-256/P-384,
+    RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
+    known-answer tests (public CA chains need them, for example an RSA-4096
+    root). Revocation is not implemented.
+  - All twelve modules are bundled table rows and substrate members, and none
+    is a native seed row: `--backend native` refuses their import at the import.
+  - The longest std import chain stays at five modules. The client's top
+    module imports `x509_path` and `tls13_finished` directly:
+    `tls13_hs_cert_verify_content`, `tls13_hs_verify_server_finished` and
+    `tls13_hs_client_finished` move from `tls13_handshake` to `tls13_finished`,
+    and `tls13_hs_rsa_pss_verify` to `rsa_pss`, with the same names and code.
+  - The loops of the IP literal parsers and the anchor loader end on a flag,
+    not on `break` or `continue`, so `mindc test` runs short DNS names, IP
+    literals and `x509_load_anchors` as the executable does.
+  - `tests/std_tls_x509_import.rs`: X.509 refusals (expired, not yet valid, no
+    CA path, hostname mismatch, short names and IP literals, wildcard rules,
+    an EKU without serverAuth, an IP literal against a dNSName, an outer
+    signature algorithm that differs from the inner one, wrong key), the IP
+    literal parsers, the DER and PEM anchor loader and RSA chains under
+    `mindc test` and in the executable, ECDSA/RSA-PSS/IP/name-constraint chains
+    in the executable, the RFC 8448 §3 transcript hash and key schedule on both
+    engines, and the 24 recorded TLS 1.3 flights in the executable; each with a
+    mutated copy that must fail. `tests/x509_chain_smoke.rs` replays the full
+    fixture matrix through `--emit-shared`.
+- `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
+  instead of carrying an identical copy.
+- **Results as mic@3 records (`std.mic_record`, `std.mic_results`, `#350`)**: a MIND program
+  writes and reads its results (per-game and per-level actions, a score as a
+  numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
+  empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
+  keys sorted, so the bytes depend only on the key/value set; the reader accepts only
+  that canonical form and refuses malformed input with a named error, checking every
+  count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
+  allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
+  records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
+- **Release build hardening and the release feature set (`#344`)**: `Cargo.lock` is committed and every workflow cargo call that resolves
+  dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
+  compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
+  therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
+  `release_profile` job builds the exact release.yml command on native x86_64 and aarch64 runners,
+  runs the post-build smoke action, and drives the packaged binary through
+  `tests/evidence_release_smoke.rs`: unsigned bytes equal the committed fixture with the signing
+  features compiled in (release set) or out (std-surface test rows), the public TEST seeds sign, the
+  signature verifies under pinned keys, and stripping either leg is refused. R8 fails when the job's
+  `cargo build` differs from release.yml's in any argument or its signing smoke loses the release
+  feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
+  leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
+  its feature sets never resolve fips204 or fips205.
+- `mindc test` can read project files read-only (open/read/lseek/close); results match native (`#331`).
+- **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
+  `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
+  blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
+  same-runner interleaved paired A/B wall-clock builds of `mindc <src> --emit-shared`
+  against `origin/main` across `examples/collatz.mind`, `examples/cos_dottie.mind`, and
+  `examples/dottie_collapse.mind` (`N >= 11` pairs after warmup), and fails closed via a
+  one-sided exact binomial sign test (`alpha = 0.01`, `MAX_RATIO = 1.15`, `DEADBAND_NS = 5_000_000`)
+  if the candidate is consistently slower or if any stage time or artifact is missing.
+
+### Changed
+- **TLS 1.3 client and X.509 limits (`std.https` work).** The presented chain
+  holds at most 8 certificates (`x509_path`: a count over 8 is refused) and a
+  trust store at most `x509_max_anchors()` (1024) anchors, up from 32, so the
+  system CA bundle loads. The application receive buffer holds one record
+  (16384 bytes): the client opens the next record only after the reader has
+  drained the previous one, so a long stream of small records is read in full
+  and unread bytes are never overwritten; a record longer than the record
+  bound fails closed (E_OVF). This replaces the 2048-byte buffer that
+  reclaimed consumed bytes before its bound check.
+
+### Fixed
+- The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
+- The 32 raw-syscall twins compile into the runtime object only when the module MLIR names a `__mind_sys_` symbol (`-DMIND_RAW_SYSCALLS`).
+- **String comparison is the same on every backend (#343)**: `mindc test` analyses each
+  std and project module it merges into a test against that module's own declarations,
+  as `mindc build` compiles each module alone, so a string a test hands to `vec_push` no
+  longer makes integer comparisons in an unrelated std module refused with `E2038`. The
+  payload types of an imported enum variant come from the project registry, so a string
+  one module stores into another module's `i64` payload is refused with `E2038` in a
+  project build as it is in one file, also when a third module declares a private enum
+  of the same name.
+- **Release builds run only in the tag's own cache scope (`#385`, `cd84394e`)**: `release.yml`'s
+  `workflow_dispatch` trigger ran the release build of the tagged commit in the cache scope
+  of the branch it was dispatched on (main, by default), where the build's runtime token
+  could write cache entries every later main run restores. A tag push is now the only
+  trigger; to repeat a release, re-run its tag-push run, which keeps the tag as its ref.
+  `scripts/check_release_gating.py` R3 now fails on any other trigger and on a branch
+  filter in the push trigger. The same change clears the other open code-scanning alerts:
+  the AES-GCM bench names its key and IV as the published all-zero GCM Test Case 2
+  inputs, the roofline bench's CPUID read builds on the MSRV toolchain as on newer ones,
+  and a test, a tool and two smoke scripts get clearer identifiers.
+- **Determinism through project modules**: a single-file build (`--emit-evidence`,
+  `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
+  the project modules it imports, transitively and function by function, and classifies
+  each body it reaches with the evidence classifier. A sibling that calls
+  `entropy.entropy_fill`, a `std.dns` resolver or `time.now_ns` used to pass the veto and
+  be attested `deterministic`; it is now refused without `--allow-nondeterministic`
+  (naming the callee and the project function that calls it) and, with it, attested
+  `nondeterministic`. A pure sibling function stays `deterministic`, even beside a
+  world-reading function the program does not call. `mindc verify` keeps a stored
+  `nondeterministic` label when the hashed body calls a function it does not hold; a
+  stored label that a self-contained body contradicts, and a stored `deterministic` the
+  body contradicts, are still refused as tampered. (`src/project/single_file_scope/
+  world_reach.rs`, `src/ir/evidence/reach.rs`, `tests/determinism_veto_control.rs`)
+- **Slice arguments with alias elements and private helpers**: the slice-call
+  check compares element types after type-alias resolution (local aliases and
+  aliases exported by an imported module), so `array<Q>` with `type Q = i32`
+  passes to `&[Q]` and `&[i32]`; a float element reached through an alias is now
+  refused like a direct one. An imported alias now resolves in a project whose
+  manifest lists `[targets.cpu].sources`, by the same owner rule as imported
+  types. Calls inside a `module m { ... }` block resolve module-private sibling
+  functions, so a slice argument to a non-exported helper is admitted and
+  checked instead of reported as passed to an unresolved function. A type read
+  from an imported signature or an imported struct field is read in its owner
+  module's scope, so `let b: defs.Bank = defs.make_bank()` meets a `make_bank`
+  declared `-> Bank` inside `defs`. An array-literal element that names a module
+  constant (local, or imported such as `defs.ONE`), or an arithmetic expression
+  over such constants, is classified by the constant's value. A slice or
+  collection type named through an alias (`type V = array<i32>`,
+  `type SL = &[i32]`) is refused at the slice boundary with `E2032` (and a slice
+  alias as a struct field with `E2033`), because lowering does not resolve such an
+  annotation: before, a read of an `SL` parameter failed to build or emitted an
+  artifact with an undefined symbol.
+  (`src/type_checker/slice_abi/aliases.rs`, `src/type_checker/mod.rs`,
+  `src/qualified_enums.rs`, `src/qualified_enums/canonical_types.rs`)
+- **Project source walk**: The project-root tests/ directory is now left out of
+  the walked source set (nested tests/ directories stay in). Source sets and
+  cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
+- The C read_to_string record uses cap = size + 1, retries EINTR and returns the
+  empty record on a read error, matching std/fs.mind.
+- **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
+  `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
+  compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
+  `src/eval/module_bindings.rs`, `src/test/imports.rs`). During constant lookup
+  (`const_table_lookup` / `const_lookup_keys`), the current module's owner-qualified
+  constant (`owner::K`) is checked before bare imported bindings, so a local `const K`
+  shadows even an ambiguous pair of same-name imports while an unshadowed ambiguous
+  bare constant reference is refused with a diagnostic naming both candidate modules.
+- **Bare `std` calls in imported module bodies under `mindc test` (`#318`, `7b40d0c7`)**:
+  When `mindc test` merges an imported sibling module whose source declares
+  `import std.<submod>;`, exported functions from `std/<submod>.mind` are now registered
+  as non-clobbering fallback bindings (`insert_std_imported_call` in
+  `src/eval/module_bindings.rs` and `merge_imported_modules` in `src/test/imports.rs`)
+  so bare `std` calls inside imported module bodies execute instead of failing as
+  unknown functions, without overriding local definitions or sibling project exports.
+- **Bare imported calls execute under `mindc test` (`#297`, `37cf0f4f`)**: `mindc test`
+  (`--features cross-module-imports`) now merges parsed `FnDef` and `ConstDef` items from
+  imported sibling modules into the test module before IR lowering and scopes bare-import
+  call bindings (`src/eval/module_bindings.rs`) per lowering pass via `ModuleBindingsGuard`.
+  Ambiguous bare calls across two imported modules are refused at the call site unless
+  shadowed by a local `fn` or disambiguated as `m.f(...)`.
+- **Native `assert` reports source span and message before abort (`#298`, `ab26bd50`)**:
+  On a false `assert` in a native CPU build (`src/mlir/lowering.rs`,
+  `runtime-support/mind_intrinsics.c`), the lowered failure block now calls
+  `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
+  writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
+  instead of trapping silently.
+- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`; CI-executed KAT `#325`)**:
+  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
+  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
+  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
+  verify negative returns on null, missing, and non-directory paths in debug and release builds.
+- **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`)**: `String`
+  record fields are now lowered through the whole-program mic@3 evidence path instead of
+  falling back to a placeholder, so a project whose structs carry `String` fields emits
+  correct evidence bytes.
+- **`mindc build --backend native` bridges to the pure-MIND native-ELF compiler (`52bd6d3b`)**:
+  the opt-in native backend now hands a project build to the pure-MIND compiler. The
+  `--backend` flag itself shipped in 0.10.2.
+- **The self-host record-trace seed is frozen and the mirror gate follows the advanced
+  compiler seed (`4211591e`, `42cadc3c`)**: the record-trace publication seed and its
+  receipts are committed as a frozen baseline, and the mirror gate is bound to the
+  advanced compiler seed.
+- **`__mind_open` is wired on the Rust/MLIR backend (`be7f945c`)**: `std.fs` path-based
+  file I/O now builds and links under `mindc build`'s default backends. The C runtime
+  gains an `open` definition and the intrinsic table gains the `__mind_open` row
+  (arity 1, pure); this empties the exec-tier quarantine set.
+- **A bare call to an imported `std` world function is classified as a world call (`#374`,
+  `e68f3480`)**: the determinism evidence classifier now treats a bare call to an imported
+  `std` module's world-reading function (e.g. `entropy_fill`, `dns_resolve`) as a world call,
+  so a program that reaches one through an imported module is refused without
+  `--allow-nondeterministic` and attested `nondeterministic` with it, matching direct calls.
+- **`mindc test` evaluates float conditions, zeroed arrays, `break` and `for-each` like the
+  build (`#342`, `67439663`)**: the test evaluator now matches native/MLIR semantics for
+  float-typed `if`/`while` conditions, zero-initialized fixed arrays, `break` out of nested
+  loops, and `for-each` over arrays, closing evaluator/build divergence.
+- **A foreign export from a module decoded from mic@3 is refused (`#356`, `c36deb0d`)**:
+  the MLIR lowering rejects an `extern` export whose defining module was decoded from a
+  mic@3 artifact, preventing cross-artifact symbol leakage.
+- **A wrong-arity intrinsic call is refused in every feature build (`#355`, `#338`, `#368`)**:
+  the intrinsic-call arity check fires uniformly across feature profiles, reporting `E2005`
+  in every body shape (bare call, method call, imported-module body).
+- **Malformed UTF-8 is refused in the canonical JSON dump (`#347`, `676bd2fa`)**:
+  `std/json_canon` rejects a `String` whose bytes are not valid UTF-8 instead of emitting
+  replacement characters.
+- **`--emit object` writes a relocatable object (`#339`, `615d375c`)**: the object-file emit
+  path produces a proper relocatable `.o` (not a linked image), so downstream link steps
+  can compose it with other objects.
+- **Narrow imported `extern "C"` argument and return widths are preserved (`#333`,
+  `e9a8f3b2`)**: an imported `extern "C"` function with `i8`/`i16`/`i32`/`u8`/`u16`/`u32`
+  parameter or return types keeps its declared width through the call ABI instead of
+  being silently widened to `i64`.
+- **Qualified enum variants resolve and imported enum variants evaluate (`#334`, `#335`)**:
+  `m::Variant` resolves against the owning module's enum, and `mindc test` evaluates an
+  imported enum variant constructor correctly.
+- **Narrow-arith inference widens on a wide-`i64` operand (`#329`, `732edb0f`)**: the
+  3-valued narrow-arith lattice widens to `i64` when one operand is a known wide `i64`,
+  preventing a narrow-type miscompile in mixed-width expressions.
+- **`mlir-opt` load/store addresses lower as base plus offset (`#358`, `7c667dc8`)**:
+  the MLIR lowering emits `base + offset` addressing for load/store, reducing redundant
+  address arithmetic.
+- **`mindc test` evaluates `vec_zeroed` arrays and `Ok`/`Err` values like the build (`#375`,
+  `b235dda0`)**: the test evaluator now handles zero-initialized growable arrays and
+  `Result::Ok`/`Result::Err` payloads with the same semantics as native execution.
+- **A float comparison returned from a `bool` function is a `bool` (`#377`, `d9720285`)**:
+  the type checker no longer reads `return a <= b;` over `f32`/`f64` operands in a
+  `-> bool` function as returning a float (E2010); a comparison, `&&`/`||` or `!`
+  (parentheses looked through) denotes a truth value, while a genuine float returned
+  from an int/bool function is still refused. `tests/mindc_test_eval_float_compare_parity.rs`
+  holds `mindc test` and the native build to the same result for every comparison on
+  `f32` and `f64` through `if`, `!`, `&&`, `||`, a returned `bool`, a `bool` binding and
+  a `while` condition.
+- **Bounded X.509 path search, key-derived RSA-PSS salt bound, TLS receive buffer
+  reclaim (`#379`, `2f453d34`)**: the chain search verifies at most 64 signatures and
+  treats a repeated certificate as one candidate issuer; the RSA-PSS salt bound follows
+  the issuer's modulus; the TLS application receive buffer reclaims consumed bytes
+  before its bound check (details under the TLS and X.509 entries above).
+  `tests/x509_pss_salt.rs` and `tests/tls13_client_rx.mind` hold the new behavior.
+- **`mindc test` survives a worker spawn failure and joins every spawned worker (`#380`,
+  `1d6f8ec2`)**: a refused 512 MiB worker stack falls back through 64, 16, 8 and 2 MiB
+  (`MINDC_TEST_WORKER_STACK` sets the ladder); if no worker can start, every test that
+  did not run fails with "could not start a test worker" after the workers already
+  started are joined (before, the run returned early and left them running), and a
+  panicking worker cancels the queue while the others are still joined.
+- **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
+  formatter's `--diff` mode no longer panics on edge-case inputs.
+- **`mindc test` admits exactly what the build links and every explicit `std` import
+  compiles (`#367`, `#365`)**: the test runner's module admission matches the build's
+  link set, and an explicit `import std.<submod>` compiles even when the submodule is
+  only used for its types.
+
+- **Native-ELF saturating `f64` to `i8`/`i16`/`i32` cast codegen (`#10`, `5fdbfbaf`)**: a
+  branchless clamp composes with the saturating `f64` to `i64` base, so `300.0 as i8` is
+  127 (not a wrapped 44), matching the MLIR path. This is the codegen primitive only; wiring
+  the cast through the whole-module native backend is a later slice.
+- **`mindc build` is fail-closed (`#244`, `a8b2eb1d`)**: a source that `mindc check` rejects
+  (for example E1001) or that falls back to the runtime JIT now exits non-zero instead of
+  emitting a launcher and exiting 0, as `run_project` already did.
+- **Lowering helpers follow the feature gates (`#337`, `c09c720d`)**: the MLIR lowering
+  helpers are compiled only under the feature gates of the code that uses them.
+- **Bare enum heads and enum equality settle as `mindc build` does (`#354`, `a5cb17a3`)**:
+  `mindc test` resolves a bare enum head and compares enum values the way the build
+  does, including enums imported from another module.
+- **Slice arguments admit alias-element literals and private helpers (`#340`, `4d081451`)**:
+  the type checker follows type aliases when it checks a literal element or a private
+  helper passed as a slice argument.
+- **Every shipped `std` module resolves through the bundled table (`#341`, `027cc216`)**:
+  `mindc test`, the type checker and the native bridge all read one bundled std table.
+- **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
+  with known-answer tests and cross-substrate identity receipts.
+- **The warnings `main` and pull-request runs showed are cleared (`#383`, `e3b01d11`)**:
+  the `shadowing` lint no longer fires on a repeated `let _ = expr` discard, which binds
+  no name, while a named rebind beside the discards still fires
+  (`tests/mindcraft_lint_shadowing.rs` holds both); the Windows runtime-support read path
+  opens through `_sopen_s` and keeps `_O_BINARY`, so `__mind_read` bytes stay identical
+  across substrates; the release workflow builds a shipped binary from a clean target and
+  registry with no `actions/cache` step, so a cache entry written by another run cannot
+  reach a release; the arch-mind scanner pull logs in to the registry for that step only;
+  the examples and benches no longer trip the lint or compiler warnings; the crate
+  `homepage` is `https://mindlang.dev`.
+- **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
+  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
+  pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`) and compares
+  the scanned tree with the commit's own first parent, not a later `main` (`#382`); automated
+  pull-request review and a public-leak check run in CI (`#305`), and the review job still
+  posts the leak verdict when the review model is unavailable (`#378`); the link check
+  retries transient network errors instead of failing (`#381`); clippy lints on `main` are
+  cleared (`#302`); the `mic-map` SDK dev dependencies are bumped for advisories
+  (`#296`, `#283`).
+- **CI, docs and test changes**: #373, #370, #369, #361, #357, #353, #352, #348,
+  #332, #325, #323, #322, #321, #319, #307, #306, #304, #303, #301, #299, #295.
+
 ### Changed (breaking) — extern "C" ABI resolution and refusals
 - `extern "C"` resolves its calling convention from the compile target (before: the host that built `mindc`). The evidence records the resolved callconv byte, so the same source and target give the same bytes on every host. Gate: `c_callconv_follows_the_compile_target_not_the_host` (3 targets, 1 host).
 - A declared convention with no lowering row on the target is refused with `E2039`: AAPCS on x86-64 (before: a silent SysV fallback), Win64 varargs, SysV on a Windows target, SysV or Win64 on aarch64. Gate: `unrealized_callconv_is_refused_with_e2039` (12 rows, 5 refused).
@@ -752,523 +1267,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via a close-on-exec pipe. Exit status 127 by itself is not that failure.
 - `spawn_capture` reads pipe ends as full ints and closes every end it opened
   when `pipe` or `fork` fails, including descriptors at or above 65536.
-
-### Added
-- **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
-  (Linux).** `https_get(url)` / `https_post(url, body, content_type)` (and
-  `https_get_ca` / `https_post_ca` with a CA bundle path) resolve the host with
-  `tcp_connect_host`, draw the TLS randoms and key share from `entropy_fill`,
-  run the TLS 1.3 client, authenticate the chain against the system CA bundle
-  (`/etc/ssl/certs/ca-certificates.crt`) at the system clock, and speak
-  HTTP/1.1: Host header, Content-Length and chunked bodies, a body that ends
-  with close_notify, bounded URL / header block (32 KiB) / body (8 MiB) /
-  request body, a 30 s socket timeout and a 120 s deadline on the monotonic
-  clock (every read and write is limited to the time left, so one read cannot
-  run past it). Redirects are not
-  followed: a 3xx is returned. Each call returns a response record whose error
-  is 0 or a named `https_err_*` code (wrong hostname, certificate validity,
-  unknown anchor, other chain refusal, CertificateVerify, unsupported leaf key,
-  truncated, body too large, malformed response, ...); a refusal carries no
-  status or body. The server profile is TLS 1.3 with an RSA-2048 leaf and an
-  rsa_pss_rsae_sha256 CertificateVerify; an ECDSA, RSA-3072+ or other leaf key
-  is refused with `https_err_unsupported_key`. **Revocation (CRL, OCSP) is not
-  checked.** A qualified call to one of the
-  six request functions (`https.https_get(...)`) is a world read, like
-  `entropy_fill`: the determinism veto refuses it without
-  `--allow-nondeterministic`.
-  - Request headers: `https_get_with_headers(url, headers, ca_path)` and
-    `https_post_with_headers(url, headers, body, content_type, ca_path)` send a
-    caller block of `name: value` CRLF lines (for example `X-API-Key` and
-    `Cookie`) after the client's own headers; `ca_path` 0 is the system bundle.
-    A line that is not `token: value` CRLF, a byte outside HTAB and printable
-    ASCII, a block over 16 KiB, or a header the client writes itself (Host,
-    User-Agent, Accept, Connection, Content-Type, Content-Length) or that
-    changes the framing (Transfer-Encoding, TE, Trailer, Upgrade, Expect) is
-    refused with `https_err_request_headers` (-19) before any connection.
-  - Response headers: `https_header_nth` / `https_header_count` read every
-    header of a name; `https_set_cookie_count`, `https_set_cookie` (the whole
-    value) and `https_set_cookie_pair` (the `name=value` a later request sends
-    back) capture Set-Cookie. `https_free` releases a response record.
-  - Strict framing: a chunk size takes leading zeros and is refused at the
-    digit that passes the 8 MiB body cap (`https_err_body_too_large`), so it
-    cannot overflow; a chunk extension and a response header value holding a
-    control byte (NUL, bare CR or LF, DEL) are refused (`https_err_response`).
-  - Error classes: `https_error_class(r)` is `https_class_none()` (0) for a
-    complete response, `https_class_before_send()` (1) when the call failed
-    before any request byte was written (a refused URL, header block, body or
-    CA bundle, name resolution, the TCP connect, the TLS handshake), so the
-    same request is safe to retry, and `https_class_after_send()` (2) when the
-    client had begun to write the request and the response is missing,
-    partial or garbled, so the server may have acted and the caller must pause
-    and never count it as a result. A failure is never a success: it carries
-    no status or body. The client marks the request as begun before its first
-    write, so a write that fails partway (a reset during the body) is
-    after-send; application data that arrives before any request byte is
-    written (with the server's handshake flight) answers no request and is
-    refused (`https_err_response`, before-send).
-  - `std.https_probe`: `https_probe(url, url_len, timeout_ms)` resolves the
-    URL's host and opens and closes one TCP connection to its port, sending
-    nothing, with a distinct code per failure: `https_probe_err_url`,
-    `_dns_again` (EAI_AGAIN: the resolver or network is down), `_dns`,
-    `_refused`, `_timeout`, `_unreachable`, `_socket`, `_argument`. A qualified
-    call to it is a world read.
-  - The TLS 1.3 client's record pump and handshake state machine move from
-    `std/tls13_client.mind` to `std/https.mind` (`import std.https;`), beside
-    the HTTPS driver: the import chain under the state machine is already five
-    modules deep, the arch-mind DEPTH ceiling. The EncryptedExtensions and
-    Certificate parsers move to `std.tls13_client_api`; every name is kept.
-    New modules `std.https_url` (error codes, bounds, URL, request) and
-    `std.https_http1` (response record and parser).
-  - `std/https.mind` is split along its seams so no file passes the size
-    ceiling: `std.https_record` (the record layer: validate and open one
-    record, act on its content type; handshake content is returned in a
-    pending record that `tls13c_handle_record` parses) and `std.https_io` (the
-    clocks, the request deadline, the socket time budget and the CA bundle
-    file; `hio_now_unix`, `hio_now_mono_ms`, `hio_remaining_ms`, `hio_arm` and
-    `hio_io_failure` are qualified world reads). `std.https` keeps every public name and the handshake state
-    machine with the driver: each caller of the hello, finished, X.509 path and
-    client API modules stays in the top module so the import chain stays at
-    five. `tls13c_x509_blob` moves to `std.tls13_client_api`. The loopback test
-    server is split into five fixture files the harness appends in order.
-  - The client now discards whole post-handshake NewSessionTicket messages
-    (any other post-handshake message is refused), holds one full record of
-    decrypted application data (16 KiB, was 2 KiB, so a record of the RFC 8446
-    maximum of 2^14 plaintext bytes no longer ends the connection with E_OVF)
-    and opens no further record until it is read, so a body of any size
-    streams through that fixed window. It records the presented leaf key
-    (`tls13c_leaf_key_kind`, `tls13c_leaf_rsa_len`) outside the ranges key
-    erasure clears, so the evidence survives the refusal it names, and
-    reports its inbound space (`tls13c_in_space`). `tls13c_state_size()` is
-    102400 and does not depend on the body size. The per-record scratch
-    buffers (record copy, plaintext, AEAD nonce and inner plaintext, in
-    `std.tls13_record` too) and the chain and anchor tables are released, so
-    memory does not grow with the number of records.
-  - CA bundles: `x509_load_anchors` accepts blank lines and `#` comment lines
-    between PEM blocks (other text is still refused), decodes into one buffer,
-    and holds up to `x509_max_anchors()` (1024) anchors in at most 4 MiB. The
-    32-anchor cap in `x509_verify_server_chain` is replaced by a bounded search
-    over the whole set: each anchor is parsed once and only one whose subject
-    issues a supplied certificate enters the path search.
-  - `std.dns`: `tcp_set_io_timeout` (SO_RCVTIMEO and SO_SNDTIMEO) and
-    `tcp_write_all` (MSG_NOSIGNAL) for a connected stream; `dns_free` releases
-    a `dns_resolve` record; the socket descriptor calls `dns_tcp_socket`,
-    `dns_set_send_timeout`, `dns_connect_fd`, `dns_errno` and `dns_close_fd`
-    (`std.https_probe` makes its socket calls through them, so it makes no OS
-    call of its own; a call to `dns_tcp_socket` or `dns_connect_fd` is a world
-    read); `dns_clock_gettime` and `dns_read_path` (a bounded whole-file read
-    that closes its descriptor), through which `std.https_io` reads the clocks
-    and the CA bundle, so it makes no OS call of its own either (a call to
-    `dns_clock_gettime` is a world read). `dns_resolve`, `tcp_connect_host(_timeout)` and
-    the host-layout probe release every per-call allocation (the name copy,
-    hints and out-slot, the `uname` buffer, the socket address, the timeout
-    value, the record the connect call resolves) on the success and every
-    error path (`tests/std_dns_free_run.rs`).
-  - `tests/std_https_loopback.rs`: a hermetic loopback TLS 1.3 server in MIND
-    (test-only RSA-2048 chain, `tests/https_loopback/`) proves GET, POST,
-    chunked, a multi-record body and an unfollowed 301, and the named refusals;
-    an ignored test is the manual release smoke against
-    `https://three.arcprize.org/`.
-  - `tests/std_https_openssl.rs`: the client against `openssl s_server` on
-    127.0.0.1 with the same chain, through a TCP proxy that records every
-    server record: a full 16 KiB record, a 5 MiB Content-Length body and a
-    5 MiB chunked body compared byte for byte, X-API-Key, Cookie, Content-Type
-    and the POST body asserted at the server, two Set-Cookie headers captured,
-    and the refusals of malformed chunk sizes (eleven forms), control bytes in
-    a response header, malformed request header blocks (nine forms, before any
-    connection), a body truncated by close_notify, by a missing last chunk and
-    by a TCP cut, a wrong hostname, an untrusted chain and an RSA-3072 leaf;
-    and the framing guards, each beside an accepted control: a repeated
-    Content-Length, a transfer coding other than chunked, a Content-Length
-    over 18 digits (one that would wrap i64), and CR, LF, SP and other control
-    bytes in the URL request target (refused before any connection); an 8 MiB
-    POST body (the request maximum) reaches s_server whole, and the same
-    request is refused after-send when a proxy resets the connection while the
-    body is written. Every refusal is checked with its error class.
-  - `tests/std_https_network_safe.rs`: the loopback server in MIND and a step
-    client under a preloaded resolver: a DNS outage between two requests (the
-    probe reports it, the request fails before-send, and after the outage the
-    same request returns the exact body), a refused port and a full accept
-    queue (probe codes), a TLS refusal before the request and a cut after it,
-    a body framed by the connection, which is complete only on close_notify:
-    a fatal alert, a warning alert and a TCP close are refused after-send; and
-    a response that arrives before any request byte is written (a recorded
-    server flight, response and close_notify replayed right after the client's
-    ClientHello, with a fixed `getrandom` preloaded) is refused before-send.
-
-### Changed
-- **TLS 1.3 client and X.509 limits (`std.https` work).** The presented chain
-  holds at most 8 certificates (`x509_path`: a count over 8 is refused) and a
-  trust store at most `x509_max_anchors()` (1024) anchors, up from 32, so the
-  system CA bundle loads. The application receive buffer holds one record
-  (16384 bytes): the client opens the next record only after the reader has
-  drained the previous one, so a long stream of small records is read in full
-  and unread bytes are never overwritten; a record longer than the record
-  bound fails closed (E_OVF). This replaces the 2048-byte buffer that
-  reclaimed consumed bytes before its bound check.
-
-## [0.10.3] - 2026-11-09
-
-### Added
-- **`std.procgroup` — run many child processes and wait for all of them (`#351`,
-  `59ac0915`)** (`std/procgroup.mind`, `docs/std-procgroup.md`): `procgroup_new` /
-  `procgroup_spawn` / `procgroup_wait_all` start up to 4096 children, capture
-  each child's stdout through its own pipe (drained while the children run),
-  and wait for all of them with one deadline; a child still running at the
-  deadline is killed with `SIGKILL` and reported timed out. Every spawned slot
-  ends in one state (ok, non-zero exit, signal, timed out, spawn failed, lost),
-  and `procgroup_wait_all` returns how many are not ok. `procgroup_self_exe()`
-  plus `procgroup_task_index()` let one `mindc build` executable run itself N
-  times in parallel. Bundled and linked like the other substrate modules; not
-  in the native seed. `tests/std_procgroup_run.rs` builds a program with
-  `mindc build` that spawns 25 copies of itself. `procgroup_spawn`,
-  `procgroup_wait_all` and `procgroup_task_index` are classified as world
-  readers (`src/intrinsics.rs`), so the flat `mindc <file>` path refuses an
-  artifact for a program that calls them unless `--allow-nondeterministic` is
-  given, and attests it `nondeterministic`. `std.procgroup` itself makes no
-  OS call: every pipe, fork, exec, wait, kill, read, poll, clock and
-  environment call is a primitive of the new effect module
-  `std.procgroup_sys` (`std/procgroup_sys.mind`, not in the native seed;
-  every function in it is one straight-line OS call, with the deadline
-  arithmetic, the poll-until-deadline step and the environment save and
-  restore in `std.procgroup`, and the C-string helpers in
-  `std.procgroup_text`), and
-  the primitives that read the world are classified the same way.
-- **`std.entropy` and `std.dns` for `mindc build` executables (`#349`)**: `entropy_fill`
-  reads the kernel CSPRNG with getrandom(2), in 256-byte chunks; on an error or a short
-  read it returns a negative code and zeroes the whole buffer (no clock or PRNG fallback).
-  `dns_resolve` resolves a host name or numeric literal with getaddrinfo(3) into a
-  bounded list (at most 32 IPv4/IPv6 addresses); the name must be 1..253 printable ASCII
-  bytes, each getaddrinfo error code -1..-12 has its own `dns_err_*` code (any other code
-  is `dns_err_unknown`), and a failed call returns no entries. It reads `struct addrinfo`
-  in the layout of the host uname(2) names: Linux (`ai_addr` at +24, AF_INET6 = 10) or
-  Darwin (`ai_addr` at +32, `sa_len` / `sa_family` bytes, AF_INET6 = 30); on any other
-  host, or when uname fails, it returns `dns_err_platform` without calling getaddrinfo.
-  `tcp_connect_host` / `tcp_connect_host_timeout` try each address in resolver order with
-  a per-connect timeout and return a std.net TcpStream handle; they use Linux socket
-  constants and return 0 on any other host. `getrandom` and `getaddrinfo` are classified
-  as world reads, and so are `entropy_fill`, `dns_resolve`, `tcp_connect_host` and
-  `tcp_connect_host_timeout`, because a caller's IR holds only the call: a program that
-  calls one is refused by the determinism veto without `--allow-nondeterministic` and,
-  with it, attested `nondeterministic`.
-  (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
-  `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
-- **X.509 path validation and a TLS 1.3 client in std (`#346`).** `import std.x509;` and
-  `import std.tls13_client;` resolve, link and run in `mindc build` executables
-  and under `mindc test`.
-  - `std.x509` validates a server chain (`x509_verify_server_chain`) from
-    the leaf through intermediates to a caller-supplied anchor set: RSA PKCS#1
-    v1.5 (2048/3072/4096-bit), RSA-PSS, ECDSA P-256/P-384, validity against the
-    caller's `now_unix`, DNS/IP name constraints, keyUsage and serverAuth EKU,
-    RFC 6125 hostname matching (a wildcard only as the complete left-most
-    label, IP SAN for IP literals), the inner and outer signature algorithm
-    identifiers equal, SHA-1 refused, and in-memory DER/PEM trust
-    anchors (`x509_load_anchors`). `x509_peer_auth_supported()` now returns 1.
-    Limits: no revocation checking, DNS/IP-only name constraints, at most 8
-    certificates and 32 anchors, exact-DER issuer matching; unsupported cases
-    fail closed. The path search treats a certificate repeated in the chain
-    (same DER) as one candidate issuer and spends at most 64 signature
-    verifications, anchor and bag issuers alike, failing -13 past that, so a
-    peer's certificate bag cannot multiply the work;
-    `x509_verify_server_chain_budget` takes that budget from the caller.
-    The RSA-PSS salt-length bound comes from the issuer's modulus
-    (`n_len - 34` for SHA-256: 222, 350 and 478 for RSA-2048, 3072 and 4096), so
-    long-salt signatures under larger keys verify and one past the key's bound
-    is refused as an unsupported parameter (-2).
-    Anchors are trusted key bindings: their self-signature and
-    validity are not evaluated, and their CA, keyUsage, EKU, pathLen and name
-    constraints apply to the path below them.
-  - New modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`,
-    `x509_path`, `x509_bundle` and `x509_bignum` (the RSA bignum, which
-    `rsa_pss` now imports instead of `x509`). `x509_verify_server_chain` is
-    in `x509_path` and `x509_parse` in `x509_der`; `std/x509.mind` imports
-    the whole validator.
-  - `std/tls13_client.mind` (with `_core`, `_hello`, `_api`): a bounded
-    sans-IO TLS 1.3 client. The caller owns I/O, entropy, time and the tick
-    budget; DNS-only SNI, caller ALPN, one HelloRetryRequest, fragmented
-    handshake reassembly, latched fail-closed refusal, and every chain
-    authenticated by `x509_verify_server_chain`. CertificateVerify supports
-    `rsa_pss_rsae_sha256` only, with an RSA-2048 leaf key that `x509_rsa_spki`
-    decodes strictly as rsaEncryption (NULL or absent parameters, 0 unused
-    bits, exactly two positive minimal INTEGERs); `x509_parse` and the chain
-    verifier share that decoder. Every other leaf key is refused: a non-RSA
-    key (ECDSA included) and RSA-1024 at CertificateVerify (E_CV), RSA-3072
-    and larger at Certificate (E_OVF). The RFC 8448 §3 trace (an RSA-1024
-    server key) keeps its known answer at the RSA-PSS verify primitive, not
-    through the client.
-    The 2048-byte application receive buffer reclaims bytes the reader has
-    already consumed before its bound check, so a long stream of small records
-    is read in full; a record that does not fit the unread bytes still fails
-    closed (E_OVF).
-  - Scope of the two key rules: the leaf (CertificateVerify) key is RSA-2048
-    only; issuer signatures inside the chain keep ECDSA P-256/P-384,
-    RSASSA-PSS and RSA PKCS#1 v1.5 2048/3072/4096-bit verification, each with
-    known-answer tests (public CA chains need them, for example an RSA-4096
-    root). Revocation is not implemented.
-  - All twelve modules are bundled table rows and substrate members, and none
-    is a native seed row: `--backend native` refuses their import at the import.
-  - The longest std import chain stays at five modules. The client's top
-    module imports `x509_path` and `tls13_finished` directly:
-    `tls13_hs_cert_verify_content`, `tls13_hs_verify_server_finished` and
-    `tls13_hs_client_finished` move from `tls13_handshake` to `tls13_finished`,
-    and `tls13_hs_rsa_pss_verify` to `rsa_pss`, with the same names and code.
-  - The loops of the IP literal parsers and the anchor loader end on a flag,
-    not on `break` or `continue`, so `mindc test` runs short DNS names, IP
-    literals and `x509_load_anchors` as the executable does.
-  - `tests/std_tls_x509_import.rs`: X.509 refusals (expired, not yet valid, no
-    CA path, hostname mismatch, short names and IP literals, wildcard rules,
-    an EKU without serverAuth, an IP literal against a dNSName, an outer
-    signature algorithm that differs from the inner one, wrong key), the IP
-    literal parsers, the DER and PEM anchor loader and RSA chains under
-    `mindc test` and in the executable, ECDSA/RSA-PSS/IP/name-constraint chains
-    in the executable, the RFC 8448 §3 transcript hash and key schedule on both
-    engines, and the 24 recorded TLS 1.3 flights in the executable; each with a
-    mutated copy that must fail. `tests/x509_chain_smoke.rs` replays the full
-    fixture matrix through `--emit-shared`.
-- `std/tls13_handshake.mind` calls `rsa_pss_emsa_check` from `std/rsa_pss.mind`
-  instead of carrying an identical copy.
-- **Results as mic@3 records (`std.mic_record`, `std.mic_results`, `#350`)**: a MIND program
-  writes and reads its results (per-game and per-level actions, a score as a
-  numerator and a scale, a scorecard id, a weights SHA-256) as a mic@3 artifact: the
-  empty-module body plus the MAP epilogue, with no wire-format change. The writer keeps
-  keys sorted, so the bytes depend only on the key/value set; the reader accepts only
-  that canonical form and refuses malformed input with a named error, checking every
-  count and length against fixed limits (4096 entries, 256-byte keys, 10 MiB) before it
-  allocates. The compiler's `parse_mic3_envelope` and `mic3_canonical_check` accept the
-  records. (`tests/std_surface_mic_record.rs`, `tests/std_surface_mic_record_refusals.rs`)
-- **Release build hardening and the release feature set (`#344`)**: `Cargo.lock` is committed and every workflow cargo call that resolves
-  dependencies (`cargo deny` included) passes `--locked`, except the bench-gate base-arm build, which
-  compiles an older commit and is the one declared `# lockfile-exempt:` line. Release binaries
-  therefore link the crypto crates CI tested (scripts/check_release_gating.py R7). The required
-  `release_profile` job builds the exact release.yml command on native x86_64 and aarch64 runners,
-  runs the post-build smoke action, and drives the packaged binary through
-  `tests/evidence_release_smoke.rs`: unsigned bytes equal the committed fixture with the signing
-  features compiled in (release set) or out (std-surface test rows), the public TEST seeds sign, the
-  signature verifies under pinned keys, and stripping either leg is refused. R8 fails when the job's
-  `cargo build` differs from release.yml's in any argument or its signing smoke loses the release
-  feature selection. linux-arm64 releases build natively instead of with `cross`, and every release
-  leg verifies its `.sha256` and checks `mindc --version` against the tag before upload. The keystone job asserts with `cargo tree` that
-  its feature sets never resolve fips204 or fips205.
-- `mindc test` can read project files read-only (open/read/lseek/close); results match native (`#331`).
-- **End-to-end compile benchmark gate (`#311`)**: Added `tools/e2e_compile_bench.py`,
-  `tools/test_e2e_compile_bench.py`, `benchmarks/baseline/e2e-compile.json`, and the
-  blocking `e2e_compile_gate` job in `.github/workflows/bench-gate.yml`. The gate runs
-  same-runner interleaved paired A/B wall-clock builds of `mindc <src> --emit-shared`
-  against `origin/main` across `examples/collatz.mind`, `examples/cos_dottie.mind`, and
-  `examples/dottie_collapse.mind` (`N >= 11` pairs after warmup), and fails closed via a
-  one-sided exact binomial sign test (`alpha = 0.01`, `MAX_RATIO = 1.15`, `DEADBAND_NS = 5_000_000`)
-  if the candidate is consistently slower or if any stage time or artifact is missing.
-
-### Fixed
-- The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
-- The 32 raw-syscall twins compile into the runtime object only when the module MLIR names a `__mind_sys_` symbol (`-DMIND_RAW_SYSCALLS`).
-- **String comparison is the same on every backend (#343)**: `mindc test` analyses each
-  std and project module it merges into a test against that module's own declarations,
-  as `mindc build` compiles each module alone, so a string a test hands to `vec_push` no
-  longer makes integer comparisons in an unrelated std module refused with `E2038`. The
-  payload types of an imported enum variant come from the project registry, so a string
-  one module stores into another module's `i64` payload is refused with `E2038` in a
-  project build as it is in one file, also when a third module declares a private enum
-  of the same name.
-- **Release builds run only in the tag's own cache scope (`#385`, `cd84394e`)**: `release.yml`'s
-  `workflow_dispatch` trigger ran the release build of the tagged commit in the cache scope
-  of the branch it was dispatched on (main, by default), where the build's runtime token
-  could write cache entries every later main run restores. A tag push is now the only
-  trigger; to repeat a release, re-run its tag-push run, which keeps the tag as its ref.
-  `scripts/check_release_gating.py` R3 now fails on any other trigger and on a branch
-  filter in the push trigger. The same change clears the other open code-scanning alerts:
-  the AES-GCM bench names its key and IV as the published all-zero GCM Test Case 2
-  inputs, the roofline bench's CPUID read builds on the MSRV toolchain as on newer ones,
-  and a test, a tool and two smoke scripts get clearer identifiers.
-- **Determinism through project modules**: a single-file build (`--emit-evidence`,
-  `--emit-obj`, `--emit-shared`) of a project entry now follows the entry's calls into
-  the project modules it imports, transitively and function by function, and classifies
-  each body it reaches with the evidence classifier. A sibling that calls
-  `entropy.entropy_fill`, a `std.dns` resolver or `time.now_ns` used to pass the veto and
-  be attested `deterministic`; it is now refused without `--allow-nondeterministic`
-  (naming the callee and the project function that calls it) and, with it, attested
-  `nondeterministic`. A pure sibling function stays `deterministic`, even beside a
-  world-reading function the program does not call. `mindc verify` keeps a stored
-  `nondeterministic` label when the hashed body calls a function it does not hold; a
-  stored label that a self-contained body contradicts, and a stored `deterministic` the
-  body contradicts, are still refused as tampered. (`src/project/single_file_scope/
-  world_reach.rs`, `src/ir/evidence/reach.rs`, `tests/determinism_veto_control.rs`)
-- **Slice arguments with alias elements and private helpers**: the slice-call
-  check compares element types after type-alias resolution (local aliases and
-  aliases exported by an imported module), so `array<Q>` with `type Q = i32`
-  passes to `&[Q]` and `&[i32]`; a float element reached through an alias is now
-  refused like a direct one. An imported alias now resolves in a project whose
-  manifest lists `[targets.cpu].sources`, by the same owner rule as imported
-  types. Calls inside a `module m { ... }` block resolve module-private sibling
-  functions, so a slice argument to a non-exported helper is admitted and
-  checked instead of reported as passed to an unresolved function. A type read
-  from an imported signature or an imported struct field is read in its owner
-  module's scope, so `let b: defs.Bank = defs.make_bank()` meets a `make_bank`
-  declared `-> Bank` inside `defs`. An array-literal element that names a module
-  constant (local, or imported such as `defs.ONE`), or an arithmetic expression
-  over such constants, is classified by the constant's value. A slice or
-  collection type named through an alias (`type V = array<i32>`,
-  `type SL = &[i32]`) is refused at the slice boundary with `E2032` (and a slice
-  alias as a struct field with `E2033`), because lowering does not resolve such an
-  annotation: before, a read of an `SL` parameter failed to build or emitted an
-  artifact with an undefined symbol.
-  (`src/type_checker/slice_abi/aliases.rs`, `src/type_checker/mod.rs`,
-  `src/qualified_enums.rs`, `src/qualified_enums/canonical_types.rs`)
-- **Project source walk**: The project-root tests/ directory is now left out of
-  the walked source set (nested tests/ directories stay in). Source sets and
-  cache keys of projects with a root tests/ change. (`src/project/sources.rs`)
-- The C read_to_string record uses cap = size + 1, retries EINTR and returns the
-  empty record on a read error, matching std/fs.mind.
-- **Imported constants with owner-first lookup (`#317`, `49ea9a07`)**: `mindc build`,
-  `mindc run`, and `mindc test` now resolve module-qualified (`m.K`) and bare (`K`)
-  compile-time constants imported from sibling project modules (`src/eval/lower_import_consts.rs`,
-  `src/eval/module_bindings.rs`, `src/test/imports.rs`). During constant lookup
-  (`const_table_lookup` / `const_lookup_keys`), the current module's owner-qualified
-  constant (`owner::K`) is checked before bare imported bindings, so a local `const K`
-  shadows even an ambiguous pair of same-name imports while an unshadowed ambiguous
-  bare constant reference is refused with a diagnostic naming both candidate modules.
-- **Bare `std` calls in imported module bodies under `mindc test` (`#318`, `7b40d0c7`)**:
-  When `mindc test` merges an imported sibling module whose source declares
-  `import std.<submod>;`, exported functions from `std/<submod>.mind` are now registered
-  as non-clobbering fallback bindings (`insert_std_imported_call` in
-  `src/eval/module_bindings.rs` and `merge_imported_modules` in `src/test/imports.rs`)
-  so bare `std` calls inside imported module bodies execute instead of failing as
-  unknown functions, without overriding local definitions or sibling project exports.
-- **Bare imported calls execute under `mindc test` (`#297`, `37cf0f4f`)**: `mindc test`
-  (`--features cross-module-imports`) now merges parsed `FnDef` and `ConstDef` items from
-  imported sibling modules into the test module before IR lowering and scopes bare-import
-  call bindings (`src/eval/module_bindings.rs`) per lowering pass via `ModuleBindingsGuard`.
-  Ambiguous bare calls across two imported modules are refused at the call site unless
-  shadowed by a local `fn` or disambiguated as `m.f(...)`.
-- **Native `assert` reports source span and message before abort (`#298`, `ab26bd50`)**:
-  On a false `assert` in a native CPU build (`src/mlir/lowering.rs`,
-  `runtime-support/mind_intrinsics.c`), the lowered failure block now calls
-  `__mind_assert_fail(msg_ptr, msg_len, span_start, span_end)` before `llvm.intr.trap`,
-  writing `mind: assertion failed at source span <start>..<end>: <message>\n` to stderr
-  instead of trapping silently.
-- **Negative file-open errors preserved in runtime support (`#290`, `fcb44b97`; CI-executed KAT `#325`)**:
-  `__mind_open(path)` in `runtime-support/mind_intrinsics.c` now returns `(int64_t)fd`
-  directly (preserving `-1` on failure) instead of returning the positive sentinel `999`
-  when `open()` fails, and `tests/open_error_kat.rs` / `tests/open_error_kat.mind`
-  verify negative returns on null, missing, and non-directory paths in debug and release builds.
-- **String fields lower on the whole-program mic@3 path (`#345`, `6643af71`)**: `String`
-  record fields are now lowered through the whole-program mic@3 evidence path instead of
-  falling back to a placeholder, so a project whose structs carry `String` fields emits
-  correct evidence bytes.
-- **`mindc build --backend native` bridges to the pure-MIND native-ELF compiler (`52bd6d3b`)**:
-  the opt-in native backend now hands a project build to the pure-MIND compiler. The
-  `--backend` flag itself shipped in 0.10.2.
-- **The self-host record-trace seed is frozen and the mirror gate follows the advanced
-  compiler seed (`4211591e`, `42cadc3c`)**: the record-trace publication seed and its
-  receipts are committed as a frozen baseline, and the mirror gate is bound to the
-  advanced compiler seed.
-- **`__mind_open` is wired on the Rust/MLIR backend (`be7f945c`)**: `std.fs` path-based
-  file I/O now builds and links under `mindc build`'s default backends. The C runtime
-  gains an `open` definition and the intrinsic table gains the `__mind_open` row
-  (arity 1, pure); this empties the exec-tier quarantine set.
-- **A bare call to an imported `std` world function is classified as a world call (`#374`,
-  `e68f3480`)**: the determinism evidence classifier now treats a bare call to an imported
-  `std` module's world-reading function (e.g. `entropy_fill`, `dns_resolve`) as a world call,
-  so a program that reaches one through an imported module is refused without
-  `--allow-nondeterministic` and attested `nondeterministic` with it, matching direct calls.
-- **`mindc test` evaluates float conditions, zeroed arrays, `break` and `for-each` like the
-  build (`#342`, `67439663`)**: the test evaluator now matches native/MLIR semantics for
-  float-typed `if`/`while` conditions, zero-initialized fixed arrays, `break` out of nested
-  loops, and `for-each` over arrays, closing evaluator/build divergence.
-- **A foreign export from a module decoded from mic@3 is refused (`#356`, `c36deb0d`)**:
-  the MLIR lowering rejects an `extern` export whose defining module was decoded from a
-  mic@3 artifact, preventing cross-artifact symbol leakage.
-- **A wrong-arity intrinsic call is refused in every feature build (`#355`, `#338`, `#368`)**:
-  the intrinsic-call arity check fires uniformly across feature profiles, reporting `E2005`
-  in every body shape (bare call, method call, imported-module body).
-- **Malformed UTF-8 is refused in the canonical JSON dump (`#347`, `676bd2fa`)**:
-  `std/json_canon` rejects a `String` whose bytes are not valid UTF-8 instead of emitting
-  replacement characters.
-- **`--emit object` writes a relocatable object (`#339`, `615d375c`)**: the object-file emit
-  path produces a proper relocatable `.o` (not a linked image), so downstream link steps
-  can compose it with other objects.
-- **Narrow imported `extern "C"` argument and return widths are preserved (`#333`,
-  `e9a8f3b2`)**: an imported `extern "C"` function with `i8`/`i16`/`i32`/`u8`/`u16`/`u32`
-  parameter or return types keeps its declared width through the call ABI instead of
-  being silently widened to `i64`.
-- **Qualified enum variants resolve and imported enum variants evaluate (`#334`, `#335`)**:
-  `m::Variant` resolves against the owning module's enum, and `mindc test` evaluates an
-  imported enum variant constructor correctly.
-- **Narrow-arith inference widens on a wide-`i64` operand (`#329`, `732edb0f`)**: the
-  3-valued narrow-arith lattice widens to `i64` when one operand is a known wide `i64`,
-  preventing a narrow-type miscompile in mixed-width expressions.
-- **`mlir-opt` load/store addresses lower as base plus offset (`#358`, `7c667dc8`)**:
-  the MLIR lowering emits `base + offset` addressing for load/store, reducing redundant
-  address arithmetic.
-- **`mindc test` evaluates `vec_zeroed` arrays and `Ok`/`Err` values like the build (`#375`,
-  `b235dda0`)**: the test evaluator now handles zero-initialized growable arrays and
-  `Result::Ok`/`Result::Err` payloads with the same semantics as native execution.
-- **A float comparison returned from a `bool` function is a `bool` (`#377`, `d9720285`)**:
-  the type checker no longer reads `return a <= b;` over `f32`/`f64` operands in a
-  `-> bool` function as returning a float (E2010); a comparison, `&&`/`||` or `!`
-  (parentheses looked through) denotes a truth value, while a genuine float returned
-  from an int/bool function is still refused. `tests/mindc_test_eval_float_compare_parity.rs`
-  holds `mindc test` and the native build to the same result for every comparison on
-  `f32` and `f64` through `if`, `!`, `&&`, `||`, a returned `bool`, a `bool` binding and
-  a `while` condition.
-- **Bounded X.509 path search, key-derived RSA-PSS salt bound, TLS receive buffer
-  reclaim (`#379`, `2f453d34`)**: the chain search verifies at most 64 signatures and
-  treats a repeated certificate as one candidate issuer; the RSA-PSS salt bound follows
-  the issuer's modulus; the TLS application receive buffer reclaims consumed bytes
-  before its bound check (details under the TLS and X.509 entries above).
-  `tests/x509_pss_salt.rs` and `tests/tls13_client_rx.mind` hold the new behavior.
-- **`mindc test` survives a worker spawn failure and joins every spawned worker (`#380`,
-  `1d6f8ec2`)**: a refused 512 MiB worker stack falls back through 64, 16, 8 and 2 MiB
-  (`MINDC_TEST_WORKER_STACK` sets the ladder); if no worker can start, every test that
-  did not run fails with "could not start a test worker" after the workers already
-  started are joined (before, the run returned early and left them running), and a
-  panicking worker cancels the queue while the others are still joined.
-- **`fmt --diff` groups hunks without an out-of-bounds slice (`#371`, `f979f4f1`)**: the
-  formatter's `--diff` mode no longer panics on edge-case inputs.
-- **`mindc test` admits exactly what the build links and every explicit `std` import
-  compiles (`#367`, `#365`)**: the test runner's module admission matches the build's
-  link set, and an explicit `import std.<submod>` compiles even when the submodule is
-  only used for its types.
-
-- **Native-ELF saturating `f64` to `i8`/`i16`/`i32` cast codegen (`#10`, `5fdbfbaf`)**: a
-  branchless clamp composes with the saturating `f64` to `i64` base, so `300.0 as i8` is
-  127 (not a wrapped 44), matching the MLIR path. This is the codegen primitive only; wiring
-  the cast through the whole-module native backend is a later slice.
-- **`mindc build` is fail-closed (`#244`, `a8b2eb1d`)**: a source that `mindc check` rejects
-  (for example E1001) or that falls back to the runtime JIT now exits non-zero instead of
-  emitting a launcher and exiting 0, as `run_project` already did.
-- **Lowering helpers follow the feature gates (`#337`, `c09c720d`)**: the MLIR lowering
-  helpers are compiled only under the feature gates of the code that uses them.
-- **Bare enum heads and enum equality settle as `mindc build` does (`#354`, `a5cb17a3`)**:
-  `mindc test` resolves a bare enum head and compares enum values the way the build
-  does, including enums imported from another module.
-- **Slice arguments admit alias-element literals and private helpers (`#340`, `4d081451`)**:
-  the type checker follows type aliases when it checks a literal element or a private
-  helper passed as a slice argument.
-- **Every shipped `std` module resolves through the bundled table (`#341`, `027cc216`)**:
-  `mindc test`, the type checker and the native bridge all read one bundled std table.
-- **Canonical JSON dump as `std/json_canon` (`#327`, `c49503e0`)**: a non-seed std module
-  with known-answer tests and cross-substrate identity receipts.
-- **The warnings `main` and pull-request runs showed are cleared (`#383`, `e3b01d11`)**:
-  the `shadowing` lint no longer fires on a repeated `let _ = expr` discard, which binds
-  no name, while a named rebind beside the discards still fires
-  (`tests/mindcraft_lint_shadowing.rs` holds both); the Windows runtime-support read path
-  opens through `_sopen_s` and keeps `_O_BINARY`, so `__mind_read` bytes stay identical
-  across substrates; the release workflow builds a shipped binary from a clean target and
-  registry with no `actions/cache` step, so a cache entry written by another run cannot
-  reach a release; the arch-mind scanner pull logs in to the registry for that step only;
-  the examples and benches no longer trip the lint or compiler warnings; the crate
-  `homepage` is `https://mindlang.dev`.
-- **Tooling and governance gates**: `tools` regenerate `ANATOMY.md` atomically (`#372`); a
-  fail-closed arch-mind governance gate runs from a pinned scanner image (`#326`), and the
-  pin moves to the scanner that reads MIND effects by the mindc grammar (`#376`) and compares
-  the scanned tree with the commit's own first parent, not a later `main` (`#382`); automated
-  pull-request review and a public-leak check run in CI (`#305`), and the review job still
-  posts the leak verdict when the review model is unavailable (`#378`); the link check
-  retries transient network errors instead of failing (`#381`); clippy lints on `main` are
-  cleared (`#302`); the `mic-map` SDK dev dependencies are bumped for advisories
-  (`#296`, `#283`).
-- **CI, docs and test changes**: #373, #370, #369, #361, #357, #353, #352, #348,
-  #332, #325, #323, #322, #321, #319, #307, #306, #304, #303, #301, #299, #295.
 
 ### Changed — `mlir-opt` and `mlir-translate` run concurrently (#310)
 - The MLIR build path now starts `mlir-translate` before `mlir-opt` and streams
