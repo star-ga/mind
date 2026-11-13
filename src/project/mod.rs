@@ -2623,32 +2623,91 @@ fn link_binary(
         return link_result;
     };
 
-    // Fallback to a launcher shell script when native linking fails. This is the
-    // executable-path analogue of the cdylib false-green guarded by #306: the
-    // emitted artifact is a `#!/bin/bash` launcher that defers to the installed
-    // MIND runtime, NOT a natively-linked binary. Reporting "Finished" with a
-    // launcher in place of a real binary — silently — is exactly the kind of
-    // false-green that must never happen. Surface it: name the artifact for what
-    // it is and show why the native link failed, so a degraded build cannot pass
-    // for a clean one.
-    let link_err = link_result
-        .err()
-        .map(|e| {
-            e.to_string()
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("native link failed")
-                .trim()
-                .to_string()
-        })
-        .unwrap_or_else(|| "native link failed".to_string());
-    eprintln!(
-        "[WARN] {}: native link failed — emitting a launcher script that requires the \
-         installed MIND runtime, not a native binary ({link_err})",
-        output.display()
-    );
+    runtime_link::warn_launcher(output, link_result);
+    write_launcher(output, backend, &runtime, project_root)
+}
 
-    runtime_link::write_launcher(output, backend, &runtime, project_root)
+/// The launcher-script fallback of a failed native link. `project_root` is the root
+/// whose build lock the caller holds: a search from the current directory could read
+/// another standalone build's temporary manifest (`build_lock`).
+fn write_launcher(
+    output: &Path,
+    backend: &str,
+    runtime: &runtime_link::RuntimeLink,
+    project_root: &Path,
+) -> Result<()> {
+    let manifest = load_manifest(project_root)?;
+    let entry_path = project_root.join(&manifest.build.entry);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = format!(
+            r#"#!/bin/bash
+# {name} v{version} - Built with MIND
+# Backend: {backend}
+# Runtime: {runtime}
+
+MIND_ROOT="{project_root}"
+MIND_ENTRY="{entry}"
+MIND_BACKEND="{backend}"
+MIND_LIB_DIR="{lib_dir}"
+
+export LD_LIBRARY_PATH="$MIND_LIB_DIR:$LD_LIBRARY_PATH"
+export MIND_SOURCE_ROOT="$MIND_ROOT/src"
+export MIND_BACKEND="$MIND_BACKEND"
+
+# Execute the runtime interpreter
+if [ -f "$MIND_LIB_DIR/mind-runtime" ]; then
+    exec "$MIND_LIB_DIR/mind-runtime" --backend "$MIND_BACKEND" --entry "$MIND_ENTRY" "$@"
+elif [ -f "$MIND_LIB_DIR/{runtime}" ]; then
+    # Direct library execution via ld.so
+    exec /lib64/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    exec /lib/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    {{
+        echo "Error: MIND runtime not executable"
+        echo "See https://mindlang.dev/enterprise for licensing."
+        exit 1
+    }}
+else
+    echo "Error: MIND runtime not found at $MIND_LIB_DIR/{runtime}"
+    echo "See https://mindlang.dev/enterprise for licensing."
+    exit 1
+fi
+"#,
+            name = manifest.package.name,
+            version = manifest.package.version,
+            backend = backend,
+            runtime = runtime.file_name,
+            project_root = project_root.display(),
+            entry = entry_path.display(),
+            lib_dir = runtime.dir.display(),
+        );
+
+        fs::write(output, script)?;
+
+        let mut perms = fs::metadata(output)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(output, perms)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let script = format!(
+            "@echo off\r\nrem {} v{} - Built with MIND\r\nset MIND_BACKEND={}\r\nset PATH=%PATH%;{}\r\n\"{}/mind-runtime.exe\" --backend {} --entry \"{}\" %*\r\n",
+            manifest.package.name,
+            manifest.package.version,
+            backend,
+            runtime.dir.display(),
+            runtime.dir.display(),
+            backend,
+            entry_path.display(),
+        );
+        fs::write(output, script)?;
+    }
+
+    Ok(())
 }
 
 /// Attempt native linking with clang/gcc
