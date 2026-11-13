@@ -205,22 +205,40 @@ fn a_variant_of_an_unexported_enum_stays_refused() {
 }
 
 #[test]
-fn a_flat_alias_resolves_under_a_sources_list() {
-    // `src/fixed_point.mind` under a sources list is `crate.src.fixed_point`.
+fn a_flat_alias_of_a_src_module_resolves_in_a_project_check() {
+    // Root `main.mind` makes the project root the repo, so `src/fixed_point.mind`
+    // is `crate.src.fixed_point` while `import fixed_point` reads `crate.fixed_point`.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/fixed_point.mind"), "type Q16_16 = i32\n").unwrap();
     fs::write(
-        root.join("src/main.mind"),
-        "import fixed_point;\nfn clamp_q16(v: fixed_point.Q16_16) -> fixed_point.Q16_16 {\n    return v;\n}\nfn main() -> i64 {\n    return 0;\n}\n",
+        root.join("src/kernel.mind"),
+        "import fixed_point;\nfn clamp_q16(v: fixed_point.Q16_16) -> fixed_point.Q16_16 {\n    return v;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.mind"),
+        "import kernel;\nimport fixed_point;\nfn main() -> i64 {\n    return 0;\n}\n",
     )
     .unwrap();
     fs::write(
         root.join("Mind.toml"),
-        "[package]\nname = \"alias-src\"\nversion = \"0.0.1\"\n[build]\nentry = \"src/main.mind\"\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/fixed_point.mind\", \"src/main.mind\"]\n",
+        "[package]\nname = \"alias-src\"\nversion = \"0.0.1\"\n[build]\nentry = \"main.mind\"\n",
     )
     .unwrap();
-    let (ok, text) = check(root);
-    assert!(ok, "fixed_point.Q16_16 under a sources list:\n{text}");
+    let out = Command::new(mindc())
+        .current_dir(root)
+        .args(["check", "--no-fmt"])
+        .output()
+        .expect("run mindc check");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "fixed_point.Q16_16 from src/kernel.mind:\n{text}"
+    );
 }
