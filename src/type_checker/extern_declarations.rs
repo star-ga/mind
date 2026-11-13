@@ -4,7 +4,7 @@
 use super::{check_extern_type_with_repr_c, diag_from_span, nerve_walk};
 use crate::ast::{CallConv, ExternBinding, Node, TypeAnn};
 use crate::diagnostics::Diagnostic;
-use crate::eval::{lower::resolve_callconv, type_aliases::LocalTypeAliases};
+use crate::eval::type_aliases::LocalTypeAliases;
 use std::collections::{BTreeMap, BTreeSet};
 
 type Signature = (CallConv, bool, Vec<TypeAnn>, Option<TypeAnn>);
@@ -71,7 +71,7 @@ pub(super) fn check(items: &[Node], src: &str, file: Option<&str>, errs: &mut Ve
                     }
                 };
                 let signature = (
-                    resolve_callconv(*callconv),
+                    crate::target::compile_target().lowered_callconv(*callconv),
                     function.is_varargs,
                     function
                         .params

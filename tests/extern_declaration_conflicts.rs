@@ -3,9 +3,44 @@
 
 #![cfg(feature = "std-surface")]
 
+use libmind::target::{CompileTargetGuard, Target};
 use libmind::{parser, type_checker};
 
 const CONFLICT: &str = "safety::extern_conflicting_declaration";
+
+/// The explicit tag of each target's native C convention, then the tags of a
+/// different ABI (RFC 0010 section 4.1, docs/errors.md E2039): `.sysv` on
+/// x86-64 Linux and macOS, `.win64` on x86-64 Windows, `.aapcs` on aarch64.
+const NATIVE_C: [(&str, &str, [&str; 2]); 5] = [
+    ("x86_64-unknown-linux-gnu", "sysv", ["win64", "aapcs"]),
+    ("x86_64-apple-darwin", "sysv", ["win64", "aapcs"]),
+    ("x86_64-w64-windows-gnu", "win64", ["sysv", "aapcs"]),
+    ("aarch64-unknown-linux-gnu", "aapcs", ["sysv", "win64"]),
+    ("aarch64-apple-darwin", "aapcs", ["sysv", "win64"]),
+];
+
+/// The native C tag of the host that runs this test (the default target).
+fn host_native_c() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "aapcs"
+    } else if cfg!(target_os = "windows") {
+        "win64"
+    } else {
+        "sysv"
+    }
+}
+
+fn top_level_pair(tag: &str) -> String {
+    format!(
+        "extern \"C\" {{ fn same() -> i32; }} extern \"C\" callconv(.{tag}) {{ fn same() -> i32; }}"
+    )
+}
+
+fn nested_pair(tag: &str) -> String {
+    format!(
+        "extern \"C\" {{ fn same() -> i32; }} fn main() -> i64 {{ while false {{ extern \"C\" callconv(.{tag}) {{ fn same() -> i32; }} }} return 0; }}"
+    )
+}
 
 fn diagnostics(source: &str) -> Vec<libmind::diagnostics::Diagnostic> {
     let module = parser::parse(source).expect("extern fixture must parse");
@@ -77,15 +112,40 @@ fn identical_redeclarations_and_independent_owners_remain_valid() {
 
 #[test]
 fn default_and_explicit_host_c_conventions_are_consistent() {
-    let host = if cfg!(target_os = "windows") {
-        "win64"
-    } else {
-        "sysv"
-    };
-    let source = format!(
-        "extern \"C\" {{ fn same() -> i32; }} extern \"C\" callconv(.{host}) {{ fn same() -> i32; }}"
-    );
+    let source = top_level_pair(host_native_c());
     assert!(diagnostics(&source).is_empty(), "{source}");
+}
+
+/// Each compile target, from any build host: `extern "C"` and the explicit tag
+/// of the target's native C convention are one ABI; a tag of another ABI is a
+/// conflict. aarch64 records the SysV byte for `extern "C"` and lowers it as
+/// AAPCS64, so the conflict check must compare the lowered convention.
+#[test]
+fn default_c_matches_the_native_tag_of_each_compile_target() {
+    let mut failures = Vec::new();
+    for (triple, native, foreign) in NATIVE_C {
+        let _target = CompileTargetGuard::install(Target::from_triple(triple).expect(triple));
+        let rows = [(native, true)]
+            .into_iter()
+            .chain(foreign.map(|tag| (tag, false)));
+        for (tag, same_abi) in rows {
+            for source in [top_level_pair(tag), nested_pair(tag)] {
+                let all = diagnostics(&source);
+                let conflicts = all.iter().filter(|d| d.code == CONFLICT).count();
+                let ok = if same_abi {
+                    all.is_empty()
+                } else {
+                    conflicts == 1
+                };
+                if !ok {
+                    failures.push(format!(
+                        "{triple} .{tag} same_abi={same_abi}: {source}: {all:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]
@@ -136,14 +196,7 @@ fn identical_nested_extern_declarations_remain_valid() {
     ] {
         assert!(diagnostics(source).is_empty(), "{source}");
     }
-    let host = if cfg!(target_os = "windows") {
-        "win64"
-    } else {
-        "sysv"
-    };
-    let source = format!(
-        "extern \"C\" {{ fn same() -> i32; }} fn main() -> i64 {{ while false {{ extern \"C\" callconv(.{host}) {{ fn same() -> i32; }} }} return 0; }}"
-    );
+    let source = nested_pair(host_native_c());
     assert!(diagnostics(&source).is_empty(), "{source}");
 }
 

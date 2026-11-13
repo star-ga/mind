@@ -338,6 +338,20 @@ impl Target {
         }
     }
 
+    /// The convention a declaration with `cc` is lowered with on this target:
+    /// the ABI two declarations of one symbol must agree on. It is never
+    /// recorded. It differs from the recorded byte only for the aarch64 stub
+    /// above: `extern "C"` records SysV there and lowers as AAPCS64, the ABI of
+    /// `callconv(.aapcs)`.
+    pub fn lowered_callconv(&self, cc: crate::ast::CallConv) -> crate::ast::CallConv {
+        use crate::ast::CallConv;
+        match (cc, self.arch, self.c_callconv()) {
+            (CallConv::C, Arch::Aarch64, CallConv::SysV) => CallConv::Aapcs,
+            (CallConv::C, _, recorded) => recorded,
+            (declared, _, _) => declared,
+        }
+    }
+
     /// True when this target has a lowering row for a DECLARED convention.
     /// A missing row is refused (E2039), never lowered with another row.
     pub fn realizes_callconv(&self, cc: crate::ast::CallConv, varargs: bool) -> bool {
@@ -542,6 +556,24 @@ mod tests {
             Some(Target::host().march()),
             "march_for(None) must equal the host arch march"
         );
+    }
+
+    #[test]
+    fn extern_c_lowers_with_the_native_c_convention_of_the_target() {
+        use crate::ast::CallConv::{Aapcs, C, SysV, Win64};
+        for (triple, native) in [
+            ("x86_64-unknown-linux-gnu", SysV),
+            ("x86_64-apple-darwin", SysV),
+            ("x86_64-w64-windows-gnu", Win64),
+            ("aarch64-unknown-linux-gnu", Aapcs),
+            ("aarch64-apple-darwin", Aapcs),
+        ] {
+            let target = Target::from_triple(triple).unwrap();
+            assert_eq!(target.lowered_callconv(C), native, "{triple}");
+            for declared in [SysV, Win64, Aapcs] {
+                assert_eq!(target.lowered_callconv(declared), declared, "{triple}");
+            }
+        }
     }
 
     #[test]
