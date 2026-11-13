@@ -120,8 +120,15 @@ pub(crate) fn governing_root(
 /// result is what a directory without that file gives. Every pass removes a
 /// file or finds one absent, so the search ends.
 pub(crate) fn lock_cwd_project() -> anyhow::Result<ProjectBuildLock> {
+    lock_searched_project(super::find_project_root)
+}
+
+/// `lock_cwd_project` with its search given, so a test can play that search.
+fn lock_searched_project(
+    mut search: impl FnMut() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<ProjectBuildLock> {
     loop {
-        let root = super::find_project_root()?;
+        let root = search()?;
         let lock = ProjectBuildLock::acquire(&root)?;
         let manifest = root.join("Mind.toml");
         if remove_leftover(&manifest)? || !manifest.exists() {
@@ -292,6 +299,60 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    /// The search of `lock_cwd_project` sees a temporary manifest below a real
+    /// project: a live standalone build's (its lock held, then the file
+    /// removed and the lock released) or a killed build's leftover. Either way
+    /// the root it locked is no project, so the search runs again and locks
+    /// the real project. Read as a project, the live build's root has no
+    /// manifest any more (`manifest error: Failed to read <dir>/Mind.toml`).
+    #[test]
+    fn a_temporary_manifest_seen_by_the_search_is_no_project() {
+        for live in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let above = dir.path().to_path_buf();
+            fs::write(
+                above.join("Mind.toml"),
+                "[package]\nname = \"real\"\nversion = \"0.1.0\"\n",
+            )
+            .unwrap();
+            let sub = above.join("sub");
+            fs::create_dir(&sub).unwrap();
+            let held = live.then(|| ProjectBuildLock::acquire(&sub).unwrap());
+            let manifest = sub.join("Mind.toml");
+            fs::write(&manifest, super::temporary_manifest("alpha", "alpha.mind")).unwrap();
+            let (seen_tx, seen_rx) = mpsc::channel();
+            let (tx, rx) = mpsc::channel();
+            let (probe, below, real) = (manifest.clone(), sub.clone(), above.clone());
+            let search = thread::spawn(move || {
+                let found = super::lock_searched_project(|| {
+                    let root = if probe.exists() { &below } else { &real };
+                    let _ = seen_tx.send(root.clone());
+                    Ok(root.clone())
+                });
+                let found = found.map(|lock| lock.root().to_path_buf());
+                tx.send(found.map_err(|e| e.to_string())).unwrap();
+            });
+            let seen = seen_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(
+                seen, sub,
+                "live {live}: the search did not see the manifest"
+            );
+            if let Some(held) = held {
+                let early = rx.recv_timeout(Duration::from_millis(300)).ok();
+                assert_eq!(early, None, "the search did not wait on the live build");
+                fs::remove_file(&manifest).unwrap();
+                drop(held);
+            }
+            let found = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            search.join().unwrap();
+            assert_eq!(found, Ok(above), "live {live}");
+            assert!(
+                !manifest.exists(),
+                "live {live}: the manifest is still there"
+            );
+        }
     }
 }
 
