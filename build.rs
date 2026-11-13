@@ -58,12 +58,36 @@ const NATIVE_SEEDS: [&str; 2] = [
     "examples/mindc_mind/testdata/selfhost_loop_bounded",
 ];
 
+/// The compatibility marks `seed.rs` reads, in its `MARKS` bit order. `seed.rs`
+/// compares this list (written to OUT_DIR) with its own and rescans on a difference.
+const SEED_MARKS: [&[u8]; 5] = [
+    b"\x48\xb8nbscope1",
+    b"\x48\xb8nblane01",
+    b"\x48\xb8nbextc01",
+    b"\x48\xb8nbsext01",
+    b"\x48\xb8nbprint1",
+];
+
+/// Bit `i` is set when `bytes` carries `SEED_MARKS[i]` (`seed.rs`'s `marks_in`).
+/// Every mark is `movabs rax, imm64`: two opcode bytes, then eight.
+fn seed_marks_in(bytes: &[u8]) -> u8 {
+    let mut found = 0;
+    for w in bytes.windows(SEED_MARKS[0].len()) {
+        for (bit, mark) in SEED_MARKS.iter().enumerate() {
+            found |= u8::from(w == *mark) << bit;
+        }
+    }
+    found
+}
+
 /// Verify each embedded compiler seed against its pin when mindc is built; a
 /// mismatch fails the build. The pin is the `stage1.elf<TAB>size<TAB>sha256` row
 /// of the seed's `MANIFEST.txt`, parsed with the rules of `seed.rs`'s
 /// `pinned_stage1`. Only a build with `std-surface` embeds the seeds, so only
-/// that build checks them. Nothing is written to OUT_DIR: the crate keeps its
-/// source-path `include_bytes!`.
+/// that build checks them. The crate keeps its source-path `include_bytes!`.
+/// OUT_DIR gets only `native_seed_marks.rs`: the mark list, then the size and
+/// marks of each seed. `seed.rs` uses those marks only while the size and the
+/// list equal its own, and a unit test rescans both seeds against them.
 fn verify_native_seeds() {
     if std::env::var_os("CARGO_FEATURE_STD_SURFACE").is_none() {
         return;
@@ -73,6 +97,7 @@ fn verify_native_seeds() {
         println!("cargo:rerun-if-changed={dir}/stage1.elf");
         println!("cargo:rerun-if-changed={dir}/MANIFEST.txt");
     }
+    let mut seeds = String::new();
     for dir in NATIVE_SEEDS {
         let manifest_path = root.join(dir).join("MANIFEST.txt");
         let manifest = std::fs::read_to_string(&manifest_path)
@@ -106,7 +131,12 @@ fn verify_native_seeds() {
                 elf.len()
             );
         }
+        seeds.push_str(&format!("({}, {}), ", elf.len(), seed_marks_in(&elf)));
     }
+    let marks: Vec<String> = SEED_MARKS.iter().map(|m| format!("&{m:?}")).collect();
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    let text = format!("([{}], [{seeds}])\n", marks.join(", "));
+    std::fs::write(out.join("native_seed_marks.rs"), text).expect("write native_seed_marks.rs");
 }
 
 fn main() {

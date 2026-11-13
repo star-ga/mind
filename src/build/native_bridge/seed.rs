@@ -249,8 +249,23 @@ enum Seed {
     Embedded(&'static [u8]),
 }
 
-/// Resolve the compiler and its marks once per process, with one scan of its
-/// bytes. The embedded seed is not hashed here: `build.rs` verified it.
+/// `(marks, [(size, marks) of the default seed, of the bounded seed])`, as
+/// `build.rs` scanned the seeds it verified.
+const BUILT_SEED_MARKS: ([&[u8]; 5], [(usize, u8); 2]) =
+    include!(concat!(env!("OUT_DIR"), "/native_seed_marks.rs"));
+
+/// The marks of an embedded seed: the ones `build.rs` found, while its mark list
+/// and the seed's size equal this build's; otherwise one scan of the bytes.
+fn embedded_marks(elf: &[u8], bounded: bool) -> u8 {
+    let (list, seeds) = BUILT_SEED_MARKS;
+    match seeds[usize::from(bounded)] {
+        (size, marks) if size == elf.len() && list == MARKS => marks,
+        _ => marks_in(elf),
+    }
+}
+
+/// Resolve the compiler and its marks once per process. The embedded seed is
+/// not hashed or scanned here: `build.rs` verified it and found its marks.
 fn resolved(bounded: bool) -> &'static (Seed, u8) {
     static RESOLVED: [std::sync::OnceLock<(Seed, u8)>; 2] =
         [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
@@ -265,7 +280,7 @@ fn resolved(bounded: bool) -> &'static (Seed, u8) {
         } else {
             DEFAULT_SEED_ELF
         };
-        (Seed::Embedded(elf), marks_in(elf))
+        (Seed::Embedded(elf), embedded_marks(elf, bounded))
     })
 }
 
@@ -409,6 +424,21 @@ mod tests {
             (1 << 4, 0),
             "the print mark alone"
         );
+    }
+
+    #[test]
+    fn the_marks_build_rs_found_are_the_marks_of_the_embedded_seeds() {
+        let (list, seeds) = BUILT_SEED_MARKS;
+        assert_eq!(list, MARKS, "build.rs scanned for another mark list");
+        for (bounded, elf) in [(false, DEFAULT_SEED_ELF), (true, BOUNDED_SEED_ELF)] {
+            let built = seeds[usize::from(bounded)];
+            assert_eq!(built, (elf.len(), marks_in(elf)), "bounded={bounded}");
+            assert_eq!(embedded_marks(elf, bounded), marks_in(elf));
+        }
+        // A seed of another size (a stale OUT_DIR) is scanned, not trusted.
+        let cut = &DEFAULT_SEED_ELF[..DEFAULT_SEED_ELF.len() - 1];
+        assert_eq!(embedded_marks(cut, false), marks_in(cut));
+        assert_eq!(embedded_marks(b"", true), 0);
     }
 
     #[test]
