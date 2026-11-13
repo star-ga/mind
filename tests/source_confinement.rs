@@ -411,3 +411,112 @@ fn project_check_and_build_take_one_source_set_in_the_src_layout() {
         assert!(out.contains("stray.mind"), "build did not name it: {out}");
     }
 }
+
+/// A module with one type error: it returns a name that nothing declares.
+const BROKEN: &str = "export { broken_value }\nfn broken_value() -> i64 { return missing_name; }\n";
+
+/// `mindc check` (type-check pass only) with no path, in `root`.
+fn project_check(root: &std::path::Path) -> (bool, String) {
+    mindc_in(root, &["check", "--no-fmt", "--no-lint"])
+}
+
+#[test]
+fn check_and_build_agree_on_an_ignored_imported_module() {
+    // The ignore file matches a module that the entry imports. The build
+    // compiles it, so the project check reads it.
+    let name = "ignored_imported_module";
+    let root = common::scratch_dir(name).join("project");
+    fs::create_dir_all(root.join("src/generated")).expect("src/generated");
+    fs::create_dir_all(root.join(".git")).expect("project boundary");
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n"
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("manifest");
+    fs::write(root.join(".gitignore"), "generated/\n").expect("ignore file");
+    let main = "import generated.bind;\n\nfn main() -> i64 {\n    return broken_value();\n}\n";
+    fs::write(root.join("src/main.mind"), main).expect("entry");
+    fs::write(root.join("src/generated/bind.mind"), BROKEN).expect("bind");
+
+    let (ok, out) = project_check(&root);
+    assert!(!ok, "the project check skipped an ignored member: {out}");
+    assert!(
+        out.contains("bind.mind") && out.contains("missing_name"),
+        "the ignored member was not reported: {out}"
+    );
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = mindc_in(&root, &["build", "--backend", "mlir", "--no-cache"]);
+        assert!(!ok, "build skipped the ignored member: {out}");
+        assert!(out.contains("bind.mind"), "build did not name it: {out}");
+    }
+}
+
+/// A project that declares `sources` for the default target. The entry
+/// `src/main.mind` is a whole program.
+fn declared_project(name: &str, sources: &[&str]) -> std::path::PathBuf {
+    let root = common::scratch_dir(name).join("project");
+    fs::create_dir_all(root.join("src")).expect("src");
+    fs::create_dir_all(root.join(".git")).expect("project boundary");
+    let list: Vec<String> = sources.iter().map(|s| format!("\"{s}\"")).collect();
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n\n\
+         [targets.cpu]\nbackend = \"cpu\"\nsources = [{}]\n",
+        list.join(", ")
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("manifest");
+    let main = "fn main() -> i64 {\n    return 0;\n}\n";
+    fs::write(root.join("src/main.mind"), main).expect("entry");
+    root
+}
+
+/// `mindc build` of the project in `root`.
+#[cfg(feature = "mlir-build")]
+fn project_build(root: &std::path::Path) -> (bool, String) {
+    mindc_in(root, &["build", "--backend", "mlir", "--no-cache"])
+}
+
+#[test]
+fn check_and_build_agree_on_the_declared_source_list() {
+    // The list holds a broken source with another extension: both read it.
+    let sources = ["src/main.mind", "src/extra.mnd"];
+    let root = declared_project("declared_other_extension", &sources);
+    fs::write(root.join("src/extra.mnd"), BROKEN).expect("extra");
+    let (ok, out) = project_check(&root);
+    assert!(!ok, "check skipped a declared source: {out}");
+    assert!(out.contains("extra.mnd"), "check did not name it: {out}");
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = project_build(&root);
+        assert!(!ok, "build skipped a declared source: {out}");
+    }
+
+    // The list holds a broken file that only the list puts in the set.
+    let sources = ["src/main.mind", "lib/extra.mind"];
+    let root = declared_project("declared_holds_broken", &sources);
+    fs::create_dir_all(root.join("lib")).expect("lib");
+    fs::write(root.join("lib/extra.mind"), BROKEN).expect("extra");
+    let (ok, out) = project_check(&root);
+    assert!(!ok, "check skipped a declared source: {out}");
+    assert!(out.contains("extra.mind"), "check did not name it: {out}");
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = project_build(&root);
+        assert!(!ok, "build skipped a declared source: {out}");
+    }
+
+    // The list leaves out a broken file in the entry's directory: neither
+    // reads it, and the check counts it.
+    let root = declared_project("declared_leaves_out_broken", &["src/main.mind"]);
+    fs::write(root.join("src/other.mind"), BROKEN).expect("other");
+    let (ok, out) = project_check(&root);
+    assert!(ok, "check read a file the list leaves out: {out}");
+    assert!(
+        out.contains("note[check]: 1 .mind file(s) below"),
+        "no notice of the file the list leaves out: {out}"
+    );
+    #[cfg(feature = "mlir-build")]
+    {
+        let (ok, out) = project_build(&root);
+        assert!(ok, "build read a file the list leaves out: {out}");
+    }
+}

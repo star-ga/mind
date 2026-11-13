@@ -158,7 +158,12 @@ is deliberately small and entirely MIND's own:
   (e.g. a Q16.16-overflow rule that is `error` on a fixed-point target
   and `warn` elsewhere).
 - **VCS integration** — `[mindcraft.vcs] use_ignore_file = true` makes the
-  default file set follow the repository's ignore rules.
+  discovery walk of `mindc check` follow the repository's ignore rules: an
+  ignored file below a directory operand is skipped, and with no path an
+  ignored file outside the project's source set is skipped. The filter never
+  removes a file of the project's source set (the files `mindc build`
+  compiles, whatever their extension) or a file named on the command line:
+  those are always checked.
 - **Inline suppression** — a single canonical form, Rust-flavoured to
   match MIND's surface syntax: `#[allow(lint::q16_overflow)]` on the
   declaration above the diagnostic, with a mandatory justification

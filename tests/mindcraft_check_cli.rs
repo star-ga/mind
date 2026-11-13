@@ -518,3 +518,68 @@ fn a_named_file_is_checked_when_the_ignore_file_matches_it() {
     assert_eq!(code, Some(0), "{stdout}{stderr}");
     assert!(!stdout.contains("bad.mind"), "{stdout}");
 }
+
+#[test]
+fn an_ignored_member_of_the_source_set_is_checked() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+    fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    fs::write(dir.path().join(".gitignore"), "gen.mind\n").expect("write .gitignore");
+    // In the entry's directory: the build compiles it, so it is a member.
+    fs::write(dir.path().join("src/gen.mind"), broken("gen_value")).expect("write member");
+    // Outside the set and ignored: the discovery walk does not find it.
+    fs::write(dir.path().join("docs/gen.mind"), broken("docs_gen_value")).expect("write other");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "an ignored member of the source set was not checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("gen.mind") && stdout.contains("missing_name"),
+        "the ignored member was not reported: {stdout}{stderr}"
+    );
+    // One broken member, one error: no file outside the set was read.
+    let errors = stdout.lines().filter(|l| l.contains("missing_name"));
+    assert_eq!(errors.count(), 1, "{stdout}");
+    // The note counts the two walked files outside the set, not the ignored one.
+    assert!(
+        stderr.contains("note[check]: 2 .mind file(s) below"),
+        "the note does not count the walked files outside the set: {stderr}"
+    );
+}
+
+/// A project whose manifest declares `sources` (root-relative) for the
+/// default target. `src/main.mind` is the whole program.
+fn write_declared_project(root: &Path, sources: &[&str]) {
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let list: Vec<String> = sources.iter().map(|s| format!("\"{s}\"")).collect();
+    let manifest = format!(
+        "[package]\nname = \"declared\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n\n\
+         [targets.cpu]\nbackend = \"cpu\"\nsources = [{}]\n",
+        list.join(", ")
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("write manifest");
+    let entry = "fn main() -> i64 {\n    0\n}\n";
+    fs::write(root.join("src/main.mind"), entry).expect("write entry");
+}
+
+#[test]
+fn a_declared_source_with_another_extension_is_checked() {
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "src/extra.mnd"]);
+    fs::write(dir.path().join("src/extra.mnd"), broken("extra_value")).expect("write extra");
+
+    // The build compiles a declared source whatever its extension.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a declared source was skipped for its extension:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("extra.mnd") && stdout.contains("missing_name"),
+        "the declared source was not reported: {stdout}{stderr}"
+    );
+}

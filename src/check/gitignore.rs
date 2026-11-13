@@ -251,13 +251,14 @@ pub(super) fn collect_mind_files(
     Ok(())
 }
 
-/// The file set of a check with no path in `project`: the files of the
-/// filtered walk that are in the source set the project's build compiles, so
-/// check and build read one set (the ignore filter applies as it does to
-/// every walk). One stderr line counts the walked `*.mind` files outside the
-/// set, so no file leaves the check without a notice. `None` when the
-/// manifest gives no source set; the caller then walks as it does with no
-/// project.
+/// The file set of a check with no path in `project`: every file of the
+/// source set the project's build compiles, so check and build read one set.
+/// A member is checked whatever its extension and whatever the ignore file
+/// says, because the build compiles it. The ignore filter governs only the
+/// discovery walk: one stderr line counts the `*.mind` files that walk finds
+/// outside the set, so no walked file leaves the check without a notice.
+/// `None` when the manifest gives no source set; the caller then walks as it
+/// does with no project.
 pub(super) fn project_set(
     (root, manifest): (PathBuf, ProjectManifest),
     filter: Option<&GitignoreFilter>,
@@ -266,21 +267,27 @@ pub(super) fn project_set(
     let Some(set) = default_source_set(&root, &manifest) else {
         return Ok(None);
     };
+    // Membership is on canonical paths: the build resolves its sources so.
+    let canonical = |path: &PathBuf| path.canonicalize().unwrap_or_else(|_| path.clone());
+    let members: BTreeSet<PathBuf> = set.iter().map(canonical).collect();
+    // A member is named below `root` as the command line reached it, as a
+    // walked file is, so diagnostics keep one path form.
+    let canonical_root = canonical(&root);
+    let spell = |member: &PathBuf| match member.strip_prefix(&canonical_root) {
+        Ok(rel) => root.join(rel),
+        Err(_) => member.clone(),
+    };
+    let mut files: Vec<PathBuf> = members.iter().map(spell).collect();
+    files.sort();
     let mut walked = Vec::new();
     collect_mind_files(&root, &mut walked, filter, repo_root)
         .map_err(|e| format!("{}: {e}", root.display()))?;
-    // Match on canonical paths; keep the walk's spelling for diagnostics.
-    let canonical = |path: &PathBuf| path.canonicalize().unwrap_or_else(|_| path.clone());
-    let members: BTreeSet<PathBuf> = set.iter().map(canonical).collect();
-    let is_member = |path: &PathBuf| members.contains(&canonical(path));
-    let (mut files, outside): (Vec<PathBuf>, Vec<PathBuf>) =
-        walked.into_iter().partition(is_member);
-    files.sort();
-    if !outside.is_empty() {
+    let is_outside = |path: &&PathBuf| !members.contains(&canonical(path));
+    let outside = walked.iter().filter(is_outside).count();
+    if outside > 0 {
         eprintln!(
-            "note[check]: {} .mind file(s) below {} are not in the project source set; \
+            "note[check]: {outside} .mind file(s) below {} are not in the project source set; \
              this check did not examine them (give a file or a directory to check them)",
-            outside.len(),
             root.display()
         );
     }

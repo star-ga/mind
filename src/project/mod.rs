@@ -226,10 +226,10 @@ pub struct MindcraftConfig {
     /// surrounding config (not replaces it).
     #[serde(default)]
     pub overrides: Vec<MindcraftOverride>,
-    /// VCS integration — when ``use_ignore_file`` is true, the default
-    /// file set for ``mindc check`` follows the repository's ignore
-    /// rules (`.gitignore` etc.) so generated / vendored sources are
-    /// excluded by default.
+    /// VCS integration — when ``use_ignore_file`` is true, the discovery
+    /// walk of ``mindc check`` follows the repository's ignore rules
+    /// (`.gitignore` etc.). A file of the project's source set, and a
+    /// file named on the command line, are checked in every case.
     #[serde(default)]
     pub vcs: MindcraftVcsConfig,
     /// Per-target sections. `[mindcraft.cpu]`, `[mindcraft.gpu]`,
@@ -334,8 +334,8 @@ pub struct MindcraftOverride {
 }
 
 /// RFC 0007 §5 — VCS integration. When ``use_ignore_file`` is true,
-/// the default file set for ``mindc check`` walks the repository's
-/// ignore rules so generated / vendored sources are excluded.
+/// the discovery walk of ``mindc check`` skips the files the repository's
+/// ignore rules match. It never removes a source-set member or a named file.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MindcraftVcsConfig {
