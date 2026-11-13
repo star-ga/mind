@@ -216,8 +216,9 @@ fn check_one(tag: &str, src: &str) -> (bool, String) {
     (out.status.success(), combined(&out))
 }
 
-/// A trailing loop yields a unit placeholder and a trailing store yields its
-/// store call, so neither can return the borrowed slice it writes through.
+/// A trailing loop yields a unit placeholder, a trailing store yields its
+/// store call and a trailing `if` / `match` yields its branch tails, so none
+/// of them can return the borrowed slice it writes through.
 #[test]
 fn a_trailing_loop_or_store_over_a_slice_parameter_is_admitted() {
     let cases = [
@@ -241,6 +242,14 @@ fn a_trailing_loop_or_store_over_a_slice_parameter_is_admitted() {
             "tail_if_store",
             "fn first(out: &mut [i32], c: bool) {\n    if c {\n        out[0] = 1\n    }\n}\n",
         ),
+        (
+            "tail_match_store",
+            "fn f(out: &mut [i32], m: i32) {\n    match m {\n        0 => {\n            out[0] = 1\n        },\n        _ => {\n            out[1] = 2\n        },\n    }\n}\n",
+        ),
+        (
+            "tail_match_store_module",
+            "module m {\n    fn f(out: &mut [i32], m: i32) {\n        match m {\n            0 => {\n                out[0] = 1\n            },\n            _ => {\n                out[1] = 2\n            },\n        }\n    }\n}\n",
+        ),
     ];
     for (tag, src) in cases {
         let (ok, text) = check_one(tag, src);
@@ -261,6 +270,14 @@ fn a_borrowed_slice_tail_value_stays_refused() {
             "tail_value_if",
             "fn leak(xs: &[i32], c: bool) -> i64 {\n    if c {\n        xs\n    }\n}\n",
         ),
+        (
+            "tail_value_match",
+            "fn leak(xs: &[i32], m: i32) -> i64 {\n    match m {\n        0 => xs,\n        _ => xs,\n    }\n}\n",
+        ),
+        (
+            "tail_value_match_block",
+            "fn leak(xs: &[i32], m: i32) -> i64 {\n    match m {\n        0 => {\n            0\n        },\n        _ => {\n            xs\n        },\n    }\n}\n",
+        ),
     ];
     for (tag, src) in cases {
         let (ok, text) = check_one(tag, src);
@@ -270,6 +287,18 @@ fn a_borrowed_slice_tail_value_stays_refused() {
             "{tag} was not refused as an escape:\n{text}"
         );
     }
+}
+
+/// A store yields its store helper's status, not the stored value: a borrowed
+/// slice stored by the tail is refused by the store check, not let through.
+#[test]
+fn a_borrowed_slice_stored_by_the_tail_stays_refused() {
+    let src = "fn keep(out: &mut [i64], xs: &[i64]) {\n    out[0] = xs\n}\n";
+    let (ok, text) = check_one("tail_store_of_borrow", src);
+    assert!(
+        !ok,
+        "a borrowed slice stored into an element passed:\n{text}"
+    );
 }
 
 /// The mind-law 0009 repro: a fixed-array literal of the wrong length stays E2001.

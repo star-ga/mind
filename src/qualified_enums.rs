@@ -39,6 +39,8 @@ pub(crate) struct Registry {
     exported_types: BTreeSet<String>,
     /// Canonical source alias key -> target resolved within that source owner.
     alias_targets: BTreeMap<String, TypeAnn>,
+    /// Canonical source alias key -> target as its owner wrote it, read by `denotation`.
+    alias_written: BTreeMap<String, TypeAnn>,
     /// Module path -> its resolved import paths, for reading a type in its owner's scope.
     pub(crate) module_imports: BTreeMap<String, Vec<String>>,
     /// `owner.NAME` -> the declared type of that module-level constant.
@@ -163,27 +165,16 @@ impl Registry {
     }
 
     /// Resolve a bare type name through the importing module's imports alone:
-    /// `Ok(Some(key))` when exactly one import exports it and it is an enum,
-    /// `Ok(None)` when exactly one exports it as a non-enum type, and
-    /// `Err(exporters)` with the number of exporters (0, or 2 and more)
-    /// otherwise. Each import counts through its direct key or, failing that,
-    /// the terminal-segment fallback, exactly as `bare_visible` and
-    /// `bare_type_is_ambiguous` count it, so all three agree on ambiguity.
+    /// `Ok(Some(key))` when every import that exports it denotes one enum,
+    /// `Ok(None)` when they denote one non-enum type, and `Err(types)` with
+    /// the number of distinct denoted types (0, or 2 and more) otherwise.
+    /// `bare_visible` and `bare_type_is_ambiguous` count the same
+    /// `bare_denotations`, so all three agree on ambiguity.
     fn imported_enum_key(&self, name: &str, imports: &[String]) -> Result<Option<String>, usize> {
-        let mut owners = BTreeSet::new();
-        for import in imports {
-            let direct = format!("{}.{name}", canonical_module(import));
-            if self.exported_types.contains(&direct) {
-                owners.insert(direct);
-            } else if let Some(source) =
-                self.imported_exported_source(import, name, std::slice::from_ref(import))
-            {
-                owners.insert(source);
-            }
-        }
-        match owners.first() {
-            Some(source) if owners.len() == 1 => Ok(self.type_keys.get(source).cloned()),
-            _ => Err(owners.len()),
+        let denoted = self.bare_denotations(name, imports);
+        match denoted.first() {
+            Some(key) if denoted.len() == 1 => Ok(self.is_canonical_type(key).then(|| key.clone())),
+            _ => Err(denoted.len()),
         }
     }
 
@@ -222,28 +213,10 @@ impl Registry {
     }
 
     fn bare_visible(&self, name: &str, imports: &[String], current: Option<&str>) -> bool {
-        let mut owners = BTreeSet::new();
-        if let Some(module) = current {
-            if self.type_keys.contains_key(&format!("{module}.{name}")) {
-                // A declaration in the current module has lexical precedence
-                // over imported owners with the same bare spelling.
-                return true;
-            }
-        }
-        for import in imports {
-            let owner = canonical_module(import);
-            let key = format!("{owner}.{name}");
-            if self.exported_types.contains(&key) {
-                owners.insert(owner);
-            } else if let Some(source) =
-                self.imported_exported_source(import, name, std::slice::from_ref(import))
-            {
-                if let Some((found, _)) = source.rsplit_once('.') {
-                    owners.insert(found.to_string());
-                }
-            }
-        }
-        owners.len() == 1
+        // A declaration in the current module has lexical precedence over
+        // imported owners with the same bare spelling.
+        current.is_some_and(|module| self.type_keys.contains_key(&format!("{module}.{name}")))
+            || self.bare_denotations(name, imports).len() == 1
     }
 
     pub(crate) fn bare_type_is_ambiguous(
@@ -252,24 +225,8 @@ impl Registry {
         imports: &[String],
         current: Option<&str>,
     ) -> bool {
-        if current.is_some_and(|module| self.type_keys.contains_key(&format!("{module}.{name}"))) {
-            return false;
-        }
-        let mut owners = BTreeSet::new();
-        for import in imports {
-            let owner = canonical_module(import);
-            let key = format!("{owner}.{name}");
-            if self.exported_types.contains(&key) {
-                owners.insert(owner);
-            } else if let Some(source) =
-                self.imported_exported_source(import, name, std::slice::from_ref(import))
-            {
-                if let Some((found, _)) = source.rsplit_once('.') {
-                    owners.insert(found.to_string());
-                }
-            }
-        }
-        owners.len() > 1
+        !current.is_some_and(|module| self.type_keys.contains_key(&format!("{module}.{name}")))
+            && self.bare_denotations(name, imports).len() > 1
     }
 
     pub(crate) fn is_canonical_type(&self, name: &str) -> bool {
@@ -707,14 +664,17 @@ pub(crate) fn rebuild(parsed: &[(String, crate::ast::Module)], enums: &mut crate
     enums.qualified.declared_types = declared;
     enums.qualified.exported_types = exported;
     enums.qualified.alias_targets = alias_targets;
+    enums.qualified.alias_written = raw_alias_targets;
     enums.qualified.module_imports = alias_imports;
     enums.qualified.const_types = const_types;
 
+    let shadowed = enums.qualified.shadowed_enum_names(&by_name);
     for (enum_name, owners) in by_name {
         enums.names.push(enum_name.clone());
         let collision = owners.len() > 1;
+        let owner_keyed = collision || shadowed.contains(&enum_name);
         for (owner_index, (module_path, decl)) in owners.into_iter().enumerate() {
-            let enum_key = if collision {
+            let enum_key = if owner_keyed {
                 format!("{module_path}::{enum_name}")
             } else {
                 enum_name.clone()

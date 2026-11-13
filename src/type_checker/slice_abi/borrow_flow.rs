@@ -8,7 +8,7 @@ use crate::ast::{FnDefData, Node, Pattern, Span, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
 use super::aliases::type_needs_collection_flow;
-use super::provenance::result_paths_proven;
+use super::provenance::{TailYield, result_paths_proven, tail_yield};
 use super::{
     Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, canonical,
     check_stmts, compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
@@ -520,6 +520,7 @@ pub(super) fn check_call(
     }
 }
 
+/// Refuse a borrowed handle in the value the body tail yields as the implicit result.
 pub(super) fn reject_borrowed_tail(
     stmts: &[Node],
     env: &Env,
@@ -527,35 +528,25 @@ pub(super) fn reject_borrowed_tail(
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    // Key on what the tail yields: a loop lowers to a unit placeholder and a
-    // store to its store call, so only the stored value can carry a handle out.
-    match stmts.last() {
-        Some(Node::Return { .. } | Node::For { .. } | Node::ForEach { .. }) | None => {}
-        #[cfg(feature = "std-surface")]
-        Some(Node::While { .. }) => {}
-        Some(Node::IndexAssign { value, .. } | Node::FieldAssign { value, .. }) => {
-            reject_borrowed_tail(std::slice::from_ref(value.as_ref()), env, src, file, errs)
+    let Some(tail) = stmts.last() else {
+        return;
+    };
+    match tail_yield(tail) {
+        TailYield::Branches(branches) => {
+            for branch in branches {
+                reject_borrowed_tail(branch, env, src, file, errs);
+            }
         }
-        Some(Node::Block { stmts, .. }) => reject_borrowed_tail(stmts, env, src, file, errs),
-        Some(Node::If {
-            then_branch,
-            else_branch,
-            ..
-        }) => {
-            reject_borrowed_tail(then_branch, env, src, file, errs);
-            let else_branch = else_branch.as_deref().unwrap_or_default();
-            reject_borrowed_tail(else_branch, env, src, file, errs);
-        }
-        Some(value) if value_contains_borrow(value, env) => report(
+        TailYield::Itself if value_contains_borrow(tail, env) => report(
             errs,
             src,
             file,
             "a borrowed slice handle cannot escape as an implicit non-slice function result"
                 .to_string(),
-            value.span(),
+            tail.span(),
             SLICE_CAPABILITY_CODE,
         ),
-        Some(_) => {}
+        TailYield::Itself | TailYield::Nothing => {}
     }
 }
 

@@ -471,3 +471,100 @@ pub(super) fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env
         None => false,
     }
 }
+
+/// What a function-body tail hands back as the implicit result, read from the
+/// value lowering gives each node.
+pub(super) enum TailYield<'a> {
+    /// The statement lists whose own tails are yielded: `if`, `match`, a block.
+    Branches(Vec<&'a [Node]>),
+    /// No value a handle can ride on: a binding, a store (it yields its store
+    /// helper's status), a loop, a jump, a print, an assert, a declaration.
+    Nothing,
+    /// The node's own value.
+    Itself,
+}
+
+/// Classify `node` by what it yields. The match is exhaustive on purpose: a
+/// new node kind must state what it yields before the escape check admits it.
+pub(super) fn tail_yield(node: &Node) -> TailYield<'_> {
+    match node {
+        Node::Block { stmts, .. } => TailYield::Branches(vec![stmts]),
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => TailYield::Branches(vec![
+            then_branch,
+            else_branch.as_deref().unwrap_or_default(),
+        ]),
+        Node::Match { arms, .. } => TailYield::Branches(
+            arms.iter()
+                .map(|arm| std::slice::from_ref(&arm.body))
+                .collect(),
+        ),
+        Node::Let { .. }
+        | Node::LetTuple { .. }
+        | Node::Assign { .. }
+        | Node::IndexAssign { .. }
+        | Node::FieldAssign { .. }
+        | Node::For { .. }
+        | Node::ForEach { .. }
+        | Node::Print { .. }
+        | Node::Assert { .. }
+        | Node::Return { .. }
+        | Node::FnDef(..)
+        | Node::Import { .. }
+        | Node::Const { .. }
+        | Node::ExternConst { .. }
+        | Node::TypeAlias { .. }
+        | Node::Export { .. }
+        | Node::StructDef { .. }
+        | Node::EnumDef { .. }
+        | Node::ExternBlock { .. }
+        | Node::TraitDef { .. }
+        | Node::ImplBlock { .. } => TailYield::Nothing,
+        #[cfg(feature = "std-surface")]
+        Node::While { .. } | Node::Break { .. } | Node::Continue { .. } => TailYield::Nothing,
+        Node::Lit(..)
+        | Node::Binary { .. }
+        | Node::Paren(..)
+        | Node::Tuple { .. }
+        | Node::Call { .. }
+        | Node::CallGrad { .. }
+        | Node::CallTensorSum { .. }
+        | Node::CallTensorMean { .. }
+        | Node::CallReshape { .. }
+        | Node::CallExpandDims { .. }
+        | Node::CallSqueeze { .. }
+        | Node::CallTranspose { .. }
+        | Node::CallIndex { .. }
+        | Node::CallSlice { .. }
+        | Node::CallSliceStride { .. }
+        | Node::CallGather { .. }
+        | Node::CallDot { .. }
+        | Node::CallMatMul { .. }
+        | Node::TensorMatmul { .. }
+        | Node::TensorElemwise { .. }
+        | Node::CallTensorRelu { .. }
+        | Node::CallTensorRand { .. }
+        | Node::CallTensorConv2d { .. }
+        | Node::ArrayLit { .. }
+        | Node::MapLit { .. }
+        | Node::SetLit { .. }
+        | Node::Neg { .. }
+        | Node::Not { .. }
+        | Node::BitNot { .. }
+        | Node::MethodCall { .. }
+        | Node::FieldAccess { .. }
+        | Node::StructLit { .. }
+        | Node::IndexAccess { .. }
+        | Node::SliceRange { .. }
+        | Node::As { .. }
+        | Node::Logical { .. }
+        | Node::Try { .. }
+        | Node::Ref { .. }
+        | Node::Closure(..) => TailYield::Itself,
+        #[cfg(feature = "std-surface")]
+        Node::Bitwise { .. } | Node::Region { .. } => TailYield::Itself,
+    }
+}

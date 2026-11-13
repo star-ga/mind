@@ -242,3 +242,82 @@ fn a_flat_alias_of_a_src_module_resolves_in_a_project_check() {
         "fixed_point.Q16_16 from src/kernel.mind:\n{text}"
     );
 }
+
+/// `other` re-exports config's enum under the same name; `strange` exports a
+/// different type of that name.
+const OTHER_ALIAS: &str = "module other {\n    use config\n    type NormMode = config.NormMode\n    export type NormMode\n}\n";
+const OTHER_STRUCT: &str = "module other {\n    struct NormMode {\n        v: i64,\n    }\n    export struct NormMode\n}\n";
+
+fn user_of(ty: &str, pattern: &str) -> String {
+    format!(
+        "module user {{\n    use config\n    use other\n    fn pick(m: {ty}) -> i32 {{\n        match m {{\n            {pattern}GroupNorm => {{\n                1\n            }},\n            {pattern}Clamp => {{\n                2\n            }},\n        }}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn a_qualified_type_and_variant_resolve_beside_a_same_named_import() {
+    // The qualified spelling names its module; another import's same-named
+    // type (a re-export or a different type) cannot make it ambiguous.
+    for (tag, other) in [("alias", OTHER_ALIAS), ("struct", OTHER_STRUCT)] {
+        for pattern in ["config.NormMode.", "config.NormMode::"] {
+            let temp = tempfile::tempdir().unwrap();
+            let user = user_of("config.NormMode", pattern);
+            let files = [
+                ("config.mind", CONFIG),
+                ("other.mind", other),
+                ("user.mind", &user),
+            ];
+            let (ok, text) = check_files(temp.path(), &files);
+            assert!(
+                ok,
+                "{tag} {pattern}: the qualified spelling was refused:\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_bare_name_two_imports_denote_as_one_type_resolves() {
+    let temp = tempfile::tempdir().unwrap();
+    let user = user_of("NormMode", "NormMode::");
+    let files = [
+        ("config.mind", CONFIG),
+        ("other.mind", OTHER_ALIAS),
+        ("user.mind", &user),
+    ];
+    let (ok, text) = check_files(temp.path(), &files);
+    assert!(
+        ok,
+        "a re-export of the same enum is not an ambiguity:\n{text}"
+    );
+}
+
+#[test]
+fn a_bare_name_two_imports_denote_as_different_types_stays_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let user = user_of("NormMode", "NormMode::");
+    let files = [
+        ("config.mind", CONFIG),
+        ("other.mind", OTHER_STRUCT),
+        ("user.mind", &user),
+    ];
+    let (ok, text) = check_files(temp.path(), &files);
+    assert!(!ok, "a bare NormMode names an enum and a struct:\n{text}");
+    assert!(text.contains("ambiguous bare type `NormMode`"), "{text}");
+    assert!(text.contains("ambiguous enum `NormMode`"), "{text}");
+}
+
+#[test]
+fn a_flat_qualified_variant_resolves_beside_an_alias_reexport() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = "enum NormMode {\n    GroupNorm = 0,\n    Clamp = 1,\n}\nexport enum NormMode\n";
+    let other = "use config\ntype NormMode = config.NormMode\nexport type NormMode\n";
+    let user = "use config\nuse other\nfn pick(m: config.NormMode) -> i32 {\n    match m {\n        config.NormMode::GroupNorm => {\n            1\n        },\n        config.NormMode::Clamp => {\n            2\n        },\n    }\n}\n";
+    let files = [
+        ("config.mind", config),
+        ("other.mind", other),
+        ("user.mind", user),
+    ];
+    let (ok, text) = check_files(temp.path(), &files);
+    assert!(ok, "config.NormMode::GroupNorm in a flat layout:\n{text}");
+}
