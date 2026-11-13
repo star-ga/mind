@@ -212,10 +212,10 @@ enum Command {
     /// Run format-check + lint + type-check over MIND source files.
     ///
     /// Exit code 0 = all passes clean; 1 = one or more error-severity diagnostics detected.
-    /// A path is never narrowed: a file or a directory that you give is checked in full.
+    /// A file that you name is always checked, also when the ignore file (.gitignore) matches it.
     Check {
-        /// Files or directories; a directory is every *.mind file below it. With no path in a
-        /// project: the source set `mindc build` compiles (a note counts the files left out).
+        /// Files or directories. A directory gives its *.mind files; ignored files are skipped.
+        /// No path, in a project: every file `mindc build` compiles (a note counts the others).
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
         /// Diagnostic reporter: human (default), json, or lsp.
