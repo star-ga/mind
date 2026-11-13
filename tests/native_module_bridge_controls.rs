@@ -177,12 +177,10 @@ fn std_symbol_collision_is_refused() {
     );
 }
 
-/// An out-of-profile construct in a REACHABLE imported body refuses, and the
-/// diagnostic distinguishes the Rust fence from the frozen parser.
-///
-/// L12 proves reachable imported `/` via `reachable_div_in_import`.
-/// After L9 admits array reads, an f32 comparison still exercises the
-/// whole-closure fence. Require its named refusal, never a parser failure.
+/// A REACHABLE imported f32 compare refuses by the fence's name, never by a parser
+/// failure (L12 proves `/` via `reachable_div_in_import`). The fence is the lane
+/// fence where the committed stage1 runs (Linux x86-64); other hosts run a drain
+/// fixture with no lane-v1 mark, so there the frozen-profile fence owns it.
 #[test]
 fn reachable_out_of_profile_import_is_refused_by_the_fence() {
     let p = Project::new("reach_f32cmp");
@@ -204,8 +202,12 @@ fn reachable_out_of_profile_import_is_refused_by_the_fence() {
 }
 
 fn f32_fence_refusal(err: &str) -> bool {
-    err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
-        && err.contains("No artifact written.")
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
+            && err.contains("No artifact written.")
+    } else {
+        err.contains("frozen native profile (out-of-profile construct: type.non_f64_float)")
+    }
 }
 
 #[test]
