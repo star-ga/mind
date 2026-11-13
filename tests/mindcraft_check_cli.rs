@@ -488,3 +488,33 @@ fn a_temporary_manifest_does_not_scope_the_check() {
     );
     assert!(stdout.contains("other.mind"), "{stdout}{stderr}");
 }
+
+// ---------------------------------------------------------------------------
+// Tests 13-17: the ignore file, the source set and the declared list
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_named_file_is_checked_when_the_ignore_file_matches_it() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    fs::write(dir.path().join(".gitignore"), "gen/\n").expect("write .gitignore");
+    fs::create_dir(dir.path().join("gen")).expect("mkdir gen");
+    fs::write(dir.path().join("gen/bad.mind"), broken("bad_value")).expect("write bad");
+
+    // The file is named on the command line: it is checked.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["gen/bad.mind"]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a named file was dropped by the ignore file:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("bad.mind") && stdout.contains("missing_name"),
+        "the named file was not reported: {stdout}{stderr}"
+    );
+
+    // Control: the walk of a directory operand skips the ignored file.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["gen"]);
+    assert_eq!(code, Some(0), "{stdout}{stderr}");
+    assert!(!stdout.contains("bad.mind"), "{stdout}");
+}

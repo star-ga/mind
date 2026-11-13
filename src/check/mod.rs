@@ -35,8 +35,7 @@ use crate::project::{
 use crate::type_checker::check_module_types_in_file;
 
 use gitignore::{
-    build_gitignore_filter_from, collect_mind_files, find_git_root, find_git_root_from,
-    project_set, should_include,
+    build_gitignore_filter_from, collect_mind_files, find_git_root, find_git_root_from, project_set,
 };
 
 // ---------------------------------------------------------------------------
@@ -536,11 +535,12 @@ fn load_check_project() -> Option<(PathBuf, ProjectManifest)> {
 // Path resolution with VCS filtering
 // ---------------------------------------------------------------------------
 
-/// The files `paths` name, sorted. A path is never narrowed: a file is itself and a
-/// directory is every `*.mind` file below it, in a project's source set or
-/// not. With no path, a project's check takes the source set its build
-/// compiles (`gitignore::project_set`) and reports how many files that leaves
-/// out; outside a project it takes every file below the current directory.
+/// The files `paths` name, sorted. A named file is itself, also when the
+/// ignore file matches it. A directory is the `*.mind` files below it that
+/// the ignore filter keeps, in a project's source set or not. With no path, a
+/// project's check takes every file of the source set its build compiles
+/// (`gitignore::project_set`) and reports how many walked files that leaves
+/// out; outside a project it walks the current directory.
 fn resolve_paths(
     paths: &[String],
     config: &MindcraftConfig,
@@ -587,9 +587,8 @@ fn resolve_paths(
     let mut out: Vec<PathBuf> = Vec::new();
     for root in roots {
         if root.is_file() {
-            if should_include(&root, filter.as_ref(), repo_root.as_deref()) {
-                out.push(root);
-            }
+            // A named file is checked, also when the ignore file matches it.
+            out.push(root);
         } else if root.is_dir() {
             collect_mind_files(&root, &mut out, filter.as_ref(), repo_root.as_deref())
                 .map_err(|e| format!("{}: {e}", root.display()))?;
