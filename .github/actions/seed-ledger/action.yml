@@ -1,0 +1,21 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: seed-ledger
+description: Build tools/seed_ledger/ with the release mindc and check the seed drift ledger.
+# One sha256 row per seed-bound file (seed sources in _selfhost_sources.py
+# order, frozen seed ELFs + MANIFESTs, std seed blob pin, mirror pins,
+# _ref notes, bridge oracle). A file that differs from its row needs a
+# SEED_DRIFT.txt line, so the FIRST commit that changes a seed source or a
+# pinned file without one is red here. The tool is pure MIND.
+# The tool is its own project (tools/seed_ledger/Mind.toml), built in a
+# copy outside the repository so the root Mind.toml cannot govern it.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        D=$(mktemp -d)
+        cp -r tools/seed_ledger/. "$D/"
+        (cd "$D" && "$GITHUB_WORKSPACE/target/release/mindc" build \
+          --backend mlir --release --emit=binary --out=/tmp/seed_ledger)
+        /tmp/seed_ledger </dev/null

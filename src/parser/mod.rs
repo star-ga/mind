@@ -20,8 +20,8 @@
 //! ```
 
 use crate::ast::{
-    BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp,
-    TypeAnn,
+    BinOp, CallConv, ExternBinding, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern,
+    Span, TensorElemOp, TypeAnn,
 };
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
@@ -2704,16 +2704,10 @@ impl<'a> P<'a> {
         })
     }
 
-    /// Parse `extern "C" [callconv(.x)] { fn_decls... }` (RFC 0010 Phase A).
-    ///
-    /// Grammar:
-    ///   `extern` `"C"` [`callconv` `(` `.` tag `)`] `{`
-    ///       ( [`safe` | `unsafe`] `fn` name `(` params `)` \[`->` ret\] `;` )*
-    ///   `}`
-    ///
-    /// Phase A accepts all four `callconv` tags syntactically; lowering
-    /// selects the platform default (`.sysv` on Linux x86_64) regardless
-    /// of which tag is stored — Phase C/D handle Win64/AAPCS quirks.
+    /// Parse `extern "C" [callconv(.x)] [bind("<soname>") | bind(.address)]
+    /// { fn_decls... }` (RFC 0010; spec "Extern bindings"). Each fn decl is
+    /// `[safe | unsafe] fn name(params) [-> ret] [;]`. `callconv` comes first
+    /// when the two clauses are present; the checker validates the binding.
     fn parse_extern_block(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "extern"
@@ -2728,20 +2722,15 @@ impl<'a> P<'a> {
         }
         self.pos += 2; // C"
         self.skip_ws();
-        // Optional `callconv(.tag)` annotation.
-        let callconv = if self.at_keyword(b"callconv") {
-            self.pos += 8; // "callconv"
-            self.skip_ws();
-            self.expect(b'(')?;
-            self.skip_ws();
-            if !self.at(b'.') {
+        let mut callconv = CallConv::C;
+        if self.keyword_paren(b"callconv")? {
+            if !self.eat(b'.') {
                 return Err(self.err("expected `.tag` inside `callconv(...)`".into()));
             }
-            self.pos += 1; // '.'
             let tag = self
                 .word()
                 .ok_or_else(|| self.err("expected callconv tag name after `.`".into()))?;
-            let cc = match tag {
+            callconv = match tag {
                 "c" => CallConv::C,
                 "sysv" => CallConv::SysV,
                 "win64" => CallConv::Win64,
@@ -2750,13 +2739,21 @@ impl<'a> P<'a> {
                     "unknown callconv tag `{other}` — expected one of: .c, .sysv, .win64, .aapcs"
                 ))),
             };
-            self.skip_ws();
-            self.expect(b')')?;
-            self.skip_ws();
-            cc
-        } else {
-            CallConv::C
-        };
+            self.close_paren()?;
+        }
+        let mut binding = ExternBinding::Base;
+        if self.keyword_paren(b"bind")? {
+            binding = if self.eat(b'.') && self.word() == Some("address") {
+                ExternBinding::Address
+            } else if self.eat(b'"') {
+                let name = self.decode_string_body()?;
+                self.expect(b'"')?;
+                ExternBinding::Library(name)
+            } else {
+                return Err(self.err("expected `bind(\"<soname>\")` or `bind(.address)`".into()));
+            };
+            self.close_paren()?;
+        }
         self.expect(b'{')?;
         let mut fns = Vec::new();
         loop {
@@ -2783,6 +2780,7 @@ impl<'a> P<'a> {
         let span = Span::new(start, self.pos);
         Ok(Node::ExternBlock {
             callconv,
+            binding,
             fns,
             span,
         })

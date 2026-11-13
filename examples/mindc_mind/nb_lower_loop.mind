@@ -1,0 +1,88 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The per-function lowering loop (nb_lower_all_ctx in main.mind): the call
+// owner record, the fail-closed poison merge, and the arena ownership rule
+// of a checkpoint reclaim.
+//
+// Why the reclaim exists: the native compiler runs in a fixed arena (1 GiB
+// default, 768 MiB bounded). Lowering one function allocates its SSA, slot,
+// env and code tables (~180 KB for an average self-host function). These
+// tables are dead once the function's code is in the image, but they were
+// never given back, so the whole-compiler self-compile grew by ~550 MiB over
+// ~3100 functions and the bounded profile ran at 93% of its arena (measured
+// high-water 714 of 768 MiB). With the reclaim the per-function tables reuse
+// one region, and the high-water is the mic@3 twin's peak instead.
+//
+// OWNERSHIP RULE of a checkpoint reclaim (the per-function mark in
+// nb_lower_all_ctx and the per-item mark in nb_emit_item_reclaimed):
+//   1. Everything allocated at or above the mark belongs to the item and is
+//      dead when the item ends. nb_arena_reclaim(mark) frees all of it.
+//   2. A table that must outlive the item is allocated BEFORE the first mark
+//      and sized once: srt, frt and the frt name index (built eagerly before
+//      the loop), the last-definition tables, rod, calls, starts, call_owner,
+//      obs, the mic@3 string table and its index.
+//   3. What the item hands back is copied below the mark before the reclaim
+//      (the code bytes go into the spare capacity of the image buffer), and
+//      its record is rebuilt after the reclaim from words stored below the
+//      mark (nb_parts_string). Plain integers are read into locals first.
+//   4. A long-lived cell that the item made point at or above the mark (an
+//      accumulator that grew into a new buffer, an index rebuilt larger)
+//      vetoes the reclaim: nblr_ckpt returns 0, and nb_arena_reclaim(0) is a
+//      no-op. The item's tables then stay allocated; nothing ever dangles.
+// The reclaim changes only where the running compiler allocates, never an
+// emitted byte: no output depends on an arena address.
+
+import nb_strtab_index;
+
+// The mark to reclaim to, or 0 (keep everything). (a0, c0) are the address
+// and capacity of the caller's accumulator before the item, (a1, c1) after
+// it: a changed address or capacity means it grew into a buffer at or above
+// the mark. held is a long-lived index cell's value (0 = none).
+pub fn nblr_ckpt(ckpt: i64, a0: i64, c0: i64, a1: i64, c1: i64, held: i64) -> i64 {
+    if a1 != a0 {
+        return 0;
+    }
+    if c1 != c0 {
+        return 0;
+    }
+    if held >= ckpt {
+        return 0;
+    }
+    ckpt
+}
+
+// The word at t + off, or 0 when there is no table (t == 0).
+pub fn nblr_cell(t: i64, off: i64) -> i64 {
+    if t == 0 {
+        return 0;
+    }
+    __mind_load_i64(t + off)
+}
+
+// The string-table index of a mic@3 table (0 for no table or no index).
+pub fn nblr_strtab_held(strbuf: i64, offs: i64) -> i64 {
+    if offs == 0 {
+        return 0;
+    }
+    nbst_header(strbuf, offs)
+}
+
+// FAIL-CLOSED sentinel merge for nb_lower_all: -1 (refused) once ANY fn's
+// next_id sentinel is negative, else the accumulator's running value (0 on a
+// clean walk). Early-return statement form (self-host subset).
+pub fn nb_poison_merge(fr_next: i64, acc_next: i64) -> i64 {
+    if fr_next < 0 {
+        return 0 - 1;
+    }
+    acc_next
+}
+
+pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
+    if c0 >= c1 {
+        return 0;
+    }
+    __mind_store_i64(call_owner + c0 * 8, k);
+    nb_set_owners(call_owner, c0 + 1, c1, k)
+}

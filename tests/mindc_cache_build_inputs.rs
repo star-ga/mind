@@ -25,7 +25,7 @@ use common::mindc_bin;
 fn run_build(mindc: &Path, root: &Path, out: &str) -> Output {
     Command::new(mindc)
         .current_dir(root)
-        .args(["build", "--verbose", "--out", out])
+        .args(["build", "--backend", "mlir", "--verbose", "--out", out])
         .output()
         .expect("run mindc build")
 }
@@ -80,7 +80,14 @@ fn explicit_entry_is_the_compiled_and_cached_entry() {
         let mut command = Command::new(&mindc);
         command
             .current_dir(root)
-            .args(["build", "src/other.mind", "--emit=cdylib", "--verbose"])
+            .args([
+                "build",
+                "--backend",
+                "mlir",
+                "src/other.mind",
+                "--emit=cdylib",
+                "--verbose",
+            ])
             .args(["--out", out]);
         if no_cache {
             command.arg("--no-cache");

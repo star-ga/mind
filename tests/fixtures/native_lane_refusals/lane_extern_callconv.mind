@@ -1,0 +1,3 @@
+// lane.extern.callconv: a callconv other than C/SysV.
+extern "C" callconv(.win64) { fn close(fd: i32) -> i32; }
+fn main() -> i64 { return 0; }

@@ -1,0 +1,8 @@
+// Refusal row: Win64 varargs have no lowering row (E2039).
+extern "C" callconv(.win64) {
+    fn w_printf(fmt: *const u8, ...) -> i32;
+}
+
+pub fn t_w_printf() -> i64 {
+    return 0
+}

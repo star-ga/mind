@@ -1360,28 +1360,16 @@ mod tests {
                 is_varargs: true,
                 vararg_hints: vec!["i64".into(), "!llvm.ptr".into()],
                 callconv: CallConv::C,
+                binding: Default::default(),
             });
 
             let parsed = roundtrip(&m);
             assert_eq!(parsed.instrs.len(), 1);
-            if let Instr::ExternFnDecl {
-                name,
-                param_types,
-                ret_type,
-                is_varargs,
-                vararg_hints,
-                callconv,
-            } = &parsed.instrs[0]
-            {
-                assert_eq!(name, "printf");
-                assert_eq!(param_types, &["!llvm.ptr"]);
-                assert_eq!(ret_type.as_deref(), Some("i64"));
-                assert!(*is_varargs);
-                assert_eq!(vararg_hints, &["i64", "!llvm.ptr"]);
-                assert_eq!(*callconv, CallConv::C);
-            } else {
-                panic!("expected ExternFnDecl");
-            }
+            // Every field, the binding included, survives the round trip.
+            assert_eq!(
+                format!("{:?}", parsed.instrs[0]),
+                format!("{:?}", m.instrs[0])
+            );
         }
 
         #[test]

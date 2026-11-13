@@ -1,0 +1,10 @@
+// N2: the twin has no wrap for a value-if right side of a narrow assignment, so it
+// refuses the function and the note is the type-2 source note (fail closed, never a
+// type-1 note that differs). Independent value: x: u8 = 250, c == 1 ->
+// x = x + 10 -> 260 & 255 = 4; 4 + 40 = 44.
+fn main() -> i64 {
+    let c: i64 = 1;
+    let mut x: u8 = 250;
+    x = if c == 1 { x + 10 } else { 0 };
+    (x as i64) + 40
+}

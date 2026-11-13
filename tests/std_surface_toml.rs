@@ -174,18 +174,18 @@ fn tv_kind_constants_are_distinct() {
     }
 }
 
-// ─── Test 4: toml_dump uses sb_push (transitively) ───────────────────────────
+// ─── Test 4: toml_dump uses toml_sb_push (transitively) ───────────────────────────
 
 #[test]
 fn toml_dump_calls_sb_push() {
     let ir = lower_toml_mind();
     let body = fn_body(&ir, "toml_dump");
-    // toml_dump must call sb_push (directly or via dump_value).
-    let pushes_direct = count_calls_recursive(body, "sb_push");
-    let pushes_via_dv = count_calls_recursive(body, "dump_value");
+    // toml_dump must call toml_sb_push (directly or via toml_dump_value).
+    let pushes_direct = count_calls_recursive(body, "toml_sb_push");
+    let pushes_via_dv = count_calls_recursive(body, "toml_dump_value");
     assert!(
         pushes_direct > 0 || pushes_via_dv > 0,
-        "toml_dump must call sb_push or dump_value; got neither"
+        "toml_dump must call toml_sb_push or toml_dump_value; got neither"
     );
 }
 

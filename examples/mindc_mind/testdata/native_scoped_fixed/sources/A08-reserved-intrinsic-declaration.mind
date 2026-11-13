@@ -1,0 +1,2 @@
+extern "C" { unsafe fn __mind_alloc(n:i64)->i64; }
+fn main()->i64 {__mind_alloc(8)}

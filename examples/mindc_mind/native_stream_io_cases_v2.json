@@ -1,0 +1,787 @@
+{
+  "contract": "source-stream-io-v2-explicit-corrections",
+  "cases": [
+    {
+      "id": "no-io",
+      "source": "fn main()->i64{return 19;}\n",
+      "expected": "accept",
+      "exit": 19,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "write-three",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);return __mind_write(1,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "read-short",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let n:i64=__mind_read(0,p,8,0-1);if n!=3{return 91;}if __mind_load_i8(p)!=97{return 92;}return n;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "616263",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "nested-copy",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let n:i64=__mind_write(1,p,__mind_read(0,p,8,0-1),0-1);return n;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "616263",
+      "stderr_hex": "",
+      "stdin_hex": "616263",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "null-guard",
+      "source": "fn main()->i64{return __mind_write(0-1,0,1,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "negative-count",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);return __mind_write(0-1,p,0-2,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "min-offset",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);return __mind_write(1,p,3,0-9223372036854775807-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "low32-fd",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);return __mind_write(4294967297,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "signed-i32-fd",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let fd:i32=0-1;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "accept",
+      "exit": 255,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "i8-explicit-signed-cast",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let fd:i8=1;return __mind_write(fd as i64,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "unsigned-explicit-signed-cast",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let fd:u64=4294967297;return __mind_write(fd as i64,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "inferred-explicit-signed-cast",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let fd=1;return __mind_write(fd as i64,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "scalar-shadow",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let fd:bool=true;let fd:i64=1;return __mind_write(fd,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "while-live-values",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let mut i:i64=0;while i<3{let n:i64=__mind_write(1,p,1,0-1);if n!=1{return 91;}i=i+1;}return i;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "686868",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "for-desugared",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);for i in 0..3{let n:i64=__mind_write(1,p,1,0-1);if n!=1{return 91;}}return 0;}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "686868",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "match-desugared",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let x:i64=2;let n:i64=match x{1=>0,_=>__mind_write(1,p,3,0-1)};return n;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "float-live-across-call",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let f:f64=3.25;let n:i64=__mind_write(1,p,3,0-1);if f+1.0!=4.25{return 91;}return n;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "i32-param-and-return",
+      "source": "fn send(fd:i32,p:i64)->i32{return __mind_write(fd,p,3,0-1) as i32;} fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);return send(1,p) as i64;}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "field-explicit-cast",
+      "source": "struct StreamRecord{fd:i64} fn main()->i64{let p:i64=__mind_alloc(8);__mind_store_i64(p,682344);let r:StreamRecord=StreamRecord{fd:1};return __mind_write(r.fd as i64,p,3,0-1);}\n",
+      "expected": "accept",
+      "exit": 3,
+      "stdout_hex": "68690a",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "direct-bool",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);let fd:bool=true;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "direct-u64",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);let fd:u64=1;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "direct-u32",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);let fd:u32=1;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "direct-i8",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);let fd:i8=1;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "direct-i16",
+      "source": "fn main()->i64{let p:i64=__mind_alloc(8);let fd:i16=1;return __mind_write(fd,p,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "bool-literal",
+      "source": "fn main()->i64{return __mind_write(true,0,0,0-1);}\n",
+      "expected": "accept",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ],
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": ""
+    },
+    {
+      "id": "float-operand",
+      "source": "fn main()->i64{return __mind_write(1.0,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "raw-pointer-operand",
+      "source": "fn main(argc:i64,argv:*const u8)->i64{return __mind_write(1,argv,1,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "record-operand",
+      "source": "struct StreamRecord{fd:i64} fn main()->i64{let r:StreamRecord=StreamRecord{fd:1};return __mind_write(r,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "array-operand",
+      "source": "fn main()->i64{let a=[1,2];return __mind_write(1,a,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "inferred-operand",
+      "source": "fn main()->i64{let fd=1;return __mind_write(fd,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reserved-local-function",
+      "source": "fn __mind_write(a:i64,b:i64,c:i64,d:i64)->i64{return 9;}fn main()->i64{return __mind_write(1,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reserved-extern",
+      "source": "extern \"C\"{fn __mind_write(a:i64,b:i64,c:i64,d:i64)->i64;}fn main()->i64{return __mind_write(1,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reserved-let",
+      "source": "fn main()->i64{let __mind_write:i64=3;return __mind_write(1,0,0,0-1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "legacy-three",
+      "source": "fn main()->i64{return __mind_write(1,0,0);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "wrong-five",
+      "source": "fn main()->i64{return __mind_write(1,0,0,0,0);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "raw-syscall",
+      "source": "fn main()->i64{return __mind_sys_getpid();}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "unknown-call",
+      "source": "fn main()->i64{return foreign_no_declaration(1);}\n",
+      "expected": "refuse",
+      "diagnostic": [
+        4,
+        0,
+        0,
+        0
+      ],
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-i8",
+      "source": "const FD:i8=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-i16",
+      "source": "const FD:i16=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-i32",
+      "source": "const FD:i32=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-i64",
+      "source": "const FD:i64=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-u32",
+      "source": "const FD:u32=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-const-u64",
+      "source": "const FD:u64=1;fn main()->i64{return __mind_write(FD,0,0,0-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    },
+    {
+      "id": "reference-negative-literal",
+      "source": "fn main()->i64{return __mind_write(-1,0,0,-1);}\n",
+      "expected": "accept",
+      "exit": 0,
+      "stdout_hex": "",
+      "stderr_hex": "",
+      "stdin_hex": "",
+      "geometries": [
+        "A",
+        "B"
+      ],
+      "routes": [
+        "automatic",
+        "force-home"
+      ]
+    }
+  ]
+}

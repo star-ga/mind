@@ -1,0 +1,331 @@
+// Copyright 2026 STARGA Inc.
+// Measurement rows (M-A3): rdtscp 68, lfence 69, sys perf_event_open 93, RDTSCP guard.
+// All three read host state (registry rows Det::World): a program reaching one is
+// attested nondeterministic. x86-64 Linux only; the Rust/MLIR leg refuses the names.
+//
+// PART RULE: std.* and other parts only. The byte helpers (nb_le, nb_store_rax,
+// nb_slot_disp, load_byte) come from the shared emitter core, nb_emit_core.mind.
+
+import std.string;
+import nb_emit_core;
+
+// Capability mark: MEASURE V1. This compiler emits kinds 68, 69, 93 and the
+// RDTSCP start precondition. Compiled natively this body is `movabs rax, imm64`
+// whose little-endian immediate spells "nbmeas01". A compatibility mark, not a
+// signature or a pin; earlier seeds do not carry it and refuse the three names at
+// nb_calls_all_resolve (exit 3, no artifact).
+pub fn nb_cap_measure_v1() -> i64 {
+    3544459768891269742
+}
+
+// 68 rdtscp_v1 / 69 lfence_v1: exact 16-byte callee span (prefix already checked).
+pub fn nbm_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 16 {
+        return 0 - 1;
+    }
+    if nbm_eq(buf, lo, 8241416268489252703, 3564141091419812964) == 1 {
+        return 68;
+    }
+    if nbm_eq(buf, lo, 7809070704261685087, 3564141044174841190) == 1 {
+        return 69;
+    }
+    0 - 1
+}
+
+// sys 93 sys_perf_event_open: exact 26-byte callee span at buf+lo.
+pub fn nbm_sys_intrinsic_id(buf: i64, lo: i64, n: i64) -> i64 {
+    if n != 26 {
+        return 0 - 1;
+    }
+    if nbm_eq(buf, lo, 8313473862527180639, 6874307661230207865) == 0 {
+        return 0 - 1;
+    }
+    if nbm_bytes_eq(buf, lo + 16, 8101799208335799909, 8) == 0 {
+        return 0 - 1;
+    }
+    if nbm_bytes_eq(buf, lo + 24, 28261, 2) == 0 {
+        return 0 - 1;
+    }
+    93
+}
+
+// 1 iff this part emits `kind` at `args_len` arguments (nbp_kind_ok): 68 and 69
+// take none, sys 93 takes five. Anything else is not emitted here.
+pub fn nbm_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 68 {
+        if args_len == 0 {
+            return 1;
+        }
+    }
+    if kind == 69 {
+        if args_len == 0 {
+            return 1;
+        }
+    }
+    if kind == 93 {
+        if args_len == 5 {
+            return 1;
+        }
+    }
+    0
+}
+
+// kind 68: rdtscp ; shl rdx,32 ; or rax,rdx  = 0F 01 F9 48 C1 E2 20 48 09 D0
+//   EDX:EAX is the time-stamp counter (rdtscp zero-extends both halves); ECX
+//   (IA32_TSC_AUX) is discarded. rcx/rdx are scratch, as for a syscall.
+// kind 69: lfence ; xor rax,rax              = 0F AE E8 48 31 C0  (value 0)
+// Both store rax to the call's result slot. Any other kind emits nothing; the
+// callers reach this only after nbm_kind_ok(kind, args_len) == 1.
+pub fn nbm_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if kind == 68 {
+        let c1: String = nb_le(code, 5197403289766396175, 8);
+        return nb_store_rax(nb_le(c1, 53257, 2), nb_slot_disp(dst_id));
+    }
+    if kind == 69 {
+        return nb_store_rax(nb_le(code, 211317909138959, 6), nb_slot_disp(dst_id));
+    }
+    string_new()
+}
+
+// kind 93: __mind_sys_perf_event_open(attr, pid, cpu, group_fd, flags), Linux
+// x86-64 syscall 298: args -> rdi, rsi, rdx, r10, r8 (mov reg,[rbp+slot]);
+// mov eax,298 ; syscall ; result rax -> the call's slot.
+pub fn nbm_sys_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if kind != 93 {
+        return string_new();
+    }
+    let c1: String = nbm_sysarg(code, 12421960, ids, 0);
+    let c2: String = nbm_sysarg(c1, 11897672, ids, 1);
+    let c3: String = nbm_sysarg(c2, 9800520, ids, 2);
+    let c4: String = nbm_sysarg(c3, 9800524, ids, 3);
+    let c5: String = nbm_sysarg(c4, 8751948, ids, 4);
+    nb_store_rax(nb_le(c5, 1423867558046392, 7), nb_slot_disp(dst_id))
+}
+
+// `<3-byte mov reg,[rbp+disp32] opcode> <disp32 of arg i's slot>`.
+// deferred: would be nb_store_rax(nb_emit_syscall(code, 298, ids, 5), ..) (the same
+// bytes), stubbed because nb_emit_syscall stays in main.mind until its group moves
+// into nb_emit_core.mind (PARTS.md) — upgrade path: replace nbm_sysarg and the 7
+// literal bytes of nbm_sys_emit with that one call.
+pub fn nbm_sysarg(code: String, op3: i64, ids: i64, i: i64) -> String {
+    nb_le(nb_le(code, op3, 3), nb_slot_disp(__mind_load_i64(ids + i * 8)), 4)
+}
+
+// 1 iff the n bytes at buf+i equal the low n bytes of the non-negative word w.
+pub fn nbm_bytes_eq(buf: i64, i: i64, w: i64, n: i64) -> i64 {
+    if n <= 0 {
+        return 1;
+    }
+    if load_byte(buf, i) != w % 256 {
+        return 0;
+    }
+    nbm_bytes_eq(buf, i + 1, w / 256, n - 1)
+}
+
+// 1 iff the 16 bytes at buf+i are the two words w0, w1.
+pub fn nbm_eq(buf: i64, i: i64, w0: i64, w1: i64) -> i64 {
+    if nbm_bytes_eq(buf, i, w0, 8) == 0 {
+        return 0;
+    }
+    nbm_bytes_eq(buf, i + 8, w1, 8)
+}
+
+// 1 when a reachable fn's source names __mind_rdtscp_v1 at a code position.
+// The scan is lexical over each emitted fn's span (line comments, string and
+// char literals skipped), so it over-approximates the call sites: the guard may
+// be present for a name that is never called, never absent for one that is.
+// State cell: +0 lexical mode (0 code, 1 string literal, 2 line comment), +8 hit.
+pub fn nbm_fns_use_rdtscp(src_addr: i64, ordered: i64, n_fns: i64) -> i64 {
+    let st: i64 = __mind_alloc(16);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    nbm_fns_scan(src_addr, ordered, n_fns, 0, st)
+}
+
+pub fn nbm_fns_scan(buf: i64, ordered: i64, n_fns: i64, k: i64, st: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    let lo: i64 = __mind_load_i64(node + 8);
+    let hi: i64 = lo + nbm_fn_span(node);
+    __mind_store_i64(st, 0);
+    let _e: i64 = nbm_scan_span(buf, lo, lo, hi, hi, st);
+    if __mind_load_i64(st + 8) == 1 {
+        return 1;
+    }
+    nbm_fns_scan(buf, ordered, n_fns, k + 1, st)
+}
+
+// Byte length of fn node's source: the larger of the fn span and its body span
+// (AST node: +8 span_lo, +16 span_hi, +40 body), as main.mind's hm_fn_span reads it.
+pub fn nbm_fn_span(node: i64) -> i64 {
+    let body: i64 = __mind_load_i64(node + 40);
+    let a: i64 = __mind_load_i64(node + 16) - __mind_load_i64(node + 8);
+    if body == 0 {
+        return nbm_nonneg(a);
+    }
+    let b: i64 = __mind_load_i64(body + 16) - __mind_load_i64(body + 8);
+    if a > b {
+        return nbm_nonneg(a);
+    }
+    nbm_nonneg(b)
+}
+
+pub fn nbm_nonneg(v: i64) -> i64 {
+    if v < 0 {
+        return 0;
+    }
+    v
+}
+
+// Halving ranges bound the recursion depth (main.mind hm_count_span's discipline).
+pub fn nbm_scan_span(buf: i64, i: i64, a: i64, b: i64, hi: i64, st: i64) -> i64 {
+    if b - a <= 256 {
+        return nbm_scan_run(buf, i, b, hi, st);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    let j: i64 = nbm_scan_span(buf, i, a, mid, hi, st);
+    nbm_scan_span(buf, j, mid, b, hi, st)
+}
+
+pub fn nbm_scan_run(buf: i64, i: i64, b: i64, hi: i64, st: i64) -> i64 {
+    if i >= b {
+        return i;
+    }
+    let step: i64 = nbm_scan_one(buf, i, hi, load_byte(buf, i), st);
+    nbm_scan_run(buf, i + step, b, hi, st)
+}
+
+pub fn nbm_scan_one(buf: i64, i: i64, hi: i64, c: i64, st: i64) -> i64 {
+    let mode: i64 = __mind_load_i64(st);
+    if mode == 2 {
+        if c == 10 {
+            __mind_store_i64(st, 0)
+        }
+        return 1;
+    }
+    if mode == 1 {
+        if c == 92 {
+            return 2;
+        }
+        if c == 34 {
+            __mind_store_i64(st, 0)
+        }
+        return 1;
+    }
+    if c == 34 {
+        __mind_store_i64(st, 1);
+        return 1;
+    }
+    if c == 39 {
+        if load_byte(buf, i + 1) == 92 {
+            return nbm_char_end(buf, i, i + 3, hi);
+        }
+        return nbm_char_end(buf, i, i + 2, hi);
+    }
+    if c == 47 {
+        if i + 1 < hi {
+            if load_byte(buf, i + 1) == 47 {
+                __mind_store_i64(st, 2);
+                return 2;
+            }
+        }
+        return 1;
+    }
+    if c == 95 {
+        if nbm_rdtscp_name_at(buf, i, hi) == 1 {
+            __mind_store_i64(st + 8, 1);
+            return 16;
+        }
+    }
+    1
+}
+
+// Bytes of the char literal opening at p ('x', '\n', a multi-byte scalar): up to
+// its closing quote, or 1 when none follows within 12 bytes.
+pub fn nbm_char_end(buf: i64, p: i64, q: i64, hi: i64) -> i64 {
+    if q >= hi {
+        return 1;
+    }
+    if q >= p + 12 {
+        return 1;
+    }
+    if load_byte(buf, q) == 39 {
+        return q - p + 1;
+    }
+    nbm_char_end(buf, p, q + 1, hi)
+}
+
+// 1 iff the 16-byte identifier rdtscp_v1 (with its prefix) starts at i, with no
+// identifier byte before or after it.
+pub fn nbm_rdtscp_name_at(buf: i64, i: i64, hi: i64) -> i64 {
+    if i + 16 > hi {
+        return 0;
+    }
+    if i > 0 {
+        if nbm_word_byte(load_byte(buf, i - 1)) == 1 {
+            return 0;
+        }
+    }
+    if i + 16 < hi {
+        if nbm_word_byte(load_byte(buf, i + 16)) == 1 {
+            return 0;
+        }
+    }
+    nbm_eq(buf, i, 8241416268489252703, 3564141091419812964)
+}
+
+// [A-Za-z0-9_]
+pub fn nbm_word_byte(c: i64) -> i64 {
+    if c == 95 {
+        return 1;
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    0
+}
+
+// RDTSCP start precondition (entry-guard chain bit 2), emitted ahead of the
+// entry's argv capture only when nbm_fns_use_rdtscp found the name:
+//   push rbx ; push rdx                     (cpuid clobbers ebx/edx)
+//   mov eax,0x80000000 ; cpuid ; cmp eax,0x80000001 ; jb fail
+//   mov eax,0x80000001 ; cpuid ; bt edx,27 ; jc ok   (CPUID.80000001H:EDX.RDTSCP)
+// fail: write(2, msg, 81) ; exit_group(132) ; msg
+//   msg = "error[isa]: isa.rdtscp_missing: this CPU lacks RDTSCP (CPUID 0x80000001 EDX[27])\n"
+// ok:   pop rdx ; pop rbx
+// 148 bytes: a CPU without RDTSCP gets the named refusal and exit 132, never SIGILL.
+pub fn nbm_entry_guard(code: String) -> String {
+    let c1: String = nb_le(code, 1116892707599962707, 8);
+    let c2: String = nb_le(c1, 968977607326514594, 8);
+    let c3: String = nb_le(c2, 1126479899226276280, 8);
+    let c4: String = nb_le(c3, 484289541825210, 8);
+    let c5: String = nb_le(c4, 5188146770776883200, 8);
+    let c6: String = nb_le(c5, 5889019462741603725, 8);
+    let c7: String = nb_le(c6, 65223051486167040, 8);
+    let c8: String = nb_le(c7, 1080863912796028928, 8);
+    let c9: String = nb_le(c8, 7591787419850138885, 8);
+    let c10: String = nb_le(c9, 7022071831139803507, 8);
+    let c11: String = nb_le(c10, 6877105978519876142, 8);
+    let c12: String = nb_le(c11, 4208453775988582765, 8);
+    let c13: String = nb_le(c12, 5783502026535629856, 8);
+    let c14: String = nb_le(c13, 2338330706115829845, 8);
+    let c15: String = nb_le(c14, 2891399210862920786, 8);
+    let c16: String = nb_le(c15, 8660457561093656643, 8);
+    let c17: String = nb_le(c16, 3544385890265608248, 8);
+    let c18: String = nb_le(c17, 6716892737150666016, 8);
+    nb_le(c18, 1532627497, 4)
+}

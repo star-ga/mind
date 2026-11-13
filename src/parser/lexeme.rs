@@ -46,6 +46,27 @@ impl<'a> P<'a> {
         Some(self.text(start, self.pos))
     }
 
+    /// Read `kw (` (a clause head such as `callconv(` or `bind(`) and the
+    /// blanks after it. Returns false, reading nothing, when `kw` is absent.
+    pub(super) fn keyword_paren(&mut self, kw: &[u8]) -> Result<bool, super::ParseError> {
+        if !self.at_keyword(kw) {
+            return Ok(false);
+        }
+        self.pos += kw.len();
+        self.skip_ws();
+        self.expect(b'(')?;
+        self.skip_ws();
+        Ok(true)
+    }
+
+    /// Read the `)` that closes a clause, with the blanks around it.
+    pub(super) fn close_paren(&mut self) -> Result<(), super::ParseError> {
+        self.skip_ws();
+        self.expect(b')')?;
+        self.skip_ws();
+        Ok(())
+    }
+
     /// Issue #205: at the current position (immediately after an integer
     /// literal's digits), try to consume a trailing integer-type suffix
     /// (`u8`/`u16`/`u32`/`u64`/`i8`/`i16`/`i32`/`i64`) so `2u32`, `-1i32`,

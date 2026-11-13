@@ -80,6 +80,13 @@ pub(crate) struct LinkSurface<'a> {
 
 static NO_NAMES: BTreeSet<String> = BTreeSet::new();
 
+/// Holds the MIND symbol namespace of one executable build; see
+/// [`LinkSurface::linked`].
+#[cfg(feature = "mlir-build")]
+pub(crate) type NamespaceScope = Option<crate::mlir::nobuiltin::NamespaceGuard>;
+#[cfg(not(feature = "mlir-build"))]
+pub(crate) type NamespaceScope = ();
+
 impl<'a> LinkSurface<'a> {
     /// An executable whose native objects call `native_refs`.
     pub(crate) fn executable(native_refs: Option<&'a BTreeSet<String>>) -> Self {
@@ -87,6 +94,35 @@ impl<'a> LinkSurface<'a> {
             shared_exports: None,
             native_refs,
         }
+    }
+
+    /// The surface of a `mindc build` that compiles objects for `emit`, and the
+    /// scope of its MIND symbol namespace (`mlir::nobuiltin`). An executable
+    /// whose native objects were read gets the namespace: every MIND function
+    /// but `main`, a runtime-support export and a name a native object calls
+    /// has the object symbol `mind.<name>`. An object file is a surface a C
+    /// caller links by name, so it keeps plain names, as does a build whose
+    /// native objects could not be read.
+    pub(crate) fn linked(
+        native_refs: Option<&'a BTreeSet<String>>,
+        emit: super::EmitKind,
+    ) -> (Self, NamespaceScope) {
+        #[cfg(feature = "mlir-build")]
+        let scope = native_refs
+            .filter(|_| emit == super::EmitKind::Binary)
+            .map(|refs| {
+                let mut keep: BTreeSet<String> =
+                    crate::eval::mlir_build::runtime_src::exported_names()
+                        .map(str::to_string)
+                        .collect();
+                keep.extend(refs.iter().cloned());
+                keep.insert("main".to_string());
+                crate::mlir::nobuiltin::install_namespace(keep)
+            });
+        // Native objects are only compiled, and MLIR only built, under `mlir-build`.
+        #[cfg(not(feature = "mlir-build"))]
+        let (scope, _) = ((), emit);
+        (Self::executable(native_refs), scope)
     }
 
     /// A shared library exporting `c_abi` (and every `export { … }` name); it
@@ -591,7 +627,7 @@ mod tests {
 
     #[test]
     fn a_std_helper_yields_to_a_program_fn() {
-        // Pulled or not, std.toml's private `is_digit` is the one made internal.
+        // Pulled or not, the toml-like `TOML` const's private `is_digit` is made internal.
         for main in [
             "fn is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\nfn main() -> i64 {\n    return is_digit(1);\n}\n",
             "fn is_digit(c: i64) -> i64 {\n    return c + 1000;\n}\n\nfn main() -> i64 {\n    return is_digit(1) + toml.toml_new();\n}\n",

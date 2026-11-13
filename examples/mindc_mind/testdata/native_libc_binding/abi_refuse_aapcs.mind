@@ -1,0 +1,8 @@
+// Refusal row: AAPCS has no lowering row on x86-64 (E2039).
+extern "C" callconv(.aapcs) {
+    fn a_i32(a: i32) -> i32;
+}
+
+pub fn t_a_i32() -> i64 {
+    return a_i32(7 as i32)
+}

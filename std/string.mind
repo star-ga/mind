@@ -70,31 +70,71 @@ pub fn string_validate_utf8(s: String) -> i64 {
     }
 }
 
-// string_push_byte — append a single pre-validated byte.  Same
-// non-mutating semantics as `vec_push` (allocates a new backing
-// store on growth, copies via per-byte load/store).  Growth: cap 0
-// → 16, otherwise doubles.  The 16-byte minimum amortises the small-
-// string case while keeping the allocation trace deterministic.
-pub fn string_push_byte(s: String, b: i64) -> String {
-    let new_len: i64 = s.len + 1;
-    let new_cap: i64 = if s.cap == 0 {
+// string_push_capacity — checked byte capacity for one additional byte.
+// Zero diagnoses negative metadata, owned len > cap, or len + 1 overflow.
+// This allocation-free helper does not validate pointers or ownership.
+pub fn string_push_capacity(len: i64, cap: i64) -> i64 {
+    if len < 0 {
+        return 0;
+    }
+    if cap < 0 {
+        return 0;
+    }
+    if len == 9223372036854775807 {
+        return 0;
+    }
+    if cap > 0 {
+        if len > cap {
+            return 0;
+        }
+        if len < cap {
+            return cap;
+        }
+    }
+    let needed: i64 = len + 1;
+    let mut next: i64 = if cap == 0 {
         16
     } else {
-        if s.len < s.cap {
-            s.cap
-        } else {
-            s.cap * 2
-        }
+        cap
     };
-    // Grow-and-preserve: __mind_realloc(NULL, size) === malloc(size)
-    // on the cap-0 path, and copies existing bytes on the doubling path.
-    // The plain __mind_alloc this used to call lost the old bytes; that
-    // worked while strings stayed ≤16 bytes but silently corrupted any
-    // longer push sequence.  Fixed alongside the vec_push twin.
-    let new_addr: i64 = if new_cap == s.cap {
-        s.addr
+    while next < needed {
+        if next > 4611686018427387903 {
+            next = needed;
+        } else {
+            next = next * 2;
+        }
+    }
+    next
+}
+
+// string_push_byte — append the low byte of b, returning a fresh header.
+// Preconditions: valid live String; len + 1 representable; allocation succeeds
+// or the allocator applies its documented failure policy. cap=0 is a borrowed
+// readable view (including literals/slices); cap>0 is writable allocator-owned
+// storage with len<=cap. Owned growth may invalidate old backing-store aliases.
+// The capacity helper's refusal is not a recoverable malformed-String API.
+//
+// Borrowed storage is never reallocated or freed. Its bytes are copied into a
+// fresh buffer, minimum16 and doubled until sufficient. Owned spare capacity is
+// reused; owned growth uses realloc, preserving the existing bytes. Doubling
+// cannot wrap: near the signed limit the helper selects exactly len+1.
+pub fn string_push_byte(s: String, b: i64) -> String {
+    let new_cap: i64 = string_push_capacity(s.len, s.cap);
+    let new_len: i64 = s.len + 1;
+    let new_addr: i64 = if s.cap == 0 {
+        let fresh: i64 = __mind_alloc(new_cap);
+        let mut i: i64 = 0;
+        while i < s.len {
+            __mind_store_i8(fresh + i, __mind_load_i8(s.addr + i));
+            i = i + 1;
+        }
+        fresh
     } else {
-        __mind_realloc(s.addr, new_cap)
+        if new_cap == s.cap {
+            s.addr
+        } else {
+            __mind_realloc(s.addr, new_cap)
+        }
     };
     __mind_store_i8(new_addr + s.len, b);
     String { addr: new_addr, len: new_len, cap: new_cap }
@@ -224,13 +264,9 @@ pub fn string_slice_from(s: String, start: i64) -> String {
 // next power-of-two ≥ the required length, copies all existing
 // bytes of `dst` into it, then appends `src`'s bytes at the tail.
 //
-// Note: the existing `string_push_byte` (above) does NOT copy
-// existing bytes on growth — a known limitation that holds while
-// strings stay ≤16 bytes.  `string_push_str` is written correctly
-// for arbitrary lengths so concatenation works for the agent-CLI
-// text-output paths that drive it (ANSI sequences, multi-arg
-// command-line strings, JSON payloads).  The fix-string_push_byte
-// follow-up tracks separately.
+// Like string_push_byte, borrowed cap=0 views become owned copies when
+// nonempty bytes are appended. This function retains its existing allocation
+// and aliasing contract; it does not free the previous backing store.
 pub fn string_push_str(dst: String, src: String) -> String {
     let needed: i64 = dst.len + src.len;
     let new_cap: i64 = if needed <= dst.cap {

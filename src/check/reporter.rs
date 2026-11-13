@@ -14,7 +14,7 @@
 //!
 //! The trait is currently thin — Phase 6 will add streaming variants.
 
-use super::CheckDiagnostic;
+use super::{CheckDiagnostic, CheckSeverity};
 
 /// Trait for emitting check diagnostics.
 pub trait Reporter {
@@ -43,4 +43,68 @@ impl Reporter for JsonReporter {
             Err(e) => eprintln!("error[check]: JSON serialisation failed: {e}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// LSP reporter
+// ---------------------------------------------------------------------------
+
+/// LSP severity codes (as per the LSP specification).
+///
+/// 1=Error, 2=Warning, 3=Information, 4=Hint.
+fn lsp_severity(s: CheckSeverity) -> u8 {
+    match s {
+        CheckSeverity::Error => 1,
+        CheckSeverity::Warn => 2,
+        CheckSeverity::Info => 3,
+    }
+}
+
+/// Emit diagnostics as a JSON array of LSP `Diagnostic` objects.
+///
+/// Schema (per LSP specification §3.17):
+/// ```json
+/// [
+///   {
+///     "uri": "file:///absolute/path/to/file.mind",
+///     "range": {
+///       "start": { "line": 0, "character": 0 },
+///       "end":   { "line": 0, "character": 5 }
+///     },
+///     "severity": 1,
+///     "message": "...",
+///     "source": "mindc",
+///     "code": "lint::trailing_whitespace"
+///   }
+/// ]
+/// ```
+///
+/// LSP line/character values are 0-based; `CheckDiagnostic` uses 1-based.
+pub(super) fn emit_lsp_diagnostics(diags: &[CheckDiagnostic]) -> Result<String, serde_json::Error> {
+    use serde_json::{Value, json};
+
+    let items: Vec<Value> = diags
+        .iter()
+        .map(|d| {
+            let line0 = d.line.saturating_sub(1);
+            let char0 = d.col.saturating_sub(1);
+            // For LSP `end`, we use the same line/col as start since we only
+            // have one position. Downstream tooling can use the `code` to
+            // look up the full span if needed.
+            let uri = format!("file://{}", d.file.display());
+            json!({
+                "uri": uri,
+                "range": {
+                    "start": { "line": line0, "character": char0 },
+                    "end":   { "line": line0, "character": char0 }
+                },
+                "severity": lsp_severity(d.severity),
+                "message": d.message,
+                "source": "mindc",
+                "code": d.rule_id,
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&items)
 }

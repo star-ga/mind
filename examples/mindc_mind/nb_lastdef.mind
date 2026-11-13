@@ -1,0 +1,274 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Name spans, the last-definition table of a fn array and the name index
+// of the fn return-type registry (frt).
+//
+// The prune, the dedup and the call checks ask "which fns[k] is the LAST def
+// of this name" once per call site, per reachability round. A linear scan of
+// fns[] made the whole-source self-compile O(call sites x fns). Here the
+// answer comes from a table built ONCE per fn array: an open-addressing hash
+// of the name bytes, filled in index order, so a later def of a name
+// overwrites the earlier one (last-write-wins, the compile_to_elf dedup ABI).
+// The hash and the probe order are pure functions of the name bytes and the
+// array order: no address and no allocation order reaches the result, which
+// is exactly the index the scan returned.
+//
+// Layout: the table address sits in the word after the array, fns[n_fns]
+// (every fn array is allocated with one spare word). Header: tab[0] =
+// "MINDLDT\x01" little-endian, tab[1] = the array it indexes, tab[2] = its length, tab[3] =
+// cap = 2n + 1 slots; tab[4 + s] = k + 1 for the fn that owns slot s, 0 =
+// empty. Fail closed: every producer of a fn array (nb_collect_fns,
+// nb_order_rest, nb_build_kept, nb_build_kept_all) ends it with nbld_end, so
+// the spare word is 0 until attach writes it, and a lookup on an array
+// without a matching header writes a named diagnostic and traps
+// (nbld_trap), never an index read from garbage.
+
+import nb_emit_core;
+import nb_ast;
+
+// 1 if buf[alo..ahi] equals buf[blo..bhi] byte-for-byte, else 0.
+pub fn span_bytes_equal(buf: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    if (ahi - alo) == (bhi - blo) {
+        span_bytes_equal_loop(buf, alo, ahi, blo, 0)
+    } else {
+        0
+    }
+}
+pub fn span_bytes_equal_loop(buf: i64, alo: i64, ahi: i64, blo: i64, k: i64) -> i64 {
+    if alo + k >= ahi {
+        1
+    } else {
+        if load_byte(buf, alo + k) == load_byte(buf, blo + k) {
+            span_bytes_equal_loop(buf, alo, ahi, blo, k + 1)
+        } else {
+            0
+        }
+    }
+}
+
+// The hash of the name buf[lo..hi): h = (31 h + byte) mod 1000003.
+pub fn nbld_hash(buf: i64, lo: i64, hi: i64) -> i64 {
+    let mut h: i64 = 7;
+    let mut i: i64 = lo;
+    while i < hi {
+        h = (h * 31 + load_byte(buf, i)) % 1000003;
+        i = i + 1;
+    }
+    h
+}
+
+// The slot that holds the name buf[lo..hi), or the empty slot where it goes.
+// Linear probing from slot s; cap > n_fns, so an empty slot always exists.
+pub fn nbld_probe(tab: i64, buf: i64, fns: i64, lo: i64, hi: i64, s: i64) -> i64 {
+    let v: i64 = __mind_load_i64(tab + 32 + s * 8);
+    if v == 0 {
+        return s;
+    }
+    let name: i64 = ast_child0(__mind_load_i64(fns + (v - 1) * 8));
+    if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
+        return s;
+    }
+    nbld_probe(tab, buf, fns, lo, hi, (s + 1) % __mind_load_i64(tab + 24))
+}
+
+pub fn nbld_slot(tab: i64, buf: i64, fns: i64, lo: i64, hi: i64) -> i64 {
+    nbld_probe(tab, buf, fns, lo, hi, nbld_hash(buf, lo, hi) % __mind_load_i64(tab + 24))
+}
+
+// End a fn array of n entries: the spare word fns[n] = 0 (no table yet).
+// Returns n, so a producer's base case reads `return nbld_end(fns, n);`.
+pub fn nbld_end(fns: i64, n: i64) -> i64 {
+    __mind_store_i64(fns + n * 8, 0);
+    n
+}
+
+// Build the table of fns[0..n) and store it at fns[n]. Returns n, so an
+// allocation site wraps its nb_collect_fns call. A refused allocation leaves
+// fns[n] = 0, so the first lookup traps by name.
+pub fn nb_last_def_attach(buf: i64, fns: i64, n: i64) -> i64 {
+    let cap: i64 = n * 2 + 1;
+    let tab: i64 = __mind_alloc((cap + 4) * 8);
+    if tab == 0 {
+        return nbld_end(fns, n);
+    }
+    __mind_store_i64(tab, 95776586435807565);
+    __mind_store_i64(tab + 8, fns);
+    __mind_store_i64(tab + 16, n);
+    __mind_store_i64(tab + 24, cap);
+    let mut s: i64 = 0;
+    while s < cap {
+        __mind_store_i64(tab + 32 + s * 8, 0);
+        s = s + 1;
+    }
+    let mut k: i64 = 0;
+    while k < n {
+        let name: i64 = ast_child0(__mind_load_i64(fns + k * 8));
+        let slot: i64 = nbld_slot(tab, buf, fns, ast_span_lo(name), ast_span_hi(name));
+        __mind_store_i64(tab + 32 + slot * 8, k + 1);
+        k = k + 1;
+    }
+    __mind_store_i64(fns + n * 8, tab);
+    n
+}
+
+// A lookup on an array without its table: name the defect on fd 2, then
+// fault on a load from address 8 (never mapped), so no compile continues
+// with a wrong index. Unreachable while every array is attached.
+pub fn nbld_trap() -> i64 {
+    let m: i64 = __mind_alloc(88);
+    __mind_store_i64(m, 7575118771798305133);
+    __mind_store_i64(m + 8, 2336349433691993198);
+    __mind_store_i64(m + 16, 6998658084104204901);
+    __mind_store_i64(m + 24, 7021800530505524768);
+    __mind_store_i64(m + 32, 7307199665373585529);
+    __mind_store_i64(m + 40, 8314045544031723620);
+    __mind_store_i64(m + 48, 7235419169739792244);
+    __mind_store_i64(m + 56, 8462097074047361144);
+    __mind_store_i64(m + 64, 8314045544031723636);
+    __mind_store_i64(m + 72, 8386088874532953972);
+    __mind_store_i64(m + 80, 44701016436);
+    let _w: i64 = __mind_write(2, m, 85, 0 - 1);
+    __mind_load_i64(8)
+}
+
+// The LAST index in fns[0..n_fns) whose fn-name span equals buf[lo..hi), or -1.
+// fns must carry its table (nb_last_def_attach); an empty array has none.
+pub fn nb_last_def_idx(buf: i64, fns: i64, n_fns: i64, lo: i64, hi: i64) -> i64 {
+    if n_fns <= 0 {
+        return 0 - 1;
+    }
+    let tab: i64 = __mind_load_i64(fns + n_fns * 8);
+    if tab == 0 {
+        return nbld_trap();
+    }
+    if __mind_load_i64(tab) != 95776586435807565 {
+        return nbld_trap();
+    }
+    if __mind_load_i64(tab + 8) != fns {
+        return nbld_trap();
+    }
+    if __mind_load_i64(tab + 16) != n_fns {
+        return nbld_trap();
+    }
+    __mind_load_i64(tab + 32 + nbld_slot(tab, buf, fns, lo, hi) * 8) - 1
+}
+
+// ---- The fn return-type registry (frt): slot layout and name index ----
+// frt_find answered "the LAST registry entry named src[lo..hi)" with a scan
+// of every entry per call site (O(call sites x fns) on a whole program). The
+// index is a hash table of the name bytes, built at the first lookup for one
+// source buffer and filled in entry order (last-write-wins). It returns the
+// index the scan returned. A lookup with another buffer, or a refused
+// allocation, takes the scan (nbfx_scan), so every answer is the old one.
+// Index header: [0] the buffer, [1] the entry count, [2] cap = 2n + 1;
+// word 3 + s = k + 1 for the entry that owns slot s, 0 = empty.
+
+pub fn frt_cap() -> i64 {
+    4096
+}
+
+// Words per fn slot: name_lo + name_hi + ret_is_float + ret_width (C2 driver;
+// 64 default, 8/16/32 only for a declared `-> i8/i16/i32 {` return) + retty_lo +
+// retty_hi (the return-type NAME span, for struct-return descriptor inference on
+// an UNANNOTATED call-init let `let p = mk(); p.x` — the span names the struct in
+// srt exactly as an explicit `: P` annotation would; (0,0) for a unit/extern/
+// multi-token return, which never names a struct).
+pub fn frt_slot_words() -> i64 {
+    6
+}
+
+pub fn frt_count(t: i64) -> i64 {
+    __mind_load_i64(t + 0)
+}
+
+pub fn frt_slot_base(k: i64) -> i64 {
+    1 + k * frt_slot_words()
+}
+
+pub fn frt_name_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 0) * 8)
+}
+
+pub fn frt_name_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 1) * 8)
+}
+
+// The slot that holds the name src[lo..hi), or the empty slot where it goes.
+pub fn nbfx_probe(ix: i64, t: i64, src: i64, lo: i64, hi: i64, s: i64) -> i64 {
+    let v: i64 = __mind_load_i64(ix + 24 + s * 8);
+    if v == 0 {
+        return s;
+    }
+    if span_bytes_equal(src, lo, hi, frt_name_lo(t, v - 1), frt_name_hi(t, v - 1)) == 1 {
+        return s;
+    }
+    nbfx_probe(ix, t, src, lo, hi, (s + 1) % __mind_load_i64(ix + 16))
+}
+
+// The index of frt entries 0..n, names read in src; 0 if the allocation is refused.
+pub fn nbfx_build(t: i64, src: i64, n: i64) -> i64 {
+    let cap: i64 = n * 2 + 1;
+    let ix: i64 = __mind_alloc((cap + 3) * 8);
+    if ix == 0 {
+        return 0;
+    }
+    __mind_store_i64(ix, src);
+    __mind_store_i64(ix + 8, n);
+    __mind_store_i64(ix + 16, cap);
+    let mut s: i64 = 0;
+    while s < cap {
+        __mind_store_i64(ix + 24 + s * 8, 0);
+        s = s + 1;
+    }
+    let mut k: i64 = 0;
+    while k < n {
+        let nlo: i64 = frt_name_lo(t, k);
+        let nhi: i64 = frt_name_hi(t, k);
+        let slot: i64 = nbfx_probe(ix, t, src, nlo, nhi, nbld_hash(src, nlo, nhi) % cap);
+        __mind_store_i64(ix + 24 + slot * 8, k + 1);
+        k = k + 1;
+    }
+    ix
+}
+
+// The old answer: scan from the tail (entry n - 1 - k first), -1 if none.
+pub fn nbfx_scan(t: i64, src: i64, lo: i64, hi: i64, n: i64, k: i64) -> i64 {
+    if k >= n {
+        return 0 - 1;
+    }
+    let idx: i64 = n - 1 - k;
+    if span_bytes_equal(src, lo, hi, frt_name_lo(t, idx), frt_name_hi(t, idx)) == 1 {
+        return idx;
+    }
+    nbfx_scan(t, src, lo, hi, n, k + 1)
+}
+
+// The LAST frt entry named src[lo..hi), or -1. cell is the registry's index
+// word (frt_alloc writes 0): built at the first lookup, rebuilt only if the
+// entry count changed since.
+pub fn nbfx_find(t: i64, cell: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = frt_count(t);
+    if n <= 0 {
+        return 0 - 1;
+    }
+    let mut ix: i64 = __mind_load_i64(cell);
+    if ix != 0 {
+        if __mind_load_i64(ix + 8) != n {
+            ix = 0;
+        }
+    }
+    if ix == 0 {
+        ix = nbfx_build(t, src, n);
+        if ix == 0 {
+            return nbfx_scan(t, src, lo, hi, n, 0);
+        }
+        __mind_store_i64(cell, ix)
+    }
+    if __mind_load_i64(ix) != src {
+        return nbfx_scan(t, src, lo, hi, n, 0);
+    }
+    let s: i64 = nbfx_probe(ix, t, src, lo, hi, nbld_hash(src, lo, hi) % __mind_load_i64(ix + 16));
+    __mind_load_i64(ix + 24 + s * 8) - 1
+}

@@ -88,9 +88,9 @@ pub fn entropy_fill(buf: i64, len: i64) -> i64 {
         if want > entropy_chunk_len() {
             want = entropy_chunk_len();
         }
-        let got: i64 = getrandom((buf + done) as *mut u8, want, 0);
+        let got: i64 = getrandom((buf + done) as *mut u8, want, 0 as i32);
         if got != want {
-            let _ = memset(buf as *mut u8, 0, len);
+            memset(buf as *mut u8, 0 as i32, len);
             if got < 0 {
                 return entropy_err_os();
             }

@@ -1,0 +1,88 @@
+// Copyright 2026 STARGA Inc.
+// Supplementary public behavior checks; preserves the original writer fixture.
+pub fn ndm_cmp(out: String, a: String, b: String) -> String {
+    nb_push(out, nd_compare(string_addr(a), string_len(a), string_addr(b), string_len(b)) + 1)
+}
+
+pub fn ndm_sort(mode: i64) -> String {
+    let mut imports: Vec = vec_new();
+    if mode == 14 {
+        imports = vec_push(imports, nd_import("a", "V_1"));
+        imports = vec_push(imports, nd_import("aa", "V_1"));
+        imports = vec_push(imports, nd_import("a_", "V_1"));
+    } else {
+        imports = vec_push(imports, nd_import("z", "V_2"));
+        let version: String = if mode == 1 { "V_2" } else { "V_1" };
+        imports = vec_push(imports, nd_import("a", version));
+        imports = vec_push(imports, nd_import("m", "V_2"));
+    }
+    let order: Vec = nd_order(imports);
+    let versions: Vec = nd_versions(imports, order);
+    let mut out: String = string_new();
+    let mut i: i64 = 0;
+    while i < vec_len(order) { out = nb_push(out, vec_get(order, i)); i = i + 1; }
+    i = 0;
+    while i < vec_len(versions) { out = nb_push(out, vec_get(versions, i)); i = i + 1; }
+    if mode != 14 {
+        i = 0;
+        while i < 3 { out = nb_push(out, nd_version_id(imports, versions, vec_get(imports, i))); i = i + 1; }
+    }
+    out
+}
+
+pub fn ndm_case(mode: i64) -> String {
+    if mode == 0 { return ndm_sort(mode); }
+    if mode == 1 { return ndm_sort(mode); }
+    if mode == 14 { return ndm_sort(mode); }
+    let mut out: String = string_new();
+    if mode == 2 {
+        out = ndm_cmp(out, "", "");
+        out = ndm_cmp(out, "a", "ab");
+        out = ndm_cmp(out, "ab", "a");
+        out = ndm_cmp(out, "az", "ba");
+        out = ndm_cmp(out, "bA", "aZ");
+        out = ndm_cmp(out, nb_push(string_new(), 128), nb_push(string_new(), 127));
+        out = ndm_cmp(out, "", "z");
+        return ndm_cmp(out, "z", "");
+    }
+    if mode == 3 {
+        out = nb_push(out, nd_text_ok(string_addr("/a-b.c_1"), 8, 2));
+        out = nb_push(out, nd_text_ok(string_addr("/a-b.c_1"), 8, 1));
+        out = nb_push(out, nd_text_ok(string_addr("a-b.c"), 5, 1));
+        out = nb_push(out, nd_text_ok(string_addr("a-b"), 3, 0));
+        out = nb_push(out, nd_text_ok(string_addr("_"), 1, 0));
+        out = nb_push(out, nd_text_ok(string_addr("1a"), 2, 0));
+        let nul: String = nb_push(nb_push(string_new(), 97), 0);
+        return nb_push(out, nd_text_ok(string_addr(nul), 2, 0));
+    }
+    let mut imports: Vec = vec_new();
+    imports = vec_push(imports, nd_import("a", "V_1"));
+    imports = vec_push(imports, nd_import("b", "V_1"));
+    imports = vec_push(imports, nd_import("c", "V_1"));
+    let mut code: String = string_new();
+    let mut patches: Vec = vec_new();
+    let mut i: i64 = 0;
+    while i < 3 {
+        code = nd_zero(nb_push(nb_push(code, 255), 21), 4);
+        patches = vec_push(patches, nd_patch(i * 6 + 2, i));
+        i = i + 1;
+    }
+    if mode == 4 { vec_set(imports, 1, vec_get(imports, 0)); vec_set(imports, 2, 0); }
+    if mode == 5 { vec_set(imports, 1, nd_import("-", "V_1")); vec_set(imports, 2, vec_get(imports, 0)); }
+    if mode == 6 { __mind_store_i64(vec_get(patches, 0), 1); __mind_store_i8(string_addr(code) + 8, 1); }
+    if mode == 7 { __mind_store_i8(string_addr(code) + 2, 1); __mind_store_i64(vec_get(patches, 1), 1); }
+    if mode == 8 { __mind_store_i64(vec_get(patches, 1), 2); __mind_store_i64(vec_get(patches, 2) + 8, 3); }
+    if mode == 9 { __mind_store_i64(vec_get(patches, 2) + 8, 1); }
+    if mode == 11 { vec_set(imports, 0, 0); __mind_store_i64(vec_get(patches, 0), 1); }
+    if mode == 12 { __mind_store_i64(vec_get(patches, 0) + 8, 3); }
+    if mode == 13 { __mind_store_i8(string_addr(code) + 5, 1); }
+    nb_push(out, nd_validate(code, 0, imports, patches, "/lib64/ld-linux-x86-64.so.2", "libc.so.6"))
+}
+
+pub fn main() -> i64 {
+    let mode: i64 = __mind_alloc(8);
+    if __mind_read(0, mode, 8, 0 - 1) != 8 { return 90; }
+    let out: String = ndm_case(__mind_load_i64(mode));
+    if __mind_write(1, string_addr(out), string_len(out), 0 - 1) != string_len(out) { return 91; }
+    0
+}

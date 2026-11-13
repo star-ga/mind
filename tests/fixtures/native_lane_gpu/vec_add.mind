@@ -1,0 +1,152 @@
+// A native-lane program that drives the real CUDA driver API through the
+// libcuda.so.1 rows: cuInit, device+context, PTX module load, function
+// handle, device allocations, host-to-device copies, an 11-argument
+// cuLaunchKernel of a 4-element vector add, a context synchronize, a
+// device-to-host readback checked exactly, and the teardown. It also calls
+// one glibc row (getuid), so the image is the mixed import: two DT_NEEDED
+// entries and the glibc version tables. Run on a host with a GPU and
+// libcuda.so.1 it exits 42; each failing step exits its own number.
+// The driver keeps threads after the call, so each exit is exit_group:
+// a thread-only exit would leave the process running.
+extern "C" {
+    fn getuid() -> i32;
+    fn cuInit(flags: u32) -> i32;
+    fn cuDeviceGet(device: *mut i32, ordinal: i32) -> i32;
+    fn cuCtxCreate_v2(pctx: *mut *mut u8, flags: u32, dev: i32) -> i32;
+    fn cuCtxSynchronize() -> i32;
+    fn cuModuleLoadData(module: *mut *mut u8, image: *const u8) -> i32;
+    fn cuModuleGetFunction(hfunc: *mut *mut u8, hmod: *mut u8, name: *const u8) -> i32;
+    fn cuMemAlloc_v2(dptr: *mut i64, bytesize: i64) -> i32;
+    fn cuMemcpyHtoD_v2(dst: i64, src: *const u8, count: i64) -> i32;
+    fn cuMemcpyDtoH_v2(dst: *mut u8, src: i64, count: i64) -> i32;
+    fn cuMemFree_v2(dptr: i64) -> i32;
+    fn cuLaunchKernel(f: *mut u8, gx: u32, gy: u32, gz: u32, bx: u32, by: u32, bz: u32, shared: u32, stream: *mut u8, kparams: *mut *mut u8, extra: *mut *mut u8) -> i32;
+    fn cuModuleUnload(hmod: *mut u8) -> i32;
+    fn cuCtxDestroy_v2(ctx: *mut u8) -> i32;
+}
+fn main() -> i64 {
+    let u: i64 = getuid() as i64;
+    if u < 0 { let _g: i64 = __mind_sys_exit_group(90); }
+    // The PTX image of the 4-element vector add, 8 bytes per store.
+    let ptx: i64 = __mind_alloc(568);
+    __mind_store_i64(ptx + 0, 7957695011148363310);
+    __mind_store_i64(ptx + 8, 7022288340270331680);
+    __mind_store_i64(ptx + 16, 6876278789293565810);
+    __mind_store_i64(ptx + 24, 8242823586541876535);
+    __mind_store_i64(ptx + 32, 7312272889232978789);
+    __mind_store_i64(ptx + 40, 8316308127028098592);
+    __mind_store_i64(ptx + 48, 7954815033495282281);
+    __mind_store_i64(ptx + 56, 7017564202398741108);
+    __mind_store_i64(ptx + 64, 7021781903462655076);
+    __mind_store_i64(ptx + 72, 6998651229432586349);
+    __mind_store_i64(ptx + 80, 7881706585694543916);
+    __mind_store_i64(ptx + 88, 3198154094010510880);
+    __mind_store_i64(ptx + 96, 2336630925564063264);
+    __mind_store_i64(ptx + 104, 732225404390503726);
+    __mind_store_i64(ptx + 112, 8227548891602487931);
+    __mind_store_i64(ptx + 120, 2319973336427292517);
+    __mind_store_i64(ptx + 128, 2314885436783292965);
+    __mind_store_i64(ptx + 136, 7074627693101329952);
+    __mind_store_i64(ptx + 144, 2318335051065996342);
+    __mind_store_i64(ptx + 152, 7165830777213710885);
+    __mind_store_i64(ptx + 160, 2318282215670489132);
+    __mind_store_i64(ptx + 168, 7089269583548342565);
+    __mind_store_i64(ptx + 176, 2675186984034836524);
+    __mind_store_i64(ptx + 184, 2308723150480747640);
+    __mind_store_i64(ptx + 192, 7021162827916255264);
+    __mind_store_i64(ptx + 200, 2320539584920641906);
+    __mind_store_i64(ptx + 208, 6728759512009896485);
+    __mind_store_i64(ptx + 216, 7236194023627557435);
+    __mind_store_i64(ptx + 224, 8443806616664502318);
+    __mind_store_i64(ptx + 232, 2318336150577624118);
+    __mind_store_i64(ptx + 240, 2314885436786172507);
+    __mind_store_i64(ptx + 248, 7021781903466589216);
+    __mind_store_i64(ptx + 256, 8225015703086116461);
+    __mind_store_i64(ptx + 264, 737285645317188707);
+    __mind_store_i64(ptx + 272, 3347985887477637152);
+    __mind_store_i64(ptx + 280, 3184451915307168629);
+    __mind_store_i64(ptx + 288, 4285226054243853600);
+    __mind_store_i64(ptx + 296, 8392003945280577546);
+    __mind_store_i64(ptx + 304, 3617363767013569838);
+    __mind_store_i64(ptx + 312, 2675186769308296480);
+    __mind_store_i64(ptx + 320, 2314885530451128690);
+    __mind_store_i64(ptx + 328, 8443808861792269677);
+    __mind_store_i64(ptx + 336, 3184436852939568182);
+    __mind_store_i64(ptx + 344, 4044281056028927264);
+    __mind_store_i64(ptx + 352, 7233097798883740219);
+    __mind_store_i64(ptx + 360, 7000036604441210468);
+    __mind_store_i64(ptx + 368, 2318335051065994337);
+    __mind_store_i64(ptx + 376, 2314861457816449573);
+    __mind_store_i64(ptx + 384, 3923530709085528096);
+    __mind_store_i64(ptx + 392, 2675186979723092020);
+    __mind_store_i64(ptx + 400, 3559095109308670578);
+    __mind_store_i64(ptx + 408, 7233097798883740219);
+    __mind_store_i64(ptx + 416, 7144151792517066340);
+    __mind_store_i64(ptx + 424, 2318337250089249891);
+    __mind_store_i64(ptx + 432, 2314861457816449573);
+    __mind_store_i64(ptx + 440, 8028905684645716000);
+    __mind_store_i64(ptx + 448, 2320539584920576354);
+    __mind_store_i64(ptx + 456, 7016930767731980325);
+    __mind_store_i64(ptx + 464, 7791262677699541853);
+    __mind_store_i64(ptx + 472, 7809631459536744036);
+    __mind_store_i64(ptx + 480, 3204633430095983918);
+    __mind_store_i64(ptx + 488, 737285641140001568);
+    __mind_store_i64(ptx + 496, 3342907191729332256);
+    __mind_store_i64(ptx + 504, 2318360009038378611);
+    __mind_store_i64(ptx + 512, 737316164365744165);
+    __mind_store_i64(ptx + 520, 7435008072644304928);
+    __mind_store_i64(ptx + 528, 3924093693348441964);
+    __mind_store_i64(ptx + 536, 3196820587982561332);
+    __mind_store_i64(ptx + 544, 2314885436787926304);
+    __mind_store_i64(ptx + 552, 755771562940264992);
+    __mind_store_i64(ptx + 560, 0);
+    let dev: i64 = __mind_alloc(8);
+    let ctx: i64 = __mind_alloc(8);
+    let hmod: i64 = __mind_alloc(8);
+    let hfn: i64 = __mind_alloc(8);
+    let da: i64 = __mind_alloc(8);
+    let db: i64 = __mind_alloc(8);
+    let dc: i64 = __mind_alloc(8);
+    let ha: i64 = __mind_alloc(32);
+    let hb: i64 = __mind_alloc(32);
+    let hc: i64 = __mind_alloc(32);
+    __mind_store_i64(ha, 10);
+    __mind_store_i64(ha + 8, 20);
+    __mind_store_i64(ha + 16, 30);
+    __mind_store_i64(ha + 24, 40);
+    __mind_store_i64(hb, 1);
+    __mind_store_i64(hb + 8, 2);
+    __mind_store_i64(hb + 16, 3);
+    __mind_store_i64(hb + 24, 4);
+    if cuInit(0 as u32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(1); }
+    if cuDeviceGet(dev as *mut i32, 0 as i32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(2); }
+    if cuCtxCreate_v2(ctx as *mut *mut u8, 0 as u32, __mind_load_i32(dev) as i32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(3); }
+    if cuModuleLoadData(hmod as *mut *mut u8, ptx as *const u8) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(4); }
+    let name: i64 = __mind_alloc(8);
+    __mind_store_i64(name, 110382293411190);
+    if cuModuleGetFunction(hfn as *mut *mut u8, __mind_load_i64(hmod) as *mut u8, name as *const u8) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(5); }
+    if cuMemAlloc_v2(da as *mut i64, 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(6); }
+    if cuMemAlloc_v2(db as *mut i64, 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(7); }
+    if cuMemAlloc_v2(dc as *mut i64, 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(8); }
+    if cuMemcpyHtoD_v2(__mind_load_i64(da), ha as *const u8, 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(9); }
+    if cuMemcpyHtoD_v2(__mind_load_i64(db), hb as *const u8, 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(10); }
+    // kernelParams: three pointers to the device-pointer argument slots.
+    let kparams: i64 = __mind_alloc(24);
+    __mind_store_i64(kparams, da);
+    __mind_store_i64(kparams + 8, db);
+    __mind_store_i64(kparams + 16, dc);
+    if cuLaunchKernel(__mind_load_i64(hfn) as *mut u8, 1 as u32, 1 as u32, 1 as u32, 4 as u32, 1 as u32, 1 as u32, 0 as u32, 0 as *mut u8, kparams as *mut *mut u8, 0 as *mut *mut u8) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(11); }
+    if cuCtxSynchronize() as i64 != 0 { let _g: i64 = __mind_sys_exit_group(12); }
+    if cuMemcpyDtoH_v2(hc as *mut u8, __mind_load_i64(dc), 32) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(13); }
+    if __mind_load_i64(hc) != 11 { let _g: i64 = __mind_sys_exit_group(14); }
+    if __mind_load_i64(hc + 8) != 22 { let _g: i64 = __mind_sys_exit_group(15); }
+    if __mind_load_i64(hc + 16) != 33 { let _g: i64 = __mind_sys_exit_group(16); }
+    if __mind_load_i64(hc + 24) != 44 { let _g: i64 = __mind_sys_exit_group(17); }
+    if cuMemFree_v2(__mind_load_i64(da)) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(18); }
+    if cuMemFree_v2(__mind_load_i64(db)) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(19); }
+    if cuMemFree_v2(__mind_load_i64(dc)) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(20); }
+    if cuModuleUnload(__mind_load_i64(hmod) as *mut u8) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(21); }
+    if cuCtxDestroy_v2(__mind_load_i64(ctx) as *mut u8) as i64 != 0 { let _g: i64 = __mind_sys_exit_group(22); }
+    let _g: i64 = __mind_sys_exit_group(42);
+    return 0;
+}

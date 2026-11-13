@@ -1,0 +1,149 @@
+// Copyright 2026 STARGA Inc.
+// __mind_cpu_features_v1 (kind 67, Det::World) and the ISA entry guard: the
+// CPUID / XGETBV readers. Every sequence below is pinned byte for byte against
+// llvm-mc in testdata/native_avx2/native_avx2_encoder_table.tsv (seq: rows).
+// No bitwise operator here: the part stays parseable by the bare grammar.
+
+import std.string;
+import nb_emit_core;
+
+// "__mind_cpu_features_v1" (22 bytes, prefix included) -> 67, else -1.
+pub fn nbc_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 22 {
+        return 0 - 1;
+    }
+    if tc_shoc_span_eq(buf + lo, 22, 7160552357920333663, 8463496687873127792, 54384477300082, 0, 22, 0, 0) == 1 {
+        return 67;
+    }
+    0 - 1
+}
+
+// 1 iff this part emits `kind` at `args_len` arguments (nbp_kind_ok): kind 67 takes none.
+pub fn nbc_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 67 {
+        if args_len == 0 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Kind 67: the host feature mask into the result slot. Bit 0 SSE2 (1.EDX[26]),
+// 1 AVX usable (1.ECX[27] OSXSAVE and [28] AVX and XGETBV(0) & 6 == 6; XGETBV is
+// reached only when OSXSAVE is set), 2 AVX2 (7.0.EBX[5]), 3 BMI2 (7.0.EBX[8]),
+// 4 AVX-VNNI (7.1.EAX[4], only when 7.0.EAX >= 1), 5 RDTSCP (0x80000001.EDX[27],
+// only when the extended range reaches it); leaf 7 is read only when the basic
+// range reaches it; bits 6..63 are 0. CPUID writes rbx, which is saved and
+// restored; rax/rcx/rdx are clobbered; the max basic leaf sits on the stack below
+// the frame for the length of the sequence. All jumps are fixed rel8 (disp32
+// slot forms), so the bytes depend on the slot only.
+pub fn nbc_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if kind == 67 {
+        return nbc_emit_features(code, nb_slot_disp(dst_id));
+    }
+    string_new()
+}
+
+pub fn nbc_emit_features(code: String, d: i64) -> String {
+    // push rbx ; mov qword [rbp+d],0
+    let c1: String = nb_le(nb_i32le_signed(nb_le(code, 2244429907, 4), d), 0, 4);
+    // xor eax,eax ; cpuid ; push rax (max basic leaf)
+    let c2: String = nb_le(c1, 346316324913, 5);
+    // mov eax,1 ; cpuid
+    let c3: String = nb_le(c2, 45615438901543352, 7);
+    // mov eax,edx ; shr eax,26
+    let c4: String = nb_le(c3, 115574165641, 5);
+    // and eax,1 ; or [rbp+d],eax (bit 0)
+    let c5: String = nb_i32le_signed(nb_le(c4, 571381768323, 5), d);
+    // and ecx,0x18000000 ; cmp ecx,0x18000000
+    let c6: String = nb_le(nb_le(c5, 26388279124353, 6), 26388279130497, 6);
+    // jne noavx (+0x14) ; xor ecx,ecx
+    let c7: String = nb_le(c6, 3375436917, 4);
+    // xgetbv ; and eax,6
+    let c8: String = nb_le(c7, 7561353888015, 6);
+    // cmp eax,6 ; jne noavx (+7)
+    let c9: String = nb_le(c8, 32028162179, 5);
+    // or dword [rbp+d],2 (bit 1)
+    let c10: String = nb_le(nb_i32le_signed(nb_le(c9, 36227, 2), d), 2, 1);
+    // noavx: cmp dword [rsp],7 ; jb no7 (+0x40)
+    let c11: String = nb_le(c10, 70858490264707, 6);
+    // mov eax,7 ; xor ecx,ecx
+    let c12: String = nb_le(c11, 56630346388604856, 7);
+    // cpuid ; mov ecx,eax (max subleaf) ; mov eax,ebx
+    let c13: String = nb_le(c12, 238086169141775, 6);
+    // shr eax,3 ; and eax,4 ; or [rbp+d],eax (bit 2)
+    let c14: String = nb_i32le_signed(nb_le(nb_le(c13, 5362317256897, 6), 34057, 2), d);
+    // mov eax,ebx ; shr eax,5
+    let c15: String = nb_le(c14, 25379854473, 5);
+    // and eax,8 ; or [rbp+d],eax (bit 3)
+    let c16: String = nb_i32le_signed(nb_le(c15, 571382227075, 5), d);
+    // test ecx,ecx ; je no7 (+0x15) ; mov eax,7
+    let c17: String = nb_le(nb_le(c16, 359975301, 4), 1976, 5);
+    // mov ecx,1 ; cpuid
+    let c18: String = nb_le(c17, 45615438901543353, 7);
+    // and eax,16 ; or [rbp+d],eax (bit 4)
+    let c19: String = nb_i32le_signed(nb_le(c18, 571382751363, 5), d);
+    // no7: mov eax,0x80000000 ; cpuid
+    let c20: String = nb_le(c19, 45615988657356984, 7);
+    // cmp eax,0x80000001 ; jb noext (+0x13)
+    let c21: String = nb_le(c20, 5473918638883133, 7);
+    // mov eax,0x80000001 ; cpuid
+    let c22: String = nb_le(c21, 45615988657357240, 7);
+    // shr edx,22 ; and edx,32 ; or [rbp+d],edx (bit 5)
+    let c23: String = nb_i32le_signed(nb_le(nb_le(c22, 36157234014913, 6), 38153, 2), d);
+    // noext: pop rax ; pop rbx
+    nb_le(c23, 23384, 2)
+}
+
+// ISA entry guard (239 bytes), emitted at program start only when a ymm row is
+// reachable: CPUID.0:EAX >= 7, CPUID.1:ECX[27] OSXSAVE and [28] AVX, XGETBV(0)
+// & 6 == 6, CPUID.(7,0):EBX[5] AVX2. Pass: rbx restored, rsp unchanged, jump
+// past the failure path. Fail: the 104-byte message is pushed onto the stack,
+// written to fd 2, then exit_group(132). No rodata, no relocation.
+pub fn nbc_isa_guard(code: String) -> String {
+    // push rbx ; xor eax,eax ; cpuid
+    let g1: String = nb_le(code, 696048955731, 5);
+    // cmp eax,7 ; jb fail (+0x36)
+    let g2: String = nb_le(g1, 233841358979, 5);
+    // mov eax,1 ; cpuid
+    let g3: String = nb_le(g2, 45615438901543352, 7);
+    // and ecx,0x18000000 ; cmp ecx,0x18000000
+    let g4: String = nb_le(nb_le(g3, 26388279124353, 6), 26388279130497, 6);
+    // jne fail (+0x21) ; xor ecx,ecx
+    let g5: String = nb_le(g4, 3375440245, 4);
+    // xgetbv ; and eax,6
+    let g6: String = nb_le(g5, 7561353888015, 6);
+    // cmp eax,6 ; jne fail (+0x14)
+    let g7: String = nb_le(g6, 87862737027, 5);
+    // mov eax,7 ; xor ecx,ecx
+    let g8: String = nb_le(g7, 56630346388604856, 7);
+    // cpuid ; test bl,0x20
+    let g9: String = nb_le(g8, 140726673935, 5);
+    // je fail (+6) ; pop rbx ; jmp ok (+0xaf)
+    let g10: String = nb_le(g9, 755534333556, 8);
+    // fail: "mind: this program requires x86-64-v3 (AVX2); the host CPU or OS
+    // does not provide it (isa.avx2_missing)\n", last word pushed first
+    let m1: String = nbc_push_word(nbc_push_word(nbc_push_word(g10, 732230138337653609), 7881073365885202017), 8316222306773442661);
+    let m2: String = nbc_push_word(nbc_push_word(nbc_push_word(m1, 7235444497380810868), 8029390865643299872), 6003052504170911056);
+    let m3: String = nbc_push_word(nbc_push_word(nbc_push_word(m2, 4836994038935068773), 7526676315709266006), 4695038016931836982);
+    let m4: String = nbc_push_word(nbc_push_word(nbc_push_word(m3, 3257853469040797042), 7599104626777943393), 8243680180223112041);
+    let m5: String = nbc_push_word(m4, 7526676312408090989);
+    // mov rsi,rsp ; mov edx,104 ; mov edi,2
+    let t1: String = nb_le(nb_le(m5, 449812269384, 8), 703, 5);
+    // mov eax,1 ; syscall (write) ; mov edi,132
+    let t2: String = nb_le(nb_le(t1, 1423867557970360, 7), 33983, 5);
+    // mov eax,231 ; syscall (exit_group) ; ok:
+    nb_le(t2, 1423867558029240, 7)
+}
+
+// movabs rax,w ; push rax = 48 B8 <w, 8 bytes LE> 50.
+pub fn nbc_push_word(code: String, w: i64) -> String {
+    nb_le(nb_le(nb_le(code, 47176, 2), w, 8), 80, 1)
+}
+
+// ---- capability mark nbcpuf01 ------------------------------------------------
+// `movabs rax, imm64` whose little-endian bytes spell "nbcpuf01"; no caller, kept
+// because the compiler's own region is not pruned (the nb_cap_* pattern).
+pub fn nb_cap_cpuf_v1() -> i64 {
+    3544445561323348590
+}

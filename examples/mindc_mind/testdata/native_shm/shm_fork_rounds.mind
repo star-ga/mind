@@ -1,0 +1,147 @@
+// Author: STARGA Inc. A5 fork + MAP_SHARED arena + pipe barrier, 10^6 rounds.
+// One MAP_SHARED|MAP_ANONYMOUS page is the only data channel between a parent
+// and its forked child; two pipes are the per-round barrier. Round k: the parent
+// release-stores x_k (+64) and the request epoch k (+0), then sends a token; the
+// child takes the token, acquire-loads the epoch (must be k) and x_k, computes
+// y_k = mix(x_k), release-stores y_k (+192) and the reply epoch k (+128), then
+// sends a token back; the parent acquire-loads the reply epoch (must be k) and
+// y_k, folds y_k into the checksum and derives x_{k+1} from it. The chain passes
+// through the child on every round, so the checksum equals the single-process
+// run only when every reply really crossed the shared mapping. stdout: the
+// multi-process checksum, then the single-process one (8 bytes LE each).
+// Exit 0 when they agree; a nonzero exit names the failed step.
+// Every value is non-negative, so `% 2^k` is the low-k-bit mask (no bitwise
+// operator: the bare parser refuses them).
+fn a5_mix(x: i64) -> i64 {
+    (x * 1103515245 + 12345) % 2147483648
+}
+
+fn a5_fold(c: i64, y: i64) -> i64 {
+    (c * 31 + y) % 281474976710656
+}
+
+fn a5_next(y: i64, k: i64) -> i64 {
+    (y + k) % 2147483648
+}
+
+fn a5_single(n: i64) -> i64 {
+    let mut x: i64 = 20261109;
+    let mut c: i64 = 0;
+    let mut k: i64 = 1;
+    while k <= n {
+        let y: i64 = a5_mix(x);
+        c = a5_fold(c, y);
+        x = a5_next(y, k);
+        k = k + 1;
+    }
+    c
+}
+
+// The child: n rounds, then exit 0; 10 stale request epoch, 11 barrier closed.
+fn a5_child(arena: i64, a_r: i64, b_w: i64, tok: i64, n: i64) -> i64 {
+    let mut k: i64 = 1;
+    while k <= n {
+        if __mind_read(a_r, tok, 1, 0 - 1) != 1 {
+            return 11;
+        }
+        if __mind_atomic_load_acquire_i64(arena) != k {
+            return 10;
+        }
+        let x: i64 = __mind_atomic_load_acquire_i64(arena + 64);
+        __mind_atomic_store_release_i64(arena + 192, a5_mix(x));
+        // The reply epoch store (the epoch-store mutant edits this line).
+        __mind_atomic_store_release_i64(arena + 128, k);
+        if __mind_write(b_w, tok, 1, 0 - 1) != 1 {
+            return 12;
+        }
+        k = k + 1;
+    }
+    0
+}
+
+// The parent: the checksum, or a negative step code (-4 stale reply epoch,
+// -5 barrier closed, -13 token not sent).
+fn a5_parent(arena: i64, a_w: i64, b_r: i64, tok: i64, n: i64) -> i64 {
+    let mut x: i64 = 20261109;
+    let mut c: i64 = 0;
+    let mut k: i64 = 1;
+    while k <= n {
+        __mind_atomic_store_release_i64(arena + 64, x);
+        __mind_atomic_store_release_i64(arena, k);
+        if __mind_write(a_w, tok, 1, 0 - 1) != 1 {
+            return 0 - 13;
+        }
+        if __mind_read(b_r, tok, 1, 0 - 1) != 1 {
+            return 0 - 5;
+        }
+        if __mind_atomic_load_acquire_i64(arena + 128) != k {
+            return 0 - 4;
+        }
+        let y: i64 = __mind_atomic_load_acquire_i64(arena + 192);
+        c = a5_fold(c, y);
+        x = a5_next(y, k);
+        k = k + 1;
+    }
+    c
+}
+
+fn main() -> i64 {
+    let n: i64 = 1000000;
+    let single: i64 = a5_single(n);
+    // PROT_READ|PROT_WRITE = 3; MAP_SHARED|MAP_ANONYMOUS = 0x21 = 33; fd -1.
+    // The MAP_PRIVATE mutant (34) edits this line.
+    let arena: i64 = __mind_sys_mmap(0, 4096, 3, 33, 0 - 1, 0);
+    if arena < 0 {
+        return 1;
+    }
+    __mind_atomic_store_release_i64(arena, 0);
+    __mind_atomic_store_release_i64(arena + 128, 0);
+    let fa: i64 = __mind_alloc(8);
+    let fb: i64 = __mind_alloc(8);
+    if __mind_sys_pipe2(fa, 0) != 0 {
+        return 2;
+    }
+    if __mind_sys_pipe2(fb, 0) != 0 {
+        return 2;
+    }
+    let a_r: i64 = __mind_load_i64(fa) % 4294967296;
+    let a_w: i64 = __mind_load_i64(fa) / 4294967296;
+    let b_r: i64 = __mind_load_i64(fb) % 4294967296;
+    let b_w: i64 = __mind_load_i64(fb) / 4294967296;
+    let tok: i64 = __mind_alloc(8);
+    __mind_store_i64(tok, 1);
+    let pid: i64 = __mind_sys_fork();
+    if pid < 0 {
+        return 3;
+    }
+    if pid == 0 {
+        __mind_sys_close(a_w);
+        __mind_sys_close(b_r);
+        return a5_child(arena, a_r, b_w, tok, n);
+    }
+    __mind_sys_close(a_r);
+    __mind_sys_close(b_w);
+    let multi: i64 = a5_parent(arena, a_w, b_r, tok, n);
+    if multi < 0 {
+        return 0 - multi;
+    }
+    let st: i64 = __mind_alloc(8);
+    __mind_store_i64(st, 255);
+    if __mind_sys_wait4(pid, st, 0, 0) != pid {
+        return 6;
+    }
+    if __mind_load_i64(st) % 4294967296 != 0 {
+        return 7;
+    }
+    if __mind_sys_munmap(arena, 4096) != 0 {
+        return 8;
+    }
+    let out: i64 = __mind_alloc(16);
+    __mind_store_i64(out, multi);
+    __mind_store_i64(out + 8, single);
+    __mind_write(1, out, 16, 0 - 1);
+    if multi != single {
+        return 9;
+    }
+    0
+}

@@ -3,7 +3,8 @@
 
 //! Project identity and temporary-manifest race controls.
 
-use super::{canonical_explicit_entry, entry_relative_to_root, open_explicit};
+use super::project_transaction::canonical_explicit_entry;
+use super::{entry_relative_to_root, open_explicit, temporary_manifest};
 use crate::project::build_lock::ProjectBuildLock;
 use crate::project::{find_project_root_for_file, resolve_sources};
 use std::fs;
@@ -14,8 +15,8 @@ use std::thread;
 
 const ENTRY_SOURCE: &str = "fn main() -> i64 { 42 }\n";
 
-/// A *bare* manifest: no `[targets.*].sources`, the shape of a prior
-/// standalone build's temporary `Mind.toml`. The package name is
+/// A *bare* manifest: no `[targets.*].sources` and no temporary-manifest
+/// marker, so it is a real one-file project. The package name is
 /// distinctive so a test can tell a loaded manifest from a synthesised one,
 /// which takes its name from the entry's file stem.
 const BARE_MANIFEST: &str =
@@ -103,14 +104,21 @@ fn symlink_and_canonical_spellings_open_one_directory_identity() {
     );
 }
 
-/// A co-located *bare* manifest scopes the build to the named entry through
-/// either spelling, and an unrelated sibling stays out of the source set.
+/// A co-located *bare* manifest is a project: through either spelling the
+/// named entry builds that project, with the same whole-directory source set a
+/// no-path build uses, so a sibling module the entry imports is compiled.
 #[test]
-fn adjacent_bare_manifest_scopes_to_the_entry_through_either_spelling() {
+fn adjacent_bare_manifest_builds_the_project_through_either_spelling() {
     let d = aliased_dir();
     fs::write(d.real.join("Mind.toml"), BARE_MANIFEST).expect("manifest");
-    fs::write(d.real.join("unrelated.mind"), "fn other() -> i64 { 7 }\n").expect("sibling");
+    fs::write(d.real.join("sibling.mind"), "fn other() -> i64 { 7 }\n").expect("sibling");
 
+    // The no-path build's source set: the reference both spellings must equal.
+    let (no_path, _) = resolve_sources(&d.real, "alpha.mind", None, false).expect("walk");
+    assert!(
+        no_path.contains(&d.real.join("sibling.mind")),
+        "positive control: the no-path walk does not see the sibling"
+    );
     for spelling in [&d.real, &d.link] {
         let (entry_dir, entry_path) =
             canonical_explicit_entry(&spelling.join("alpha.mind"), &cwd())
@@ -122,29 +130,133 @@ fn adjacent_bare_manifest_scopes_to_the_entry_through_either_spelling() {
         )
         .expect("transaction opens");
         assert!(
-            opened.single_file,
-            "{} adopted a whole-directory walk",
+            !opened.single_file,
+            "{} narrowed a project to its entry",
             spelling.display()
         );
         assert_eq!(opened.root, d.real);
+        assert_eq!(opened.manifest.package.name, "preceding");
         let (sources, _) = resolve_sources(&opened.root, "alpha.mind", None, opened.single_file)
             .expect("source set");
         assert_eq!(
             sources,
-            vec![d.real.join("alpha.mind")],
-            "{} swept in an unrelated sibling",
+            no_path,
+            "{} built a different module graph than the no-path build",
             spelling.display()
         );
     }
+}
 
-    // Positive control: the sibling IS reachable by the whole-directory
-    // walk, so the exclusions above are the classification doing work and
-    // not an empty directory proving nothing.
-    let (walked, _) = resolve_sources(&d.real, "alpha.mind", None, false).expect("walk");
-    assert!(
-        walked.contains(&d.real.join("unrelated.mind")),
-        "the walk that single-file scoping suppresses does not see the sibling"
+/// The dc85648e hazard: a killed standalone build leaves its temporary
+/// manifest behind, here planted with the exact text the build writes. It must
+/// not turn the next named build into a project build, next to the entry or in
+/// a parent directory, and the leftover is removed under the lock.
+#[test]
+fn leftover_temporary_manifest_is_never_a_project() {
+    let d = aliased_dir();
+    fs::write(d.real.join("sibling.mind"), "fn other() -> i64 { 7 }\n").expect("sibling");
+    let leftover = d.real.join("Mind.toml");
+    fs::write(&leftover, temporary_manifest("killed", "alpha.mind")).expect("leftover");
+    let (entry_dir, entry_path) =
+        canonical_explicit_entry(&d.link.join("alpha.mind"), &cwd()).expect("canonical entry");
+    let probed = find_project_root_for_file(&entry_dir);
+    assert_eq!(
+        probed.as_deref(),
+        Some(d.real.as_path()),
+        "probe saw no leftover"
     );
+    let opened = open_explicit(probed, &entry_dir, &entry_path).expect("transaction opens");
+    assert!(
+        opened.single_file,
+        "a leftover temporary manifest made a project"
+    );
+    assert_eq!(opened.manifest.package.name, "alpha");
+    assert!(!leftover.exists(), "the leftover was not removed");
+    let (sources, _) =
+        resolve_sources(&opened.root, "alpha.mind", None, opened.single_file).expect("source set");
+    assert_eq!(sources, vec![d.real.join("alpha.mind")]);
+    // Release this transaction's project lock: the next one locks the same
+    // directory, and a shadowed binding would hold it until the test ends.
+    drop(opened);
+
+    // In a parent directory inside a repository: the build is standalone in
+    // the entry's own directory, not a walk of the parent.
+    fs::create_dir(d.real.join(".git")).expect("repo boundary");
+    fs::create_dir(d.real.join("sub")).expect("sub");
+    fs::write(d.real.join("sub/beta.mind"), ENTRY_SOURCE).expect("nested entry");
+    fs::write(&leftover, temporary_manifest("killed", "alpha.mind")).expect("leftover");
+    let (entry_dir, entry_path) =
+        canonical_explicit_entry(&d.real.join("sub/beta.mind"), &cwd()).expect("nested entry");
+    let probed = find_project_root_for_file(&entry_dir);
+    assert_eq!(
+        probed.as_deref(),
+        Some(d.real.as_path()),
+        "probe saw no parent leftover"
+    );
+    let opened = open_explicit(probed, &entry_dir, &entry_path).expect("transaction opens");
+    assert!(opened.single_file);
+    assert_eq!(opened.root, d.real.join("sub"));
+    assert!(!leftover.exists(), "the parent leftover was not removed");
+    drop(opened);
+
+    // A real project above the leftover is still found: the search continues
+    // upward past the removed file, both for an entry next to the leftover and
+    // for one below it.
+    fs::write(&leftover, BARE_MANIFEST).expect("real project manifest");
+    fs::create_dir(d.real.join("sub/deep")).expect("deep");
+    fs::write(d.real.join("sub/deep/gamma.mind"), ENTRY_SOURCE).expect("deep entry");
+    let sub_leftover = d.real.join("sub/Mind.toml");
+    for entry in ["sub/beta.mind", "sub/deep/gamma.mind"] {
+        fs::write(&sub_leftover, temporary_manifest("killed", "beta.mind")).expect("leftover");
+        let (entry_dir, entry_path) =
+            canonical_explicit_entry(&d.real.join(entry), &cwd()).expect("entry below");
+        let probed = find_project_root_for_file(&entry_dir);
+        assert_eq!(
+            probed.as_deref(),
+            Some(d.real.join("sub").as_path()),
+            "{entry}"
+        );
+        let opened = open_explicit(probed, &entry_dir, &entry_path).expect("transaction opens");
+        assert!(
+            !opened.single_file,
+            "{entry}: the real project above was lost"
+        );
+        assert_eq!(opened.root, d.real, "{entry}");
+        assert_eq!(opened.manifest.package.name, "preceding", "{entry}");
+        assert!(
+            !sub_leftover.exists(),
+            "{entry}: the leftover was not removed"
+        );
+    }
+}
+
+/// With no governing manifest a named entry that imports a local module is
+/// refused at the import, by name, with the fix; a `std` import is not.
+#[test]
+fn standalone_local_import_names_the_missing_project() {
+    let d = aliased_dir();
+    fs::write(
+        d.real.join("alpha.mind"),
+        "import std.io;\nimport ledger_lib;\nfn main() -> i64 { return 0; }\n",
+    )
+    .expect("entry");
+    let (entry_dir, entry_path) =
+        canonical_explicit_entry(&d.real.join("alpha.mind"), &cwd()).expect("canonical entry");
+    let err = match open_explicit(None, &entry_dir, &entry_path) {
+        Ok(_) => panic!("a standalone local import was accepted"),
+        Err(err) => err.to_string(),
+    };
+    assert!(err.contains("ledger_lib"), "{err}");
+    assert!(err.contains("add a Mind.toml"), "{err}");
+    assert!(!err.contains("std.io"), "{err}");
+
+    fs::write(
+        d.real.join("alpha.mind"),
+        "import std.io;\nfn main() -> i64 { return 0; }\n",
+    )
+    .expect("std-only entry");
+    let opened = open_explicit(None, &entry_dir, &entry_path).expect("std-only standalone");
+    assert!(opened.single_file);
 }
 
 /// A vanished temporary manifest, reproduced against the real lock with

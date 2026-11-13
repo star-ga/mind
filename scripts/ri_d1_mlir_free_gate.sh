@@ -93,9 +93,13 @@ fi
 # clean artifact and must not mask, or turn into, the inspection status above.
 # The native signature adapter is named ``extern_type_to_mlir_*`` for historical
 # compatibility and is present in both feature profiles; it is not an MLIR
-# pipeline symbol.  Exclude that known adapter while counting the implementation
-# symbols whose presence distinguishes the MLIR-enabled artifact.
-implementation_mlir_syms="$(awk 'tolower($0) ~ /mlir/ && tolower($0) !~ /extern_type_to_mlir/ { count++ } END { print count + 0 }' "$NM_OUT")"
+# pipeline symbol.  The two route guards ``require_mlir_route`` (mindc run /
+# bench) and ``admit_mlir_route`` (project builds) are present in both profiles
+# too: they REFUSE a native selection or a backend the MLIR route cannot honor,
+# hold no MLIR pipeline code, and must stay in the MLIR-free binary so it fails
+# closed.  Exclude those known names while counting the implementation symbols
+# whose presence distinguishes the MLIR-enabled artifact.
+implementation_mlir_syms="$(awk 'tolower($0) ~ /mlir/ && tolower($0) !~ /extern_type_to_mlir|require_mlir_route|admit_mlir_route/ { count++ } END { print count + 0 }' "$NM_OUT")"
 mlir_marks="$(awk '/mlir_build/ { count++ } END { print count + 0 }' "$STRINGS_OUT")"
 if [ "${implementation_mlir_syms:-0}" -ne 0 ] || [ "${mlir_marks:-0}" -ne 0 ]; then
   echo "FAIL: just-built artifact carries MLIR — $implementation_mlir_syms implementation MLIR symbol(s),"

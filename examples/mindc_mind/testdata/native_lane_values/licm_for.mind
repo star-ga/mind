@@ -1,0 +1,14 @@
+// LICM slice 1 on a desugared range `for`: `t` hoists, `u` reads the loop variable.
+fn fo(a: i64, b: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    for i in 0..n {
+        let t: i64 = a * b;
+        let u: i64 = t + i;
+        s = s + u;
+    }
+    s
+}
+
+fn main() -> i64 {
+    fo(3, 5, 7) % 227
+}

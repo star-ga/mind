@@ -1,0 +1,2 @@
+// lane.source.method_call: a method call on a scalar.
+fn main() -> i64 { let x: i64 = 1; return x.abs(); }

@@ -655,4 +655,54 @@ mod functional {
         let codec = self::lib().expect("the codec gate built");
         assert_eq!(truncated, codec.err("truncated"), "a cut file");
     }
+
+    /// The results helpers free their key buffers. Each round writes and reads
+    /// every field of a fresh record (the score write also takes the
+    /// rollback path once), then frees the record; the growth of the
+    /// resident set and of its peak stays under 2 MiB. Before the fix every
+    /// helper call kept its key (about 100 heap bytes), so 30k rounds grew by
+    /// tens of MiB.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_results_helpers_free_their_key_buffers() {
+        use common::mic_record::{alone, rss_growth_kib};
+        if !alone("functional::the_results_helpers_free_their_key_buffers") {
+            return;
+        }
+        let Some(lib) = lib() else { return };
+        const BOUND_KIB: i64 = 2048;
+        let g = b"ls20".as_slice();
+        let sc = SCORECARD.as_bytes();
+        let mut out = [0i64; 2];
+        let o = out.as_mut_ptr() as i64;
+        let scale_key = b"results.score_scale".as_slice();
+        let dup = lib.err("duplicate");
+        let grown = rss_growth_kib(30_000, || {
+            let h = lib.call("mres_new", &[]);
+            assert!(h > 0, "mres_new");
+            let set = |f: &str, a: &[i64]| assert_eq!(lib.call(f, a), 0, "{f}");
+            set("mres_set_scorecard", &[h, ptr(sc), sc.len() as i64]);
+            set("mres_set_weights_sha256", &[h, ptr(&WEIGHTS)]);
+            set("mres_set_game_actions", &[h, ptr(g), 4, 214]);
+            set("mres_set_level_actions", &[h, ptr(g), 4, 10, 146]);
+            set("mres_get_schema", &[h, o]);
+            set("mres_get_scorecard", &[h, o]);
+            set("mres_get_weights_sha256", &[h, o]);
+            set("mres_get_game_actions", &[h, ptr(g), 4, o]);
+            set("mres_get_level_actions", &[h, ptr(g), 4, 10, o]);
+            // The scale key exists, so the score write is rolled back.
+            assert_eq!(lib.put_int(h, scale_key, 1), 0);
+            assert_eq!(lib.call("mres_set_score", &[h, 121, 10000]), dup);
+            assert_eq!(lib.find(h, b"results.score"), lib.err("not_found"));
+            assert_eq!(lib.call("mrec_remove", &[h, ptr(scale_key), 19]), 0);
+            set("mres_set_score", &[h, 121, 10000]);
+            set("mres_get_score", &[h, o]);
+            assert_eq!(lib.call("mrec_free", &[h]), 0, "mrec_free");
+        });
+        assert_eq!(out, [121, 10000], "the last read is the score");
+        assert!(
+            grown < BOUND_KIB,
+            "results helpers: resident grew {grown} KiB"
+        );
+    }
 }

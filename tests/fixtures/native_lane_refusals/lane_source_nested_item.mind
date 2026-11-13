@@ -1,0 +1,3 @@
+// lane.source.nested_item: a const item in a function body (a nested std
+// import is refused earlier, by the type check, E2002).
+fn main() -> i64 { const K: i64 = 1; return 0; }

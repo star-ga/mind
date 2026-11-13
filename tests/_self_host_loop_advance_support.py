@@ -76,6 +76,10 @@ def sha(b: bytes) -> str:
 OLD_SEED = elf(b"old-seed")
 NEW_POINT = elf(b"new-fixed-point")
 OTHER = elf(b"something-else")
+# The two-hop shape: the OLD seed compiles the new source into a compiler that
+# still carries the old codegen (INTERMEDIATE), and that compiler then emits the
+# new fixed point. INTERMEDIATE != NEW_POINT is exactly what --hops 2 admits.
+INTERMEDIATE = elf(b"intermediate-stage1")
 SRC = b"// synthetic combined source\n"
 IMAGE = b"\x00" * 16 + SRC
 USER_LO = 7
@@ -144,6 +148,31 @@ class Sandbox:
             self.elf_path.read_bytes() == self.before_elf
             and self.manifest_path.read_bytes() == self.before_manifest
         )
+
+
+def captured(fn, *args, **kwargs) -> tuple[object, str]:
+    """Call `fn` with stdout captured; return (result, printed text).
+
+    An exception is NOT swallowed: a control that expects a verdict must see a
+    traceback as a failure, not as a missing line of output.
+    """
+    import contextlib
+    import io
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        result = fn(*args, **kwargs)
+    return result, out.getvalue()
+
+
+def receipt_rows(text: str) -> dict[str, str]:
+    """The `# <key>\\t<value>` receipt rows of a manifest, as a dict."""
+    rows: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith("# ") and "\t" in line:
+            key, value = line[2:].split("\t", 1)
+            rows[key] = value
+    return rows
 
 
 def stub_loop(stages, log: list[bytes], *, on_call=None, before_call=None):

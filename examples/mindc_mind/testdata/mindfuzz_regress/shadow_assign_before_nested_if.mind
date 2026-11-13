@@ -1,0 +1,14 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// Assign to the shadow inside a nested if (bubbled segment binding).
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    let mut x: i64 = 0;
+    if a >= 1 {
+        x = 5;
+        let mut x: i64 = 7;
+        if a >= 2 {
+            x = 9;
+        }
+    }
+    return x;
+}

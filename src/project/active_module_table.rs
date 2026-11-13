@@ -89,10 +89,209 @@ fn captured_import_targets_from_map(
     )
 }
 
+/// `std.posix` publishes libc names (`open`, `close`, `umask`, …). Those
+/// names are visible only to a file that imports `std.posix` (or to
+/// `std.posix` itself). Every other file keeps the pre-posix resolution:
+/// its own `extern "C"` declaration is the callee.
+const IMPORT_SCOPED_MODULE: &str = "std.posix";
+
+thread_local! {
+    /// Modules whose exports the file currently being checked imported by
+    /// path. Independent of the captured import map: std imports are dropped
+    /// from that map because the seed blob satisfies them.
+    static ADMITTED_IMPORT_SCOPED: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    /// `extern "C"` names declared in the file currently being checked.
+    /// They hide a same-named import-scoped export for the whole check, so
+    /// the call stays on the extern lowering path.
+    static LOCAL_EXTERN_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    static QUALIFIED_POSIX_CALLS: RefCell<BTreeSet<(usize, usize)>> = const { RefCell::new(BTreeSet::new()) };
+}
+
+pub(crate) fn is_import_scoped_module(module: &str) -> bool {
+    module == IMPORT_SCOPED_MODULE
+}
+
+fn admitted_import_scoped(module: &str) -> bool {
+    ADMITTED_IMPORT_SCOPED.with(|cell| cell.borrow().contains(module))
+}
+
+fn local_extern_hides(name: &str) -> bool {
+    LOCAL_EXTERN_NAMES.with(|cell| cell.borrow().contains(name))
+}
+
+/// Whether `module`'s bare exports may satisfy a lookup in `owner`.
+/// Import-scoped modules are excluded from the legacy whole-table set
+/// unless this file imported them, the captured map names them, or the
+/// file being checked is that module.
+fn bare_module_visible(
+    module: &str,
+    owner: Option<&str>,
+    captured: &Option<BTreeSet<String>>,
+) -> bool {
+    if is_import_scoped_module(module) {
+        return owner == Some(module)
+            || captured
+                .as_ref()
+                .is_some_and(|targets| targets.contains(module))
+            || admitted_import_scoped(module);
+    }
+    captured
+        .as_ref()
+        .is_none_or(|targets| targets.contains(module))
+}
+
+fn collect_file_scope(
+    items: &[crate::ast::Node],
+    admitted: &mut BTreeSet<String>,
+    externs: &mut BTreeSet<String>,
+    qualifiers: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    for item in items {
+        match item {
+            crate::ast::Node::Import { path, alias, .. } => {
+                let joined = path.join(".");
+                qualifiers
+                    .entry(joined.clone())
+                    .or_default()
+                    .insert(joined.clone());
+                for qualifier in path.last().into_iter().chain(alias.iter()) {
+                    qualifiers
+                        .entry(qualifier.clone())
+                        .or_default()
+                        .insert(joined.clone());
+                }
+                if is_import_scoped_module(&joined) {
+                    admitted.insert(joined);
+                }
+            }
+            crate::ast::Node::ExternBlock { fns, .. } => {
+                for function in fns {
+                    externs.insert(function.name.clone());
+                }
+            }
+            crate::ast::Node::Block { stmts, .. } => {
+                collect_file_scope(stmts, admitted, externs, qualifiers);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Installs the file-local import admission and extern-name set for one
+/// check or lower, and restores the previous sets on drop.
+pub(crate) struct FileScopeGuard {
+    previous_admitted: BTreeSet<String>,
+    previous_externs: BTreeSet<String>,
+    previous_qualified: BTreeSet<(usize, usize)>,
+}
+
+impl FileScopeGuard {
+    pub(crate) fn install(module: &crate::ast::Module) -> Self {
+        let mut admitted = BTreeSet::new();
+        let mut externs = BTreeSet::new();
+        let mut qualifiers = BTreeMap::new();
+        collect_file_scope(&module.items, &mut admitted, &mut externs, &mut qualifiers);
+        // The parser folds a qualified call to its bare member. Retain its
+        // recorded qualifier so a same-named local extern hides only bare calls.
+        let qualified = module
+            .spelling
+            .call_qualifiers
+            .iter()
+            .filter_map(|(span, qualifier)| {
+                let targets = qualifiers.get(&qualifier.replace("::", "."))?;
+                (targets.len() == 1 && targets.contains(IMPORT_SCOPED_MODULE))
+                    .then_some((span.start(), span.end()))
+            })
+            .collect();
+        let previous_qualified = QUALIFIED_POSIX_CALLS.with(|cell| cell.replace(qualified));
+        let previous_admitted = ADMITTED_IMPORT_SCOPED.with(|cell| cell.replace(admitted));
+        let previous_externs = LOCAL_EXTERN_NAMES.with(|cell| cell.replace(externs));
+        Self {
+            previous_admitted,
+            previous_externs,
+            previous_qualified,
+        }
+    }
+}
+
+impl Drop for FileScopeGuard {
+    fn drop(&mut self) {
+        QUALIFIED_POSIX_CALLS.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_qualified);
+        });
+        ADMITTED_IMPORT_SCOPED.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_admitted);
+        });
+        LOCAL_EXTERN_NAMES.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_externs);
+        });
+    }
+}
+
+/// The defining module and signature of a bare name visible to `owner`.
+/// A local `extern "C"` hides the name. The current module's own export
+/// wins over an import. The flag is `false` when several modules export the
+/// same signature (explicit multi-file checking): the module is then the
+/// first visible one, and no single declaring scope applies.
+fn resolve_visible(
+    owner: Option<&str>,
+    name: &str,
+) -> Option<(String, bool, super::module_table::ExportedFn)> {
+    if local_extern_hides(name) {
+        return None;
+    }
+    ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
+        let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
+        ACTIVE.with(|active| {
+            let table = active.borrow();
+            let table = table.as_ref()?;
+            let candidates = table.exported_fn_candidate_refs(name);
+            if let Some(owner) = owner {
+                if let Some((module, function)) =
+                    candidates.iter().find(|(module, _)| *module == owner)
+                {
+                    return Some(((*module).to_string(), true, (*function).clone()));
+                }
+            }
+            let mut selected = candidates
+                .iter()
+                .filter(|(module, _)| bare_module_visible(module, owner, &captured));
+            let first = selected.next()?;
+            if selected.next().is_some() {
+                // Explicit multi-file checking historically exposed one
+                // translation-unit namespace. Preserve that scope only when
+                // every duplicate carries the exact same ABI; manifest
+                // captures and conflicting signatures remain fail-closed.
+                if captured.is_some() || candidates.iter().any(|(_, function)| *function != first.1)
+                {
+                    return None;
+                }
+                return Some((first.0.to_string(), false, first.1.clone()));
+            }
+            Some((first.0.to_string(), true, first.1.clone()))
+        })
+    })
+}
+
+/// Linker symbol for a call or definition that resolved to `std.posix`.
+/// The source name stays `close`; the object symbol is `mind_posix_close`
+/// so it cannot interpose libc when the same program also has
+/// `extern "C" { fn close... }`.
+pub(crate) fn link_name(owner: Option<&str>, name: &str) -> String {
+    match resolve_visible(owner, name) {
+        Some((module, _, _)) if is_import_scoped_module(&module) => {
+            format!("mind_posix_{name}")
+        }
+        _ => name.to_string(),
+    }
+}
+
 /// Resolve a bare imported function using the current module's captured
 /// imports. A single imported owner wins over unimported siblings; multiple
 /// owners or a missing imported symbol return `None` so the checker refuses
 /// the unresolved/ambiguous spelling before native lowering.
+/// A name declared `extern "C"` in the current file resolves to that
+/// declaration, never to an import-scoped std export of the same name.
 pub(crate) fn lookup_visible_fn(
     owner: Option<&str>,
     name: &str,
@@ -107,39 +306,8 @@ pub(crate) fn lookup_visible_fn_owned(
     owner: Option<&str>,
     name: &str,
 ) -> Option<(Option<String>, super::module_table::ExportedFn)> {
-    ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
-        let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
-        ACTIVE.with(|active| {
-            let table = active.borrow();
-            let table = table.as_ref()?;
-            let candidates = table.exported_fn_candidate_refs(name);
-            if let Some(owner) = owner {
-                if let Some((module, function)) =
-                    candidates.iter().find(|(module, _)| *module == owner)
-                {
-                    return Some((Some(module.to_string()), (*function).clone()));
-                }
-            }
-            let mut selected = candidates.iter().filter(|(module, _)| {
-                captured
-                    .as_ref()
-                    .is_none_or(|targets| targets.contains(*module))
-            });
-            let first = selected.next()?;
-            if selected.next().is_some() {
-                // Explicit multi-file checking historically exposed one
-                // translation-unit namespace. Preserve that scope only when
-                // every duplicate carries the exact same ABI; manifest
-                // captures and conflicting signatures remain fail-closed.
-                if captured.is_some() || candidates.iter().any(|(_, function)| *function != first.1)
-                {
-                    return None;
-                }
-                return Some((None, first.1.clone()));
-            }
-            Some((Some(first.0.to_string()), first.1.clone()))
-        })
-    })
+    resolve_visible(owner, name)
+        .map(|(module, unique, function)| (unique.then_some(module), function))
 }
 
 /// Return all typed function signatures visible to the current module. This
@@ -156,6 +324,9 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
             let mut by_name: BTreeMap<String, Vec<(&str, &super::module_table::ExportedFn)>> =
                 BTreeMap::new();
             for (module, function) in table.all_exported_fn_refs() {
+                if local_extern_hides(&function.name) {
+                    continue;
+                }
                 by_name
                     .entry(function.name.clone())
                     .or_default()
@@ -171,11 +342,9 @@ pub(crate) fn visible_fns(owner: Option<&str>) -> Vec<super::module_table::Expor
                             return Some((*function).clone());
                         }
                     }
-                    let mut selected = candidates.iter().filter(|(module, _)| {
-                        captured
-                            .as_ref()
-                            .is_none_or(|targets| targets.contains(*module))
-                    });
+                    let mut selected = candidates
+                        .iter()
+                        .filter(|(module, _)| bare_module_visible(module, owner, &captured));
                     let first = selected.next()?;
                     if selected.next().is_some() {
                         (captured.is_none()
@@ -242,6 +411,9 @@ pub(crate) fn visible_externs(owner: Option<&str>) -> Vec<super::module_table::E
 /// Imported owners are authoritative when present; otherwise the legacy
 /// whole-project metadata surface remains available only for one owner.
 pub(crate) fn symbol_visible(owner: Option<&str>, name: &str) -> bool {
+    if local_extern_hides(name) {
+        return false;
+    }
     ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
         let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
         ACTIVE.with(|active| {
@@ -252,11 +424,7 @@ pub(crate) fn symbol_visible(owner: Option<&str>, name: &str) -> bool {
             let mut selected = table
                 .exported_symbol_candidate_refs(name)
                 .into_iter()
-                .filter(|module| {
-                    captured
-                        .as_ref()
-                        .is_none_or(|targets| targets.contains(*module))
-                });
+                .filter(|module| bare_module_visible(module, owner, &captured));
             selected.next().is_some() && selected.next().is_none()
         })
     })
@@ -270,7 +438,14 @@ pub(crate) fn current_symbol_exported(name: &str) -> bool {
     )
 }
 
+pub(crate) fn is_qualified_posix_call(span: crate::ast::Span) -> bool {
+    QUALIFIED_POSIX_CALLS.with(|cell| cell.borrow().contains(&(span.start(), span.end())))
+}
+
 fn qualified_import_target(span: crate::ast::Span, name: &str, is_call: bool) -> Option<String> {
+    if is_call && is_qualified_posix_call(span) {
+        return Some(IMPORT_SCOPED_MODULE.to_string());
+    }
     let owner = crate::qualified_enums::current_module_path()?;
     ACTIVE_QUALIFIED_IMPORTS.with(|refs| {
         refs.borrow()
@@ -317,11 +492,7 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
             let Some(table) = table.as_ref() else {
                 return BTreeSet::new();
             };
-            let allow = |module: &str| {
-                captured
-                    .as_ref()
-                    .is_none_or(|targets| targets.contains(module))
-            };
+            let allow = |module: &str| bare_module_visible(module, owner, &captured);
             let mut function_names = BTreeSet::<String>::new();
             for (module, function) in table.all_exported_fn_refs() {
                 if allow(module) {
@@ -330,7 +501,7 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
             }
             let mut counts = BTreeMap::<String, u8>::new();
             for (module, name) in table.all_exported_symbol_refs() {
-                if !allow(module) {
+                if local_extern_hides(name) || !allow(module) {
                     continue;
                 }
                 // An imported extern must not compete with a user `pub fn`
@@ -449,211 +620,5 @@ impl Drop for Guard {
 }
 
 #[cfg(test)]
-mod extern_abi_tests {
-    use super::*;
-    use crate::ast::CallConv;
-    use crate::project::module_table::build_module_table;
-
-    fn selected(
-        provider: &str,
-        sibling: Option<&str>,
-        captured: bool,
-        owner: &str,
-    ) -> Vec<super::super::module_table::ExportedExtern> {
-        let provider = crate::parser::parse(provider).expect("provider fixture");
-        let sibling = sibling.map(|s| crate::parser::parse(s).expect("sibling fixture"));
-        let mut modules = vec![("crate.ffi".to_string(), &provider)];
-        if let Some(sibling) = &sibling {
-            modules.push(("crate.other".to_string(), sibling));
-        }
-        let _table = Guard::install(build_module_table(&modules));
-        let _imports = if captured {
-            ResolvedImportsGuard::install(BTreeMap::from([(
-                (owner.to_string(), vec!["ffi".to_string()]),
-                "crate.ffi".to_string(),
-            )]))
-        } else {
-            ResolvedImportsGuard {
-                previous: ACTIVE_RESOLVED_IMPORTS.with(|cell| cell.replace(None)),
-            }
-        };
-        visible_externs(Some(owner))
-    }
-
-    #[test]
-    fn one_owner_conflicts_remain_ambiguous_in_every_scope() {
-        let conflicting = "extern \"C\" { fn same() -> i64; fn same() -> i32; }";
-        for owner in ["crate.user", "crate.ffi"] {
-            for captured in [false, true] {
-                assert!(
-                    selected(conflicting, None, captured, owner).is_empty(),
-                    "owner={owner}, captured={captured}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn identical_owner_declarations_and_unimported_conflicts_are_stable() {
-        let same = "extern \"C\" { fn same(x: i64) -> i32; fn same(other: i64) -> i32; }";
-        let unrelated = "extern \"C\" { fn same(x: i64) -> i64; }";
-        let expected = selected(same, None, true, "crate.user");
-        assert_eq!(expected.len(), 1);
-        assert_eq!(
-            selected(same, Some(unrelated), true, "crate.user"),
-            expected
-        );
-        assert_eq!(selected(same, Some(same), false, "crate.user"), expected);
-        assert!(selected(same, Some(unrelated), false, "crate.user").is_empty());
-    }
-
-    #[test]
-    fn exported_extern_default_convention_matches_explicit_host_convention() {
-        let host = if cfg!(target_os = "windows") {
-            "win64"
-        } else {
-            "sysv"
-        };
-        let source = format!(
-            "extern \"C\" {{ fn same() -> i32; }} extern \"C\" callconv(.{host}) {{ fn same() -> i32; }}"
-        );
-        let found = selected(&source, None, true, "crate.user");
-        assert_eq!(found.len(), 1);
-        let expected = if cfg!(target_os = "windows") {
-            CallConv::Win64
-        } else {
-            CallConv::SysV
-        };
-        assert_eq!(found[0].callconv, expected);
-    }
-
-    fn extern_decl(module: &crate::ast::Module) -> (Vec<String>, Option<String>, CallConv) {
-        let ir = crate::eval::lower::lower_to_ir(module).expect("declaration lowering");
-        let found: Vec<_> = ir
-            .instrs
-            .into_iter()
-            .filter_map(|instr| match instr {
-                crate::ir::Instr::ExternFnDecl {
-                    name,
-                    param_types,
-                    ret_type,
-                    callconv,
-                    ..
-                } if name == "same" => Some((param_types, ret_type, callconv)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(found.len(), 1, "one resolved declaration required");
-        found.into_iter().next().unwrap()
-    }
-
-    #[test]
-    fn imported_declarations_preserve_local_target_and_explicit_conventions() {
-        for (annotation, expected) in [
-            (
-                "",
-                if cfg!(target_os = "windows") {
-                    CallConv::Win64
-                } else {
-                    CallConv::SysV
-                },
-            ),
-            ("callconv(.sysv)", CallConv::SysV),
-            ("callconv(.win64)", CallConv::Win64),
-            ("callconv(.aapcs)", CallConv::Aapcs),
-        ] {
-            let provider = crate::parser::parse(&format!(
-                "extern \"C\" {annotation} {{ fn same(x: i64) -> i32; }}"
-            ))
-            .unwrap();
-            let local = extern_decl(&provider);
-            assert_eq!(local.2, expected, "local {annotation}");
-            let _table = Guard::install(build_module_table(&[("crate.ffi".into(), &provider)]));
-            let _owner = crate::qualified_enums::ModuleGuard::install("crate.user");
-            let _imports = ResolvedImportsGuard::install(BTreeMap::from([(
-                ("crate.user".to_string(), vec!["ffi".to_string()]),
-                "crate.ffi".to_string(),
-            )]));
-            let consumer =
-                crate::parser::parse("import ffi; pub fn use_same() -> i64 { return same(1); }")
-                    .unwrap();
-            assert_eq!(extern_decl(&consumer), local, "imported {annotation}");
-        }
-    }
-
-    #[test]
-    fn uncalled_import_adds_no_extern_decl() {
-        let provider = crate::parser::parse("extern \"C\" { fn same(x: i64) -> i32; }").unwrap();
-        let _table = Guard::install(build_module_table(&[("crate.ffi".into(), &provider)]));
-        let _owner = crate::qualified_enums::ModuleGuard::install("crate.user");
-        let _imports = ResolvedImportsGuard::install(BTreeMap::from([(
-            ("crate.user".to_string(), vec!["ffi".to_string()]),
-            "crate.ffi".to_string(),
-        )]));
-        let consumer = crate::parser::parse("import ffi;").unwrap();
-        let ir = crate::eval::lower::lower_to_ir(&consumer).expect("lower import");
-        let decls = ir.instrs.iter().filter(
-            |instr| matches!(instr, crate::ir::Instr::ExternFnDecl { name, .. } if name == "same"),
-        );
-        assert_eq!(
-            decls.count(),
-            0,
-            "an uncalled import must not declare the extern"
-        );
-    }
-
-    #[test]
-    fn owner_extern_is_not_declared_twice() {
-        let provider = crate::parser::parse(
-            "extern \"C\" { fn same(x: i64) -> i32; } pub fn use_same() -> i64 { return same(1); }",
-        )
-        .unwrap();
-        let _table = Guard::install(build_module_table(&[("crate.ffi".into(), &provider)]));
-        let _owner = crate::qualified_enums::ModuleGuard::install("crate.ffi");
-        let _imports = ResolvedImportsGuard::install(BTreeMap::new());
-        let found = extern_decl(&provider);
-        assert_eq!(found.0, vec!["i64".to_string()]);
-    }
-
-    #[test]
-    fn user_fn_close_stays_visible_beside_std_fs_extern() {
-        let fs = crate::parser::parse(
-            "extern \"C\" { fn close(fd: i32) -> i32; fn open(p: *const u8, flags: i32, mode: i32) -> i32; }",
-        )
-        .unwrap();
-        let user =
-            crate::parser::parse("import std.fs; pub fn close(fd: i64) -> i64 { return fd; }")
-                .unwrap();
-        let _table = Guard::install(build_module_table(&[
-            ("std.fs".into(), &fs),
-            ("crate.user".into(), &user),
-        ]));
-        let _imports = ResolvedImportsGuard::install(BTreeMap::from([
-            (
-                ("crate.user".to_string(), vec!["fs".to_string()]),
-                "std.fs".to_string(),
-            ),
-            (
-                ("crate.consumer".to_string(), vec!["user".to_string()]),
-                "crate.user".to_string(),
-            ),
-            (
-                ("crate.consumer".to_string(), vec!["fs".to_string()]),
-                "std.fs".to_string(),
-            ),
-        ]));
-        let symbols = visible_symbols(Some("crate.consumer"));
-        assert!(
-            symbols.contains("close"),
-            "pub fn close must not become ambiguous beside an imported extern"
-        );
-        assert!(
-            symbols.contains("open"),
-            "a unique extern must stay visible"
-        );
-        let resolved = lookup_visible_fn(Some("crate.consumer"), "close").expect("user fn");
-        assert_eq!(resolved.ret_type, Some(crate::ast::TypeAnn::ScalarI64));
-        let local = lookup_visible_fn(Some("crate.user"), "close").expect("owner fn");
-        assert_eq!(local.ret_type, Some(crate::ast::TypeAnn::ScalarI64));
-    }
-}
+#[path = "active_module_table_extern_abi_tests.rs"]
+mod extern_abi_tests;

@@ -1,0 +1,13 @@
+// The libcuda-only import: both called rows are unversioned driver rows, so
+// the image carries DT_NEEDED libcuda.so.1 only and no glibc version is
+// referenced by any symbol — the writer emits no DT_NEEDED libc.so.6, no
+// DT_VERSYM, DT_VERNEED or DT_VERNEEDNUM: 13 dynamic entries (208 bytes).
+extern "C" {
+    fn cuInit(flags: u32) -> i32;
+    fn cuCtxSynchronize() -> i32;
+}
+fn main() -> i64 {
+    if cuInit(0 as u32) as i64 != 0 { return 1; }
+    let _s: i64 = cuCtxSynchronize() as i64;
+    return 0;
+}

@@ -1,0 +1,7 @@
+import std.hkdf;
+
+fn main() -> i64 {
+    let k: i64 = __mind_alloc(32);
+    let o: i64 = __mind_alloc(32);
+    return hmac_sha256(k, 0, k, 0, o);
+}

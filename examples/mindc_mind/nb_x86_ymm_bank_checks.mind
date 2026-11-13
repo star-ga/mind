@@ -1,0 +1,225 @@
+// Copyright 2026 STARGA Inc.
+// R-01b bank operand fences and refusals. The self-host is THE fence (the Rust rows
+// carry arity and i64 typing only): literal operands, register / displacement
+// range, and the named refusals every bank fence prints, "error[ymm]: <code>:
+// <construct>"; the caller then poisons the fn (0 bytes, driver exit 3).
+
+import nb_ast;
+
+// ---- operand shape per kind ----
+// Register operands sit first; a memory form ends (base, disp). Kind 75 is
+// vpshufb_m(d, t, base, disp); 79 is vpshufb_r(d, t, m); other _r forms (d, a, b).
+pub fn nbbc_is_mem(kind: i64) -> i64 {
+    if kind <= 75 {
+        return 1;
+    }
+    if kind == 80 {
+        return 1;
+    }
+    if kind == 81 {
+        return 1;
+    }
+    0
+}
+
+pub fn nbbc_nregs(kind: i64) -> i64 {
+    if kind == 75 {
+        return 2;
+    }
+    if nbbc_is_mem(kind) == 1 {
+        return 1;
+    }
+    3
+}
+
+pub fn nbbc_arity(kind: i64) -> i64 {
+    if kind == 75 {
+        return 4;
+    }
+    3
+}
+
+// ---- integer literals (never slotted) ----
+// 1 and *out = value for `7`, `-7`, `(7)` (a synthetic literal keeps its value in
+// child0, flagged by child1 == 1); 0 for any other operand. Decimal digits with
+// `_` separators, as main.mind's parse_int_span reads a source int literal.
+pub fn nbb_lit(buf: i64, a: i64, sign: i64, out: i64) -> i64 {
+    if a == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(a);
+    if k == 12 {
+        return nbb_lit(buf, ast_child0(a), sign, out);
+    }
+    if k == 14 {
+        return nbb_lit(buf, ast_child0(a), 0 - sign, out);
+    }
+    if k != 1 {
+        return 0;
+    }
+    if ast_child1(a) == 1 {
+        __mind_store_i64(out, sign * ast_child0(a));
+        return 1;
+    }
+    let lo: i64 = ast_span_lo(a);
+    let hi: i64 = ast_span_hi(a);
+    if lo >= hi {
+        return 0;
+    }
+    let b: i64 = __mind_load_i8(buf + lo);
+    if b < 48 {
+        return 0;
+    }
+    if b > 57 {
+        return 0;
+    }
+    __mind_store_i64(out, sign * nbb_dec(buf, lo, hi, 0));
+    1
+}
+
+// Saturates far outside i32, so a long literal fails the range check, never wraps.
+pub fn nbb_dec(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
+    if lo >= hi {
+        return acc;
+    }
+    if acc > 100000000000 {
+        return acc;
+    }
+    let b: i64 = __mind_load_i8(buf + lo);
+    if b == 95 {
+        return nbb_dec(buf, lo + 1, hi, acc);
+    }
+    nbb_dec(buf, lo + 1, hi, acc * 10 + (b - 48))
+}
+
+// Fill ops[0..3) with the register literals and ops[3] with the displacement.
+// 1 = every operand is an in-range literal; 0 = refused (printed when report).
+pub fn nbb_operands(buf: i64, node: i64, kind: i64, ops: i64, report: i64) -> i64 {
+    let args: i64 = ast_child1(node);
+    let n: i64 = ast_aux(node);
+    __mind_store_i64(ops + 0, 0);
+    __mind_store_i64(ops + 8, 0);
+    __mind_store_i64(ops + 16, 0);
+    __mind_store_i64(ops + 24, 0);
+    if n != nbbc_arity(kind) {
+        return nbbc_refuse(report, 1, buf, node) + 1;
+    }
+    if nbb_regs(buf, args, nbbc_nregs(kind), 0, ops, report) == 0 {
+        return 0;
+    }
+    if nbbc_is_mem(kind) == 0 {
+        return 1;
+    }
+    let d: i64 = __mind_load_i64(args + (n - 1) * 8);
+    if nbb_lit(buf, d, 1, ops + 24) == 0 {
+        return nbbc_refuse(report, 1, buf, d) + 1;
+    }
+    let v: i64 = __mind_load_i64(ops + 24);
+    if v > 2147483647 {
+        return nbbc_refuse(report, 2, buf, d) + 1;
+    }
+    if v < 0 - 2147483648 {
+        return nbbc_refuse(report, 2, buf, d) + 1;
+    }
+    1
+}
+
+// Registers are literals in 0..14 (ymm15 is Layer A's scratch).
+pub fn nbb_regs(buf: i64, args: i64, nr: i64, i: i64, ops: i64, report: i64) -> i64 {
+    if i >= nr {
+        return 1;
+    }
+    let a: i64 = __mind_load_i64(args + i * 8);
+    if nbb_lit(buf, a, 1, ops + i * 8) == 0 {
+        return nbbc_refuse(report, 1, buf, a) + 1;
+    }
+    let r: i64 = __mind_load_i64(ops + i * 8);
+    if r < 0 {
+        return nbbc_refuse(report, 2, buf, a) + 1;
+    }
+    if r > 14 {
+        return nbbc_refuse(report, 2, buf, a) + 1;
+    }
+    nbb_regs(buf, args, nr, i + 1, ops, report)
+}
+
+// ---- named refusals ----
+// code: 1 ymm.operand_not_literal, 2 ymm.register_out_of_range,
+// 3 ymm.bank_function_not_leaf, 4 ymm.memory_form_in_bank_function,
+// 5 ymm.discard_result_use. Prints "error[ymm]: <code>: <construct>" when report
+// is 1; always returns -1.
+pub fn nbbc_refuse(report: i64, code: i64, buf: i64, site: i64) -> i64 {
+    if report == 0 {
+        return 0 - 1;
+    }
+    let msg: i64 = __mind_alloc(64);
+    let n: i64 = nbbc_msg(msg, code);
+    let _h: i64 = __mind_write(2, msg, n, 0 - 1);
+    let lo: i64 = ast_span_lo(site);
+    let hi: i64 = ast_span_hi(site);
+    let _s: i64 = __mind_write(2, buf + lo, hi - lo, 0 - 1);
+    __mind_store_i64(msg, 10);
+    let _e: i64 = __mind_write(2, msg, 1, 0 - 1);
+    0 - 1
+}
+
+// "error[ymm]: " (two words) then the code and ": "; returns the byte length.
+pub fn nbbc_msg(msg: i64, code: i64) -> i64 {
+    __mind_store_i64(msg + 0, 7888436769370305125);
+    __mind_store_i64(msg + 8, 3345450465205312877);
+    if code == 1 {
+        __mind_store_i64(msg + 16, 6873740296084353135);
+        __mind_store_i64(msg + 24, 7310584009308008302);
+        __mind_store_i64(msg + 32, 138419134834);
+        return 37;
+    }
+    if code == 2 {
+        __mind_store_i64(msg + 16, 8243122732010005874);
+        __mind_store_i64(msg + 24, 6874304336994070367);
+        __mind_store_i64(msg + 32, 9071406456136050);
+        return 39;
+    }
+    if code == 3 {
+        __mind_store_i64(msg + 16, 7959380476457541986);
+        __mind_store_i64(msg + 24, 8029460113568396387);
+        __mind_store_i64(msg + 32, 2322281126362374004);
+        return 40;
+    }
+    if code == 4 {
+        __mind_store_i64(msg + 16, 7376748247058834797);
+        __mind_store_i64(msg + 24, 7088505737356079727);
+        __mind_store_i64(msg + 32, 7164793139741027937);
+        __mind_store_i64(msg + 40, 35435332987252);
+        return 46;
+    }
+    __mind_store_i64(msg + 16, 6873744693880121700);
+    __mind_store_i64(msg + 24, 8457606634400867698);
+    __mind_store_i64(msg + 32, 540697971);
+    36
+}
+
+// 1 when a slot of the per-fn dtype table (main.mind lcell+8: capacity at tbl-16,
+// one i64 tag per slot, 0 INT, 1 FLOAT) holds an f64 value.
+pub fn nbbc_has_float(tbl: i64, i: i64) -> i64 {
+    if tbl == 0 {
+        return 0;
+    }
+    if i >= __mind_load_i64(tbl - 16) {
+        return 0;
+    }
+    if __mind_load_i64(tbl + i * 8) == 1 {
+        return 1;
+    }
+    nbbc_has_float(tbl, i + 1)
+}
+
+// The fn being lowered: the native ctx main.mind keeps in the address-taken table
+// at lcell+88 (nb_ast.mind nb_at_native_ctx_off, +16 = current fn node); 0 for a
+// selftest cell, which has none.
+pub fn nbbc_cur_fn(lcell: i64) -> i64 {
+    let at: i64 = __mind_load_i64(lcell + 88);
+    if at == 0 {
+        return 0;
+    }
+    __mind_load_i64(at + nb_at_native_ctx_off() + 16)
+}

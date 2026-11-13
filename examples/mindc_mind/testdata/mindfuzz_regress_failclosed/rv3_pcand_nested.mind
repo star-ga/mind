@@ -1,0 +1,18 @@
+// Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate (nested loop).
+fn fz(a: i64, b: i64, c: i64) -> i64 {
+    let mut x: i64 = c;
+    let mut k: i64 = 0;
+    while k < 2 {
+        k = (k + 1);
+        let mut j: i64 = 0;
+        while j < 2 {
+            j = (j + 1);
+            let mut c: i64 = x;
+            c = (c + 1);
+        }
+    }
+    return x;
+}
+fn main() -> i64 {
+    return fz(1, 2, 3);
+}

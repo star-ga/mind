@@ -1,0 +1,15 @@
+import std.string;
+
+// naes_shape_public_name_closed plus one call into the std seed outside every
+// loop. The image is open, so it keeps the seed and the private `decode`
+// collides with the public std.json `decode`. (Importing std.json itself
+// would make the `decode` call lane.call.ambiguous before omission is asked.)
+
+fn decode(a: i64) -> i64 {
+    a + 1
+}
+
+fn main(argc: i64, argv: i64) -> i64 {
+    let cap: i64 = string_push_capacity(3, 8);
+    decode(argc) + cap
+}

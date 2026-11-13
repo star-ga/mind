@@ -7,6 +7,752 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking) — extern "C" ABI resolution and refusals
+- `extern "C"` resolves its calling convention from the compile target (before: the host that built `mindc`). The evidence records the resolved callconv byte, so the same source and target give the same bytes on every host. Gate: `c_callconv_follows_the_compile_target_not_the_host` (3 targets, 1 host).
+- A declared convention with no lowering row on the target is refused with `E2039`: AAPCS on x86-64 (before: a silent SysV fallback), Win64 varargs, SysV on a Windows target, SysV or Win64 on aarch64. Gate: `unrealized_callconv_is_refused_with_e2039` (12 rows, 5 refused).
+- Win64 extern signatures record the declared scalar names in the evidence (before: `u32` was recorded as `i32` and `bool` as `i32`). MLIR stays signless with `llvm.signext`/`llvm.zeroext`, and a narrow Win64 return is extended from its declared type.
+- By-value `#[repr(C)]` struct parameters and returns in `extern "C"` signatures are refused in 0.10.3 on the MLIR path with `E2040`. Pass a pointer. Cause: wrong values for some float layouts. The SysV classifier passes `{f32, f32}` as one `f32`; a callee `float pair_sum(struct { float a, b; })` that returns `a + 1000 * b`, built with gcc 15.2.0 at `-O0` and `-O2`, returns `1.5` when it is called through that one-`f32` declaration with `1.5` (it reads `b = 0`), and `2501.5` for `{1.5, 2.5}` through the correct declaration. Mixed integer and float eightbytes and MEMORY-class structs are wrong too.
+- A `callconv(.win64)` extern builds on the MLIR path. Before: the declaration and the call carried `cconv = #llvm.cconv<win64cc>`, which `mlir-opt` refuses ("expected attribute value"), so no Win64 program built. Now they carry the `win64cc` keyword (`llvm.func win64cc @f`). Gate: `win64_program_builds_and_passes_args_in_win64_registers` (the first two integer arguments go in `rcx` and `rdx`).
+- An `extern "C"` call that returns `f32` or `f64` is used at that type on the MLIR path. Before: every extern call result was typed `i64`, so `return %r : i64` followed a `-> f32` call and `mlir-opt` refused the module. Gate: `extern_float_returns_keep_their_float_type` (libm `ldexpf`/`ldexp`: `6.0`, `19.0`, `18`).
+- A float literal bound to a `let` declared `f32` (`let a: f32 = 1.5`) is converted to `f32` on the MLIR path (`arith.truncf`, round to nearest even, as `1.5 as f32`). Before: it stayed an `f64` constant and every `f32` use of the binding was an `mlir-opt` type error. A literal expression (`0.1 * 3.0`) is evaluated in `f64`, then converted. Narrow integer lets keep their wrap (`let a: i8 = 300` is `44`). The declared width governs the binding, so `let c = 1.5; let a: f32 = c` converts too (`docs/errors.md`). Gate: `typed_let_takes_the_declared_width` (8 rows).
+- Each primitive scalar resolves once to one row of the primitive scalar table (`docs/specs/v1.0.md` §2.1). The extern classifiers, the extern type check and the MLIR narrow-argument rules read the row, not the spelling. Scalar extern bytes do not change.
+- The declared width governs an `f32` binding at all sites on the MLIR path. An `f64` value goes to `f32` through `arith.truncf` (round to nearest even, as `x as f32`). This occurs at a `return` in a `-> f32` fn and at an argument to an `f32` parameter. It also occurs at an `extern "C"` `f32` argument and at an assignment to an `f32` binding. Before: each site was an `mlir-opt` type error. A `let` or an assignment converts only a proven `f64` value. The compiler proves a literal, an `f64` parameter, the result of a MIND fn declared `-> f64`, an `as f64` cast, and `+ - * / %` over one of them. In a branch or a loop body, it does not prove an `f64` parameter or call result yet: that stays an `mlir-opt` type error. Gates: `f32_let_of_an_f64_value_converts`, `f32_return_takes_the_declared_width`, `f32_argument_takes_the_declared_width`, `f32_assignment_takes_the_declared_width`, `extern_f32_argument_takes_the_declared_width`. Each gate reads `0.1` back as `0.10000000149011612`.
+- A top-level `let g: f32 = 0.1` type-checks, as the same `let` in a fn body does. Before: `E2001` (annotation `f32`, inferred `f64`). The checker still refuses an integer value. Gate: `top_level_f32_let_type_checks_and_builds`.
+- `mindc test` (the tree evaluator) rounds a float to `f32` at a `let`, a parameter and a return declared `f32`. The built artifact does the same. Before: the evaluator kept the `f64` value (`0.1`, the artifact gives `0.10000000149011612`). The evaluator does not round an assignment to an `f32` binding yet. Gate: `evaluator_and_artifact_agree_on_an_f32_binding`.
+
+### Added — extern bindings: `bind("<soname>")` and `bind(.address)` (MLIR route)
+
+- An `extern "C"` block takes a `bind` clause. `bind("<soname>")` links the
+  named library after the base set, in ascending name order. `bind(.address)`
+  declares a C prototype: a call passes the code address first. A null address
+  exits with status 78.
+- New codes: E2045 (refused binding), E6012 (link failed with base-bound
+  extern names), exit status 78.
+- mic@3 gets one additive record, `OP_EXTERN_BIND` (0x2C). A program with no
+  `bind` clause keeps its bytes and its `trace_hash`.
+- A call through an address is always `nondeterministic`. `dlopen`, `dlsym`,
+  `dlclose` and `dlerror` are World rows.
+- The native route refuses the clause as `lane.extern.bind_clause` in 0.10.3.
+
+- The native self-host route (x86-64) refuses an `extern` block with no realized ABI row on that route with `E2039`: `callconv(.win64)`, `callconv(.aapcs)`, unknown values and Win64 varargs. `callconv(.win64)` is supported on the MLIR route; the native route refuses it in 0.10.3 (E2039). A by-value `#[repr(C)]` struct parameter or return in an extern signature is refused with `E2040` on the native route too. Pass a pointer. The code goes to stderr; no image bytes are written. The note records the declared callconv byte and the varargs flag of each extern fn (before: always SysV, never varargs). The native route binds only its fixed libc list, and no entry in it takes or returns i8/u8/i16/u16, so a narrow C argument is unreachable on the native route in 0.10.3. Gate: `native_libc_binding_check.py --abi-rows --selfhost` (29 rows, `native_libc_abi_rows.tsv`).
+- The native self-host walks the token stream, statement lists and module items with loops, not one native stack frame per element: the whole-stream scans (`const_find_from`, the `const_bound_*` guards, `frt_collect`, `srt_collect`, the policy attribute scans, the `u64x_*` passes), the statement-list parser (`parse_block_stmts`), the brace skippers, the call patcher and the per-statement alias, field and struct-literal passes. The self-compile of the whole compiler used 512 B of stack per token (281 MiB of the bounded 384 MiB stack); it now uses 3.5 MiB. The whole-program stack budget (`nb_stack_short`, constants and measurement in `examples/mindc_mind/nb_stack_budget.mind`) has two bounds and refuses a program only when both find the stack short: the new bound, 320 B per token plus 640 B per unit of the longest token plus 64 MiB, and the bound before, 640 B per token and per unit of the longest token plus 16 MiB. Every program the bound before admitted is still admitted. The bounded compiler admits 1.04M tokens (603k before). The unknown-item skipper, the stacked inert attributes of an item and the two struct-literal module passes are loops too. Emitted bytes do not change.
+- The native compiler gives back the arena of each function after its code is in the image (`nb_lower_all_ctx`, ownership rule in `examples/mindc_mind/nb_lower_loop.mind`). Before, every function's lowering tables stayed allocated, so the bounded (768 MiB) self-compile of the whole compiler ran at its arena budget and refused when a few functions were added. A grown image or an index rebuilt inside the function vetoes the reclaim, and the frt name index is built before the loop. Emitted bytes do not change.
+- `intern_find` (the mic@3 string-table dedup of the trace-hash twin and the source note) reads a hash index of the table entries for the five string tables the compiler allocates (`nbst_offs`, `examples/mindc_mind/nb_strtab_index.mind`), not a scan of every entry per intern. `intern_span` keeps the index current; `intern_find` reads it only when it holds every entry below the caller count. It returns the same first equal entry. 40000 extern blocks or 20000 parameters spent minutes in the scan. Output bytes do not change.
+- `frt_find` (the callee return-type lookup of the native lowering and the alias passes) reads a hash index of the registry names, built at the first lookup, not a scan of every registry entry per call site. It returns the same last-definition entry. The registry slot layout moved from `main.mind` into `nb_lastdef.mind`. Output bytes do not change.
+- The last-definition table fails closed: its header holds a magic word, the fn array address and its length, and every fn array producer writes 0 to the spare word. A lookup on an array with no matching table writes a named diagnostic to fd 2 and traps. Before, it read an uninitialised word as a table address.
+- The self-host resolves a callee name to its last definition through a hash table built once per fn array (`examples/mindc_mind/nb_lastdef.mind`), not a scan of every fn per call site. The whole-source self-compile was quadratic in the fn count. `span_bytes_equal` moved into the same part. Output bytes do not change.
+- The fp test drivers in `main.mind` (`selftest_native_elf_fp_*` and `selftest_dtk_plan`) set all 16 lcell words to 0 before use. `__mind_alloc` does not zero memory, and a garbage word at +104 caused a SIGSEGV. The five fp smokes run on a poisoned glibc heap, so a read of an unzeroed word fails on every run.
+- A float to Q16.16 constant follows the new spec section 3.3 (round to nearest, ties to even). A Q16.16 dense element or scalar fill that is NaN, infinite or out of range stops the build with `Q16ConstantOutOfRange` and writes no artifact. Before, the compiler rounded ties away from zero and saturated an out-of-range value with no message. A Q16.16 scalar fill now stores Q(x) in each element. Before, the MLIR text had an invalid `: q16` constant. The cast `as q16` stops the build with `Q16Unsupported` on the MLIR route. Before, the cast had no effect. A fractional fill of an `i32` or `i64` tensor stops the build with `InexactIntegerFill`. Before, the compiler truncated the fill with no message.
+- A typed dense tensor literal stores the folded value of each element. Before this change, `let t: tensor<i64[2]> = [0 - 1, 2]` stored 0 for `0 - 1`. A dense tensor literal or a named constant array with an element that has no constant value now stops the build with a named refusal (`NonConstantElement`). Before, the compiler stored 0 for that element. The AST fold no longer stops with a panic on `i64::MIN / -1` or `i64::MIN % -1`.
+- A nested constant literal of a dense tensor binding flattens row-major to the declared shape, for example `let W: diff tensor<f32[4, 1]> = [[0.1], [0.2], [-0.1], [0.3]]` (any rank). A leaf count that is not the product of the shape stops the build with `DenseLeafCount`. A ragged nest, or a nest that is not of the declared shape, stops the build with `RaggedNest`. The `NonConstantElement` refusal of a leaf that does not fold stays. Before this change a nested literal stopped the build with `NonConstantElement` on its first inner list, and `examples/zoo/linear_regression.mind` did not compile.
+- Route A (`mindc build --backend native`) accepts an array literal element that is an integer constant expression, for example `[0 - 1, 2, 3]`. One fold (`opt::fold::const_int`, spec 3.2: `+ - * /`) gives the element value to the native-lane fence and to the lowering. A division by zero, an overflow or another operator does not fold, and the element stays a refusal (`lane.source.array_element`).
+- The self-host mic@3 twin folds an array literal element by the same spec 3.2 rule as the Rust oracle (`examples/mindc_mind/nb_arr_fold.mind`). The trace note of `[0 - 1, 2 * 3]` now equals the Rust `emit_mic3` reference. Three element readers moved out of `main.mind` into this part.
+- `std.mic_record` is three modules under 400 lines (`mic_record_wire`, `mic_record_table`, `mic_record`; same `import std.mic_record;`). `mrec_decode` frees its reader cursor on every path and the partly built record on every refusal, a growing table frees the old table, `mrec_remove` frees the removed entry, and the new `mrec_free(h)` releases a record (`tests/std_surface_mic_record_refusals.rs` bounds the resident set over repeated decode, insert and remove). The `std.mic_results` helpers free every key buffer they build (`tests/std_surface_mic_record.rs` bounds the resident set over repeated writes and reads). Allocation-failure paths that still leak carry `deferred:` markers: no fault-injection hook exists yet.
+- A seed drift ledger: `tools/seed_ledger/` (pure MIND) checks one sha256 row per seed-bound file (the seed sources, their G2 table rows, and a fixed list of pinned files) against `examples/mindc_mind/testdata/seed_ledger/SEED_LEDGER.tsv`. CI (`mindcraft_self_host`) is red when a changed row has no `SEED_DRIFT.txt` line, when a line is stale, when a row is edited or deleted by hand, when a pinned file has no row, or when `stage1.elf` does not hash to the published stage sha256 of its MANIFEST (`stage2_sha256` when the receipt has the row `published_stage` = `stage2`, as a two-hop advance writes; `stage1_sha256` for all other receipts). With no seed source drifted it is also red unless the seed sources, joined in `_selfhost_sources.py` order, hash to the MANIFEST `combined_source_sha256`. The re-pin (`printf write | seed_ledger`) requires both MANIFEST values to match.
+- The architecture gate lists `tools/seed_ledger/` as gate tooling. Its product metrics do not include the tool in this release.
+- The frozen self-host seeds advance for 0.10.3 (`self_host_loop_smoke.py --advance --hops 2`, two advances): `testdata/selfhost_loop/stage1.elf` moves 5131e278… -> bb35955f… -> 6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c (3434737 bytes), and `testdata/selfhost_loop_bounded/stage1.elf` moves 02914794… -> 77be7b09… -> 3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077 (3349291 bytes). `SEED_BLOB_SHA256` and the mirror gate's `EXPECTED_STD_SEED_SHA256` move fc66c18b… -> ef646c3faebec81838902834c5b9c97190fbfad5224331cd145367da40e72873 (21 modules, 419266 bytes). The four `testdata/backend_native_bridge/*.elf` anchors follow the seed: the code bytes, the sizes and the exit codes do not change, and the 32-byte trace note of each anchor now equals the Rust `emit_mic3` reference note (add 997bb7a1…, const_return 06efb126…, local_call b5a53e34…, while_sum 0a7d47ad…). The seed ledger is re-pinned to this seed and `SEED_DRIFT.txt` is empty.
+- The native self-host computes the merged branch writes of each `if` node once per function, and reads the id count of each else list from the count walk that already made it (`nb_branch_memo.mind`): on the SSA path an else-if chain or a `match` no longer re-walks or recounts every later arm for each arm, and `nb_branch_defines` borrows one scratch table instead of allocating 4 KB per call. The `native_cf` smoke checks that the compile time of a `match` grows at most 8x for 4x the arms. Compiled bytes are unchanged. Chains and trees routed to the HOME lowering are not changed by this.
+- **A project's sources are its manifest's scope**: without a declared `[targets.*].sources` list, `mindc build`, `mindc check` and `mindc test` take the `.mind` files in the entry's directory plus the files their imports reach (and, for a checked or tested file, what that file imports). A file in a subdirectory that nothing imports (a `docs/` repro, an old module, a harness) no longer enters the build or the analysis.
+- **`mindc check` with no path checks the project's source set**: in a project, `mindc check` with no path checks every file that `mindc build` compiles there (the declared `[targets.*].sources` list, or the files in the entry's directory plus the files their imports reach). A file of that set is checked whatever its extension, and also when the ignore file (`.gitignore`) matches it, because the build compiles it. Before: the check read every `.mind` file below the current directory that the ignore file did not match, so a broken file that the build ignores failed the check. One stderr line gives the number of `.mind` files below the project root that are not in the set: `note[check]: N .mind file(s) below <root> are not in the project source set`. The count does not include ignored files. The project-root `tests/` tree is not in the set; check it with `mindc check tests` or `mindc test`. `mindc check <file>` always checks that file, also when the ignore file matches it (before: such a file was skipped with no message and exit 0). `mindc check <dir>` checks the `.mind` files below `<dir>`, in the source set or not; ignored files below a directory are skipped, as before. There is no command-line flag for the filter: `[mindcraft.vcs] use_ignore_file = false` in `Mind.toml` stops it. `mindc check --fix` takes the same files. With no project, or with a manifest that gives no source set, no path means the `.mind` files below the current directory, as before. The rule is the same in every feature build (`docs/rfcs/0007-mindcraft.md` §5). Gates: `project_check_with_no_path_takes_the_build_source_set`, `a_path_operand_is_never_narrowed_to_the_source_set`, `a_temporary_manifest_does_not_scope_the_check`, `a_named_file_is_checked_when_the_ignore_file_matches_it`, `an_ignored_member_of_the_source_set_is_checked`, `a_declared_source_with_another_extension_is_checked`, `project_check_follows_the_declared_source_list`, `project_check_and_build_take_one_source_set_in_the_src_layout`, `check_and_build_agree_on_the_declared_source_list`, `check_and_build_agree_on_an_ignored_imported_module`.
+- Moved 1.5k lines of leaf-closed `main.mind` fns verbatim into six compiler parts (`nb_intern_names*.mind`, `nb_synth_sha*.mind`, `nb_float_lit*.mind`), appended to `COMPILER_COMPONENTS`, so the whole-file `mindc fmt` fits `MAIN_MIND_LINE_PIN`. No fn body changed.
+- The native self-host accepts `__mind_assert_fail` (id 54, one argument) and exits 134.
+- On the MLIR route, `print` of a `String` value writes the bytes of the string. Before this change, it wrote the record address as an integer. A runnable build refuses `print` of a struct, array, slice, tensor, map, tuple, `Option` or `Result` value, and of a value of unknown type (`lower.print_operand`). `mindc check` and the interpreter accept these values.
+
+### Added — std evidence records of governance verdicts (0.10.3)
+- `std/evidence.mind`: a caller-owned evidence sink (`evd_new`, `evidence_record`,
+  `evd_len`, `evd_dropped`, `evd_field`, `evd_free`). One record is five fixed-width
+  i64 words `[module | kind | reason | a | b]`; no clock, random value, pid or address
+  enters a record. `evidence_record` refuses a (module, kind) pair outside the one table
+  of the pairs a std wrapper writes (`evd_pairs`, read by `evd_code_ok`), so an
+  undefined code and a pair such as (x509, child) are both refused. A full sink keeps the first records and counts the rest in
+  `evd_dropped`, which stops at `evd_max_dropped()` instead of wrapping.
+- The records are written by the program about itself and are NOT authenticated:
+  nothing proves which program wrote a record or that it is true, and any code that
+  holds the sink can append one. They are a deterministic log of std verdicts, not an
+  attestation and not a signature.
+- `std/evidence_mic.mind`: `evd_export(sink, parent_addr, parent_len)` writes the sink
+  as a mic@3 MAP record through `std.mic_record`: `std.evidence.count`, `.digest`,
+  `.dropped`, the optional 32-byte `.parent` (the trace_hash of the program's own
+  `--emit-evidence` artifact; `parent_len` is 0 or 32, any other value is refused),
+  `.records` (little-endian bytes) and `.schema` = 1. The digest is sha256 over the
+  tag `std.evidence`, the schema byte, count, dropped, a parent-present byte, the
+  parent and the records, so it covers every field `evd_load` returns. `evd_load`
+  reads the record back and refuses another schema, a count out of range, a wrong
+  records or parent length, any key outside the six `std.evidence` keys, a
+  (module, kind) pair outside `evd_pairs`, or a digest that does not match. The digest detects a changed
+  field, but it is not a signature: whoever can rewrite the record can recompute it.
+  `evd_load` checks the parent only through the digest and does not return it;
+  `evd_load_parent(a, n, parent_addr, parent_len)` takes the expected parent (none,
+  or 32 bytes) and refuses a record that names another parent, or none, with
+  `evd_e_parent_mismatch` (-108). The `evd_e_*` codes and the `evd_bytes_copy` /
+  `evd_bytes_eq` byte helpers are defined in `std/evidence.mind`.
+  `evd_export_free` releases an export. `evd_export` and `evd_load` release every
+  buffer they allocate on every path, and `evd_load` releases the decoded record
+  once `mrec_decode` returns one. When `mrec_decode` refuses the input it does not
+  release every temporary it allocated; that leak is in `std.mic_record`, and a
+  separate change to `std.mic_record` fixes it.
+- `std/os_evidence.mind` (`fs_read_dir_checked_ev`, `procgroup_spawn_ev`,
+  `procgroup_wait_all_ev`, `procgroup_record_verdicts`) and `std/x509_evidence.mind`
+  (`x509_verify_server_chain_budget_ev`) run the unchanged std calls with their
+  arguments passed through and record the verdicts (refusal code or accept, per-child
+  state, exit code and signal, never the pid). The x509 wrapper has its own file, so
+  a caller of the fs or procgroup wrappers does not compile the x509 validator. These
+  are opt-in variants: no existing std or compiler path calls them, and the plain std
+  calls and their callers are unchanged.
+- `procgroup_spawn_ev` and `procgroup_wait_all_ev` are `std_qualified` world rows,
+  so a caller is marked nondeterministic like a caller of `procgroup_spawn`.
+- CI: the executable miscompile gate job runs `mindc test` on
+  `tests/std_evidence_kat` and `tests/std_evidence_load` (exact passed counts, 0
+  failed), builds and runs those two programs and `tests/std_evidence_wrappers`
+  natively, verifies the written record with `mindc verify`, and requires a record
+  with one changed byte to be refused.
+- No native-seed module changes (`SEED_BLOB_SHA256` unchanged); the four modules are
+  bundled, non-seed rows of `stdlib_manifest.txt`.
+
+### Changed (breaking) — an unusable `MIND_STDLIB_PATH` is an error
+- A set `MIND_STDLIB_PATH` that is not a directory, lacks one of `io.mind`, `map.mind`, `string.mind`, `vec.mind`, or holds a module file that does not read or parse now stops `mindc` with exit 2 and an `error:` line that names the path and the missing file or the parse error. Before, mindc used the bundled std with no message, so a build could silently use a std the user did not ask for. Unset still uses the bundled std. A usable directory is used as before (`tests/std_surface_phase_d_env_override.rs`, `tests/std_bundled_module_table.rs`).
+- The native backend (`--backend native`) composes its std image from the pinned seed blob or `MINDC_STD_DIR`, not from `MIND_STDLIB_PATH`; this change does not alter that path.
+
+### Changed — `mindc inspect` prints extern declarations and native ELF notes
+- The IR printer has no catch-all arm: a new `Instr` variant does not compile until it states how it prints. `mindc inspect` of a mic@3 artifact prints each `extern` declaration (name, each parameter type, return type, varargs, vararg hints, calling convention, in mic@3 wire order), so a narrow parameter such as `flags: i32` shows as `i32`. The `--emit-ir` text is unchanged.
+- `mindc inspect` of a native ELF prints its MIND notes (type 1: the sha256 of the seeded mic@3 module) found through the program headers, and exits 1 on a broken note. The image holds no IR, so the note is printed as a digest (`tests/mindc_inspect.rs`).
+
+### Changed — E2038 string-equality verdicts follow the linked program
+- The E2038 verdict covers exactly the modules that are linked into the artifact. `mindc check <file>`, `mindc test <file>`, a cdylib build and a native build decide over the file and the project modules it imports, directly or not. The executable `mindc build` compiles every project source into one artifact, so its verdict covers every source that it compiles. A module that the program does not link does not change the verdict of the program.
+- `mindc test` now reads the same module table and import resolution as `mindc check`. Before this change, a test could refuse a comparison that its check accepted.
+- A `const` that another module declares keeps its declared type. Before this change, an imported const had an unknown type, and a call that gave it to an `i64` parameter caused E2038 in the callee. A const name that two modules declare with different types stays unknown. A const name that a std module also declares stays unknown. A const whose value contradicts its declared type stays "maybe a string".
+- `mindc check`, `mindc build` and `mindc test` refuse with E2038 a `match` that has a string-literal pattern when the subject is not known to be a string (rule from a561c7ba, #343). A string-literal arm compares bytes on every backend, so the subject must be a `string`. Declare the subject `string`, or test it with `string_eq(s, "...")`. A type name that the compiler does not know, for example `str`, is not a string.
+- A count or a flag of a parameter that is declared as a collection (`len`, `length`, `cap`, `is_empty`, `contains`, `contains_key`, `contains_key_str`, `has`) is an integer. This is true also when a call stores a value of another type into the parameter, because lowering selects the method from the declared type. The parameter itself, its elements, and a method result that is the collection handle can still be strings.
+
+### Changed — the MLIR backend refuses a native-only intrinsic by name (E2041)
+- An MLIR build (`mindc build`, `--emit-obj`, `--emit-shared`) refuses a call to an intrinsic that has no MLIR lowering, with E2041 and the intrinsic name, before it lowers or links.
+- The refused rows are the 37 registry rows of the native profile alone: 20 `__mind_ymm_*` bank rows, 7 `__mind_vp*` / `__mind_vmovdqu_i32x8` rows, `__mind_cpu_features_v1`, `__mind_rdtscp_v1`, `__mind_lfence_v1`, `__mind_sys_perf_event_open` and the 6 shared-memory rows.
+- Before, such a call passed the check. `--emit-shared` wrote a shared object with an undefined symbol, and `mindc build` failed in the linker. A program that wrote such a shared object before is now refused.
+- `mindc check`, `--emit-mic3` and `--emit-evidence` accept these calls, because the native backend lowers them.
+- `__mind_now_ns` has no native row. Its E2024 refusal on the MLIR build stays, so `std.time` does not link yet.
+
+### Added — `__mind_argc` / `__mind_argv` and `std.cli`, `std.io` on the MLIR backend
+- `__mind_argc` and `__mind_argv` lower on the MLIR backend with the native row semantics. The runtime support stores argc and argv before `main` runs (glibc, Apple, Windows). `__mind_argv(i)` reads `argv[i]` with no bounds check, so `argv[argc]` gives 0 and `argv[argc + 1]` is the first environment entry. On another C library the two calls stop the program with a message. `mindc build --backend native` does not admit these two rows yet.
+- `std.cli` and `std.io` join the substrate modules, so `args_from_os` and `read_stdin_bytes` link on the MLIR backend. The runtime `print_bytes` is now weak, so the std.io object replaces it with the same write. This applies to ELF and Mach-O targets. On Windows the runtime `print_bytes` stays strong, so a Windows build that links the std.io object is not supported yet.
+- Gate: `tests/native_lane_open_parity.rs` echoes argv on both backends (no arguments, non-ASCII bytes, out-of-range indexes with one environment entry) and compares the bytes.
+- The MLIR build also refuses a native-only call in a project sibling module or a substrate module: every object compile reads the same blockers as the entry.
+
+### Changed (breaking) — mindc build uses the native backend by default
+- `mindc build` with no `--backend` flag and no `[build] backend` key uses the native backend. Before 0.10.3 it used the MLIR backend.
+- The native backend needs no MLIR, LLVM or clang. It compiles the native-lane-v1 subset, runs on x86-64 Linux, and emits an x86-64 Linux executable.
+- A program outside the subset, or a host that is not x86-64 Linux, gets a named refusal (exit 3, no artifact). `mindc` never changes the backend by itself.
+- To keep the MLIR backend: add `backend = "mlir"` to `[build]` in Mind.toml, or use `--backend mlir`.
+- `MINDC_NATIVE_ELF` is a test-only substitution hook: it names another compiler in place of the committed seed, and only then is the x86-64 Linux host check skipped. With it unset, the host check always runs (`backend.native_host`).
+- `mindc run`, `mindc bench`, workspace builds and `--emit cdylib|object` need the MLIR backend. They refuse until you select it.
+
+### Fixed — the fixed cost of `mindc build` on the native backend
+- Each native build hashed the embedded compiler seed and std blob (3.9 MB of SHA-256) before it started the compiler. It scanned the 3.4 MB seed one time for each of five compatibility marks, synced the unpacked seed to disk, and parsed the 21 std seed modules for a program that calls none of them. On a 472 ms build of a one-function program this was 50 ms (paired runs, one host).
+- Each embedded compiler seed is verified against its pin when mindc is built; a mismatch fails the build. `build.rs` compares the size and sha256 of each `stage1.elf` with the `stage1.elf` row of its `MANIFEST.txt`. The pin and the seed are compiled into the same binary, so the check at each run stopped no one who can change `mindc`.
+- No compiler seed starts before its pin verdict. The std blob is still hashed for each build and compared with `SEED_BLOB_SHA256`; a mismatch refuses (exit 2), starts nothing and writes no artifact.
+- The seed is unpacked to a private temporary directory for each build and removed after it. Nothing is kept in a per-user cache. The unpacked seed is not synced. `build.rs` finds the five compatibility marks of each seed, and a build does not scan the seed for them. A program that calls no std seed function does not parse the seed. The std blob pin hash uses the `sha2` crate (already a dependency of the `pkg` feature; `std-surface` now enables it).
+- `MINDC_NATIVE_ELF` does not change: it names another compiler, which is not hashed.
+- The emitted bytes do not change.
+
+### Changed — `[build] backend` in Mind.toml selects the build route
+- `[build] backend = "native"` in Mind.toml selects the native bridge, the same route as `mindc build --backend native`. Before this change, `mindc build` did not read the key and used the MLIR route.
+- `mindc build` refuses a `--backend` flag that does not agree with `[build] backend` (E2044). The flag and the manifest select one route.
+- An unknown `[build] backend` value stops the manifest load (E2043). Workspace member builds refuse `backend = "native"` (E2043), because they use only the MLIR route. `mindc run` and `mindc bench` refuse a native selection by name (`backend.native_run`, `backend.native_bench`).
+- The MLIR route refuses a code-generation name (`native` or `mlir`) in `[targets.<name>] backend` (E2043). That key selects the target class. Before this change, it became `cpu` and the build used the MLIR route.
+
+### Fixed — a MIND function is never a C library function on the MLIR route
+- A program that imports `std.detmath` and calls `pow(0.0 - 2.0, 0.5)` got NaN.
+  The std body gives 0.0. LLVM identifies a C library function by its symbol
+  name, and the declaration of an imported function was sufficient: the
+  optimizer replaced the literal call with the value of the build host. Literal
+  `sin`, `cos` and `log` calls had the same defect. The build driver now marks
+  each `func.func` declaration `nobuiltin`, as it already marked each
+  definition (`src/mlir/nobuiltin.rs`). It uses no list of C names. An
+  `extern "C"` declaration is an `llvm.func` and stays a C function.
+- In an executable, a MIND function that had a C name was the definition that
+  the linker gave to C callers. A program `fn write` received the `write` calls
+  of the runtime support (no `print` output, exit 0), and a program `fn memcpy`
+  lost vector data. In an executable built by `mindc build`, the object symbol
+  of each MIND function is now `mind.<name>`. These names stay as written:
+  `main`, each runtime-support export, each `__mind_` name, and each name that
+  a native object of the build calls.
+- A shared library and an object file keep the source names, because a host
+  loads each function by name. There, a MIND function with a C name still
+  receives the C calls of its own link. The IR, mic@3, the evidence chain and
+  `--emit-mlir` keep the source names. The native backend is not affected.
+- Tests: `tests/libm_name_capture_run.rs` builds and runs the three cases.
+
+### Changed — `mindc build <file>` follows one build rule
+- A named entry inside a project (a `Mind.toml` in its directory or a parent) builds
+  that project with the named file as the entry, the same module graph as `mindc build`
+  with no path. A co-located manifest no longer narrows the build to the entry alone,
+  which dropped every imported sibling and failed with `E2003 unsupported call` and
+  `E5005`.
+- With no project, an entry that imports a local module is refused at the import
+  with the new code `E2042` (exit 1): the error names the import and says to add a
+  `Mind.toml`. `mindc check`, `mindc test` and `mindc <file>` report this case as
+  `E2042` too, not `E2003`.
+- A temporary `Mind.toml` that a standalone build writes now starts with a marker
+  line. A leftover from a killed build is never a project: `mindc build` (with or
+  without a path), `mindc run`, `mindc test`, `mindc bench` and import discovery
+  remove it under the project lock and search on upward, as if that directory had
+  no `Mind.toml`, so a real project above it is still found.
+- A second path is a usage error (exit 2); it was silently ignored before.
+
+### Added — resident ymm register bank on the native self-host (R-01b)
+- R-02e: six epilogue register rows on the bank, `__mind_ymm_vpmuludq/vpand/vpor/vpcmpgtq/vpsrlq/vpsllq_i64x4_r` (kinds 94-99, `examples/mindc_mind/nb_x86_ymm_epi.mind`), each one op through the shared VEX encoder.
+- Fourteen literal-indexed bank names, `__mind_ymm_vmovdqu_ld/_st`,
+  `__mind_ymm_vpadd{d,b,q}_*_m/_r`, `__mind_ymm_vpsub{d,q}_*_m/_r` and
+  `__mind_ymm_vpshufb_i8x32_m/_r` (kinds 70-83), lowered inline by the self-host
+  (`examples/mindc_mind/nb_x86_ymm_bank.mind`) through the shared VEX encoder:
+  registers ymm0..14 are integer literals, so accumulators stay in registers and
+  each tap is one VEX instruction (a memory form reloads only the base address).
+- A function that calls a bank name is a vector leaf: `vzeroall` after its
+  prologue and `vzeroupper` before every exit. The self-host refuses by name
+  (`nb_x86_ymm_bank_checks.mind`, `nb_x86_ymm_bank_walk.mind`; exit 3, no
+  output): `ymm.operand_not_literal`, `ymm.register_out_of_range`,
+  `ymm.bank_function_not_leaf` (a user call, a non-memory intrinsic, an f64 value,
+  or a node kind the leaf walker does not know), `ymm.memory_form_in_bank_function`
+  (a Layer A op) and `ymm.discard_result_use` (a bank result read as a value). A
+  bank op is emitted only inside a function whose leaf verdict is positive.
+- A program whose emitted functions call a bank name gets the AVX2 entry guard
+  (`isa.avx2_missing`, exit 132) like a Layer A program; others get no guard bytes.
+- The Rust leg carries the names as native-only registry rows (arity, i64 typing,
+  `DiscardOnly`); the native lane fence types them as stores and admits them in
+  value position too, so the self-host is the fence for the leaf and statement
+  rules. The AST record accessors moved unchanged from `main.mind` into
+  `nb_ast.mind`.
+- `--emit-mic3` / `--emit-evidence` still exit 1 on a program that calls a bank
+  name: the evidence type check accepts only Rust/MLIR-selectable rows until the
+  any-profile arity lookup lands (R-01r).
+### Added — native-only AVX2 ymm and CPU-feature intrinsic rows
+
+- Registry and native-lane rows for `__mind_vpaddd_i32x8`, `__mind_vpsubd_i32x8`,
+  `__mind_vpaddb_i8x32`, `__mind_vpshufb_i8x32`, `__mind_vmovdqu_i32x8`,
+  `__mind_vpaddq_i64x4`, `__mind_vpsubq_i64x4` (seed ids 60-66) and
+  `__mind_cpu_features_v1` (67, World). FrozenNative profile only.
+- The type checker arity-checks a registered native-only intrinsic in any
+  profile, so `--emit-mic3` / `--emit-evidence` accept `__mind_argc`,
+  `__mind_argv` and the new rows. E2024 fires only for a `__mind_*` name
+  registered in no profile (Rust checker and self-host twin alike).
+### Changed — private helpers of the native-seed std modules carry their module prefix
+- The native image is flat and reserves every std seed name, so a bare private std
+  helper (`is_digit`, `skip_ws`, `copy_bytes`, `ch`, `w_set`, ...) was a name no user
+  program could define. 68 private helpers are renamed in place, bodies unchanged:
+  std/sha256 `sha_*`, std/toml `toml_*`, std/tui `tui_*`, std/cli `cli_*`, std/fs
+  `fs_*`, std/async `async_fnv_offset` / `async_fnv_prime` / `sched_trace_append`,
+  std/blas `blas_matmul_rmajor_q16_v_row`, std/regex `rx_sb_new` / `rx_sb_push`,
+  std/iouring `io_off_sqes`. The public API is unchanged.
+- In the compiler's own image, main.mind's `load_byte`, `is_digit` and `bytes_eq` no
+  longer replace std/toml's private helpers of the same names.
+- `stdlib_manifest_lint.py` check 8: every private `fn` of a `seed` module must start
+  with that module's prefix (`_SEED_PRIVATE_PREFIXES`), and no private name may be
+  defined by two seed modules; either case fails the lint.
+- `SEED_BLOB_SHA256` and the mirror gate's `EXPECTED_STD_SEED_SHA256` move 199f304b… ->
+  fc66c18b… (21 modules, 418837 bytes). The new pin also covers the std changes merged
+  since the last pin (fs, iouring, sha256, string, toml), so native builds against the
+  embedded std no longer refuse. The frozen self-host seeds are re-minted at the next
+  seed event.
+### Fixed — exits and NEEDED entries of driver-row images on the native lane
+- An image whose extern block declares a driver row (called or not) now ends
+  through `exit_group` (231) at the entry return and at the runtime bounds trap
+  (status 77), like the division trap and the arena-exhausted exit already did.
+  A driver may start helper threads, and `exit` (60) ended only the calling
+  thread, so a trap after driver initialisation could leave the process running
+  or report a wrong status. The decision lives in
+  `examples/mindc_mind/nb_exit.mind`; images that declare no driver row keep
+  `exit` (60) and their bytes.
+- A driver-only image (driver rows imported, no libc row) lists DT_NEEDED
+  `libcuda.so.1` only: no `libc.so.6` entry or string, 13 dynamic entries
+  (208 bytes, was 224). Images that import a libc row keep both entries and
+  their bytes. libc is still loaded because the driver library depends on it.
+- `tests/fixtures/native_lane_gpu/fake_driver.c` starts a never-returning helper
+  thread from `cuInit` when `MIND_FAKE_CUDA_THREAD` is set, so the exit path
+  is tested the way a real driver behaves (`trap_after_init.mind`).
+
+### Added — evidence and signed (opt-in) recipe for native AVX2 programs
+- `docs/compiler/NATIVE_EVIDENCE_RECIPE.md`: how to attach mic@3 evidence and the
+  opt-in `pqc-hybrid-ml-dsa-87-slh-dsa-256s` signature (ML-DSA-87 AND
+  SLH-DSA-SHAKE-256s) to a program that calls the native-only AVX2 rows. It states
+  what is attested (the IR body, the row names, the determinism class, and the
+  signer-asserted `starga.native.elf_sha256` / `compiler_sha256` / `isa`
+  attributes) and what is not (the VEX bytes, the host ISA, which `libcuda.so.1`
+  the loader resolves).
+- `tests/evidence_release_smoke.rs` runs the recipe: the native ELF and its
+  compiler are hashed into signed attributes, both legs sign without randomness
+  (two runs, one artifact), the pinned `--require-deterministic --require-signed`
+  verify passes, a one-byte attribute edit fails, one leg alone and an Ed25519
+  seed (`signing.retired_scheme`) are refused with no artifact, and
+  `MIND_EVIDENCE_MLDSA_KEY` alone never yields the hybrid. The unsigned body of the
+  AVX2 program is pinned, so builds with and without the signing features agree.
+- Class control: a program that reaches `__mind_cpu_features_v1` (`Det::World`)
+  is vetoed without `--allow-nondeterministic`, attested `nondeterministic` with
+  it, and refused by `mindc verify --require-deterministic`; the same program
+  without the call passes.
+- Signing stays **signed (opt-in)**: off by default, never a claim that releases
+  are signed. Offline key generation, a published public key and a CI gate that
+  reproduces and verifies a signed artifact are still owed.
+- The release-profile CI job now expects 8 passing `evidence_release_smoke` tests
+  (was 4).
+
+### Changed — std.posix and std.fs_checked call their syscalls through std.posix_sys
+- New `std/posix_sys.mind`: one straight-line `posix_sys_*` wrapper per raw
+  `__mind_sys_*` call of `std/posix.mind` and `std/fs_checked.mind` (32), declared
+  as an OS-effect module in `.arch-mind/rules.mind`. Both callers keep every
+  public name, signature, branch and `mind_posix_*` link name; only the direct
+  syscalls moved. Non-seed rows: the native seed blob is unchanged.
+- `std/fs_checked.mind` copies bytes with `memcpy` (as `std/procgroup_text.mind`
+  does) instead of its own byte loop, and its admission and record-validation
+  decisions (`fs_read_dir_checked`, `fsc_block`, `fsc_push`) carry
+  `#[protection]`, as do `signal`, `fdopendir` and `readdir` in `std/posix.mind`.
+
+### Added — dynamic allocation sizes on the native lane
+- `src/ir/native_lane_profile/alloc_size.rs` proves an allocation size positive from
+  a dominating `if n <= 0 { return ...; }` exit test on a name the function never
+  assigns (and from positive literals, as before). Arithmetic is never proven.
+- The native bridge routes every other `__mind_alloc(e)` in a user function through
+  an appended `__lane_alloc` guard with the C-runtime result: 0 for a size of 0 or
+  less (`src/build/native_bridge/alloc_guard.rs`). The respelling keeps every byte
+  offset, and an image without a dynamic size is unchanged byte for byte.
+- `tests/native_lane_request_fixtures.rs`: the zero, negative and variable-size
+  programs now build and match MLIR (exit 1); two new programs pin a dynamic
+  positive size (exit 42) and zero/negative sizes through a helper (exit 5), and the
+  evaluator (`mindc test`) returns the same value for all five. An image that
+  already names `__lane_alloc` stays refused (`lane.alloc.size_positive`).
+
+### Added — dynamic reallocation sizes on the native lane
+- The native bridge routes every unproven `__mind_realloc` size in a user
+  function through an appended `__lane_realloc` guard
+  (`src/build/native_bridge/alloc_guard.rs`). A positive size calls
+  `__mind_realloc`. A non-positive size returns 0, except `realloc(NULL, 0)`,
+  which returns a 24-byte block, the C runtime's `malloc(0)`. The evaluator
+  allocates that same block. Native and MLIR agree, including the census shape
+  `cap = cap * 2; buf = __mind_realloc(buf, cap)`. An image that already names
+  `__lane_realloc` stays refused (`lane.alloc.size_positive`).
+
+### Added — the native GPU loader: the MC-6 driver rows (cuda.h 12.6 names)
+- The closed extern table gains 33 `libcuda.so.1` rows, indices 54..86, in the
+  compiler part `examples/mindc_mind/nbx_cuda_rows2.mind` (capability mark
+  `nbcuda02`): streams and capture (`cuStreamCreate`, `cuStreamSynchronize`, `cuStreamQuery`,
+  `cuStreamDestroy_v2`, `cuStreamBeginCapture_v2`, `cuStreamEndCapture`,
+  `cuStreamGetCaptureInfo_v2`), graphs (`cuGraphInstantiateWithFlags`,
+  `cuGraphAddKernelNode_v2`, `cuGraphExecUpdate_v2`, `cuGraphLaunch`,
+  `cuGraphDestroy`, `cuGraphExecDestroy`), memory (`cuMemcpyHtoDAsync_v2`,
+  `cuMemcpyDtoHAsync_v2`, `cuMemcpy2D_v2`, `cuMemcpy2DAsync_v2`,
+  `cuMemHostAlloc`, `cuMemAllocHost_v2`, `cuMemHostRegister_v2`,
+  `cuMemFreeHost`, `cuMemHostGetDevicePointer_v2`, `cuMemsetD8_v2`), events
+  (`cuEventCreate`, `cuEventRecord`, `cuEventSynchronize`, `cuEventQuery`,
+  `cuEventElapsedTime`, `cuEventDestroy_v2`) and queries and launch
+  (`cuDeviceGetAttribute`, `cuFuncGetAttribute`,
+  `cuOccupancyMaxActiveBlocksPerMultiprocessor`, the 10-argument
+  `cuLaunchCooperativeKernel`). 87 rows in all. Each name is the cuda.h 12.6
+  macro target for the legacy default stream; no `_ptsz`/`_ptds` name, no
+  plain legacy name of a `_v2` entry, no `cuGetProcAddress` and no
+  `cuMemAllocManaged` (each refuses by name).
+- `cuMemsetD8_v2`'s `unsigned char` lowers as `u32`; the self-host admits that
+  argument only as a decimal integer literal in 0..255 or `x & m` with a
+  decimal literal mask in 0..255 (through parentheses and unsigned casts) and
+  otherwise refuses the program by name (`error[extern]:
+  extern.byte_arg_unproven: <argument>`, exit 3, no artifact). The 0..255
+  fence is the self-host's: the Rust front end and the MLIR leg pass the
+  `u32` as written and the driver reads its low byte (that leg retires at the
+  self-host flip).
+- Row names may exceed the record's 24 in-line bytes (the longest is 43):
+  such a row keeps its name in its own block behind the record's first name
+  word, and the lookup and the dynamic string table read it through
+  `nbcu_name`. The row scan covers 128 indices. Programs that import none of
+  the new rows keep their ELF bytes exactly.
+- `tests/native_lane_gpu_loader.rs`: every new row runs against the fake
+  driver (`fake_driver.c`, `fake_rows2.mind`, including the 128-byte
+  `CUDA_MEMCPY2D` layout at the offsets measured from cuda.h 12.6: 16/32/48/
+  72/80/112/120, size 128) identically on the native and the MLIR backend;
+  the image is the same from two build directories, imports each row once by
+  `GLOB_DAT` with no version tables and `BIND_NOW`, and has the NEEDED list
+  and dynamic size of the other libcuda-only image; the compiler carries
+  `nbcuda02`; a 10-argument alignment probe (`align_probe_coop.mind`) whose
+  driver calls each drop exactly their stack block (`add rsp` right after the
+  call); the byte-argument admissions and named refusals, the off-table
+  names, and five mutants (long-name lookup, long-name string table, 64-row
+  scan, open byte fence: every refused argument then builds, pad on an even
+  overflow count), each of which must turn its guard red (`mc6_cases.tsv`).
+  Every libc-only and no-extern program keeps its bytes with all driver rows
+  deleted.
+
+### Added — the native GPU loader: libcuda.so.1 rows (ruling 16b)
+- The closed extern table gains thirteen `libcuda.so.1` rows with unversioned
+  symbols: `cuInit`, `cuDeviceGet`, `cuCtxCreate_v2`, `cuCtxDestroy_v2`,
+  `cuCtxSynchronize`, `cuModuleLoadData`, `cuModuleGetFunction`,
+  `cuModuleUnload`, `cuMemAlloc_v2`, `cuMemcpyHtoD_v2`, `cuMemcpyDtoH_v2`,
+  `cuMemFree_v2` and `cuLaunchKernel`. 54 rows in all. A driver-row import adds
+  `DT_NEEDED libcuda.so.1` next to `libc.so.6`; a program importing only
+  driver rows emits no `DT_VERSYM`/`DT_VERNEED`/`DT_VERNEEDNUM`; a program
+  importing none keeps its ELF bytes exactly.
+- Row names grow from 16 to 24 bytes (`cuModuleGetFunction` is 19): the
+  `nbx_row` record is 80 bytes, and the offsets its readers use
+  (`nbx_check_row`, `nbx_build`, `nbx_same_version`, `nbx_meta`, `nbx_row_at`,
+  `nbx_write_elf`) moved with them.
+- The arity cap rises from six to eleven with SysV stack-argument emission:
+  parameters 6..10 travel on the stack (pad, right-to-left pushes, `call
+  [rip+disp32]`, cleanup), packed into a second signature word, and the
+  six-or-fewer-argument call sequence keeps its bytes. `cuLaunchKernel`
+  matches the driver entry: `CUstream` is `*mut u8` (null selects the
+  default stream), then the `void**` kernel-parameter array, then
+  `void** extra`. New parameter codes 9
+  (`*mut *mut u8`, the out-param and `void**` shapes) and 10 (`*mut i64`, the
+  device-pointer out-param); every other pointer-to-pointer shape still
+  refuses, and both stay out of result position.
+- The dynamic segment is sized (15 fixed entries plus one `DT_NEEDED` per
+  library, minus the three version tags when no import carries a glibc
+  version) instead of a fixed 256 bytes.
+- `tests/native_lane_gpu_loader.rs`: the parsed-ELF contract (both NEEDED
+  entries, GLOB_DAT per driver symbol, 272-byte dynamic segment on the mixed
+  import; no version tags and 224 bytes on a libcuda-only import), a
+  pointer-to-pointer / `void**` / 11-argument program run against a test-only
+  fake driver library (`tests/fixtures/native_lane_gpu/fake_driver.c`,
+  compiled with cc for that fixture only) that exits 42 identically on the
+  native and the MLIR backend, a real-driver vector-add program over PTX
+  (`tests/fixtures/native_lane_gpu/vec_add.mind`), a rows-removed compiler
+  minted from a mutated `main.mind` emitting byte-identical libc-only ELF,
+  and six mutants (truncated name, arity cap back to six, reversed push
+  order, dropped NEEDED entry, unconditional version tags, frozen 256-byte
+  dynamic segment), each of which must turn its guard red. The same test
+  file pins the eight libc-only extern programs, plus two programs with no
+  extern, to a stage1 minted from the nearest ancestor whose compiler source
+  does not name `libcuda.so.1`. Always emitting that string moves every
+  libc-only image. An 11-argument probe whose callee returns its frame
+  nibble fails when the odd-count pad is removed and when the cleanup forgets
+  that pad.
+- The shared extern runner treats a signal death as a failure. Native and
+  MLIR parity pin every exit code, including the two probes whose code
+  follows this host's `/dev/null` mode and owner. A guard that must not exit
+  42 records a signal as that failure and does not store it as an exit code.
+- `*mut i32` stays parameter code 6. The `*mut i64` admission test refuses
+  only shapes the table refuses.
+- The six mic@3 reference notes are the bytes the reference dump writes.
+
+### Added — socket, address, fill and entropy rows in the native extern table
+- The closed libc table (`nbx_row` in `main.mind`, mirrored in
+  `src/ir/native_lane_profile/admit_extern.rs`) gains nine fixed-arity rows:
+  `socket`, `connect`, `send`, `recv`, `inet_pton`, `memset`, `setsockopt`
+  (five parameters, the fifth in `r8`), `getaddrinfo` and `getrandom@GLIBC_2.25`;
+  the others bind at `GLIBC_2.2.5`. `socklen_t` and the getrandom flags are
+  spelled `i32`, as std's `net`, `dns` and `entropy` blocks declare them.
+  `close` was already a row. 41 rows in all; variadic names stay outside.
+- `tests/native_lane_extern_parity.rs` runs a program over the nine rows on both
+  backends (a UDP socket on the loopback address, an option set with a valid and
+  an invalid length, a non-blocking receive, a send before and after connect,
+  `memset`, `getrandom` with valid and invalid flags, a numeric `getaddrinfo`
+  and a non-numeric host refused): native and MLIR exit alike, pinned at 42.
+- The dynamic-ELF determinism contract in `tests/native_lane_extern_fixed.rs`
+  now covers every program of the extern corpus, not only the close probe: each
+  is built twice in two directories, and the number of identical images must
+  equal the corpus size. A further test requires every `nbx_row` name to be
+  declared by a corpus program, so a row cannot land without one.
+
+### Fixed — a vendored seed helper no longer hides the extern table
+- An image that carries a byte-identical private copy of a std seed helper (as
+  consumer programs that vendor the sha256 helpers do) meets the seed-copy
+  closure guard before the lane fence. That guard did not see `extern "C"`
+  declarations, so a call to a table row such as `close` was refused as
+  `closure.unresolved_edge` ("has no definition in the closure"). A declared
+  extern is now a terminal edge there, as it already was in the closure
+  admission after the fence. The table call builds and runs like MLIR, and an
+  off-table declaration beside it is refused by its own name
+  (`lane.extern.unknown_symbol`).
+  `tests/native_lane_extern_parity.rs::a_vendored_seed_helper_keeps_extern_calls_terminal`
+  covers both.
+
+### Fixed — a zero-byte evaluator read reaches the kernel
+- The evaluator's `read` on a project file returned 0 for a zero-byte request
+  without asking the kernel. Native `read(2)` still fails there on a directory
+  (`EISDIR`). On a file system that reports size 0 for a directory (XFS), the
+  evaluator's `read_to_string` of a directory therefore returned a non-empty
+  record (a one-byte buffer, length 0) where native returns the empty record.
+  A zero-byte read now reaches the kernel; a regular file still reads 0 bytes.
+  `eval::extern_c_intrinsics::tests::a_zero_byte_read_of_a_directory_fails_like_native`
+  covers both on any file system.
+
+### Fixed — every std import of a std module resolves
+- `STDLIB_MIND_SOURCES` had no row for 25 std modules that other std modules import (`aes_gcm`, `chacha20_poly1305`, `ecdsa_p256`, `hkdf`, `keccak`, `mlkem768`, `rsa_pss`, `tls13_client_core`, `tls13_client_handshake`, `tls13_client_hello`, `tls13_finished`, `tls13_handshake`, `tls13_keyschedule`, `tls13_record`, `x25519`, `x25519mlkem768`, `x509`, `x509_bignum`, `x509_bundle`, `x509_der`, `x509_ext`, `x509_name`, `x509_p384`, `x509_path`, `x509_sig`). Such an import resolved nothing, so a single-file compile of the importing module refused each call into it (`mindc std/x509.mind --emit-ir`: E2003 on `der_tlv` after the X.509 module split), and the G2 differential row for `std/x509.mind` measured RUST_ONLY instead of MATCH.
+- Each of them now has a row and a `bundled` manifest entry (51 of 57 bundled). A lib test, `every_std_import_of_a_std_module_is_bundled`, fails on any `import std.<m>` inside `std/` with no row. Not changed: the native seed set and its pinned blob digest, and the native substrate link set (these modules resolve at type check; none of them is linked as a substrate object).
+
+### Added — every native-lane refusal key is pinned by exact key
+- New `tests/native_lane_refusal_keys.rs`: one fixture per reachable `lane.*`
+  refusal key in `tests/fixtures/native_lane_refusals/` (28 rows). Each fixture
+  is built with `mindc build --backend native` under the committed seed carrying
+  the lane marker and must refuse with exactly
+  `outside candidate native-lane-v1 (<key>)`, `No artifact written.` and no
+  artifact. Each row also carries a positive control, the one edit that removes
+  the refused construct, which must build an ELF, so a fixture cannot refuse
+  for an unrelated reason.
+- A key-set ratchet in the same file reads every `"lane.<...>"` literal in the
+  lane profile and the native bridge sources. It fails naming any key with no
+  fixture row and no `UNREACHABLE` entry, any row or entry whose key is gone
+  from the source, any fixture with no row, and any `"lane.` literal that is not
+  a plain dotted key. A change that introduces a key lands with its row.
+- 12 keys no source program reaches through the native build are listed in an
+  `UNREACHABLE` table with a one-line reason each (40 keys = 28 rows + 12):
+  `lane.source.duplicate_function` (the bridge's ambiguity guard refuses a
+  duplicate definition first), ten IR-only `lane.ir.*` checks that an earlier
+  source refusal or a lowering invariant always precedes, and
+  `lane.ir.semantic_type`, whose metadata the native bridge never produces (it
+  lowers without a canonical plan).
+
+### Fixed — the self-host seed chain is tool-produced and tool-verified
+- `self_host_loop_smoke.py --advance` refuses a no-op: when the new fixed point
+  is the current seed it prints `BLOCKED: --advance would republish the current
+  seed unchanged; nothing written.` and exits 2 before publication (the
+  `(unchanged bytes)` label is gone). The bounded profile's `--bless` refuses the
+  same way.
+- Every `--advance` receipt (one or two hops) now ends with a COMPUTED
+  `seed_chain` row, `<sha256>[:intermediate] -> ... -> <published sha256>`,
+  starting at the chain root `abb0622b…`. One function derives it by walking the
+  receipts on every ref and tag back to the root; the old literal two-hop
+  sentence is gone. An advance whose old seed has no resolvable chain is refused
+  before the oracle runs or anything is written.
+- New build-free `--verify-chain` mode, run in CI with full history from the
+  advancement harness controls (not as a second CI argument list of the
+  compiler-dependent loop smoke, which the vacuity sweep and the loop-gate
+  wiring guards would read as a compiler-free loop gate): it
+  re-derives the chain, requires every link to resolve, checks `stage1.elf`
+  against the committed MANIFEST row and the head receipt's `seed_chain` row
+  against the derived chain, prints one `PASS [CHAIN]` line per link, and
+  BLOCKs (exit 2, never a pass) on a shallow clone, without git, or with fewer
+  than two historical receipts. Receipts before the root are listed as
+  PRE-ROOT lines, never as chain links.
+- The receipt writer and the chain walk live in the loop's seed-provenance
+  support module, keeping the gate entrypoint under the 800-line ceiling.
+
+### Fixed — lane gate workflow failure collection
+- Repair YAML and shell syntax in the three newly collected smoke steps.
+  Keep each aggregate failure exit inside its step; preserve the original
+  30-minute cross-substrate and 55-minute keystone job limits.
+- Capture smoke output without a status-masking pipeline in the grown-subset,
+  native byte-identity canary, native float/SIMD, and front-end corpus loops.
+
+### Added — lane operator differential coverage
+- `native_lane_op_differential_smoke.py` checks a seeded scalar corpus,
+  including reachable division in an imported helper. Both LLVM 20 and LLVM 23
+  keystone legs run x86 three-path checks (native-lane ELF, MLIR, evaluator).
+  Both LLVM legs of `cross_substrate_identity` run the same corpus as a named
+  ARM neon MLIR/evaluator step. The native leg is x86-only by construction;
+  ARM neon validation is CI-only until an ARM node is available.
+- Division edges are pinned per path, expectation follows D1: native/MLIR
+  trap 79 on a zero divisor and on i64 `INT_MIN / -1` and `INT_MIN % -1`;
+  i8/i16/i32 `MIN / -1` gives `MIN` and `MIN % -1` gives `0` with no trap, as
+  docs/errors.md defines and the division-trap smoke already pins on both
+  backends; unsupported native narrow types require the named
+  `lane.type.int_width` refusal.
+  The evaluator pins measured values or exact named errors and overflow
+  panics. Unrelated process failures never satisfy an evaluator pin.
+
+### Added — native-lane request corpus (native-wave2 / native-wave3 programs)
+- `tests/native_lane_request_fixtures.rs` runs 172 programs from the native-wave2 and
+  native-wave3 checkpoints and from the native admission requests
+  (`tests/fixtures/native_lane/request_corpus.txt`) on native-lane-v1. 44 build
+  natively and match the MLIR backend (exit code and stdout); 115 are refused with a
+  named lane kind and no artifact. A compiler whose seed predates the lane refuses 138
+  of them with exit 3 (the ignored RED leg, run with `MIND_LANE_PRESEED_MINDC`).
+- 13 programs build on the lane and exit differently from MLIR: allocation sizes of 0
+  or less (the C runtime returns 0, the native arena a pointer), 2000 allocations of
+  1 MB freed in a loop (the native build traps), a non-canonical `bool` argument used
+  with `!`, `== true` or arithmetic, and an `f64` result from `main`. They stay in an
+  ignored open-defect test until each is a named refusal or matches MLIR.
+
+### Added — fixed-arity `extern "C"` admission and lowering for the native lane
+- The native-lane fence now admits a top-level `extern "C"` block against a closed
+  libc table (`close`, `fstat`, `getuid`, `__errno_location`, and the fixed-signature
+  rows `clock_gettime`, `close_range`, `closedir`, `dup2`, `fchdir`, `fdopendir`,
+  `flock`, `fork`, `fstatat`, `fsync`, `getpgid`, `getrlimit`, `kill`, `lseek`,
+  `memfd_create`, `nanosleep`, `pipe2`, `readdir`, `renameat`, `setpgid`,
+  `setrlimit`, `signal`, `umask`, `unlinkat`, `waitid`, `waitpid`, `_exit`,
+  `fexecve`) mirrored in Rust (`src/ir/native_lane_profile/admit_extern.rs`)
+  and in `main.mind` (`nbx_row`). `_exit` has no result type. `fexecve` takes
+  two `*const *const u8` parameters. Variadic names stay outside the table.
+  Every name outside the table, a width the row does not carry, varargs, or a
+  callconv other than C/SysV refuses BY NAME. Parameter widths are the ABI codes
+  1 i32 / 2 u32 / 3 i64 / 4 `*const u8` / 5 `*mut u8` / 6 `*mut i32` /
+  8 `*const *const u8`; code 7 is a void result. A u32, `*const u8`, or
+  `*const *const u8` result refuses, and every other pointer-to-pointer shape
+  refuses, matching `nbx_row_sig` and `nbx_code`.
+- A u32 argument is an integer `EXPR as u32` written at the call: no binding,
+  parameter, operator or return holds a u32. Both lane legs type the cast
+  (`__mind_conv_u32` in the IR leg), and both backends keep the low 32 bits.
+- Admission is gated on the compiler's `nbextc01` mark. A bounded-profile request
+  that also carries a user extern block is refused (`scope.bounded_extern`) until
+  `rw_load_segments` filters BSS loads.
+- Call resolution is L4's chain: user fn > extern > seed > intrinsic. Extern names
+  are terminal edges of the closure, exactly like intrinsics.
+- `tests/native_lane_extern_fixed.rs` pins the build/refusal matrix and the
+  dynamic-ELF determinism contract (two build directories, byte-identical images,
+  fixed PT_INTERP, no build-id or host path). Two writer-side mutants of
+  `nbx_write_elf` (a clock stamp and a host-path stamp appended to the image)
+  each fail exactly the arm of that contract they attack. The marked cases run a
+  stage1 that the test mints from the checkout with the committed seed (or the
+  compiler `MINDC_NATIVE_ELF` names); the committed seed is not replaced.
+- `tests/native_lane_extern_parity.rs` builds the extern corpus (the two probe
+  programs, both committed fixtures, the 32-row program, a `close_range` program
+  with u32 arguments and a program that calls ten more rows with i64, pointer and
+  four-argument signatures) with the native and the MLIR backend: both artifacts
+  exit alike with the same stdout.
+- Refusal-key rows for the nine `lane.extern.*` keys replace the
+  `lane.extern.unimplemented` row. The `lane.source.cast` row now refuses an f64
+  to i32 cast, because an i64 to i32 cast is admitted for an extern argument.
+  Request corpus records under the committed seed: the five extern records
+  refuse `lane.extern.compiler_unmarked`, `w3_cast_i32` refuses
+  `lane.type.mismatch` and the four integer-to-pointer cast records refuse
+  `lane.source.binding_type`. The ci.yml step that would run
+  the same contract stays commented until the reseed, and this change does not
+  add a tracked harness script: the harness inventory has no spare slot.
+  Both the wiring row and that step flip to `ci` together in the L10 commit.
+
+### Fixed — fixed i64 array reads on the default native path
+- The native lane (the default `--backend native` profile) refused every array
+  literal and index read, so programs main builds natively (`a[i] + b[i]`, a loop
+  summing `a[i]`) were refused and the runtime bounds trap was unreachable. A
+  `let`-bound literal of i64 elements and `a[i]` with an i64 index are admitted
+  again; an out-of-bounds index exits 77 on the native ELF as on MLIR. Every other
+  array use refuses with a named kind (`lane.source.array_value`, `...index_store`,
+  `...array_element`, `lane.type.array`).
+- Lane refusals name the construct instead of `lane.source.unsupported` /
+  `lane.type.unsupported` / `lane.ir.unsupported` (`lane.type.tensor`,
+  `lane.type.int_width`, `lane.source.struct`, `lane.source.trait`, ...). Each
+  key a program reaches has a refusal-key row with a fixture and a control (32
+  new rows; the tuple and i32 rows move to `lane.source.tuple` and
+  `lane.type.int_width`); the IR names, `lane.source.try` and the generic
+  fallbacks are listed as unreachable from a source program. 24 request-corpus
+  records and the operator differential's narrow-type rows pin the new names.
+- The pure-MIND compiler refuses an array operand of a binary operator itself (a
+  second fence behind the Rust `binop.array_operand` refusal). This reaches the
+  committed compiler at the next reseed.
+- `ri_d1_frozen_profile_gate.py` takes `--compiler PATH`; integer `/` and `>>`
+  are in-profile rows checked against MLIR; the f32-compare, `zeros`, struct-return
+  and u8 rows assert the lane's named refusal. `self_host_native_diag_smoke.py`
+  takes `--stage1 PATH`, checks the second fence directly and prints the sha256
+  of the compiler it fed and of the committed seed.
+
+### Added — native-lane-v1 calls into the std seed
+- A native-lane-v1 program may call a public function of an imported std seed
+  module (`import std.sha256;` then `sha256(in, len, out)`). The lane walks every
+  seed function the program reaches, source and lowering, under the same typing
+  rules as user code; the native compiler already compiles the seed blob, so no
+  lowering changed and no seed or pin moved. Measured: `sha256` of the empty
+  message and of 1000 bytes, `std.io` `print_bytes`, `std.ring`, `std.string`
+  and `std.io_canon` (which calls `std.sha256`) run natively with the same exit
+  code and stdout bytes as the MLIR build. Before, each refused
+  `lane.call.unknown`.
+- A reached seed body outside the lane refuses at its own site, naming the module:
+  `(lane.type.named) in std/cli.mind fn `args_get` at line 63, column 5`.
+- Call resolution is one explicit chain, user function > extern > seed >
+  intrinsic. A name defined in two tiers refuses `lane.call.ambiguous` (a user
+  function named like a seed helper the program reaches) instead of being bound
+  by position.
+- `import std.<m>` of a module that is not a seed row (`std.hkdf`, `std.x509`, …)
+  refuses `lane.import.not_seed` on the native lane, used or not. An unused one
+  was silently ignored and a used one refused as an unrelated `lane.call.unknown`.
+  This unblocks, at admission, the native legs of the std requests whose modules
+  are seed rows (`std.sha256`, `std.fs`, `std.net`, `std.cli`, `std.time`); each
+  reached helper must still be in the lane (`std.cli`'s `Args` struct and
+  `std.time`'s `__mind_now_ns` refuse, located).
+- Request corpus records the seed tier changes: `r3_std_wrapper_int` builds
+  natively and matches MLIR (exit 41, stdout `0a`); `w3b_vec`, `w3b_vec_push`
+  and `w3_shadowed_callee` refuse inside the reached seed function
+  (`lane.type.named` in `std/vec.mind` / `std/io.mind`), `r3_std_wrapper_f64`
+  at its call (`lane.type.mismatch`), and `w3_import_collision` (a user `vec_len`
+  beside `import std.vec;`) as `lane.call.ambiguous`, each instead of
+  `lane.call.unknown` or `closure.std_symbol_collision`. `lane.call.ambiguous` has
+  a refusal-key row; `lane.seed.unparsed` and `lane.seed.lowering` are listed as
+  unreachable from a source program.
+### Added — X.509 path validation and the TLS 1.3 client joined
+- std/x509: real path validation from the leaf through intermediates to a caller-supplied anchor set (`x509_verify_server_chain`), RSA-PSS, RSA PKCS#1 v1.5 (2048/3072/4096-bit), ECDSA P-256/P-384, validity against the caller's `now_unix`, DNS/IP name constraints, key usage and EKU serverAuth, RFC 6125 hostname matching (a wildcard only as the complete left-most label, IP SAN for IP literals), SHA-1 refused, and in-memory DER/PEM trust anchors (`std/x509_bundle.mind`). Split into bounded modules `x509_der`, `x509_ext`, `x509_name`, `x509_sig`, `x509_p384`, `x509_path`, `x509_bundle`, `x509_bignum`. `x509_peer_auth_supported()` now returns 1. Limits: DNS/IP-only name constraints, no revocation checking, at most 8 certificates / 32 anchors, exact-DER issuer matching, fail-closed rejection of unsupported cases.
+- Trust-anchor policy is explicit and pinned by tests: anchors are trusted public-key bindings; their self-signature is never verified and their validity period is not evaluated, so a leaf under an expired anchor verifies (0) while a leaf under a valid anchor via an expired intermediate fails closed (-6). An anchor must still parse as a certificate (malformed DER, or RSASSA-PSS parameters on its own signature other than SHA-256, skip that anchor: -7), and an anchor that issues a path link must be a CA (-9), carry keyCertSign if it has keyUsage (-11), list serverAuth if it has an EKU (-11), and its pathLen (-10) and name constraints (-17) apply. Verification fixes carried with it: 3072/4096-bit RSA keys, anchor self-signatures can no longer poison verification, a skipped cert-to-anchor signature check is detected, leaf expiry is checked in isolation, and mid-label wildcards (`a.*.com`, `f*o.example.com`, bare `*`, `*.*.com`, IDN left labels) are refused.
+- Fixed in the join: the RSA bignum moved from `x509_sig` into `std/x509_bignum.mind`, so `rsa_pss` and the X.509 modules no longer import each other (the carried branch had an import cycle rsa_pss -> x509 -> x509_sig -> rsa_pss); a wildcard suffix with an empty or root label (`*.`, `*..example.com`, `*.example.com.`) no longer matches; `x509_verify_server_chain` refuses a chain, anchor or hostname pointer <= 0 with -1 instead of faulting; the B1–B3 regression drivers read committed fixtures (`tests/x509/testdata/adv/`) instead of a scratch path, so they run on any host.
+- std/tls13_client (`tls13_client`, `_core`, `_hello`, `_handshake`): a bounded sans-IO TLS 1.3 client — caller-owned I/O, entropy, time and tick budget; DNS-only SNI; caller ALPN with the negotiated protocol exposed; version/suite/group/ALPN/chain/verdict evidence; one bounded HelloRetryRequest; fragmented-handshake reassembly; latched fail-closed refusal. It calls the real `x509_verify_server_chain` at Certificate for every chain; the stub that refused every chain is gone and no test verifier is spliced into any build.
+- Tests: `tests/x509_chain_smoke.rs`, `tests/x509/` (chain driver, B1–B6 regression drivers, committed DER fixtures with a fixed clock), and `tests/tls13_handshake_driver.py client` replaying eight recorded flights (AES-128-GCM and ChaCha20-Poly1305, X25519 and X25519MLKEM768, with and without HRR) to CONNECTED through the real verifier, plus expired (-6), wrong-name (-8), unknown-anchor (-7) and CertificateVerify/Finished tamper cases, a latched-refusal suite on the unknown-anchor path, and seven single-fault ServerHello/EncryptedExtensions refusals (a record straddling the key epoch, a cookie in ServerHello, plaintext after ServerHello, a suite or group change after HRR, an unsolicited EE extension, a server_name acknowledgement for an IP literal), each after its positive twin. `scripts/run_crypto_vectors.sh` builds x509/rsa_pss/tls13_handshake from the validator's module set and runs the client driver (15 drivers). The joined x509 and client harnesses are entry points of these existing drivers; their mode bodies live in two sibling helper modules (`tests/_x509_vectors_modes.py`, `tests/_tls13_client_modes.py`) so that each driver stays under the 800-line file ceiling, and the harness ceiling counts exactly those two files.
+- Not changed: no compiler source, seed or seed-row std module. The drivers compose the new modules by concatenation. The modules were joined without a `STDLIB_MIND_SOURCES` row; they are registered by "Fixed — every std import of a std module resolves" above. The native backend still refuses the TLS client program (see `tests/fixtures/tls13_client/README.md`); no native result is claimed.
+
+### Added — native variadic C-call emitter component
+- Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
+
+### Fixed — std.sha256 uses bounded scratch and never returns an unwritten digest
+- The raw entry used to allocate a fresh 512-byte schedule per message block, plus a
+  padded copy of the message and the hash state, and did not check allocation failure.
+  Repeated hashing could exhaust memory. It now uses one 704-byte scratch, reused for
+  every block and freed before it returns; whole input blocks are read in place and only
+  the final one or two padded blocks are copied.
+- New `sha256_checked(input, len, out)`: returns 0 after writing exactly 32 bytes, `-1`
+  for an invalid length or address range, `-2` when the scratch allocation fails. On
+  failure the output is not written.
+- `sha256(input, len, out)` keeps its zero-returning success ABI, but on any failure it
+  now calls the runtime trap `__mind_assert_fail` instead of returning, so a caller that
+  ignores the return value can no longer read an uninitialized digest. The intrinsic is
+  registered in the std surface with its existing determinism class. Backends that cannot
+  execute it refuse the program.
+- `hash(bytes)` returns 0 after freeing its temporaries when an allocation fails.
+- Contract and reproduction: `docs/sha256-memory-contract.md`,
+  `scripts/sha256_memory_regression.sh` (KATs, 100,000 repeated hashes under a 32 MiB
+  address-space cap, allocation faults, source mutations, legacy trap). The older
+  `tests/sha256_lifetime` controls describe the replaced contract; they are kept as the
+  record of that review and refuse any other subject.
+- `std/sha256.mind` is a native-seed module, so this change moves the std seed blob
+  (part of the seed batch; see the std.iouring entry).
+
+### Fixed — std.iouring waits are bounded and report the kernel's reason
+- On Linux 6.6 `io_uring_multishot_recv_demo` hung: it armed a multishot RECV with
+  `sqe.len = 256`, which that kernel rejects with one terminal `-EINVAL` CQE, then waited
+  for three completions with no timeout. `io_ring_submit_recv_multishot` now refuses a
+  nonzero length with `-EINVAL` on every kernel, and the demo submits length 0.
+- `io_ring_enter` waits at most `io_ring_wait_bound_ns()` (5 s) through
+  `IORING_ENTER_EXT_ARG`; `io_ring_enter_timeout` takes an explicit bound.
+  `io_ring_wait_multishot` stops at the first terminal CQE (no `IORING_CQE_F_MORE`, or a
+  negative `res`), when it has the completions it needs, or when a bounded wait expires.
+- `io_ring_reap` / `io_ring_reap_full` sign-extend `cqe.res`. An error CQE used to read as
+  a 4-billion byte count.
+- `io_ring_try_new_flags` reports why a ring could not be created through its `err_out`
+  slot: `io_uring_setup`'s `-errno` (a setup flag or ring size the kernel refuses, io_uring
+  disabled), or `iouring_err_kernel_feature()` for a kernel without
+  `IORING_FEAT_SINGLE_MMAP` / `IORING_FEAT_EXT_ARG`. `io_uring_nop`, the multishot recv /
+  accept demos and the O_DIRECT round-trip return that reason instead of a bare -1.
+  `io_uring_register` results are `-errno` too. The surface's own codes (`iouring_err_*`)
+  are all at or below -4096, outside the errno range.
+- `std/iouring.mind` is a native-seed module, so this change moves the std seed blob.
+  Measured on its own over the pre-batch std, it moved `SEED_BLOB_SHA256` 199f304b… ->
+  8e29ed8b…; in the seed batch (with the std.sha256 and json/toml changes) the blob is
+  45218a70… (`stdlib_manifest_lint.py --print-seed-sha256`). Until the next seed event advances the
+  frozen self-host seeds (`self_host_loop_smoke.py --advance`, then the bounded seed and the
+  manifest pin), the native backend refuses to build against the unpinned blob and the
+  self-host loop verifies a new fixed point (0c9036e6…) instead of the frozen seed.
+
+### Fixed — the native bridge reports the compiler child's real outcome
+- When streaming the source image to the native compiler fails, the bridge no longer
+  exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then
+  SIGKILL and reap), and reports the actual outcome: exit status, or terminating signal
+  name and number with the core flag, plus up to 64 KiB of the child's stderr. The exit
+  stays nonzero (the child's own code, `128 + signal`, or 2) and no artifact is written.
+  Measured: the committed seed under `RLIMIT_AS = 2 GiB` now reports
+  `terminated by signal 11 (SIGSEGV)` (its execve fails with ENOMEM).
+- Both output pipes are drained while the image is written. A compiler that filled its
+  stderr before reading stdin used to deadlock the bridge.
+- A compiler killed by a signal on the normal path is reported by signal and exits
+  `128 + signal`, instead of "rejected the program (exit 1)".
+- These compiler-process failures now carry the stable code `E6011`
+  (`error[backend-native][E6011]: ...`, docs/errors.md). The code covers a stream
+  failure, a signal death, a child that could not be reaped, and a compiler ELF that
+  could not be spawned (the OS error is named). A compiler that read the whole image
+  and refused the program keeps its uncoded "rejected the program (exit N)" verdict.
+- The stderr report keeps the TAIL as well as the head: the first 16 KiB and the last
+  48 KiB, with the number of bytes left out between them. A compiler that logs a lot
+  and then dies no longer has its last lines cut off.
+
+### Fixed — checked process wait and spawn_capture descriptors
+- `std.process.wait` retries `EINTR` and returns an error record when `waitpid`
+  fails. Waiting on a non-child is no longer reported as exit 0 / signal 0.
+- Exit, signal, core-dump and stopped statuses stay distinct. `wait_flags`
+  passes the `waitpid` options through (`WNOHANG`, `WUNTRACED`).
+- `spawn` and `spawn_capture` publish a failed `exec` on `child_exec_errno`
+  via a close-on-exec pipe. Exit status 127 by itself is not that failure.
+- `spawn_capture` reads pipe ends as full ints and closes every end it opened
+  when `pipe` or `fork` fails, including descriptors at or above 65536.
+
 ### Added
 - **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
   (Linux).** `https_get(url)` / `https_post(url, body, content_type)` (and
@@ -313,6 +1059,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the candidate is consistently slower or if any stage time or artifact is missing.
 
 ### Fixed
+- The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
+- The 32 raw-syscall twins compile into the runtime object only when the module MLIR names a `__mind_sys_` symbol (`-DMIND_RAW_SYSCALLS`).
 - **String comparison is the same on every backend (#343)**: `mindc test` analyses each
   std and project module it merges into a test against that module's own declarations,
   as `mindc build` compiles each module alone, so a string a test hands to `vec_push` no
@@ -533,6 +1281,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes ever differ. Emitted `.so` and `.o` files are byte-identical to the
   ones built before this change. Errors are attributed as before: an `mlir-opt` failure is
   reported as `mlir-opt`.
+- The tensor pipeline runs `mlir-opt` twice, cut before `one-shot-bufferize`, so its
+  dense constants get a fixed global order. The first run completes before the second
+  starts; only the second streams into `mlir-translate`. The streamed and the serial
+  build make the same two invocations on the same text and report a failure the same way.
 
 ### Performance — runtime-support object off the `--emit-shared` critical path (#309)
 - `--emit-shared` now compiles (or fetches from cache) the bundled runtime-support

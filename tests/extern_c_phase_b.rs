@@ -75,28 +75,46 @@ fn parse_repr_c_attribute_on_struct() {
 
 // ── test 2: repr(C) struct accepted in extern "C" signature ──────────────────
 
-/// A `Named` type in an `extern "C"` signature must be accepted by the
-/// Phase B type-checker when the struct carries `#[repr(C)]`.
-/// The module must include the struct definition so the type-checker's
-/// pre-pass can populate its repr(C) registry (audit fix F-06).
-#[test]
-fn typecheck_accepts_named_type_in_extern_signature() {
-    // Use the parser so the repr_c pre-pass has a real StructDef to scan.
-    let src = r#"
-        #[repr(C)]
-        struct Timeval { tv_sec: i64, tv_usec: i64 }
-
-        extern "C" {
-            safe fn accept_timeval(tv: Timeval) -> i32
-        }
-    "#;
+fn codes(src: &str) -> Vec<String> {
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
-    // A repr(C)-annotated struct must be accepted; no diagnostic expected.
-    assert!(
-        diags.is_empty(),
-        "expected no diagnostics for repr(C) Named type in extern \"C\" signature; got: {diags:?}"
-    );
+    check_module_types_in_file(&module, src, None, &TypeEnv::default())
+        .into_iter()
+        .map(|d| d.code.to_string())
+        .collect()
+}
+
+/// 0.10.3 refuses a by-value `#[repr(C)]` struct in an extern signature
+/// (E2040): the x86-64 classifiers give wrong values for some layouts. The
+/// pointer form of the same signature stays accepted (positive control).
+#[test]
+fn typecheck_refuses_by_value_repr_c_struct_param_and_return() {
+    let def = "#[repr(C)]\nstruct Timeval { tv_sec: i64, tv_usec: i64 }\n";
+    for (sig, refused) in [
+        ("safe fn take(tv: Timeval) -> i32", true),
+        ("safe fn give() -> Timeval", true),
+        (
+            "safe fn cb(f: extern \"C\" fn(Timeval) -> i64) -> i32",
+            true,
+        ),
+        ("safe fn take(tv: *const Timeval) -> i32", false),
+        ("safe fn give(out: *mut Timeval) -> i32", false),
+    ] {
+        let src = format!("{def}extern \"C\" {{\n    {sig}\n}}\n");
+        let got = codes(&src);
+        assert_eq!(
+            got.iter().filter(|c| *c == "E2040").count(),
+            usize::from(refused),
+            "{sig}: {got:?}"
+        );
+        if !refused {
+            assert!(got.is_empty(), "{sig}: {got:?}");
+        }
+    }
+    // A type alias of the struct is the same by-value struct (the older
+    // layout rule also refuses the unresolved alias name).
+    let aliased = format!("{def}type Tv = Timeval;\nextern \"C\" {{ fn take(tv: Tv) -> i32; }}\n");
+    let got = codes(&aliased);
+    assert!(got.iter().any(|c| c == "E2040"), "alias: {got:?}");
 }
 
 // ── test 3: SysV — all-int 8B struct → single i64 ────────────────────────────
@@ -303,6 +321,7 @@ fn typecheck_accepts_fn_ptr_in_extern_signature() {
     let module = Module {
         items: vec![Node::ExternBlock {
             callconv: CallConv::SysV,
+            binding: Default::default(),
             fns: vec![efn],
             span: sp(),
         }],
@@ -330,6 +349,7 @@ fn fn_ptr_param_lowers_to_llvm_ptr_in_mlir() {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
     let id = m.fresh();
     m.instrs.push(Instr::ConstI64(id, 0));
@@ -363,6 +383,7 @@ fn variadic_printf_call_uses_vararg_hints() {
         is_varargs: true,
         vararg_hints: vec!["!llvm.ptr".to_string(), "i64".to_string()],
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
 
     // Three arguments: fmt pointer, string arg, int arg.
@@ -425,6 +446,7 @@ fn repr_c_struct_param_expands_to_two_i64_in_mlir() {
         is_varargs: false,
         vararg_hints: Vec::new(),
         callconv: CallConv::SysV,
+        binding: Default::default(),
     });
     let id = m.fresh();
     m.instrs.push(Instr::ConstI64(id, 0));
@@ -461,11 +483,14 @@ fn end_to_end_repr_c_struct_lower_to_ir() {
     "#;
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
-    // Type-check: must produce no errors.
+    // The build path refuses the by-value struct (E2040); the classifier the
+    // lowering below exercises stays as the start of the full struct ABI.
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
-    assert!(
-        diags.is_empty(),
-        "type-check of repr(C) struct in extern signature must succeed; diags: {diags:?}"
+    let got: Vec<&str> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        got,
+        ["E2040"],
+        "by-value struct must be refused; diags: {diags:?}"
     );
 
     // Lower to IR: repr_c_structs must be populated.

@@ -1,0 +1,49 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: std-fs-checked
+description: "Run the std fs_checked listing checks: 18 native programs and the 7 declared mutants."
+# Moved verbatim from the ci.yml step "std fs_checked listing checks (18 native programs)" (no-god-files order: the workflow file must not grow).
+runs:
+  using: composite
+  steps:
+    - shell: bash -e {0}
+      working-directory: ${{ github.workspace }}
+      run: |
+        command -v jq >/dev/null || { echo '::error::jq missing'; exit 1; }
+        set -euo pipefail
+        M="$PWD/target/release/mindc"; T="$PWD/tests/fs_checked_listing"; S="$PWD/std/fs_checked.mind"; W="$RUNNER_TEMP/fs-checked"
+        rm -rf "$W"; mkdir -p "$W"; pass=0
+        subst() { jq -er --rawfile s "$1" "$2" "$3"; }
+        INST='reduce .ordered_exact_replacements[] as $r ($s; if (split($r.old) | length - 1) == $r.occurrences then split($r.old) | join($r.new) else error("needle \($r.old | @json): want \($r.occurrences), got \(split($r.old) | length - 1)") end)'
+        subst "$S" "$INST" "$T/INSTRUMENTATION.json" > "$W/instrumented.mind" || { echo "::error::INSTRUMENTATION.json does not apply to std/fs_checked.mind"; exit 1; }
+        build() { d="$W/$1"; shift; mkdir -p "$d"; cat "$@" > "$d/main.mind"
+          printf '[package]\nname = "fsc_%s"\nversion = "0.0.1"\n\n[build]\nentry = "main.mind"\n\n[targets.cpu]\nbackend = "cpu"\nsources = ["main.mind"]\n' "$(basename "$d")" > "$d/Mind.toml"
+          ( cd "$d" && "$M" build --backend mlir --target cpu --emit binary --optimize debug --no-cache --out program ) > "$d/build.log" 2>&1 || { cat "$d/build.log"; echo "::error::build of $(basename "$d") failed"; exit 1; }; }
+        # expect <program> <exit> <file with the exact stdout>
+        expect() { d="$W/$1"; want_rc="$2"; cp "$3" "$d/want.out"; r=0
+          ( cd "$d" && ulimit -n 1024 && ./program ) > "$d/got.out" 2> "$d/got.err" || r=$?
+          if [ "$r" != "$want_rc" ] || ! cmp -s "$d/want.out" "$d/got.out" || [ -s "$d/got.err" ]; then
+            echo "--- $1 stdout"; cat "$d/got.out"; echo "--- $1 stderr"; cat "$d/got.err"
+            echo "::error::$1: exit $r, want $want_rc, with the exact declared stdout and empty stderr"; exit 1
+          fi; pass=$((pass + 1)); echo "ok $1 (exit $r)"; }
+        cp -r "$T" "$W/import"
+        ( cd "$W/import" && "$M" build --backend mlir --target cpu --emit binary --optimize debug --no-cache --out program ) > "$W/import.build.log" 2>&1 || { cat "$W/import.build.log"; echo "::error::build of tests/fs_checked_listing failed"; exit 1; }
+        printf '0\n' > "$W/zero.out"
+        expect import 0 "$W/zero.out"
+        build unit "$S" "$T/unit.mind"; expect unit 0 "$W/zero.out"
+        build real "$S" "$T/real.mind"; mkdir -p "$W/real/fse" "$W/real/fsc/d"; expect real 0 "$W/zero.out"
+        build fault "$W/instrumented.mind" "$T/fault_support.mind" "$T/fault_driver.mind" "$T/fault_main.mind"; expect fault 0 "$W/zero.out"
+        for id in $(jq -r '.cases[].id' "$T/MUTATIONS.json"); do
+          q() { jq -er --arg id "$id" ".cases[] | select(.id == \$id) | $1" "$T/MUTATIONS.json"; }
+          printf 'pub fn main() -> i64 {\n    if fcf_case(%s, %s) != 0 { return 1; }\n    print(0);\n    0\n}\n' "$(q .mode)" "$(q .fail_ordinal)" > "$W/main_$id.mind"
+          MUT='.cases[] | select(.id == $id) as $c | if ($s | split($c.old) | length - 1) == $c.occurrences then $s | split($c.old) | join($c.new) else error("mutation \($c.id): needle count is not \($c.occurrences)") end'
+          jq -er --arg id "$id" --rawfile s "$W/instrumented.mind" "$MUT" "$T/MUTATIONS.json" > "$W/mutant_$id.mind" || { echo "::error::mutation $id does not apply"; exit 1; }
+          build "control_$id" "$W/instrumented.mind" "$T/fault_support.mind" "$T/fault_driver.mind" "$W/main_$id.mind"
+          jq -j --arg id "$id" '.cases[] | select(.id == $id) | .baseline.stdout' "$T/MUTATIONS.json" > "$W/control_$id.want"
+          expect "control_$id" "$(q .baseline.exit)" "$W/control_$id.want"
+          build "mutant_$id" "$W/mutant_$id.mind" "$T/fault_support.mind" "$T/fault_driver.mind" "$W/main_$id.mind"
+          jq -j --arg id "$id" '.cases[] | select(.id == $id) | .mutation.stdout' "$T/MUTATIONS.json" > "$W/mutant_$id.want"
+          expect "mutant_$id" "$(q .mutation.exit)" "$W/mutant_$id.want"
+        done
+        [ "$pass" = 18 ] || { echo "::error::fs_checked listing: $pass programs passed, want 18"; exit 1; }
+        echo "fs_checked listing: 18 programs passed (import, unit, real, fault, 7 controls, 7 mutants killed)"

@@ -1,0 +1,19 @@
+// LICM slice 1 keeps a hoisted let's declared width: `a` wraps to i32 where it is
+// bound, so `b` (which reads `a` and hoists with it) shifts the wrapped value.
+fn nw(x: i32, y: i32, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let a: i32 = x * y;
+        let b: i32 = a >> 4;
+        s = s + (b as i64) + i;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    let r: i64 = nw(65536, 32768, 3);
+    let q: i64 = nw(3, 5, 2);
+    (r + 402653184 + q + 40) % 233
+}

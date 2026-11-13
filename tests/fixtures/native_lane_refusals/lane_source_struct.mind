@@ -1,0 +1,2 @@
+// lane.source.struct: a struct declared in a function body.
+fn main() -> i64 { struct Q { h: i64 } return 3; }

@@ -173,7 +173,15 @@ fn a_built_module_reads_the_local_field_too() {
     let program = temp.path().join("program");
     let out = Command::new(mindc())
         .current_dir(temp.path())
-        .args(["build", "--target", "cpu", "--no-cache", "--out"])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--target",
+            "cpu",
+            "--no-cache",
+            "--out",
+        ])
         .arg(&program)
         .output()
         .expect("run mindc build");

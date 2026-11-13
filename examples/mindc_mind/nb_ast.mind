@@ -1,0 +1,96 @@
+// Copyright 2026 STARGA Inc.
+// AST record accessors and the native-ctx offset (moved out of main.mind unchanged).
+// An AST node is a 7 x i64 heap record (main.mind "AST node layout"): kind, span
+// lo, span hi, child0..2, aux.
+// main.mind and the compiler parts read nodes only through these. The binop
+// operator tags that a binop node carries in aux are here too.
+
+pub fn ast_kind(node: i64) -> i64 {
+    __mind_load_i64(node + 0)
+}
+pub fn ast_span_lo(node: i64) -> i64 {
+    __mind_load_i64(node + 8)
+}
+pub fn ast_span_hi(node: i64) -> i64 {
+    __mind_load_i64(node + 16)
+}
+pub fn ast_child0(node: i64) -> i64 {
+    __mind_load_i64(node + 24)
+}
+pub fn ast_child1(node: i64) -> i64 {
+    __mind_load_i64(node + 32)
+}
+pub fn ast_child2(node: i64) -> i64 {
+    __mind_load_i64(node + 40)
+}
+pub fn ast_aux(node: i64) -> i64 {
+    __mind_load_i64(node + 48)
+}
+
+// Native owner-validation context follows the fixed address-taken table. It is
+// compiler heap metadata only: no target instruction or wire byte depends on
+// these words. Keeping it on the existing atab side-channel avoids widening
+// every expression/statement signature. Hand-rolled drivers with atab==0
+// retain their existing scalar behavior and cannot claim record-owner proof.
+pub fn nb_at_native_ctx_off() -> i64 {
+    16 + 1024 * 2 * 8
+}
+
+// `"..."` string literal: span covers both quotes (content is [lo+1, hi-1)).
+// The print-statement desugar consumes this node; native value emission also
+// decodes the lexer-approved escapes into a borrowed read-only String. Other
+// emitters must explicitly support this node or refuse it.
+pub fn ast_str_lit() -> i64 {
+    34
+}
+
+// ===== Binop operator tags =====
+
+pub fn op_add() -> i64 {
+    1
+}
+pub fn op_sub() -> i64 {
+    2
+}
+pub fn op_mul() -> i64 {
+    3
+}
+pub fn op_div() -> i64 {
+    4
+}
+pub fn op_lt() -> i64 {
+    5
+}
+pub fn op_gt() -> i64 {
+    6
+}
+pub fn op_eq() -> i64 {
+    7
+}
+pub fn op_le() -> i64 {
+    8
+}
+pub fn op_ge() -> i64 {
+    9
+}
+pub fn op_ne() -> i64 {
+    10
+}
+pub fn op_bitand() -> i64 {
+    11
+}
+pub fn op_bitor() -> i64 {
+    12
+}
+pub fn op_bitxor() -> i64 {
+    13
+}
+pub fn op_shl() -> i64 {
+    14
+}
+pub fn op_shr() -> i64 {
+    15
+}
+pub fn op_mod() -> i64 {
+    16
+}

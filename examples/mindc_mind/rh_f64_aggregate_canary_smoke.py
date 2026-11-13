@@ -61,7 +61,7 @@ def _run(p: pathlib.Path) -> int:
 def _mlir_leg(tmp: pathlib.Path, canary: pathlib.Path) -> bool:
     so = tmp / "canary_mlir.so"
     r = subprocess.run(
-        [MINDC, "build", str(canary), "--release", "--emit=cdylib", "--out", str(so)],
+        [MINDC, "build", "--backend", "mlir", str(canary), "--release", "--emit=cdylib", "--out", str(so)],
         capture_output=True, text=True, timeout=180,
     )
     if not so.exists() or so.stat().st_size < 256:

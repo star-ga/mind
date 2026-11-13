@@ -1,0 +1,366 @@
+// std/evidence_mic.mind — write a std.evidence sink as a mic@3 MAP record and read it back.
+// Author: STARGA Inc.
+//
+// The record is a std.mic_record artifact (the empty mic@3 module body and the
+// MAP epilogue), so the compiler's mic@3 reader accepts it. Keys, sorted by
+// mic_record:
+//   std.evidence.count    Int    records stored
+//   std.evidence.digest   Bytes  sha256 of the digest preimage below
+//   std.evidence.dropped  Int    records refused because the sink was full
+//   std.evidence.parent   Bytes  32 bytes, only when the caller passes one: the
+//                                trace_hash of the program's own
+//                                --emit-evidence artifact, which links the run
+//                                to the build
+//   std.evidence.records  Bytes  count * 40 bytes: each record's five words,
+//                                8 little-endian bytes each, written byte by byte
+//   std.evidence.schema   Int    1
+// No other key is accepted: evd_load refuses a record with any extra key.
+// The bytes are a pure function of the sink and the parent hash.
+//
+// Digest preimage, which covers every field evd_load returns:
+//   "std.evidence" (12 ASCII bytes), the schema byte 1,
+//   count and dropped as 8 little-endian bytes each,
+//   1 and the 32 parent bytes when a parent is present, else the byte 0,
+//   then the count * 40 record bytes.
+//
+// Trust: the program writes this record about itself, and it is NOT
+// authenticated. The digest detects a changed, cut, reordered or added field,
+// but whoever can rewrite the record can also recompute the digest: it is not
+// a signature, and the record is not signed. The `evidence_chain.` and
+// `signature.` namespaces stay reserved for the compiler, so this is an
+// application record, never an attested artifact.
+//
+// Parent: evd_load checks the parent only through the digest and does not
+// return it, so a record that names another build loads the same way.
+// evd_load_parent takes the parent the caller expects and refuses a record
+// that names another parent, or none, with evd_e_parent_mismatch.
+//
+// Memory: evd_export returns a buffer the caller releases with
+// evd_export_free. evd_export and evd_load release every buffer they allocate
+// on every path, and evd_load releases the decoded record on every path once
+// mrec_decode returns it, through mrec_free. When mrec_decode refuses the
+// input, it releases its own temporaries (std.mic_record).
+//
+// Errors are negative: a mic_record code (mrec_e_*) or an evd_e_* code of
+// std.evidence.
+
+import std.mic_record;
+import std.evidence;
+import std.sha256;
+
+fn evdm_release(p: i64) -> i64 {
+    if p > 0 {
+        __mind_free(p)
+    }
+    0
+}
+
+// Key "std.evidence.<suffix>" for field: 0 count, 1 digest, 2 dropped,
+// 3 parent, 4 records, 5 schema. A 16-byte [ addr | len ] pair, or 0.
+fn evdm_key(field: i64) -> i64 {
+    let k: i64 = __mind_alloc(16);
+    let d: i64 = __mind_alloc(24);
+    if k == 0 || d == 0 {
+        let _ = evdm_release(k);
+        let _ = evdm_release(d);
+        return 0;
+    }
+    let mut p: i64 = evdm_tag(d);
+    p = evdm_w1(d, p, 46);
+    if field == 0 {
+        p = evdm_w1(d, evdm_w4(d, p, 99, 111, 117, 110), 116);
+    }
+    if field == 1 {
+        p = evdm_w2(d, evdm_w4(d, p, 100, 105, 103, 101), 115, 116);
+    }
+    if field == 2 {
+        p = evdm_w2(d, evdm_w1(d, evdm_w4(d, p, 100, 114, 111, 112), 112), 101, 100);
+    }
+    if field == 3 {
+        p = evdm_w2(d, evdm_w4(d, p, 112, 97, 114, 101), 110, 116);
+    }
+    if field == 4 {
+        p = evdm_w2(d, evdm_w1(d, evdm_w4(d, p, 114, 101, 99, 111), 114), 100, 115);
+    }
+    if field == 5 {
+        p = evdm_w2(d, evdm_w4(d, p, 115, 99, 104, 101), 109, 97);
+    }
+    __mind_store_i64(k + 0, d);
+    __mind_store_i64(k + 8, p);
+    k
+}
+
+// "std.evidence" at d; returns 12.
+fn evdm_tag(d: i64) -> i64 {
+    evdm_w4(d, evdm_w4(d, evdm_w4(d, 0, 115, 116, 100, 46), 101, 118, 105, 100), 101, 110, 99, 101)
+}
+
+fn evdm_w1(d: i64, p: i64, c0: i64) -> i64 {
+    __mind_store_i8(d + p, c0);
+    p + 1
+}
+
+fn evdm_w2(d: i64, p: i64, c0: i64, c1: i64) -> i64 {
+    evdm_w1(d, evdm_w1(d, p, c0), c1)
+}
+
+fn evdm_w4(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
+    evdm_w2(d, evdm_w2(d, p, c0, c1), c2, c3)
+}
+
+fn evdm_key_free(k: i64) {
+    __mind_free(__mind_load_i64(k + 0));
+    __mind_free(k)
+}
+
+// Release a buffer evd_export returned. Returns 1, or 0 for b <= 0.
+pub fn evd_export_free(b: i64) -> i64 {
+    if b <= 0 {
+        return 0;
+    }
+    let _ = evdm_release(mrec_buf_addr(b));
+    __mind_free(b);
+    1
+}
+
+// Put an Int (tag 1) or Bytes (tag 2) entry under field's key. 0 or an error.
+fn evdm_put(h: i64, field: i64, tag: i64, v: i64, a: i64, n: i64) -> i64 {
+    let k: i64 = evdm_key(field);
+    if k == 0 {
+        return mrec_e_no_memory();
+    }
+    let mut rc: i64 = 0;
+    if tag == 1 {
+        rc = mrec_put_int(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), v);
+    } else {
+        rc = mrec_put_bytes(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8), a, n);
+    }
+    evdm_key_free(k);
+    rc
+}
+
+// Index of field's entry with the tag, or an error (not found, wrong type).
+fn evdm_find(h: i64, field: i64, tag: i64) -> i64 {
+    let k: i64 = evdm_key(field);
+    if k == 0 {
+        return mrec_e_no_memory();
+    }
+    let i: i64 = mrec_find(h, __mind_load_i64(k + 0), __mind_load_i64(k + 8));
+    evdm_key_free(k);
+    if i < 0 {
+        return i;
+    }
+    if mrec_tag_at(h, i) != tag {
+        return mrec_e_type();
+    }
+    i
+}
+
+// sha256 of the digest preimage (see the header) into the 32 bytes at out:
+// count records at rec, dropped, and the 32 parent bytes when parent > 0.
+// Returns 0 or an error. Export and load both hash through this one writer.
+fn evdm_digest(rec: i64, count: i64, dropped: i64, parent: i64, out: i64) -> i64 {
+    let mut has: i64 = 0;
+    if parent > 0 {
+        has = 1;
+    }
+    let len: i64 = 30 + has * 32 + count * evd_record_bytes();
+    let pre: i64 = __mind_alloc(len);
+    if pre == 0 {
+        return mrec_e_no_memory();
+    }
+    let p: i64 = evdm_w1(pre, evdm_tag(pre), 1);
+    let _ = evd_le_put(evd_le_put(pre + p, count), dropped);
+    let q: i64 = evdm_w1(pre, p + 16, has);
+    let _ = evd_bytes_copy(parent, pre + q, has * 32);
+    let _ = evd_bytes_copy(rec, pre + q + has * 32, count * evd_record_bytes());
+    let rc: i64 = sha256_checked(pre, len, out);
+    __mind_free(pre);
+    if rc != 0 {
+        return mrec_e_value();
+    }
+    0
+}
+
+// The sink as a mic@3 record in a mic_record byte buffer [ addr | len | cap ]
+// (read it with mrec_buf_addr / mrec_buf_len, release it with
+// evd_export_free). parent_len is 0 (no parent; parent_addr must be 0) or 32
+// (the 32 bytes at parent_addr > 0 become std.evidence.parent). Returns the
+// buffer (> 0), evd_e_sink() for a 0 sink, evd_e_parent() for any other
+// parent_len or a parent_addr that does not match it, or the error of the
+// first refused step; it never truncates.
+pub fn evd_export(sink: i64, parent_addr: i64, parent_len: i64) -> i64 {
+    let n: i64 = evd_len(sink);
+    if n < 0 {
+        return evd_e_sink();
+    }
+    if (parent_len != 0 || parent_addr != 0) && (parent_len != 32 || parent_addr <= 0) {
+        return evd_e_parent();
+    }
+    let rec: i64 = __mind_alloc(8 + n * evd_record_bytes());
+    let h: i64 = mrec_new();
+    let mut out: i64 = mrec_e_no_memory();
+    if rec != 0 && h != 0 {
+        let mut d: i64 = rec;
+        let mut r: i64 = 0;
+        while r < n * 5 {
+            d = evd_le_put(d, evd_field(sink, r / 5, r % 5));
+            r = r + 1;
+        }
+        out = evdm_fill(h, n, evd_dropped(sink), rec, parent_addr);
+        if out == 0 {
+            out = mrec_encode(h);
+            if out == 0 {
+                out = mrec_e_no_memory();
+            }
+        }
+    }
+    let _ = evdm_release(rec);
+    let _ = mrec_free(h);
+    out
+}
+
+// The six entries of an export into h. 0 or the first error.
+fn evdm_fill(h: i64, n: i64, dropped: i64, rec: i64, parent: i64) -> i64 {
+    let dig: i64 = __mind_alloc(32);
+    if dig == 0 {
+        return mrec_e_no_memory();
+    }
+    let mut rc: i64 = evdm_digest(rec, n, dropped, parent, dig);
+    if rc == 0 {
+        rc = evdm_put(h, 0, 1, n, 0, 0);
+    }
+    if rc == 0 {
+        rc = evdm_put(h, 1, 2, 0, dig, 32);
+    }
+    if rc == 0 {
+        rc = evdm_put(h, 2, 1, dropped, 0, 0);
+    }
+    if rc == 0 && parent > 0 {
+        rc = evdm_put(h, 3, 2, 0, parent, 32);
+    }
+    if rc == 0 {
+        rc = evdm_put(h, 4, 2, 0, rec, n * evd_record_bytes());
+    }
+    if rc == 0 {
+        rc = evdm_put(h, 5, 1, 1, 0, 0);
+    }
+    __mind_free(dig);
+    rc
+}
+
+// Read the n bytes at a (an evd_export record) into a new sink. Returns the
+// sink (> 0) or an error. Schema, count, dropped, records length, parent
+// length, the key set, the record codes and the digest are all checked before
+// the sink is allocated. Any parent loads: see evd_load_parent.
+pub fn evd_load(a: i64, n: i64) -> i64 {
+    evdm_load(a, n, 0 - 1)
+}
+
+// evd_load, and the record must name the expected parent. parent_len 0
+// (parent_addr 0) expects no std.evidence.parent; parent_len 32 (parent_addr
+// > 0) expects those 32 bytes. Returns the sink (> 0), evd_e_parent() for any
+// other pair, evd_e_parent_mismatch() for a record that names another parent
+// or none, or an evd_load error. Checked after the digest.
+pub fn evd_load_parent(a: i64, n: i64, parent_addr: i64, parent_len: i64) -> i64 {
+    if (parent_len != 0 || parent_addr != 0) && (parent_len != 32 || parent_addr <= 0) {
+        return evd_e_parent();
+    }
+    evdm_load(a, n, parent_addr)
+}
+
+// want: -1 any parent, 0 no parent, > 0 the 32 expected parent bytes.
+fn evdm_load(a: i64, n: i64, want: i64) -> i64 {
+    let h: i64 = mrec_decode(a, n);
+    if h < 0 {
+        return h;
+    }
+    let s: i64 = evdm_load_rec(h, want);
+    let _ = mrec_free(h);
+    s
+}
+
+fn evdm_load_rec(h: i64, want: i64) -> i64 {
+    let si: i64 = evdm_find(h, 5, 1);
+    if si < 0 {
+        return si;
+    }
+    if mrec_int_at(h, si) != 1 {
+        return evd_e_schema();
+    }
+    let ci: i64 = evdm_find(h, 0, 1);
+    let di: i64 = evdm_find(h, 2, 1);
+    let ri: i64 = evdm_find(h, 4, 2);
+    let gi: i64 = evdm_find(h, 1, 2);
+    if ci < 0 || di < 0 || ri < 0 || gi < 0 {
+        return mrec_e_not_found();
+    }
+    let count: i64 = mrec_int_at(h, ci);
+    let dropped: i64 = mrec_int_at(h, di);
+    if count < 0 || count > evd_max_cap() || dropped < 0 {
+        return evd_e_count();
+    }
+    let rlen: i64 = count * evd_record_bytes();
+    if mrec_val_len_at(h, ri) != rlen {
+        return evd_e_records();
+    }
+    let mut parent: i64 = 0;
+    let mut has: i64 = 0;
+    let pi: i64 = evdm_find(h, 3, 2);
+    if pi >= 0 {
+        if mrec_val_len_at(h, pi) != 32 {
+            return evd_e_parent();
+        }
+        parent = mrec_val_addr_at(h, pi);
+        has = 1;
+    } else {
+        if pi != mrec_e_not_found() {
+            return evd_e_parent();
+        }
+    }
+    if mrec_count(h) != 5 + has {
+        return evd_e_key();
+    }
+    if mrec_val_len_at(h, gi) != 32 {
+        return evd_e_digest();
+    }
+    let rec: i64 = mrec_val_addr_at(h, ri);
+    if evd_le_valid(rec, rlen, count) == 0 {
+        return evd_e_code();
+    }
+    let rc: i64 = evdm_check_digest(rec, count, dropped, parent, mrec_val_addr_at(h, gi));
+    if rc != 0 {
+        return rc;
+    }
+    if want == 0 && has == 1 {
+        return evd_e_parent_mismatch();
+    }
+    if want > 0 {
+        if has == 0 {
+            return evd_e_parent_mismatch();
+        }
+        if evd_bytes_eq(parent, want, 32) == 0 {
+            return evd_e_parent_mismatch();
+        }
+    }
+    let s: i64 = evd_from_le(rec, rlen, count, dropped);
+    if s == 0 {
+        return mrec_e_no_memory();
+    }
+    s
+}
+
+// 0 when the digest of (rec, count, dropped, parent) equals the 32 bytes at
+// want; evd_e_digest() or an allocation error otherwise.
+fn evdm_check_digest(rec: i64, count: i64, dropped: i64, parent: i64, want: i64) -> i64 {
+    let dig: i64 = __mind_alloc(32);
+    if dig == 0 {
+        return mrec_e_no_memory();
+    }
+    let mut rc: i64 = evdm_digest(rec, count, dropped, parent, dig);
+    if rc == 0 && evd_bytes_eq(dig, want, 32) == 0 {
+        rc = evd_e_digest();
+    }
+    __mind_free(dig);
+    rc
+}

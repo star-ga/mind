@@ -1,0 +1,14 @@
+// A program that calls the native-only AVX2 row __mind_vpaddd_i32x8.
+// acc = [1..8], row = [40; 8]; the native ELF exits with acc[1] + row[1] = 42.
+fn main() -> i64 {
+    let acc: i64 = __mind_alloc(32);
+    let row: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i32(acc + i * 4, i + 1);
+        __mind_store_i32(row + i * 4, 40);
+        i = i + 1;
+    }
+    let out: i64 = __mind_vpaddd_i32x8(acc, row);
+    return __mind_load_i32(out + 4);
+}

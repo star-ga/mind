@@ -1,0 +1,45 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: std-evidence-checks
+description: "Run the std evidence checks: mindc test, native build and run, verify, tamper refusal."
+# Moved verbatim from the ci.yml step "std evidence checks (mindc test + native build + run)" (no-god-files order: the workflow file must not grow).
+runs:
+  using: composite
+  steps:
+    - shell: bash -e {0}
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        M="$PWD/target/release/mindc"; W="$RUNNER_TEMP/std-evidence"; C="$PWD/tests/x509/testdata/cases_native.bin"
+        rm -rf "$W"; mkdir -p "$W"
+        for t in std_evidence_kat:4 std_evidence_load:2; do
+          d="${t%%:*}"; want="${t##*:}"
+          "$M" test "tests/$d/main.mind" > "$W/$d.test.log" 2>&1 || { cat "$W/$d.test.log"; echo "::error::mindc test tests/$d failed"; exit 1; }
+          cat "$W/$d.test.log"
+          got="$(sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed; 0 failed;.*/\1/p' "$W/$d.test.log")"
+          [ "${got:-0}" = "$want" ] || { echo "::error::mindc test tests/$d passed ${got:-0} tests, want $want"; exit 1; }
+        done
+        for d in std_evidence_kat std_evidence_load std_evidence_wrappers; do
+          cp -r "tests/$d" "$W/$d"
+          ( cd "$W/$d" && "$M" build --backend mlir --target cpu --emit binary --no-cache --out program )
+        done
+        run() { log="$1"; shift; ( cd "$W/$(dirname "$log")" && ./program "$@" ) > "$W/$log" 2>&1 || { r=$?; cat "$W/$log"; echo "::error::$log exited $r (the id of the first failed check)"; exit 1; }; cat "$W/$log"; }
+        has() { grep -q "$2" "$W/$1" || { cat "$W/$1"; echo "::error::$1 has no line matching $2"; exit 1; }; }
+        run std_evidence_kat/run.log
+        has std_evidence_kat/run.log '^evd_export_len 237$'
+        run std_evidence_load/run.log
+        has std_evidence_load/run.log '^evd_load_groups_passed 2$'
+        run std_evidence_wrappers/write.log "$C" "$W/ev.mic3" w
+        has std_evidence_wrappers/write.log '^evd_wrapper_groups_passed 4$'
+        "$M" verify "$W/ev.mic3" --json > "$W/verify.json" 2>&1 || { cat "$W/verify.json"; echo "::error::mindc verify refused the evidence record"; exit 1; }
+        cat "$W/verify.json"
+        has verify.json '"ssa_valid":true'
+        has verify.json '"attested":false'
+        run std_evidence_wrappers/read.log "$C" "$W/ev.mic3" r
+        has std_evidence_wrappers/read.log '^evd_wrapper_groups_passed 4$'
+        cp "$W/ev.mic3" "$W/evt.mic3"
+        printf '\x01' | dd of="$W/evt.mic3" bs=1 seek=$(( $(stat -c %s "$W/evt.mic3") - 30 )) count=1 conv=notrunc 2>/dev/null
+        if cmp -s "$W/ev.mic3" "$W/evt.mic3"; then echo "::error::the tamper byte did not change the record"; exit 1; fi
+        r=0; ( cd "$W/std_evidence_wrappers" && ./program "$C" "$W/evt.mic3" r ) > "$W/tamper.log" 2>&1 || r=$?
+        [ "$r" = 62 ] || { cat "$W/tamper.log"; echo "::error::the changed record: exit $r, want 62 (refused)"; exit 1; }
+        echo "std evidence: kat 4 + load 2 tests, 3 native programs, verify, tamper refused (exit 62)"

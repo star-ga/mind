@@ -1,0 +1,84 @@
+# Copyright 2026 STARGA Inc. Diagnostic register canaries only.
+.intel_syntax noprefix
+.text
+.global probe_init
+probe_init:
+ push rbx
+ push rbp
+ push r12
+ push r13
+ push r14
+ push r15
+ sub rsp,24
+ mov [rsp],rdi
+ mov [rsp+8],rsp
+ mov rcx,101
+ mov rdx,102
+ mov rsi,103
+ mov rdi,104
+ mov r8,105
+ mov r9,106
+ mov r10,107
+ mov r11,108
+ mov rbx,109
+ mov rbp,110
+ mov r12,111
+ mov r13,112
+ mov r14,113
+ mov r15,114
+ mov eax,123456
+ movq xmm0,rax
+ movq xmm15,rax
+ call [rsp]
+ test rax,rax
+ jne probe_bad
+ cmp rsp,[rsp+8]
+ jne probe_bad
+ cmp rcx,101
+ jne probe_bad
+ cmp rdx,102
+ jne probe_bad
+ cmp rsi,103
+ jne probe_bad
+ cmp rdi,104
+ jne probe_bad
+ cmp r8,105
+ jne probe_bad
+ cmp r9,106
+ jne probe_bad
+ cmp r10,107
+ jne probe_bad
+ cmp r11,108
+ jne probe_bad
+ cmp rbx,109
+ jne probe_bad
+ cmp rbp,110
+ jne probe_bad
+ cmp r12,111
+ jne probe_bad
+ cmp r13,112
+ jne probe_bad
+ cmp r14,113
+ jne probe_bad
+ cmp r15,114
+ jne probe_bad
+ movq rax,xmm0
+ cmp rax,123456
+ jne probe_bad
+ movq rax,xmm15
+ cmp rax,123456
+ jne probe_bad
+ xor eax,eax
+ jmp probe_done
+probe_bad:
+ mov eax,3
+probe_done:
+ add rsp,24
+ pop r15
+ pop r14
+ pop r13
+ pop r12
+ pop rbp
+ pop rbx
+ ret
+.section .note.GNU-stack,"",@progbits

@@ -1,0 +1,39 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// Prints "before", then calls sha256 with a negative length. The trap must
+// stop the process before "after" is printed.
+import std.sha256;
+
+fn put_before() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 98);
+    __mind_store_i8(p + 1, 101);
+    __mind_store_i8(p + 2, 102);
+    __mind_store_i8(p + 3, 111);
+    __mind_store_i8(p + 4, 114);
+    __mind_store_i8(p + 5, 101);
+    __mind_store_i8(p + 6, 10);
+    __mind_write(1, p, 7, 0 - 1)
+}
+
+fn put_after() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 97);
+    __mind_store_i8(p + 1, 102);
+    __mind_store_i8(p + 2, 116);
+    __mind_store_i8(p + 3, 101);
+    __mind_store_i8(p + 4, 114);
+    __mind_store_i8(p + 5, 10);
+    __mind_write(1, p, 6, 0 - 1)
+}
+
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    let out: i64 = __mind_alloc(32);
+    put_before();
+    sha256(buf, 0 - 1, out);
+    put_after();
+    return 0;
+}

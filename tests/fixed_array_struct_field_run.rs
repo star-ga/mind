@@ -711,6 +711,7 @@ fn fixed_array_capability_gate_is_operation_scoped_and_project_aware() {
                 let out = run(
                     &[
                         "build",
+                        "--backend=mlir",
                         "--emit",
                         kind,
                         "--no-cache",

@@ -1,0 +1,2 @@
+// lane.source.region: a region block.
+fn main() -> i64 { region { let x: i64 = 1; } return 0; }

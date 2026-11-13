@@ -1,0 +1,31 @@
+
+pub fn nsi_compile(source:i64,length:i64,hash:i64,user_lo:i64,route:i64,policy:i64,diagnostic:i64)->String {
+ __mind_store_i64(policy,__mind_load_i64(policy)+1);
+ if length==0{return string_new();}
+ let p:i64=__mind_alloc(length+16); let mut i:i64=0;
+ while i<length{__mind_store_i8(p+i,__mind_load_i8(source+i));i=i+1;}
+ String{addr:p,len:length,cap:length+16}
+}
+pub fn test_read(p:i64,n:i64)->i64 {
+ let mut at:i64=0;while at<n{let k:i64=__mind_read(0,p+at,n-at,0-1);if k<=0{return 0;}at=at+k;}1
+}
+pub fn test_write(p:i64,n:i64)->i64 {
+ let mut at:i64=0;while at<n{let k:i64=__mind_write(1,p+at,n-at,0-1);if k<=0{return 0;}at=at+k;}1
+}
+pub fn main()->i64 {
+ let h:i64=__mind_alloc(64);if test_read(h,48)!=1{return 90;}
+ let n:i64=__mind_load_i64(h);if n<0{return 91;}if n>4194304{return 92;}
+ let p:i64=__mind_alloc(n+16);if test_read(p,n)!=1{return 93;}
+ let backup:i64=__mind_alloc(n+16);let mut i:i64=0;while i<n{__mind_store_i8(backup+i,__mind_load_i8(p+i));i=i+1;}
+ let ctl:i64=__mind_alloc(64);__mind_store_i64(ctl,0);__mind_store_i64(ctl+8,__mind_load_i64(h+8));
+ __mind_store_i64(ctl+16,17);__mind_store_i64(ctl+24,19);__mind_store_i64(ctl+32,23);
+ let result:String=nsd_compile_once(p,n,h+16,0,ctl,ctl+8);
+ let mut same:i64=1;i=0;while i<n{if __mind_load_i8(p+i)!=__mind_load_i8(backup+i){same=0;}i=i+1;}
+ let off:i64=hm_source_note_offset(result);
+ __mind_store_i64(h,string_len(result));__mind_store_i64(h+8,__mind_load_i64(ctl+8));
+ __mind_store_i64(h+16,__mind_load_i64(ctl));__mind_store_i64(h+24,same);
+ __mind_store_i64(h+32,__mind_load_i64(ctl+16));__mind_store_i64(h+40,__mind_load_i64(ctl+24));
+ __mind_store_i64(h+48,__mind_load_i64(ctl+32));__mind_store_i64(h+56,off);
+ if test_write(h,64)!=1{return 94;}if test_write(string_addr(result),string_len(result))!=1{return 95;}
+ __mind_free(string_addr(result));__mind_free(p);__mind_free(backup);__mind_free(ctl);__mind_free(h);0
+}

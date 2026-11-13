@@ -1,0 +1,155 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0 (the "License").
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// nb_shm: the shared-memory worker rows of the native self-host (A5).
+// Raw Linux x86-64 mmap/munmap/sched_setaffinity, a spin hint and an
+// acquire/release i64 pair, reached only through nb_part_dispatch.mind.
+//
+// Kinds (the single ledger in nb_part_dispatch.mind):
+//   84 __mind_cpu_relax()                          pause (F3 90), returns 0
+//   85 __mind_atomic_load_acquire_i64(addr)        mov rax,[addr]
+//   86 __mind_atomic_store_release_i64(addr, v)    mov [addr],v, returns 0
+//   90 __mind_sys_mmap(addr, len, prot, flags, fd, off)   syscall 9
+//   91 __mind_sys_munmap(addr, len)                       syscall 11
+//   92 __mind_sys_sched_setaffinity(pid, len, mask_addr)  syscall 203
+// x86-64 is TSO: an aligned 8-byte mov load already has acquire order and an
+// aligned 8-byte mov store already has release order, so neither row needs a
+// fence. What the two rows add over __mind_load_i64/__mind_store_i64 is a
+// distinct kind: every call site is emitted in program order and no pass may
+// move, merge or drop one (the future LICM hoists only ConstI64/BinOp, never a
+// call). All six rows are Det::World in the registry: the value read through
+// a MAP_SHARED arena is another process's write, and mmap/sched_setaffinity
+// answer from host state. Syscall results are left raw (negative errno).
+
+import std.string;
+import nb_emit_core;
+
+// Capability mark: SHM ROWS V1. Compiled natively this body is
+// `movabs rax, imm64` whose little-endian immediate spells "nbshm001". It is a
+// compatibility mark, not a signature or a pin; the self-host region is not
+// pruned, so the mark survives without a caller (nb_cap_* precedent). Earlier
+// seeds do not carry it, and fed a program that calls one of these names they
+// refuse it at nb_calls_all_resolve (exit 3, no artifact).
+pub fn nb_cap_shm_rows_v1() -> i64 {
+    3544386153202541166
+}
+
+// General-family name match over the complete callee span [lo, hi).
+// Returns the kind, or -1 when the name is not one of this part's rows.
+pub fn nbs_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    // 84: __mind_cpu_relax
+    if tc_shoc_span_eq(buf + lo, n, 7160552357920333663, 8674333540258641264, 0, 0, 16, 0, 0) == 1 {
+        return 84;
+    }
+    // 85: __mind_atomic_load_acquire_i64
+    if tc_shoc_span_eq(buf + lo, n, 7016437169844477791, 8028897116269932404, 7599104617906922593, 57408300737906, 30, 0, 0) == 1 {
+        return 85;
+    }
+    // 86: __mind_atomic_store_release_i64
+    if tc_shoc_span_eq(buf + lo, n, 7016437169844477791, 8391155411296546676, 7308327837216633455, 14696524988904289, 31, 0, 0) == 1 {
+        return 86;
+    }
+    0 - 1
+}
+
+// Sys-family name match (the caller already saw the "__mind_sys_" prefix).
+// Returns the kind, or -1 when the name is not one of this part's rows.
+pub fn nbs_sys_intrinsic_id(buf: i64, lo: i64, n: i64) -> i64 {
+    // 90: __mind_sys_mmap
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 31632320005895033, 0, 0, 15, 0, 0) == 1 {
+        return 90;
+    }
+    // 91: __mind_sys_munmap
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7020388844765672313, 112, 0, 17, 0, 0) == 1 {
+        return 91;
+    }
+    // 92: __mind_sys_sched_setaffinity
+    if tc_shoc_span_eq(buf + lo, n, 8313473862527180639, 7234303152787256185, 7594870390357586783, 2037672302, 28, 0, 0) == 1 {
+        return 92;
+    }
+    0 - 1
+}
+
+// 1 iff this part emits `kind` at `args_len` arguments (nbp_kind_ok): the ledger
+// arity, exactly. Any other count makes the call site poison the fn (fail closed).
+pub fn nbs_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 84 {
+        return nbs_eq(args_len, 0);
+    }
+    if kind == 85 {
+        return nbs_eq(args_len, 1);
+    }
+    if kind == 86 {
+        return nbs_eq(args_len, 2);
+    }
+    if kind == 90 {
+        return nbs_eq(args_len, 6);
+    }
+    if kind == 91 {
+        return nbs_eq(args_len, 2);
+    }
+    if kind == 92 {
+        return nbs_eq(args_len, 3);
+    }
+    0
+}
+
+pub fn nbs_eq(a: i64, b: i64) -> i64 {
+    if a == b {
+        return 1;
+    }
+    0
+}
+
+// The defined 0 result: xor rax,rax ; mov [rbp+dst],rax.
+pub fn nbs_store_zero(code: String, dst_id: i64) -> String {
+    nb_store_rax(nb_emit_free_xor(code), nb_slot_disp(dst_id))
+}
+
+// Kinds 84-86. Any other kind, or any emission ctx (the schema images, where the
+// call arm's nb_ctx_intrinsic_ok already refuses every kind past 53 and every raw
+// syscall), emits nothing, which the caller's 0-byte fence refuses (fail closed).
+pub fn nbs_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if ctx != 0 {
+        return string_new();
+    }
+    if kind == 84 {
+        // pause = F3 90: a spin-loop hint, no architectural effect, no memory access.
+        return nbs_store_zero(nb_push(nb_push(code, 243), 144), dst_id);
+    }
+    if kind == 85 {
+        // mov rax,[rbp+addr] ; mov rax,[rax] ; mov [rbp+dst],rax
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_load_i64(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 86 {
+        // mov rax,[rbp+addr] ; mov rcx,[rbp+v] ; mov [rax],rcx ; then the defined 0
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        let c1: String = nb_emit_store_i64(code, nb_slot_disp(a0), nb_slot_disp(a1));
+        return nbs_store_zero(c1, dst_id);
+    }
+    string_new()
+}
+
+// Kinds 90-92 with no emission ctx: the shared nb_emit_syscall (arguments in rdi rsi
+// rdx r10 r8 r9 ; mov eax,nr ; syscall), then mov [rbp+dst],rax. The result stays raw:
+// a negative errno on failure. Anything else emits nothing (the 0-byte fence).
+pub fn nbs_sys_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if ctx != 0 {
+        return string_new();
+    }
+    if kind == 90 {
+        return nb_store_rax(nb_emit_syscall(code, 9, ids, 6), nb_slot_disp(dst_id));
+    }
+    if kind == 91 {
+        return nb_store_rax(nb_emit_syscall(code, 11, ids, 2), nb_slot_disp(dst_id));
+    }
+    if kind == 92 {
+        return nb_store_rax(nb_emit_syscall(code, 203, ids, 3), nb_slot_disp(dst_id));
+    }
+    string_new()
+}

@@ -95,7 +95,7 @@ def main() -> int:
         (proj / "src" / "main.mind").write_text(MAIN_MIND)
 
         out = subprocess.run(
-            [str(MINDC), "build", "--emit", "cdylib"],
+            [str(MINDC), "build", "--backend", "mlir", "--emit", "cdylib"],
             cwd=proj,
             capture_output=True,
             text=True,

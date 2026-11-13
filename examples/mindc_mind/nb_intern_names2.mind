@@ -1,0 +1,220 @@
+// Copyright 2026 STARGA Inc.
+// Name-interning probes, part 2: vec_new_name_find on, vec_push and conv names.
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import std.vec;
+import nb_emit_core;
+import nb_ast;
+import nb_intern_names;
+
+// Find the string index of "vec_new" among the n already-interned strings, or -1.
+pub fn vec_new_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if vec_new_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    vec_new_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of "vec_new" (the COLLECTION PASS form): existing index on a
+// hit, else allocate. Matches Rust `Instr::Call { name } => st.intern(name)`.
+pub fn intern_vec_new_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = vec_new_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_vec_new_literal(strbuf, offs, ccell)
+}
+
+// The j-th byte (0..7) of "vec_push" = 118 101 99 95 112 117 115 104.
+pub fn vec_push_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 118;
+    }
+    if j == 1 {
+        return 101;
+    }
+    if j == 2 {
+        return 99;
+    }
+    if j == 3 {
+        return 95;
+    }
+    if j == 4 {
+        return 112;
+    }
+    if j == 5 {
+        return 117;
+    }
+    if j == 6 {
+        return 115;
+    }
+    104
+}
+
+// Write the literal "vec_push" (8 bytes) into `strbuf`; register offset/count; index.
+pub fn intern_vec_push_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    __mind_store_i8(strbuf + start + 0, 118);
+    __mind_store_i8(strbuf + start + 1, 101);
+    __mind_store_i8(strbuf + start + 2, 99);
+    __mind_store_i8(strbuf + start + 3, 95);
+    __mind_store_i8(strbuf + start + 4, 112);
+    __mind_store_i8(strbuf + start + 5, 117);
+    __mind_store_i8(strbuf + start + 6, 115);
+    __mind_store_i8(strbuf + start + 7, 104);
+    __mind_store_i64(offs + (n + 1) * 8, start + 8);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Does the already-interned string at index i equal "vec_push"? Raw-byte compare.
+pub fn vec_push_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 8 {
+        return 0;
+    }
+    if j >= 8 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != vec_push_name_byte(j) {
+        return 0;
+    }
+    vec_push_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "vec_push" among the n already-interned strings, or -1.
+pub fn vec_push_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if vec_push_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    vec_push_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of "vec_push" (COLLECTION PASS form): index on hit, else alloc.
+pub fn intern_vec_push_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = vec_push_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_vec_push_literal(strbuf, offs, ccell)
+}
+
+// ===== mic@3 typed-cast synthetic names =====
+//
+// Rust lowers every supported scalar cast to `__mind_conv_TARGET`, where TARGET is
+// the exact canonical target spelling retained by ast_cast. The conversion remains
+// source-kind-dependent until MLIR lowering, so the bootstrap note must preserve
+// this call instead of substituting an integer-only shift or mask.
+pub fn conv_name_prefix_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 99;
+    }
+    if j == 8 {
+        return 111;
+    }
+    if j == 9 {
+        return 110;
+    }
+    if j == 10 {
+        return 118;
+    }
+    if j == 11 {
+        return 95;
+    }
+    95
+}
+
+pub fn conv_name_len(node: i64) -> i64 {
+    12 + ast_child2(node) - ast_child1(node)
+}
+
+pub fn conv_name_byte(src: i64, node: i64, j: i64) -> i64 {
+    if j < 12 {
+        return conv_name_prefix_byte(j);
+    }
+    load_byte(src, ast_child1(node) + j - 12)
+}
+
+pub fn conv_name_write(strbuf: i64, start: i64, src: i64, node: i64, j: i64, n: i64) -> i64 {
+    if j >= n {
+        return 0;
+    }
+    __mind_store_i8(strbuf + start + j, conv_name_byte(src, node, j));
+    conv_name_write(strbuf, start, src, node, j + 1, n)
+}
+
+pub fn intern_conv_name_literal(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    let name_len: i64 = conv_name_len(node);
+    let _w: i64 = conv_name_write(strbuf, start, src, node, 0, name_len);
+    __mind_store_i64(offs + (n + 1) * 8, start + name_len);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+pub fn conv_name_eq_at(strbuf: i64, offs: i64, src: i64, node: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    let name_len: i64 = conv_name_len(node);
+    if ehi - elo != name_len {
+        return 0;
+    }
+    if j >= name_len {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != conv_name_byte(src, node, j) {
+        return 0;
+    }
+    conv_name_eq_at(strbuf, offs, src, node, i, j + 1)
+}
+
+pub fn conv_name_find(strbuf: i64, offs: i64, n: i64, src: i64, node: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if conv_name_eq_at(strbuf, offs, src, node, i, 0) == 1 {
+        return i;
+    }
+    conv_name_find(strbuf, offs, n, src, node, i + 1)
+}
+
+pub fn intern_conv_name(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = conv_name_find(strbuf, offs, n, src, node, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_conv_name_literal(strbuf, offs, ccell, src, node)
+}

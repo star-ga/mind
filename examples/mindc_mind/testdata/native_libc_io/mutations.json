@@ -1,0 +1,26 @@
+[
+  {
+    "name": "null_guard",
+    "case": "read_null"
+  },
+  {
+    "name": "count_guard",
+    "case": "read_zero"
+  },
+  {
+    "name": "offset_selection",
+    "case": "read_pipe_position_0"
+  },
+  {
+    "name": "wrong_import",
+    "case": "read_stream_minus_one"
+  },
+  {
+    "name": "source_snapshot",
+    "case": "bundle_roundtrip"
+  },
+  {
+    "name": "plan_comparison",
+    "case": "header_22"
+  }
+]

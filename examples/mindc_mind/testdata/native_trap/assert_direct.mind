@@ -1,0 +1,16 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+// x comes from argc. No extra argument: argc is 1 and x is not 0, so main
+// returns. One extra argument: argc is 2, x is 0, and the trap runs.
+fn main(argc: i64, argv: i64) -> i64 {
+    if argv < 0 {
+        return 2;
+    }
+    let x: i64 = argc - 2;
+    if x == 0 {
+        __mind_assert_fail(0)
+    }
+    return 0;
+}

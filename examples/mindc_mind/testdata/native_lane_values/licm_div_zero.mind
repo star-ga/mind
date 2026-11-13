@@ -1,0 +1,72 @@
+// LICM slice 1 never hoists `/` or `%`: a division by zero in a loop that runs zero
+// times, or whose inner loop runs zero times, must not trap.
+// Independent values: dz 5 (top level, zero trips), mz 7 (the same with `%`),
+// nz 9 (the inner loop never runs), nm 11 (outer zero trips, `%`), live
+// 3 * (100 / 7 + 100 % 7) = 3 * (14 + 2) = 48. 5 + 7 + 9 + 11 + 48 = 80.
+fn dz(a: i64, b: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: i64 = a / b;
+        s = s + t;
+        i = i + 1;
+    }
+    s + 5
+}
+
+fn mz(a: i64, b: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: i64 = a % b;
+        s = s + t;
+        i = i + 1;
+    }
+    s + 7
+}
+
+fn nz(a: i64, b: i64, n: i64, m: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let mut j: i64 = 0;
+        while j < m {
+            let t: i64 = a / b;
+            s = s + t;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    s + 9
+}
+
+fn nm(a: i64, b: i64, n: i64, m: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let mut j: i64 = 0;
+        while j < m {
+            let t: i64 = a % b;
+            s = s + t;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    s + 11
+}
+
+fn live(a: i64, b: i64, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let q: i64 = a / b;
+        let r: i64 = a % b;
+        s = s + q + r;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    dz(7, 0, 0) + mz(7, 0, 0) + nz(7, 0, 2, 0) + nm(7, 0, 0, 3) + live(100, 7, 3)
+}

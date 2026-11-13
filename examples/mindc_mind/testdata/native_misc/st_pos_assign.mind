@@ -1,0 +1,26 @@
+// Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+// __mind_store_*, so a read of the store result must be 0. `junk` first dirties
+// the stack so a stale result slot would be visible.
+// Shape: the store-tail fn w_put is read in exactly ONE position, the
+// right-hand side of an assignment (x = 0, then 0 + 3 + the stored 5): exit 8.
+fn junk(a: i64, b: i64, c: i64) -> i64 {
+    let x: i64 = a * 3;
+    let y: i64 = x + b;
+    let z: i64 = y + c;
+    let u: i64 = z * 7;
+    let v: i64 = u + 1;
+    let q: i64 = v + 2;
+    q
+}
+
+fn w_put(w: i64, v: i64) -> i64 {
+    __mind_store_i64(w, v)
+}
+
+fn main() -> i64 {
+    let w: i64 = __mind_alloc(64);
+    let j: i64 = junk(11, 22, 33);
+    let mut x: i64 = 99;
+    x = w_put(w, 5);
+    x + 3 + __mind_load_i64(w)
+}

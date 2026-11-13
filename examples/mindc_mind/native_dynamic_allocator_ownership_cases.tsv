@@ -1,0 +1,14 @@
+# Supplemental ownership-before-size contract; original39-case catalogue unchanged.
+name	exit	arena_bytes	overflow_bytes
+foreign_intmax	0	8192	1048576
+foreign_over_limit	0	8192	1048576
+reserved_intmax	0	8192	1048576
+foreign_zero	0	8192	1048576
+foreign_negative	0	8192	1048576
+owned_intmax	70	8192	1048576
+owned_over_limit	70	8192	1048576
+null_intmax	70	8192	1048576
+null_over_limit	70	8192	1048576
+owned_zero	0	8192	1048576
+owned_negative	0	8192	1048576
+null_zero_again	0	8192	1048576

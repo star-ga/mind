@@ -28,6 +28,11 @@ anchor set that does not contain the fixture root. It requires verdict -7,
 ERROR/E_CHAIN, no application data, and latched refusal on
 feed/pump/tick/write/close.
 
+`test_x509_verify.inc.mind` is the narrow fixture verifier that stood in for
+the real one before the client and the path validator joined (pinned anchor
+DER, RSA PKCS1/SHA256 signatures, validity, exact SAN). No build splices it in;
+it is kept, uncalled, as a reference for the fixture PKI.
+
 ## Provenance and regeneration
 
 Client entropy byte i is i mod 256; server entropy byte i is (101+i) mod 256.
@@ -44,7 +49,10 @@ RSA-PSS signatures pinned in `cvsigs.mind`; MIND computes key agreement,
 traffic secrets, AEAD records and Finished. The test gate computes no expected
 value: tests/std_tls_x509_import.rs embeds the frozen bytes verbatim as stores,
 builds the program with `mindc build` and propagates the MIND result as the
-exit code. The offline regeneration tool is not part of this tree.
+exit code. The handshake driver's `make-fixture-keys` mode is the offline
+provenance tool that emits the PKI as MIND constants, and its `regenerate`
+mode the offline signing/freezing tool (the MIND generator provides the CV
+transcripts); neither is imported or run by any test gate.
 
 SHA256SUMS pins all 24 containers plus key/signature constants. The generator
 shares primitives with the client, so this is regression evidence, not an
@@ -61,13 +69,35 @@ in that order. Certificate is fragmented even across its handshake header.
 ```sh
 cargo test --release --no-default-features \
   --features 'mlir-build std-surface cross-module-imports' --test std_tls_x509_import
+export MINDC=${CARGO_TARGET_DIR:-target}/release/mindc
+nice -n 15 timeout 600 python3 tests/tls13_handshake_driver.py client
+nice -n 15 timeout 600 python3 tests/tls13_handshake_driver.py client --native
 sha256sum -c tests/fixtures/tls13_client/SHA256SUMS
+# Development-only, intentional fixture replacement:
+PYTHONDONTWRITEBYTECODE=1 nice -n 15 timeout 120 python3 tests/tls13_handshake_driver.py make-fixture-keys
+PYTHONDONTWRITEBYTECODE=1 nice -n 15 timeout 600 python3 tests/tls13_handshake_driver.py regenerate
 ```
+
+`tests/tls13_handshake_driver.py client` (run by `scripts/run_crypto_vectors.sh`)
+is the same suite through `--emit-shared`: it concatenates the client's module
+set, the fixture PKI, the cases, the runner and the shipped suite with the
+frozen containers embedded as stores, and propagates the MIND result of
+`tls13ct_run_all` and `tls13ct_run_shipped`; it computes no expected value.
+`--shipped` runs only the shipped suite. `--native` builds the same program
+with `mindc build --backend native` and never falls back to MLIR.
 
 The recorded flights run in the `mindc build` executable only: the tree-walking
 evaluator behind `mindc test` would take hours for 24 handshakes. `mindc build
 --backend native` refuses `import std.tls13_client;` at the import, because the
-client modules are not rows of the native seed.
+client modules are not rows of the native seed. The `--native` driver mode is
+refused with exit 3 and writes no artifact. `native_alloc_probe.mind`
+reproduces the frozen-profile allocation edge (closure.unresolved_edge); the
+frozen-profile fence also excludes built-in calls, division and shifts.
+`native_hkdf_loop_probe.mind` reduces a second blocker from hkdf_expand: an
+intrinsic-free value-if inside a loop reaches the frozen emitter and is
+refused with exit 3, while the identical source executes as zero under MLIR.
+Admission alone cannot close that emitter gap; it needs a reseed. Native
+acceptance is unqualified until the compiler supports this program.
 
 ## Consumer API
 

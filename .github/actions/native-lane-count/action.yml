@@ -1,0 +1,25 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+name: native-lane-count
+description: Run the ir::native_lane_profile tests (std-surface) with a floor of the source #[test] count.
+# The native-lane profile module is `#[cfg(feature = "std-surface")]`.
+# Measured on run 42742700358 (head 95165bb3): only the four Build & Test
+# rows ran its tests (49 of 49, from the `--features std-surface` lib
+# run); the `ffi-c --lib` step and every other job selected 0 of them.
+# A cfg change could drop them to "ok. 0 passed" with exit 0, so the
+# floor is the `#[test]` count in the module source, derived here.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -e
+        expected=$(cat src/ir/native_lane_profile/*.rs | grep -cE '^[[:space:]]*#\[test\]')
+        out=$(timeout 900 cargo test --locked --no-default-features --features std-surface --lib ir::native_lane_profile::)
+        echo "$out"
+        n=$(printf '%s\n' "$out" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
+        if [ "$expected" -lt 1 ] || [ "${n:-0}" -lt "$expected" ]; then
+          echo "FAIL: ir::native_lane_profile ran ${n:-0} tests, the source has $expected #[test] fns - module or tests cfg'd out" >&2
+          exit 1
+        fi
+        echo "ir::native_lane_profile tests executed: $n (source #[test] count $expected)"

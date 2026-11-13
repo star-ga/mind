@@ -152,7 +152,7 @@ fn run_reads_the_project_manifest() {
     // `mindc run` is project-mode: it reads Mind.toml for the entry (there is
     // no positional source argument). The program returns 1 when the manifest
     // read is empty and 0 when it read bytes, so exit 0 IS the read proof.
-    let out = run_out(&root, &["run"]);
+    let out = run_out(&root, &["run", "--backend", "mlir"]);
     if !common::gate::compiled("file_read_under_test::run", &out) {
         // Legal capability skip (no native backend in this binary / no MLIR
         // toolchain); MIND_BENCH_REQUIRE=1 turns this into a hard failure.
@@ -284,7 +284,7 @@ fn manifest_bytes_match_under_test_and_run() {
     );
     assert_eq!(decode_printed_bytes(&tested.stderr), expected);
 
-    let ran = run_out(&root, &["run"]);
+    let ran = run_out(&root, &["run", "--backend", "mlir"]);
     if !common::gate::compiled("file_read_under_test::bytes", &ran) {
         return;
     }
@@ -396,11 +396,11 @@ fn c_and_std_read_records_match() {
         "extern \"C\" {\n    fn read_to_string(path_addr: i64) -> i64\n}",
     );
     let std_root = payload_project("std_payload", "import std.fs;");
-    let c_out = run_out(&c_root, &["run"]);
+    let c_out = run_out(&c_root, &["run", "--backend", "mlir"]);
     if !common::gate::compiled("file_read_under_test::c_record", &c_out) {
         return;
     }
-    let std_out = run_out(&std_root, &["run"]);
+    let std_out = run_out(&std_root, &["run", "--backend", "mlir"]);
     if !common::gate::compiled("file_read_under_test::std_record", &std_out) {
         return;
     }
@@ -418,3 +418,7 @@ fn c_and_std_read_records_match() {
         "record fields differ:\nstd:\n{std_text}\nc:\n{c_text}"
     );
 }
+
+// Directory reads: every reader returns the zero record for a directory.
+#[path = "support/file_read_directory.rs"]
+mod directory;

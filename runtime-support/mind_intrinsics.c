@@ -39,11 +39,19 @@
 // Growth policy is fixed at "doubling, min-cap 4" (deterministic for the
 // evidence chain and bootstrap fixed point).
 
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#if !defined(_WIN32)
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/file.h>
+#endif
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -313,6 +321,29 @@ MIND_EXPORT int64_t __mind_now_ns(int64_t _unused) {
     return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
 }
 
+// __mind_argc() / __mind_argv(i) — the process argument vector (native contract
+// rows 10, 11). The start-up hook stores argc and argv in two runtime-private
+// globals before main runs. __mind_argv(i) reads argv[i] with no bounds check,
+// as the native row does: argv[argc] is the NULL terminator, then envp follows.
+// A C library that passes no arguments to constructors aborts with a message.
+static int64_t mind_argc_slot = 0;
+static const int64_t *mind_argv_slot = 0;
+#if defined(_WIN32) || defined(_WIN64)
+static void mind_args_capture(void) { mind_argc_slot = __argc; mind_argv_slot = (const int64_t *)(void *)__argv; }
+#  define MIND_ARGS_READY() mind_args_capture()
+#elif defined(__GLIBC__) || defined(__APPLE__)
+__attribute__((constructor)) static void mind_args_capture(int argc, char **argv, char **envp) {
+    (void)envp;
+    mind_argc_slot = argc;
+    mind_argv_slot = (const int64_t *)(void *)argv;
+}
+#  define MIND_ARGS_READY() ((void)0)
+#else
+#  define MIND_ARGS_READY() (fputs("__mind_argc/__mind_argv: this C library gives constructors no argc/argv\n", stderr), abort())
+#endif
+MIND_EXPORT int64_t __mind_argc(void) { MIND_ARGS_READY(); return mind_argc_slot; }
+MIND_EXPORT int64_t __mind_argv(int64_t i) { MIND_ARGS_READY(); return mind_argv_slot ? mind_argv_slot[i] : 0; }
+
 MIND_EXPORT int64_t __mind_load_i64(int64_t addr) {
     int64_t val;
     memcpy(&val, (void *)(uintptr_t)addr, sizeof(int64_t));
@@ -378,38 +409,6 @@ MIND_EXPORT int64_t __mind_store_i16(int64_t addr, int64_t val) {
     return 0;
 }
 
-// __mind_open(path_addr) — open(2) with O_RDONLY on a NUL-terminated C string.
-//
-// The contract is fixed by std/fs.mind:274-285 and by the native-ELF self-host
-// emitter's intrinsic slot 12 (`examples/mindc_mind/main.mind` nb_intrinsic_id):
-// ONE argument, read-only, path is a NUL-TERMINATED C string, returns the fd, or
-// a NEGATIVE value on error. Callers test `fd < 0` and nothing finer, which is
-// what lets the two backends disagree harmlessly on the exact negative value: the
-// raw `open` syscall the native-ELF path emits returns `-errno`, while libc's
-// `open` here returns -1 and parks the code in `errno`. The intrinsic promises
-// a negative value on error, not identical numeric error codes across backends.
-// std/fs.mind normalizes that negative result; direct callers must do the same
-// before using it in portable output or evidence.
-//
-// Determinism: registered `Det::Pure` in `src/intrinsics.rs`, the same NAME-level
-// verdict `__mind_read` carries. A path is a declared program input; the fd is an
-// opaque process-local descriptor whose numeric value the std surface only ever
-// compares against zero, never prints or hashes. No clock, no entropy, no pointer
-// bits reach the result.
-//
-// There is deliberately no `__mind_close`: std/fs.mind's single-shot reader relies
-// on process exit to reclaim the descriptor, and that deferral is recorded at
-// std/fs.mind:284-285 with its upgrade path. Adding one here without the matching
-// intrinsic row and native-ELF slot would be a half-wired third backend.
-MIND_EXPORT int64_t __mind_open(int64_t path_addr) {
-    if (path_addr == 0) {
-        return -1;
-    }
-    const char *path = (const char *)(uintptr_t)path_addr;
-    int fd = MIND_OPEN_RDONLY(path);
-    return (int64_t)fd;
-}
-
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
 // offset == -1 means "use current stream position" (plain read).
 MIND_EXPORT int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
@@ -432,11 +431,161 @@ MIND_EXPORT int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, in
     return (int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset);
 }
 
+// Raw Linux x86-64 twins. One guard: clang passes -DMIND_RAW_SYSCALLS.
+#if defined(MIND_RAW_SYSCALLS)
+#if defined(__linux__) && defined(__x86_64__)
+static int64_t mind_raw_syscall(int64_t nr, int64_t a0, int64_t a1,
+                               int64_t a2, int64_t a3, int64_t a4, int64_t a5) {
+    register int64_t r10 __asm__("r10") = a3;
+    register int64_t r8 __asm__("r8") = a4;
+    register int64_t r9 __asm__("r9") = a5;
+    int64_t result;
+    __asm__ volatile ("syscall" : "=a"(result)
+                      : "a"(nr), "D"(a0), "S"(a1), "d"(a2),
+                        "r"(r10), "r"(r8), "r"(r9)
+                      : "rcx", "r11", "memory");
+    return result;
+}
+#else
+static int64_t mind_raw_syscall(int64_t nr, int64_t a0, int64_t a1,
+                               int64_t a2, int64_t a3, int64_t a4, int64_t a5) {
+    (void)nr; (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    return -38; // ENOSYS: this ABI is Linux x86-64 only.
+}
+#endif
+
+MIND_EXPORT int64_t __mind_sys_openat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(257, a0, a1, a2, a3, 0, 0);
+}
+MIND_EXPORT int64_t __mind_sys_close(int64_t a0) {
+    return mind_raw_syscall(3, a0, 0, 0, 0, 0, 0);
+}
+MIND_EXPORT int64_t __mind_sys_fstat(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(5, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_newfstatat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(262, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_fsync(int64_t a0) {
+    return mind_raw_syscall(74, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_flock(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(73, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_fcntl(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(72, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_lseek(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(8, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_unlinkat(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(263, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_renameat(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(264, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_umask(int64_t a0) {
+    return mind_raw_syscall(95, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getuid(void) {
+    return mind_raw_syscall(102, 0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_fork(void) {
+    return mind_raw_syscall(57, 0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_pipe2(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(293, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_dup2(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(33, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_close_range(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(436, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_execveat(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(322, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_wait4(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(61, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_waitid(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(247, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_kill(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(62, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_setpgid(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(109, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getpgid(int64_t a0) {
+    return mind_raw_syscall(121, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_prctl(int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    return mind_raw_syscall(157, a0, a1, a2, a3, a4, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getrlimit(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(97, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_setrlimit(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(160, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_rt_sigaction(int64_t a0, int64_t a1, int64_t a2, int64_t a3) {
+    return mind_raw_syscall(13, a0, a1, a2, a3, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_nanosleep(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(35, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_clock_gettime(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(228, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_memfd_create(int64_t a0, int64_t a1) {
+    return mind_raw_syscall(319, a0, a1, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_fchdir(int64_t a0) {
+    return mind_raw_syscall(81, a0, 0, 0, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_getdents64(int64_t a0, int64_t a1, int64_t a2) {
+    return mind_raw_syscall(217, a0, a1, a2, 0, 0, 0);
+}
+
+MIND_EXPORT int64_t __mind_sys_exit_group(int64_t a0) {
+    return mind_raw_syscall(231, a0, 0, 0, 0, 0, 0);
+}
+#endif
+
 // print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.
 // Corresponds to std/io.mind `print_bytes(buf_addr, count)`.
-// Compiled by mindc as an external call (the MIND stdlib function body is
-// not inlined into the cdylib during --emit-shared).
-MIND_EXPORT int64_t print_bytes(int64_t buf_addr, int64_t count) {
+// Weak: when a build links the std.io object, its definition (the same write)
+// is the one used, so std.io links on the MLIR path without a collision.
+MIND_EXPORT_WEAK int64_t print_bytes(int64_t buf_addr, int64_t count) {
     return __mind_write(1, buf_addr, count, -1);
 }
 
@@ -840,112 +989,54 @@ MIND_EXPORT_WEAK int64_t string_validate_utf8(int64_t s) {
     return 0;
 }
 
-// string_push_byte — append a single byte, returning a new String handle.
-//
-// Non-mutating ABI: allocates a fresh 3-field String heap record on every
-// call (matches std/string.mind's non-mutating semantics).  The backing
-// store is reused when len < cap and reallocated (doubling) when len == cap.
-// Growth: cap 0 → 16, then doubles.
-//
-// Allocation size: new_cap + 7 bytes.  The byte at logical position i is
-// written via __mind_store_i64(base + i, …) which copies 8 bytes starting
-// at byte offset i.  At the last valid position (i = new_cap − 1) that
-// write needs bytes [new_cap−1 .. new_cap+6], so the backing store must be
-// at least new_cap + 7 bytes.  The extra 7 bytes are never part of the
-// logical string content (cap field controls the logical boundary); they
-// exist purely to make the 8-byte i64 store safe at every position.
+// Reference shim for the checked std.string capacity policy. This is not
+// compiler/theorem authority; explicitly embedded MIND tests exercise the
+// actual standard-library body independently of these weak compatibility names.
+MIND_EXPORT_WEAK int64_t string_push_capacity(int64_t len, int64_t cap) {
+    if (len < 0 || cap < 0 || len == INT64_MAX) return 0;
+    if (cap > 0) {
+        if (len > cap) return 0;
+        if (len < cap) return cap;
+    }
+    int64_t needed = len + 1;
+    int64_t next = cap == 0 ? 16 : cap;
+    while (next < needed) {
+        next = next > INT64_MAX / 2 ? needed : next * 2;
+    }
+    return next;
+}
+
+// Same valid-live-String/representable-append/allocation preconditions as the
+// MIND body. cap0 is borrowed, including nonnull empty views; never realloc it.
+// Owned spare storage is reused and owned growth may invalidate old aliases.
 MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
-    int64_t base    = __mind_load_i64(s);
-    int64_t len     = __mind_load_i64(s + 8);
-    int64_t cap     = __mind_load_i64(s + 16);
-
-    int64_t new_cap;
+    int64_t base = __mind_load_i64(s);
+    int64_t len = __mind_load_i64(s + 8);
+    int64_t cap = __mind_load_i64(s + 16);
+    int64_t new_cap = string_push_capacity(len, cap);
     int64_t new_base;
-
-    if (len < cap) {
-        new_cap  = cap;
+    if (cap == 0) {
+        new_base = __mind_alloc(new_cap);
+        if (len > 0) {
+            memcpy((void *)(uintptr_t)new_base,
+                   (const void *)(uintptr_t)base, (size_t)len);
+        }
+    } else if (new_cap == cap) {
         new_base = base;
     } else {
-        new_cap  = (cap == 0) ? 16 : cap * 2;
-        // Allocate new_cap + 7 bytes: the 7-byte pad ensures that a
-        // __mind_store_i64 at any byte offset in [0, new_cap) writes
-        // entirely within the allocated region (see comment above).
-        new_base = __mind_alloc(new_cap + 7);
-        if (len > 0 && base != 0) {
-            memcpy((void *)(uintptr_t)new_base,
-                   (void *)(uintptr_t)base,
-                   (size_t)len);
-        }
+        new_base = __mind_realloc(base, new_cap);
     }
-
-    // Write the new byte at offset `len` (each byte is stored in a full i64
-    // slot matching the MIND intrinsic convention — only low 8 bits matter).
-    __mind_store_i64(new_base + len, b & 0xFF);
-
-    // Allocate a fresh String header and populate it.
+    __mind_store_i8(new_base + len, b);
     int64_t rec = __mind_alloc(24);
-    __mind_store_i64(rec,      new_base);
-    __mind_store_i64(rec + 8,  len + 1);
+    __mind_store_i64(rec, new_base);
+    __mind_store_i64(rec + 8, len + 1);
     __mind_store_i64(rec + 16, new_cap);
     return rec;
 }
 
 
-// read_to_string — whole file as a heap record [addr, len, cap].
-//
-// Same rule as std/fs.mind: size the file, allocate file_sz + 1 bytes, read
-// that many bytes, store a trailing NUL, and publish cap = file_sz + 1.
-// A null path, a failed open, a failed size, or a real read error returns
-// the still-zero record and does not publish a partial buffer. EINTR is
-// retried. MIND_EXPORT_WEAK so a linked std/fs object overrides this
-// fallback; without that object this is the definition that links.
-MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
-    int64_t rec = __mind_alloc(24);
-    __mind_store_i64(rec,      0);
-    __mind_store_i64(rec + 8,  0);
-    __mind_store_i64(rec + 16, 0);
-
-    if (path_addr == 0) return rec;
-    const char *path = (const char *)(uintptr_t)path_addr;
-    int fd = MIND_OPEN_RDONLY(path);
-    if (fd < 0) return rec;
-
-    int64_t file_sz = MIND_LSEEK(fd, 0, SEEK_END);
-    if (file_sz < 0 || file_sz == INT64_MAX) {
-        MIND_CLOSE(fd);
-        return rec;
-    }
-    if (MIND_LSEEK(fd, 0, SEEK_SET) < 0) {
-        MIND_CLOSE(fd);
-        return rec;
-    }
-
-    int64_t buf = __mind_alloc(file_sz + 1);
-    if (buf == 0) {
-        MIND_CLOSE(fd);
-        return rec;
-    }
-
-    int64_t n = 0;
-    while (n < file_sz) {
-        size_t chunk = (size_t)1 << 20;
-        if ((int64_t)chunk > file_sz - n) chunk = (size_t)(file_sz - n);
-        int64_t got = (int64_t)MIND_READ(fd, (void *)(uintptr_t)(buf + n), chunk);
-        if (got < 0) {
-            if (errno == EINTR) continue;
-            MIND_CLOSE(fd);
-            return rec;
-        }
-        if (got == 0) break;
-        n += got;
-    }
-    MIND_CLOSE(fd);
-    __mind_store_i8(buf + n, 0);
-    __mind_store_i64(rec,      buf);
-    __mind_store_i64(rec + 8,  n);
-    __mind_store_i64(rec + 16, file_sz + 1);
-    return rec;
-}
+// read_to_string and is_dir_fd (the whole-file reader) live in their own file.
+#include "mind_fs_read.h"
 
 static int64_t mind_string_eq_impl(int64_t a, int64_t b) {
     // The null handle 0 is no string record: it equals only itself.

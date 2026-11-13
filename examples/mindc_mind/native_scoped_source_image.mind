@@ -1,0 +1,442 @@
+// Copyright 2026 STARGA Inc.
+// NSF/1: fixed canonical std source units plus ONE user translation unit.
+// Live API inputs must remain readable/immutable during capture; diag32 must
+// be writable/disjoint. Only the stdin adapter accepts untrusted byte streams.
+// No supplied ownership, derived call plan, import index or address is trusted.
+
+pub fn nsf_same(a: i64, b: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if __mind_load_i8(a + i) != __mind_load_i8(b + i) { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+// Narrow supported import syntax: import/use std.NAME; at top level.
+// Other module scopes/aliases require a future captured resolver contract.
+pub fn nsf_import_mask(src: i64, length: i64) -> i64 {
+    let t: Vec = lex(src, length);
+    let mut depth: i64 = 0;
+    let mut p: i64 = 0;
+    let mut mask: i64 = 0;
+    while p < tok_count(t) {
+        let k: i64 = tok_kind(t, p);
+        if depth == 0 {
+            let mut type_decl: i64 = 0;
+            if nb_cabi_word(src, t, p, 4, 1701869940) == 1 { type_decl = 1; }
+            if nb_cabi_word(src, t, p, 6, 127970521019507) == 1 { type_decl = 1; }
+            if nb_cabi_word(src, t, p, 4, 1836412517) == 1 { type_decl = 1; }
+            // Global legacy type metadata cannot represent a unit-local
+            // redefinition of a primitive spelling. Refuse that ambiguity.
+            if type_decl == 1 { if nb_cabi_scalar(src, t, p + 1) > 0 { return 0 - 1; } }
+        }
+        if k == tk_kw_use() {
+            if depth != 0 { return 0 - 1; }
+            if p > tok_count(t) - 6 { return 0 - 1; }
+            if nb_cabi_word(src, t, p + 1, 3, 6583411) != 1 { return 0 - 1; }
+            if tok_kind(t, p + 2) != tk_dot() { return 0 - 1; }
+            if tok_kind(t, p + 4) != tk_semi() { return 0 - 1; }
+            let unit: i64 = nsf_module_index(src, tok_lo(t, p + 3), tok_hi(t, p + 3));
+            if unit < 0 { return 0 - 1; }
+            mask = mask | (1 << unit);
+        }
+        if k == tk_lbrace() { depth = depth + 1; }
+        if k == tk_rbrace() { depth = depth - 1; }
+        if depth < 0 { return 0 - 1; }
+        p = p + 1;
+    }
+    if depth != 0 { return 0 - 1; }
+    mask
+}
+
+// Reserve compiler intrinsic names across declarations and value binders.
+// A bare intrinsic call is permitted; defining or shadowing one is not.
+pub fn nsf_reserved_ok(src: i64, length: i64) -> i64 {
+    let t: Vec = lex(src, length);
+    let mut i: i64 = 0;
+    while i < tok_count(t) {
+        let lo: i64 = tok_lo(t, i);
+        let hi: i64 = tok_hi(t, i);
+        if tok_kind(t, i) == tk_ident() {
+            if hi - lo >= 7 {
+                let mut reserved: i64 = 1;
+                if __mind_load_i8(src + lo) != 95 { reserved = 0; }
+                if __mind_load_i8(src + lo + 1) != 95 { reserved = 0; }
+                if __mind_load_i8(src + lo + 2) != 109 { reserved = 0; }
+                if __mind_load_i8(src + lo + 3) != 105 { reserved = 0; }
+                if __mind_load_i8(src + lo + 4) != 110 { reserved = 0; }
+                if __mind_load_i8(src + lo + 5) != 100 { reserved = 0; }
+                if __mind_load_i8(src + lo + 6) != 95 { reserved = 0; }
+                if reserved == 1 {
+                    if i + 1 >= tok_count(t) { return 0; }
+                    if tok_kind(t, i + 1) != tk_lparen() { return 0; }
+                    if i > 0 {
+                        let prev: i64 = tok_kind(t, i - 1);
+                        if prev == tk_kw_fn() { return 0; }
+                        if prev == tk_kw_let() { return 0; }
+                        if prev == tk_dot() { return 0; }
+                        if prev == tk_colon() { return 0; }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    1
+}
+
+pub fn nsf_scope_fail(scope: i64, scratch: i64, diag: i64, code: i64, detail: i64) -> i64 {
+    let _free: i64 = nb_fc_free(scope);
+    __mind_free(scope);
+    __mind_free(scratch);
+    nsi_error(diag, code, detail)
+}
+
+pub fn nsf_capture(source: i64, length: i64, hash: i64, user_lo: i64, diag: i64) -> i64 {
+    if user_lo != 395479 { return nsi_error(diag, 10, 1); }
+    if length <= user_lo { return nsi_error(diag, 10, 1); }
+    let scope: i64 = __mind_alloc(128);
+    if scope == 0 { return nsi_error(diag, 2, 0); }
+    let _zero: i64 = nsi_zero(scope, 128);
+    let scratch: i64 = __mind_alloc(80);
+    let copy: i64 = __mind_alloc(length + 16);
+    let units: i64 = __mind_alloc(22 * 32);
+    let calls: i64 = __mind_alloc(256 * 64);
+    __mind_store_i64(scope + 8, copy);
+    __mind_store_i64(scope + 40, units);
+    __mind_store_i64(scope + 48, calls);
+    if units != 0 { let _z: i64 = nsi_zero(units, 22 * 32); }
+    if scratch == 0 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+    if copy == 0 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+    if units == 0 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+    if calls == 0 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+    let _c: i64 = nfn_copy_src_bytes(copy, source, length, 0);
+    let _end: i64 = nsi_zero(copy + length, 16);
+    __mind_store_i64(scope, 1);
+    __mind_store_i64(scope + 16, length);
+    __mind_store_i64(scope + 24, user_lo);
+    __mind_store_i64(scope + 32, 22);
+    let hs: i64 = sha256(copy, length, scratch + 48);
+    if hs == 2 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+    if hs != 0 { return nsf_scope_fail(scope, scratch, diag, 10, 2); }
+    if nsf_same(scratch + 48, hash, 32) == 0 { return nsf_scope_fail(scope, scratch, diag, 10, 2); }
+    let mut i: i64 = 0;
+    let mut expected_start: i64 = 0;
+    while i < 21 {
+        if nsf_manifest(i, scratch) != 1 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        let start: i64 = __mind_load_i64(scratch);
+        let n: i64 = __mind_load_i64(scratch + 8);
+        if start != expected_start { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        if n < 1 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        if start > user_lo - n - 1 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        if __mind_load_i8(copy + start + n) != 10 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        let status: i64 = sha256(copy + start, n, scratch + 48);
+        if status == 2 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+        if status != 0 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        if nsf_same(scratch + 16, scratch + 48, 32) == 0 { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+        __mind_store_i64(units + i * 32, start);
+        __mind_store_i64(units + i * 32 + 8, n);
+        expected_start = start + n + 1;
+        i = i + 1;
+    }
+    if expected_start != user_lo { return nsf_scope_fail(scope, scratch, diag, 10, 3); }
+    __mind_store_i64(units + 21 * 32, user_lo);
+    __mind_store_i64(units + 21 * 32 + 8, length - user_lo);
+    i = 0;
+    while i < 22 {
+        let unit: i64 = units + i * 32;
+        let src: i64 = copy + __mind_load_i64(unit);
+        let n: i64 = __mind_load_i64(unit + 8);
+        if nsf_reserved_ok(src, n) != 1 { return nsf_scope_fail(scope, scratch, diag, 10, 6); }
+        let registry: i64 = nb_cabi_build(src, n);
+        __mind_store_i64(unit + 16, registry);
+        if registry == 0 { return nsf_scope_fail(scope, scratch, diag, 2, 0); }
+        if __mind_load_i64(registry + 32) != 0 { return nsf_scope_fail(scope, scratch, diag, 10, 4); }
+        let mask: i64 = nsf_import_mask(src, n);
+        if mask < 0 { return nsf_scope_fail(scope, scratch, diag, 10, 5); }
+        __mind_store_i64(unit + 24, mask);
+        i = i + 1;
+    }
+    __mind_free(scratch);
+    scope
+}
+
+pub fn nsf_context(request: i64, scope: i64) -> i64 {
+    let old: i64 = nec_new_profile(request, 2, nd_code_addr() + nsi_io_offset());
+    if old == 0 { return 0; }
+    let ctx: i64 = __mind_alloc(432);
+    if ctx == 0 { nec_free(old); return 0; }
+    let _copy: i64 = nfn_copy_src_bytes(ctx, old, 416, 0);
+    let _old: i64 = nec_free(old);
+    __mind_store_i64(ctx, 3);
+    __mind_store_i64(ctx + 416, scope);
+    __mind_store_i64(ctx + 424, 0);
+    ctx
+}
+
+// Foreign workspace32768. Header: binding/import/patch counts0/8/16,
+// finalized24, Vec headers32/56, NCE metadata80. Cache128:256 rows32;
+// import pointers8320:256; patch pointers10368:512;
+// import rows14464:256*32; patch rows22656:512*16.
+// At most16 distinct unit/row bindings in this tranche, at most256 callsites.
+pub fn nsf_foreign_free(f: i64) -> i64 {
+    if f == 0 { return 0; }
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(f) {
+        __mind_free(__mind_load_i64(f + 128 + i * 32 + 16));
+        i = i + 1;
+    }
+    __mind_free(f);
+    0
+}
+
+pub fn nsf_foreign_new(w: i64) -> i64 {
+    let f: i64 = __mind_alloc(32768);
+    if f == 0 { return 0; }
+    let _z: i64 = nsi_zero(f, 32768);
+    let imports: Vec = nsi_imports(w);
+    let patches: Vec = nsi_patches(w, nsa_libc_fixup());
+    if imports.len < 0 { __mind_free(f); return 0; }
+    if imports.len > 256 { __mind_free(f); return 0; }
+    if patches.len < 0 { __mind_free(f); return 0; }
+    if patches.len > 512 { __mind_free(f); return 0; }
+    __mind_store_i64(f + 8, imports.len);
+    __mind_store_i64(f + 16, patches.len);
+    let mut i: i64 = 0;
+    while i < imports.len {
+        __mind_store_i64(f + 8320 + i * 8, __mind_load_i64(imports.addr + i * 8));
+        i = i + 1;
+    }
+    i = 0;
+    while i < patches.len {
+        __mind_store_i64(f + 10368 + i * 8, __mind_load_i64(patches.addr + i * 8));
+        i = i + 1;
+    }
+    f
+}
+
+pub fn nsf_plan_ok(plan: i64, row: i64) -> i64 {
+    if __mind_load_i64(plan + 56) != 1 { return 0; }
+    if __mind_load_i64(plan + 64) != 0 { return 0; }
+    if __mind_load_i64(plan + 80) != 0 { return 0; }
+    let n: i64 = __mind_load_i64(row + 40);
+    if n < 0 { return 0; }
+    if n > 1 { return 0; }
+    if __mind_load_i64(plan + 168) != n + 1 { return 0; }
+    if nb_fc_result(row) == 0 { return 0; }
+    let mut i: i64 = 0;
+    while i < n + 1 {
+        // Compatibility conversions/opaque pointer substitutes are excluded.
+        if __mind_load_i64(plan + 192 + i * 40 + 16) != 0 { return 0; }
+        i = i + 1;
+    }
+    if nb_fc_result(row) == 2 {
+        // Checked borrowed TLS errno pointer, never an untyped integer result.
+        if __mind_load_i64(plan + 192 + 24) != 13 { return 0; }
+    }
+    1
+}
+
+pub fn nsf_import(f: i64, plan: i64) -> i64 {
+    let name: i64 = plan + 192 + __mind_load_i64(plan + 168) * 40 + __mind_load_i64(plan + 120) + __mind_load_i64(plan + 128);
+    let n: i64 = __mind_load_i64(plan + 136);
+    let version: i64 = name + n;
+    let vn: i64 = __mind_load_i64(plan + 144);
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(f + 8) {
+        let r: i64 = __mind_load_i64(f + 8320 + i * 8);
+        if __mind_load_i64(r + 8) == n {
+            if nsf_same(__mind_load_i64(r), name, n) == 1 {
+                if __mind_load_i64(r + 24) != vn { return 0 - 1; }
+                if nsf_same(__mind_load_i64(r + 16), version, vn) != 1 { return 0 - 1; }
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    if i >= 256 { return 0 - 1; }
+    let row: i64 = f + 14464 + i * 32;
+    __mind_store_i64(row, name);
+    __mind_store_i64(row + 8, n);
+    __mind_store_i64(row + 16, version);
+    __mind_store_i64(row + 24, vn);
+    __mind_store_i64(f + 8320 + i * 8, row);
+    __mind_store_i64(f + 8, i + 1);
+    i
+}
+
+// Recheck the original whole-unit source; never synthesize a one-row prototype.
+pub fn nsf_binding(f: i64, scope: i64, unit_id: i64, row_id: i64, diag: i64) -> i64 {
+    if unit_id < 0 { return 0 - 1; }
+    if unit_id >= 22 { return 0 - 1; }
+    let unit: i64 = __mind_load_i64(scope + 40) + unit_id * 32;
+    let registry: i64 = __mind_load_i64(unit + 16);
+    if row_id < 0 { return 0 - 1; }
+    if row_id >= __mind_load_i64(registry + 24) { return 0 - 1; }
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(f) {
+        let r: i64 = f + 128 + i * 32;
+        if __mind_load_i64(r) == unit_id {
+            if __mind_load_i64(r + 8) == row_id { return __mind_load_i64(r + 24); }
+        }
+        i = i + 1;
+    }
+    if i >= 16 { return 0 - 1; }
+    let src: i64 = __mind_load_i64(scope + 8) + __mind_load_i64(unit);
+    let n: i64 = __mind_load_i64(unit + 8);
+    let plan: i64 = ncb_build(src, n, row_id, 1, diag);
+    if plan == 0 { return 0 - 1; }
+    let checked: i64 = ncb_check(plan, __mind_load_i64(plan + 8), src, n, row_id, 1, diag);
+    if checked != 0 { __mind_free(plan); return 0 - 1; }
+    let row: i64 = __mind_load_i64(__mind_load_i64(registry + 16) + row_id * 8);
+    if nsf_plan_ok(plan, row) != 1 { __mind_free(plan); return 0 - 1; }
+    let imported: i64 = nsf_import(f, plan);
+    if imported < 0 { __mind_free(plan); return 0 - 1; }
+    let cached: i64 = f + 128 + i * 32;
+    __mind_store_i64(cached, unit_id);
+    __mind_store_i64(cached + 8, row_id);
+    __mind_store_i64(cached + 16, plan);
+    __mind_store_i64(cached + 24, imported);
+    __mind_store_i64(f, i + 1);
+    imported
+}
+
+pub fn nsf_finalize_one(parts: i64, w: i64, f: i64, scope: i64, index: i64, diag: i64) -> i64 {
+    let record: i64 = __mind_load_i64(scope + 48) + index * 64;
+    let off: i64 = __mind_load_i64(record);
+    let body: i64 = __mind_load_i64(parts + 8);
+    let length: i64 = __mind_load_i64(parts + 16);
+    if off < 0 { return 0; }
+    if off > length - 64 { return 0; }
+    if index > 0 {
+        let previous: i64 = __mind_load_i64(__mind_load_i64(scope + 48) + (index - 1) * 64);
+        if off < previous + 64 { return 0; }
+    }
+    let mut i: i64 = 0;
+    while i < 64 {
+        if __mind_load_i8(body + off + i) != 204 { return 0; }
+        i = i + 1;
+    }
+    let unit_id: i64 = __mind_load_i64(record + 8);
+    let row_id: i64 = __mind_load_i64(record + 16);
+    let imported: i64 = nsf_binding(f, scope, unit_id, row_id, diag);
+    if imported < 0 { return 0; }
+    let unit: i64 = __mind_load_i64(scope + 40) + unit_id * 32;
+    let registry: i64 = __mind_load_i64(unit + 16);
+    let row: i64 = __mind_load_i64(__mind_load_i64(registry + 16) + row_id * 8);
+    if __mind_load_i64(record + 24) != __mind_load_i64(row + 40) { return 0; }
+    if __mind_load_i64(record + 56) != nb_fc_result(row) - 1 { return 0; }
+    let code: String = nce_emit(row, record + 32, __mind_load_i64(record + 48), __mind_load_i64(record + 40), imported, f + 80);
+    let n: i64 = string_len(code);
+    if n < 6 { nsi_drop(code); return 0; }
+    if n > 64 { nsi_drop(code); return 0; }
+    if __mind_load_i64(f + 80) != 1 { nsi_drop(code); return 0; }
+    if __mind_load_i64(f + 96) != imported { nsi_drop(code); return 0; }
+    if __mind_load_i64(f + 104) != 0 { nsi_drop(code); return 0; }
+    let fixup: i64 = __mind_load_i64(f + 88);
+    if fixup < 2 { nsi_drop(code); return 0; }
+    if fixup > n - 4 { nsi_drop(code); return 0; }
+    if __mind_load_i8(string_addr(code) + fixup - 2) != 255 { nsi_drop(code); return 0; }
+    if __mind_load_i8(string_addr(code) + fixup - 1) != 21 { nsi_drop(code); return 0; }
+    let patch_id: i64 = __mind_load_i64(f + 16);
+    if patch_id >= 512 { nsi_drop(code); return 0; }
+    let patch: i64 = f + 22656 + patch_id * 16;
+    __mind_store_i64(patch, nsa_code_size() + nda_code_size() + nsi_io_size(w) + off + fixup);
+    __mind_store_i64(patch + 8, imported);
+    __mind_store_i64(f + 10368 + patch_id * 8, patch);
+    __mind_store_i64(f + 16, patch_id + 1);
+    let _copy: i64 = nfn_copy_src_bytes(body + off, string_addr(code), n, 0);
+    let _drop: i64 = nsi_drop(code);
+    i = n;
+    while i < 64 { __mind_store_i8(body + off + i, 144); i = i + 1; }
+    __mind_store_i64(scope + 104, __mind_load_i64(scope + 104) + 1);
+    1
+}
+
+pub fn nsf_finalize(parts: i64, w: i64, f: i64, diag: i64) -> i64 {
+    let scope: i64 = nb_fc_scope(__mind_load_i64(parts + 176));
+    if scope == 0 { return 0; }
+    if __mind_load_i64(scope + 112) != 0 { return 0; }
+    if __mind_load_i64(scope + 104) != 0 { return 0; }
+    if __mind_load_i64(parts + 152) != __mind_load_i64(scope + 16) { return 0; }
+    if nsf_same(__mind_load_i64(parts + 144), __mind_load_i64(scope + 8), __mind_load_i64(scope + 16)) != 1 { return 0; }
+    let mut i: i64 = 0;
+    while i < __mind_load_i64(scope + 56) {
+        if nsf_finalize_one(parts, w, f, scope, i, diag) != 1 { return 0; }
+        i = i + 1;
+    }
+    if __mind_load_i64(scope + 104) != __mind_load_i64(scope + 56) { return 0; }
+    __mind_store_i64(f + 32, f + 8320);
+    __mind_store_i64(f + 40, __mind_load_i64(f + 8));
+    __mind_store_i64(f + 48, 256);
+    __mind_store_i64(f + 56, f + 10368);
+    __mind_store_i64(f + 64, __mind_load_i64(f + 16));
+    __mind_store_i64(f + 72, 512);
+    __mind_store_i64(w + 1120, f + 32);
+    __mind_store_i64(w + 1128, f + 56);
+    __mind_store_i64(scope + 112, 1);
+    __mind_store_i64(f + 24, 1);
+    1
+}
+
+pub fn nsf_complete(parts: i64, w: i64, diag: i64) -> String {
+    let f: i64 = nsf_foreign_new(w);
+    if f == 0 { nsi_error(diag, 2, 0); return string_new(); }
+    if nsf_finalize(parts, w, f, diag) != 1 {
+        nsf_foreign_free(f);
+        nsi_error(diag, 11, 1);
+        return string_new();
+    }
+    let scope: i64 = nb_fc_scope(__mind_load_i64(parts + 176));
+    if __mind_load_i64(scope + 112) != 1 { nsf_foreign_free(f); nsi_error(diag, 11, 2); return string_new(); }
+    if __mind_load_i64(scope + 104) != __mind_load_i64(scope + 56) { nsf_foreign_free(f); nsi_error(diag, 11, 2); return string_new(); }
+    let image: String = nsi_from_parts(parts, w, diag);
+    __mind_store_i64(w + 1120, 0);
+    __mind_store_i64(w + 1128, 0);
+    nsf_foreign_free(f);
+    image
+}
+
+pub fn nsf_compile(source: i64, length: i64, hash: i64, user_lo: i64, route: i64, policy: i64, diag: i64) -> String {
+    let _z: i64 = nsi_zero(diag, 32);
+    if source <= 0 { nsi_error(diag, 1, 1); return string_new(); }
+    if length < 1 { nsi_error(diag, 1, 2); return string_new(); }
+    if length > 4194304 { nsi_error(diag, 1, 2); return string_new(); }
+    if source > 9223372036854775791 - length { nsi_error(diag, 1, 1); return string_new(); }
+    if hash <= 0 { nsi_error(diag, 1, 3); return string_new(); }
+    if hash > 9223372036854775775 { nsi_error(diag, 1, 3); return string_new(); }
+    if policy <= 0 { nsi_error(diag, 1, 4); return string_new(); }
+    if policy > 9223372036854775759 { nsi_error(diag, 1, 4); return string_new(); }
+    if route < 0 { nsi_error(diag, 1, 6); return string_new(); }
+    if route > 1 { nsi_error(diag, 1, 6); return string_new(); }
+    let scope: i64 = nsf_capture(source, length, hash, user_lo, diag);
+    if scope == 0 { return string_new(); }
+    let w: i64 = __mind_alloc(1152);
+    if w == 0 { nb_fc_free(scope); __mind_free(scope); nsi_error(diag, 2, 0); return string_new(); }
+    nsi_zero(w, 1152);
+    nsi_text_init(w);
+    let mut i: i64 = 0;
+    while i < 6 { __mind_store_i64(w + i * 8, __mind_load_i64(policy + i * 8)); i = i + 1; }
+    nfn_copy_src_bytes(w + 592, hash, 32, 0);
+    nsi_request(w, 1, 0);
+    let ctx: i64 = nsf_context(w + 48, scope);
+    if ctx == 0 { nb_fc_free(scope); __mind_free(scope); __mind_free(w); nsi_error(diag, 3, 0); return string_new(); }
+    if nec_check(ctx) != 1 { nec_free(ctx); __mind_free(w); nsi_error(diag, 3, 1); return string_new(); }
+    let captured: i64 = __mind_load_i64(scope + 8);
+    let tokens: Vec = lex(captured, length);
+    let parts: i64 = __mind_alloc(192);
+    if parts == 0 { nec_free(ctx); __mind_free(w); nsi_error(diag, 4, 0); return string_new(); }
+    let status: i64 = nb_lower_parts_hb_route(tokens, captured, w + 592, user_lo, route, ctx, parts);
+    if status == 0 { __mind_free(parts); nec_free(ctx); __mind_free(w); nsi_error(diag, 4, 0); return string_new(); }
+    __mind_store_i64(parts + 176, ctx);
+    if nsi_bind_io(parts, w, diag) == 0 {
+        nb_parts_free(parts); __mind_free(parts); __mind_free(w); return string_new();
+    }
+    let image: String = nsf_complete(parts, w, diag);
+    nio_free(__mind_load_i64(w + 752));
+    nb_parts_free(parts);
+    __mind_free(parts);
+    __mind_free(w);
+    image
+}

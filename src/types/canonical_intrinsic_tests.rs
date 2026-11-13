@@ -51,7 +51,7 @@ fn frozen_native_contracts_accept_exact_value_and_discard_signatures() {
             FunctionSignature::new(i64s(arity), result),
         );
     }
-    for name in ["store_i64", "store8"] {
+    for name in ["store_i64", "store8", "store_i16"] {
         intrinsic(
             name,
             FunctionKind::Intrinsic,
@@ -108,7 +108,8 @@ fn fabricated_or_malformed_intrinsic_declarations_refuse_closed() {
 
 #[test]
 fn native_contract_profile_is_explicit_and_rust_mlir_is_refused() {
-    let identity = FunctionIdentity::new("__mind_intrinsic", "argc");
+    // A native-only row: the native profile admits it, Rust/MLIR refuses it.
+    let identity = FunctionIdentity::new("__mind_intrinsic", "cpu_relax");
     assert!(
         validate_intrinsic_profile(&identity, crate::intrinsics::IntrinsicProfile::FrozenNative)
             .is_ok()
@@ -120,6 +121,20 @@ fn native_contract_profile_is_explicit_and_rust_mlir_is_refused() {
         error,
         SchemaError::IntrinsicProfileMismatch { .. }
     ));
+
+    // argc/argv carry both profiles: the MLIR path calls the runtime pair.
+    for name in ["argc", "argv"] {
+        let identity = FunctionIdentity::new("__mind_intrinsic", name);
+        for profile in [
+            crate::intrinsics::IntrinsicProfile::FrozenNative,
+            crate::intrinsics::IntrinsicProfile::RustMlir,
+        ] {
+            assert!(
+                validate_intrinsic_profile(&identity, profile).is_ok(),
+                "{name}"
+            );
+        }
+    }
 
     let generic = FunctionIdentity::new("__mind_intrinsic", "load_i64").with_type_args(["T"]);
     let error =

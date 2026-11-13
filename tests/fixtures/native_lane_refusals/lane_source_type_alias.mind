@@ -1,0 +1,2 @@
+// lane.source.type_alias: a type alias in a function body.
+fn main() -> i64 { type T = i64; return 0; }

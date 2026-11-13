@@ -34,6 +34,21 @@
 
 use anyhow::{Result, bail};
 
+/// Calling convention tag for an `extern "C"` block (RFC 0010). The
+/// compile target resolves it; the AST re-exports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallConv {
+    /// Platform-default C ABI — resolves to `.sysv` on Linux/macOS x86_64
+    /// and `.win64` on Windows x86_64 when no explicit tag is present.
+    C,
+    /// System V AMD64 ABI.
+    SysV,
+    /// Microsoft x64 calling convention.
+    Win64,
+    /// ARM Architecture Procedure Call Standard (AArch64).
+    Aapcs,
+}
+
 /// Instruction-set architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arch {
@@ -309,6 +324,77 @@ impl Target {
             _ => None,
         }
     }
+
+    /// The convention `extern "C"` resolves to on this target. The evidence
+    /// records this byte, so it depends on the target only, never the host.
+    // deferred: aarch64 records the SysV byte and lowers through the LLVM
+    // default convention (AAPCS64), stubbed because an Aapcs byte would split
+    // the arch-neutral mic@3 of every extern program — upgrade path: record
+    // Aapcs under a versioned wire step with an aarch64 re-bless.
+    pub fn c_callconv(&self) -> crate::ast::CallConv {
+        match self.os {
+            Os::Windows => crate::ast::CallConv::Win64,
+            _ => crate::ast::CallConv::SysV,
+        }
+    }
+
+    /// The convention a declaration with `cc` is lowered with on this target:
+    /// the ABI two declarations of one symbol must agree on. It is never
+    /// recorded. It differs from the recorded byte only for the aarch64 stub
+    /// above: `extern "C"` records SysV there and lowers as AAPCS64, the ABI of
+    /// `callconv(.aapcs)`.
+    pub fn lowered_callconv(&self, cc: crate::ast::CallConv) -> crate::ast::CallConv {
+        use crate::ast::CallConv;
+        match (cc, self.arch, self.c_callconv()) {
+            (CallConv::C, Arch::Aarch64, CallConv::SysV) => CallConv::Aapcs,
+            (CallConv::C, _, recorded) => recorded,
+            (declared, _, _) => declared,
+        }
+    }
+
+    /// True when this target has a lowering row for a DECLARED convention.
+    /// A missing row is refused (E2039), never lowered with another row.
+    pub fn realizes_callconv(&self, cc: crate::ast::CallConv, varargs: bool) -> bool {
+        use crate::ast::CallConv;
+        match (self.arch, cc) {
+            (_, CallConv::C) => true,
+            // SysV emits no cconv attribute: on Windows that is Win64.
+            (Arch::X86_64, CallConv::SysV) => self.os != Os::Windows,
+            (Arch::X86_64, CallConv::Win64) => !varargs,
+            (Arch::Aarch64, CallConv::Aapcs) => true,
+            _ => false,
+        }
+    }
+}
+
+thread_local! {
+    static COMPILE_TARGET: std::cell::Cell<Option<Target>> = const { std::cell::Cell::new(None) };
+}
+
+/// The target the current compilation lowers for: the installed
+/// [`CompileTargetGuard`] target, else the host (cross builds are refused).
+pub fn compile_target() -> Target {
+    COMPILE_TARGET
+        .with(|t| t.get())
+        .unwrap_or_else(Target::host)
+}
+
+/// Scopes the compile target of this thread; the previous one comes back on drop.
+pub struct CompileTargetGuard {
+    prev: Option<Target>,
+}
+
+impl CompileTargetGuard {
+    pub fn install(target: Target) -> Self {
+        let prev = COMPILE_TARGET.with(|t| t.replace(Some(target)));
+        CompileTargetGuard { prev }
+    }
+}
+
+impl Drop for CompileTargetGuard {
+    fn drop(&mut self) {
+        COMPILE_TARGET.with(|t| t.set(self.prev));
+    }
 }
 
 /// The `-march` string for a build target — a verbatim, byte-identical extraction
@@ -470,6 +556,24 @@ mod tests {
             Some(Target::host().march()),
             "march_for(None) must equal the host arch march"
         );
+    }
+
+    #[test]
+    fn extern_c_lowers_with_the_native_c_convention_of_the_target() {
+        use crate::ast::CallConv::{Aapcs, C, SysV, Win64};
+        for (triple, native) in [
+            ("x86_64-unknown-linux-gnu", SysV),
+            ("x86_64-apple-darwin", SysV),
+            ("x86_64-w64-windows-gnu", Win64),
+            ("aarch64-unknown-linux-gnu", Aapcs),
+            ("aarch64-apple-darwin", Aapcs),
+        ] {
+            let target = Target::from_triple(triple).unwrap();
+            assert_eq!(target.lowered_callconv(C), native, "{triple}");
+            for declared in [SysV, Win64, Aapcs] {
+                assert_eq!(target.lowered_callconv(declared), declared, "{triple}");
+            }
+        }
     }
 
     #[test]

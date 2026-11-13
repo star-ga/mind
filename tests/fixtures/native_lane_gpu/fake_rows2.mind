@@ -1,0 +1,189 @@
+// The MC-6 driver rows (the cuda.h 12.6 macro targets, legacy default stream)
+// run against the test-only fake libcuda.so.1 (fake_driver.c): every row once,
+// every out-param shape read back, the CUDA_MEMCPY2D layout the loader builds,
+// the 0..255 byte argument of cuMemsetD8_v2 (a literal and a masked value) and
+// the 10-argument cuLaunchCooperativeKernel whose four stack arguments all
+// contribute (1241). Each failing step exits its own number (101..); all
+// steps pass exits 42, identically on the native and the MLIR backend.
+extern "C" {
+    fn cuStreamBeginCapture_v2(s: *mut u8, mode: i32) -> i32;
+    fn cuGraphInstantiateWithFlags(exec: *mut *mut u8, g: *mut u8, flags: i64) -> i32;
+    fn cuMemcpyHtoDAsync_v2(dst: i64, src: *const u8, n: i64, s: *mut u8) -> i32;
+    fn cuMemcpyDtoHAsync_v2(dst: *mut u8, src: i64, n: i64, s: *mut u8) -> i32;
+    fn cuEventDestroy_v2(e: *mut u8) -> i32;
+    fn cuStreamDestroy_v2(s: *mut u8) -> i32;
+    fn cuMemHostRegister_v2(p: *mut u8, n: i64, flags: u32) -> i32;
+    fn cuMemAllocHost_v2(pp: *mut *mut u8, n: i64) -> i32;
+    fn cuGraphAddKernelNode_v2(node: *mut *mut u8, g: *mut u8, deps: *const *const u8, ndeps: i64, params: *const u8) -> i32;
+    fn cuGraphExecUpdate_v2(exec: *mut u8, g: *mut u8, info: *mut u8) -> i32;
+    fn cuMemsetD8_v2(d: i64, uc: u32, n: i64) -> i32;
+    fn cuStreamGetCaptureInfo_v2(s: *mut u8, status: *mut i32, id: *mut i64, graph: *mut *mut u8, deps: *mut *mut u8, ndeps: *mut i64) -> i32;
+    fn cuDeviceGetAttribute(pi: *mut i32, attrib: i32, dev: i32) -> i32;
+    fn cuStreamCreate(ps: *mut *mut u8, flags: u32) -> i32;
+    fn cuStreamSynchronize(s: *mut u8) -> i32;
+    fn cuStreamQuery(s: *mut u8) -> i32;
+    fn cuMemFreeHost(p: *mut u8) -> i32;
+    fn cuEventCreate(pe: *mut *mut u8, flags: u32) -> i32;
+    fn cuEventRecord(e: *mut u8, s: *mut u8) -> i32;
+    fn cuEventSynchronize(e: *mut u8) -> i32;
+    fn cuEventQuery(e: *mut u8) -> i32;
+    fn cuEventElapsedTime(ms: *mut i32, start: *mut u8, end: *mut u8) -> i32;
+    fn cuFuncGetAttribute(pi: *mut i32, attrib: i32, f: *mut u8) -> i32;
+    fn cuOccupancyMaxActiveBlocksPerMultiprocessor(nb: *mut i32, f: *mut u8, bs: i32, smem: i64) -> i32;
+    fn cuLaunchCooperativeKernel(f: *mut u8, gx: u32, gy: u32, gz: u32, bx: u32, by: u32, bz: u32, shared: u32, stream: *mut u8, kparams: *mut *mut u8) -> i32;
+    fn cuGraphDestroy(g: *mut u8) -> i32;
+    fn cuGraphExecDestroy(e: *mut u8) -> i32;
+    fn cuGraphLaunch(e: *mut u8, s: *mut u8) -> i32;
+    fn cuMemcpy2D_v2(copy: *const u8) -> i32;
+    fn cuMemcpy2DAsync_v2(copy: *const u8, s: *mut u8) -> i32;
+    fn cuMemHostAlloc(pp: *mut *mut u8, n: i64, flags: u32) -> i32;
+    fn cuMemHostGetDevicePointer_v2(pd: *mut i64, p: *mut u8, flags: u32) -> i32;
+    fn cuStreamEndCapture(s: *mut u8, pg: *mut *mut u8) -> i32;
+}
+
+fn cell(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, v);
+    return p;
+}
+
+fn streams(s: i64) -> i64 {
+    let ps: i64 = cell(0);
+    if cuStreamCreate(ps as *mut *mut u8, 1 as u32) as i64 != 5 { return 101; }
+    if __mind_load_i64(ps) != 153 { return 102; }
+    if cuStreamBeginCapture_v2(s as *mut u8, 1 as i32) as i64 != 19 { return 103; }
+    let st: i64 = cell(0);
+    let id: i64 = cell(0);
+    let gr: i64 = cell(0);
+    let dp: i64 = cell(0);
+    let nd: i64 = cell(0);
+    if cuStreamGetCaptureInfo_v2(s as *mut u8, st as *mut i32, id as *mut i64, gr as *mut *mut u8, dp as *mut *mut u8, nd as *mut i64) as i64 != 12 { return 104; }
+    if __mind_load_i32(st) != 1 { return 105; }
+    if __mind_load_i64(id) != 77 { return 106; }
+    if __mind_load_i64(gr) != 119 { return 107; }
+    if __mind_load_i64(dp) != 136 { return 108; }
+    if __mind_load_i64(nd) != 2 { return 109; }
+    let pg: i64 = cell(0);
+    if cuStreamEndCapture(s as *mut u8, pg as *mut *mut u8) as i64 != 10 { return 110; }
+    if __mind_load_i64(pg) != 204 { return 111; }
+    if cuStreamQuery(s as *mut u8) as i64 != 15 { return 112; }
+    return 0;
+}
+
+fn graphs(s: i64, g: i64, ex: i64) -> i64 {
+    let pe: i64 = cell(0);
+    if cuGraphInstantiateWithFlags(pe as *mut *mut u8, g as *mut u8, 2) as i64 != 11 { return 121; }
+    if __mind_load_i64(pe) != 68 { return 122; }
+    let node: i64 = cell(0);
+    let deps: i64 = cell(cell(7));
+    let params: i64 = cell(2);
+    if cuGraphAddKernelNode_v2(node as *mut *mut u8, g as *mut u8, deps as *const *const u8, 1, params as *const u8) as i64 != 18 { return 123; }
+    if __mind_load_i64(node) != 102 { return 124; }
+    let info: i64 = cell(0);
+    if cuGraphExecUpdate_v2(ex as *mut u8, g as *mut u8, info as *mut u8) as i64 != 17 { return 125; }
+    if __mind_load_i64(info) != 23 { return 126; }
+    if cuGraphLaunch(ex as *mut u8, s as *mut u8) as i64 != 27 { return 127; }
+    if cuGraphExecDestroy(ex as *mut u8) as i64 != 26 { return 128; }
+    if cuGraphDestroy(g as *mut u8) as i64 != 15 { return 129; }
+    return 0;
+}
+
+fn memory(s: i64) -> i64 {
+    let src: i64 = cell(3);
+    if cuMemcpyHtoDAsync_v2(4660, src as *const u8, 8, s as *mut u8) as i64 != 33 { return 131; }
+    let dst: i64 = cell(0);
+    if cuMemcpyDtoHAsync_v2(dst as *mut u8, 4660, 8, s as *mut u8) as i64 != 42 { return 132; }
+    if __mind_load_i64(dst) != 13 { return 133; }
+    let hp: i64 = cell(0);
+    if cuMemHostRegister_v2(hp as *mut u8, 40, 3 as u32) as i64 != 16 { return 134; }
+    if __mind_load_i64(hp) != 17 { return 135; }
+    let pp: i64 = cell(0);
+    if cuMemAllocHost_v2(pp as *mut *mut u8, 64) as i64 != 8 { return 136; }
+    if __mind_load_i64(pp) != 85 { return 137; }
+    let pp2: i64 = cell(0);
+    if cuMemHostAlloc(pp2 as *mut *mut u8, 64, 2 as u32) as i64 != 6 { return 138; }
+    if __mind_load_i64(pp2) != 187 { return 139; }
+    let pd: i64 = cell(0);
+    if cuMemHostGetDevicePointer_v2(pd as *mut i64, cell(33) as *mut u8, 0 as u32) as i64 != 3 { return 140; }
+    if __mind_load_i64(pd) != 8192 { return 141; }
+    if cuMemFreeHost(cell(30) as *mut u8) as i64 != 31 { return 142; }
+    let v: i64 = 511;
+    if cuMemsetD8_v2(4660, 200 as u32, 12) as i64 != 203 { return 143; }
+    if cuMemsetD8_v2(4660, (v & 255) as u32, 12) as i64 != 258 { return 144; }
+    return 0;
+}
+
+// CUDA_MEMCPY2D (128 B): 16 srcMemoryType, 32 srcDevice, 48 srcPitch,
+// 72 dstMemoryType, 80 dstHost, 112 WidthInBytes, 120 Height.
+fn copies(s: i64) -> i64 {
+    let c: i64 = __mind_alloc(128);
+    let mut k: i64 = 0;
+    while k < 16 {
+        __mind_store_i64(c + k * 8, 0);
+        k = k + 1;
+    }
+    let dsth: i64 = cell(0);
+    __mind_store_i64(c + 16, 2);
+    __mind_store_i64(c + 32, 4660);
+    __mind_store_i64(c + 48, 100);
+    __mind_store_i64(c + 72, 1);
+    __mind_store_i64(c + 80, dsth);
+    __mind_store_i64(c + 112, 4);
+    __mind_store_i64(c + 120, 3);
+    if cuMemcpy2D_v2(c as *const u8) as i64 != 30 { return 151; }
+    if __mind_load_i64(dsth) != 31 { return 152; }
+    if cuMemcpy2DAsync_v2(c as *const u8, s as *mut u8) as i64 != 120 { return 153; }
+    return 0;
+}
+
+fn events(s: i64) -> i64 {
+    let pev: i64 = cell(0);
+    if cuEventCreate(pev as *mut *mut u8, 2 as u32) as i64 != 4 { return 161; }
+    if __mind_load_i64(pev) != 170 { return 162; }
+    let ea: i64 = cell(21);
+    let eb: i64 = cell(25);
+    if cuEventRecord(ea as *mut u8, s as *mut u8) as i64 != 111 { return 163; }
+    if cuEventSynchronize(ea as *mut u8) as i64 != 1 { return 164; }
+    if cuEventQuery(ea as *mut u8) as i64 != 6 { return 165; }
+    let ms: i64 = cell(0);
+    if cuEventElapsedTime(ms as *mut i32, ea as *mut u8, eb as *mut u8) as i64 != 4 { return 166; }
+    if __mind_load_i32(ms) != 1069547520 { return 167; }
+    if cuEventDestroy_v2(ea as *mut u8) as i64 != 22 { return 168; }
+    if cuStreamSynchronize(s as *mut u8) as i64 != 1 { return 169; }
+    if cuStreamDestroy_v2(s as *mut u8) as i64 != 11 { return 170; }
+    return 0;
+}
+
+fn kernels(s: i64) -> i64 {
+    let pi: i64 = cell(0);
+    if cuDeviceGetAttribute(pi as *mut i32, 75 as i32, 2 as i32) as i64 != 3 { return 171; }
+    if __mind_load_i32(pi) != 752 { return 172; }
+    let fw: i64 = cell(51);
+    let pi2: i64 = cell(0);
+    if cuFuncGetAttribute(pi2 as *mut i32, 4 as i32, fw as *mut u8) as i64 != 55 { return 173; }
+    if __mind_load_i32(pi2) != 1024 { return 174; }
+    let nb: i64 = cell(0);
+    if cuOccupancyMaxActiveBlocksPerMultiprocessor(nb as *mut i32, fw as *mut u8, 256 as i32, 100) as i64 != 52 { return 175; }
+    if __mind_load_i32(nb) != 8 { return 176; }
+    let kp: i64 = cell(cell(3));
+    let r: i64 = cuLaunchCooperativeKernel(fw as *mut u8, 1 as u32, 2 as u32, 3 as u32, 4 as u32, 5 as u32, 6 as u32, 7 as u32, s as *mut u8, kp as *mut *mut u8) as i64;
+    if r != 1241 { return 177; }
+    return 0;
+}
+
+fn main() -> i64 {
+    let s: i64 = cell(9);
+    let a: i64 = streams(s);
+    if a != 0 { return a; }
+    let b: i64 = graphs(s, cell(5), cell(6));
+    if b != 0 { return b; }
+    let c: i64 = memory(s);
+    if c != 0 { return c; }
+    let d: i64 = copies(s);
+    if d != 0 { return d; }
+    let e: i64 = events(s);
+    if e != 0 { return e; }
+    let k: i64 = kernels(s);
+    if k != 0 { return k; }
+    return 42;
+}

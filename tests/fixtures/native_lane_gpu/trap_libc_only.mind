@@ -1,0 +1,11 @@
+// The libc-only control of trap_after_init.mind: no driver row is declared,
+// so the runtime bounds trap and the entry return keep exit (60) and every
+// byte they had. The index is 3 at run time, so the trap exits 77.
+extern "C" {
+    fn getuid() -> i32;
+}
+fn main() -> i64 {
+    let a = [10, 20, 30];
+    let i: i64 = (getuid() as i64) * 0 + 3;
+    return a[i];
+}

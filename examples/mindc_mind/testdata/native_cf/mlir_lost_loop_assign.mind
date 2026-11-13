@@ -1,0 +1,31 @@
+// Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+// variable made by a value-if nested in another value-if's tail is not carried
+// out of the iteration on MLIR. MIND carries it (native == interpreter):
+//   it1: c=1, y=2:  c != y -> y = 17, v = 4
+//   it2: c=2, y=17: c != y -> v = 8
+//   it3: c=3, y=17: c != y -> v = 12          return v + y = 29
+// MLIR forgets y = 17 each time (it2 takes the c == y arm, +20) and returns
+// 28 + 2 = 30.
+// expect: exit=29
+// stdout:
+// note: 2
+// mlir: exit=30
+fn main() -> i64 {
+    let mut y: i64 = 2;
+    let mut v: i64 = 0;
+    let mut c: i64 = 0;
+    while c < 3 {
+        c = c + 1;
+        v = v + (if y > 0 {
+            (if c != y {
+                y = 17;
+                4
+            } else {
+                20
+            })
+        } else {
+            0
+        });
+    }
+    v + y
+}

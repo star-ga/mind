@@ -1,0 +1,11 @@
+import std.io_canon;
+
+fn main() -> i64 {
+    let h: i64 = canon_new(4);
+    canon_push(h, 2, 7, 1, 0);
+    canon_push(h, 1, 3, 2, 5);
+    let out: i64 = __mind_alloc(32);
+    let n: i64 = canon_anchor(h, out);
+    __mind_write(1, out, 32, 0 - 1);
+    return n;
+}

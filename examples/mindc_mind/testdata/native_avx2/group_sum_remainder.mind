@@ -1,0 +1,137 @@
+// Remainder paths: group 3 with pixels = 5 (one four-pixel step + one scalar
+// pixel) and group 4 with pixels = 1 (scalar only), into banks pre-filled with
+// -1 so an untouched cell is visible. Stdout = the 832-byte group-3 bank then
+// the 1280-byte group-4 bank; exit = 0.
+
+fn gs_a(p: i64) -> i64 {
+    if p == 0 {
+        return 1;
+    }
+    if p == 1 {
+        return 2;
+    }
+    if p == 2 {
+        return 3;
+    }
+    if p == 3 {
+        return 4;
+    }
+    if p == 4 {
+        return 100;
+    }
+    if p == 5 {
+        return 549755813888;
+    }
+    return 0;
+}
+
+fn gs_b(p: i64) -> i64 {
+    if p == 0 {
+        return 5;
+    }
+    if p == 1 {
+        return 0;
+    }
+    if p == 2 {
+        return 9;
+    }
+    if p == 3 {
+        return 1;
+    }
+    if p == 4 {
+        return 1;
+    }
+    if p == 5 {
+        return 2;
+    }
+    return 0;
+}
+
+fn gs_c(p: i64) -> i64 {
+    if p == 0 {
+        return 8;
+    }
+    if p == 1 {
+        return 7;
+    }
+    if p == 2 {
+        return 6;
+    }
+    if p == 3 {
+        return 0;
+    }
+    if p == 4 {
+        return 3;
+    }
+    if p == 5 {
+        return 4;
+    }
+    return 0;
+}
+
+fn gs_x(p: i64) -> i64 {
+    if p == 0 {
+        return 2;
+    }
+    if p == 1 {
+        return 4;
+    }
+    if p == 2 {
+        return 6;
+    }
+    if p == 3 {
+        return 8;
+    }
+    return 0;
+}
+
+// which 0 a, 1 b, 2 c, 3 x: n pixels of that corpus plane.
+fn gs_plane(n: i64, which: i64) -> i64 {
+    let dst: i64 = __mind_alloc(n * 8 + 8);
+    let mut p: i64 = 0;
+    while p < n {
+        let mut v: i64 = gs_x(p);
+        if which == 0 {
+            v = gs_a(p);
+        }
+        if which == 1 {
+            v = gs_b(p);
+        }
+        if which == 2 {
+            v = gs_c(p);
+        }
+        __mind_store_i64(dst + p * 8, v);
+        p = p + 1;
+    }
+    dst
+}
+
+fn gs_ptrs(n: i64) -> i64 {
+    let ptrs: i64 = __mind_alloc(32);
+    __mind_store_i64(ptrs, gs_plane(n, 0));
+    __mind_store_i64(ptrs + 8, gs_plane(n, 1));
+    __mind_store_i64(ptrs + 16, gs_plane(n, 2));
+    __mind_store_i64(ptrs + 24, gs_plane(n, 3));
+    ptrs
+}
+
+fn gs_fill(dst: i64, words: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(dst + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let b3: i64 = __mind_alloc(832);
+    let b4: i64 = __mind_alloc(1280);
+    gs_fill(b3, 104, 0 - 1);
+    gs_fill(b4, 160, 0 - 1);
+    let r3: i64 = __mind_group_bank_i64(gs_ptrs(8), b3, 64, 5, 3);
+    let r4: i64 = __mind_group_bank_i64(gs_ptrs(4), b4, 32, 1, 4);
+    __mind_write(1, b3, 832, 0 - 1);
+    __mind_write(1, b4, 1280, 0 - 1);
+    r3 + r4
+}

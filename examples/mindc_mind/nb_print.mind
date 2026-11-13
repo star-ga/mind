@@ -1,0 +1,142 @@
+// Copyright 2026 STARGA Inc.
+// Native `print(a, b, ..)`: the builtin print statement on the native backend.
+// A part: it calls intrinsics and other parts only, never a main.mind fn.
+//
+// The bytes and the write calls are those of the MLIR route's runtime
+// (runtime-support/mind_intrinsics.c, lowered by src/eval/lower.rs Node::Print):
+// - a string-literal argument writes its bytes, no newline (print_bytes ->
+//   __mind_write: no write when the length is 0);
+// - an integer or bool argument writes its signed decimal in one write(2)
+//   (printI64), then "\n" in a second write(2) (printNewline).
+// Every write is a raw unbuffered write(1, ..). The result is ignored, as in
+// the runtime: a closed stdout drops the bytes and the program goes on.
+// The arguments are evaluated before the first write (nb_call_args); the lane
+// admission (src/ir/native_lane_profile/admit.rs, print_args) admits a later
+// argument only when its evaluation has no effect, so the order is unobservable.
+
+import std.string;
+import nb_emit_core;
+import nb_ast;
+
+// Capability mark: NATIVE PRINT V1. Compiled natively this body is
+// `movabs rax, imm64` whose little-endian immediate spells "nbprint1"; the Rust
+// bridge (src/build/native_bridge/seed.rs, NATIVE_PRINT_V1_MARK) admits `print`
+// only for a compiler ELF that carries those bytes. A compatibility mark, not a
+// signature or a pin. Earlier seeds do not carry it.
+pub fn nb_cap_native_print_v1() -> i64 {
+    3563594604327494254
+}
+
+pub fn nbp_b4(code: String, a: i64, b: i64, c: i64, d: i64) -> String {
+    let c1: String = nb_push(code, a);
+    let c2: String = nb_push(c1, b);
+    let c3: String = nb_push(c2, c);
+    nb_push(c3, d)
+}
+
+// write(1, rsi, rdx): mov edi,1 = BF 01 00 00 00 ; mov eax,1 = B8 01 00 00 00 ;
+// syscall = 0F 05. The kernel result in rax is not read.
+pub fn nbp_write1(code: String) -> String {
+    let c1: String = nbp_b4(code, 191, 1, 0, 0);
+    let c2: String = nbp_b4(c1, 0, 184, 1, 0);
+    nbp_b4(c2, 0, 0, 15, 5)
+}
+
+// rax = i64 value -> its signed decimal (printI64). A 32-byte stack buffer is
+// filled from its end. The magnitude divides UNSIGNED, so the negation of
+// i64::MIN (itself) reads as 2^63. Uses rdi rsi rdx r8 r9 (caller-saved; the
+// call node already ends their live ranges) and keeps rbx r12 rbp.
+//   sub rsp,32           48 83 EC 20      lea rsi,[rsp+32]  48 8D 74 24 20
+//   mov r8,rax           49 89 C0         test rax,rax      48 85 C0
+//   jns +3               79 03            neg rax           48 F7 D8
+//   mov r9d,10           41 B9 0A 00 00 00
+// L: xor edx,edx         31 D2            div r9            49 F7 F1
+//   add dl,'0'           80 C2 30         dec rsi           48 FF CE
+//   mov [rsi],dl         88 16            test rax,rax      48 85 C0
+//   jnz L                75 EE
+//   test r8,r8           4D 85 C0         jns +6            79 06
+//   dec rsi              48 FF CE         mov byte [rsi],'-' C6 06 2D
+//   lea rdx,[rsp+32]     48 8D 54 24 20   sub rdx,rsi       48 29 F2   nop 90
+//   write(1, rsi, rdx)                    add rsp,32        48 83 C4 20
+pub fn nbp_dec(code: String) -> String {
+    let c1: String = nbp_b4(code, 72, 131, 236, 32);
+    let c2: String = nbp_b4(c1, 72, 141, 116, 36);
+    let c3: String = nbp_b4(c2, 32, 73, 137, 192);
+    let c4: String = nbp_b4(c3, 72, 133, 192, 121);
+    let c5: String = nbp_b4(c4, 3, 72, 247, 216);
+    let c6: String = nbp_b4(c5, 65, 185, 10, 0);
+    let c7: String = nbp_b4(c6, 0, 0, 49, 210);
+    let c8: String = nbp_b4(c7, 73, 247, 241, 128);
+    let c9: String = nbp_b4(c8, 194, 48, 72, 255);
+    let c10: String = nbp_b4(c9, 206, 136, 22, 72);
+    let c11: String = nbp_b4(c10, 133, 192, 117, 238);
+    let c12: String = nbp_b4(c11, 77, 133, 192, 121);
+    let c13: String = nbp_b4(c12, 6, 72, 255, 206);
+    let c14: String = nbp_b4(c13, 198, 6, 45, 72);
+    let c15: String = nbp_b4(c14, 141, 84, 36, 32);
+    let c16: String = nbp_b4(c15, 72, 41, 242, 144);
+    let c17: String = nbp_write1(c16);
+    nbp_b4(c17, 72, 131, 196, 32)
+}
+
+// "\n" in its own write (printNewline):
+//   sub rsp,8 48 83 EC 08 ; mov byte [rsp],10 C6 04 24 0A ; mov rsi,rsp 48 89 E6 ;
+//   mov edx,1 BA 01 00 00 00 ; write(1, rsi, rdx) ; add rsp,8 48 83 C4 08.
+pub fn nbp_newline(code: String) -> String {
+    let c1: String = nbp_b4(code, 72, 131, 236, 8);
+    let c2: String = nbp_b4(c1, 198, 4, 36, 10);
+    let c3: String = nbp_b4(c2, 72, 137, 230, 186);
+    let c4: String = nbp_b4(c3, 1, 0, 0, 0);
+    let c5: String = nbp_write1(c4);
+    nbp_b4(c5, 72, 131, 196, 8)
+}
+
+// rax = String handle {addr, len, cap} -> its bytes (print_bytes):
+//   mov rsi,[rax] 48 8B 30 ; mov rdx,[rax+8] 48 8B 50 08 ; test rdx,rdx 48 85 D2 ;
+//   jle +12 7E 0C (no write for an empty string, as __mind_write) ; write(1, rsi, rdx).
+pub fn nbp_str(code: String) -> String {
+    let c1: String = nbp_b4(code, 72, 139, 48, 72);
+    let c2: String = nbp_b4(c1, 139, 80, 8, 72);
+    let c3: String = nbp_b4(c2, 133, 210, 126, 12);
+    nbp_write1(c3)
+}
+
+// 1 when every argument is a string literal or an integer-class value
+// (nb_dtype_int == 0: i64 and bool). A float or other class refuses.
+pub fn nbp_args_ok(args_addr: i64, args_len: i64, arg_dts: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 1;
+    }
+    if ast_kind(__mind_load_i64(args_addr + i * 8)) != ast_str_lit() {
+        if __mind_load_i64(arg_dts + i * 8) != 0 {
+            return 0;
+        }
+    }
+    nbp_args_ok(args_addr, args_len, arg_dts, i + 1)
+}
+
+pub fn nbp_args(code: String, args_addr: i64, args_len: i64, ids: i64, plan: i64, i: i64) -> String {
+    if i >= args_len {
+        return code;
+    }
+    let c1: String = nb_val_load_rax(plan, __mind_load_i64(ids + i * 8), code);
+    if ast_kind(__mind_load_i64(args_addr + i * 8)) == ast_str_lit() {
+        return nbp_args(nbp_str(c1), args_addr, args_len, ids, plan, i + 1);
+    }
+    let c2: String = nbp_dec(c1);
+    nbp_args(nbp_newline(c2), args_addr, args_len, ids, plan, i + 1)
+}
+
+// The print call node (main.mind nb_expr, call arm). The arguments are already
+// in their homes `ids`; the statement's own result `id` holds 0, as the MLIR
+// route's unit placeholder. An argument class it cannot print poisons the
+// function (lcell+80): the module is refused, never written wrong.
+pub fn nbp_print(code: String, args_addr: i64, args_len: i64, ids: i64, arg_dts: i64, id: i64, lcell: i64) -> String {
+    if nbp_args_ok(args_addr, args_len, arg_dts, 0) == 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nbp_args(code, args_addr, args_len, ids, plan, 0);
+    nb_val_store_rax(plan, id, nb_emit_free_xor(c1))
+}

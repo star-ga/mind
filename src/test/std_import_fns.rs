@@ -105,12 +105,24 @@ pub(super) fn resolve_std_import_fns(
         .into_iter()
         .map(|name| load_module(name, link.links_module(name) || explicit.contains(name)))
         .collect::<Result<Vec<_>, String>>()?;
+    Ok(bind_modules(&modules, |m, f| link.links(m, f), module))
+}
 
+/// The items for the loaded `modules`: each module's fns and consts under
+/// module-owned names, its cross-module forwarders, the consts under their
+/// bare names, and one forwarder per bare fn name exactly one module defines
+/// (`links(module, fn)`, or a `whole` module) that `file` does not bind
+/// through its own `extern "C"` block.
+fn bind_modules(
+    modules: &[StdModule],
+    links: impl Fn(&str, &str) -> bool,
+    file: &crate::ast::Module,
+) -> Vec<Node> {
     // Per bare name, the modules whose linked definition answers it.
     let mut definers: BTreeMap<&str, Vec<&StdModule>> = BTreeMap::new();
-    for m in &modules {
+    for m in modules {
         for name in m.fns.keys() {
-            if m.whole || link.links(m.name, name) {
+            if m.whole || links(m.name, name) {
                 definers.entry(name.as_str()).or_default().push(m);
             }
         }
@@ -121,7 +133,7 @@ pub(super) fn resolve_std_import_fns(
     };
 
     let mut out: Vec<Node> = Vec::new();
-    for m in &modules {
+    for m in modules {
         for (name, fd) in &m.fns {
             let mut owned = fd.clone();
             owned.name = eval_owned_symbol(m.name, name);
@@ -153,8 +165,8 @@ pub(super) fn resolve_std_import_fns(
             }
         }
     }
-    let extern_names = file_extern_names(module);
-    for m in &modules {
+    let extern_names = file_extern_names(file);
+    for m in modules {
         out.extend(m.consts.iter().cloned());
     }
     for name in definers.keys() {
@@ -167,13 +179,18 @@ pub(super) fn resolve_std_import_fns(
             ));
         }
     }
-    Ok(out)
+    out
 }
 
 /// Parse bundled module `name` into its fns, consts and call targets.
 fn load_module(name: &'static str, whole: bool) -> Result<StdModule, String> {
     let src = crate::project::stdlib::std_source(name)
         .ok_or_else(|| format!("bundled std module '{name}' has no source"))?;
+    parse_module(name, src, whole)
+}
+
+/// Parse `src` as std module `name` into its fns, consts and call targets.
+fn parse_module(name: &'static str, src: &str, whole: bool) -> Result<StdModule, String> {
     let parsed = parser::parse(src).map_err(|errs| {
         format!(
             "failed to parse bundled std module '{name}': {}",
@@ -293,7 +310,7 @@ fn explicit_import_admits_the_modules_it_imports() {
         })
         .collect();
     assert!(
-        names.contains("sha256") && names.contains("rotr32"),
+        names.contains("sha256") && names.contains("sha_rotr32"),
         "std.sha256 and its helpers must be admitted through import std.x509, got {names:?}"
     );
     assert!(
@@ -371,7 +388,7 @@ fn ambient_admission_ignores_import_order_and_depth() {
     let deep_last = resolve_program("import std.toml;\nimport std.tls13_handshake;\n");
     let (a, b) = (bare_fn_names(&deep_first), bare_fn_names(&deep_last));
     assert_eq!(a, b, "admission must not depend on import order");
-    assert!(a.contains("vec_len") && a.contains("map_insert") && a.contains("ch"));
+    assert!(a.contains("vec_len") && a.contains("map_insert") && a.contains("sha_ch"));
     for unlinkable in ["vec_free", "vec_zeroed", "map_str_key_eq"] {
         assert!(!a.contains(unlinkable), "{unlinkable} is not linkable");
     }
@@ -413,39 +430,63 @@ fn std_calls_bind_to_the_definitions_the_link_supplies() {
     let own_ch = top_level::refs(&parser::parse(src).expect("sha256 parses").items)
         .into_iter()
         .find_map(|item| match item {
-            Node::FnDef(fd, _) if fd.name == "ch" => Some(fd.body.clone()),
+            Node::FnDef(fd, _) if fd.name == "sha_ch" => Some(fd.body.clone()),
             _ => None,
         })
-        .expect("std.sha256 defines ch");
-    let owned_ch =
-        def(eval_owned_symbol("std.sha256", "ch").as_str()).expect("sha256 keeps its own ch");
+        .expect("std.sha256 defines sha_ch");
+    let owned_ch = def(eval_owned_symbol("std.sha256", "sha_ch").as_str())
+        .expect("sha256 keeps its own sha_ch");
     assert_eq!(
         owned_ch.body, own_ch,
-        "std.sha256's ch is its own definition"
+        "std.sha256's sha_ch is its own definition"
     );
 }
 
-/// std.json_canon and std.toml each define a private `dump_value` with a
-/// different signature. The bare name is not admitted (a call to it is a
-/// call the link cannot bind to one definition), and each module's own calls
-/// keep reaching its own `dump_value`.
+/// Two linked modules each define a private `dump_value` with a different
+/// signature (bundled std no longer holds such a pair: its private helpers
+/// carry a module prefix, so the pair is spelled here). The bare name is not
+/// admitted (a call to it is a call the link cannot bind to one definition),
+/// and each module's own calls keep reaching its own `dump_value`.
 #[cfg(test)]
 #[test]
 fn a_name_two_linked_modules_define_is_not_admitted_bare() {
-    let items = resolve_program("import std.json_canon;\nimport std.toml;\n");
+    const LEFT: &str = "fn dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {\n    \
+                        return sb + h + pretty + depth;\n}\n\
+                        pub fn left_dump(h: i64) -> i64 {\n    return dump_value(0, h, 0, 0);\n}\n";
+    const RIGHT: &str = "fn dump_value(sb: i64, tv: i64) -> i64 {\n    return sb - tv;\n}\n\
+                         pub fn right_dump(tv: i64) -> i64 {\n    return dump_value(1, tv);\n}\n";
+    let file = parser::parse("fn t() -> i64 {\n    return 0;\n}\n").expect("parse");
+    let left = parse_module("test.left", LEFT, true).expect("left parses");
+    let right = parse_module("test.right", RIGHT, true).expect("right parses");
+    let bind = |modules: &[StdModule]| bind_modules(modules, |_, _| true, &file);
+
+    // Positive control: with one definer the bare name is admitted.
+    let alone = bind(std::slice::from_ref(&left));
+    assert!(bare_fn_names(&alone).contains("dump_value"));
+
+    let items = bind(&[left, right]);
     let bare = bare_fn_names(&items);
     assert!(
         !bare.contains("dump_value"),
         "an ambiguous bare name must be refused"
     );
-    assert!(bare.contains("jv_dump_canonical") && bare.contains("toml_max_depth"));
-    for owner in ["std.json_canon", "std.toml"] {
+    assert!(bare.contains("left_dump") && bare.contains("right_dump"));
+    for (owner, params) in [("test.left", 4), ("test.right", 2)] {
         let own = eval_owned_symbol(owner, "dump_value");
         assert!(
-            items
-                .iter()
-                .any(|item| matches!(item, Node::FnDef(fd, _) if fd.name == own)),
+            items.iter().any(
+                |item| matches!(item, Node::FnDef(fd, _) if fd.name == own && fd.params.len() == params)
+            ),
             "{owner} keeps its own dump_value"
         );
+    }
+    // Each module's own call needs no forwarder: it binds inside its owner.
+    for owner in ["test.left", "test.right"] {
+        let via = eval_owned_symbol(owner, "dump_value");
+        let forwarders = items
+            .iter()
+            .filter(|item| matches!(item, Node::FnDef(fd, _) if fd.name == via))
+            .count();
+        assert_eq!(forwarders, 1, "{owner}: one dump_value, its own definition");
     }
 }

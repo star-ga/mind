@@ -76,16 +76,35 @@ pub fn head(count: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Both modules as one translation unit, read from the working tree. The
-/// results module's `import std.mic_record;` and its `mic_record.` call
-/// qualifiers are dropped, since the codec is defined in the same unit.
+/// The files of the `std.mic_record` codec, leaf module first. Each one's
+/// `import std.mic_record_*;` lines name a module of this same list.
+const CODEC_FILES: [&str; 3] = [
+    "mic_record_wire.mind",
+    "mic_record_table.mind",
+    "mic_record.mind",
+];
+
+/// The codec and the results module as one translation unit, read from the
+/// working tree. The codec's imports of its own parts, the results module's
+/// `import std.mic_record;` and its `mic_record.` call qualifiers are dropped,
+/// since the whole codec is defined in the same unit.
 pub fn combined_source() -> String {
     let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
     let read = |name: &str| {
         let p = std_dir.join(name);
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
     };
-    let codec = read("mic_record.mind");
+    let codec: Vec<String> = CODEC_FILES
+        .iter()
+        .map(|f| {
+            read(f)
+                .lines()
+                .filter(|l| !l.starts_with("import std.mic_record_"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    let codec = codec.join("\n");
     let results = read("mic_results.mind");
     let import = "import std.mic_record;\n";
     assert!(
@@ -217,4 +236,68 @@ pub fn bytes_at(addr: i64, len: i64) -> Vec<u8> {
         return Vec::new();
     }
     unsafe { std::slice::from_raw_parts(addr as *const u8, len as usize) }.to_vec()
+}
+
+/// `VmRSS` and `VmHWM` (peak) of this process in KiB, from /proc/self/status.
+#[cfg(target_os = "linux")]
+pub fn rss_kib() -> (i64, i64) {
+    let status = std::fs::read_to_string("/proc/self/status").expect("read /proc/self/status");
+    let field = |name: &str| -> i64 {
+        let line = status
+            .lines()
+            .find(|l| l.starts_with(name))
+            .unwrap_or_else(|| panic!("a {name} line"));
+        line.split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("a {name} value in KiB"))
+    };
+    (field("VmRSS:"), field("VmHWM:"))
+}
+
+/// Run a resident-set bound alone. The resident set belongs to the process,
+/// so a bound taken while sibling tests allocate on other threads measures
+/// them too (measured: 26916 KiB beside the siblings, under the bound with
+/// one test thread). The parent runs this test binary again with only
+/// `test_name` selected and returns `false`; the child returns `true` and
+/// takes the measurement.
+#[cfg(target_os = "linux")]
+pub fn alone(test_name: &str) -> bool {
+    const ALONE_VAR: &str = "MIND_RSS_BOUND_ALONE";
+    if std::env::var_os(ALONE_VAR).is_some_and(|v| v == test_name) {
+        return true;
+    }
+    let exe = std::env::current_exe().expect("current_exe");
+    let out = Command::new(exe)
+        .args([test_name, "--exact", "--test-threads", "1", "--nocapture"])
+        .env(ALONE_VAR, test_name)
+        .output()
+        .expect("spawn this test binary");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // `--exact` on a name that matches no test still exits 0.
+    assert!(
+        out.status.success() && text.contains("test result: ok. 1 passed"),
+        "{test_name} alone:\n{text}"
+    );
+    false
+}
+
+/// Growth in KiB of the resident set and of its peak, whichever is larger,
+/// over `rounds` calls of `round`, after a warm-up of a tenth as many (at
+/// least one) so the allocator's arenas are already mapped.
+#[cfg(target_os = "linux")]
+pub fn rss_growth_kib(rounds: usize, mut round: impl FnMut()) -> i64 {
+    for _ in 0..(rounds / 10).max(1) {
+        round();
+    }
+    let (rss0, peak0) = rss_kib();
+    for _ in 0..rounds {
+        round();
+    }
+    let (rss1, peak1) = rss_kib();
+    (rss1 - rss0).max(peak1 - peak0)
 }

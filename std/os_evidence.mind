@@ -1,0 +1,109 @@
+// std/os_evidence.mind — std.evidence records of std.fs_checked and std.procgroup verdicts.
+// Author: STARGA Inc.
+//
+// Each `_ev` call runs the unchanged std call and, when the caller passes a
+// sink (std.evidence evd_new), appends records of the verdict that call
+// returned. Kind and reason come from the return value or the public result
+// accessors of the unchanged function; no check of that function is copied
+// here. sink 0 returns at once and records nothing. These are opt-in variants:
+// no existing std or compiler path calls them, and the plain calls and their
+// callers are unchanged. The x509 wrapper is std/x509_evidence.mind, so a
+// caller of these two OS-call wrappers does not compile the x509 validator.
+//
+// The program writes the records about itself; they are NOT authenticated
+// (see std/evidence.mind).
+//
+// fs_read_dir_checked_ev, one record:
+//   [ evd_mod_fs_checked | refuse or accept | errno | path_len | entries ]
+// errno is 0 on accept, else the refusal the call returned: EINVAL 22,
+// ENAMETOOLONG 36 and EOVERFLOW 75 for refused arguments, ENOMEM 12, or the OS
+// errno of the open, read or close. entries is the number of listed entries on
+// accept and 0 (unused) on refuse. The path bytes are not recorded.
+//
+// procgroup_spawn_ev, procgroup_wait_all_ev, procgroup_record_verdicts:
+// A pid is never recorded (it differs run to run).
+//   procgroup_spawn_ev:     [ evd_mod_procgroup | kind | reason | slot (-1 refused) | argv_vec_len ]
+//     refuse (reason 1): the group was full, g was 0 or argv_vec_len < 0;
+//     fail (reason = procgroup_state_spawn_failed()): pipe or fork failed;
+//     accept (reason 0): the child started in `slot`.
+//   procgroup_wait_all_ev:  procgroup_record_verdicts after the wait, or one
+//     refuse record [ evd_mod_procgroup | refuse | 1 | 0 | timeout_ms ] when
+//     the wait refused g 0.
+//   procgroup_record_verdicts: one record per slot,
+//     [ evd_mod_procgroup | evd_kind_child | procgroup state | exit code | signal ]
+// Records follow the call order, and procgroup_record_verdicts writes slots in
+// index order, never in completion order. A timed_out verdict depends on the
+// deadline and the host's speed; the record reports the verdict std reached,
+// it does not make it reproducible. Unused fields are 0: the wait refusal
+// record has a = 0.
+
+import std.evidence;
+import std.fs_checked;
+import std.procgroup;
+
+#[protection]
+pub fn fs_read_dir_checked_ev(path_addr: i64, path_len: i64, max_entries: i64, max_name_bytes: i64, out_slot: i64, sink: i64) -> i64 {
+    let status: i64 = fs_read_dir_checked(path_addr, path_len, max_entries, max_name_bytes, out_slot);
+    if sink == 0 {
+        return status;
+    }
+    let mut kind: i64 = evd_kind_refuse();
+    let mut entries: i64 = 0;
+    if status == 0 {
+        kind = evd_kind_accept();
+        // A listing handle is [ entries | count | cap ].
+        entries = __mind_load_i64(__mind_load_i64(out_slot) + 8);
+    }
+    let _ = evidence_record(sink, evd_mod_fs_checked(), kind, 0 - status, path_len, entries);
+    status
+}
+
+#[protection]
+pub fn procgroup_spawn_ev(g: i64, prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64, sink: i64) -> i64 {
+    let slot: i64 = procgroup_spawn(g, prog_addr, argv_vec_addr, argv_vec_len);
+    if sink == 0 {
+        return slot;
+    }
+    let mut kind: i64 = evd_kind_accept();
+    let mut reason: i64 = 0;
+    if slot < 0 {
+        kind = evd_kind_refuse();
+        reason = 1;
+    } else {
+        if procgroup_state(g, slot) == procgroup_state_spawn_failed() {
+            kind = evd_kind_fail();
+            reason = procgroup_state_spawn_failed();
+        }
+    }
+    let _ = evidence_record(sink, evd_mod_procgroup(), kind, reason, slot, argv_vec_len);
+    slot
+}
+
+pub fn procgroup_wait_all_ev(g: i64, timeout_ms: i64, sink: i64) -> i64 {
+    let failures: i64 = procgroup_wait_all(g, timeout_ms);
+    if sink == 0 {
+        return failures;
+    }
+    if failures < 0 {
+        let _ = evidence_record(sink, evd_mod_procgroup(), evd_kind_refuse(), 1, 0, timeout_ms);
+    } else {
+        let _ = procgroup_record_verdicts(g, sink);
+    }
+    failures
+}
+
+// procgroup_record_verdicts — append one child record per slot of g (also
+// usable after a plain procgroup_wait_all). Reads only the group's memory.
+// Returns the records appended, or -1 for g 0 or sink 0.
+pub fn procgroup_record_verdicts(g: i64, sink: i64) -> i64 {
+    if g == 0 || sink == 0 {
+        return 0 - 1;
+    }
+    let n: i64 = procgroup_len(g);
+    let mut i: i64 = 0;
+    while i < n {
+        let _ = evidence_record(sink, evd_mod_procgroup(), evd_kind_child(), procgroup_state(g, i), procgroup_exit_code(g, i), procgroup_signal(g, i));
+        i = i + 1;
+    }
+    n
+}

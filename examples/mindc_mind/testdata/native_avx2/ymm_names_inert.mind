@@ -1,0 +1,18 @@
+// Copyright 2026 STARGA Inc.
+// The ISA-guard trigger is lexical: a ymm row name inside a line comment is not a
+// call, and a longer identifier that only contains one is not the name, so this
+// program gets no guard (no cpuid / xgetbv) and the same bytes as a compiler
+// without the ymm rows gives. __mind_vpaddd_i32x8 __mind_vpsubd_i32x8
+// __mind_vpaddb_i8x32 __mind_vpshufb_i8x32(d, s, m) __mind_vmovdqu_i32x8(d, s)
+// __mind_vpaddq_i64x4 __mind_vpsubq_i64x4 __mind_cpu_features_v1()
+fn x__mind_vpaddd_i32x8(a: i64) -> i64 {
+    // __mind_vpaddq_i64x4(a, a)
+    a + 1
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    // __mind_vmovdqu_i32x8(p, p)
+    __mind_store_i64(p, x__mind_vpaddd_i32x8(40) + 1);
+    return __mind_load_i64(p);
+}

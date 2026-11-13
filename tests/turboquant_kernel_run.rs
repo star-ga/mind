@@ -66,6 +66,7 @@ fn turboquant_builds_and_its_own_assertions_pass() {
     let build = Command::new(&mindc)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=binary",
             &format!("--out={}", out_bin.display()),

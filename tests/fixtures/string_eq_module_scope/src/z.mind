@@ -1,0 +1,7 @@
+// No module of `k`'s import closure imports this one. It stores a value of
+// unknown type (`g` is not declared) into a collection element.
+fn f(n: i64) -> i64 {
+    let mut es = g(n);
+    es[0] = es[1];
+    return 0;
+}

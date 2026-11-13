@@ -1,4 +1,4 @@
-// std.https_io — what the std.https driver reads from the world around one
+// std/https_io.mind — what the std.https driver reads from the world around one
 // request: the system and monotonic clocks, the request deadline, the time one
 // socket read or write may block, and the CA bundle file.
 //

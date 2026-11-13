@@ -1,0 +1,11 @@
+--- a/native_c_variadic_plan.mind
++++ b/native_c_variadic_plan.mind
+@@ -139,7 +139,7 @@
+     let gp: i64 = __mind_load_i64(plan + 24);
+     let sse: i64 = __mind_load_i64(plan + 32);
+     let stack: i64 = __mind_load_i64(plan + 40);
+-    let kind: i64 = ncp_location_class(abi, gp, sse);
++    let kind: i64 = ncp_location_class(abi, gp + sse, sse);
+     let location: i64 = ncp_location(kind, gp, sse, stack);
+     __mind_store_i64(plan + 24, gp + ncp_delta(kind, 1, 1));
+     __mind_store_i64(plan + 32, sse + ncp_delta(kind, 2, 1));

@@ -1,0 +1,54 @@
+// extern "C" ABI rows, Win64 (callconv(.win64)) convention: each pub fn calls one C callee of
+// abi_callees.c with the same arguments as its ref_w_* function there.
+// Gate: native_libc_binding_check.py --abi-rows (native_libc_abi_rows.tsv).
+extern "C" callconv(.win64) {
+    fn w_i8(a: i8) -> i8;
+    fn w_u8(a: u8) -> u8;
+    fn w_i16(a: i16) -> i16;
+    fn w_u16(a: u16) -> u16;
+    fn w_i32(a: i32) -> i32;
+    fn w_u32(a: u32) -> u32;
+    fn w_bool(a: bool) -> bool;
+    fn w_ints(a: i8, b: u8, c: i16, d: u16, e: i32, f: u32, g: bool, h: i64, i: i8, j: u16) -> i64;
+    fn w_floats(a0: f64, a1: f32, a2: f64, a3: f32, a4: f64, a5: f32, a6: f64, a7: f32, a8: f64, a9: f32) -> i64;
+    fn w_mixed(a: i8, b: f32, c: u16, d: f64, e: i32, f: f32, g: u32, h: f64, i: i64, j: f32, k: u8, l: f64, m: i16, n: bool) -> i64;
+}
+
+pub fn t_w_i8() -> i64 {
+    return w_i8((-1) as i8)
+}
+pub fn t_w_u8() -> i64 {
+    return w_u8(255 as u8)
+}
+pub fn t_w_i16() -> i64 {
+    return w_i16((-32768) as i16)
+}
+pub fn t_w_u16() -> i64 {
+    return w_u16(65535 as u16)
+}
+pub fn t_w_i32() -> i64 {
+    return w_i32((-2147483648) as i32)
+}
+pub fn t_w_u32() -> i64 {
+    return w_u32(2147483648 as u32)
+}
+pub fn t_w_bool() -> i64 {
+    return w_bool(true)
+}
+pub fn t_w_ints() -> i64 {
+    return w_ints((-1) as i8, 255 as u8, (-32768) as i16, 65535 as u16, (-2147483648) as i32, 2147483648 as u32, true, -5, (-128) as i8, 40000 as u16)
+}
+pub fn t_w_floats() -> i64 {
+    let a1: f32 = 1.25 as f32;
+    let a3: f32 = 3.5 as f32;
+    let a5: f32 = -0.75 as f32;
+    let a7: f32 = 0.0625 as f32;
+    let a9: f32 = 10.25 as f32;
+    return w_floats(0.5, a1, -2.0, a3, 0.125, a5, 6.0, a7, -9.5, a9)
+}
+pub fn t_w_mixed() -> i64 {
+    let b: f32 = 1.5 as f32;
+    let f: f32 = 0.75 as f32;
+    let j: f32 = -3.25 as f32;
+    return w_mixed((-1) as i8, b, 65535 as u16, -2.25, (-2147483648) as i32, f, 2147483648 as u32, 4.5, -5, j, 255 as u8, 0.125, (-32768) as i16, true)
+}

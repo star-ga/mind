@@ -1,0 +1,392 @@
+// Copyright 2026 STARGA Inc.
+// Native-route extern ABI rows, part 2: the callconv byte of an extern header, the
+// varargs tail, the #[repr(C)] struct lookup and the refusal walk with its report.
+// The scans are loops with a step function per position (each position test is its
+// own fn), the shape the mic@3 twin lays out. A part calls std.* and other parts only.
+
+import nb_extern_abi;
+
+// Callconv byte of an extern header (bytes up to the first lbrace): 1 for no
+// callconv, `.c` or `.sysv`; 2 `.win64`; 3 `.aapcs`; 0 for an unknown value.
+pub fn nxa_header_cc(p: i64, len: i64) -> i64 {
+    let end: i64 = nxa_find(p, 0, len, 123);
+    let mut i: i64 = 0;
+    let mut r: i64 = 0 - 1;
+    while i < end {
+        let hit: i64 = nxa_cc_hit(p, i, end);
+        if hit == 1 {
+            r = nxa_cc_value(p, i, end);
+        }
+        i = nxa_adv(p, i, end, hit);
+    }
+    if r < 0 {
+        return 1;
+    }
+    r
+}
+
+// 1 when the word `callconv` stands at i outside comments and strings.
+pub fn nxa_cc_hit(p: i64, i: i64, end: i64) -> i64 {
+    if nxa_opaque(p, i, end) == 1 {
+        return 0;
+    }
+    if nxa_word_at(p, i, end, 8, 8533880816725156195) == 1 {
+        return 1;
+    }
+    0
+}
+
+// The callconv byte of the `callconv (. NAME)` at i (0 for an unknown value).
+pub fn nxa_cc_value(p: i64, i: i64, end: i64) -> i64 {
+    let a: i64 = nxa_skip(p, i + 8, end);
+    let b: i64 = nxa_skip(p, a + 1, end);
+    let w: i64 = nxa_skip(p, b + 1, end);
+    if a >= end {
+        return 0;
+    }
+    if nxa_byte(p, a) != 40 {
+        return 0;
+    }
+    if b >= end {
+        return 0;
+    }
+    if nxa_byte(p, b) != 46 {
+        return 0;
+    }
+    if nxa_word_at(p, w, end, 1, 99) == 1 {
+        return 1;
+    }
+    if nxa_word_at(p, w, end, 4, 1987279219) == 1 {
+        return 1;
+    }
+    if nxa_word_at(p, w, end, 5, 224251505015) == 1 {
+        return 2;
+    }
+    if nxa_word_at(p, w, end, 5, 495589548385) == 1 {
+        return 3;
+    }
+    0
+}
+
+// 1 when bytes [p, p + len) hold `...` (a varargs tail), else 0.
+pub fn nxa_varargs(p: i64, len: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut r: i64 = 0;
+    while k + 2 < len {
+        r = nxa_dots_at(p, k);
+        if r == 1 {
+            k = len;
+        }
+        k = k + 1;
+    }
+    r
+}
+
+pub fn nxa_dots_at(p: i64, k: i64) -> i64 {
+    if nxa_byte(p, k) == 46 {
+        if nxa_byte(p, k + 1) == 46 {
+            if nxa_byte(p, k + 2) == 46 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// 1 when the bytes before `at` (spaces skipped) end with the attribute `#[repr(C)]`.
+pub fn nxa_repr_c_before(p: i64, at: i64) -> i64 {
+    let mut j: i64 = at - 1;
+    let mut r: i64 = 0;
+    while j >= 0 {
+        if nxa_space(nxa_byte(p, j)) == 0 {
+            r = nxa_repr_c_end(p, j);
+            j = 0 - 1;
+        }
+        j = j - 1;
+    }
+    r
+}
+
+// 1 when the non-space byte at j closes the attribute `#[repr(C)]`.
+pub fn nxa_repr_c_end(p: i64, j: i64) -> i64 {
+    if j < 9 {
+        return 0;
+    }
+    if nxa_word_at(p, j - 9, j + 1, 8, 4839243626673494819) == 0 {
+        return 0;
+    }
+    if nxa_byte(p, j - 1) != 41 {
+        return 0;
+    }
+    if nxa_byte(p, j) != 93 {
+        return 0;
+    }
+    1
+}
+
+// The number of names in tab that equal the identifier at [lo, lo + n). tab
+// holds the name start of each of the cnt #[repr(C)] structs (nxa_rc_scan).
+pub fn nxa_repr_c_struct(p: i64, len: i64, lo: i64, n: i64, tab: i64, cnt: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut r: i64 = 0;
+    while k < cnt {
+        r = r + nxa_name_same(p, len, lo, n, __mind_load_i64(tab + k * 8));
+        k = k + 1;
+    }
+    r
+}
+
+// The number of `struct` declarations after #[repr(C)] in [p, p + len). With a
+// table, entry c gets the name start of declaration c. One pass over the bytes:
+// a lookup per extern type over the whole region cost time as the square of it.
+pub fn nxa_rc_scan(p: i64, len: i64, tab: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut c: i64 = 0;
+    while k < len {
+        let hit: i64 = nxa_rc_at(p, len, k);
+        let _s: i64 = nxa_rc_put(p, len, tab, c, k, hit);
+        c = c + hit;
+        k = nxa_adv(p, k, len, 0);
+    }
+    c
+}
+
+// 1 when a `struct` declaration that follows #[repr(C)] starts at k.
+pub fn nxa_rc_at(p: i64, len: i64, k: i64) -> i64 {
+    if nxa_opaque(p, k, len) == 1 {
+        return 0;
+    }
+    if nxa_word_at(p, k, len, 6, 127970521019507) == 0 {
+        return 0;
+    }
+    nxa_repr_c_before(p, nxa_decl_start(p, len, k))
+}
+
+// Store the name start of the hit at k as entry c of tab (nothing for no hit or no table).
+pub fn nxa_rc_put(p: i64, len: i64, tab: i64, c: i64, k: i64, hit: i64) -> i64 {
+    if hit == 0 {
+        return 0;
+    }
+    if tab == 0 {
+        return 0;
+    }
+    __mind_store_i64(tab + c * 8, nxa_skip(p, k + 6, len));
+    0
+}
+
+// 1 when the n bytes at s equal the n bytes at lo and end at an identifier boundary.
+pub fn nxa_name_same(p: i64, len: i64, lo: i64, n: i64, s: i64) -> i64 {
+    let mut same: i64 = 1;
+    let mut i: i64 = 0;
+    while i < n {
+        if nxa_byte_diff(p, len, lo, s, i) == 1 {
+            same = 0;
+        }
+        i = i + 1;
+    }
+    same * nxa_name_end_ok(p, len, s, n)
+}
+
+// 1 when byte s + i is past len or differs from byte lo + i.
+pub fn nxa_byte_diff(p: i64, len: i64, lo: i64, s: i64, i: i64) -> i64 {
+    if s + i >= len {
+        return 1;
+    }
+    if nxa_byte(p, s + i) != nxa_byte(p, lo + i) {
+        return 1;
+    }
+    0
+}
+
+// 0 when an identifier byte follows the name at [s, s + n), else 1.
+pub fn nxa_name_end_ok(p: i64, len: i64, s: i64, n: i64) -> i64 {
+    if s + n < len {
+        if nxa_ident_byte(nxa_byte(p, s + n)) == 1 {
+            return 0;
+        }
+    }
+    1
+}
+
+// The start of the declaration at k: the `pub` before it, else k.
+pub fn nxa_decl_start(p: i64, len: i64, k: i64) -> i64 {
+    if k >= 4 {
+        if nxa_word_at(p, k - 4, len, 3, 6452592) == 1 {
+            return k - 4;
+        }
+    }
+    k
+}
+
+// Length of the identifier at lo (0 when lo is not an identifier byte).
+pub fn nxa_ident_len(p: i64, lo: i64, len: i64) -> i64 {
+    let mut e: i64 = lo;
+    let mut r: i64 = 0;
+    while e < len {
+        let b: i64 = nxa_ident_byte(nxa_byte(p, e));
+        r = r + b;
+        if b == 0 {
+            e = len;
+        }
+        e = e + 1;
+    }
+    r
+}
+
+// E-code of the first extern refusal in [p, p + len): 2039 (no ABI row on this
+// route), 2040 (by-value #[repr(C)] struct), else 0.
+// Without the struct table (allocation refused) no type is looked up: 2039 or 0.
+pub fn nxa_refusal(p: i64, len: i64) -> i64 {
+    let found: i64 = nxa_rc_scan(p, len, 0);
+    let tab: i64 = __mind_alloc(found * 8 + 8);
+    let cnt: i64 = nxa_tab_len(tab, found);
+    let _f: i64 = nxa_rc_scan(p, len, tab);
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < len {
+        let hit: i64 = nxa_extern_hit(p, i, len);
+        if hit == 1 {
+            r = nxa_block_code(p, len, i, tab, cnt);
+        }
+        i = nxa_refusal_next(p, len, i, hit, r);
+    }
+    r
+}
+
+// 1 when the word `extern` stands at i outside comments and strings.
+pub fn nxa_extern_hit(p: i64, i: i64, len: i64) -> i64 {
+    if nxa_opaque(p, i, len) == 1 {
+        return 0;
+    }
+    if nxa_word_at(p, i, len, 6, 121437607458917) == 1 {
+        return 1;
+    }
+    0
+}
+
+// The index to scan next: len once a code is found, past the block of a hit, else one step.
+pub fn nxa_refusal_next(p: i64, len: i64, i: i64, hit: i64, r: i64) -> i64 {
+    if r != 0 {
+        return len;
+    }
+    if hit == 1 {
+        return nxa_find(p, nxa_find(p, i, len, 123), len, 125) + 1;
+    }
+    nxa_adv(p, i, len, 0)
+}
+
+// E-code of the extern block at i (0 when it has no refusal).
+pub fn nxa_block_code(p: i64, len: i64, i: i64, tab: i64, cnt: i64) -> i64 {
+    let hb: i64 = nxa_find(p, i, len, 123);
+    if nxa_header_cc(p + i, hb - i) != 1 {
+        return 2039;
+    }
+    nxa_block_types(p, len, hb, nxa_find(p, hb, len, 125), tab, cnt)
+}
+
+// 2040 when a signature in the block (hb, rb) takes a #[repr(C)] struct by value, else 0.
+pub fn nxa_block_types(p: i64, len: i64, hb: i64, rb: i64, tab: i64, cnt: i64) -> i64 {
+    let mut j: i64 = hb + 1;
+    let mut r: i64 = 0;
+    while j < rb {
+        let hit: i64 = nxa_ty_hit(p, len, rb, j, tab, cnt);
+        if hit == 1 {
+            r = 2040;
+        }
+        j = nxa_ty_step(p, rb, j, hit);
+    }
+    r
+}
+
+// 1 when the `:` or `->` at j (outside comments and strings) is followed by a #[repr(C)] struct name.
+pub fn nxa_ty_hit(p: i64, len: i64, rb: i64, j: i64, tab: i64, cnt: i64) -> i64 {
+    if nxa_opaque(p, j, rb) == 1 {
+        return 0;
+    }
+    let t: i64 = nxa_ty_target(p, j);
+    if t < 1 {
+        return 0;
+    }
+    let lo: i64 = nxa_skip(p, t, rb);
+    let n: i64 = nxa_ident_len(p, lo, rb);
+    if n > 0 {
+        if nxa_repr_c_struct(p, len, lo, n, tab, cnt) > 0 {
+            return 1;
+        }
+    }
+    0
+}
+
+// The index after the `:` or `->` at j (-1 for neither, or for `::`).
+pub fn nxa_ty_target(p: i64, j: i64) -> i64 {
+    let c: i64 = nxa_byte(p, j);
+    if c == 58 {
+        if nxa_byte(p, j + 1) == 58 {
+            return 0 - 1;
+        }
+        return j + 1;
+    }
+    if c == 45 {
+        if nxa_byte(p, j + 1) == 62 {
+            return j + 2;
+        }
+    }
+    0 - 1
+}
+
+// The index to scan next in a block: rb on a hit, past a comment or string, past `::`, else one step.
+pub fn nxa_ty_step(p: i64, rb: i64, j: i64, hit: i64) -> i64 {
+    if hit == 1 {
+        return rb;
+    }
+    if nxa_opaque(p, j, rb) == 1 {
+        return nxa_past(p, j, rb);
+    }
+    if nxa_byte(p, j) == 58 {
+        if nxa_byte(p, j + 1) == 58 {
+            return j + 2;
+        }
+    }
+    j + 1
+}
+
+// Writes the E-code diagnostic for `code` to fd 2 and returns exit code 3.
+pub fn nxa_report(code: i64) -> i64 {
+    let m: i64 = __mind_alloc(128);
+    if code == 2039 {
+        __mind_store_i64(m + 0, 3622402022343602789);
+        __mind_store_i64(m + 8, 8675375692243350320);
+        __mind_store_i64(m + 16, 8028900127126218100);
+        __mind_store_i64(m + 24, 8316293034882526051);
+        __mind_store_i64(m + 32, 7453010347740455712);
+        __mind_store_i64(m + 40, 8389754715171152672);
+        __mind_store_i64(m + 48, 2338319731384020841);
+        __mind_store_i64(m + 56, 8223653468487839598);
+        __mind_store_i64(m + 64, 7526676535925831535);
+        __mind_store_i64(m + 72, 3762244249613508709);
+        __mind_store_i64(m + 80, 2334402177157656096);
+        __mind_store_i64(m + 88, 5992074924334083954);
+        __mind_store_i64(m + 96, 8749489599636992889);
+        __mind_store_i64(m + 104, 2601);
+        let _w: i64 = __mind_write(2, m, 106, 0 - 1);
+        return 3;
+    }
+    __mind_store_i64(m + 0, 3622402022343602789);
+    __mind_store_i64(m + 8, 8675375692242760752);
+    __mind_store_i64(m + 16, 7451613641590334836);
+    __mind_store_i64(m + 24, 2322280100134150510);
+    __mind_store_i64(m + 32, 7310868735956187490);
+    __mind_store_i64(m + 40, 2914515489874715424);
+    __mind_store_i64(m + 48, 8462954687595620675);
+    __mind_store_i64(m + 56, 7309940825232798819);
+    __mind_store_i64(m + 64, 8079506541213087078);
+    __mind_store_i64(m + 72, 8029953737129948001);
+    __mind_store_i64(m + 80, 11486444678761);
+    let _w2: i64 = __mind_write(2, m, 86, 0 - 1);
+    3
+}
+
+// Fail-closed reporter leg: the extern E-code of the user region, else 0.
+pub fn nxa_user_refusal(src: i64, user_lo: i64, src_len: i64) -> i64 {
+    nxa_refusal(src + user_lo, src_len - user_lo)
+}

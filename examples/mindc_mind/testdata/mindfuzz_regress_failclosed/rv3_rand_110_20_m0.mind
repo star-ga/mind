@@ -1,0 +1,65 @@
+// Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+fn fzh(p: i64, q0: i64, Pz: i64, a0: i64) -> i64 {
+    let mut Pz: i64 = q0;
+    if a0 != 2 {
+        let mut k0: i64 = 0;
+        while k0 < 3 {
+            k0 = (k0 + 1);
+            Pz = (k0 * 3);
+            let mut c: i64 = q0;
+        }
+        let mut x2: i64 = a0;
+        let mut k1: i64 = 0;
+        while k1 < 2 {
+            k1 = (k1 + 1);
+            let mut x2: i64 = k0;
+            let mut p: i64 = k1;
+        }
+    }
+    Pz = (q0 + 2);
+    let mut k2: i64 = 0;
+    while k2 < 3 {
+        k2 = (k2 + 1);
+        let mut a0: i64 = Pz;
+        let mut p: i64 = 4;
+    }
+    let mut k3: i64 = 0;
+    while k3 < 1 {
+        k3 = (k3 + 1);
+        let mut b: i64 = (k3 * 2);
+    }
+    let mut p: i64 = k3;
+    return (((p + k3) + a0) + k2);
+}
+fn main() -> i64 {
+    let mut k4: i64 = 0;
+    while k4 < 2 {
+        k4 = (k4 + 1);
+        let mut k5: i64 = 0;
+        while k5 < 1 {
+            k5 = (k5 + 1);
+            let mut w: i64 = k5;
+            let mut yy: i64 = k4;
+            w = k5;
+            let mut w: i64 = k4;
+        }
+        let mut y: i64 = k4;
+    }
+    let mut e: i64 = k4;
+    let mut k6: i64 = 0;
+    while k6 < 1 {
+        k6 = (k6 + 1);
+        e = (k6 + 4);
+        let mut k7: i64 = 0;
+        while k7 < 3 {
+            k7 = (k7 + 1);
+            let mut b: i64 = k4;
+            let mut e: i64 = e;
+            let mut m: i64 = k6;
+        }
+    }
+    let mut longname_beta: i64 = e;
+    longname_beta = (k6 * 2);
+    let mut zcall: i64 = fzh(1, 2, 3, 4);
+    return zcall + (((longname_beta + e) + k6) + k4);
+}

@@ -1,0 +1,336 @@
+// Copyright 2026 STARGA Inc.
+// Resident ymm register bank (R-01b, kinds 70-83): ymm0..14 are named by integer
+// literals, so up to 15 accumulators stay in registers and every tap is ONE VEX op,
+// encoded by the shared verified encoder (nb_x86_vex.mind nbv_op_rm / nbv_op_rrr: 2-byte
+// C5 unless the map is 0F38 or the rm register is ymm8..15).
+// main.mind nb_bank_call lowers only `base`, loads it into rax and calls nbb_call:
+// a memory form is one op on [rax+disp] (mod 00 / 01 / 10 by disp), a register form
+// one op. Register and disp operands are AST literals (nb_x86_ymm_bank_checks.mind),
+// never slotted; the SSA advance is the generic call count (nb_count_args + 1). A
+// bank function is a vector leaf (nb_x86_ymm_bank_walk.mind): vzeroall (C5 FC 77)
+// after its prologue, vzeroupper (C5 F8 77) before every exit.
+
+import std.string;
+import nb_ast;
+import nb_x86_vex;
+import nb_x86_ymm_epi;
+import nb_x86_ymm_bank_checks;
+import nb_x86_ymm_bank_walk;
+
+// Kind ledger (seed id == kind), names "__mind_ymm_<op>": 70 vmovdqu_ld(r, base,
+// disp), 71 vmovdqu_st, 72 vpaddd_i32x8_m, 73 vpsubd_i32x8_m, 74 vpaddb_i8x32_m,
+// 75 vpshufb_i8x32_m(d, t, base, disp), 76 vpaddd_i32x8_r(d, a, b), 77 vpsubd_i32x8_r,
+// 78 vpaddb_i8x32_r, 79 vpshufb_i8x32_r(d, t, m), 80 vpaddq_i64x4_m,
+// 81 vpsubq_i64x4_m, 82 vpaddq_i64x4_r, 83 vpsubq_i64x4_r.
+pub fn nbb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    nbb_kind(buf, lo, hi)
+}
+
+// nb_expr's call arm routes every bank name to nb_bank_call before argument
+// lowering, so the generic intrinsic path never carries one: it emits nothing and
+// kind_ok is 0 for every kind, so a bank kind reaching that path poisons the fn.
+pub fn nbb_kind_ok(kind: i64, args_len: i64) -> i64 {
+    0
+}
+
+pub fn nbb_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    string_new()
+}
+
+// ---- bank name -> ledger kind (70..83), or -1 ----
+// Every name starts "__mind_y"; the word at +8 picks the op family, the last 8
+// bytes pick element type and form, and every other byte is compared too.
+// Spans: 21 (vmovdqu), 25, 26 (vpshufb).
+pub fn nbb_kind(buf: i64, lo: i64, hi: i64) -> i64 {
+    let e: i64 = nbbe_intrinsic_id(buf, lo, hi);
+    if e > 0 {
+        return e;
+    }
+    let n: i64 = hi - lo;
+    if n < 21 {
+        return 0 - 1;
+    }
+    if n > 26 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(buf + lo) != 8745819426754748255 {
+        return 0 - 1;
+    }
+    let w8: i64 = __mind_load_i64(buf + lo + 8);
+    let t: i64 = __mind_load_i64(buf + hi - 8);
+    if n == 21 {
+        return nbb_kind_mov(w8, t);
+    }
+    if n == 26 {
+        return nbb_kind_shuf(w8, __mind_load_i64(buf + lo + 16), t);
+    }
+    if n != 25 {
+        return 0 - 1;
+    }
+    let k: i64 = nbb_kind_25(w8, t);
+    if k < 0 {
+        return 0 - 1;
+    }
+    if __mind_load_i8(buf + lo + 16) != nbb_elem_byte(k) {
+        return 0 - 1;
+    }
+    k
+}
+
+// "mm_vpadd" / "mm_vpsub" at +8; the 8-byte tail picks element type and form.
+pub fn nbb_kind_25(w8: i64, t: i64) -> i64 {
+    if w8 == 7234014037114056045 {
+        return nbb_kind_add(t);
+    }
+    if w8 == 7094703714851581293 {
+        return nbb_kind_sub(t);
+    }
+    0 - 1
+}
+
+// Byte 16 of a 25-byte name, the element letter the tail implies: b (i8x32),
+// q (i64x4), d (i32x8). Every byte of every name is compared.
+pub fn nbb_elem_byte(k: i64) -> i64 {
+    if k == 74 {
+        return 98;
+    }
+    if k == 78 {
+        return 98;
+    }
+    if k >= 80 {
+        return 113;
+    }
+    100
+}
+
+// "mm_vmovd" + "ovdqu_ld" / "ovdqu_st".
+pub fn nbb_kind_mov(w8: i64, t: i64) -> i64 {
+    if w8 != 7239095966972734829 {
+        return 0 - 1;
+    }
+    if t == 7236263659295766127 {
+        return 70;
+    }
+    if t == 8391155488739587695 {
+        return 71;
+    }
+    0 - 1
+}
+
+// "mm_vpshu" "fb_i8x32" + "i8x32_m" / "i8x32_r" tails.
+pub fn nbb_kind_shuf(w8: i64, w16: i64, t: i64) -> i64 {
+    if w8 != 8460138826874973549 {
+        return 0 - 1;
+    }
+    if w16 != 3617367109390000742 {
+        return 0 - 1;
+    }
+    if t == 7881073069563341151 {
+        return 75;
+    }
+    if t == 8241361039752980831 {
+        return 79;
+    }
+    0 - 1
+}
+
+// "mm_vpadd" tails: _i32x8_m 72, _i8x32_m 74, _i64x4_m 80, and the _r forms 76, 78, 82.
+pub fn nbb_kind_add(t: i64) -> i64 {
+    if t == 7881079961811118431 {
+        return 72;
+    }
+    if t == 7881073069563341151 {
+        return 74;
+    }
+    if t == 7881075563798358367 {
+        return 80;
+    }
+    if t == 8241367932000758111 {
+        return 76;
+    }
+    if t == 8241361039752980831 {
+        return 78;
+    }
+    if t == 8241363533987998047 {
+        return 82;
+    }
+    0 - 1
+}
+
+// "mm_vpsub" tails: d 73 / 77, q 81 / 83 (there is no vpsubb row).
+pub fn nbb_kind_sub(t: i64) -> i64 {
+    if t == 7881079961811118431 {
+        return 73;
+    }
+    if t == 7881075563798358367 {
+        return 81;
+    }
+    if t == 8241367932000758111 {
+        return 77;
+    }
+    if t == 8241363533987998047 {
+        return 83;
+    }
+    0 - 1
+}
+
+// The `base` node of a memory form (arg n-2); 0 for a register form or a call of
+// the wrong arity (nbb_call refuses that one by name).
+pub fn nbb_base_node(buf: i64, node: i64) -> i64 {
+    let callee: i64 = ast_child0(node);
+    let kind: i64 = nbb_kind(buf, ast_span_lo(callee), ast_span_hi(callee));
+    if kind < 0 {
+        return 0;
+    }
+    if nbbc_is_mem(kind) == 0 {
+        return 0;
+    }
+    let n: i64 = ast_aux(node);
+    if n != nbbc_arity(kind) {
+        return 0;
+    }
+    __mind_load_i64(ast_child1(node) + (n - 2) * 8)
+}
+
+// One bank op; for a memory form `code` already ends with base in rax. A refused
+// operand prints its named code and poisons the fn (lcell+80). Fail closed: the op
+// is emitted only when the enclosing fn's leaf verdict is 1 (vzeroall is then in
+// its prologue); a verdict the walker missed (0) refuses the call by name.
+pub fn nbb_call(code: String, buf: i64, node: i64, lcell: i64) -> String {
+    let callee: i64 = ast_child0(node);
+    let kind: i64 = nbb_kind(buf, ast_span_lo(callee), ast_span_hi(callee));
+    let ops: i64 = __mind_alloc(32);
+    if nbb_operands(buf, node, kind, ops, 1) == 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    let f: i64 = nbbc_cur_fn(lcell);
+    let v: i64 = nbbc_fn_bank(buf, f, 0);
+    if v != 1 {
+        let say: i64 = 1 - __mind_load_i64(lcell + 80);
+        let _w: i64 = nbbc_fn_bank(buf, f, say);
+        let _m: i64 = nbbc_refuse(say * (1 + v), 3, buf, node);
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    nbb_emit_op(code, kind, ops)
+}
+
+// ops = [reg0, reg1, reg2, disp]. VEX.256 W0; map 0F = 1, 0F38 = 2; pp 66 = 1,
+// F3 = 2; memory base rax (0); vvvv 0 encodes 1111 (unused). vpsub: d = a - b.
+pub fn nbb_emit_op(code: String, kind: i64, ops: i64) -> String {
+    let r0: i64 = __mind_load_i64(ops + 0);
+    let r1: i64 = __mind_load_i64(ops + 8);
+    let r2: i64 = __mind_load_i64(ops + 16);
+    let disp: i64 = __mind_load_i64(ops + 24);
+    if kind == 70 {
+        return nbv_op_rm(code, 1, 111, 2, 0, r0, 0, 0, disp);
+    }
+    if kind == 71 {
+        return nbv_op_rm(code, 1, 127, 2, 0, r0, 0, 0, disp);
+    }
+    if kind == 72 {
+        return nbv_op_rm(code, 1, 254, 1, 0, r0, r0, 0, disp);
+    }
+    if kind == 73 {
+        return nbv_op_rm(code, 1, 250, 1, 0, r0, r0, 0, disp);
+    }
+    if kind == 74 {
+        return nbv_op_rm(code, 1, 252, 1, 0, r0, r0, 0, disp);
+    }
+    if kind == 75 {
+        return nbv_op_rm(code, 2, 0, 1, 0, r0, r1, 0, disp);
+    }
+    if kind == 76 {
+        return nbv_op_rrr(code, 1, 254, 1, 0, r0, r1, r2);
+    }
+    if kind == 77 {
+        return nbv_op_rrr(code, 1, 250, 1, 0, r0, r1, r2);
+    }
+    if kind == 78 {
+        return nbv_op_rrr(code, 1, 252, 1, 0, r0, r1, r2);
+    }
+    if kind == 79 {
+        return nbv_op_rrr(code, 2, 0, 1, 0, r0, r1, r2);
+    }
+    if kind == 80 {
+        return nbv_op_rm(code, 1, 212, 1, 0, r0, r0, 0, disp);
+    }
+    if kind == 81 {
+        return nbv_op_rm(code, 1, 251, 1, 0, r0, r0, 0, disp);
+    }
+    if kind == 82 {
+        return nbv_op_rrr(code, 1, 212, 1, 0, r0, r1, r2);
+    }
+    if kind == 83 {
+        return nbv_op_rrr(code, 1, 251, 1, 0, r0, r1, r2);
+    }
+    nbbe_emit_op(code, kind, ops)
+}
+
+// vzeroall right after the prologue: no read of caller ymm residue is possible.
+pub fn nbb_fn_prologue(code: String, buf: i64, node: i64) -> String {
+    if nbbc_fn_bank(buf, node, 0) != 1 {
+        return code;
+    }
+    nbv_vzeroall(code)
+}
+
+// Before the epilogue of every exit: vzeroupper in a bank fn. The fence verdict is
+// taken here (the last exit sees the whole dtype table): a refused bank fn, or one
+// holding an f64 value, prints its code once and poisons the fn.
+pub fn nbb_fn_epilogue(lcell: i64, buf: i64, code: String) -> String {
+    let node: i64 = nbbc_cur_fn(lcell);
+    if node == 0 {
+        return code;
+    }
+    let say: i64 = 1 - __mind_load_i64(lcell + 80);
+    let v: i64 = nbbc_fn_bank(buf, node, say);
+    if v == 0 {
+        return code;
+    }
+    if v < 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return code;
+    }
+    if nbbc_has_float(__mind_load_i64(lcell + 8), 0) == 1 {
+        let _r: i64 = nbbc_refuse(say, 3, buf, ast_child0(node));
+        __mind_store_i64(lcell + 80, 1)
+    }
+    nbv_vzeroupper(code)
+}
+
+// ISA guard trigger (nb_part_dispatch bit 1, as for Layer A): 1 when a fn of the
+// pruned emission set is a bank fn, refused or not. 0 => zero guard bytes.
+pub fn nbb_fns_use_ymm(buf: i64, ordered: i64, n_fns: i64) -> i64 {
+    if n_fns <= 0 {
+        return 0;
+    }
+    if nbbc_fn_bank(buf, __mind_load_i64(ordered + (n_fns - 1) * 8), 0) != 0 {
+        return 1;
+    }
+    nbb_fns_use_ymm(buf, ordered, n_fns - 1)
+}
+
+// Layer A's verdict (nbv_fns_use_ymm), widened to the bank kinds 70-83.
+pub fn nbb_or_fns_use_ymm(v: i64, buf: i64, ordered: i64, n_fns: i64) -> i64 {
+    if v == 1 {
+        return 1;
+    }
+    nbb_fns_use_ymm(buf, ordered, n_fns)
+}
+
+// SSA advance of a bank call: the count arm's (args + 1), or past every id the
+// `base` lowering used when that is further (home ctx copies an ident per use).
+pub fn nbb_next_id(after: i64, base_next: i64) -> i64 {
+    if base_next > after + 1 {
+        return base_next;
+    }
+    after + 1
+}
+
+// Capability mark: compiled natively this body is `movabs rax, imm64` spelling
+// "nbbank01"; the compiler's own region is not pruned, so the bytes survive.
+pub fn nb_cap_bank_v1() -> i64 {
+    3544451028564992622
+}

@@ -1,0 +1,2 @@
+// lane.bool.width: bool arithmetic has i1 width in MLIR but word width in the seed.
+fn main() -> i64 { let b: bool = 1; return b + 1; }

@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -459 +459 @@
+-        __mind_free(buf);
++        // MUTATION: omitted padded release.

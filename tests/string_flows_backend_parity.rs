@@ -230,6 +230,43 @@ const PROJECT_CASES: &[(&str, &str, &str)] = &[
         "import provider;\n\npub fn probe() -> i64 {\n    \
          if provider.mk() == provider.mk() { return 1 }\n    return 0\n}\n",
     ),
+    // A collection of a type the pass does not model (`Vec<i64>`) given
+    // strings, then moved into the other module's typed slot: a parameter,
+    // a result, a field; or a typed collection the other module stores
+    // strings into through such an alias. Only the last reaches `main`
+    // through an element fact, across a typed parameter.
+    (
+        "unknown_collection_param",
+        "export { same }\n\nfn same(xs: array<i64>) -> i64 {\n    \
+         if xs[0] == xs[1] { return 1 }\n    return 0\n}\n",
+        "import provider;\n\npub fn probe(n: i64) -> i64 {\n    \
+         let es: Vec<i64> = vec_zeroed(n);\n    es[0] = \"abc\";\n    es[1] = \"abc\";\n    \
+         return provider.same(es)\n}\n",
+    ),
+    (
+        "unknown_collection_result",
+        "export { strings }\n\nfn strings(n: i64) -> array<i64> {\n    \
+         let es: Vec<i64> = vec_zeroed(n);\n    es[0] = \"abc\";\n    es[1] = \"abc\";\n    \
+         return es\n}\n",
+        "import provider;\n\npub fn probe() -> i64 {\n    \
+         let xs: array<i64> = provider.strings(2);\n    \
+         if xs[0] == xs[1] { return 1 }\n    return 0\n}\n",
+    ),
+    (
+        "unknown_collection_field",
+        "export { hold, Holder }\n\nstruct Holder {\n    items: array<i64>,\n}\n\n\
+         fn hold(n: i64) -> Holder {\n    let es: Vec<i64> = vec_zeroed(n);\n    \
+         es[0] = \"abc\";\n    es[1] = \"abc\";\n    return Holder { items: es }\n}\n",
+        "import provider;\n\npub fn probe() -> i64 {\n    let h: Holder = provider.hold(2);\n    \
+         let xs: array<i64> = h.items;\n    if xs[0] == xs[1] { return 1 }\n    return 0\n}\n",
+    ),
+    (
+        "unknown_alias_of_a_typed_param",
+        "export { poison }\n\nfn poison(xs: array<i64>) -> i64 {\n    \
+         let ys: Vec<i64> = xs;\n    ys[0] = \"abc\";\n    ys[1] = \"abc\";\n    return 0\n}\n",
+        "import provider;\n\npub fn probe() -> i64 {\n    let xs: array<i64> = [1, 2];\n    \
+         provider.poison(xs);\n    if xs[0] == xs[1] { return 1 }\n    return 0\n}\n",
+    ),
 ];
 
 const MANIFEST: &str = "[package]\nname = \"xmod\"\nversion = \"0.1.0\"\n\n[build]\n\
@@ -254,7 +291,15 @@ fn strings_stored_across_project_modules_are_refused_by_check_and_build() {
         assert!(check_text.contains("E2038"), "{case}:\n{check_text}");
         let so = dir.join("x.so");
         let build = Command::new(mindc_bin())
-            .args(["build", "--emit", "cdylib", "--out", so.to_str().unwrap()])
+            .args([
+                "build",
+                "--backend",
+                "mlir",
+                "--emit",
+                "cdylib",
+                "--out",
+                so.to_str().unwrap(),
+            ])
             .current_dir(&dir)
             .output()
             .expect("spawn mindc build");
@@ -266,6 +311,231 @@ fn strings_stored_across_project_modules_are_refused_by_check_and_build() {
         assert!(build_text.contains("E2038"), "{case}:\n{build_text}");
         assert!(!so.exists(), "{case}: a refused build left an artifact");
     }
+}
+
+/// `mindc test` decides a comparison with the declarations `mindc check`
+/// reads: `mk` is the one `t` imports (`alpha.mk -> i64`), not the other
+/// project function of that name (`zeta.mk -> string`). Without the
+/// project's module table, `mindc test` read the registry's `string` result
+/// and refused the integer compare the check accepted.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn mindc_test_reads_the_declarations_its_check_reads() {
+    let dir = scratch_dir("string_flows_backend_parity_table");
+    let _ = std::fs::remove_dir_all(&dir);
+    let files = [
+        (
+            "Mind.toml",
+            "[package]\nname = \"tbl\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\n\
+             [targets.cpu]\nbackend = \"cpu\"\nsources = [\"main.mind\", \"src/alpha.mind\", \
+             \"src/zeta.mind\", \"src/t.mind\"]\n",
+        ),
+        (
+            "main.mind",
+            "import t;\n\nfn main() -> i64 {\n    return 0;\n}\n",
+        ),
+        (
+            "src/alpha.mind",
+            "export { mk }\n\nfn mk() -> i64 {\n    return 7;\n}\n",
+        ),
+        (
+            "src/zeta.mind",
+            "export { mk }\n\nfn mk() -> string {\n    return \"seven\";\n}\n",
+        ),
+        (
+            "src/t.mind",
+            "import alpha;\n\nfn same(x: i64) -> i64 {\n    if mk() == x {\n        return 1;\n    \
+             }\n    return 0;\n}\n\n#[test]\nfn t_same() {\n    assert same(7) == 1, \"seven\";\n}\n",
+        ),
+    ];
+    for (path, src) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).expect("create fixture dir");
+        std::fs::write(at, src).expect("write fixture");
+    }
+    let run = |args: &[&str]| {
+        Command::new(mindc_bin())
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("spawn mindc")
+    };
+    let check = run(&["check", "--no-fmt", "--no-lint", "src/t.mind"]);
+    let check_text = text(&check);
+    assert!(check.status.success(), "check refused:\n{check_text}");
+    let test = run(&["test", "src/t.mind"]);
+    let test_text = text(&test);
+    assert!(
+        test.status.success() && test_text.contains("1 passed"),
+        "mindc test decided otherwise than its check:\n{test_text}"
+    );
+    // Positive control: importing `zeta` makes `mk()` a string, refused by both.
+    let t = dir.join("src/t.mind");
+    let source = std::fs::read_to_string(&t).expect("read t");
+    std::fs::write(&t, source.replace("import alpha;", "import zeta;")).expect("write t");
+    for args in [
+        &["check", "--no-fmt", "--no-lint", "src/t.mind"][..],
+        &["test", "src/t.mind"],
+    ] {
+        let out = run(args);
+        let out_text = text(&out);
+        assert!(
+            !out.status.success() && out_text.contains("E2038"),
+            "{args:?} accepted a string compared with an integer:\n{out_text}"
+        );
+    }
+}
+
+/// A check or a test of `main.mind` decides over the program it links
+/// (`main` and `provider`; a cdylib build links the same modules): `other`,
+/// which `main` does not link, hands strings to `provider.same`. Once `main`
+/// links `other`, its check, test and build refuse.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn a_module_the_program_does_not_link_stores_nothing_it_reads() {
+    let dir = scratch_dir("string_flows_backend_parity_program");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create project");
+    let main = |imports: &str| {
+        format!(
+            "{imports}\npub fn probe() -> i64 {{ return provider.same(1, 2) }}\n\n\
+             #[test]\nfn t_probe() {{\n    assert probe() == 0, \"unequal\";\n}}\n"
+        )
+    };
+    let files = [
+        (
+            "Mind.toml",
+            "[package]\nname = \"prog\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n\
+             emit = \"cdylib\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\
+             sources = [\"main.mind\", \"provider.mind\", \"other.mind\"]\n"
+                .to_string(),
+        ),
+        (
+            "provider.mind",
+            "export { same }\n\nfn same(a: i64, b: i64) -> i64 {\n    if a == b { return 1 }\n    \
+             return 0\n}\n"
+                .to_string(),
+        ),
+        (
+            "other.mind",
+            "import provider;\n\nexport { other }\n\n\
+             pub fn other() -> i64 { return provider.same(\"abc\", \"abc\") }\n"
+                .to_string(),
+        ),
+        ("main.mind", main("import provider;\n")),
+    ];
+    for (path, src) in &files {
+        std::fs::write(dir.join(path), src).expect("write fixture");
+    }
+    let run = |args: &[&str]| {
+        Command::new(mindc_bin())
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("spawn mindc")
+    };
+    let check = run(&["check", "--no-fmt", "--no-lint", "main.mind"]);
+    let check_text = text(&check);
+    assert!(
+        check.status.success(),
+        "check of main refused:\n{check_text}"
+    );
+    let test = run(&["test", "main.mind"]);
+    let test_text = text(&test);
+    assert!(
+        test.status.success() && test_text.contains("1 passed"),
+        "mindc test of main refused:\n{test_text}"
+    );
+    // Positive controls: the module that stores, and `main` once it links it.
+    let other = run(&["check", "--no-fmt", "--no-lint", "other.mind"]);
+    let other_text = text(&other);
+    assert!(
+        !other.status.success() && other_text.contains("E2038"),
+        "check of other accepted:\n{other_text}"
+    );
+    std::fs::write(
+        dir.join("main.mind"),
+        main("import provider;\nimport other;\n"),
+    )
+    .expect("write main");
+    let so = dir.join("prog.so");
+    let build_args = [
+        "build",
+        "--backend",
+        "mlir",
+        "--emit",
+        "cdylib",
+        "--out",
+        so.to_str().unwrap(),
+    ];
+    for args in [
+        &["check", "--no-fmt", "--no-lint", "main.mind"][..],
+        &["test", "main.mind"],
+        &build_args,
+    ] {
+        let out = run(args);
+        let out_text = text(&out);
+        assert!(
+            !out.status.success() && out_text.contains("E2038"),
+            "{args:?} accepted a program that links `other`:\n{out_text}"
+        );
+    }
+    assert!(!so.exists(), "a refused build left an artifact");
+}
+
+/// Copy fixture directory `from` into `to`, recursively.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("create fixture copy");
+    for entry in std::fs::read_dir(from).expect("read fixture") {
+        let entry = entry.expect("fixture entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("fixture entry type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy fixture file");
+        }
+    }
+}
+
+/// A store of a value of unknown type into a collection element of one
+/// project module (`src/z.mind`) refuses the typed element compares of the
+/// modules that can exchange a collection with it (`src/j.mind` imports it),
+/// and leaves the typed compares of the others (`src/k.mind`) integer
+/// compares. Element facts are keyed by fact, not by slot: before they were
+/// kept per module, `z`'s store made every `[u8; N]` element of the project
+/// maybe a string.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn element_stores_of_an_unrelated_module_keep_typed_compares() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/string_eq_module_scope");
+    let dir = scratch_dir("string_flows_backend_parity_module_scope").join("project");
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_tree(&fixture, &dir);
+    let check = |file: &str| {
+        Command::new(mindc_bin())
+            .args(["check", "--no-fmt", "--no-lint", file])
+            .current_dir(&dir)
+            .output()
+            .expect("spawn mindc check")
+    };
+    let unrelated = check("src/k.mind");
+    let unrelated_text = text(&unrelated);
+    assert!(
+        unrelated.status.success() && !unrelated_text.contains("E2038"),
+        "typed compares of a module no importer shares with `z` refused:\n{unrelated_text}"
+    );
+    // Positive control: the module that imports `z` is still refused.
+    let related = check("src/j.mind");
+    let related_text = text(&related);
+    assert!(
+        !related.status.success(),
+        "check of the module importing `z` accepted:\n{related_text}"
+    );
+    assert!(
+        related_text.contains("src/j.mind:9:12") && related_text.contains("E2038"),
+        "{related_text}"
+    );
 }
 
 /// A string literal arm lowers to the runtime byte-wise comparison, which

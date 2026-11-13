@@ -1,0 +1,10 @@
+[package]
+name = "fs_checked_listing_import"
+version = "0.0.1"
+
+[build]
+entry = "import.mind"
+
+[targets.cpu]
+backend = "cpu"
+sources = ["import.mind"]

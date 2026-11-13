@@ -1,0 +1,234 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The name index of a mic@3 string table (strbuf / offs / count).
+//
+// intern_find answers "the FIRST entry of the table whose bytes equal
+// src[lo..hi)" (StringTable first-seen dedup). A scan of every entry per
+// intern made a whole program O(strings x interns): 40000 extern blocks or
+// 20000 parameters spent minutes in it. The index is a hash table of the
+// entry bytes, filled in entry order with insert-if-absent, so it returns the
+// first equal entry, exactly the index the scan returned.
+//
+// Only an offs array made by nbst_offs carries an index. Its 3-word header
+// sits before offs[0]: offs[-1] = 96920108593465677 - offs (tied to the address),
+// offs[-2] = the index (0 until the first lookup); the magic word is
+// "MINDSTX\x01" little-endian. Every other offs array (a caller's buffer, a
+// per-function name table) and a table past 262144 entries (an index under
+// 9 MB, far below the arena reserve) take the scan (nbst_scan), so the answer
+// never changes.
+// The table is append-only (intern_span, the synthesized-name appends of
+// nb_intern_names*.mind): the index catches up on the new entries at each
+// intern_span call and is rebuilt larger when it is half full. intern_find
+// reads it only when it holds every entry below the caller count.
+// Index layout: [0] strbuf, [1] entries indexed, [2] cap, [3] 0;
+// word 4 + s = k + 1 for the entry that owns slot s, 0 = empty.
+
+import nb_emit_core;
+import nb_lastdef;
+
+// Span-equality across TWO distinct buffers (span_bytes_equal compares within one buf).
+pub fn span_bytes_equal2(a: i64, alo: i64, ahi: i64, b: i64, blo: i64, bhi: i64) -> i64 {
+    if ahi - alo != bhi - blo {
+        return 0;
+    }
+    span_bytes_equal2_loop(a, alo, ahi, b, blo, 0)
+}
+pub fn span_bytes_equal2_loop(a: i64, alo: i64, ahi: i64, b: i64, blo: i64, k: i64) -> i64 {
+    if alo + k >= ahi {
+        return 1;
+    }
+    if load_byte(a, alo + k) != load_byte(b, blo + k) {
+        return 0;
+    }
+    span_bytes_equal2_loop(a, alo, ahi, b, blo, k + 1)
+}
+
+// An offs array of `entries` words with the index header before it.
+pub fn nbst_offs(entries: i64) -> i64 {
+    let base: i64 = __mind_alloc((entries + 3) * 8);
+    if base == 0 {
+        return 0;
+    }
+    let offs: i64 = base + 24;
+    __mind_store_i64(base, 0);
+    __mind_store_i64(base + 8, 0);
+    __mind_store_i64(base + 16, 96920108593465677 - offs);
+    offs
+}
+
+// The slot that holds the bytes src[lo..hi), or the empty slot where they go.
+pub fn nbst_probe(ix: i64, strbuf: i64, offs: i64, src: i64, lo: i64, hi: i64, s: i64) -> i64 {
+    let v: i64 = __mind_load_i64(ix + 32 + s * 8);
+    if v == 0 {
+        return s;
+    }
+    let elo: i64 = __mind_load_i64(offs + (v - 1) * 8);
+    if span_bytes_equal2(src, lo, hi, strbuf, elo, __mind_load_i64(offs + v * 8)) == 1 {
+        return s;
+    }
+    nbst_probe(ix, strbuf, offs, src, lo, hi, (s + 1) % __mind_load_i64(ix + 16))
+}
+
+// Insert entry k if no earlier entry has its bytes (the first one wins).
+pub fn nbst_insert(ix: i64, strbuf: i64, offs: i64, k: i64) -> i64 {
+    let lo: i64 = __mind_load_i64(offs + k * 8);
+    let hi: i64 = __mind_load_i64(offs + (k + 1) * 8);
+    let h: i64 = nbld_hash(strbuf, lo, hi) % __mind_load_i64(ix + 16);
+    let s: i64 = nbst_probe(ix, strbuf, offs, strbuf, lo, hi, h);
+    if __mind_load_i64(ix + 32 + s * 8) == 0 {
+        __mind_store_i64(ix + 32 + s * 8, k + 1)
+    }
+    0
+}
+
+// A fresh index of entries 0..n, stored in the header; 0 if refused.
+pub fn nbst_build(strbuf: i64, offs: i64, n: i64) -> i64 {
+    let cap: i64 = n * 4 + 64;
+    let ix: i64 = __mind_alloc((cap + 4) * 8);
+    if ix == 0 {
+        return 0;
+    }
+    __mind_store_i64(ix, strbuf);
+    __mind_store_i64(ix + 8, n);
+    __mind_store_i64(ix + 16, cap);
+    __mind_store_i64(ix + 24, 0);
+    let mut s: i64 = 0;
+    while s < cap {
+        __mind_store_i64(ix + 32 + s * 8, 0);
+        s = s + 1;
+    }
+    let mut k: i64 = 0;
+    while k < n {
+        let _i: i64 = nbst_insert(ix, strbuf, offs, k);
+        k = k + 1;
+    }
+    __mind_store_i64(offs - 16, ix);
+    ix
+}
+
+// The index of this table if it has one for strbuf, else 0 (take the scan).
+pub fn nbst_header(strbuf: i64, offs: i64) -> i64 {
+    if __mind_load_i64(offs - 8) + offs != 96920108593465677 {
+        return 0;
+    }
+    let ix: i64 = __mind_load_i64(offs - 16);
+    if ix == 0 {
+        return 0;
+    }
+    if __mind_load_i64(ix) != strbuf {
+        return 0;
+    }
+    ix
+}
+
+// The index caught up to n entries (n = the table's own count, from
+// intern_span; the entries appended since the last call go in, the first
+// one wins), or 0 (take the scan).
+pub fn nbst_index(strbuf: i64, offs: i64, n: i64) -> i64 {
+    if n > 262144 {
+        return 0;
+    }
+    if __mind_load_i64(offs - 8) + offs != 96920108593465677 {
+        return 0;
+    }
+    let ix: i64 = __mind_load_i64(offs - 16);
+    if ix == 0 {
+        return nbst_build(strbuf, offs, n);
+    }
+    if __mind_load_i64(ix) != strbuf {
+        return 0;
+    }
+    if n * 2 + 1 > __mind_load_i64(ix + 16) {
+        return nbst_build(strbuf, offs, n);
+    }
+    let mut k: i64 = __mind_load_i64(ix + 8);
+    while k < n {
+        let _i: i64 = nbst_insert(ix, strbuf, offs, k);
+        k = k + 1;
+    }
+    if __mind_load_i64(ix + 8) < n {
+        __mind_store_i64(ix + 8, n)
+    }
+    ix
+}
+
+// The old answer: scan entries i..n for the bytes src[lo..hi), -1 if none.
+pub fn nbst_scan(strbuf: i64, offs: i64, n: i64, src: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if span_bytes_equal2(src, lo, hi, strbuf, elo, ehi) == 1 {
+        return i;
+    }
+    nbst_scan(strbuf, offs, n, src, lo, hi, i + 1)
+}
+
+// The FIRST entry in 0..n whose bytes equal src[lo..hi), or -1, through
+// the index ix (which holds every entry below n).
+pub fn nbst_lookup(ix: i64, strbuf: i64, offs: i64, n: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    let h: i64 = nbld_hash(src, lo, hi) % __mind_load_i64(ix + 16);
+    let s: i64 = nbst_probe(ix, strbuf, offs, src, lo, hi, h);
+    let k: i64 = __mind_load_i64(ix + 32 + s * 8) - 1;
+    if k >= n {
+        return 0 - 1;
+    }
+    k
+}
+
+// intern_find: the FIRST entry in i..n whose bytes equal src[lo..hi), or -1.
+// It reads the index only when the index already holds every entry below n
+// (intern_span keeps it caught up), so a caller's count never adds entries.
+// An empty count reads nothing (a caller may pass offs = 0 with n = 0).
+pub fn nbst_find(strbuf: i64, offs: i64, n: i64, src: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if i != 0 {
+        return nbst_scan(strbuf, offs, n, src, lo, hi, i);
+    }
+    let ix: i64 = nbst_header(strbuf, offs);
+    if ix == 0 {
+        return nbst_scan(strbuf, offs, n, src, lo, hi, 0);
+    }
+    if n > __mind_load_i64(ix + 8) {
+        return nbst_scan(strbuf, offs, n, src, lo, hi, 0);
+    }
+    nbst_lookup(ix, strbuf, offs, n, src, lo, hi)
+}
+
+// intern_span's lookup: n is the table's own count, so the index is built or
+// caught up to it first.
+pub fn nbst_intern_find(strbuf: i64, offs: i64, n: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if n <= 0 {
+        return 0 - 1;
+    }
+    let ix: i64 = nbst_index(strbuf, offs, n);
+    if ix == 0 {
+        return nbst_scan(strbuf, offs, n, src, lo, hi, 0);
+    }
+    nbst_lookup(ix, strbuf, offs, n, src, lo, hi)
+}
+
+// intern_span's append of entry n (offs[n + 1] already written): the count
+// becomes n + 1 and a current index takes the entry, so the lookups after the
+// last intern read the index.
+pub fn nbst_appended(strbuf: i64, offs: i64, ccell: i64, n: i64) -> i64 {
+    __mind_store_i64(ccell, n + 1);
+    let ix: i64 = nbst_header(strbuf, offs);
+    if ix == 0 {
+        return 0;
+    }
+    if __mind_load_i64(ix + 8) != n {
+        return 0;
+    }
+    if n * 2 + 3 > __mind_load_i64(ix + 16) {
+        return 0;
+    }
+    let _i: i64 = nbst_insert(ix, strbuf, offs, n);
+    __mind_store_i64(ix + 8, n + 1);
+    0
+}

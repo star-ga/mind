@@ -120,7 +120,56 @@ fn prune_unreachable_fns(ir: &mut IRModule, user_fn_names: &[String]) {
     });
 }
 
-fn ref_ir(user_src: &str) -> IRModule {
+/// Bare-name struct schemas of every `StructDef` in the combined module, in the
+/// shape the project builder installs into the global registry
+/// (`src/project/mod.rs`, `enums.structs`).
+///
+/// Why the oracle needs this: the 21 std modules are concatenated in
+/// `std.X`-alphabetical order, so a std fn can read a field of a struct that a
+/// LATER module declares (`std.cli::args_push` reads `s.addr` on `String`,
+/// declared in `std.string`). `lower_to_ir` registers a local `StructDef` only
+/// when its item is reached, so that read has no schema yet. Lowering used to
+/// paper over this with a `ConstI64(0)` placeholder; it now refuses
+/// (`UnsupportedLoweringOperation { "struct field read" }`), which made this
+/// generator panic before writing any note.
+///
+/// A real multi-module compile never hits the ordering hazard: the project
+/// builder seeds every module's structs into the global registry and
+/// `lower_to_ir` merges them into `ir.struct_defs` before the item walk. The
+/// oracle seeds the same registry with the same bare names and field lists.
+/// Only BARE names are seeded (no `qualified_structs`), so `ir.struct_defs`, the
+/// one serialized struct registry, holds exactly the keys and field-name lists
+/// the local `StructDef` arms insert. Fn bodies have their own id space, so the
+/// module-level instr stream and `next_id` are untouched. The trace hash
+/// therefore stays a function of the same pruned module.
+fn combined_struct_registry(combined: &libmind::ast::Module) -> libmind::ir::GlobalEnums {
+    let mut registry = libmind::ir::GlobalEnums::default();
+    for item in &combined.items {
+        if let Node::StructDef { name, fields, .. } = item {
+            registry.structs.insert(
+                name.clone(),
+                (
+                    fields.iter().map(|f| f.name.clone()).collect(),
+                    fields.iter().map(|f| f.ty.clone()).collect(),
+                ),
+            );
+        }
+    }
+    registry
+}
+
+/// Clears the transient struct registry on every exit, a panic included (the
+/// registry is thread-local, so a leak could only reach this test's thread).
+struct RegistryGuard;
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        libmind::ir::clear_global_enums();
+    }
+}
+
+/// The std KEEP set ahead of `user_src` as one module, with the user fn names.
+fn combined_module(user_src: &str) -> (libmind::ast::Module, Vec<String>) {
     let module = libmind::parser::parse(user_src).expect("parse user");
     let user_fn_names: Vec<String> = module
         .items
@@ -139,10 +188,35 @@ fn ref_ir(user_src: &str) -> IRModule {
         }
     }
     combined.items.extend(module.items);
+    (combined, user_fn_names)
+}
 
-    let mut ir = libmind::eval::lower::lower_to_ir(&combined).expect("lowering");
+/// Install the struct registry of `combined`; the guard clears it.
+fn seed_registry(combined: &libmind::ast::Module) -> RegistryGuard {
+    libmind::ir::set_global_enums(combined_struct_registry(combined));
+    RegistryGuard
+}
+
+/// Unpruned seeded-combined IR (std KEEP set ahead of the user source), the
+/// user fn names, and the functions that hold a kept untyped comparison, or the
+/// lowering refusal. Split out so the regression test can assert on it.
+fn try_combined_ir(
+    user_src: &str,
+) -> Result<
+    (IRModule, Vec<String>, Vec<String>),
+    libmind::eval::materialization::MaterializationRefusal,
+> {
+    let (combined, user_fn_names) = combined_module(user_src);
+    let _registry = seed_registry(&combined);
+    let (lowered, kept) =
+        libmind::eval::string_equality::segments::lower_seeded_reference(&combined);
+    lowered.map(|ir| (ir, user_fn_names, kept))
+}
+
+fn ref_ir(user_src: &str) -> (IRModule, Vec<String>) {
+    let (mut ir, user_fn_names, kept) = try_combined_ir(user_src).expect("lowering");
     prune_unreachable_fns(&mut ir, &user_fn_names);
-    ir
+    (ir, kept)
 }
 
 fn note_of(ir: &IRModule) -> String {
@@ -169,7 +243,11 @@ fn dump_ref() {
     let out_dir = std::env::var("MIND_REF_OUT_DIR")
         .unwrap_or_else(|_| format!("{}/examples/mindc_mind", env!("CARGO_MANIFEST_DIR")));
     for (name, src) in FIXTURES {
-        let ir = ref_ir(src);
+        let (ir, kept) = ref_ir(src);
+        assert!(
+            kept.is_empty(),
+            "fixture `{name}` must keep no comparison: {kept:?}"
+        );
         let bytes = libmind::ir::compact::emit_mic3(&ir);
         let note = note_of(&ir);
         if let Ok(dir) = std::env::var("MIND_MIC3_BYTES_DIR") {
@@ -182,10 +260,11 @@ fn dump_ref() {
             ir.next_id,
             ir.instrs.len()
         );
+        eprintln!("KEPT {name}: untyped_eq={}", kept.len());
     }
     // main.mind
     let main_src = std::fs::read_to_string(format!("{out_dir}/main.mind")).unwrap();
-    let ir = ref_ir(&main_src);
+    let (ir, kept) = ref_ir(&main_src);
     let bytes = libmind::ir::compact::emit_mic3(&ir);
     let note = note_of(&ir);
     std::fs::write(format!("{out_dir}/_ref_main.note"), &note).unwrap();
@@ -195,4 +274,76 @@ fn dump_ref() {
         ir.next_id,
         ir.instrs.len()
     );
+    eprintln!("KEPT main: untyped_eq={}", kept.len());
+}
+
+// Regression gate for the oracle itself (runs in normal `cargo test`, writes
+// nothing). The concatenated std KEEP set puts `std.cli` (whose `args_push`
+// reads `s.addr` on `String`) ahead of `std.string` (which declares `String`).
+// Before the registry seed, lowering refused that read and `dump_ref` panicked
+// with `UnsupportedLoweringOperation { operation: "struct field read" }`, so the
+// pinned `_ref_*.note` cache could not be refreshed at all.
+#[test]
+fn dump_ref_lowers_seeded_std_cli_before_std_string() {
+    let (name, src) = FIXTURES[0];
+    assert_eq!(name, "add");
+    let (ir, user_fn_names, _kept) = match try_combined_ir(src) {
+        Ok(lowered) => lowered,
+        Err(refusal) => panic!("seeded std + `{name}` must lower, got {refusal:?}"),
+    };
+    // Positive control: std.cli really was lowered (the reader that used to be
+    // refused is present as a FnDef), so the green above is not a vacuous pass
+    // over a KEEP set that silently dropped std.cli.
+    assert!(
+        ir.instrs
+            .iter()
+            .any(|i| matches!(i, Instr::FnDef { name, .. } if name == "args_push")),
+        "std.cli::args_push must be present in the unpruned combined IR"
+    );
+    // The seed must not leak qualified keys into the serialized struct registry.
+    assert!(ir.struct_defs.contains_key("String"));
+    assert!(
+        ir.struct_defs.keys().all(|k| !k.contains('.')),
+        "only bare struct names may reach ir.struct_defs: {:?}",
+        ir.struct_defs.keys().collect::<Vec<_>>()
+    );
+    // The registry is transient: a later single-file compile must see it empty.
+    assert!(libmind::ir::with_global_enums(|g| g.structs.is_empty()));
+
+    let mut pruned = ir;
+    prune_unreachable_fns(&mut pruned, &user_fn_names);
+    let bytes = libmind::ir::compact::emit_mic3(&pruned);
+    assert!(bytes.len() > 4 && bytes.starts_with(b"MIC3"));
+    assert_eq!(note_of(&pruned).len(), 64);
+}
+
+// The seeded reference mode. `T1_SRC` hands a string to an undefined callee, so
+// the merged module's raw loads may hold a string handle, and compares two raw
+// loads: the string pass cannot type either side (kind `Untyped`).
+const T1_SRC: &str = "fn t1_probe(a: i64) -> i64 {\n    let s: string = \"x\";\n    t1_undefined_sink(s);\n    let lo: i64 = __mind_load_i64(a);\n    let hi: i64 = __mind_load_i64(a + 8);\n    if lo == hi {\n        return 1;\n    }\n    return 0;\n}\n";
+
+// T3 shape: a string field read, then a binding that is a string on one path
+// and an integer on another (string_equality/tests.rs, `Mixed`).
+const T3_SRC: &str = "struct T3Node {\n    name: string,\n    next: T3Node,\n}\nfn t3_walk(head: T3Node, flag: i64) -> i64 {\n    let mut cur = head;\n    cur = cur.next;\n    if cur.name == \"x\" {\n        return 1;\n    }\n    let mut mixed = \"a\";\n    if flag == 1 {\n        mixed = 5;\n    }\n    if mixed == \"a\" {\n        return 2;\n    }\n    return 0;\n}\n";
+
+#[test]
+fn seeded_reference_keeps_untyped_equality() {
+    let (_ir, _names, kept) = try_combined_ir(T1_SRC).expect("untyped comparison is kept");
+    // Positive control: the count is printed once, and must be non-zero.
+    eprintln!("T1 kept={} first={:?}", kept.len(), kept.first());
+    assert!(!kept.is_empty(), "the reproducer must keep a comparison");
+}
+
+#[test]
+#[should_panic(expected = "E2038")]
+fn plain_lowering_still_refuses_untyped_equality() {
+    let (combined, _names) = combined_module(T1_SRC);
+    let _registry = seed_registry(&combined);
+    let _ = libmind::eval::lower::lower_to_ir(&combined);
+}
+
+#[test]
+#[should_panic(expected = "E2038")]
+fn seeded_reference_still_refuses_mixed_equality() {
+    let _ = try_combined_ir(T3_SRC);
 }

@@ -26,29 +26,29 @@ import std.string;
 
 // --- private helpers -------------------------------------------------------
 
-// csi — append the Control Sequence Introducer `ESC [` (bytes 27, 91).
+// tui_csi — append the Control Sequence Introducer `ESC [` (bytes 27, 91).
 // Every public escape below begins here, so the two framing bytes live
 // in one place rather than being open-coded per function.
-fn csi(s: String) -> String {
+fn tui_csi(s: String) -> String {
     let out: String = string_push_byte(s, 27);
     string_push_byte(out, 91)
 }
 
-// csi_n — `ESC [ <n> <final>`: a CSI with a single decimal parameter
+// tui_csi_n — `ESC [ <n> <final>`: a CSI with a single decimal parameter
 // and a final byte. Covers cursor up/down/left/right, column-absolute,
 // erase-display / erase-line, and scroll up/down.
-fn csi_n(s: String, n: i64, final_byte: i64) -> String {
-    let out: String = csi(s);
+fn tui_csi_n(s: String, n: i64, final_byte: i64) -> String {
+    let out: String = tui_csi(s);
     let out2: String = string_push_i64(out, n);
     string_push_byte(out2, final_byte)
 }
 
-// csi_priv — `ESC [ ? <n> <final>`: a DEC-private mode set/reset.
+// tui_csi_priv — `ESC [ ? <n> <final>`: a DEC-private mode set/reset.
 // `final` is 'h' (104, set) or 'l' (108, reset). Used for the
 // alternate screen buffer (1049) and cursor visibility (25). The 63 is
 // the '?' that marks the private parameter.
-fn csi_priv(s: String, n: i64, final_byte: i64) -> String {
-    let out: String = csi(s);
+fn tui_csi_priv(s: String, n: i64, final_byte: i64) -> String {
+    let out: String = tui_csi(s);
     let out2: String = string_push_byte(out, 63);
     let out3: String = string_push_i64(out2, n);
     string_push_byte(out3, final_byte)
@@ -60,7 +60,7 @@ fn csi_priv(s: String, n: i64, final_byte: i64) -> String {
 // absolute 1-based (row, col). Row 1 / col 1 is the top-left cell. The
 // 59 is ';' and the 72 is the final 'H'.
 pub fn tui_cursor_to(s: String, row: i64, col: i64) -> String {
-    let out: String = csi(s);
+    let out: String = tui_csi(s);
     let out2: String = string_push_i64(out, row);
     let out3: String = string_push_byte(out2, 59);
     let out4: String = string_push_i64(out3, col);
@@ -70,47 +70,47 @@ pub fn tui_cursor_to(s: String, row: i64, col: i64) -> String {
 // tui_cursor_home — `ESC [ H`. Move to the top-left cell (row 1, col 1)
 // without spelling out the parameters.
 pub fn tui_cursor_home(s: String) -> String {
-    let out: String = csi(s);
+    let out: String = tui_csi(s);
     string_push_byte(out, 72)
 }
 
 // tui_cursor_up — `ESC [ <n> A` (CUU): move up n rows.
 pub fn tui_cursor_up(s: String, n: i64) -> String {
-    csi_n(s, n, 65)
+    tui_csi_n(s, n, 65)
 }
 
 // tui_cursor_down — `ESC [ <n> B` (CUD): move down n rows.
 pub fn tui_cursor_down(s: String, n: i64) -> String {
-    csi_n(s, n, 66)
+    tui_csi_n(s, n, 66)
 }
 
 // tui_cursor_forward — `ESC [ <n> C` (CUF): move right n columns.
 pub fn tui_cursor_forward(s: String, n: i64) -> String {
-    csi_n(s, n, 67)
+    tui_csi_n(s, n, 67)
 }
 
 // tui_cursor_back — `ESC [ <n> D` (CUB): move left n columns.
 pub fn tui_cursor_back(s: String, n: i64) -> String {
-    csi_n(s, n, 68)
+    tui_csi_n(s, n, 68)
 }
 
 // tui_cursor_col — `ESC [ <col> G` (CHA): move to an absolute 1-based
 // column on the current row.
 pub fn tui_cursor_col(s: String, col: i64) -> String {
-    csi_n(s, col, 71)
+    tui_csi_n(s, col, 71)
 }
 
 // tui_cursor_save — `ESC [ s` (SCP): save the current cursor position.
 // The 115 is the final 's'.
 pub fn tui_cursor_save(s: String) -> String {
-    let out: String = csi(s);
+    let out: String = tui_csi(s);
     string_push_byte(out, 115)
 }
 
 // tui_cursor_restore — `ESC [ u` (RCP): restore the saved cursor
 // position. The 117 is the final 'u'.
 pub fn tui_cursor_restore(s: String) -> String {
-    let out: String = csi(s);
+    let out: String = tui_csi(s);
     string_push_byte(out, 117)
 }
 
@@ -118,12 +118,12 @@ pub fn tui_cursor_restore(s: String) -> String {
 
 // tui_cursor_hide — `ESC [ ? 25 l`: hide the text cursor (108 = 'l').
 pub fn tui_cursor_hide(s: String) -> String {
-    csi_priv(s, 25, 108)
+    tui_csi_priv(s, 25, 108)
 }
 
 // tui_cursor_show — `ESC [ ? 25 h`: show the text cursor (104 = 'h').
 pub fn tui_cursor_show(s: String) -> String {
-    csi_priv(s, 25, 104)
+    tui_csi_priv(s, 25, 104)
 }
 
 // --- erase -----------------------------------------------------------------
@@ -132,37 +132,37 @@ pub fn tui_cursor_show(s: String) -> String {
 // 'J'). Leaves the cursor where it is; pair with tui_cursor_home for a
 // full reset to the top-left.
 pub fn tui_clear_screen(s: String) -> String {
-    csi_n(s, 2, 74)
+    tui_csi_n(s, 2, 74)
 }
 
 // tui_clear_below — `ESC [ 0 J` (ED 0): erase from the cursor to the
 // end of the display.
 pub fn tui_clear_below(s: String) -> String {
-    csi_n(s, 0, 74)
+    tui_csi_n(s, 0, 74)
 }
 
 // tui_clear_above — `ESC [ 1 J` (ED 1): erase from the start of the
 // display to the cursor.
 pub fn tui_clear_above(s: String) -> String {
-    csi_n(s, 1, 74)
+    tui_csi_n(s, 1, 74)
 }
 
 // tui_clear_line — `ESC [ 2 K` (EL 2): erase the entire current line
 // (75 = 'K').
 pub fn tui_clear_line(s: String) -> String {
-    csi_n(s, 2, 75)
+    tui_csi_n(s, 2, 75)
 }
 
 // tui_clear_line_right — `ESC [ 0 K` (EL 0): erase from the cursor to
 // the end of the line.
 pub fn tui_clear_line_right(s: String) -> String {
-    csi_n(s, 0, 75)
+    tui_csi_n(s, 0, 75)
 }
 
 // tui_clear_line_left — `ESC [ 1 K` (EL 1): erase from the start of
 // the line to the cursor.
 pub fn tui_clear_line_left(s: String) -> String {
-    csi_n(s, 1, 75)
+    tui_csi_n(s, 1, 75)
 }
 
 // --- alternate screen buffer (DEC private mode 1049) -----------------------
@@ -172,13 +172,13 @@ pub fn tui_clear_line_left(s: String) -> String {
 // screen contents are restored on leave, so a TUI app does not scroll
 // the user's scrollback.
 pub fn tui_enter_alt_screen(s: String) -> String {
-    csi_priv(s, 1049, 104)
+    tui_csi_priv(s, 1049, 104)
 }
 
 // tui_leave_alt_screen — `ESC [ ? 1049 l`: restore the primary screen
 // buffer and the contents that were there before enter.
 pub fn tui_leave_alt_screen(s: String) -> String {
-    csi_priv(s, 1049, 108)
+    tui_csi_priv(s, 1049, 108)
 }
 
 // --- scroll ----------------------------------------------------------------
@@ -186,13 +186,13 @@ pub fn tui_leave_alt_screen(s: String) -> String {
 // tui_scroll_up — `ESC [ <n> S` (SU): scroll the page up n lines; new
 // blank lines appear at the bottom (83 = 'S').
 pub fn tui_scroll_up(s: String, n: i64) -> String {
-    csi_n(s, n, 83)
+    tui_csi_n(s, n, 83)
 }
 
 // tui_scroll_down — `ESC [ <n> T` (SD): scroll the page down n lines;
 // new blank lines appear at the top (84 = 'T').
 pub fn tui_scroll_down(s: String, n: i64) -> String {
-    csi_n(s, n, 84)
+    tui_csi_n(s, n, 84)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,42 +333,42 @@ pub fn tui_box_height(b: Box) -> i64 {
     b.height
 }
 
-// box_push_glyph — append one 3-byte UTF-8 box-drawing codepoint
+// tui_box_push_glyph — append one 3-byte UTF-8 box-drawing codepoint
 // (every U+2500-family glyph encodes to 0xE2 0x94 <low>). Folds the
 // common framing prefix into a single helper rather than spelling out
 // three pushes at every site.
-fn box_push_glyph(s: String, low: i64) -> String {
+fn tui_box_push_glyph(s: String, low: i64) -> String {
     let s1: String = string_push_byte(s, 226);
     let s2: String = string_push_byte(s1, 148);
     string_push_byte(s2, low)
 }
 
-// box_push_horiz_rec — append (count) copies of the horizontal box
+// tui_box_push_horiz_rec — append (count) copies of the horizontal box
 // character `─` (U+2500, low byte 128) onto `s`. Tail recursion stays
 // inside the std-surface formatter's stable subset.
-fn box_push_horiz_rec(s: String, count: i64) -> String {
+fn tui_box_push_horiz_rec(s: String, count: i64) -> String {
     if count <= 0 {
         s
     } else {
-        let s2: String = box_push_glyph(s, 128);
-        box_push_horiz_rec(s2, count - 1)
+        let s2: String = tui_box_push_glyph(s, 128);
+        tui_box_push_horiz_rec(s2, count - 1)
     }
 }
 
-// box_push_vert_edges_rec — for each of `count` rows, position the
+// tui_box_push_vert_edges_rec — for each of `count` rows, position the
 // cursor at (start_row + i, left_col), draw a `│`, then at the same row
 // at (right_col), draw another `│`. Builds the two vertical edges in
 // one pass so the on-wire byte order is deterministic regardless of
 // terminal scroll state.
-fn box_push_vert_edges_rec(s: String, start_row: i64, left_col: i64, right_col: i64, count: i64, i: i64) -> String {
+fn tui_box_push_vert_edges_rec(s: String, start_row: i64, left_col: i64, right_col: i64, count: i64, i: i64) -> String {
     if i >= count {
         s
     } else {
         let s1: String = tui_cursor_to(s, start_row + i, left_col);
-        let s2: String = box_push_glyph(s1, 130);
+        let s2: String = tui_box_push_glyph(s1, 130);
         let s3: String = tui_cursor_to(s2, start_row + i, right_col);
-        let s4: String = box_push_glyph(s3, 130);
-        box_push_vert_edges_rec(s4, start_row, left_col, right_col, count, i + 1)
+        let s4: String = tui_box_push_glyph(s3, 130);
+        tui_box_push_vert_edges_rec(s4, start_row, left_col, right_col, count, i + 1)
     }
 }
 
@@ -390,18 +390,18 @@ pub fn tui_box_render(s: String, b: Box) -> String {
 
     // Top row: ┌ + (width-2) × ─ + ┐
     let s1: String = tui_cursor_to(s, b.row, b.col);
-    let s2: String = box_push_glyph(s1, 140);
-    let s3: String = box_push_horiz_rec(s2, interior);
-    let s4: String = box_push_glyph(s3, 144);
+    let s2: String = tui_box_push_glyph(s1, 140);
+    let s3: String = tui_box_push_horiz_rec(s2, interior);
+    let s4: String = tui_box_push_glyph(s3, 144);
 
     // Vertical edges across the interior rows (height - 2 rows total).
-    let s5: String = box_push_vert_edges_rec(s4, b.row + 1, b.col, right_col, b.height - 2, 0);
+    let s5: String = tui_box_push_vert_edges_rec(s4, b.row + 1, b.col, right_col, b.height - 2, 0);
 
     // Bottom row: └ + (width-2) × ─ + ┘
     let s6: String = tui_cursor_to(s5, bottom_row, b.col);
-    let s7: String = box_push_glyph(s6, 148);
-    let s8: String = box_push_horiz_rec(s7, interior);
-    box_push_glyph(s8, 152)
+    let s7: String = tui_box_push_glyph(s6, 148);
+    let s8: String = tui_box_push_horiz_rec(s7, interior);
+    tui_box_push_glyph(s8, 152)
 }
 
 // ---------------------------------------------------------------------------
@@ -446,17 +446,17 @@ pub fn tui_text_sgr(t: Text) -> i64 {
     t.sgr_code
 }
 
-// text_push_payload_rec — append `count` bytes from `payload_addr` to
+// tui_text_push_payload_rec — append `count` bytes from `payload_addr` to
 // `s`, one byte at a time. Matches the single-byte load pattern used by
 // `string_get_byte` / `fs_copy_bytes_rec`: `__mind_load_i8(addr+i)` reads
 // exactly byte[i] (task #306 — no tail OOB read).
-fn text_push_payload_rec(s: String, payload_addr: i64, count: i64, i: i64) -> String {
+fn tui_text_push_payload_rec(s: String, payload_addr: i64, count: i64, i: i64) -> String {
     if i >= count {
         s
     } else {
         let b: i64 = __mind_load_i8(payload_addr + i);
         let s2: String = string_push_byte(s, b);
-        text_push_payload_rec(s2, payload_addr, count, i + 1)
+        tui_text_push_payload_rec(s2, payload_addr, count, i + 1)
     }
 }
 
@@ -479,15 +479,15 @@ pub fn tui_text_render(s: String, t: Text, payload_addr: i64, payload_len: i64) 
     // on-wire bytes minimal and means unstyled Text emits exactly
     // (cursor-position + payload).
     if t.sgr_code == 0 {
-        return text_push_payload_rec(s1, payload_addr, payload_len, 0);
+        return tui_text_push_payload_rec(s1, payload_addr, payload_len, 0);
     }
     // Inline the SGR escape rather than importing std.io's
     // `string_push_ansi_sgr` — same byte sequence (ESC [ <code> m), and
     // keeps tui.mind's import surface to `std.string` only. The 109 is
     // the final 'm' (ECMA-48 SGR terminator).
-    let s2: String = csi_n(s1, t.sgr_code, 109);
-    let s3: String = text_push_payload_rec(s2, payload_addr, payload_len, 0);
+    let s2: String = tui_csi_n(s1, t.sgr_code, 109);
+    let s3: String = tui_text_push_payload_rec(s2, payload_addr, payload_len, 0);
     // SGR reset: ESC [ 0 m — restores default attributes so this Text's
     // styling does not bleed into later cells.
-    csi_n(s3, 0, 109)
+    tui_csi_n(s3, 0, 109)
 }

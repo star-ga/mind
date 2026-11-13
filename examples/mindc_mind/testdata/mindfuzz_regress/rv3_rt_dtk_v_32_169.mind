@@ -1,0 +1,19 @@
+// round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exited wrong.
+fn hh() -> i64 {
+    let mut x: i64 = 6;
+    x = x;
+    let mut b: i64 = x;
+    let mut b: i64 = b;
+    return (x + b);
+}
+fn main() -> i64 {
+    let mut k0: i64 = 0;
+    while k0 < 1 {
+        k0 = k0 + 1;
+        let mut z: i64 = k0;
+    }
+    let mut y: i64 = 0;
+    let mut y: i64 = y;
+    let mut zc: i64 = hh();
+    return zc + (y + k0);
+}

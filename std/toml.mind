@@ -42,16 +42,18 @@ import std.string;
 
 // --- TomlValue kind constants ---
 
-// Maximum recursive-descent nesting depth for untrusted input. parse_value /
-// parse_array / parse_inline_table fail closed (return a handle-0 result) once
+// Maximum recursive-descent nesting depth for untrusted input. toml_parse_value /
+// toml_parse_array / toml_parse_inline_table fail closed (return a handle-0 result) once
 // nesting exceeds this cap, bounding native stack growth so a hostile
 // deeply-nested document ([[[[... or {a={a={... ) cannot drive a
 // stack-overflow SIGSEGV. 512 leaves ample native-stack headroom.
-const MAX_DEPTH: i64 = 512
+// Named apart from std/json.mind's MAX_DEPTH: the native std seed is one
+// program, where a duplicate const name refuses every read of it.
+const TOML_MAX_DEPTH: i64 = 512
 
 // toml_max_depth -- exported nesting-depth cap enforced by the value parser.
 pub fn toml_max_depth() -> i64 {
-    MAX_DEPTH
+    TOML_MAX_DEPTH
 }
 
 pub fn tv_kind_str() -> i64 {
@@ -171,7 +173,7 @@ fn tv_make_tbl() -> i64 {
 
 // --- Byte copy helper ---
 
-fn copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
+fn toml_copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     while i < n {
         __mind_store_i8(dst + i, __mind_load_i8(src + i));
@@ -180,7 +182,7 @@ fn copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
     0
 }
 
-fn copy_i64s(src: i64, dst: i64, n: i64) -> i64 {
+fn toml_copy_i64s(src: i64, dst: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     while i < n {
         __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
@@ -208,7 +210,7 @@ fn tv_arr_push(h: i64, elem: i64) -> i64 {
         old_addr
     } else {
         let a: i64 = __mind_alloc(new_cap * 8);
-        let _ = copy_i64s(old_addr, a, old_len);
+        let _ = toml_copy_i64s(old_addr, a, old_len);
         a
     };
     __mind_store_i64(new_addr + old_len * 8, elem);
@@ -225,14 +227,14 @@ pub fn tv_arr_get(h: i64, i: i64) -> i64 {
 
 // --- String heap record operations ---
 
-// str_alloc -- copy `src_len` bytes from `src_addr` into a new String record.
-fn str_alloc(src_addr: i64, src_len: i64) -> i64 {
+// toml_str_alloc -- copy `src_len` bytes from `src_addr` into a new String record.
+fn toml_str_alloc(src_addr: i64, src_len: i64) -> i64 {
     let h: i64 = __mind_alloc(24);
     let dat: i64 = if src_len == 0 {
         0
     } else {
         let d: i64 = __mind_alloc(src_len);
-        let _ = copy_bytes(src_addr, d, src_len);
+        let _ = toml_copy_bytes(src_addr, d, src_len);
         d
     };
     __mind_store_i64(h + 0, dat);
@@ -241,18 +243,18 @@ fn str_alloc(src_addr: i64, src_len: i64) -> i64 {
     h
 }
 
-// str_eq_h -- byte-compare two String heap records.  1 = equal, 0 = not equal.
-fn str_eq_h(a: i64, b: i64) -> i64 {
+// toml_str_eq_h -- byte-compare two String heap records.  1 = equal, 0 = not equal.
+fn toml_str_eq_h(a: i64, b: i64) -> i64 {
     let la: i64 = __mind_load_i64(a + 8);
     let lb: i64 = __mind_load_i64(b + 8);
     if la == lb {
-        bytes_eq(__mind_load_i64(a + 0), __mind_load_i64(b + 0), la)
+        toml_bytes_eq(__mind_load_i64(a + 0), __mind_load_i64(b + 0), la)
     } else {
         0
     }
 }
 
-fn bytes_eq(aa: i64, ba: i64, n: i64) -> i64 {
+fn toml_bytes_eq(aa: i64, ba: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
     while i < n {
@@ -281,7 +283,7 @@ fn tv_tbl_set(h: i64, key_h: i64, val_h: i64) -> i64 {
     let mut updated: i64 = 0;
     while idx < old_len {
         let k: i64 = __mind_load_i64(old_keys + idx * 8);
-        if str_eq_h(k, key_h) == 1 {
+        if toml_str_eq_h(k, key_h) == 1 {
             __mind_store_i64(old_vals + idx * 8, val_h);
             updated = 1;
             idx = old_len;
@@ -304,14 +306,14 @@ fn tv_tbl_set(h: i64, key_h: i64, val_h: i64) -> i64 {
             old_keys
         } else {
             let nk: i64 = __mind_alloc(new_cap * 8);
-            let _ = copy_i64s(old_keys, nk, old_len);
+            let _ = toml_copy_i64s(old_keys, nk, old_len);
             nk
         };
         let new_vals: i64 = if new_cap == old_cap {
             old_vals
         } else {
             let nv: i64 = __mind_alloc(new_cap * 8);
-            let _ = copy_i64s(old_vals, nv, old_len);
+            let _ = toml_copy_i64s(old_vals, nv, old_len);
             nv
         };
         __mind_store_i64(new_keys + old_len * 8, key_h);
@@ -335,7 +337,7 @@ fn tv_tbl_get_raw(h: i64, key_addr: i64, key_len: i64) -> i64 {
         let k: i64 = __mind_load_i64(tbl_keys + idx * 8);
         let k_len: i64 = __mind_load_i64(k + 8);
         if k_len == key_len {
-            if bytes_eq(__mind_load_i64(k + 0), key_addr, key_len) == 1 {
+            if toml_bytes_eq(__mind_load_i64(k + 0), key_addr, key_len) == 1 {
                 found = __mind_load_i64(tbl_vals + idx * 8);
                 idx = tbl_len;
             } else {
@@ -353,7 +355,7 @@ fn tv_tbl_get_or_make(h: i64, key_addr: i64, key_len: i64) -> i64 {
     let existing: i64 = tv_tbl_get_raw(h, key_addr, key_len);
     if existing == 0 {
         let sub: i64 = tv_make_tbl();
-        let key_h: i64 = str_alloc(key_addr, key_len);
+        let key_h: i64 = toml_str_alloc(key_addr, key_len);
         let _ = tv_tbl_set(h, key_h, sub);
         sub
     } else {
@@ -370,7 +372,7 @@ fn tv_tbl_get_or_make_h(h: i64, key_h: i64) -> i64 {
     let mut found: i64 = 0;
     while idx < tbl_len {
         let k: i64 = __mind_load_i64(tbl_keys + idx * 8);
-        if str_eq_h(k, key_h) == 1 {
+        if toml_str_eq_h(k, key_h) == 1 {
             found = __mind_load_i64(tbl_vals + idx * 8);
             idx = tbl_len;
         } else {
@@ -388,11 +390,11 @@ fn tv_tbl_get_or_make_h(h: i64, key_h: i64) -> i64 {
 
 // --- Byte classification helpers ---
 
-fn load_byte(buf: i64, i: i64) -> i64 {
+fn toml_load_byte(buf: i64, i: i64) -> i64 {
     __mind_load_i8(buf + i)
 }
 
-fn is_ws(b: i64) -> i64 {
+fn toml_is_ws(b: i64) -> i64 {
     if b == 32 {
         return 1;
     }
@@ -402,7 +404,7 @@ fn is_ws(b: i64) -> i64 {
     0
 }
 
-fn is_newline(b: i64) -> i64 {
+fn toml_is_newline(b: i64) -> i64 {
     if b == 10 {
         return 1;
     }
@@ -412,7 +414,7 @@ fn is_newline(b: i64) -> i64 {
     0
 }
 
-fn is_digit(b: i64) -> i64 {
+fn toml_is_digit(b: i64) -> i64 {
     if b >= 48 {
         if b <= 57 {
             return 1;
@@ -421,8 +423,8 @@ fn is_digit(b: i64) -> i64 {
     0
 }
 
-fn is_hex_digit(b: i64) -> i64 {
-    if is_digit(b) == 1 {
+fn toml_is_hex_digit(b: i64) -> i64 {
+    if toml_is_digit(b) == 1 {
         return 1;
     }
     if b >= 65 {
@@ -438,7 +440,7 @@ fn is_hex_digit(b: i64) -> i64 {
     0
 }
 
-fn is_bare_key_char(b: i64) -> i64 {
+fn toml_is_bare_key_char(b: i64) -> i64 {
     if b >= 97 {
         if b <= 122 {
             return 1;
@@ -463,7 +465,7 @@ fn is_bare_key_char(b: i64) -> i64 {
     0
 }
 
-fn hex_val(b: i64) -> i64 {
+fn toml_hex_val(b: i64) -> i64 {
     if b >= 48 {
         if b <= 57 {
             return b - 48;
@@ -484,14 +486,14 @@ fn hex_val(b: i64) -> i64 {
 
 // --- Skip helpers ---
 
-fn skip_ws(buf: i64, i: i64, len: i64) -> i64 {
+fn toml_skip_ws(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= len {
             running = 0;
         } else {
-            if is_ws(load_byte(buf, pos)) == 1 {
+            if toml_is_ws(toml_load_byte(buf, pos)) == 1 {
                 pos = pos + 1;
             } else {
                 running = 0;
@@ -501,14 +503,14 @@ fn skip_ws(buf: i64, i: i64, len: i64) -> i64 {
     pos
 }
 
-fn skip_comment(buf: i64, i: i64, len: i64) -> i64 {
+fn toml_skip_comment(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= len {
             running = 0;
         } else {
-            if is_newline(load_byte(buf, pos)) == 1 {
+            if toml_is_newline(toml_load_byte(buf, pos)) == 1 {
                 pos = pos + 1;
                 running = 0;
             } else {
@@ -519,14 +521,14 @@ fn skip_comment(buf: i64, i: i64, len: i64) -> i64 {
     pos
 }
 
-fn skip_to_eol(buf: i64, i: i64, len: i64) -> i64 {
+fn toml_skip_to_eol(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= len {
             running = 0;
         } else {
-            if is_newline(load_byte(buf, pos)) == 1 {
+            if toml_is_newline(toml_load_byte(buf, pos)) == 1 {
                 running = 0;
             } else {
                 pos = pos + 1;
@@ -536,22 +538,22 @@ fn skip_to_eol(buf: i64, i: i64, len: i64) -> i64 {
     pos
 }
 
-fn skip_ws_nl(buf: i64, i: i64, len: i64) -> i64 {
+fn toml_skip_ws_nl(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= len {
             running = 0;
         } else {
-            let b: i64 = load_byte(buf, pos);
-            if is_ws(b) == 1 {
+            let b: i64 = toml_load_byte(buf, pos);
+            if toml_is_ws(b) == 1 {
                 pos = pos + 1;
             } else {
-                if is_newline(b) == 1 {
+                if toml_is_newline(b) == 1 {
                     pos = pos + 1;
                 } else {
                     if b == 35 {
-                        pos = skip_comment(buf, pos + 1, len);
+                        pos = toml_skip_comment(buf, pos + 1, len);
                     } else {
                         running = 0;
                     }
@@ -564,8 +566,8 @@ fn skip_ws_nl(buf: i64, i: i64, len: i64) -> i64 {
 
 // --- String builder ---
 
-// sb_new -- allocate a 3-field string builder record [dat_addr, len, cap].
-fn sb_new() -> i64 {
+// toml_sb_new -- allocate a 3-field string builder record [dat_addr, len, cap].
+fn toml_sb_new() -> i64 {
     let h: i64 = __mind_alloc(24);
     __mind_store_i64(h + 0, 0);
     __mind_store_i64(h + 8, 0);
@@ -573,7 +575,7 @@ fn sb_new() -> i64 {
     h
 }
 
-fn sb_push(h: i64, b: i64) -> i64 {
+fn toml_sb_push(h: i64, b: i64) -> i64 {
     let old_len: i64 = __mind_load_i64(h + 8);
     let old_cap: i64 = __mind_load_i64(h + 16);
     let old_dat: i64 = __mind_load_i64(h + 0);
@@ -590,7 +592,7 @@ fn sb_push(h: i64, b: i64) -> i64 {
         old_dat
     } else {
         let d: i64 = __mind_alloc(new_cap);
-        let _ = copy_bytes(old_dat, d, old_len);
+        let _ = toml_copy_bytes(old_dat, d, old_len);
         d
     };
     __mind_store_i8(new_dat + old_len, b);
@@ -602,10 +604,10 @@ fn sb_push(h: i64, b: i64) -> i64 {
 
 // --- String parsing ---
 
-// parse_basic_string -- parse from position `i` (after opening `"`).
+// toml_parse_basic_string -- parse from position `i` (after opening `"`).
 // Returns Vec [pos_after_close_quote, sb_handle].
-fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
-    let sb: i64 = sb_new();
+fn toml_parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
+    let sb: i64 = toml_sb_new();
     let mut pos: i64 = i;
     let mut done: i64 = 0;
     let mut closed: i64 = 0;
@@ -613,7 +615,7 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
         if pos >= len {
             done = 1;
         } else {
-            let b: i64 = load_byte(buf, pos);
+            let b: i64 = toml_load_byte(buf, pos);
             if b == 34 {
                 pos = pos + 1;
                 done = 1;
@@ -622,28 +624,28 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
                 if b == 92 {
                     pos = pos + 1;
                     if pos < len {
-                        let e: i64 = load_byte(buf, pos);
+                        let e: i64 = toml_load_byte(buf, pos);
                         if e == 110 {
-                            let _ = sb_push(sb, 10);
+                            let _ = toml_sb_push(sb, 10);
                             pos = pos + 1;
                         } else {
                             if e == 116 {
-                                let _ = sb_push(sb, 9);
+                                let _ = toml_sb_push(sb, 9);
                                 pos = pos + 1;
                             } else {
                                 if e == 114 {
-                                    let _ = sb_push(sb, 13);
+                                    let _ = toml_sb_push(sb, 13);
                                     pos = pos + 1;
                                 } else {
                                     if e == 92 {
-                                        let _ = sb_push(sb, 92);
+                                        let _ = toml_sb_push(sb, 92);
                                         pos = pos + 1;
                                     } else {
                                         if e == 34 {
-                                            let _ = sb_push(sb, 34);
+                                            let _ = toml_sb_push(sb, 34);
                                             pos = pos + 1;
                                         } else {
-                                            let _ = sb_push(sb, e);
+                                            let _ = toml_sb_push(sb, e);
                                             pos = pos + 1;
                                         }
                                     }
@@ -652,7 +654,7 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
                         }
                     }
                 } else {
-                    let _ = sb_push(sb, b);
+                    let _ = toml_sb_push(sb, b);
                     pos = pos + 1;
                 }
             }
@@ -668,10 +670,10 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
     vec_push(r1, sb)
 }
 
-// parse_literal_string -- from `i` (after opening `'`).
+// toml_parse_literal_string -- from `i` (after opening `'`).
 // Returns Vec [pos_after_close, sb_handle].
-fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
-    let sb: i64 = sb_new();
+fn toml_parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
+    let sb: i64 = toml_sb_new();
     let mut pos: i64 = i;
     let mut done: i64 = 0;
     let mut closed: i64 = 0;
@@ -679,13 +681,13 @@ fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
         if pos >= len {
             done = 1;
         } else {
-            let b: i64 = load_byte(buf, pos);
+            let b: i64 = toml_load_byte(buf, pos);
             if b == 39 {
                 pos = pos + 1;
                 done = 1;
                 closed = 1;
             } else {
-                let _ = sb_push(sb, b);
+                let _ = toml_sb_push(sb, b);
                 pos = pos + 1;
             }
         }
@@ -701,12 +703,12 @@ fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
 
 // --- Integer parsing ---
 
-// parse_integer -- decimal or 0x hex (with optional _ separators and leading -).
+// toml_parse_integer -- decimal or 0x hex (with optional _ separators and leading -).
 // Returns Vec [pos_after, value].
-fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
+fn toml_parse_integer(buf: i64, i: i64, len: i64) -> Vec {
     let mut pos: i64 = i;
     let negative: i64 = if pos < len {
-        if load_byte(buf, pos) == 45 {
+        if toml_load_byte(buf, pos) == 45 {
             pos = pos + 1;
             1
         } else {
@@ -716,8 +718,8 @@ fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
         0
     };
     let is_hex: i64 = if pos + 1 < len {
-        if load_byte(buf, pos) == 48 {
-            if load_byte(buf, pos + 1) == 120 {
+        if toml_load_byte(buf, pos) == 48 {
+            if toml_load_byte(buf, pos + 1) == 120 {
                 pos = pos + 2;
                 1
             } else {
@@ -736,9 +738,9 @@ fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
             if pos >= len {
                 running = 0;
             } else {
-                let b: i64 = load_byte(buf, pos);
-                if is_hex_digit(b) == 1 {
-                    acc = acc * 16 + hex_val(b);
+                let b: i64 = toml_load_byte(buf, pos);
+                if toml_is_hex_digit(b) == 1 {
+                    acc = acc * 16 + toml_hex_val(b);
                     pos = pos + 1;
                 } else {
                     if b == 95 {
@@ -754,8 +756,8 @@ fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
             if pos >= len {
                 running = 0;
             } else {
-                let b: i64 = load_byte(buf, pos);
-                if is_digit(b) == 1 {
+                let b: i64 = toml_load_byte(buf, pos);
+                if toml_is_digit(b) == 1 {
                     acc = acc * 10 + (b - 48);
                     pos = pos + 1;
                 } else {
@@ -780,24 +782,24 @@ fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
 
 // --- Key parsing ---
 
-// parse_key_segment -- one bare or quoted key segment.
+// toml_parse_key_segment -- one bare or quoted key segment.
 // Returns Vec [pos_after, str_handle].
-fn parse_key_segment(buf: i64, i: i64, len: i64) -> Vec {
-    let b: i64 = load_byte(buf, i);
+fn toml_parse_key_segment(buf: i64, i: i64, len: i64) -> Vec {
+    let b: i64 = toml_load_byte(buf, i);
     if b == 34 {
-        let r: Vec = parse_basic_string(buf, i + 1, len);
+        let r: Vec = toml_parse_basic_string(buf, i + 1, len);
         let pos: i64 = vec_get(r, 0);
         let sb: i64 = vec_get(r, 1);
-        let str_h: i64 = str_alloc(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8));
+        let str_h: i64 = toml_str_alloc(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8));
         let out: Vec = vec_new();
         let out1: Vec = vec_push(out, pos);
         vec_push(out1, str_h)
     } else {
         if b == 39 {
-            let r: Vec = parse_literal_string(buf, i + 1, len);
+            let r: Vec = toml_parse_literal_string(buf, i + 1, len);
             let pos: i64 = vec_get(r, 0);
             let sb: i64 = vec_get(r, 1);
-            let str_h: i64 = str_alloc(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8));
+            let str_h: i64 = toml_str_alloc(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8));
             let out: Vec = vec_new();
             let out1: Vec = vec_push(out, pos);
             vec_push(out1, str_h)
@@ -810,14 +812,14 @@ fn parse_key_segment(buf: i64, i: i64, len: i64) -> Vec {
                 if pos >= len {
                     running = 0;
                 } else {
-                    if is_bare_key_char(load_byte(buf, pos)) == 1 {
+                    if toml_is_bare_key_char(toml_load_byte(buf, pos)) == 1 {
                         pos = pos + 1;
                     } else {
                         running = 0;
                     }
                 }
             }
-            let str_h: i64 = str_alloc(buf + lo, pos - lo);
+            let str_h: i64 = toml_str_alloc(buf + lo, pos - lo);
             let out: Vec = vec_new();
             let out1: Vec = vec_push(out, pos);
             vec_push(out1, str_h)
@@ -825,18 +827,18 @@ fn parse_key_segment(buf: i64, i: i64, len: i64) -> Vec {
     }
 }
 
-// parse_dotted_key -- parse `a.b.c = ...` style key.
+// toml_parse_dotted_key -- parse `a.b.c = ...` style key.
 // Navigates/creates sub-tables in `tbl` for all but the last segment.
 // Returns Vec [pos_after_key, target_tbl_h, last_key_str_h].
-fn parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
-    let r0: Vec = parse_key_segment(buf, i, len);
+fn toml_parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
+    let r0: Vec = toml_parse_key_segment(buf, i, len);
     let pos0: i64 = vec_get(r0, 0);
     let k0: i64 = vec_get(r0, 1);
-    let pos1: i64 = skip_ws(buf, pos0, len);
+    let pos1: i64 = toml_skip_ws(buf, pos0, len);
     if pos1 < len {
-        if load_byte(buf, pos1) == 46 {
+        if toml_load_byte(buf, pos1) == 46 {
             let sub: i64 = tv_tbl_get_or_make_h(tbl, k0);
-            return parse_dotted_key(buf, pos1 + 1, len, sub);
+            return toml_parse_dotted_key(buf, pos1 + 1, len, sub);
         }
     }
     let out: Vec = vec_new();
@@ -847,12 +849,12 @@ fn parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
 
 // --- Value parsing ---
 
-// parse_value -- parse a single TOML value at position `i`.
+// toml_parse_value -- parse a single TOML value at position `i`.
 // Returns Vec [pos_after, tv_handle] (handle = 0 means parse failed / unknown).
-fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
-    let pos: i64 = skip_ws(buf, i, len);
+fn toml_parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
+    let pos: i64 = toml_skip_ws(buf, i, len);
     // Depth guard: fail closed on over-nested untrusted input (no SIGSEGV).
-    if depth > MAX_DEPTH {
+    if depth > TOML_MAX_DEPTH {
         let d: Vec = vec_new();
         let d1: Vec = vec_push(d, pos);
         return vec_push(d1, 0);
@@ -862,9 +864,9 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
         let r1: Vec = vec_push(r, pos);
         return vec_push(r1, 0);
     }
-    let b: i64 = load_byte(buf, pos);
+    let b: i64 = toml_load_byte(buf, pos);
     if b == 34 {
-        let r: Vec = parse_basic_string(buf, pos + 1, len);
+        let r: Vec = toml_parse_basic_string(buf, pos + 1, len);
         let p2: i64 = vec_get(r, 0);
         let sb: i64 = vec_get(r, 1);
         // Unterminated string (p2 < 0): parse failure (handle = 0).
@@ -879,7 +881,7 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
         return vec_push(out1, tv);
     }
     if b == 39 {
-        let r: Vec = parse_literal_string(buf, pos + 1, len);
+        let r: Vec = toml_parse_literal_string(buf, pos + 1, len);
         let p2: i64 = vec_get(r, 0);
         let sb: i64 = vec_get(r, 1);
         if p2 < 0 {
@@ -893,17 +895,17 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
         return vec_push(out1, tv);
     }
     if b == 91 {
-        return parse_array(buf, pos + 1, len, depth);
+        return toml_parse_array(buf, pos + 1, len, depth);
     }
     if b == 123 {
-        return parse_inline_table(buf, pos + 1, len, depth);
+        return toml_parse_inline_table(buf, pos + 1, len, depth);
     }
     // true
     if b == 116 {
         if pos + 3 < len {
-            if load_byte(buf, pos + 1) == 114 {
-                if load_byte(buf, pos + 2) == 117 {
-                    if load_byte(buf, pos + 3) == 101 {
+            if toml_load_byte(buf, pos + 1) == 114 {
+                if toml_load_byte(buf, pos + 2) == 117 {
+                    if toml_load_byte(buf, pos + 3) == 101 {
                         let tv: i64 = tv_make_bool(1);
                         let out: Vec = vec_new();
                         let out1: Vec = vec_push(out, pos + 4);
@@ -916,10 +918,10 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     // false
     if b == 102 {
         if pos + 4 < len {
-            if load_byte(buf, pos + 1) == 97 {
-                if load_byte(buf, pos + 2) == 108 {
-                    if load_byte(buf, pos + 3) == 115 {
-                        if load_byte(buf, pos + 4) == 101 {
+            if toml_load_byte(buf, pos + 1) == 97 {
+                if toml_load_byte(buf, pos + 2) == 108 {
+                    if toml_load_byte(buf, pos + 3) == 115 {
+                        if toml_load_byte(buf, pos + 4) == 101 {
                             let tv: i64 = tv_make_bool(0);
                             let out: Vec = vec_new();
                             let out1: Vec = vec_push(out, pos + 5);
@@ -931,8 +933,8 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
         }
     }
     // integer (decimal starts with 0-9, or negative -)
-    if is_digit(b) == 1 {
-        let r: Vec = parse_integer(buf, pos, len);
+    if toml_is_digit(b) == 1 {
+        let r: Vec = toml_parse_integer(buf, pos, len);
         let p2: i64 = vec_get(r, 0);
         let ival: i64 = vec_get(r, 1);
         let tv: i64 = tv_make_int(ival);
@@ -943,8 +945,8 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     if b == 45 {
         // Could be negative integer.  Peek next byte.
         if pos + 1 < len {
-            if is_digit(load_byte(buf, pos + 1)) == 1 {
-                let r: Vec = parse_integer(buf, pos, len);
+            if toml_is_digit(toml_load_byte(buf, pos + 1)) == 1 {
+                let r: Vec = toml_parse_integer(buf, pos, len);
                 let p2: i64 = vec_get(r, 0);
                 let ival: i64 = vec_get(r, 1);
                 let tv: i64 = tv_make_int(ival);
@@ -956,35 +958,35 @@ fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     }
     // Unknown value -- skip to end of line.
     let out: Vec = vec_new();
-    let out1: Vec = vec_push(out, skip_to_eol(buf, pos, len));
+    let out1: Vec = vec_push(out, toml_skip_to_eol(buf, pos, len));
     vec_push(out1, 0)
 }
 
-// parse_array -- parse elements from `i` (after `[`).
-fn parse_array(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
+// toml_parse_array -- parse elements from `i` (after `[`).
+fn toml_parse_array(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let arr: i64 = tv_make_arr();
-    let mut pos: i64 = skip_ws_nl(buf, i, len);
+    let mut pos: i64 = toml_skip_ws_nl(buf, i, len);
     let mut done: i64 = 0;
     while done == 0 {
         if pos >= len {
             done = 1;
         } else {
-            let b: i64 = load_byte(buf, pos);
+            let b: i64 = toml_load_byte(buf, pos);
             if b == 93 {
                 pos = pos + 1;
                 done = 1;
             } else {
                 if b == 44 {
-                    pos = skip_ws_nl(buf, pos + 1, len);
+                    pos = toml_skip_ws_nl(buf, pos + 1, len);
                 } else {
-                    let r: Vec = parse_value(buf, pos, len, depth + 1);
+                    let r: Vec = toml_parse_value(buf, pos, len, depth + 1);
                     let p2: i64 = vec_get(r, 0);
                     let tv: i64 = vec_get(r, 1);
                     if tv == 0 {
                         done = 1;
                     } else {
                         let _ = tv_arr_push(arr, tv);
-                        pos = skip_ws_nl(buf, p2, len);
+                        pos = toml_skip_ws_nl(buf, p2, len);
                     }
                 }
             }
@@ -995,29 +997,29 @@ fn parse_array(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     vec_push(out1, arr)
 }
 
-// parse_inline_table -- parse entries from `i` (after `{`).
-fn parse_inline_table(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
+// toml_parse_inline_table -- parse entries from `i` (after `{`).
+fn toml_parse_inline_table(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let tbl: i64 = tv_make_tbl();
-    let mut pos: i64 = skip_ws(buf, i, len);
+    let mut pos: i64 = toml_skip_ws(buf, i, len);
     let mut done: i64 = 0;
     while done == 0 {
         if pos >= len {
             done = 1;
         } else {
-            let b: i64 = load_byte(buf, pos);
+            let b: i64 = toml_load_byte(buf, pos);
             if b == 125 {
                 pos = pos + 1;
                 done = 1;
             } else {
                 if b == 44 {
-                    pos = skip_ws(buf, pos + 1, len);
+                    pos = toml_skip_ws(buf, pos + 1, len);
                 } else {
-                    let kr: Vec = parse_key_segment(buf, pos, len);
+                    let kr: Vec = toml_parse_key_segment(buf, pos, len);
                     let kp: i64 = vec_get(kr, 0);
                     let kh: i64 = vec_get(kr, 1);
-                    let ep: i64 = skip_ws(buf, kp, len);
+                    let ep: i64 = toml_skip_ws(buf, kp, len);
                     let vstart: i64 = if ep < len {
-                        if load_byte(buf, ep) == 61 {
+                        if toml_load_byte(buf, ep) == 61 {
                             ep + 1
                         } else {
                             ep
@@ -1025,14 +1027,14 @@ fn parse_inline_table(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
                     } else {
                         ep
                     };
-                    let vr: Vec = parse_value(buf, vstart, len, depth + 1);
+                    let vr: Vec = toml_parse_value(buf, vstart, len, depth + 1);
                     let vp: i64 = vec_get(vr, 0);
                     let vh: i64 = vec_get(vr, 1);
                     if vh == 0 {
                         done = 1;
                     } else {
                         let _ = tv_tbl_set(tbl, kh, vh);
-                        pos = skip_ws(buf, vp, len);
+                        pos = toml_skip_ws(buf, vp, len);
                     }
                 }
             }
@@ -1045,15 +1047,15 @@ fn parse_inline_table(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
 
 // --- Section header parsing ---
 
-// find_close_bracket -- scan forward for `]`, return its offset.
-fn find_close_bracket(buf: i64, i: i64, len: i64) -> i64 {
+// toml_find_close_bracket -- scan forward for `]`, return its offset.
+fn toml_find_close_bracket(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= len {
             running = 0;
         } else {
-            if load_byte(buf, pos) == 93 {
+            if toml_load_byte(buf, pos) == 93 {
                 running = 0;
             } else {
                 pos = pos + 1;
@@ -1063,9 +1065,9 @@ fn find_close_bracket(buf: i64, i: i64, len: i64) -> i64 {
     pos
 }
 
-// navigate_path_str -- walk "a.b.c" in `root`, creating sub-tables as needed.
+// toml_navigate_path_str -- walk "a.b.c" in `root`, creating sub-tables as needed.
 // Returns the innermost table handle.
-fn navigate_path_str(root: i64, buf: i64, start: i64, end: i64) -> i64 {
+fn toml_navigate_path_str(root: i64, buf: i64, start: i64, end: i64) -> i64 {
     let mut cur: i64 = root;
     let mut seg_lo: i64 = start;
     let mut pos: i64 = start;
@@ -1077,7 +1079,7 @@ fn navigate_path_str(root: i64, buf: i64, start: i64, end: i64) -> i64 {
             let is_dot: i64 = if pos == end {
                 1
             } else {
-                if load_byte(buf, pos) == 46 {
+                if toml_load_byte(buf, pos) == 46 {
                     1
                 } else {
                     0
@@ -1094,14 +1096,14 @@ fn navigate_path_str(root: i64, buf: i64, start: i64, end: i64) -> i64 {
     cur
 }
 
-// navigate_section_parent -- navigate to parent table of last segment.
+// toml_navigate_section_parent -- navigate to parent table of last segment.
 // Returns Vec [parent_tbl, seg_addr, seg_len].
-fn navigate_section_parent(root: i64, buf: i64, start: i64, end: i64) -> Vec {
+fn toml_navigate_section_parent(root: i64, buf: i64, start: i64, end: i64) -> Vec {
     // Find the last '.' in [start, end).
     let mut last_dot: i64 = 0 - 1;
     let mut pos: i64 = start;
     while pos < end {
-        if load_byte(buf, pos) == 46 {
+        if toml_load_byte(buf, pos) == 46 {
             last_dot = pos;
         }
         pos = pos + 1;
@@ -1112,7 +1114,7 @@ fn navigate_section_parent(root: i64, buf: i64, start: i64, end: i64) -> Vec {
         let out2: Vec = vec_push(out1, buf + start);
         vec_push(out2, end - start)
     } else {
-        let parent: i64 = navigate_path_str(root, buf, start, last_dot);
+        let parent: i64 = toml_navigate_path_str(root, buf, start, last_dot);
         let out: Vec = vec_new();
         let out1: Vec = vec_push(out, parent);
         let out2: Vec = vec_push(out1, buf + last_dot + 1);
@@ -1120,12 +1122,12 @@ fn navigate_section_parent(root: i64, buf: i64, start: i64, end: i64) -> Vec {
     }
 }
 
-// parse_section_header -- called with `i` pointing past the first `[`.
+// toml_parse_section_header -- called with `i` pointing past the first `[`.
 // Returns Vec [pos_after_line, current_table_handle].
-fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
+fn toml_parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
     // Detect `[[` (array-of-tables) vs `[` (plain table).
     let is_aot: i64 = if i < len {
-        if load_byte(buf, i) == 91 {
+        if toml_load_byte(buf, i) == 91 {
             1
         } else {
             0
@@ -1139,11 +1141,11 @@ fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
         i
     };
     // Find closing `]`.
-    let path_end: i64 = find_close_bracket(buf, path_start, len);
+    let path_end: i64 = toml_find_close_bracket(buf, path_start, len);
     // Advance past `]` (and `]]` for aot).
     let after_close: i64 = if is_aot == 1 {
         if path_end + 1 < len {
-            if load_byte(buf, path_end + 1) == 93 {
+            if toml_load_byte(buf, path_end + 1) == 93 {
                 path_end + 2
             } else {
                 path_end + 1
@@ -1154,17 +1156,17 @@ fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
     } else {
         path_end + 1
     };
-    let pos_after_line: i64 = skip_to_eol(buf, after_close, len);
+    let pos_after_line: i64 = toml_skip_to_eol(buf, after_close, len);
     let cur_tbl: i64 = if is_aot == 1 {
         // Navigate to parent, get-or-make the array, append new table.
-        let pv: Vec = navigate_section_parent(root, buf, path_start, path_end);
+        let pv: Vec = toml_navigate_section_parent(root, buf, path_start, path_end);
         let parent: i64 = vec_get(pv, 0);
         let k_addr: i64 = vec_get(pv, 1);
         let k_len: i64 = vec_get(pv, 2);
         let existing: i64 = tv_tbl_get_raw(parent, k_addr, k_len);
         let arr_tv: i64 = if existing == 0 {
             let a: i64 = tv_make_arr();
-            let kh: i64 = str_alloc(k_addr, k_len);
+            let kh: i64 = toml_str_alloc(k_addr, k_len);
             let _ = tv_tbl_set(parent, kh, a);
             a
         } else {
@@ -1174,7 +1176,7 @@ fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
         let _ = tv_arr_push(arr_tv, new_tbl);
         new_tbl
     } else {
-        navigate_path_str(root, buf, path_start, path_end)
+        toml_navigate_path_str(root, buf, path_start, path_end)
     };
     let out: Vec = vec_new();
     let out1: Vec = vec_push(out, pos_after_line);
@@ -1183,14 +1185,14 @@ fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
 
 // --- Key=value line parsing ---
 
-fn parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
-    let kr: Vec = parse_dotted_key(buf, i, len, tbl);
+fn toml_parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
+    let kr: Vec = toml_parse_dotted_key(buf, i, len, tbl);
     let kp: i64 = vec_get(kr, 0);
     let target: i64 = vec_get(kr, 1);
     let kh: i64 = vec_get(kr, 2);
-    let ep: i64 = skip_ws(buf, kp, len);
+    let ep: i64 = toml_skip_ws(buf, kp, len);
     let vstart: i64 = if ep < len {
-        if load_byte(buf, ep) == 61 {
+        if toml_load_byte(buf, ep) == 61 {
             ep + 1
         } else {
             ep
@@ -1198,14 +1200,14 @@ fn parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
     } else {
         ep
     };
-    let vr: Vec = parse_value(buf, vstart, len, 0);
+    let vr: Vec = toml_parse_value(buf, vstart, len, 0);
     let vp: i64 = vec_get(vr, 0);
     let vh: i64 = vec_get(vr, 1);
     if vh == 0 {
-        skip_to_eol(buf, vp, len)
+        toml_skip_to_eol(buf, vp, len)
     } else {
         let _ = tv_tbl_set(target, kh, vh);
-        skip_to_eol(buf, vp, len)
+        toml_skip_to_eol(buf, vp, len)
     }
 }
 
@@ -1216,29 +1218,29 @@ fn parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
 // Returns the i64 handle of the root Table TomlValue.
 pub fn toml_parse(buf: i64, buf_len: i64) -> i64 {
     let root: i64 = tv_make_tbl();
-    let mut pos: i64 = skip_ws_nl(buf, 0, buf_len);
+    let mut pos: i64 = toml_skip_ws_nl(buf, 0, buf_len);
     let mut cur: i64 = root;
     while pos < buf_len {
-        let b: i64 = load_byte(buf, pos);
+        let b: i64 = toml_load_byte(buf, pos);
         if b == 35 {
-            pos = skip_comment(buf, pos + 1, buf_len);
-            pos = skip_ws_nl(buf, pos, buf_len);
+            pos = toml_skip_comment(buf, pos + 1, buf_len);
+            pos = toml_skip_ws_nl(buf, pos, buf_len);
         } else {
             if b == 91 {
-                let hr: Vec = parse_section_header(buf, pos + 1, buf_len, root);
+                let hr: Vec = toml_parse_section_header(buf, pos + 1, buf_len, root);
                 let np: i64 = vec_get(hr, 0);
                 let new_tbl: i64 = vec_get(hr, 1);
                 cur = new_tbl;
-                pos = skip_ws_nl(buf, np, buf_len);
+                pos = toml_skip_ws_nl(buf, np, buf_len);
             } else {
-                if is_ws(b) == 1 {
-                    pos = skip_ws(buf, pos, buf_len);
+                if toml_is_ws(b) == 1 {
+                    pos = toml_skip_ws(buf, pos, buf_len);
                 } else {
-                    if is_newline(b) == 1 {
+                    if toml_is_newline(b) == 1 {
                         pos = pos + 1;
                     } else {
-                        let np: i64 = parse_keyval(buf, pos, buf_len, cur);
-                        pos = skip_ws_nl(buf, np, buf_len);
+                        let np: i64 = toml_parse_keyval(buf, pos, buf_len, cur);
+                        pos = toml_skip_ws_nl(buf, np, buf_len);
                     }
                 }
             }
@@ -1265,7 +1267,7 @@ pub fn toml_get(tv: i64, path_buf: i64, path_len: i64) -> i64 {
             cur = tv_tbl_get_raw(cur, path_buf + seg_lo, seg_len);
             running = 0;
         } else {
-            if load_byte(path_buf, pos) == 46 {
+            if toml_load_byte(path_buf, pos) == 46 {
                 let seg_len: i64 = pos - seg_lo;
                 let child: i64 = tv_tbl_get_raw(cur, path_buf + seg_lo, seg_len);
                 if child == 0 {
@@ -1288,70 +1290,70 @@ pub fn toml_get(tv: i64, path_buf: i64, path_len: i64) -> i64 {
 // Returns a String heap record handle (3xi64: dat_addr/len/cap).
 // Round-trip contract: toml_parse(toml_dump(v)) equals v semantically.
 pub fn toml_dump(tv: i64) -> i64 {
-    let sb: i64 = sb_new();
-    let _ = dump_value(sb, tv);
+    let sb: i64 = toml_sb_new();
+    let _ = toml_dump_value(sb, tv);
     sb
 }
 
-fn dump_value(sb: i64, tv: i64) -> i64 {
+fn toml_dump_value(sb: i64, tv: i64) -> i64 {
     let k: i64 = tv_kind(tv);
     if k == tv_kind_str() {
-        let _ = sb_push(sb, 34);
-        let _ = dump_escaped(sb, tv_s_addr(tv), tv_s_len(tv));
-        let _ = sb_push(sb, 34);
+        let _ = toml_sb_push(sb, 34);
+        let _ = toml_dump_escaped(sb, tv_s_addr(tv), tv_s_len(tv));
+        let _ = toml_sb_push(sb, 34);
     } else {
         if k == tv_kind_int() {
-            let _ = dump_i64_digits(sb, tv_ival(tv));
+            let _ = toml_dump_i64_digits(sb, tv_ival(tv));
         } else {
             if k == tv_kind_bool() {
                 if tv_bval(tv) == 1 {
-                    let _ = sb_push(sb, 116);
-                    let _ = sb_push(sb, 114);
-                    let _ = sb_push(sb, 117);
-                    let _ = sb_push(sb, 101);
+                    let _ = toml_sb_push(sb, 116);
+                    let _ = toml_sb_push(sb, 114);
+                    let _ = toml_sb_push(sb, 117);
+                    let _ = toml_sb_push(sb, 101);
                 } else {
-                    let _ = sb_push(sb, 102);
-                    let _ = sb_push(sb, 97);
-                    let _ = sb_push(sb, 108);
-                    let _ = sb_push(sb, 115);
-                    let _ = sb_push(sb, 101);
+                    let _ = toml_sb_push(sb, 102);
+                    let _ = toml_sb_push(sb, 97);
+                    let _ = toml_sb_push(sb, 108);
+                    let _ = toml_sb_push(sb, 115);
+                    let _ = toml_sb_push(sb, 101);
                 }
             } else {
                 if k == tv_kind_arr() {
-                    let _ = sb_push(sb, 91);
+                    let _ = toml_sb_push(sb, 91);
                     let alen: i64 = tv_arr_len(tv);
                     let mut ai: i64 = 0;
                     while ai < alen {
                         if ai > 0 {
-                            let _ = sb_push(sb, 44);
-                            let _ = sb_push(sb, 32);
+                            let _ = toml_sb_push(sb, 44);
+                            let _ = toml_sb_push(sb, 32);
                         }
-                        let _ = dump_value(sb, tv_arr_get(tv, ai));
+                        let _ = toml_dump_value(sb, tv_arr_get(tv, ai));
                         ai = ai + 1;
                     }
-                    let _ = sb_push(sb, 93);
+                    let _ = toml_sb_push(sb, 93);
                 } else {
                     // Table -- inline brace form.
-                    let _ = sb_push(sb, 123);
+                    let _ = toml_sb_push(sb, 123);
                     let tlen: i64 = tv_tbl_len(tv);
                     let tkeys: i64 = tv_tbl_keys(tv);
                     let tvals: i64 = tv_tbl_vals(tv);
                     let mut ti: i64 = 0;
                     while ti < tlen {
                         if ti > 0 {
-                            let _ = sb_push(sb, 44);
-                            let _ = sb_push(sb, 32);
+                            let _ = toml_sb_push(sb, 44);
+                            let _ = toml_sb_push(sb, 32);
                         }
                         let kh: i64 = __mind_load_i64(tkeys + ti * 8);
                         let vh: i64 = __mind_load_i64(tvals + ti * 8);
-                        let _ = dump_escaped(sb, __mind_load_i64(kh + 0), __mind_load_i64(kh + 8));
-                        let _ = sb_push(sb, 32);
-                        let _ = sb_push(sb, 61);
-                        let _ = sb_push(sb, 32);
-                        let _ = dump_value(sb, vh);
+                        let _ = toml_dump_escaped(sb, __mind_load_i64(kh + 0), __mind_load_i64(kh + 8));
+                        let _ = toml_sb_push(sb, 32);
+                        let _ = toml_sb_push(sb, 61);
+                        let _ = toml_sb_push(sb, 32);
+                        let _ = toml_dump_value(sb, vh);
                         ti = ti + 1;
                     }
-                    let _ = sb_push(sb, 125);
+                    let _ = toml_sb_push(sb, 125);
                 }
             }
         }
@@ -1359,23 +1361,23 @@ fn dump_value(sb: i64, tv: i64) -> i64 {
     0
 }
 
-fn dump_escaped(sb: i64, addr: i64, slen: i64) -> i64 {
+fn toml_dump_escaped(sb: i64, addr: i64, slen: i64) -> i64 {
     let mut i: i64 = 0;
     while i < slen {
-        let b: i64 = load_byte(addr, i);
+        let b: i64 = toml_load_byte(addr, i);
         if b == 34 {
-            let _ = sb_push(sb, 92);
-            let _ = sb_push(sb, 34);
+            let _ = toml_sb_push(sb, 92);
+            let _ = toml_sb_push(sb, 34);
         } else {
             if b == 92 {
-                let _ = sb_push(sb, 92);
-                let _ = sb_push(sb, 92);
+                let _ = toml_sb_push(sb, 92);
+                let _ = toml_sb_push(sb, 92);
             } else {
                 if b == 10 {
-                    let _ = sb_push(sb, 92);
-                    let _ = sb_push(sb, 110);
+                    let _ = toml_sb_push(sb, 92);
+                    let _ = toml_sb_push(sb, 110);
                 } else {
-                    let _ = sb_push(sb, b);
+                    let _ = toml_sb_push(sb, b);
                 }
             }
         }
@@ -1384,22 +1386,22 @@ fn dump_escaped(sb: i64, addr: i64, slen: i64) -> i64 {
     0
 }
 
-fn dump_i64_digits(sb: i64, v: i64) -> i64 {
+fn toml_dump_i64_digits(sb: i64, v: i64) -> i64 {
     if v == 0 {
-        return sb_push(sb, 48);
+        return toml_sb_push(sb, 48);
     }
     if v < 0 {
-        let _ = sb_push(sb, 45);
-        dump_u64_digits(sb, 0 - v)
+        let _ = toml_sb_push(sb, 45);
+        toml_dump_u64_digits(sb, 0 - v)
     } else {
-        dump_u64_digits(sb, v)
+        toml_dump_u64_digits(sb, v)
     }
 }
 
-fn dump_u64_digits(sb: i64, v: i64) -> i64 {
+fn toml_dump_u64_digits(sb: i64, v: i64) -> i64 {
     if v == 0 {
         return 0;
     }
-    let _ = dump_u64_digits(sb, v / 10);
-    sb_push(sb, 48 + (v - (v / 10) * 10))
+    let _ = toml_dump_u64_digits(sb, v / 10);
+    toml_sb_push(sb, 48 + (v - (v / 10) * 10))
 }

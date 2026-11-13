@@ -53,6 +53,112 @@ pub enum MaterializationRefusal {
         start: usize,
         end: usize,
     },
+    #[error(
+        "NonConstantElement: `{operation}` at source span {start}..{end}: an array literal element is not a constant (spec 3.2 fold)"
+    )]
+    NonConstantElement {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "Q16ConstantOutOfRange: `{operation}` at source span {start}..{end}: the constant is NaN, infinite, or out of the Q16.16 range (spec 3.3)"
+    )]
+    Q16ConstantOutOfRange {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "Q16Unsupported: `{operation}` at source span {start}..{end}: this route has no Q16.16 conversion for it (spec 3.3)"
+    )]
+    Q16Unsupported {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "DenseLeafCount: `{operation}` at source span {start}..{end}: the nested literal has a leaf count that is not the product of the declared shape"
+    )]
+    DenseLeafCount {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "RaggedNest: `{operation}` at source span {start}..{end}: the nested literal is ragged or is not a nest of the declared shape"
+    )]
+    RaggedNest {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "InexactIntegerFill: `{operation}` at source span {start}..{end}: the fill of an integer tensor is not an integer the element type holds"
+    )]
+    InexactIntegerFill {
+        operation: &'static str,
+        start: usize,
+        end: usize,
+    },
+}
+
+/// The named refusals of a constant element or fill (spec 3.2 and 3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstRefusal {
+    NonConstant,
+    Q16OutOfRange,
+    Q16Unsupported,
+    InexactIntegerFill,
+    DenseLeafCount,
+    RaggedNest,
+}
+
+impl From<crate::opt::fold::ConstElem> for ConstRefusal {
+    fn from(elem: crate::opt::fold::ConstElem) -> Self {
+        match elem {
+            crate::opt::fold::ConstElem::NonConstant => Self::NonConstant,
+            crate::opt::fold::ConstElem::Q16OutOfRange => Self::Q16OutOfRange,
+        }
+    }
+}
+
+impl ConstRefusal {
+    /// The refusal for `operation` at source span `start..end`.
+    pub fn at(self, operation: &'static str, start: usize, end: usize) -> MaterializationRefusal {
+        match self {
+            Self::NonConstant => MaterializationRefusal::NonConstantElement {
+                operation,
+                start,
+                end,
+            },
+            Self::Q16OutOfRange => MaterializationRefusal::Q16ConstantOutOfRange {
+                operation,
+                start,
+                end,
+            },
+            Self::Q16Unsupported => MaterializationRefusal::Q16Unsupported {
+                operation,
+                start,
+                end,
+            },
+            Self::InexactIntegerFill => MaterializationRefusal::InexactIntegerFill {
+                operation,
+                start,
+                end,
+            },
+            Self::DenseLeafCount => MaterializationRefusal::DenseLeafCount {
+                operation,
+                start,
+                end,
+            },
+            Self::RaggedNest => MaterializationRefusal::RaggedNest {
+                operation,
+                start,
+                end,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

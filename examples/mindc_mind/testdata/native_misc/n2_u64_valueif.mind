@@ -1,0 +1,8 @@
+// N2: the twin has no u64 tag after a value-if initializer, so it refuses the function
+// and the note is the type-2 source note (fail closed). Independent value:
+// c = 2 > 1 -> y = 7; 7 + 1 = 8.
+fn main() -> i64 {
+    let c: i64 = 2;
+    let y: u64 = if c > 1 { 7 } else { 9 };
+    (y as i64) + 1
+}

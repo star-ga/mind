@@ -1,0 +1,20 @@
+// print: several arguments in one statement, in order; a call as the first
+// argument runs (and prints) before any argument is written. The statement
+// value is 0.
+// expect: (21, b"x = 21\n42\nend|in-f 7\n!")
+fn twice(v: i64) -> i64 {
+    v * 2
+}
+
+fn f() -> i64 {
+    print("in-f ");
+    7
+}
+
+fn main() -> i64 {
+    let x: i64 = 21;
+    print("x = ", x);
+    print(twice(x), "end|");
+    print(f(), "!");
+    x
+}

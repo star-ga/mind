@@ -12,7 +12,7 @@
 //! `!` refused it. Comparisons are IEEE 754 ordered comparisons, so each is
 //! false when an operand is NaN and `!=` is true; `-0.0 == 0.0`.
 
-use crate::ast::BinOp;
+use crate::ast::{BinOp, TypeAnn};
 
 use super::{EvalError, Value};
 
@@ -32,6 +32,29 @@ pub(super) fn float_binary(op: BinOp, l: f64, r: f64) -> Result<Value, EvalError
         BinOp::Ge => truth(l >= r),
         BinOp::Eq => truth(l == r),
         BinOp::Ne => truth(l != r),
+    }
+}
+
+/// The declared width governs a float binding: a float bound at a declared `f32`
+/// (a `let`, a parameter, a return) is the nearest `f32` (round to nearest even),
+/// as the compiled `arith.truncf` gives. `Value::Float` holds an `f64`, so the
+/// value is rounded through `f32` and widened back exactly. Any other value or
+/// declared type is returned unchanged.
+pub(super) fn declared_f32(ty: &TypeAnn, value: Value) -> Value {
+    // deferred: would also round `a = <f64>` on an `f32` binding (the compiled
+    // path does, `lower.rs::mask_narrow_assign`), stubbed because the evaluator's
+    // reassignment registry holds integer widths only — upgrade path: record
+    // `f32` in `declared_width::NARROW_LOCALS` and round in `narrow_reassign`.
+    let Value::Float(x) = value else {
+        return value;
+    };
+    #[cfg(feature = "std-surface")]
+    let ty = &super::type_aliases::resolve_active(ty);
+    // The rounding `x as f32` gives in the `Node::As` arm.
+    if super::float_cast_target(ty) == Some(32) {
+        Value::Float(x as f32 as f64)
+    } else {
+        value
     }
 }
 

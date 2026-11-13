@@ -1,0 +1,139 @@
+{
+  "schema": "FSC_TEST_MUTATIONS/1",
+  "status": "PREEXECUTION_UNREVIEWED",
+  "cases": [
+    {
+      "id": "M01",
+      "mode": 2,
+      "fail_ordinal": 0,
+      "old": "status = nread;",
+      "new": "status = 0;\n                eof = 1;",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "10200\n0\n-5\n80200\n0\n1\n170200\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M02",
+      "mode": 4,
+      "fail_ordinal": 0,
+      "old": "if close_status != 0 {",
+      "new": "if 0 != 0 {",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "10400\n0\n-5\n80400\n0\n1\n170400\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M03",
+      "mode": 13,
+      "fail_ordinal": 0,
+      "old": "if size + 1 > max_name_bytes - used {",
+      "new": "if 0 > 1 {",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "11300\n0\n-75\n31300\n2\n1\n81300\n0\n1\n171300\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M04",
+      "mode": 19,
+      "fail_ordinal": 0,
+      "old": "if found == 0 || size == 0 {",
+      "new": "if size == 0 {",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "11900\n0\n-5\n31900\n2\n1\n81900\n0\n1\n171900\n4\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M05",
+      "mode": 1,
+      "fail_ordinal": 0,
+      "old": "    let fd: i64 = fsc_open(path, control);",
+      "new": "    __mind_store_i64(out_slot, list);\n    let fd: i64 = fsc_open(path, control);",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "80100\n0\n1\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M06",
+      "mode": 0,
+      "fail_ordinal": 0,
+      "old": "let close_status: i64 = fsc_close(fd, control);",
+      "new": "let close_status: i64 = 0;",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "40000\n0\n1\n50000\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    },
+    {
+      "id": "M07",
+      "mode": 0,
+      "fail_ordinal": 0,
+      "old": "    fcf_free(block, control);\n    if status == 0 {",
+      "new": "    if status == 0 {",
+      "occurrences": 1,
+      "baseline": {
+        "exit": 0,
+        "stdout": "0\n",
+        "stderr": ""
+      },
+      "mutation": {
+        "exit": 1,
+        "stdout": "170000\n1\n0\n",
+        "stderr": ""
+      },
+      "scope": "Requires declared normal mismatches; build/crash/timeout/OOM never count as detection."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+import std.sha256;
+
+// std.sha256's `sha256` reached from a loop. Its scratch is freed, and the
+// default native profile reclaims nothing, so the lane refuses the free.
+
+fn main() -> i64 {
+    let msg: i64 = __mind_alloc(8);
+    let out: i64 = __mind_alloc(32);
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3 {
+        let rc: i64 = sha256(msg, 0, out);
+        acc = acc + rc + __mind_load_i8(out);
+        i = i + 1;
+    }
+    return acc;
+}

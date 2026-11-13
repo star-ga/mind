@@ -1,0 +1,79 @@
+// Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+fn fzh() -> i64 {
+    let mut k0: i64 = 0;
+    while k0 < 2 {
+        k0 = (k0 + 1);
+        let mut Z: i64 = (k0 + k0);
+        let mut abc: i64 = (Z - Z);
+    }
+    let mut k1: i64 = 0;
+    while k1 < 3 {
+        k1 = (k1 + 1);
+        let mut x1: i64 = (k0 + k1);
+        let mut k2: i64 = 0;
+        while k2 < 2 {
+            k2 = (k2 + 1);
+            let mut k3: i64 = 0;
+            while k3 < 2 {
+                k3 = (k3 + 1);
+                let mut k4: i64 = 0;
+                while k4 < 2 {
+                    k4 = (k4 + 1);
+                    x1 = (k0 + k4);
+                    let mut x1: i64 = k2;
+                }
+                if k3 > 5 {
+                    break;
+                }
+            }
+            if k2 > 5 {
+                break;
+            }
+        }
+    }
+    return (k0 + k1);
+}
+fn main() -> i64 {
+    let mut k5: i64 = 0;
+    while k5 < 3 {
+        k5 = (k5 + 1);
+        let mut k6: i64 = 0;
+        while k6 < 3 {
+            k6 = (k6 + 1);
+            let mut h: i64 = 2;
+        }
+    }
+    if k5 >= 5 {
+        if k5 != 0 {
+            let mut q: i64 = k5;
+            q = k5;
+        } else {
+            let mut k7: i64 = 0;
+            while k7 < 1 {
+                k7 = (k7 + 1);
+                let mut k8: i64 = 0;
+                while k8 < 2 {
+                    k8 = (k8 + 1);
+                    let mut g: i64 = k5;
+                    let mut e: i64 = g;
+                }
+            }
+            let mut k9: i64 = 0;
+            while k9 < 1 {
+                k9 = (k9 + 1);
+                let mut k10: i64 = 0;
+                while k10 < 1 {
+                    k10 = (k10 + 1);
+                    let mut g: i64 = k5;
+                    let mut g: i64 = k9;
+                    let mut g: i64 = (k5 - k10);
+                    let mut g: i64 = (k10 + 2);
+                }
+            }
+        }
+    } else {
+        let mut e: i64 = (k5 + k5);
+    }
+    let mut zcall: i64 = fzh();
+    return zcall + k5;
+}

@@ -216,14 +216,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # image / glibc_floor / floor_image are release.yml's values for the same
+          # target (check_release_gating.py R8): the build image the shipped
+          # binary compiles in, and the floor it is checked against.
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: Linux x86_64
             artifact: mindc-linux-x64
+            image: quay.io/pypa/manylinux_2_28_x86_64@sha256:9555ba6c479fa69a2aa80ad1dc57154a60d562b19df159361d9379a02beb1e36
+            glibc_floor: "2.28"
+            floor_image: docker.io/library/almalinux:8.10-minimal@sha256:3f9b9fdb5957745afcc9269e82c8c43e3140ab8802172967927070c5bc8be907
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             name: Linux ARM64
             artifact: mindc-linux-arm64
+            image: quay.io/pypa/manylinux_2_28_aarch64@sha256:cb37f0d66c8a75abb93cf6085cad1f1427cd7208f0c0fc48359bb1eea9924f21
+            glibc_floor: "2.28"
+            floor_image: docker.io/library/almalinux:8.10-minimal@sha256:3f9b9fdb5957745afcc9269e82c8c43e3140ab8802172967927070c5bc8be907
     runs-on: ${{ matrix.runner }}
     # Two release builds (the binary, then the test harness against it) plus a
     # SLH-DSA-256s signature per signing run; healthy runs are well under this.
@@ -251,8 +260,30 @@ jobs:
           restore-keys: |
             release-profile-${{ matrix.target }}-
 
-      - name: Build (the release.yml command)
-        run: cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+      # release.yml's Linux build step, verbatim: the same pinned build image.
+      - name: Build (the release.yml command, inside the pinned glibc-floor build image)
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp/home -e CARGO_HOME=/tmp/home/.cargo -e RUSTUP_HOME=/tmp/home/.rustup \
+            -e CARGO_TERM_COLOR -e CARGO_REGISTRIES_CRATES_IO_PROTOCOL -e CARGO_NET_OFFLINE \
+            -v "$PWD:/src" -w /src "$IMAGE" bash -euo pipefail -c "$(cat <<'IN_IMAGE'
+          if [ ! -x "$CARGO_HOME/bin/rustc" ]; then
+            base="https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu"
+            curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init "$base/rustup-init"
+            want=$(curl --proto '=https' --tlsv1.2 -sSf "$base/rustup-init.sha256" | cut -d' ' -f1)
+            echo "$want  /tmp/rustup-init" | sha256sum -c -
+            chmod +x /tmp/rustup-init
+            /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain stable
+          fi
+          export PATH="$CARGO_HOME/bin:$PATH"
+          echo "build image glibc: $(getconf GNU_LIBC_VERSION)"
+          rustc -V
+          cargo build --release --locked --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
+          IN_IMAGE
+          )"
 
       - name: Package (as release.yml does)
         id: package
@@ -275,6 +306,13 @@ jobs:
           archive: ${{ steps.package.outputs.archive }}
           version: ${{ steps.package.outputs.version }}
 
+      - name: Glibc-floor smoke (max GLIBC symbol <= floor, runs on the floor)
+        uses: ./.github/actions/glibc-floor-smoke
+        with:
+          binary: ${{ steps.smoke.outputs.binary }}
+          glibc-floor: ${{ matrix.glibc_floor }}
+          floor-image: ${{ matrix.floor_image }}
+
       - name: Signing smoke on the packaged binary (TEST seeds, pinned keys, stripped legs)
         # The PQC test is cfg-gated, so a build that lost a signing feature
         # would compile it out and still report `ok`. The exact name and the
@@ -290,8 +328,8 @@ jobs:
             --test evidence_release_smoke -- --show-output 2>&1 | tee "$log"
           grep -qx 'test signing::test_seeds_sign_pinned_keys_verify_and_a_stripped_leg_is_refused ... ok' "$log" \
             || { echo "FAIL: the signing smoke did not run and pass"; exit 1; }
-          grep -q '^test result: ok\. 4 passed; 0 failed;' "$log" \
-            || { echo "FAIL: expected exactly 4 passing evidence_release_smoke tests"; exit 1; }
+          grep -q '^test result: ok\. 8 passed; 0 failed;' "$log" \
+            || { echo "FAIL: expected exactly 8 passing evidence_release_smoke tests"; exit 1; }
           grep -qF "binary=${MIND_RELEASE_SMOKE_MINDC} pqc_compiled_in=true " "$log" \
             || { echo "FAIL: the smoke did not drive the packaged binary"; exit 1; }
 
@@ -482,6 +520,9 @@ jobs:
           fi
           echo "ffi_header tests executed: $hn"
 
+      - name: Run gated tests — ir::native_lane_profile (std-surface) with a count floor
+        uses: ./.github/actions/native-lane-count
+
       - name: Clippy
         shell: bash
         run: cargo clippy --no-default-features --locked -- -D warnings
@@ -586,10 +627,20 @@ jobs:
             fi
           done
 
-      - name: Build mindc (MLIR backend)
+      - name: Build mindc and mind (MLIR backend)
         run: |
           cargo build --locked --no-default-features \
-            --features "mlir-build std-surface cross-module-imports" --bin mindc
+            --features "mlir-build std-surface cross-module-imports" --bin mindc --bin mind
+
+      - name: Native-lane operator differential (MLIR == evaluator, neon)
+        # ARM cells of the operator differential. The native-lane ELF is
+        # EM_X86_64 by construction (src/build/native_bridge/entry.rs), so the
+        # native leg is x86-only and is not run here. x86 three-path coverage
+        # is the keystone-job step.
+        if: matrix.substrate == 'neon'
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/debug/mindc MIND_BIN=${{ github.workspace }}/target/debug/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --paths mlir,eval --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+        working-directory: ${{ github.workspace }}
 
       - name: File read under test and run (ARM)
         # The manifest read must execute on the Linux ARM runner. This job
@@ -615,6 +666,20 @@ jobs:
           timeout 600 cargo test --locked --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_fail_loud_run -- --nocapture
+
+      - name: Constant-table build reproducibility (x86/ARM)
+        # Eight separate builds per case, ASLR on, must produce ONE artifact:
+        # constant tables, constants folded by canonicalize, a multi-module
+        # project. One-shot bufferization used to order their globals by heap
+        # address; run on both substrates because the pass is substrate-blind
+        # and the reproducibility claim is per runner. Job-level
+        # MIND_BENCH_REQUIRE=1 makes a missing backend a failure, not a skip.
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 600 cargo test --locked --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test const_table_build_determinism -- --nocapture
 
       - name: Cross-substrate reproducibility gate
         id: xsi_gate
@@ -741,6 +806,10 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Check out the local actions (the digest compare runs one)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
       # skip-decompress keeps the digest check, drops the action's unzip (deprecated Buffer(), DEP0005).
       - name: Download avx2 digest
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -760,50 +829,7 @@ jobs:
         # Genuine cross-runner byte compare. mic@3 carries no machine bytes, so
         # any difference here is a real cross-substrate divergence in the fuzzed
         # corpus — a wedge break — and MUST fail the build.
-        run: |
-          set -euo pipefail
-          for d in avx2 neon; do z=("$d"/*); [ "${#z[@]}" = 1 ] && unzip -q "${z[0]}" -d "$d" || { echo "FAIL: $d: want one artifact zip, got: ${z[*]}"; exit 1; }; done
-          # File format (tests/mindfuzz_cross_substrate.rs): `iters=<program count>`, then the 64-hex batch
-          # mic@3 digest. The count is compared as well as the digest: equal digests say nothing about how much
-          # was hashed — with MINDFUZZ_ITERS=0 both runners wrote the SHA-256 of NOTHING (non-empty, equal) and
-          # this job printed PASS having compared no programs. The test refuses any count below its floor, and
-          # this job refuses a file that does not state a count at or above it, so neither side can go vacuous.
-          MIN_ITERS=32
-          read_count() { sed -n 's/^iters=\([0-9][0-9]*\)$/\1/p' "$1" | head -1; }
-          read_digest() { sed -n '2p' "$1" | tr -d '[:space:]'; }
-          AVX2_N="$(read_count avx2/mindfuzz_digest_avx2.txt)"
-          NEON_N="$(read_count neon/mindfuzz_digest_neon.txt)"
-          AVX2="$(read_digest avx2/mindfuzz_digest_avx2.txt)"
-          NEON="$(read_digest neon/mindfuzz_digest_neon.txt)"
-          echo "avx2 (x86_64)  programs = ${AVX2_N:-<none>}  batch mic@3 digest = ${AVX2}"
-          echo "neon (aarch64) programs = ${NEON_N:-<none>}  batch mic@3 digest = ${NEON}"
-          if [ -z "${AVX2}" ] || [ -z "${NEON}" ]; then
-            echo "FAIL: a batch digest is empty — the fuzzer did not run on a substrate"
-            exit 1
-          fi
-          if [ -z "${AVX2_N}" ] || [ -z "${NEON_N}" ]; then
-            echo "FAIL: a digest file states no program count — refusing to compare"
-            echo "      two digests over an unknown (possibly empty) corpus."
-            exit 1
-          fi
-          if [ "${AVX2_N}" -lt "${MIN_ITERS}" ] || [ "${NEON_N}" -lt "${MIN_ITERS}" ]; then
-            echo "FAIL: fuzzed corpus below the floor (${MIN_ITERS}):"
-            echo "      avx2=${AVX2_N} neon=${NEON_N}. A digest over a shrunken corpus"
-            echo "      is not evidence of cross-substrate identity."
-            exit 1
-          fi
-          if [ "${AVX2_N}" != "${NEON_N}" ]; then
-            echo "FAIL: the runners fuzzed DIFFERENT program counts"
-            echo "      (avx2=${AVX2_N}, neon=${NEON_N}) — the digests are not comparable."
-            exit 1
-          fi
-          if [ "${AVX2}" != "${NEON}" ]; then
-            echo "FAIL: fuzzer mic@3 batch digest DIVERGED across substrates."
-            echo "      mic@3 is substrate-independent by construction (RFC 0015 §3.1);"
-            echo "      a difference is a real x86 != ARM cross-substrate wedge break."
-            exit 1
-          fi
-          echo "PASS: avx2 == neon over ${AVX2_N} programs — fuzzed corpus is byte-identical mic@3 across substrates."
+        uses: ./.github/actions/avx2-neon-digest
 
   format:
     name: Format Check
@@ -846,8 +872,13 @@ jobs:
     runs-on: ubuntu-24.04
     # Own installs peaked at 109s. The shared apt step also took 1022s on a
     # successful LLVM 20 fetch (148 MB in 16min 49s, run 42273645377). Rest of
-    # this job peaked at 1093s. 2*1022+1093 = 3137s.
-    timeout-minutes: 53
+    # this job needs 4716s with the native-lane gates (LLVM 23 leg, run
+    # 42687591085: cut off at 4692s, 6.0 min into the Phase G tests, which take
+    # 6.4 min; every step runs after an early red). 2*1022+4716 = 6760s (113 min). The
+    # twin-emitter mic@3 fuzzer step stopped at its sanity check there; its own
+    # 25 min step limit binds once it fuzzes (nested debug `cargo test` build of
+    # the dump_ref oracle), so the job budget is 113 + 25 = 138 min.
+    timeout-minutes: 138
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -862,6 +893,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the seed-chain verifier (run by the advancement
+          # harness controls step below) walks every ref,
+          # and a squash landing leaves the intermediate receipts on the evidence
+          # tag only. A shallow clone makes it BLOCK (rc 2), never pass.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Python for numerical smoke oracles
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -900,6 +938,11 @@ jobs:
       - name: Bootstrap advancement harness controls
         # Synthetic process/oracle controls for seed identity, agreement,
         # publication and rollback. The real compiler loop runs separately.
+        # One case also runs the build-free seed-chain verifier
+        # (self_host_loop_smoke.py --verify-chain, floor 3) on THIS repository's
+        # refs. It is nested here on purpose: as a second CI argv of the
+        # compiler-dependent loop smoke it would pass the vacuity sweep with no
+        # compiler and count as loop-gate wiring while running neither leg.
         run: python3 scripts/run_gate.py tests/self_host_loop_advance_test.py
         working-directory: ${{ github.workspace }}
 
@@ -947,7 +990,31 @@ jobs:
         run: python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py
         working-directory: ${{ github.workspace }}
 
+      # From here on every step runs after an earlier red (`!cancelled()`): a failed
+      # lint above must not leave the build and the keystone checks below unmeasured.
+      - name: H2b exclusion positive controls (h2b_exclusion_controls_check.py)
+        if: ${{ !cancelled() }}
+        # Ruling Q1.3(b) / Schedule R7: every per-file .gitignore exclusion must
+        # still be tracked and present in ANATOMY; the external pin catalogue must
+        # match its committed expected path set (an empty or truncated catalogue
+        # fails); each named owning gate must carry real assertion machinery.
+        # Pure Python, no build artifacts — runs beside the other lints.
+        run: python3 scripts/run_gate.py --min-asserted 100 examples/mindc_mind/h2b_exclusion_controls_check.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Native intrinsic id table contract (intrinsic_id_table_lint.py)
+        if: ${{ !cancelled() }}
+        # nb_intrinsic_id / nb_sys_intrinsic_id map each `__mind_*` callee to an id
+        # and nb_emit_intrinsic selects its code by `if kind == ID`; an id with no
+        # arm falls through to the `__mind_read` sequence. Two lanes appending ids
+        # from the same "next free" number merge as CLEAN text and still collide
+        # (it happened: two blocks both claimed 20 and 21). Pure text analysis with
+        # an in-memory mutation self-test, so it runs early next to the other lints.
+        run: python3 scripts/run_gate.py --min-asserted 4 examples/mindc_mind/intrinsic_id_table_lint.py
+        working-directory: ${{ github.workspace }}
+
       - name: std manifest lint must judge the real manifest's count headers
+        if: ${{ !cancelled() }}
         # Folded into the lint itself (`--self-test`): it runs its REAL entry point
         # against a damaged copy of the real manifest (a duplicated header, a wrong
         # count) and asserts a non-zero exit with the count-header message. Without
@@ -959,9 +1026,11 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Install Rust (nightly)
+        if: ${{ !cancelled() }}
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
+        if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -973,6 +1042,7 @@ jobs:
             ${{ runner.os }}-mindcraft-self-host-
 
       - name: Keystone feature set compiles no PQC crate (cargo tree)
+        if: ${{ !cancelled() }}
         # "The keystone never compiles fips204/fips205" held by construction and
         # was asserted by nothing: this job restores a cached target, so its log
         # cannot show what it compiled. The gate reads the feature sets this job
@@ -985,11 +1055,13 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Install MLIR toolchain (LLVM ${{ matrix.llvm }})
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/install-mlir-toolchain
         with:
           llvm: ${{ matrix.llvm }}
 
       - name: Verify toolchain on PATH
+        if: ${{ !cancelled() }}
         run: |
           # `tool --version | head -1` is NOT a verification: without pipefail the
           # pipeline's status is head's, so an ABSENT or broken tool exits 0 and
@@ -1013,32 +1085,30 @@ jobs:
           done
 
       - name: Build mindc (MLIR backend)
+        if: ${{ !cancelled() }}
         run: |
           cargo build --locked --release --no-default-features \
-            --features "mlir-build std-surface cross-module-imports" --bin mindc
+            --features "mlir-build std-surface cross-module-imports" --bin mindc --bin mind
+
+      - name: Seed drift ledger (tools/seed_ledger/)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/seed-ledger
 
       - name: Self-host bootstrap via mindc build (Mind.toml)
+        if: ${{ !cancelled() }}
         run: |
-          ./target/release/mindc build --release --emit=cdylib \
+          ./target/release/mindc build --backend mlir --release --emit=cdylib \
             --out=/tmp/libmindc_mind_self_host.so
         working-directory: ${{ github.workspace }}
 
       - name: Verify artifact is non-empty
-        run: |
-          if [ ! -f /tmp/libmindc_mind_self_host.so ]; then
-            echo "ERROR: artifact not produced by mindc build"
-            exit 1
-          fi
-          SZ=$(stat -c%s /tmp/libmindc_mind_self_host.so)
-          echo "Artifact size: ${SZ} bytes"
-          if [ "$SZ" -eq 0 ]; then
-            echo "ERROR: artifact is empty"
-            exit 1
-          fi
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/nonempty-artifact
 
       - name: Byte-identity check (Mind.toml-driven vs direct-path)
+        if: ${{ !cancelled() }}
         run: |
-          ./target/release/mindc build \
+          ./target/release/mindc build --backend mlir \
             examples/mindc_mind/main.mind \
             --release --emit=cdylib \
             --out=/tmp/libmindc_mind_direct.so
@@ -1052,6 +1122,7 @@ jobs:
           fi
 
       - name: Self-host stale-oracle guard (selfhost_so_provenance_smoke.py)
+        if: ${{ !cancelled() }}
         # Every smoke below resolves its `.so` through `_selfhost_so.resolve_so()`.
         # That resolver used to hand back whatever `MINDC_SO` named without any
         # freshness check, and only ONE of ~47 importers consulted the fallback
@@ -1070,18 +1141,32 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Real-body emitter smoke (self_host_body_smoke.py)
+        if: ${{ !cancelled() }}
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py examples/mindc_mind/self_host_body_smoke.py
         working-directory: ${{ github.workspace }}
 
       - name: mic@3 primitives smoke (mic3_primitives_smoke.py)
+        if: ${{ !cancelled() }}
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py examples/mindc_mind/mic3_primitives_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: H2b format identity (h2b_fmt_identity_check.py)
+        if: ${{ !cancelled() }}
+        # Ruling Q1.1: a file may stay formatted only when --emit-ir and
+        # --emit-mic3 under one mindc are byte-identical for the pre-format and
+        # post-format bytes. Re-measures that proof for every formatted .mind
+        # file against the base revision. Requires a freshly built mindc.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 14 examples/mindc_mind/h2b_fmt_identity_check.py
+        working-directory: ${{ github.workspace }}
+
       - name: Whole-module mic@3 self-host FLIP (mic3_flip_smoke.py)
+        if: ${{ !cancelled() }}
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC=${{ github.workspace }}/target/release/mindc \
@@ -1089,6 +1174,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host MLIR-text f64+i64 emit gate (self_host_mlir_smoke.py)
+        if: ${{ !cancelled() }}
         # Byte-identity of the pure-MIND selftest_emit_mlir vs `mindc --emit-mlir`
         # for the scalar i64 subset AND the f64 scalar surface (#298 step 1: f64
         # params/returns, arith.addf/subf/mulf/divf, canonicalized f64 constants).
@@ -1100,6 +1186,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Per-arm oracle-parity linter (oracle_parity_lint.py)
+        if: ${{ !cancelled() }}
         # Localises which self-host ARM drifted from the Rust oracle. The
         # whole-module FLIP above reports one byte offset on the full stream;
         # this asserts each construct's mic@3 bytes are byte-identical to
@@ -1113,6 +1200,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host gap-corpus integrity gate (gap_corpus_smoke.py)
+        if: ${{ !cancelled() }}
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC=${{ github.workspace }}/target/release/mindc \
@@ -1120,6 +1208,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host LOOP gate — MIND compiles MIND, Rust+LLVM out (self_host_loop_smoke.py)
+        if: ${{ !cancelled() }}
         # `--min-asserted 2` because this gate has TWO legs and only the pair is
         # the gate: PRIMARY (the frozen pure-MIND stage0 still reproduces itself)
         # and ORACLE (the CURRENT std/*.mind + main.mind has not drifted from that
@@ -1132,7 +1221,95 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 2 examples/mindc_mind/self_host_loop_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Bounded native profile gate — seed + programs under RLIMIT_AS=2GiB (self_host_bounded_profile_smoke.py)
+        if: ${{ !cancelled() }}
+        # The pinned bounded seed must (a) be what the frozen default seed emits
+        # for the v2 layout header, (b) reproduce itself stage1==stage2==stage3
+        # under a 2 GiB address-space cap, (c) compile and run the scalar
+        # evaluator harness under the cap, and (d) refuse over-cap allocation,
+        # stack overflow and malformed layouts fail-closed (incl. the fill_0..fill_4
+        # arena-cap boundary). 21 verdicts; the
+        # bridge leg needs MINDC_BIN, so a missing binary is a red SKIP.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 21 examples/mindc_mind/self_host_bounded_profile_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Install qemu-user (the value-shape gate's Westmere / Haswell runner)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/qemu-user
+
+      - name: Native-lane-v1 value-shape gate (native_lane_value_shapes_smoke.py)
+        if: ${{ !cancelled() }}
+        # The reseeded bounded seed carries the nblane01 mark, so `mindc build
+        # --backend native --native-profile bounded` applies the candidate
+        # native-lane-v1 profile with it. 25 cases: store results read as the
+        # defined 0 on a dirtied stack, full-width i64<->f64 conversion edges,
+        # diverging-branch merges and main(argc, argv) behind the explicit-layout
+        # runtime prefix, each built natively AND with MLIR and checked against
+        # values computed independently of both backends.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 25 \
+              examples/mindc_mind/native_lane_value_shapes_smoke.py \
+              --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+          # Fail-closed control: with no llvm-mc beside $MLIR_OPT, stage B must fail by name, never skip.
+          if MLIR_OPT=/nonexistent/mlir-opt MINDC_BIN=${{ github.workspace }}/target/release/mindc python3 scripts/run_gate.py \
+              examples/mindc_mind/native_lane_value_shapes_smoke.py --only avx2 --compiler \
+              examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf > /tmp/vs_no_llvm_mc.txt; then cat /tmp/vs_no_llvm_mc.txt; exit 1; fi
+          grep -E '^ +FAIL  avx2_encoder_table \[avx2\]: table: B: no stage B' /tmp/vs_no_llvm_mc.txt || { cat /tmp/vs_no_llvm_mc.txt; exit 1; }
+        working-directory: ${{ github.workspace }}
+
+      - name: Native-lane operator differential (native_lane_op_differential_smoke.py)
+        if: ${{ !cancelled() }}
+        # Three paths: native-lane ELF, MLIR ELF, and the reference evaluator
+        # (`mind eval`). Division edge rows are pinned per path (trap 79; the
+        # narrow MIN / -1 rows the documented MIN and 0); the matcher contracts
+        # run first inside the gate run. This job is x86, both LLVM legs, three
+        # paths. ARM MLIR == evaluator is a named step in the xsi neon leg.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+        working-directory: ${{ github.workspace }}
+
+      # PENDING RESEED (R5): flip to uncommitted `ci` in the L10 commit.
+      # - name: Native fixed-arity extern determinism gate (native_extern_fixed_smoke.py)
+      #   # Builds the closed-table extern corpus twice in two directories under
+      #   # `--compiler` and requires byte-identical dynamic images: fixed
+      #   # PT_INTERP, no build-id, no host or build-dir path. Every libc name
+      #   # outside the nbx_row table refuses BY NAME. W1 #3 mutation pair:
+      #   # drop the extern arm -> the corpus refuses; break determinism -> this
+      #   # gate reds. D-§8#7 is approved only when this gate is green.
+      #   run: |
+      #     MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+      #       python3 scripts/run_gate.py --min-asserted 12 \
+      #         examples/mindc_mind/native_extern_fixed_smoke.py \
+      #         --compiler examples/mindc_mind/testdata/selfhost_loop/stage1.elf
+      #   working-directory: ${{ github.workspace }}
+
+      - name: Bounded native allocator gate — merging free-list runtime under RLIMIT_AS=2GiB (self_host_native_alloc_bounded_smoke.py)
+        if: ${{ !cancelled() }}
+        # Derives the tree's bounded compiler natively (frozen default seed -> B1
+        # -> B2 -> B3, B2 == B3 under the cap), then: the allocator runtime source
+        # re-assembled and byte-compared with the blob B2 and a fixture start
+        # with; a C stress harness over that blob (random traces + full heap walk
+        # after every operation); every fixture in testdata/native_alloc_bounded/
+        # (alloc/free/realloc loops with a small live footprint, a fitting block
+        # behind a smaller bin head, realloc growth into a free neighbour,
+        # C-runtime edge cases incl. realloc(NULL, 0), deterministic
+        # out-of-memory exit 70, duplicate struct names that crashed the
+        # compiler under the bounded allocator)
+        # natively AND through the MLIR backend under the same cap; and the
+        # compiler's own arena reclaim code run natively. 36 verdicts; the MLIR
+        # legs need MINDC_BIN, so a missing binary is a red SKIP. Three whole
+        # self-compiles plus 12 MLIR builds overrun run_gate's 900 s default on
+        # a loaded runner, hence the explicit 2400 s budget.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 36 --timeout 2400 examples/mindc_mind/self_host_native_alloc_bounded_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)
+        if: ${{ !cancelled() }}
         # RI-B1 native-ELF float column (roadmap C1). No frozen float byte-oracle
         # can exist (the deleted Rust native backend rejected ConstF64), so the CPU
         # is the oracle: emit the pure-MIND SSE2 ELF, run it, assert the exit code
@@ -1144,6 +1321,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Native-ELF integer byte-identity gate (self_host_native_elf_smoke.py)
+        if: ${{ !cancelled() }}
         # Per-fixture byte-identity of the pure-MIND native-ELF emitter vs the frozen
         # Rust `mind-native` oracle (add/if_ret/value_if/recursion/struct_field), FED
         # and NO-FEED (self-computed PT_NOTE == pinned Rust emit_mic3 reference), plus
@@ -1159,7 +1337,63 @@ jobs:
             python3 scripts/run_gate.py examples/mindc_mind/self_host_native_elf_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native nested-binding scoping gate (self_host_native_shadow_scope_smoke.py)
+        if: ${{ !cancelled() }}
+        # A `let` in an if/else block or while body that re-declares an outer `let`
+        # or parameter must get its own storage for that block, a break/continue
+        # must carry the outer binding (not a body shadow) out of the loop, and a
+        # range-for variable must stay scoped to its loop. stage1 is built from
+        # main.mind by the frozen pure-MIND seed; hand fixtures plus 200 generated
+        # programs (seed 1234, block depths 1-4, break/continue/return) are compiled
+        # by stage1, run, and compared with a lexically scoped Python model. A
+        # refusal passes only when the shadow-free twin is refused too, or when
+        # MINDC_SO shows the code generator alone builds it to the model's value
+        # (only the mic@3 note builder refused). stage1 must carry the
+        # scoped-nested-bindings mark the Rust bridge checks; --bridge also runs
+        # `mindc build --backend native` with that stage1 (the proven shadows are
+        # admitted and exit with the model's value) and with the embedded seed
+        # (unmarked: still refused, native.block_shadow / loop_body_shadow).
+        # A stage1 build plus ~400 compiles and ~180 bridge builds measured 635 s on
+        # a loaded 12-core host, so run_gate gets 1800 s instead of its 900 s default
+        # and the step's timeout-minutes is the binding limit.
+        timeout-minutes: 35
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+            python3 scripts/run_gate.py --min-asserted 20 --timeout 1800 \
+              examples/mindc_mind/self_host_native_shadow_scope_smoke.py --bridge
+        working-directory: ${{ github.workspace }}
+
+      - name: Twin-emitter mic@3 differential fuzzer (mindfuzz_self_host.py)
+        if: ${{ !cancelled() }}
+        # Generated-program agreement of the pure-MIND self-host mic@3 note
+        # (selftest_native_elf_u) with the Rust emit_mic3 reference note
+        # (tests/_ref_mic3_dump.rs::dump_ref, one nested debug `cargo test` per
+        # batch). Seed and count are pinned so the corpus is deterministic. Any
+        # note divergence fails; so does a program the self-host emits for but
+        # the Rust oracle rejects, and a broken oracle (the `add` sanity fixture)
+        # fails as BLOCKED instead of skipping — that skip is how this gate
+        # measured nothing for a month while dump_ref was broken. Self-host
+        # fail-closed refusals are counted, never compared, never a pass — and
+        # --min-compared floors how many programs must actually be compared, so a
+        # self-host that refuses everything cannot pass as "0 divergences".
+        # Every compared program (and every emitted regression fixture) is ALSO
+        # executed: the self-host ELF's exit code must equal the Rust/MLIR
+        # binary's (`mindc build --backend mlir --emit=binary`), so a matching
+        # note can never hide a wrong runtime value from the native-ELF code.
+        # run_gate's own per-gate timeout defaults to 900 s; give it 1500 s so the
+        # step's timeout-minutes (not run_gate) is the binding limit.
+        timeout-minutes: 25
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 2 --timeout 1500 \
+              examples/mindc_mind/mindfuzz_self_host.py --seed 1234 --count 200 \
+              --min-compared 80
+        working-directory: ${{ github.workspace }}
+
       - name: RI-D seam gates — mindc build --backend=native (bridge + exact fail-close diagnostics)
+        if: ${{ !cancelled() }}
         # RI-D0: `mindc build --backend=native` is a byte-faithful pass-through to the
         # frozen pure-MIND stage1.elf (zero MLIR/LLVM/clang), fail-closed on garbage
         # (backend_native_bridge_smoke.py). RI-D1a (#313): a native fail-close is no
@@ -1170,13 +1404,15 @@ jobs:
         # regression that reverted the diagnostic to the generic 0-byte message would
         # otherwise land CI-green.
         run: |
-          set -e
-          python3 scripts/run_gate.py examples/mindc_mind/backend_native_bridge_smoke.py
+          fail=0
+          python3 scripts/run_gate.py examples/mindc_mind/backend_native_bridge_smoke.py || fail=1
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
-            python3 scripts/run_gate.py examples/mindc_mind/self_host_native_diag_smoke.py
+            python3 scripts/run_gate.py examples/mindc_mind/self_host_native_diag_smoke.py || fail=1
+          exit $fail
         working-directory: ${{ github.workspace }}
 
       - name: RH f64-aggregate surface canary (rh_f64_aggregate_canary_smoke.py)
+        if: ${{ !cancelled() }}
         # RH_REQUIRED_F64_AGGREGATE_SURFACE — deterministic LDL^T elimination on a
         # 4x4 rational SPD matrix (entries + factors exactly representable in
         # binary64) exercising local `[f64; N]` arrays, runtime load+store, store
@@ -1191,6 +1427,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Native-ELF float end-to-end gate (self_host_native_fp_expr_smoke.py)
+        if: ${{ !cancelled() }}
         # RI-B1 CAPSTONE (roadmap C1): nb_expr now routes an ast_float_lit's value
         # through the SSE2 scalar-double encoders (nb_fp_const_xmm + movsd-store to the
         # value's [rbp+d32] slot), NOT the GP-integer const path. A REAL float source
@@ -1206,6 +1443,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host ADDITIVE selftest gates (C4 tensor ops + type-checker rules + narrow/f32/div)
+        if: ${{ !cancelled() }}
         # These smokes exercise ADDITIVE selftest_* exports (the C4 native-ELF
         # tensor ops ewadd/dot/matmul; the pure-MIND type-checker rule ports
         # E2004/E2005/E2010/E2011/E2013/E2016/E2023/E2101/E2102/E2103; the E2008
@@ -1238,7 +1476,7 @@ jobs:
         # fails on ANY divergence. Adding a smoke without classifying it is a
         # build error, so a new gate can no longer go unwired unnoticed.
         run: |
-          set -e
+          fail=0
           for s in \
             self_host_native_tensor_ewadd_smoke \
             self_host_native_tensor_dot_smoke \
@@ -1255,6 +1493,8 @@ jobs:
             self_host_native_narrow_arith_batch_smoke \
             self_host_native_toplevel_assign_smoke \
             self_host_native_narrow_paramret_smoke \
+            self_host_native_sys_smoke \
+            self_host_native_process_smoke \
             self_host_native_tensor_batchsum_smoke \
             self_host_native_tensor_rowmin_smoke \
             self_host_param_mutation_smoke \
@@ -1284,16 +1524,27 @@ jobs:
             self_host_tc_unknown_ident_smoke \
             self_host_tc_undeclared_assign_smoke \
             self_host_tc_unknown_call_smoke \
-            self_host_tc_let_infer_smoke; do
+            self_host_tc_let_infer_smoke \
+            self_host_source_note_smoke \
+            self_host_continue_smoke \
+            self_host_native_cf_smoke; do
             echo "=== $s ==="
+            gate_args=()
+            if [ "$s" = self_host_source_note_smoke ]; then
+              # Current-source diagnostic compilation exceeds 120 CPU seconds.
+              # Only its two initial builds get this allowance; fixture builds
+              # and executions retain their original CPU120/wall150 limits.
+              gate_args=(--build-cpu-seconds 300)
+            fi
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
-              python3 scripts/run_gate.py "examples/mindc_mind/$s.py"
+              python3 scripts/run_gate.py "examples/mindc_mind/$s.py" "${gate_args[@]}" || fail=1
           done
+          exit $fail
         working-directory: ${{ github.workspace }}
 
-
       - name: Grown-subset capability gates (refs / records / enums / Option / closures / fail-closed / branch carry / float ABI)
+        if: ${{ !cancelled() }}
         # THE ONLY regression gate for the "grown subset" — constructs main.mind
         # does not itself use, so neither the self-host LOOP nor the native-ELF
         # byte-identity keystone above ever exercises them. A miscompile here is
@@ -1313,6 +1564,7 @@ jobs:
             option_netverify \
             ref_netverify \
             self_host_failclosed_smoke \
+            self_host_for_smoke \
             self_host_if_region_carry_smoke \
             self_host_native_fp_call_smoke \
             self_host_native_fp_field_smoke \
@@ -1322,7 +1574,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1339,6 +1592,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1347,6 +1601,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Native-ELF byte-identity canary rungs (one verdict per leg)
+        if: ${{ !cancelled() }}
         # The rungs whose emitted bytes are compared against a COMMITTED
         # cross-substrate canary hash (or, for scalar_f32, against a
         # single-precision oracle). Each reports FOUR legs -- the self-host `.so`
@@ -1385,6 +1640,7 @@ jobs:
             self_host_native_scalar_f32_smoke \
             self_host_native_scalar_f64_smoke \
             self_host_native_cast_conv_smoke \
+            self_host_native_misc_census_smoke \
             self_host_native_matmul_f32_v_smoke \
             self_host_native_dot_l1_q16_smoke \
             self_host_native_avx2_dot_f32_smoke; do
@@ -1393,7 +1649,8 @@ jobs:
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
                  python3 scripts/run_gate.py --min-asserted 4 \
-                   "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                   "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed on an announced skip, exactly as the sibling steps:
               # MINDC_SO is set and verified non-empty above, so a SKIP here
               # means the wiring broke, not that the gate is inapplicable.
@@ -1402,6 +1659,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1410,6 +1668,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Native-ELF float + SIMD/BLAS kernel value gates
+        if: ${{ !cancelled() }}
         # Native-ELF VALUE correctness for the float/SSE + packed-SIMD + integer
         # kernel surface: the f64/f32 scalar ABI legs (let / param / binop /
         # dtype-tag), int<->float casts, the strict-FP dot/GEMV/GEMM family and
@@ -1428,6 +1687,8 @@ jobs:
             self_host_native_blas_dot_i16_smoke \
             self_host_native_blas_dot_q16_smoke \
             self_host_native_elf_alignment_smoke \
+            self_host_native_f64_intrinsics_smoke \
+            self_host_native_f64_lit_smoke \
             self_host_native_fp_binop_smoke \
             self_host_native_fp_let_smoke \
             self_host_native_fp_param_smoke \
@@ -1443,7 +1704,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1460,6 +1722,7 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
@@ -1468,6 +1731,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host alias semantics and cast identity controls
+        if: ${{ !cancelled() }}
         # Pin the complete executed control counts; the shared corpus loop's
         # default floor of one cannot detect a partially removed harness.
         run: |
@@ -1484,6 +1748,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Self-host front-end + mic@3 + struct/method corpus gates
+        if: ${{ !cancelled() }}
         # Front-end + mic@3 + struct/method + control-flow corpus: parse and
         # lowering shapes (and/or precedence, else-if chains, match, value-if,
         # arrays, casts, struct literals/fields/returns, method dispatch),
@@ -1510,6 +1775,8 @@ jobs:
             self_host_andor_smoke \
             self_host_args_from_os_smoke \
             self_host_argv_smoke \
+            self_host_native_div_trap_smoke \
+            self_host_native_main_args_smoke \
             self_host_array_smoke \
             self_host_arridx_mic3_smoke \
             self_host_check_driver_smoke \
@@ -1534,7 +1801,8 @@ jobs:
             if MINDC_SO=/tmp/libmindc_mind_self_host.so \
                MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
                MINDC="${{ github.workspace }}/target/release/mindc" \
-                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+                 python3 scripts/run_gate.py "examples/mindc_mind/$s.py" > /tmp/wire_out.txt 2>&1; then
+              cat /tmp/wire_out.txt
               # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
               # a MISSING library as a pass. MINDC_SO is set and verified
               # non-empty above, so a SKIP here means the wiring broke, not that
@@ -1551,14 +1819,16 @@ jobs:
                 fail=1
               fi
             else
+              cat /tmp/wire_out.txt
               echo "ERROR: $s FAILED"
               fail=1
             fi
           done
-          [ "$fail" -eq 0 ]
+          exit $fail
         working-directory: ${{ github.workspace }}
 
       - name: Differential fuzzer — tc-rule ports vs live mindc (tcdiff)
+        if: ${{ !cancelled() }}
         # The self_host_tc_* smokes above are CURATED fixtures; tcdiff GENERATES
         # ~400 parseable MIND programs per rule and diffs the pure-MIND selftest
         # verdict against live `mindc check` over the token x position matrix the
@@ -1581,6 +1851,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: DTK register-allocator cross-implementation parity
+        if: ${{ !cancelled() }}
         # The ONLY gate comparing the pure-MIND nb_dtk_* planner — which SHIPS
         # inside the frozen stage1.elf and decides which register every value
         # lands in — against the Rust reference plan_module_k. A divergence is a
@@ -1601,6 +1872,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Run Phase G integration tests
+        if: ${{ !cancelled() }}
         run: |
           cargo test --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
@@ -1615,8 +1887,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Own installs peaked at 23s. Budget uses the slow successful apt of these
     # same packages (1022s, run 42273645377) times two, plus this job's measured
-    # rest of 206s: 2*1022+206 = 2250s.
-    timeout-minutes: 38
+    # rest of 206s, plus 120s for the std evidence step (39s measured with a
+    # 4-job build): 2*1022+206+120 = 2370s.
+    timeout-minutes: 40
 
     # Compile a tiny deterministic MIND kernel to a cdylib, dlopen it, call it,
     # and ASSERT the one true integer result. The byte-identity keystone proves
@@ -1691,6 +1964,106 @@ jobs:
           python3 scripts/run_gate.py examples/native/ci_kernel_smoke.py
         working-directory: ${{ github.workspace }}
 
+      # std.evidence: tests/std_evidence_kat and tests/std_evidence_load each run
+      # twice. `mindc test` runs their #[test] functions, and the step requires
+      # the exact passed count with 0 failed. Their native programs run every
+      # check (exit 0, else the id of the first failed check) and print a fixed
+      # line. tests/std_evidence_wrappers makes OS calls the `mindc test`
+      # interpreter refuses, so it runs only natively: it writes an evidence
+      # record, `mindc verify` reads it, the program loads it back with the
+      # parent it was written for, and the same record with one byte changed
+      # must be refused (exit 62). Each leg needs a positive count or a fixed
+      # line, so a step that selected or ran nothing fails.
+      - name: std evidence checks (mindc test + native build + run)
+        uses: ./.github/actions/std-evidence-checks
+
+  std_mind_programs:
+    # std MIND program checks: each step builds and runs MIND programs against
+    # bundled std; exact pass counts.
+    name: std MIND program checks (LLVM 20)
+    runs-on: ubuntu-24.04
+    # Budget: the slow successful apt of the same packages (1022s, run
+    # 42273645377) times two, plus executable_miscompile_gate's measured rest of
+    # 206s for the same cached build, plus 37s and 30s for the two program steps
+    # (each measured under 40s on a 72-core host), all times 1.25:
+    # (2*1022+206+37+30)*1.25 = 2896s.
+    timeout-minutes: 49
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      # Same build command and features as executable_miscompile_gate, so the
+      # two jobs share one cache key.
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-exec-gate-${{ hashFiles('**/Cargo.toml', 'src/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-exec-gate-
+
+      - name: Install MLIR toolchain (LLVM 20)
+        uses: ./.github/actions/install-mlir-toolchain
+        with:
+          llvm: "20"
+
+      - name: Verify toolchain on PATH
+        run: |
+          # Each tool runs without a pipe, so `-e` sees its real status (see the
+          # same step in executable_miscompile_gate).
+          set -e
+          for t in mlir-opt mlir-translate clang; do
+            command -v "$t" >/dev/null || { echo "FAIL: $t is not on PATH"; exit 1; }
+            "$t" --version > /tmp/toolver.txt
+            head -1 /tmp/toolver.txt
+            if ! grep -Eq "(^|[^0-9])20[.][0-9]" /tmp/toolver.txt; then
+              echo "FAIL: $t is not LLVM/MLIR 20"
+              cat /tmp/toolver.txt
+              exit 1
+            fi
+          done
+
+      - name: Build mindc (MLIR backend)
+        run: |
+          cargo build --locked --release --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" --bin mindc
+
+      # std.fs_checked: tests/fs_checked_listing holds 18 programs. The import
+      # project builds as it is. unit.mind, real.mind and the fault files compile
+      # after the module source in one file. The fault programs use the module
+      # with the 29 test-only replacements of INSTRUMENTATION.json; each needle
+      # must occur the declared number of times. real.mind lists fixture
+      # directories with real syscalls under NOFILE 1024. Each program must exit
+      # 0 and print exactly "0". Each of the 7 MUTATIONS.json mutants runs after
+      # its unmutated control and must exit 1 and print exactly its declared
+      # diagnostics. The step requires 18 passed programs, so a step that built
+      # or ran nothing fails.
+      - name: std fs_checked listing checks (18 native programs)
+        uses: ./.github/actions/std-fs-checked
+
+      # examples/halbach_q16, examples/bimap_pairs and examples/detmath_kat.
+      # halbach_q16 checks its Q16.16 field model and prints one PASS or FAIL
+      # line with measured values for each of its 4 checks. bimap_pairs prints
+      # the pairs its derived maps return; the output must equal
+      # examples/bimap_pairs/expected_stdout.txt, which `mindc run` wrote.
+      # detmath_kat runs 44 known-answer checks on std.detmath and prints the
+      # number that passed.
+      # Each program must exit 0 with empty stderr, and the step requires 3
+      # passed programs, so a step that built or ran nothing fails.
+      - name: std example programs (halbach_q16, bimap_pairs, detmath_kat)
+        uses: ./.github/actions/std-example-programs
+
   executable_semantics_tier:
     name: Executable-semantics test tier (mlir-build) (LLVM ${{ matrix.llvm }})
     strategy:
@@ -1751,6 +2124,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: native_lane_gpu_loader walks main.mind back to the
+          # compiler before the driver rows (base_compiler_source). A shallow
+          # clone has no parent to walk to, so that test fails closed.
+          fetch-depth: 0
 
       - name: cfg-gate wiring contract (scripts/cfg_gate_wiring_lint.py)
         # Guards the SCOPE of this job the way smoke_wiring_lint.py guards the

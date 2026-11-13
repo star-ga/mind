@@ -338,3 +338,46 @@ fn an_imported_string_payload_compares_bytes() {
     ];
     assert_eq!(project_refusals_reparsed(&modules, "crate.main"), vec![]);
 }
+
+/// `(provider, main)`: `main` hands `K`, a const it imports from
+/// `provider`, to `take`, which compares its integer parameters.
+#[cfg(feature = "cross-module-imports")]
+fn const_modules(k: &str) -> [(&'static str, String); 2] {
+    [
+        (
+            "crate.provider",
+            format!(
+                "{k}
+                pub fn take(a: i64, b: i64) -> i64 {{
+                    if a == b {{ return 1 }}
+                    return 0
+                }}"
+            ),
+        ),
+        (
+            "crate.main",
+            "import provider
+            pub fn probe() -> i64 { return take(K, K) }"
+                .to_string(),
+        ),
+    ]
+}
+
+/// A const another module declares holds what its declaration says: handed
+/// to an integer parameter, it stores no string there. A const whose value
+/// contradicts its type, or a name two modules declare with different
+/// types, may still be a string.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn an_imported_const_holds_its_declared_type() {
+    let refusals = |modules: &[(&str, String)]| {
+        let refs: Vec<(&str, &str)> = modules.iter().map(|(p, s)| (*p, s.as_str())).collect();
+        project_refusals_reparsed(&refs, "crate.provider")
+    };
+    assert_eq!(refusals(&const_modules("pub const K: i64 = 0")), vec![]);
+    let contradicted = const_modules("pub const K: i64 = \"abc\"");
+    assert_eq!(refusals(&contradicted), vec![UNTYPED]);
+    let mut ambiguous = const_modules("pub const K: i64 = 0").to_vec();
+    ambiguous.push(("crate.other", "pub const K: string = \"abc\"".to_string()));
+    assert_eq!(refusals(&ambiguous), vec![UNTYPED]);
+}

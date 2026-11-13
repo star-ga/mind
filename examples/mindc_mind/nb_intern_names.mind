@@ -1,0 +1,237 @@
+// Copyright 2026 STARGA Inc.
+// Name-interning probes, part 1: the load_i64 / vec_new name tables.
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import std.vec;
+import nb_emit_core;
+import nb_ast;
+
+// Write the literal "__mind_load_i64" (15 bytes) into `strbuf` at the current
+// interning cursor and register its offset/count, returning the freshly
+// allocated string index. Mirrors intern_span's allocate tail exactly, but the
+// source bytes are the fixed synthetic call name rather than a span of `src`.
+// (No dedup scan: this name is interned exactly once, after the source spans, in
+// the field-read lowering — matching the Rust collect order.)
+pub fn intern_load_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    // "__mind_load_i64" = 95 95 109 105 110 100 95 108 111 97 100 95 105 54 52.
+    __mind_store_i8(strbuf + start + 0, 95);
+    __mind_store_i8(strbuf + start + 1, 95);
+    __mind_store_i8(strbuf + start + 2, 109);
+    __mind_store_i8(strbuf + start + 3, 105);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 100);
+    __mind_store_i8(strbuf + start + 6, 95);
+    __mind_store_i8(strbuf + start + 7, 108);
+    __mind_store_i8(strbuf + start + 8, 111);
+    __mind_store_i8(strbuf + start + 9, 97);
+    __mind_store_i8(strbuf + start + 10, 100);
+    __mind_store_i8(strbuf + start + 11, 95);
+    __mind_store_i8(strbuf + start + 12, 105);
+    __mind_store_i8(strbuf + start + 13, 54);
+    __mind_store_i8(strbuf + start + 14, 52);
+    __mind_store_i64(offs + (n + 1) * 8, start + 15);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// The j-th byte (0..15) of the synthetic call name "__mind_load_i64". Shared by
+// the dedup-aware interner so the literal lives in exactly one place.
+pub fn load_i64_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 108;
+    }
+    if j == 8 {
+        return 111;
+    }
+    if j == 9 {
+        return 97;
+    }
+    if j == 10 {
+        return 100;
+    }
+    if j == 11 {
+        return 95;
+    }
+    if j == 12 {
+        return 105;
+    }
+    if j == 13 {
+        return 54;
+    }
+    52
+}
+
+// Does the already-interned string at index i equal "__mind_load_i64"? Raw-byte
+// compare against the synthetic literal (no hashing), mirroring StringTable
+// dedup on the synthetic Call name.
+pub fn load_i64_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 15 {
+        return 0;
+    }
+    if j >= 15 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != load_i64_name_byte(j) {
+        return 0;
+    }
+    load_i64_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "__mind_load_i64" among the n already-interned
+// strings, or -1. Mirrors StringTable::intern's first-seen dedup lookup.
+pub fn load_i64_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if load_i64_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    load_i64_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of the synthetic "__mind_load_i64" call name: returns the
+// existing index on a hit, else allocates it (via intern_load_i64_literal) and
+// returns the fresh index. This is the idempotent form the COLLECTION PASS needs
+// (a body with multiple field reads interns the name once), matching the Rust
+// `Instr::Call { name } => st.intern(name)` first-seen behaviour. The direct
+// field driver (emit_mic3_field_module_from_ast) still calls the no-dedup
+// intern_load_i64_literal because that path interns the name exactly once.
+pub fn intern_load_i64_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = load_i64_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_load_i64_literal(strbuf, offs, ccell)
+}
+
+// Write the literal "__mind_alloc" (12 bytes) into `strbuf` at the current
+// interning cursor; register its offset/count; return the fresh string index.
+pub fn intern_alloc_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    // "__mind_alloc" = 95 95 109 105 110 100 95 97 108 108 111 99.
+    __mind_store_i8(strbuf + start + 0, 95);
+    __mind_store_i8(strbuf + start + 1, 95);
+    __mind_store_i8(strbuf + start + 2, 109);
+    __mind_store_i8(strbuf + start + 3, 105);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 100);
+    __mind_store_i8(strbuf + start + 6, 95);
+    __mind_store_i8(strbuf + start + 7, 97);
+    __mind_store_i8(strbuf + start + 8, 108);
+    __mind_store_i8(strbuf + start + 9, 108);
+    __mind_store_i8(strbuf + start + 10, 111);
+    __mind_store_i8(strbuf + start + 11, 99);
+    __mind_store_i64(offs + (n + 1) * 8, start + 12);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Write the literal "__mind_store_i64" (16 bytes) into `strbuf` at the current
+// interning cursor; register its offset/count; return the fresh string index.
+pub fn intern_store_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    // "__mind_store_i64" = 95 95 109 105 110 100 95 115 116 111 114 101 95 105 54 52.
+    __mind_store_i8(strbuf + start + 0, 95);
+    __mind_store_i8(strbuf + start + 1, 95);
+    __mind_store_i8(strbuf + start + 2, 109);
+    __mind_store_i8(strbuf + start + 3, 105);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 100);
+    __mind_store_i8(strbuf + start + 6, 95);
+    __mind_store_i8(strbuf + start + 7, 115);
+    __mind_store_i8(strbuf + start + 8, 116);
+    __mind_store_i8(strbuf + start + 9, 111);
+    __mind_store_i8(strbuf + start + 10, 114);
+    __mind_store_i8(strbuf + start + 11, 101);
+    __mind_store_i8(strbuf + start + 12, 95);
+    __mind_store_i8(strbuf + start + 13, 105);
+    __mind_store_i8(strbuf + start + 14, 54);
+    __mind_store_i8(strbuf + start + 15, 52);
+    __mind_store_i64(offs + (n + 1) * 8, start + 16);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// The j-th byte (0..6) of the synthetic call name "vec_new" = 118 101 99 95 110 101 119.
+pub fn vec_new_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 118;
+    }
+    if j == 1 {
+        return 101;
+    }
+    if j == 2 {
+        return 99;
+    }
+    if j == 3 {
+        return 95;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 101;
+    }
+    119
+}
+
+// Write the literal "vec_new" (7 bytes) into `strbuf` at the current interning
+// cursor; register its offset/count; return the fresh string index.
+pub fn intern_vec_new_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    __mind_store_i8(strbuf + start + 0, 118);
+    __mind_store_i8(strbuf + start + 1, 101);
+    __mind_store_i8(strbuf + start + 2, 99);
+    __mind_store_i8(strbuf + start + 3, 95);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 101);
+    __mind_store_i8(strbuf + start + 6, 119);
+    __mind_store_i64(offs + (n + 1) * 8, start + 7);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Does the already-interned string at index i equal "vec_new"? Raw-byte compare.
+pub fn vec_new_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 7 {
+        return 0;
+    }
+    if j >= 7 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != vec_new_name_byte(j) {
+        return 0;
+    }
+    vec_new_name_eq_at(strbuf, offs, i, j + 1)
+}

@@ -1,0 +1,8 @@
+// A2 fail-closed: a pointer cast of an i32 PARAMETER.
+fn g(x: i32) -> i64 {
+    (x as *mut u8) as i64
+}
+
+fn main() -> i64 {
+    g(5)
+}

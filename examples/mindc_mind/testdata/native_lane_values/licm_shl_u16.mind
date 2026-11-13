@@ -1,0 +1,33 @@
+// LICM slice 1 keeps the narrow code of a hoisted name: `<<` on a u16 left masks
+// its count to 15 and wraps to 16 bits where it is read.
+// Independent value: 17 & 15 = 1. 40000 << 1 = 80000, which
+// wraps to 80000 - 65536 = 14464 as a u16. param chain: 1 trip. local chain: 2 trips,
+// 28928. (14464 + 28928) % 251 = 43392 - 172 * 251 = 220.
+fn chain_param(a: u16, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: u16 = a + 0;
+        let y: u16 = x << 17;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn chain_local(n: i64) -> i64 {
+    let a: u16 = 40000;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: u16 = a + 0;
+        let y: u16 = x << 17;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    (chain_param(40000, 1) + chain_local(2)) % 251
+}

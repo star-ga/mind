@@ -1,0 +1,144 @@
+// Copyright 2026 STARGA Inc.
+// Author: STARGA Inc.
+// Scalar Linux x86-64 LP64 SysV variadic call emission component.
+// Requires native_c_variadic_plan.mind, native_c_call_emit.mind, and the
+// existing nb_* byte encoders. It performs no import binding or execution.
+// Borrowed declaration, type, and slot buffers remain live and immutable.
+// Metadata is five writable disjoint i64 words and aliases no borrowed input.
+
+pub fn ncve_zero(metadata: i64) -> i64 {
+    __mind_store_i64(metadata, 0);
+    __mind_store_i64(metadata + 8, 0);
+    __mind_store_i64(metadata + 16, 0);
+    __mind_store_i64(metadata + 24, 0);
+    __mind_store_i64(metadata + 32, 0);
+    0
+}
+
+// Slots are signed RBP-frame displacements, never values or machine pointers.
+// Planner errors retain their v2 meanings. Later environment errors match nce:
+// 9 frame, 10 import, 11 slot table/displacement, and 12 result displacement.
+pub fn ncve_validate(decl: i64, actual_types: i64, total: i64, slots: i64, frame: i64, dst: i64, import_id: i64) -> i64 {
+    let plan_error: i64 = ncv_validate(decl, actual_types, total);
+    if plan_error != 0 { return plan_error; }
+    if frame < 16 { return 9; }
+    if frame > 2147483632 { return 9; }
+    if frame % 16 != 0 { return 9; }
+    if import_id < 0 { return 10; }
+    if import_id > 255 { return 10; }
+    if slots == 0 { return 11; }
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while i < total {
+        ok = ok * nce_slot_ok(__mind_load_i64(slots + i * 8), frame);
+        i = i + 1;
+    }
+    if ok == 0 { return 11; }
+    let rt: i64 = ncv_type(__mind_load_i64(decl + 56));
+    if rt != 0 { if nce_slot_ok(dst, frame) == 0 { return 12; } }
+    0
+}
+
+// movzx eax,byte ptr [rbp+disp32] reads exactly the meaningful Boolean byte.
+// test eax,eax; setne al leaves RAX exactly zero or one because MOVZX cleared
+// every other EAX bit and an EAX write cleared the high half of RAX.
+pub fn ncve_load_bool(code: String, disp: i64) -> String {
+    let loaded: String = nce_load_scalar(code, 13, disp);
+    let tested: String = nce_op3(loaded, 133, 192, 15);
+    nb_push(nb_push(tested, 149), 192)
+}
+
+// Conversions 1..4 deliberately select the signed or unsigned low-width nce
+// load. They are value extensions, not eight-byte slot bitcasts. Conversion 5
+// canonicalizes poison high/remaining bits from the one live source byte.
+pub fn ncve_load_integer(code: String, source_tag: i64, conversion: i64, disp: i64) -> String {
+    if conversion == 1 { return nce_load_scalar(code, 1, disp); }
+    if conversion == 2 { return nce_load_scalar(code, 2, disp); }
+    if conversion == 3 { return nce_load_scalar(code, 3, disp); }
+    if conversion == 4 { return nce_load_scalar(code, 4, disp); }
+    if conversion == 5 { return ncve_load_bool(code, disp); }
+    nce_load_scalar(code, source_tag, disp)
+}
+
+// F3 0F 5A /r is CVTSS2SD xmm, m32. With mod=10 and r/m=101, the
+// ModRM byte 0x85+8*k selects XMMk and [RBP+disp32]. k is planned in 0..7.
+// Numeric binary32-to-binary64 conversion observes caller MXCSR. Exact
+// subnormal behavior requires DAZ off; exception masks are caller obligations.
+// This component neither installs nor changes the floating-point environment.
+pub fn ncve_f32_xmm(code: String, reg: i64, disp: i64) -> String {
+    let op: String = nce_op3(code, 243, 15, 90);
+    nb_i32le_signed(nb_push(op, 133 + reg * 8), disp)
+}
+
+// F3 44 0F 5A BD disp32 is CVTSS2SD XMM15,[RBP+disp32]. REX.R=1
+// selects XMM15. F2 44 0F 11 BC 24 disp32 is MOVSD [RSP+disp32],XMM15;
+// its SIB byte selects RSP with no index. XMM15 cannot overwrite XMM0..7.
+pub fn ncve_f32_stack(code: String, disp: i64, offset: i64) -> String {
+    let p1: String = nb_push(nb_push(nb_push(nb_push(nb_push(code, 243), 68), 15), 90), 189);
+    let converted: String = nb_i32le_signed(p1, disp);
+    let p2: String = nb_push(nb_push(nb_push(nb_push(nb_push(nb_push(converted, 242), 68), 15), 17), 188), 36);
+    nb_u32(p2, offset)
+}
+
+// 48 89 84 24 disp32 is MOV [RSP+disp32],RAX. The fresh v2 plan proves
+// offset is an eight-byte spill slot within the aligned reservation.
+pub fn ncve_store_rax(code: String, offset: i64) -> String {
+    let store: String = nb_push(nce_op3(code, 72, 137, 132), 36);
+    nb_u32(store, offset)
+}
+
+// item is a row of the newly allocated ncv_plan, never caller-built metadata.
+pub fn ncve_argument(code: String, item: i64, disp: i64) -> String {
+    let source_tag: i64 = ncp_type(item);
+    let conversion: i64 = __mind_load_i64(item + 104);
+    let kind: i64 = __mind_load_i64(item + 136);
+    let place: i64 = __mind_load_i64(item + 144);
+    if conversion == 6 {
+        if kind == 2 { return ncve_f32_xmm(code, place, disp); }
+        return ncve_f32_stack(code, disp, place);
+    }
+    if kind == 2 { return nb_fp_movsd_load_xmmk(code, place, disp); }
+    let loaded: String = ncve_load_integer(code, source_tag, conversion, disp);
+    if kind == 1 { return nce_move_gp(loaded, place); }
+    ncve_store_rax(loaded, place)
+}
+
+// B8 imm32 is MOV EAX,imm32. It is emitted after every argument preparation,
+// so RAX scratch use cannot corrupt the SysV variadic vector-register count.
+pub fn ncve_set_al(code: String, count: i64) -> String {
+    nb_u32(nb_push(code, 184), count)
+}
+
+// RSP is 16-byte aligned at the bottom of the valid RBP frame, as required by
+// nce. FF 15 disp32 is an unresolved RIP-relative indirect call through a GOT
+// slot. Metadata fixup names the first displacement byte for the later writer.
+pub fn ncve_emit(decl: i64, actual_types: i64, total: i64, slots: i64, frame: i64, dst: i64, import_id: i64, metadata: i64) -> String {
+    let _clear: i64 = ncve_zero(metadata);
+    if ncve_validate(decl, actual_types, total, slots, frame, dst, import_id) != 0 { return string_new(); }
+    // Revalidate and reconstruct from original typed inputs. No successful
+    // caller-supplied plan or plan-derived pointer is accepted by this API.
+    let plan: i64 = ncv_plan(decl, actual_types, total);
+    if plan == 0 { return string_new(); }
+    let reserve: i64 = __mind_load_i64(plan + 48);
+    let al_count: i64 = __mind_load_i64(plan + 56);
+    let rt: i64 = __mind_load_i64(plan + 64);
+    let mut code: String = nce_stack(string_new(), reserve, 0);
+    let mut i: i64 = 0;
+    while i < total {
+        code = ncve_argument(code, plan + 96 + i * 160, __mind_load_i64(slots + i * 8));
+        i = i + 1;
+    }
+    code = ncve_set_al(code, al_count);
+    let call: String = nb_push(nb_push(code, 255), 21);
+    let fixup: i64 = string_len(call);
+    let pending: String = nb_u32(call, 0);
+    let restored: String = nce_stack(pending, reserve, 1);
+    let result: String = nce_result(restored, rt, dst);
+    let _free: i64 = __mind_free(plan);
+    __mind_store_i64(metadata + 8, fixup);
+    __mind_store_i64(metadata + 16, import_id);
+    __mind_store_i64(metadata + 24, reserve);
+    __mind_store_i64(metadata + 32, al_count);
+    __mind_store_i64(metadata, 2);
+    result
+}

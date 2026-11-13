@@ -1,0 +1,9 @@
+// Minimal reproduction of the native gate refusal on this checkpoint.
+// mindc build <this-file> --backend native --out /tmp/tls13-alloc.elf
+// error[backend-native]: `main` calls `__mind_alloc`, which has no definition
+// in the closure (closure.unresolved_edge). No alternate allocator is supplied.
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i64(p, 7);
+    __mind_load_i64(p)
+}

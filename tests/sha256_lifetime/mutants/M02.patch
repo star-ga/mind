@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -464 +464 @@
+-        __mind_free(h_addr);
++        // MUTATION: omitted state release.

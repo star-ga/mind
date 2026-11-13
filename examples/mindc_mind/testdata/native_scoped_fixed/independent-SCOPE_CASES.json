@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "status": "PRELISTED_NOT_EXECUTED",
+  "cases": [
+    {
+      "id": "Q01-changed-prefix-comment",
+      "purpose": "A syntactically inert prefix comment change must fail the build-bound manifest, even with an honest new full-source hash.",
+      "expected_admission": "refuse",
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      },
+      "packet": {
+        "path": "packets/Q01-changed-prefix-comment.bin",
+        "bytes": 395548,
+        "sha256": "7fc20397e37e657c12baa885973873362d8e84feda6d3d338404cf0d6c24fd58"
+      },
+      "full_source_sha256": "4a31f94d7f67342052ebe0688dae6648b65b427f4f5e8bc36d6023ba8c927867",
+      "user_lo": 395479,
+      "source_length": 395500,
+      "no_supplied_region_or_digest_can_override_manifest": true
+    },
+    {
+      "id": "Q02-changed-module-joiner",
+      "purpose": "Exact per-module newline joiners are part of the trusted capture.",
+      "expected_admission": "refuse",
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      },
+      "packet": {
+        "path": "packets/Q02-changed-module-joiner.bin",
+        "bytes": 395548,
+        "sha256": "cb08c0c9039b47d66b0a912117a2d8f4aa125ac1a5af1c7bc2950f64ca4812cd"
+      },
+      "full_source_sha256": "37aa84f3d8add16293ea4e2d95be4698e7b7d1750b90c35a26d408cc005daa8e",
+      "user_lo": 395479,
+      "source_length": 395500,
+      "no_supplied_region_or_digest_can_override_manifest": true
+    },
+    {
+      "id": "Q03-user-boundary-minus-one",
+      "purpose": "Source boundary cannot move into the last trusted unit.",
+      "expected_admission": "refuse",
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      },
+      "packet": {
+        "path": "packets/Q03-user-boundary-minus-one.bin",
+        "bytes": 395548,
+        "sha256": "7d9f4f0cb8c32b00772d97cc80660dd645f6965fb056a1e3d8322737a3d08496"
+      },
+      "full_source_sha256": "b00c781f882e63baa75ac4f511e7ad6b2f0fc1b4f737df10d067ef1db67cbe9d",
+      "user_lo": 395478,
+      "source_length": 395500,
+      "no_supplied_region_or_digest_can_override_manifest": true
+    },
+    {
+      "id": "Q04-user-boundary-plus-one",
+      "purpose": "User byte cannot be reclassified into trusted prefix.",
+      "expected_admission": "refuse",
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      },
+      "packet": {
+        "path": "packets/Q04-user-boundary-plus-one.bin",
+        "bytes": 395548,
+        "sha256": "e7b358240cdb6911c531f214a9c95d5bbb0bd249e05ac9de974cf9aa86625edc"
+      },
+      "full_source_sha256": "b00c781f882e63baa75ac4f511e7ad6b2f0fc1b4f737df10d067ef1db67cbe9d",
+      "user_lo": 395480,
+      "source_length": 395500,
+      "no_supplied_region_or_digest_can_override_manifest": true
+    },
+    {
+      "id": "Q05-reordered-trusted-modules",
+      "purpose": "Unit membership and order must be validated against the build-bound manifest.",
+      "expected_admission": "refuse",
+      "expected_compile": {
+        "normal_refusal": true,
+        "elf_bytes": 0,
+        "same_exact_native_and_cpu_diagnostic": true,
+        "diagnostic_code": "freeze with new profile wire before execution"
+      },
+      "packet": {
+        "path": "packets/Q05-reordered-trusted-modules.bin",
+        "bytes": 395548,
+        "sha256": "0b8e1258bafc5b89bbb6cec85b7cde3b76f91677fb58ea8ebd947b16e91d0bfc"
+      },
+      "full_source_sha256": "0aa530fbdf13e63bb2c1f6dfab7a77998316ee61d61cced205bf8d8cc9eca0de",
+      "user_lo": 395479,
+      "source_length": 395500,
+      "no_supplied_region_or_digest_can_override_manifest": true
+    }
+  ]
+}

@@ -44,15 +44,17 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+pub use crate::project::build_lock::temporary_manifest;
 use artifact::{default_artifact_path, legacy_opts_from, legacy_target_name};
 use driver_error::classify_driver_error;
-use project_transaction::{ManifestEdit, canonical_explicit_entry, lock_project, open_explicit};
+use project_transaction::{
+    ManifestEdit, open_explicit, open_project, probe_root, resolve_explicit_entry,
+};
 use source_key::compile_cache_material_from_snapshots as cache_material_from;
 
 use crate::project::{
     BuildTarget, EmitKind, OptimizeLevel, build_input_snapshot::BuildInputSnapshot,
-    build_project_locked_with_snapshot as build_snapshot, find_project_root,
-    find_project_root_for_file_checked, load_manifest,
+    build_project_locked_with_snapshot as build_snapshot,
 };
 
 use cache::{
@@ -156,31 +158,14 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     // Mind.toml in bounds — the manifest is synthesised and the project root is
     // the entry file's OWN directory. Such a build compiles only the named entry
     // (see `BuildOptions::single_file`), never a whole-directory sibling walk.
-    let explicit_entry = opts
-        .paths
-        .first()
-        .map(|first| {
-            let cwd = std::env::current_dir().map_err(|error| {
-                anyhow::Error::new(error).context("cannot read current directory")
-            })?;
-            canonical_explicit_entry(first, &cwd)
-        })
-        .transpose()
-        .map_err(|error| {
-            BuildError::Invalid(format!("cannot resolve explicit entry: {error:#}"))
-        })?;
+    let explicit_entry = resolve_explicit_entry(&opts.paths)?;
     let (project_root, manifest, build_lock, single_file) =
         if let Some((entry_dir, first_path)) = explicit_entry.clone() {
-            // The root is probed before any lock is held and re-audited after
-            // it, inside `open_explicit` — see that function for the window
-            // that ordering opens.
-            let opened = open_explicit(
-                find_project_root_for_file_checked(&entry_dir).map_err(|error| {
-                    BuildError::Invalid(format!("cannot discover project root: {error:#}"))
-                })?,
-                &entry_dir,
-                &first_path,
-            )?;
+            // The root is probed before any lock is held, by the rule of the
+            // lock (`probe_root`), and re-audited after it, inside
+            // `open_explicit` — see that function for the window that ordering
+            // opens.
+            let opened = open_explicit(probe_root(&entry_dir)?, &entry_dir, &first_path)?;
             (
                 opened.root,
                 opened.manifest,
@@ -188,17 +173,8 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                 opened.single_file,
             )
         } else {
-            match find_project_root() {
-                Ok(root) => {
-                    let lock = lock_project(&root)?;
-                    let m = load_manifest(&root)
-                        .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
-                    (root, m, lock, false)
-                }
-                Err(e) => {
-                    return Err(BuildError::Invalid(format!("cannot locate Mind.toml: {e}")));
-                }
-            }
+            let opened = open_project()?;
+            (opened.root, opened.manifest, opened.lock, false)
         };
 
     // Validate [package].name per RFC 0008 §3.
@@ -457,7 +433,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     let manifest_edit = if need_write {
         let toml_to_write = match &orig_manifest_text {
             Some(text) => patch_manifest_entry(text, &entry_rel),
-            None => build_synthetic_manifest(&manifest.package.name, &entry_rel),
+            None => temporary_manifest(&manifest.package.name, &entry_rel),
         };
         Some(
             ManifestEdit::replace(
@@ -755,15 +731,6 @@ fn resolve_entry(
     Err(BuildError::failed(
         "no source files provided and no src/main.mind or src/lib.mind found".to_string(),
     ))
-}
-
-/// Build a minimal `Mind.toml` text for a single-file build that has no
-/// existing project manifest.
-fn build_synthetic_manifest(pkg_name: &str, entry: &str) -> String {
-    format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"{}\"\n",
-        pkg_name, entry
-    )
 }
 
 /// Patch a raw `Mind.toml` text to change `entry = "..."`.

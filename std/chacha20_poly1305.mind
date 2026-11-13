@@ -1,6 +1,6 @@
 // std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
-// Self-contained: no imports, only the `__mind_*` byte-buffer intrinsics, matching
-// std/sha256.mind and std/aes_gcm.mind's low-level discipline.
+// Self-contained: no imports, only the `__mind_*` byte-buffer intrinsics,
+// matching the low-level discipline of std/sha256.mind and std/aes_gcm.mind.
 //
 // Scope (RFC 8446 §9.1 mandatory suite TLS_CHACHA20_POLY1305_SHA256):
 //   - ChaCha20 (RFC 8439 §2.4), 20 rounds, 256-bit key, 96-bit (12-byte) nonce,

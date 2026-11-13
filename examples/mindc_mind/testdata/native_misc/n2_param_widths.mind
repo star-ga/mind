@@ -1,0 +1,17 @@
+// N2: an 8/16-bit parameter is wrapped once at entry to its declared width, in the
+// code and in the trace note (note leg). Independent value: a + 1 on a: u8 = 255 is
+// u8 arithmetic -> 0; b: i16 = -300; 0 - 300 + 400 = 100. wi8(127) -> 127 + 1 as i8
+// arithmetic = -128; -128 + 128 = 0. 100 + 0 + 7 = 107.
+fn fa(a: u8, b: i16) -> i64 {
+    let c: i64 = a + 1;
+    c + (b as i64) + 400
+}
+
+fn wi8(x: i8) -> i64 {
+    let y: i8 = x + 1;
+    (y as i64) + 128
+}
+
+fn main() -> i64 {
+    fa(255, 0 - 300) + wi8(127) + 7
+}

@@ -1,0 +1,20 @@
+// Two struct declarations with the same name (W11c). The emitter visits the
+// struct registry in name-sorted order by rank; with equal names and no
+// tie-break two structs share a rank, one rank is never found, and the
+// sorted-order walk indexes registry slot -1 (memory before the table). Under
+// the bump allocator that word was a harmless stale value; under the bounded
+// allocator it is a block header, and the compiler died with SIGSEGV while
+// compiling this file. The native compiler must not crash: expected exit 7,
+// empty stdout. Native-only (the Rust front end refuses duplicate struct
+// declarations with E2035, so there is no MLIR oracle).
+struct A {
+    x: i64,
+}
+
+struct A {
+    x: i64,
+}
+
+fn main() -> i64 {
+    7
+}

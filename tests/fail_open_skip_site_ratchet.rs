@@ -264,6 +264,7 @@ fn announced_skip_sites(rel: &str, lines: &[&str]) -> Vec<String> {
         if !lines[i..tail_end]
             .iter()
             .any(|l| l.contains("return") || is_bare_none(l))
+            && !falls_off_the_fn(lines, i, end)
         {
             continue;
         }
@@ -274,6 +275,31 @@ fn announced_skip_sites(rel: &str, lines: &[&str]) -> Vec<String> {
         open.push(format!("{}:{} (announced skip)", rel, i + 1));
     }
     open
+}
+
+/// Does the announcement spanning `lines[start..=end]` end its top-level fn
+/// without a verdict?
+///
+/// Two shapes exit as surely as a `return`: the announcement inside a block
+/// that closes straight into the fn's own column-0 `}` (`if missing {
+/// println!("skipped"); }` as a test's last statement), and a fn whose WHOLE
+/// body is the announcement (a `#[cfg(not(..))]` stub). The tail rule above,
+/// keyed on `return` / `None`, saw neither. A summary print as the last
+/// top-level statement after real work is neither shape.
+fn falls_off_the_fn(lines: &[&str], start: usize, end: usize) -> bool {
+    let whole_body = start > 0
+        && lines[start - 1].trim_end().ends_with('{')
+        && lines[start - 1].starts_with("fn ");
+    let mut nested = false;
+    for line in lines.iter().skip(end + 1).take(MAX_MACRO_SPAN) {
+        match line.trim() {
+            "" => {}
+            "}" if line.starts_with('}') => return nested || whole_body,
+            "}" => nested = true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The identifier run starting at byte 0 of `s`, as a byte length.
@@ -678,6 +704,46 @@ fn the_scanner_can_see_an_announced_skip_that_hands_back_none() {
         announced_skip_sites("specimen.rs", &commented),
         vec!["specimen.rs:5 (announced skip)".to_string()]
     );
+
+    // A print-only skip as the test's LAST statement exits as surely as a
+    // `return`; a print followed by more work does not.
+    let falls_off = [
+        "fn t() {",
+        "    if stdout.contains(\"unavailable\") {",
+        "        println!(\"round-trip skipped\");",
+        "    }",
+        "}",
+    ];
+    assert_eq!(
+        announced_skip_sites("specimen.rs", &falls_off),
+        vec!["specimen.rs:3 (announced skip)".to_string()]
+    );
+    let stub = [
+        "#[test]",
+        "fn t() {",
+        "    println!(\"t: SKIP -- gated to linux\");",
+        "}",
+    ];
+    assert_eq!(
+        announced_skip_sites("specimen.rs", &stub),
+        vec!["specimen.rs:3 (announced skip)".to_string()]
+    );
+    let summary = [
+        "fn t() {",
+        "    let n = run();",
+        "    eprintln!(\"summary: {n} passed, 2 skipped\");",
+        "}",
+    ];
+    assert!(announced_skip_sites("specimen.rs", &summary).is_empty());
+    let continues = [
+        "fn t() {",
+        "    if stdout.contains(\"unavailable\") {",
+        "        println!(\"round-trip skipped\");",
+        "    }",
+        "    assert_eq!(n, 3);",
+        "}",
+    ];
+    assert!(announced_skip_sites("specimen.rs", &continues).is_empty());
 
     // Every early-out spelling, and a `None` that is a real value, not an exit.
     assert!(is_bare_none("        None"));

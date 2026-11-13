@@ -61,6 +61,11 @@ pub(crate) const E_STRING_EQUALITY_OPERAND: &str = "E2038";
 /// refuses as an unsupported field read (see `eval::string_equality`).
 pub(crate) const E_STRING_MEMBER: &str = "E6009";
 
+/// A `print` operand a runnable artifact would write as a handle: an
+/// aggregate value, or a value of unknown type (see `eval::string_equality`).
+/// Dotted key until the release assigns its E-code.
+pub(crate) const E_PRINT_OPERAND: &str = "lower.print_operand";
+
 /// The collection mutating-method names whose std implementation returns a
 /// FRESH handle on realloc (`vec_push`, `map_insert`, …).
 ///

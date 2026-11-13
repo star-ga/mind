@@ -1,0 +1,3 @@
+// lane.binop.non_scalar: a binary operator over two unit values.
+fn h() { }
+fn main() -> i64 { let y = h() + h(); return y; }

@@ -30,6 +30,8 @@
 //!
 //! `tests/std_tls_x509_import.rs` runs the same verifier through
 //! `import std.x509;` under `mindc test` and in a `mindc build` executable.
+//! The native-backend twin of the matrix is
+//! `scripts/run_crypto_vectors.sh x509-build-native` (see tests/x509/README.md).
 
 #![cfg(all(
     feature = "mlir-build",

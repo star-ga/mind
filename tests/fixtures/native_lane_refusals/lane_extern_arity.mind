@@ -1,0 +1,3 @@
+// lane.extern.arity: a table name declared with the wrong parameter count.
+extern "C" { fn close() -> i32; }
+fn main() -> i64 { return 0; }

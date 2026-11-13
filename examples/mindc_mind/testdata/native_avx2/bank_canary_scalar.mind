@@ -1,0 +1,58 @@
+// Copyright 2026 STARGA Inc.
+// Scalar twin of bank_canary.mind: the same 32 live locals and the same vector
+// result lane by lane. Builds on both backends; must print the same 40 bytes.
+
+fn canary(a: i64, o: i64, seed: i64) -> i64 {
+    let v0: i64 = seed * 3 + 17;
+    let v1: i64 = seed * 4 + 1017;
+    let v2: i64 = seed * 5 + 2017;
+    let v3: i64 = seed * 6 + 3017;
+    let v4: i64 = seed * 7 + 4017;
+    let v5: i64 = seed * 8 + 5017;
+    let v6: i64 = seed * 9 + 6017;
+    let v7: i64 = seed * 10 + 7017;
+    let v8: i64 = seed * 11 + 8017;
+    let v9: i64 = seed * 12 + 9017;
+    let v10: i64 = seed * 13 + 10017;
+    let v11: i64 = seed * 14 + 11017;
+    let v12: i64 = seed * 15 + 12017;
+    let v13: i64 = seed * 16 + 13017;
+    let v14: i64 = seed * 17 + 14017;
+    let v15: i64 = seed * 18 + 15017;
+    let v16: i64 = seed * 19 + 16017;
+    let v17: i64 = seed * 20 + 17017;
+    let v18: i64 = seed * 21 + 18017;
+    let v19: i64 = seed * 22 + 19017;
+    let v20: i64 = seed * 23 + 20017;
+    let v21: i64 = seed * 24 + 21017;
+    let v22: i64 = seed * 25 + 22017;
+    let v23: i64 = seed * 26 + 23017;
+    let v24: i64 = seed * 27 + 24017;
+    let v25: i64 = seed * 28 + 25017;
+    let v26: i64 = seed * 29 + 26017;
+    let v27: i64 = seed * 30 + 27017;
+    let v28: i64 = seed * 31 + 28017;
+    let v29: i64 = seed * 32 + 29017;
+    let v30: i64 = seed * 33 + 30017;
+    let v31: i64 = seed * 34 + 31017;
+    let mut i: i64 = 0;
+    while i < 4 {
+        __mind_store_i64(o + i * 8, __mind_load_i64(a + i * 8) + __mind_load_i64(a + 32 + i * 8) - __mind_load_i64(a + 64 + i * 8));
+        i = i + 1;
+    }
+    v0 * 1 + v1 * 3 + v2 * 5 + v3 * 7 + v4 * 9 + v5 * 11 + v6 * 13 + v7 * 15 + v8 * 17 + v9 * 19 + v10 * 21 + v11 * 23 + v12 * 25 + v13 * 27 + v14 * 29 + v15 * 31 + v16 * 33 + v17 * 35 + v18 * 37 + v19 * 39 + v20 * 41 + v21 * 43 + v22 * 45 + v23 * 47 + v24 * 49 + v25 * 51 + v26 * 53 + v27 * 55 + v28 * 57 + v29 * 59 + v30 * 61 + v31 * 63
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(96);
+    let o: i64 = __mind_alloc(40);
+    let mut i: i64 = 0;
+    while i < 12 {
+        __mind_store_i64(a + i * 8, i * 1000003 + 11);
+        i = i + 1;
+    }
+    let c: i64 = canary(a, o, 41);
+    __mind_store_i64(o + 32, c);
+    __mind_write(1, o, 40, 0 - 1);
+    0
+}

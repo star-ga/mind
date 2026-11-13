@@ -1,0 +1,329 @@
+// Copyright 2026 STARGA Inc.
+// Kind 87: __mind_group_bank_i64(ptrs, bank, plane, pixels, group) -> 0.
+// For p in 0..pixels: a, b, c, x = the i64 at ptrs[0..3] + p * 8 (ptrs read once,
+// x only for group 4); z_k for k = 1..13 is { c, b-c, b, b+c, a-b-c, a-b, a-b+c,
+// a-c, a, a+c, a+b-c, a+b, a+b+c } (wrapping). Group 3 stores z_k at bank +
+// (k-1)*plane + p*8; group 4 stores row k-1 = z_k, row 26-k = x-z_k, row 26+k =
+// x+z_k, then row 26 = x. Any other group, or pixels <= 0, reads and writes
+// nothing. plane is in bytes, nothing needs alignment.
+// Paths: four pixels per step in ymm1..7 (vpaddq / vpsubq) with a scalar tail,
+// taken only when the AVX2 probe passes AND the rows cannot overlap each other or
+// any input plane (plane >= pixels*8, written span disjoint from every read
+// span); otherwise the scalar per-pixel path, in the order above. Both paths store
+// the same bytes for every input, so the result never depends on the CPU.
+// Registers: r10 a, r12 b, rdx c, r15 x, rbx bank, r11 plane, r9 pixels, rsi p,
+// r14 p*8, r8 the AVX2 flag.
+
+import std.string;
+import nb_group_sum_enc;
+
+// 1 iff [lo, hi) is "__mind_group_bank_i64" (21 bytes), else 0. Name only.
+pub fn nbg_bank_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 21 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 7448782734072045407 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 8) != 7953746578961166194 {
+        return 0;
+    }
+    if (__mind_load_i64(buf + lo + 16) & 1099511627775) != 224251174763 {
+        return 0;
+    }
+    1
+}
+
+// "__mind_group_bank_i64" with exactly five arguments -> 87, else -1.
+pub fn nbg_bank_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if nbg_bank_name(buf, lo, hi) == 0 {
+        return 0 - 1;
+    }
+    if nbg_arity(buf, hi) != 5 {
+        return 0 - 1;
+    }
+    87
+}
+
+// mov rax, r14 ; add rax, <base> ; vmovdqu ymm, [rax]
+pub fn nbg_load_ymm(code: String, ymm: i64, base: i64) -> String {
+    let c1: String = nbg_rr(nbg_rr(code, 137, 0, 14), 1, 0, base);
+    nbg_mem(c1, 2, 0, 111, ymm, 0)
+}
+
+// rax = row * plane + bank + p*8: mov eax, row ; imul rax, r11 ; add rax, rbx ;
+// add rax, r14.
+pub fn nbg_row_addr(code: String, row: i64) -> String {
+    let c1: String = nbg_b4(nbg_u32(nbg_push(code, 184), row), 73, 15, 175, 195);
+    nbg_rr(nbg_rr(c1, 1, 0, 3), 1, 0, 14)
+}
+
+pub fn nbg_store_ymm(code: String, ymm: i64, row: i64) -> String {
+    nbg_mem(nbg_row_addr(code, row), 2, 0, 127, ymm, 0)
+}
+
+// mov r14, rsi ; shl r14, 3
+pub fn nbg_set_r14(code: String) -> String {
+    nbg_b4(nbg_rr(code, 137, 14, 6), 73, 193, 230, 3)
+}
+
+// push qword [base + r14]: mov rax, r14 ; add rax, base ; mov rax, [rax] ; push rax
+pub fn nbg_push_mem(code: String, base: i64) -> String {
+    nbg_b4(nbg_rr(nbg_rr(code, 137, 0, 14), 1, 0, base), 72, 139, 0, 80)
+}
+
+// rax op= [rsp + disp]: op 0 mov (8B), 1 add (03), 2 sub (2B); disp 0..127.
+pub fn nbg_rax_sp(code: String, op: i64, disp: i64) -> String {
+    let opc: i64 = if op == 0 {
+        139
+    } else {
+        if op == 1 {
+            3
+        } else {
+            43
+        }
+    };
+    if disp == 0 {
+        return nbg_b4(code, 72, opc, 4, 36);
+    }
+    nbg_b5(code, 72, opc, 68, 36, disp)
+}
+
+// rax = z_{k+1} from the pushed c / b / a at rsp + adj, adj + 8, adj + 16.
+pub fn nbg_z(code: String, k: i64, adj: i64) -> String {
+    let cd: i64 = adj;
+    let bd: i64 = adj + 8;
+    let ad: i64 = adj + 16;
+    if k == 0 {
+        return nbg_rax_sp(code, 0, cd);
+    }
+    if k == 1 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, bd), 2, cd);
+    }
+    if k == 2 {
+        return nbg_rax_sp(code, 0, bd);
+    }
+    if k == 3 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, bd), 1, cd);
+    }
+    if k == 4 {
+        return nbg_rax_sp(nbg_rax_sp(nbg_rax_sp(code, 0, ad), 2, bd), 2, cd);
+    }
+    if k == 5 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, ad), 2, bd);
+    }
+    if k == 6 {
+        return nbg_rax_sp(nbg_rax_sp(nbg_rax_sp(code, 0, ad), 2, bd), 1, cd);
+    }
+    if k == 7 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, ad), 2, cd);
+    }
+    if k == 8 {
+        return nbg_rax_sp(code, 0, ad);
+    }
+    if k == 9 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, ad), 1, cd);
+    }
+    if k == 10 {
+        return nbg_rax_sp(nbg_rax_sp(nbg_rax_sp(code, 0, ad), 1, bd), 2, cd);
+    }
+    if k == 11 {
+        return nbg_rax_sp(nbg_rax_sp(code, 0, ad), 1, bd);
+    }
+    nbg_rax_sp(nbg_rax_sp(nbg_rax_sp(code, 0, ad), 1, bd), 1, cd)
+}
+
+// Store rax at row: push rax ; rax = row address ; mov rcx, rax ; pop rax ;
+// mov [rcx], rax.
+pub fn nbg_store_rax_row(code: String, row: i64) -> String {
+    let c1: String = nbg_rr(nbg_row_addr(nbg_push(code, 80), row), 137, 1, 0);
+    nbg_b4(c1, 88, 72, 137, 1)
+}
+
+// One pixel, scalar: push a, b, c (and x for group 4), store every row, pop.
+pub fn nbg_scalar_pixel(code: String, g4: i64) -> String {
+    let mut c: String = nbg_push_mem(nbg_push_mem(nbg_push_mem(nbg_set_r14(code), 10), 12), 2);
+    let adj: i64 = if g4 == 1 {
+        8
+    } else {
+        0
+    };
+    if g4 == 1 {
+        c = nbg_push_mem(c, 15);
+    }
+    let mut k: i64 = 0;
+    while k < 13 {
+        c = nbg_z(c, k, adj);
+        if g4 == 1 {
+            // push z: [rsp] = z, [rsp + 8] = x.
+            c = nbg_store_rax_row(nbg_push(c, 80), k);
+            c = nbg_store_rax_row(nbg_rax_sp(nbg_rax_sp(c, 0, 8), 2, 0), 25 - k);
+            c = nbg_store_rax_row(nbg_rax_sp(nbg_rax_sp(c, 0, 8), 1, 0), 27 + k);
+            c = nbg_push(c, 88);
+        } else {
+            c = nbg_store_rax_row(c, k);
+        }
+        k = k + 1;
+    }
+    if g4 == 1 {
+        c = nbg_push(nbg_store_rax_row(nbg_rax_sp(c, 0, 0), 26), 88);
+    }
+    nbg_b3(c, 88, 88, 88)
+}
+
+// ymm6 = the z row for k when k is not held in a named register, and that
+// register: z_1 ymm3 (c), z_3 ymm2 (b), z_6 ymm5 (a-b), z_9 ymm1 (a), z_12 ymm4 (a+b).
+pub fn nbg_z_reg(k: i64) -> i64 {
+    if k == 0 {
+        return 3;
+    }
+    if k == 2 {
+        return 2;
+    }
+    if k == 5 {
+        return 5;
+    }
+    if k == 8 {
+        return 1;
+    }
+    if k == 11 {
+        return 4;
+    }
+    6
+}
+
+pub fn nbg_z_prep(code: String, k: i64) -> String {
+    if k == 1 {
+        return nbg_rrr(code, 251, 6, 2, 3);
+    }
+    if k == 3 {
+        return nbg_rrr(code, 212, 6, 2, 3);
+    }
+    if k == 4 {
+        return nbg_rrr(code, 251, 6, 5, 3);
+    }
+    if k == 6 {
+        return nbg_rrr(code, 212, 6, 5, 3);
+    }
+    if k == 7 {
+        return nbg_rrr(code, 251, 6, 1, 3);
+    }
+    if k == 9 {
+        return nbg_rrr(code, 212, 6, 1, 3);
+    }
+    if k == 10 {
+        return nbg_rrr(code, 251, 6, 4, 3);
+    }
+    if k == 12 {
+        return nbg_rrr(code, 212, 6, 4, 3);
+    }
+    code
+}
+
+// Four pixels: ymm1 a, ymm2 b, ymm3 c (ymm0 x), ymm4 a+b, ymm5 a-b.
+pub fn nbg_vec_body(code: String, g4: i64) -> String {
+    let mut c: String = nbg_set_r14(code);
+    if g4 == 1 {
+        c = nbg_load_ymm(c, 0, 15);
+    }
+    c = nbg_load_ymm(nbg_load_ymm(nbg_load_ymm(c, 1, 10), 2, 12), 3, 2);
+    c = nbg_rrr(nbg_rrr(c, 212, 4, 1, 2), 251, 5, 1, 2);
+    let mut k: i64 = 0;
+    while k < 13 {
+        let reg: i64 = nbg_z_reg(k);
+        c = nbg_store_ymm(nbg_z_prep(c, k), reg, k);
+        if g4 == 1 {
+            c = nbg_store_ymm(nbg_rrr(c, 251, 7, 0, reg), 7, 25 - k);
+            c = nbg_store_ymm(nbg_rrr(c, 212, 7, 0, reg), 7, 27 + k);
+        }
+        k = k + 1;
+    }
+    if g4 == 1 {
+        c = nbg_store_ymm(c, 0, 26);
+    }
+    c
+}
+
+// Clears r8 (the scalar path) unless plane >= pixels*8 and [bank, bank + rows
+// planes + pixels*8) is disjoint from [q, q + pixels*8) for every input plane q.
+// Every jump has its own cell; an overlap clears r8 inline (xor r8, r8).
+pub fn nbg_overlap_q(code: String, q: i64) -> String {
+    let ok1: i64 = nbg_cell();
+    let ok2: i64 = nbg_cell();
+    let c1: String = nbg_jcc(nbg_rr(code, 57, q, 1), 131, ok1);
+    let c2: String = nbg_rr(nbg_rr(nbg_rr(c1, 137, 6, q), 1, 6, 0), 57, 6, 3);
+    let c3: String = nbg_b3(nbg_jcc(c2, 134, ok2), 77, 49, 192);
+    nbg_here(nbg_here(c3, ok1), ok2)
+}
+
+pub fn nbg_overlap(code: String, g4: i64) -> String {
+    let skip: i64 = nbg_cell();
+    let wide: i64 = nbg_cell();
+    let rows: i64 = if g4 == 1 {
+        39
+    } else {
+        12
+    };
+    let mut c: String = nbg_jcc(nbg_b4(code, 73, 131, 248, 1), 133, skip);
+    // rax = pixels*8 ; plane < rax -> xor r8, r8
+    c = nbg_b4(nbg_rr(c, 137, 0, 9), 72, 193, 224, 3);
+    c = nbg_here(nbg_b3(nbg_jcc(nbg_rr(c, 57, 11, 0), 141, wide), 77, 49, 192), wide);
+    // rcx = rows * plane + rax + bank (end of the written span)
+    c = nbg_rr(nbg_rr(nbg_b4(c, 73, 107, 203, rows), 1, 1, 0), 1, 1, 3);
+    c = nbg_overlap_q(nbg_overlap_q(nbg_overlap_q(c, 10), 12), 2);
+    if g4 == 1 {
+        c = nbg_overlap_q(c, 15);
+    }
+    nbg_b3(nbg_here(c, skip), 72, 49, 246)
+}
+
+// The pixel loops; jumps to `exit` when p reaches pixels.
+pub fn nbg_bank_path(code: String, g4: i64, exit: i64) -> String {
+    let scalar: i64 = nbg_cell();
+    let rem: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let pback: i64 = nbg_cell();
+    let mut c: String = nbg_jcc(nbg_b4(nbg_overlap(code, g4), 73, 131, 248, 1), 133, scalar);
+    let head: i64 = string_len(c);
+    // remaining = pixels - p ; < 4 -> the scalar tail
+    c = nbg_b4(nbg_rr(nbg_rr(c, 137, 0, 9), 41, 0, 6), 72, 131, 248, 4);
+    c = nbg_jcc(c, 140, rem);
+    c = nbg_jmp(nbg_add_rsi(nbg_vec_body(c, g4), 4), back);
+    c = nbg_link(c, back, head);
+    c = nbg_here(nbg_here(c, scalar), rem);
+    let phead: i64 = string_len(c);
+    c = nbg_jcc(nbg_rr(c, 57, 6, 9), 141, exit);
+    c = nbg_jmp(nbg_add_rsi(nbg_scalar_pixel(c, g4), 1), pback);
+    nbg_link(c, pback, phead)
+}
+
+// a, b, c (x) plane pointers from ptrs (r12): mov r10, [r12] ; mov rdx, [r12+16] ;
+// (mov r15, [r12+24]) ; mov r12, [r12+8].
+pub fn nbg_channels(code: String, g4: i64) -> String {
+    let mut c: String = nbg_b5(nbg_b4(code, 77, 139, 20, 36), 73, 139, 84, 36, 16);
+    if g4 == 1 {
+        c = nbg_b5(c, 77, 139, 124, 36, 24);
+    }
+    nbg_b5(c, 77, 139, 100, 36, 8)
+}
+
+pub fn nbg_emit_bank(code: String, s_ptrs: i64, s_bank: i64, s_plane: i64, s_pixels: i64, s_group: i64, id: i64) -> String {
+    let j3: i64 = nbg_cell();
+    let j4: i64 = nbg_cell();
+    let skip: i64 = nbg_cell();
+    let none: i64 = nbg_cell();
+    let x3: i64 = nbg_cell();
+    let x4: i64 = nbg_cell();
+    let mut c: String = nbg_slot(nbg_slot(nbg_prologue(code), s_ptrs, 12), s_bank, 15);
+    c = nbg_slot(nbg_slot(nbg_slot(c, s_plane, 11), s_pixels, 9), s_group, 7);
+    c = nbg_rr(nbg_cpuid_r8(c), 137, 3, 15);
+    // test r9, r9 ; jle -> nothing ; dispatch on rdi (nbg_overlap zeroes rsi)
+    c = nbg_jcc(nbg_rr(c, 133, 9, 9), 142, none);
+    c = nbg_jcc(nbg_b4(c, 72, 131, 255, 3), 132, j3);
+    c = nbg_jcc(nbg_b4(c, 72, 131, 255, 4), 132, j4);
+    c = nbg_jmp(c, skip);
+    c = nbg_bank_path(nbg_channels(nbg_here(c, j3), 0), 0, x3);
+    c = nbg_bank_path(nbg_channels(nbg_here(c, j4), 1), 1, x4);
+    c = nbg_here(nbg_here(nbg_here(nbg_here(c, skip), none), x3), x4);
+    nbg_epi(c, id)
+}

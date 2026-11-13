@@ -1,0 +1,15 @@
+// Regression class: an if-branch alias value (`b = a`) feeding a later loop
+// alias-break.
+fn main() -> i64 {
+    let a: i64 = 4;
+    let mut b: i64 = a;
+    if a > 2 {
+        b = a;
+    }
+    let mut c: i64 = 0;
+    while c < 3 {
+        b = (b + a);
+        c = (c + 1);
+    }
+    return b;
+}

@@ -1,0 +1,116 @@
+name: Glibc-floor smoke
+description: >-
+  Check a Linux mindc binary against the glibc floor the release promises. It
+  fails when the binary needs a glibc symbol version newer than the floor, when
+  it links any shared library other than glibc and libgcc_s (an LLVM or MLIR
+  library would be a run-time requirement the release does not ship), or when
+  it does not run inside a minimal system at exactly the floor glibc: there it
+  must print its version and, on x86-64, build a small program with the
+  native backend and run it, with no compiler, linker, LLVM or MLIR present.
+  release.yml runs this on each Linux leg before upload; ci.yml's
+  release_profile job runs the same action on every PR.
+
+inputs:
+  binary:
+    description: Path of the unpacked Linux mindc binary.
+    required: true
+  glibc-floor:
+    description: The newest glibc version the binary may need, for example 2.28.
+    required: true
+  floor-image:
+    description: A minimal image whose glibc is exactly the floor, pinned by digest.
+    required: true
+
+outputs:
+  glibc_max:
+    description: The newest GLIBC_ symbol version the binary needs, without the prefix.
+    value: ${{ steps.check.outputs.glibc_max }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        BIN: ${{ inputs.binary }}
+        FLOOR: ${{ inputs.glibc-floor }}
+        FLOOR_IMAGE: ${{ inputs.floor-image }}
+      run: |
+        set -euo pipefail
+        test -f "$BIN" || { echo "FAIL: binary $BIN is missing"; exit 1; }
+        printf '%s\n' "$FLOOR" | grep -Eq '^[0-9]+\.[0-9]+$' || { echo "FAIL: glibc floor '$FLOOR' is not MAJOR.MINOR"; exit 1; }
+        printf '%s\n' "$FLOOR_IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo "FAIL: floor image '$FLOOR_IMAGE' is not pinned by digest"; exit 1; }
+
+        # 1. The newest glibc symbol version the binary needs is at most the floor.
+        # A binary with no GLIBC_ symbol at all is not the dynamic glibc build this
+        # check is about, so that fails too instead of passing for no reason.
+        versions=$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -uV)
+        test -n "$versions" || { echo "FAIL: objdump -T lists no GLIBC_ symbol version in $BIN"; exit 1; }
+        max=$(printf '%s\n' "$versions" | tail -n 1)
+        top=$(printf '%s\n%s\n' "$FLOOR" "$max" | sort -V | tail -n 1)
+        if [ "$top" != "$FLOOR" ]; then
+          echo "FAIL: $BIN needs GLIBC_$max, newer than the floor GLIBC_$FLOOR. Symbols above the floor:"
+          for v in $versions; do
+            if [ "$(printf '%s\n%s\n' "$FLOOR" "$v" | sort -V | tail -n 1)" != "$FLOOR" ]; then
+              objdump -T "$BIN" | grep -E "GLIBC_${v//./\\.}([^0-9.]|$)" || true
+            fi
+          done
+          exit 1
+        fi
+        echo "PASS: newest glibc symbol needed is GLIBC_$max (floor GLIBC_$FLOOR)"
+        echo "glibc_max=$max" >> "$GITHUB_OUTPUT"
+
+        # 2. DT_NEEDED: glibc and libgcc_s only. No libLLVM, libMLIR or libclang.
+        needed=$(objdump -p "$BIN" | awk '$1 == "NEEDED" { print $2 }')
+        test -n "$needed" || { echo "FAIL: objdump -p lists no NEEDED entry in $BIN"; exit 1; }
+        bad=0
+        for lib in $needed; do
+          case "$lib" in
+            libc.so.6|libm.so.6|libgcc_s.so.1|libpthread.so.0|libdl.so.2|librt.so.1|libutil.so.1|ld-linux-x86-64.so.2|ld-linux-aarch64.so.1) ;;
+            *) echo "FAIL: $BIN needs $lib at run time; only glibc and libgcc_s may be needed"; bad=1 ;;
+          esac
+        done
+        test "$bad" = 0 || exit 1
+        echo "PASS: NEEDED = $(printf '%s ' $needed)"
+
+        # 3. It runs on a minimal system at exactly the floor glibc. The native
+        # backend runs an x86-64 compiler seed and emits an x86-64 executable, so
+        # the hello-world build + run applies to the x86-64 binary; the aarch64
+        # binary must check the same program there.
+        work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/glibc-floor.XXXXXX")
+        cp "$BIN" "$work/mindc"
+        chmod 755 "$work/mindc"
+        docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+          -e WANT_FLOOR="$FLOOR" -v "$work:/work" -w /work "$FLOOR_IMAGE" bash -euo pipefail -c "$(cat <<'ON_FLOOR'
+        got=$(getconf GNU_LIBC_VERSION)
+        if [ "$got" != "glibc $WANT_FLOOR" ]; then
+          echo "FAIL: the floor image runs '$got', not glibc $WANT_FLOOR"
+          exit 1
+        fi
+        for tool in cc gcc clang ld ld.lld llc mlir-opt mlir-translate; do
+          if command -v "$tool" >/dev/null 2>&1; then
+            echo "FAIL: the floor image has $tool; it must have no compiler, linker, LLVM or MLIR"
+            exit 1
+          fi
+        done
+        ./mindc --version
+        # The program uses only constructs the native seed admits today (no string
+        # values), so the floor check does not depend on a later seed.
+        printf '%s\n' 'fn main() -> i64 {' '    let a: i64 = 40;' '    return a + 2;' '}' > hello.mind
+        case "$(uname -m)" in
+          x86_64)
+            ./mindc build --backend native hello.mind --out hello
+            rc=0; ./hello || rc=$?
+            if [ "$rc" != 42 ]; then
+              echo "FAIL: the native program exited $rc, want 42"
+              exit 1
+            fi
+            echo "PASS: on $got, mindc --version ran and the native backend built and ran a program (exit 42)"
+            ;;
+          *)
+            ./mindc check hello.mind
+            echo "PASS: on $got, mindc --version and mindc check ran (the native backend emits x86-64 only)"
+            ;;
+        esac
+        ON_FLOOR
+        )"

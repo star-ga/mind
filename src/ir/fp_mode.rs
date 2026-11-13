@@ -322,14 +322,17 @@ impl FpScan {
             #[cfg(feature = "std-surface")]
             if let Instr::ExternFnDecl {
                 name,
-                ret_type: Some(rt),
+                ret_type,
+                binding,
                 ..
             } = instr
             {
-                // Only a float-RETURN decl is a taint source; float-param-only
-                // externs do NOT taint (the float leaves via the call, it is not
-                // a reassociated result).
-                if rt == "f32" || rt == "f64" {
+                // A float-RETURN decl is a taint source; float-param-only externs
+                // are not (the float leaves via the call). A call through an
+                // address runs code outside the artifact: always a taint.
+                if matches!(ret_type.as_deref(), Some("f32" | "f64"))
+                    || *binding == crate::ast::ExternBinding::Address
+                {
                     self.extern_float_rets.insert(name.clone());
                 }
             }
@@ -714,6 +717,7 @@ mod tests {
             is_varargs: false,
             vararg_hints: vec![],
             callconv: crate::ast::CallConv::SysV,
+            binding: Default::default(),
         }
     }
 
@@ -1133,14 +1137,7 @@ mod tests {
         // pre-pass makes the taint set order-independent.
         let m = module_with(vec![
             Instr::legacy_call(ValueId(2), "libm_pow", vec![ValueId(0), ValueId(1)]),
-            Instr::ExternFnDecl {
-                name: "libm_pow".to_string(),
-                param_types: vec!["f64".to_string(), "f64".to_string()],
-                ret_type: Some("f64".to_string()),
-                is_varargs: false,
-                vararg_hints: vec![],
-                callconv: crate::ast::CallConv::SysV,
-            },
+            extern_decl("libm_pow", &["f64", "f64"], Some("f64")),
         ]);
         assert_eq!(
             fp_contract_mode(&m),
@@ -1169,14 +1166,7 @@ mod tests {
                 init_ids: vec![],
                 exit_ids: vec![],
             },
-            Instr::ExternFnDecl {
-                name: "libm_pow".to_string(),
-                param_types: vec!["f64".to_string()],
-                ret_type: Some("f64".to_string()),
-                is_varargs: false,
-                vararg_hints: vec![],
-                callconv: crate::ast::CallConv::SysV,
-            },
+            extern_decl("libm_pow", &["f64"], Some("f64")),
         ]);
         assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
     }
@@ -1189,19 +1179,29 @@ mod tests {
         // must collect only f32/f64-RETURN decls, exactly like the old walk.
         let m = module_with(vec![
             Instr::legacy_call(ValueId(2), "print_f64", vec![ValueId(0)]),
-            Instr::ExternFnDecl {
-                name: "print_f64".to_string(),
-                param_types: vec!["f64".to_string()],
-                ret_type: Some("i64".to_string()),
-                is_varargs: false,
-                vararg_hints: vec![],
-                callconv: crate::ast::CallConv::SysV,
-            },
+            extern_decl("print_f64", &["f64"], Some("i64")),
         ]);
         assert_eq!(
             fp_contract_mode(&m),
             FpMode::Strict,
             "float-param-only extern (non-float return) must NOT taint"
+        );
+    }
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn a_call_through_an_address_binding_is_never_strict() {
+        // Spec "Extern bindings" E4: the code at the address is outside the
+        // artifact, so an integer signature taints too; base stays Strict.
+        let mut decl = extern_decl("add2", &["i64", "i64", "i64"], Some("i64"));
+        let call = Instr::legacy_call(ValueId(3), "add2", vec![ValueId(0), ValueId(1)]);
+        let base = module_with(vec![decl.clone(), call.clone()]);
+        assert_eq!(fp_contract_mode(&base), FpMode::Strict);
+        if let Instr::ExternFnDecl { binding, .. } = &mut decl {
+            *binding = crate::ast::ExternBinding::Address;
+        }
+        assert_eq!(
+            fp_contract_mode(&module_with(vec![decl, call])),
+            FpMode::Relaxed
         );
     }
 }

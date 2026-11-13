@@ -357,6 +357,8 @@ fn sibling_struct_owner_type_is_enforced_by_project_check_and_build() {
         invocation.arg(command).current_dir(&project);
         if command == "check" {
             invocation.args(["--no-fmt", "--no-lint"]);
+        } else {
+            invocation.args(["--backend", "mlir"]);
         }
         let out = invocation
             .output()
@@ -411,7 +413,7 @@ fn qualified_colliding_struct_owners_are_order_independent_and_run_natively() {
         let valid = root.join(format!("valid_{tag}"));
         write_collision_project(&valid, imports, false);
         let built = Command::new(common::mindc_bin())
-            .args(["build", "--no-cache"])
+            .args(["build", "--backend", "mlir", "--no-cache"])
             .current_dir(&valid)
             .output()
             .expect("build valid collision project");

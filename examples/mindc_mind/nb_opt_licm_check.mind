@@ -1,0 +1,352 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The LICM legality self-check (M-A4 slice 1), a second formulation of the
+// rule nb_opt_licm.mind applies. The pass decides from the DECLARED tree, in
+// body order, with name-fact tables; this check reads only the REWRITTEN tree
+// and re-derives every fact by direct search. Every hidden-named let
+// (`let H: T = E`, H's source text starting with `{`) must sit in a run of
+// such lets right before a While W, with:
+//   - H spelled from the function body's `{` to a point inside the let's own
+//     span, E Pure and total (literals, names, parentheses,
+//     + - * & | ^ << >> and comparisons);
+//   - exactly one top-level `let X: T = H` in W's body, of the same declared
+//     type T as H (an absent type matches only i64), and H named nowhere else
+//     except in later lets of the run;
+//   - every user name of E never assigned in W, never let-bound in W's
+//     condition or before that `let X = H`, and never address-taken in the
+//     function; every hidden name of E defined earlier in the same run. A
+//     bare hidden E (`let H = H2`) is the `let X = H2` of an outer While for a
+//     let hoisted twice: H2 is checked at its own run.
+// A violation writes `opt.licm.illegal_hoist` to fd 2 and returns a body of
+// one unsupported statement, which both native lowering paths refuse (0 bytes,
+// the driver exits 3). PART RULE: intrinsics and other parts only.
+
+import nb_opt_licm_scan;
+
+// 1 iff leaf's source text starts with `{` (a hidden name, never an identifier).
+pub fn nblc_hidden_name(buf: i64, leaf: i64) -> i64 {
+    if leaf == 0 {
+        return 0;
+    }
+    if nblc_f(leaf, 2) <= nblc_f(leaf, 1) {
+        return 0;
+    }
+    if nblc_byte(buf, nblc_f(leaf, 1)) == 123 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff type leaf t spells the three bytes i64 (the default width).
+pub fn nblc_text_i64(buf: i64, t: i64) -> i64 {
+    if t == 0 {
+        return 0;
+    }
+    let lo: i64 = nblc_f(t, 1);
+    let hi: i64 = nblc_f(t, 2);
+    if hi - lo != 3 {
+        return 0;
+    }
+    if nblc_byte(buf, lo) != 105 {
+        return 0;
+    }
+    if nblc_byte(buf, lo + 1) != 54 {
+        return 0;
+    }
+    if nblc_byte(buf, lo + 2) != 52 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff type leaves a and b are both absent, or one is absent and the other
+// spells i64, or they spell the same text. A dropped type keeps i64 width and
+// mismatches every narrower declared type.
+pub fn nblc_same_type(buf: i64, a: i64, b: i64) -> i64 {
+    if a == 0 {
+        if b == 0 {
+            return 1;
+        }
+        return nblc_text_i64(buf, b);
+    }
+    if b == 0 {
+        return nblc_text_i64(buf, a);
+    }
+    nblc_hits(buf, a, nblc_f(b, 1), nblc_f(b, 2))
+}
+
+// 1 iff statement s is a hidden-named let.
+pub fn nblc_is_hidden(buf: i64, s: i64) -> i64 {
+    if nblc_f(s, 0) != 6 {
+        return 0;
+    }
+    nblc_hidden_name(buf, nblc_f(s, 3))
+}
+
+// The index of the one top-level `let X = H` in block b from index i on, -1
+// when there is none, -2 when there are several (`at` = the one seen so far).
+pub fn nblc_use_of(buf: i64, b: i64, lo: i64, hi: i64, i: i64, at: i64) -> i64 {
+    if i >= nblc_f(b, 6) {
+        return at;
+    }
+    let s: i64 = __mind_load_i64(nblc_f(b, 3) + i * 8);
+    let v: i64 = if nblc_f(s, 0) == 6 {
+        nblc_f(s, 5)
+    } else {
+        0
+    };
+    let hit: i64 = if v == 0 {
+        0
+    } else {
+        nblc_bare_hit(buf, v, lo, hi)
+    };
+    if hit == 1 {
+        if at >= 0 {
+            return 0 - 2;
+        }
+        return nblc_use_of(buf, b, lo, hi, i + 1, i);
+    }
+    nblc_use_of(buf, b, lo, hi, i + 1, at)
+}
+
+// 1 iff v is a bare name spelling [lo, hi).
+pub fn nblc_bare_hit(buf: i64, v: i64, lo: i64, hi: i64) -> i64 {
+    if nblc_f(v, 0) != 2 {
+        return 0;
+    }
+    nblc_hits(buf, v, lo, hi)
+}
+
+// 1 iff some hidden let sa[q], q in [i, p), is named [lo, hi) and ann, the
+// narrow code cached on the reading leaf, is the code of that let's declared
+// type (nblc_type_code): a renamed read must mask and wrap like the name it
+// replaced, so a leaf that lost its code is a violation.
+pub fn nblc_defined(buf: i64, sa: i64, i: i64, p: i64, lo: i64, hi: i64, ann: i64) -> i64 {
+    if i >= p {
+        return 0;
+    }
+    let h: i64 = __mind_load_i64(sa + i * 8);
+    if nblc_hits(buf, nblc_f(h, 3), lo, hi) == 1 {
+        let c: i64 = nblc_type_code(buf, nblc_f(h, 4));
+        if c == nblc_unknown_code() {
+            return 1;
+        }
+        if c == ann {
+            return 1;
+        }
+        return 0;
+    }
+    nblc_defined(buf, sa, i + 1, p, lo, hi, ann)
+}
+
+// 1 iff every name of E is legal for the hidden let at sa[p] of the run [i, r).
+pub fn nblc_names_ok(buf: i64, rw: i64, sa: i64, i: i64, p: i64, r: i64, at: i64, e: i64) -> i64 {
+    let k: i64 = nblc_f(e, 0);
+    if k == 1 {
+        return 1;
+    }
+    if k == 12 {
+        return nblc_names_ok(buf, rw, sa, i, p, r, at, nblc_f(e, 3));
+    }
+    if k == 3 {
+        return nblc_names_ok(buf, rw, sa, i, p, r, at, nblc_f(e, 3)) * nblc_names_ok(buf, rw, sa, i, p, r, at, nblc_f(e, 4));
+    }
+    let lo: i64 = nblc_f(e, 1);
+    let hi: i64 = nblc_f(e, 2);
+    if hi > lo {
+        if nblc_byte(buf, lo) == 123 {
+            return nblc_defined(buf, sa, i, p, lo, hi, nblc_f(e, 7));
+        }
+    }
+    let w: i64 = __mind_load_i64(sa + r * 8);
+    let b: i64 = nblc_f(w, 4);
+    if nblc_scan(buf, w, 1, lo, hi) != 0 {
+        return 0;
+    }
+    if nblc_scan(buf, nblc_f(w, 3), 2, lo, hi) != 0 {
+        return 0;
+    }
+    if nblc_list(buf, nblc_f(b, 3), at, 8, 0, 2, lo, hi) != 0 {
+        return 0;
+    }
+    if nblc_scan(buf, rw, 3, lo, hi) != 0 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff the hidden let sa[p] of the run [i, r) before While sa[r] is legal.
+pub fn nblc_hidden_ok(buf: i64, rw: i64, sa: i64, i: i64, p: i64, r: i64) -> i64 {
+    let h: i64 = __mind_load_i64(sa + p * 8);
+    let w: i64 = __mind_load_i64(sa + r * 8);
+    if nblc_f(w, 0) != 20 {
+        return 0;
+    }
+    let b: i64 = nblc_f(w, 4);
+    if b == 0 {
+        return 0;
+    }
+    let nm: i64 = nblc_f(h, 3);
+    let lo: i64 = nblc_f(nm, 1);
+    let hi: i64 = nblc_f(nm, 2);
+    if lo != nblc_f(rw, 1) {
+        return 0;
+    }
+    if hi > nblc_f(h, 2) {
+        return 0;
+    }
+    if hi <= nblc_f(h, 1) {
+        return 0;
+    }
+    if nblc_pure(nblc_f(h, 5)) == 0 {
+        return 0;
+    }
+    let at: i64 = nblc_use_of(buf, b, lo, hi, 0, 0 - 1);
+    if at < 0 {
+        return 0;
+    }
+    if nblc_same_type(buf, nblc_f(h, 4), nblc_f(__mind_load_i64(nblc_f(b, 3) + at * 8), 4)) == 0 {
+        return 0;
+    }
+    // `let H = H'` with H' hidden is an outer While's `let X = H'` for a let
+    // this run hoisted further out: H' and its operands are checked at H'.
+    let v: i64 = nblc_f(h, 5);
+    let alias: i64 = if nblc_f(v, 0) == 2 {
+        nblc_is_hidden(buf, h) * nblc_hidden_name(buf, v)
+    } else {
+        0
+    };
+    if alias == 0 {
+        if nblc_names_ok(buf, rw, sa, i, p, r, at, v) == 0 {
+            return 0;
+        }
+    }
+    let mut later: i64 = 0;
+    let mut q: i64 = p + 1;
+    while q < r {
+        later = later + nblc_scan(buf, nblc_f(__mind_load_i64(sa + q * 8), 5), 4, lo, hi);
+        q = q + 1;
+    }
+    if nblc_scan(buf, rw, 4, lo, hi) != 2 + later {
+        return 0;
+    }
+    1
+}
+
+// The end of the run of hidden lets starting at sa[r].
+pub fn nblc_run_end(buf: i64, sa: i64, n: i64, r: i64) -> i64 {
+    if r >= n {
+        return r;
+    }
+    if nblc_is_hidden(buf, __mind_load_i64(sa + r * 8)) == 0 {
+        return r;
+    }
+    nblc_run_end(buf, sa, n, r + 1)
+}
+
+// 1 iff every hidden let sa[p..r) of the run [i, r) is legal.
+pub fn nblc_run_ok(buf: i64, rw: i64, sa: i64, i: i64, p: i64, r: i64) -> i64 {
+    if p >= r {
+        return 1;
+    }
+    if nblc_hidden_ok(buf, rw, sa, i, p, r) == 0 {
+        return 0;
+    }
+    nblc_run_ok(buf, rw, sa, i, p + 1, r)
+}
+
+// 1 iff every hidden let of the list sa[i..n) is legal (each run ends at a While).
+pub fn nblc_list_ok(buf: i64, rw: i64, sa: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if nblc_is_hidden(buf, __mind_load_i64(sa + i * 8)) == 0 {
+        return nblc_list_ok(buf, rw, sa, n, i + 1);
+    }
+    let r: i64 = nblc_run_end(buf, sa, n, i);
+    if r >= n {
+        return 0;
+    }
+    if nblc_run_ok(buf, rw, sa, i, i, r) == 0 {
+        return 0;
+    }
+    nblc_list_ok(buf, rw, sa, n, r)
+}
+
+// 1 iff every statement list anywhere under the statements sa[i..n) passes.
+pub fn nblc_stmts_ok(buf: i64, rw: i64, sa: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if nblc_tree_ok(buf, rw, __mind_load_i64(sa + i * 8)) == 0 {
+        return 0;
+    }
+    nblc_stmts_ok(buf, rw, sa, n, i + 1)
+}
+
+// 1 iff every statement list anywhere under node passes nblc_list_ok.
+pub fn nblc_tree_ok(buf: i64, rw: i64, node: i64) -> i64 {
+    if node == 0 {
+        return 1;
+    }
+    let k: i64 = nblc_f(node, 0);
+    if k == 10 {
+        if nblc_list_ok(buf, rw, nblc_f(node, 3), nblc_f(node, 6), 0) == 0 {
+            return 0;
+        }
+        return nblc_stmts_ok(buf, rw, nblc_f(node, 3), nblc_f(node, 6), 0);
+    }
+    if k == 20 {
+        return nblc_tree_ok(buf, rw, nblc_f(node, 4));
+    }
+    if k == 16 {
+        return nblc_tree_ok(buf, rw, nblc_f(node, 4)) * nblc_tree_ok(buf, rw, nblc_f(node, 5));
+    }
+    if k == 6 {
+        if nblc_is_hidden(buf, node) == 1 {
+            return 1;
+        }
+        return nblc_tree_ok(buf, rw, nblc_f(node, 5));
+    }
+    1
+}
+
+// rw when every hoist in it is legal; else the refusal (see the header).
+pub fn nblc_verdict(buf: i64, body: i64, rw: i64) -> i64 {
+    if nblc_tree_ok(buf, rw, rw) == 1 {
+        return rw;
+    }
+    let m: i64 = __mind_alloc(24);
+    __mind_store_i64(m, 7882259686185267311);
+    __mind_store_i64(m + 8, 7809636914145552686);
+    __mind_store_i64(m + 16, 2942788806076511);
+    let _w: i64 = __mind_write(2, m, 23, 0 - 1);
+    let bad: i64 = nblc_zeroed();
+    __mind_store_i64(bad, 26);
+    __mind_store_i64(bad + 8, nblc_f(body, 1));
+    __mind_store_i64(bad + 16, nblc_f(body, 1));
+    let sa: i64 = __mind_alloc(8);
+    __mind_store_i64(sa, bad);
+    let out: i64 = nblc_zeroed();
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(out + i * 8, nblc_f(body, i));
+        i = i + 1;
+    }
+    __mind_store_i64(out + 24, sa);
+    __mind_store_i64(out + 48, 1);
+    out
+}
+
+// A fresh 64-byte node record, every word 0 (the allocator does not zero).
+pub fn nblc_zeroed() -> i64 {
+    let n: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(n + i * 8, 0);
+        i = i + 1;
+    }
+    n
+}

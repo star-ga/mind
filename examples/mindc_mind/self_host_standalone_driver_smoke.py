@@ -66,6 +66,7 @@ _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 import _stdlib_manifest  # noqa: E402
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import compiler_library  # noqa: E402
 # Reuse the loop's EXACT source-combining so the headline compiles the identical
 # bytes the frozen stage1.elf was minted from.
 from self_host_loop_smoke import build_seed  # noqa: E402
@@ -127,7 +128,7 @@ def _build_driver_elf(lib) -> bytes:
     """Compile [std ++ main.mind ++ selfhost_argv_driver.mind] to the standalone
     argv-driven driver ELF (the argv driver's `main` becomes the ELF entry)."""
     std_blob = _std_blob()
-    main = (_HERE / "main.mind").read_bytes()
+    main = compiler_library()
     argv_driver = (_HERE / "selfhost_argv_driver.mind").read_bytes()
     combined = std_blob + main + b"\n" + argv_driver
     return _emit_u(lib, combined, len(std_blob))
@@ -246,7 +247,7 @@ def main() -> int:
         #    stage0 (no .so, no Rust), require it byte-identical to the
         #    .so-built driver, and require IT to reproduce stage1.elf too.
         # --------------------------------------------------------------
-        combined_a = std_blob + (_HERE / "main.mind").read_bytes() + b"\n" + \
+        combined_a = std_blob + compiler_library() + b"\n" + \
             (_HERE / "selfhost_argv_driver.mind").read_bytes()
         image_a = struct.pack("<qq", len(std_blob), len(combined_a)) + combined_a
         r_pure = subprocess.run([str(_FROZEN)], input=image_a,

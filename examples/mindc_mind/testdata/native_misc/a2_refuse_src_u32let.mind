@@ -1,0 +1,8 @@
+// A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+// signed integer (u32let) must refuse natively (0 bytes), never extend,
+// convert or re-interpret it.
+fn main() -> i64 {
+    let x: u32 = 4294967291;
+    let q: i64 = (x as *const u8) as i64;
+    q + 1
+}

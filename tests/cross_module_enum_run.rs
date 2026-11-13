@@ -82,7 +82,7 @@ fn cross_module_enum_runs() {
     std::fs::write(src.join("main.mind"), MAIN_MIND).expect("write main.mind");
 
     let out = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&proj)
         .output()
         .expect("run mindc build");

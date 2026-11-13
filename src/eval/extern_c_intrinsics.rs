@@ -5,7 +5,7 @@
 //! Extern "C" libc intrinsics dispatched by the evaluator so `mindc test`
 //! can execute file-reading MIND (`std.fs.read_to_string`) without the
 //! native runtime. Matches the POSIX semantics the native backend links
-//! in `runtime-support/mind_intrinsics.c` by symbol.
+//! in `runtime-support/mind_intrinsics.c` (reader: `mind_fs_read.h`) by symbol.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -16,7 +16,14 @@ use super::interp_mem;
 pub(crate) fn is_extern_c_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "open" | "lseek" | "read" | "close" | "read_to_string" | "string_push_byte" | "vec_zeroed"
+        "open"
+            | "lseek"
+            | "read"
+            | "close"
+            | "read_to_string"
+            | "string_push_byte"
+            | "vec_zeroed"
+            | "is_dir_fd"
     )
 }
 
@@ -43,6 +50,7 @@ pub(crate) fn eval_extern_c_intrinsic(name: &str, args: &[i64]) -> Result<i64, S
         ("read_to_string", [path_addr]) => read_to_string(*path_addr),
         ("string_push_byte", [s, b]) => string_push_byte(*s, *b),
         ("vec_zeroed", [n]) => interp_mem::eval_intrinsic("__mind_vec_zeroed", &[*n]),
+        ("is_dir_fd", [fd]) => Ok(if fake_fd_is_dir(*fd) { 1 } else { 0 }),
         _ => Err(format!(
             "{name}: wrong argument count for runtime-support intrinsic"
         )),
@@ -116,6 +124,20 @@ fn slot_is_open(index: usize) -> bool {
     })
 }
 
+/// fstat S_ISDIR equivalent for a fake descriptor.
+fn fake_fd_is_dir(fd: i64) -> bool {
+    let Some(index) = fd_index(fd) else {
+        return false;
+    };
+    FAKE_FDS.with(|fds| {
+        fds.borrow()
+            .get(index)
+            .and_then(|slot| slot.as_ref())
+            .map(|f| f.file.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .unwrap_or(false)
+    })
+}
+
 /// `whence`: 0 = SEEK_SET, 1 = SEEK_CUR, 2 = SEEK_END.
 /// A bad descriptor, a bad whence, or an offset that overflows returns -1.
 /// The stream position is left unchanged on those failures.
@@ -184,14 +206,18 @@ fn read_fake_fd(fd: i64, buf_addr: i64, count: i64) -> Result<i64, String> {
     if count < 0 {
         return Ok(-1);
     }
-    if count == 0 {
-        return Ok(0);
-    }
-    let space = interp_mem::writable_suffix(buf_addr)?;
-    let want = usize::try_from(count).unwrap_or(usize::MAX).min(space);
-    if want == 0 {
-        return Ok(0);
-    }
+    // A zero-byte read still reaches the kernel, as native read(2) does: on a
+    // directory it fails with EISDIR, whatever size the file system reports.
+    let want = if count == 0 {
+        0
+    } else {
+        let space = interp_mem::writable_suffix(buf_addr)?;
+        let want = usize::try_from(count).unwrap_or(usize::MAX).min(space);
+        if want == 0 {
+            return Ok(0);
+        }
+        want
+    };
     let read: Result<Vec<u8>, ()> = FAKE_FDS.with(|fds| {
         let mut fds = fds.borrow_mut();
         let Some(slot) = fds.get_mut(index).and_then(|slot| slot.as_mut()) else {
@@ -245,6 +271,15 @@ fn read_to_string(path_addr: i64) -> Result<i64, String> {
     if fd < 0 {
         return Ok(rec);
     }
+    // A directory is refused by file type (fstat S_ISDIR), not by size:
+    // filesystems disagree on the size lseek reports for a directory (ext4
+    // returns a non-zero block count; others return 0), so size is not a
+    // reliable signal.  The zero record (ptr 0, len 0, cap 0) is the only
+    // correct answer for a directory on every filesystem.
+    if fake_fd_is_dir(fd) {
+        let _ = close_fake_fd(fd);
+        return Ok(rec);
+    }
     let file_sz = lseek_fake_fd(fd, 0, 2)?;
     if file_sz < 0 {
         let _ = close_fake_fd(fd);
@@ -254,8 +289,6 @@ fn read_to_string(path_addr: i64) -> Result<i64, String> {
         let _ = close_fake_fd(fd);
         return Ok(rec);
     }
-    // A directory seek can report the maximum offset. That size cannot grow
-    // by the trailing NUL, so the record stays empty, same as a failed size.
     let Some(cap) = file_sz.checked_add(1) else {
         let _ = close_fake_fd(fd);
         return Ok(rec);
@@ -349,6 +382,44 @@ fn path_from_bytes(bytes: Vec<u8>) -> std::path::PathBuf {
         String::from_utf8(bytes)
             .map(std::path::PathBuf::from)
             .unwrap_or_default()
+    }
+}
+
+/// Spec "Extern bindings" C9: the evaluator does not call C code through an
+/// address. It refuses each call to a `bind(.address)` signature by name
+/// (E2045) before it evaluates anything, and never guesses a result.
+pub(crate) fn refuse_address_calls(m: &crate::ast::Module) -> Result<(), super::EvalError> {
+    use crate::ast::{ExternBinding, Node};
+    let mut bound = std::collections::BTreeSet::new();
+    for item in &m.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let Node::ExternBlock {
+                binding: ExternBinding::Address,
+                fns,
+                ..
+            } = node
+            {
+                bound.extend(fns.iter().map(|f| f.name.clone()));
+            }
+        });
+    }
+    let mut calls = Vec::new();
+    for item in &m.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let Node::Call { callee, .. } = node
+                && bound.contains(callee)
+            {
+                calls.push(callee.clone());
+            }
+        });
+    }
+    match calls.first() {
+        None => Ok(()),
+        Some(name) => Err(super::EvalError::UnsupportedMsg(format!(
+            "error[{}]: `{name}` is bound by address; the evaluator does not call C code \
+             through an address. Build the program and run the artifact.",
+            crate::project::link::EXTERN_BINDING_CODE
+        ))),
     }
 }
 
@@ -516,6 +587,34 @@ mod tests {
         assert!(
             (field(rec, 0), field(rec, 16)) == (0, 0)
                 || (field(rec, 0) != 0 && field(rec, 16) == 1)
+        );
+    }
+
+    /// A file system may report size 0 for a directory (XFS seeks a directory
+    /// to 0, ext4 to i64::MAX). Then read_to_string asks for zero bytes, and
+    /// native read(2) still fails with EISDIR, so the record stays empty.
+    /// Windows cannot open a directory as a file at all, so there the open
+    /// itself fails: a directory yields no bytes on either platform.
+    #[test]
+    fn a_zero_byte_read_of_a_directory_fails_like_native() {
+        interp_mem::reset();
+        let dir = tempfile::tempdir().unwrap();
+        let path = put_bytes(dir.path().to_str().unwrap().as_bytes());
+        let fd = call("open", &[path, 0, 0]).unwrap();
+        let buf = interp_mem::eval_intrinsic("__mind_alloc", &[4]).unwrap();
+        if cfg!(unix) {
+            assert!(fd >= 0, "a directory opens read-only");
+            assert_eq!(call("read", &[fd, buf, 0]).unwrap(), -1);
+        } else {
+            assert_eq!(fd, -1, "a directory does not open as a file");
+        }
+        // Control: a zero-byte read of a regular file is 0, and it moves nothing.
+        let file = call("open", &[scratch_file(dir.path(), "one.bin", b"Z"), 0, 0]).unwrap();
+        assert_eq!(call("read", &[file, buf, 0]).unwrap(), 0);
+        assert_eq!(call("read", &[file, buf, 1]).unwrap(), 1);
+        assert_eq!(
+            interp_mem::eval_intrinsic("__mind_load_i8", &[buf]).unwrap(),
+            i64::from(b'Z')
         );
     }
 

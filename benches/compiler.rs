@@ -283,6 +283,21 @@ mod e2e {
         run_ok(&mut build_native_cmd(mindc, src, out))
     }
 
+    /// Copy the pinned corpus source for `shape` into `work` and return the copy.
+    ///
+    /// The tree's own `Mind.toml` governs every source below the checkout and
+    /// declares `[build] emit = "cdylib"`. A compiler that takes the manifest's
+    /// emit as the request refuses a native build of the in-tree path by name
+    /// (`backend.native_emit`). The copy is a single-file program with no
+    /// governing manifest on every compiler; its bytes stay pinned to the oracle.
+    fn stage_native_source(shape: &str, work: &Path) -> PathBuf {
+        let corpus = manifest_dir().join("examples/mindc_mind/testdata/backend_native_bridge");
+        let staged = work.join(format!("{shape}.mind"));
+        std::fs::copy(corpus.join(format!("{shape}.mind")), &staged)
+            .expect("compiler::e2e_native: cannot stage the corpus source");
+        staged
+    }
+
     fn read(path: &Path) -> Vec<u8> {
         std::fs::read(path).unwrap_or_default()
     }
@@ -450,9 +465,9 @@ mod e2e {
     /// The untimed pre-check pins the output to the committed byte oracle.
     fn bench_native_shape(c: &mut Criterion, mindc: &Path, shape: &str) {
         let corpus = manifest_dir().join("examples/mindc_mind/testdata/backend_native_bridge");
-        let src = corpus.join(format!("{shape}.mind"));
         let oracle = read(&corpus.join(format!("{shape}.elf")));
         let work = tmp();
+        let src = stage_native_source(shape, work.path());
         let out = work.path().join(format!("{shape}.elf"));
         if !build_native(mindc, &src, &out) {
             eprintln!("compiler::e2e_native: {shape} did not build; skipped (not a timing result)");

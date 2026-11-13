@@ -20,8 +20,17 @@ Three claims, each asserted per program via strace -f -e trace=execve:
                  toolchain execve — proving refusal is fail-closed, never a silent MLIR
                  fallback (dependency removal must not be faked by capability regression).
 
+On a compiler carrying the native-lane-v1 mark (the committed seed since the lane
+became the default) the Rust lane fence answers before the frozen ELF does, so an
+out-of-profile row may declare the lane's NAMED refusal (fence "lane" + its kind).
+
+  --compiler PATH  the native compiler ELF to run (default: the committed seed). Its
+                   basename joins ALLOWED_BINS; a path that is not a file is BLOCKED (exit 2).
+  MINDC_BIN        the mindc driver (default: target/release/mindc), as the other smokes.
+
 Exit: 0 all pass; 1 a gate failed; 2 BLOCKED (missing mindc / stage1.elf / strace).
 """
+import argparse
 import os
 import re
 import pathlib
@@ -31,7 +40,7 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-MINDC = REPO / "target" / "release" / "mindc"
+MINDC = pathlib.Path(os.environ.get("MINDC_BIN", str(REPO / "target" / "release" / "mindc")))
 STAGE1 = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 
 # Binaries the toolchain-free native path must NEVER spawn. A hit here means the build
@@ -46,11 +55,6 @@ ALLOWED_BINS = ("mindc", "stage1.elf")
 IN_PROFILE = [
     ("int_arith", "fn main()->i64{return 7+35;}", 42),
     ("float_as_i64", "fn main()->i64{return (2.5+4.0) as i64;}", 6),
-    ("struct_return",
-     "struct P{a:i64,b:i64} fn mk()->P{return P{a:3,b:4};} "
-     "fn main()->i64{let p=mk(); return p.a+p.b;}", 7),
-    # u8 200+100 wraps to 44 (mod 256); `as i64` widens the already-wrapped value.
-    ("narrow_u8_wrap", "fn main()->i64{let x:u8=200; let y:u8=100; return (x+y) as i64;}", 44),
     ("array_idx_loop",
      "fn main()->i64{let a=[1,2,3,4]; let mut s:i64=0; for i in 0..4 {s=s+a[i];} return s;}", 10),
     # Row 10 FLOAT_LANGUAGE_COVERAGE — the float COMPARISON, formerly OUT_PROFILE. Native
@@ -123,7 +127,15 @@ FCMP_PROGRAMS = [
 IN_PROFILE += FCMP_PROGRAMS
 # Every float-comparison program (the truth table + the historical NaN program) must
 # ALSO agree with the MLIR backend — this is the cross-backend half of the claim.
-MLIR_CROSSCHECK = {name for name, _s, _e in FCMP_PROGRAMS} | {"float_nan_compare"}
+# Integer `/` and `>>` were OUT_PROFILE first-fence fixtures (div_first_fence,
+# shr_first_fence). The native lane admits both operators, so each moved here with
+# its value checked against MLIR, never a bare "builds".
+IN_PROFILE += [
+    ("div_i64", "fn main()->i64{let a:i64=7; let b:i64=2; return a / b;}", 3),
+    ("shr_i64", "fn main()->i64{let x:i64=256; return x >> 2;}", 64),
+]
+MLIR_CROSSCHECK = ({name for name, _s, _e in FCMP_PROGRAMS}
+                   | {"float_nan_compare", "div_i64", "shr_i64"})
 
 # Out-of-profile: matrix-declared NOT in the native subset (row 11 tensor = NO / RI-E,
 # row 12 trait dispatch = PARTIAL / RI-F). Must fail-closed with zero toolchain spawn.
@@ -134,19 +146,28 @@ OUT_PROFILE = [
     # frozen ELF's own refusal. A first fence that defers to the second is not a fence.
     #   "first"  -> the Rust frozen-profile predicate must name the construct
     #   "second" -> the pure-MIND compiler must be the one that rejects
+    #   "lane"   -> the Rust native-lane fence must refuse with the named kind given
     # enforces: RI-D1-PROFILE
-    # These two fixtures are the TEST for the Rust-side frozen-profile fence. Both are
-    # accepted by the pure-MIND compiler and refused ONLY by the predicate, so deleting
-    # the fence makes them build instead of exiting 3 — which is exactly what the
-    # enforcement/test pairing lint requires: a rule whose removal something notices.
-    ("div_first_fence", "fn main()->i64{let a:i64=7; let b:i64=2; return a / b;}", "first"),
-    ("shr_first_fence", "fn main()->i64{let x:i64=256; return x >> 2;}", "first"),
-    # A declared f32 lowers to the same ConstF64 + Lt IR as f64, so only the source-level
-    # half of the fence (profile_frozen_admits_source) can name it. The pure-MIND compiler
-    # refuses it too, without a name; this row fails if the first fence stops naming it.
+    # The frozen predicate runs only for a compiler without the native-lane-v1 mark; its
+    # own refusals are pinned in src/ir/frozen_profile_tests.rs. On the lane the rows
+    # below are answered by the lane fence, by name. (div_first_fence/shr_first_fence
+    # moved to IN_PROFILE as div_i64/shr_i64: the lane admits both operators.)
+    # A declared f32 binding reaches the IR as __mind_conv_f32; the source-level fence
+    # names it first. This row fails if the lane stops naming it.
     ("f32_compare_first_fence",
-     "fn main()->i64{let x:f32=1.0; let y:f32=2.0; if x < y {return 1;} return 0;}", "first"),
-    ("tensor", "fn main()->i64{let t=zeros([4]); return 0;}", "first"),
+     "fn main()->i64{let x:f32=1.0; let y:f32=2.0; if x < y {return 1;} return 0;}",
+     "lane", "lane.type.non_f64_float"),
+    # `zeros` is no builtin on this path; the first construct the lane refuses is the
+    # array literal in argument position. Main's frozen compiler also refuses this row.
+    ("tensor", "fn main()->i64{let t=zeros([4]); return 0;}", "lane", "lane.source.array_literal"),
+    # Formerly IN_PROFILE. Main refuses both too (rc=3, no artifact; its SMOKE_WIRING row
+    # lists them as known red). A struct return and a u8 binding are outside the lane by
+    # design (scalar i64/f64 surface only), so each stays a named lane refusal.
+    ("struct_return",
+     "struct P{a:i64,b:i64} fn mk()->P{return P{a:3,b:4};} "
+     "fn main()->i64{let p=mk(); return p.a+p.b;}", "lane", "lane.type.named"),
+    ("narrow_u8_wrap", "fn main()->i64{let x:u8=200; let y:u8=100; return (x+y) as i64;}",
+     "lane", "lane.type.int_width"),
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
@@ -178,7 +199,7 @@ def strace_native_build(name, src, td):
 
 
 def mlir_exit(name, src, td):
-    """Build `src` with the DEFAULT (MLIR) backend and run it; return (exit, error).
+    """Build `src` with the MLIR backend and run it; return (exit, error).
     The oracle half of the float-comparison claim: the native artifact must answer
     exactly what `arith.cmpf` answers. A failed MLIR build is reported, never skipped —
     a cross-check that did not run is not a cross-check that passed."""
@@ -187,7 +208,7 @@ def mlir_exit(name, src, td):
     srcf.write_text(src)
     env = dict(os.environ, MINDC_STD_DIR=str(REPO / "std"))
     env.pop("MINDC_NATIVE_ELF", None)
-    r = subprocess.run([str(MINDC), "build", str(srcf), "--out", str(outf)],
+    r = subprocess.run([str(MINDC), "build", "--backend", "mlir", str(srcf), "--out", str(outf)],
                        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if r.returncode != 0 or not outf.exists():
         tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
@@ -205,8 +226,16 @@ def unexpected_bins(execs):
 
 
 def main() -> int:
+    global STAGE1, ALLOWED_BINS
+    ap = argparse.ArgumentParser(description="RI-D1 frozen-profile readiness gate")
+    ap.add_argument("--compiler", type=pathlib.Path, default=STAGE1,
+                    help="native compiler ELF to run (default: the committed seed)")
+    args = ap.parse_args()
+    STAGE1 = args.compiler.resolve()
+    ALLOWED_BINS = tuple(dict.fromkeys(ALLOWED_BINS + (STAGE1.name,)))
+    print(f"  compiler = {STAGE1}")
     for label, p in (("mindc", MINDC), ("stage1.elf", STAGE1)):
-        if not p.exists():
+        if not p.is_file():
             print(f"BLOCKED: {label} missing at {p}")
             return 2
     if subprocess.run(["sh", "-c", "command -v strace"], stdout=subprocess.DEVNULL).returncode != 0:
@@ -217,7 +246,7 @@ def main() -> int:
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
     PINNED_IN_PROFILE = 20
-    PINNED_OUT_PROFILE = 3
+    PINNED_OUT_PROFILE = 5
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
@@ -265,11 +294,9 @@ def main() -> int:
         for entry in OUT_PROFILE:
             # A fixture may declare WHICH fence must refuse it. Optional, so existing
             # two-field fixtures keep working; when present it is asserted.
-            if len(entry) == 3:
-                name, src, want_fence = entry
-            else:
-                name, src = entry
-                want_fence = None
+            name, src = entry[0], entry[1]
+            want_fence = entry[2] if len(entry) > 2 else None
+            want_kind = entry[3] if len(entry) > 3 else None
             rc, art, serr, execs = strace_native_build(name, src, td)
             th = toolchain_hits(execs)
             problems = []
@@ -303,6 +330,12 @@ def main() -> int:
                         "refuse and name the construct, but it did not — this fixture "
                         "gives the first fence no coverage"
                     )
+            elif want_fence == "lane":
+                if f"native-lane-v1 ({want_kind})" not in serr:
+                    problems.append(
+                        f"expected the native-lane fence to refuse with `{want_kind}`, "
+                        "but it did not name that construct"
+                    )
             elif want_fence == "second":
                 if "out-of-profile construct:" in serr:
                     problems.append(
@@ -324,7 +357,7 @@ def main() -> int:
         f"\nPASS  RI-D1 readiness: {len(IN_PROFILE)}/{len(IN_PROFILE)} in-profile programs "
         f"build+run toolchain-free (execve ⊆ {{mindc, stage1.elf}}), "
         f"{len(OUT_PROFILE)}/{len(OUT_PROFILE)} out-of-profile fail-closed with no MLIR fallback; "
-        f"{len(MLIR_CROSSCHECK)} float-comparison programs native == IEEE == MLIR.\n"
+        f"{len(MLIR_CROSSCHECK)} programs native == MLIR (the float comparisons also == IEEE).\n"
         "Native backend is READY to be default FOR THIS FROZEN PROFILE (default NOT flipped)."
     )
     return 0

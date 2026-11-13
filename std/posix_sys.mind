@@ -1,0 +1,149 @@
+// std.posix_sys — the raw Linux x86-64 system calls of std.posix and
+// std.fs_checked, one straight-line wrapper each.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// std.posix keeps its public names, signatures and link names; its bodies
+// call these wrappers. The argument defaults (AT_FDCWD for open, the zero
+// rusage of waitpid and waitid), the stat mode test of fdopendir, the dirent
+// cursor of readdir, the sigaction record of signal and the empty path of
+// fexecve live in std.posix. std.fs_checked opens, reads and closes its
+// directory through the same wrappers. A function in this module makes one
+// __mind_sys_* call with its arguments unchanged and returns its result: no
+// branch, no loop and no call to another function. Every result is the
+// kernel's: a value >= 0 on success, -errno on failure. Hosts without the
+// raw syscall ABI return -ENOSYS.
+
+// ---- Files and descriptors ----
+
+pub fn posix_sys_openat(dirfd: i64, path: i64, flags: i64, mode: i64) -> i64 {
+    __mind_sys_openat(dirfd, path, flags, mode)
+}
+
+pub fn posix_sys_close(fd: i64) -> i64 {
+    __mind_sys_close(fd)
+}
+
+pub fn posix_sys_fstat(fd: i64, buf: i64) -> i64 {
+    __mind_sys_fstat(fd, buf)
+}
+
+pub fn posix_sys_newfstatat(dirfd: i64, path: i64, buf: i64, flags: i64) -> i64 {
+    __mind_sys_newfstatat(dirfd, path, buf, flags)
+}
+
+pub fn posix_sys_fsync(fd: i64) -> i64 {
+    __mind_sys_fsync(fd)
+}
+
+pub fn posix_sys_flock(fd: i64, op: i64) -> i64 {
+    __mind_sys_flock(fd, op)
+}
+
+pub fn posix_sys_fcntl(fd: i64, cmd: i64, arg: i64) -> i64 {
+    __mind_sys_fcntl(fd, cmd, arg)
+}
+
+pub fn posix_sys_lseek(fd: i64, off: i64, whence: i64) -> i64 {
+    __mind_sys_lseek(fd, off, whence)
+}
+
+pub fn posix_sys_unlinkat(dirfd: i64, path: i64, flags: i64) -> i64 {
+    __mind_sys_unlinkat(dirfd, path, flags)
+}
+
+pub fn posix_sys_renameat(olddirfd: i64, old: i64, newdirfd: i64, new: i64) -> i64 {
+    __mind_sys_renameat(olddirfd, old, newdirfd, new)
+}
+
+pub fn posix_sys_umask(mask: i64) -> i64 {
+    __mind_sys_umask(mask)
+}
+
+pub fn posix_sys_getuid() -> i64 {
+    __mind_sys_getuid()
+}
+
+pub fn posix_sys_getdents64(fd: i64, buf: i64, count: i64) -> i64 {
+    __mind_sys_getdents64(fd, buf, count)
+}
+
+pub fn posix_sys_memfd_create(name: i64, flags: i64) -> i64 {
+    __mind_sys_memfd_create(name, flags)
+}
+
+pub fn posix_sys_fchdir(fd: i64) -> i64 {
+    __mind_sys_fchdir(fd)
+}
+
+// ---- Processes, signals, limits and clocks ----
+
+pub fn posix_sys_fork() -> i64 {
+    __mind_sys_fork()
+}
+
+pub fn posix_sys_pipe2(pipefd: i64, flags: i64) -> i64 {
+    __mind_sys_pipe2(pipefd, flags)
+}
+
+pub fn posix_sys_dup2(oldfd: i64, newfd: i64) -> i64 {
+    __mind_sys_dup2(oldfd, newfd)
+}
+
+pub fn posix_sys_close_range(first: i64, last: i64, flags: i64) -> i64 {
+    __mind_sys_close_range(first, last, flags)
+}
+
+pub fn posix_sys_kill(pid: i64, number: i64) -> i64 {
+    __mind_sys_kill(pid, number)
+}
+
+pub fn posix_sys_setpgid(pid: i64, group: i64) -> i64 {
+    __mind_sys_setpgid(pid, group)
+}
+
+pub fn posix_sys_getpgid(pid: i64) -> i64 {
+    __mind_sys_getpgid(pid)
+}
+
+pub fn posix_sys_prctl(option: i64, value: i64, a: i64, b: i64, c: i64) -> i64 {
+    __mind_sys_prctl(option, value, a, b, c)
+}
+
+pub fn posix_sys_getrlimit(resource: i64, limits: i64) -> i64 {
+    __mind_sys_getrlimit(resource, limits)
+}
+
+pub fn posix_sys_setrlimit(resource: i64, limits: i64) -> i64 {
+    __mind_sys_setrlimit(resource, limits)
+}
+
+pub fn posix_sys_nanosleep(value: i64, remainder: i64) -> i64 {
+    __mind_sys_nanosleep(value, remainder)
+}
+
+pub fn posix_sys_clock_gettime(clock: i64, value: i64) -> i64 {
+    __mind_sys_clock_gettime(clock, value)
+}
+
+pub fn posix_sys_execveat(dirfd: i64, path: i64, argv: i64, envp: i64, flags: i64) -> i64 {
+    __mind_sys_execveat(dirfd, path, argv, envp, flags)
+}
+
+pub fn posix_sys_wait4(pid: i64, status: i64, options: i64, rusage: i64) -> i64 {
+    __mind_sys_wait4(pid, status, options, rusage)
+}
+
+pub fn posix_sys_waitid(kind: i64, pid: i64, info: i64, options: i64, rusage: i64) -> i64 {
+    __mind_sys_waitid(kind, pid, info, options, rusage)
+}
+
+pub fn posix_sys_rt_sigaction(number: i64, act: i64, old: i64, size: i64) -> i64 {
+    __mind_sys_rt_sigaction(number, act, old, size)
+}
+
+pub fn posix_sys_exit_group(code: i64) -> i64 {
+    __mind_sys_exit_group(code)
+}

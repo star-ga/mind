@@ -1,0 +1,327 @@
+{
+  "schema": 1,
+  "status": "PRELISTED_NOT_EXECUTED",
+  "wire": "Author-announced MINDNSI2 using exact v1 framing; flags0 and automatic route only.",
+  "HOME_requirement": "Direct nsf_compile mirror of nsi_compile with explicit HOME route; no new flag invented here.",
+  "packets": [
+    {
+      "id": "P01-close-i32-result",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P01-close-i32-result.bin",
+        "bytes": 395668,
+        "sha256": "85949d07dc97049d022bfb22b558076f24d5af071a65afab1543e4e089ffad4b"
+      },
+      "source_sha256": "d006ab8615aefa9c85958d3e111895ccbd4743c8115ab4513d1fc8f2d524092c"
+    },
+    {
+      "id": "P02-close-observed-tls-errno",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P02-close-observed-tls-errno.bin",
+        "bytes": 395890,
+        "sha256": "317e61e202baa49c3792f96a5b53a3fe69a6316a00498567d6fc889d6868dc59"
+      },
+      "source_sha256": "c1b09e21220fa463b378a464ef36c1701fc7081e0024c60d6039e5b8af8eb986"
+    },
+    {
+      "id": "P03-read-ebadf",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P03-read-ebadf.bin",
+        "bytes": 395936,
+        "sha256": "5ea2673454058e12e0298ed35a30f145f7db9420ae390979e4928544dfa813e9"
+      },
+      "source_sha256": "113719fe96d1059c0eb2250d5c551abd3b5a65c695bc93d882a2cca53f2f24b0"
+    },
+    {
+      "id": "P04-write-ebadf",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P04-write-ebadf.bin",
+        "bytes": 395937,
+        "sha256": "268281be4be0f03804d9248924d0c9b8ec461a90a67b4655bbf2b05e18688b85"
+      },
+      "source_sha256": "abb38e94c9c70f889f4db039ba7c3b7d66324f1f20bb7b1833c7698de8eccea4"
+    },
+    {
+      "id": "P05-empty-nonblocking-pipe",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P05-empty-nonblocking-pipe.bin",
+        "bytes": 395911,
+        "sha256": "13127ebc1b20fff931b4d4391fe6095269da4eb57a58789448b75ef1298c2144"
+      },
+      "source_sha256": "ea29c4bbb6ec6bc27f3355daa4fb87496df80c9bae745d54af4281847036bf5c"
+    },
+    {
+      "id": "P06-positioned-pipe-espipe",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P06-positioned-pipe-espipe.bin",
+        "bytes": 395909,
+        "sha256": "e8803ceaea5da1580defd15046277f3b1bee017f50fd91472402ae76d4abbb73"
+      },
+      "source_sha256": "d3a38afe9f17e6053940457b15a80013db88670cbfe4b7a677416d435dddf752"
+    },
+    {
+      "id": "P07-nio-shortcuts-preserve-errno",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P07-nio-shortcuts-preserve-errno.bin",
+        "bytes": 395894,
+        "sha256": "0e4105de4266488ba891c440fb1666f9100859c335234bc6580bcfde112e902f"
+      },
+      "source_sha256": "d9a9e1778549258d6025f6f02c63c822274ff31fed440c51cc730c0b50cc03a9"
+    },
+    {
+      "id": "P08-close-owned-inherited-fd",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P08-close-owned-inherited-fd.bin",
+        "bytes": 396159,
+        "sha256": "a91f35aae82f1a9f5fdebba7f888a836997f0e4cd32ab46bfda26c7c3f062005"
+      },
+      "source_sha256": "76e2fe1d14afc10dcd9d8aae7b5f0f180f22a92d227af755ec16218b4541fcd4"
+    },
+    {
+      "id": "P09-typed-param-loop-live-values",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P09-typed-param-loop-live-values.bin",
+        "bytes": 395963,
+        "sha256": "dc4f39a21f6ce3bea8daccb0061349b36ed82457b58e3603585567bda22e7627"
+      },
+      "source_sha256": "9fc15fe0cfbbdcda07a70cd3673d0e88e4fb8e3aa370cb1a8d279c95d86556bc"
+    },
+    {
+      "id": "P10-nested-argument-once",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P10-nested-argument-once.bin",
+        "bytes": 395942,
+        "sha256": "a39d623a45fa5fdf278742b6d3b8eecc3fc24aed8b9581ef0a6a21735ee6714a"
+      },
+      "source_sha256": "452445badbfa4b447cc2d26ed54696568021d803ee856ee80b1af11c8f152583"
+    },
+    {
+      "id": "C01-no-c-reference",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/C01-no-c-reference.bin",
+        "bytes": 395548,
+        "sha256": "323b709332ca6a2553bae75acfc65fc4e74cd5b44abba1827c1f6059482919a3"
+      },
+      "source_sha256": "b00c781f882e63baa75ac4f511e7ad6b2f0fc1b4f737df10d067ef1db67cbe9d"
+    },
+    {
+      "id": "C02-dormant-declaration-reference",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/C02-dormant-declaration-reference.bin",
+        "bytes": 395593,
+        "sha256": "bcbf2aa145509f90ffd4c9dbc753e2d9791630fac02fff6551f52b8e2bc0399a"
+      },
+      "source_sha256": "5a606e83a4951451d82ac99bea498b8383ff90071afc626ac1f0c850585dd1c1"
+    },
+    {
+      "id": "R01-undeclared-close",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R01-undeclared-close.bin",
+        "bytes": 395573,
+        "sha256": "372496bbca52b6c1dc697eddac3f7509bee57864b4c4ce72b0592887ad752080"
+      },
+      "source_sha256": "6122000dce4083bb1969d1f595059027bbfc7c28136faa155c47e01f4ff62319"
+    },
+    {
+      "id": "R02-undeclared-errno",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R02-undeclared-errno.bin",
+        "bytes": 395572,
+        "sha256": "fd9a16330761b42e7d5e4734fa13e2afa76c2f29a12ec974bcaecaa2bf21dca0"
+      },
+      "source_sha256": "810b2fe617ec8aff5eaaca240a4db6acd22168bc7b0de364003770e8ba2b323d"
+    },
+    {
+      "id": "R03-duplicate-same-unit",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R03-duplicate-same-unit.bin",
+        "bytes": 395663,
+        "sha256": "65622bf31f34e193b4989f233a7b7515a7ba28bb9bdc510f6af9feeb8927de82"
+      },
+      "source_sha256": "46b2585248d843c4b7051200b61e2af6391873fd7d7c7577e1b13e8023ee87e1"
+    },
+    {
+      "id": "R04-wrong-close-parameter",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R04-wrong-close-parameter.bin",
+        "bytes": 395609,
+        "sha256": "f0c3a74e4faecd8e0b3c0732585f422e05f35205ef70f0e2abb26d8b939123ab"
+      },
+      "source_sha256": "5f9a447c41ee2dbbb4825435c447d74fcd28b1826da4954588a0c439f8f5afab"
+    },
+    {
+      "id": "R05-wrong-close-result",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R05-wrong-close-result.bin",
+        "bytes": 395611,
+        "sha256": "321beef25a3678701af0e87d41497cebfad83678c3b31ac294aef7f4b81a4723"
+      },
+      "source_sha256": "eb87f118c495f5ef141372340a734967dc763914a1d5402273bd5f0a664352ad"
+    },
+    {
+      "id": "R06-errno-wrong-qualifier",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R06-errno-wrong-qualifier.bin",
+        "bytes": 395629,
+        "sha256": "817e09b6c602d2af63b7a65e5e476893f4613ceddbc93ece8db5378a5a6085a4"
+      },
+      "source_sha256": "29bca2a2062ac6928cd938caaa28bc79e3211f8ea981524775edfc81c3a655b8"
+    },
+    {
+      "id": "R07-errno-wrong-depth",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R07-errno-wrong-depth.bin",
+        "bytes": 395632,
+        "sha256": "e375f0f1d748a360eba6b52706cdba6be64c745594dbb604e0db9c466ce57f03"
+      },
+      "source_sha256": "ba7ea82a12922080f4a2b77617560fd4d0c1be1df6e50a2b0e7a714a60367958"
+    },
+    {
+      "id": "R08-local-callee-shadow",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R08-local-callee-shadow.bin",
+        "bytes": 395635,
+        "sha256": "5eb90f097473826d348418621685d9685c979026ef4447c14717232111aaae61"
+      },
+      "source_sha256": "57d7df5161ab599a6b1fc0bff2b7cdbebf17b60d5bfa211e60c3513702c82188"
+    },
+    {
+      "id": "R09-typed-bool-shadow",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R09-typed-bool-shadow.bin",
+        "bytes": 395680,
+        "sha256": "dfb4af13807330665daac3a7018792203fc9d5a6ebd3a2bbf0a2d2a44712c69e"
+      },
+      "source_sha256": "e2f4565bea1b715fa765d44ea086cf4c573ed29b992bf04b70129114ebb2c025"
+    },
+    {
+      "id": "R10-extra-argument",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R10-extra-argument.bin",
+        "bytes": 395627,
+        "sha256": "ddb7b7301bc3d29e19c5cad6620a333a5cc32e195046f7dd95b48aed99ec98c9"
+      },
+      "source_sha256": "073d56e2cb3659de407997a0e782ff569552e233ad015538c8b74851ea4744eb"
+    },
+    {
+      "id": "R11-local-body-and-extern",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R11-local-body-and-extern.bin",
+        "bytes": 395647,
+        "sha256": "f1b5e9cc8fc11c6a9ec02bdf7e04321f7642443a2f9e505d2e6acc832b1fd994"
+      },
+      "source_sha256": "714906ea28df81510226b75aada9d5c557c541e2e4c3c262b24f4d67eae89700"
+    },
+    {
+      "id": "R12-fixed-looking-variadic",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R12-fixed-looking-variadic.bin",
+        "bytes": 395663,
+        "sha256": "d1d7296a05f2771c7944e55163e4302b4a044b6ff353125308bcc1f204c62457"
+      },
+      "source_sha256": "6579024bf1b27a53170d9b589cde4f65c329534e121a8553d3c7e3568396d12e"
+    },
+    {
+      "id": "R13-nonreturning-call",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R13-nonreturning-call.bin",
+        "bytes": 395609,
+        "sha256": "39cb91298219543ca01c2ef30d4d90a54eaf7cb310861005c6aba7e033fb4835"
+      },
+      "source_sha256": "5656b49667de38d2126bccf19ab4a45589b60f805cb688b9f43a72a2365d4df4"
+    },
+    {
+      "id": "P11-public-std-and-user-close",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/P11-public-std-and-user-close.bin",
+        "bytes": 395819,
+        "sha256": "2894fa90f5c683668667f4615df6125a2c46b83ec42a216e4be2ed4b3661c251"
+      },
+      "source_sha256": "6961dd2b0775c5104abafce0caa507101482c8eddda45aa4bc50e6208e09e9e0"
+    },
+    {
+      "id": "R14-untyped-close-literal",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R14-untyped-close-literal.bin",
+        "bytes": 395609,
+        "sha256": "c1bdbae64b913c1eea63e991a13085bd42eada1c6c7c13edfb8476a7e8286578"
+      },
+      "source_sha256": "aaf680671b0d64e720e58700b51646a9612a70af85fe0434d02543a360ef8aa3"
+    },
+    {
+      "id": "R15-private-std-local-edge",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R15-private-std-local-edge.bin",
+        "bytes": 395559,
+        "sha256": "f5f020ab703f5b8f5f5375011ebcee879539482018065d85cfedb31272af8595"
+      },
+      "source_sha256": "1994aabb9fdf86a2f116fa62561f2382a3f200cec323fdc96cfa68d657d74886"
+    },
+    {
+      "id": "R16-unresolved-user-import",
+      "route": "automatic",
+      "profile": "MINDNSI2",
+      "packet": {
+        "path": "packets/R16-unresolved-user-import.bin",
+        "bytes": 395639,
+        "sha256": "567ad840d11a793f1478cd124d472a2fbca783d9646f4b9edb83a8e66803a342"
+      },
+      "source_sha256": "56407d7e996bb70cd3a46a080afdb81eb46efa89f33505a5020668097cbe5f0e"
+    }
+  ]
+}

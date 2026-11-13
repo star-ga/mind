@@ -65,10 +65,11 @@ use crate::runtime::types::BackendTarget;
 /// * `std.vec`, `std.map`, `std.string`: the runtime-support shim already
 ///   provides their symbols; linking the MIND objects too would replace the
 ///   shim's implementations in every program that imports them.
-/// * `std.cli`: calls `__mind_argc` / `__mind_argv`, which the Rust/MLIR path
-///   does not register yet, so its object cannot be compiled.
-/// * `std.io`: defines `print_bytes`, which the shim also defines as a strong
-///   symbol, so the two objects collide at link.
+///
+/// `std.cli` reads the process arguments through `__mind_argc` / `__mind_argv`,
+/// which the runtime support defines for the MLIR path. `std.io` defines
+/// `print_bytes`, which the shim defines too, as a weak symbol the std.io
+/// object replaces with the same write.
 ///
 /// `std.time` is a member but cannot compile until `__mind_now_ns` is
 /// registered for the Rust/MLIR path; a program importing it fails the build
@@ -87,11 +88,15 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.async",
     "std.blas",
     "std.chacha20_poly1305",
+    "std.cli",
     "std.detmath",
     "std.dns",
     "std.ecdsa_p256",
     "std.entropy",
+    "std.evidence",
+    "std.evidence_mic",
     "std.fs",
+    "std.fs_checked",
     "std.hkdf",
     "std.hpack",
     "std.http",
@@ -102,6 +107,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.https_probe",
     "std.https_record",
     "std.https_url",
+    "std.io",
     "std.io_canon",
     "std.iouring",
     "std.json",
@@ -109,10 +115,15 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.keccak",
     "std.llvm",
     "std.mic_record",
+    "std.mic_record_table",
+    "std.mic_record_wire",
     "std.mic_results",
     "std.mlir",
     "std.mlkem768",
     "std.net",
+    "std.os_evidence",
+    "std.posix",
+    "std.posix_sys",
     "std.process",
     "std.procgroup",
     "std.procgroup_sys",
@@ -139,12 +150,51 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.x509_bignum",
     "std.x509_bundle",
     "std.x509_der",
+    "std.x509_evidence",
     "std.x509_ext",
     "std.x509_name",
     "std.x509_p384",
     "std.x509_path",
     "std.x509_sig",
 ];
+
+/// Compile one source that becomes its own object (a project sibling or a
+/// substrate module), with its diagnostics rendered into the error.
+///
+/// Every object route calls this, so each one refuses the runnable blockers
+/// (E2041 and the rest) exactly as the entry does. A sibling with a
+/// native-only call used to write a `.so` with an undefined symbol.
+pub(crate) fn compile_object_source(
+    src: &str,
+    name: &str,
+    opts: &crate::pipeline::CompileOptions,
+    what: &str,
+) -> Result<crate::pipeline::CompileProducts> {
+    let render = |diags: &[crate::diagnostics::Diagnostic]| {
+        diags
+            .iter()
+            .map(|d| crate::diagnostics::render(src, d))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let prod = crate::pipeline::compile_source_with_name(src, Some(name), opts).map_err(|e| {
+        let rendered = render(&e.into_diagnostics(Some(name)));
+        if rendered.trim().is_empty() {
+            anyhow!("{what} compile failed for {name}")
+        } else {
+            anyhow!("{what} compile failed for {name}:\n{rendered}")
+        }
+    })?;
+    if !prod.runnable_blockers.is_empty() {
+        return Err(anyhow!(
+            "{what} compile failed for {name}: {} construct(s) cannot be lowered to a \
+             correct runnable artifact:\n{}",
+            prod.runnable_blockers.len(),
+            render(&prod.runnable_blockers)
+        ));
+    }
+    Ok(prod)
+}
 
 /// Substrate modules directly imported by `src`.
 ///
@@ -335,7 +385,7 @@ pub(crate) fn compile_substrate_objects<'a>(
     target: BackendTarget,
     tools: &BuildTools,
 ) -> Result<SubstrateArchive> {
-    use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir};
+    use crate::pipeline::{CompileOptions, lower_to_mlir};
 
     if closure.is_empty() {
         return Ok(SubstrateArchive {
@@ -364,21 +414,7 @@ pub(crate) fn compile_substrate_objects<'a>(
         let Some(src) = crate::project::stdlib::std_source(modname) else {
             continue;
         };
-        let prod = compile_source_with_name(src, Some(modname), &sub_opts).map_err(|e| {
-            // Render the real diagnostics (file:line:col + message) instead of
-            // the opaque CompileError Display, matching the cdylib build path.
-            let diags = e.into_diagnostics(Some(modname));
-            let rendered = diags
-                .iter()
-                .map(|d| crate::diagnostics::render(src, d))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if rendered.trim().is_empty() {
-                anyhow!("substrate compile failed for {modname}")
-            } else {
-                anyhow!("substrate compile failed for {modname}:\n{rendered}")
-            }
-        })?;
+        let prod = compile_object_source(src, modname, &sub_opts, "substrate")?;
         #[cfg(feature = "autodiff")]
         let sub_mlir = lower_to_mlir(&prod.ir, prod.grad.as_ref())
             .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;

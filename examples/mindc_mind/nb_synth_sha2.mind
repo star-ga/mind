@@ -1,0 +1,195 @@
+// Copyright 2026 STARGA Inc.
+// SHA-256 compression and block loops of the native trace-hash section.
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import std.string;
+import nb_emit_core;
+import nb_synth_sha;
+
+// H0..H7 — FIPS 180-4 §5.3.3 square-root constants (Rust SHA256_H0, decimal).
+pub fn nb_h_init(i: i64) -> i64 {
+    if i == 0 {
+        return 1779033703;
+    }
+    if i == 1 {
+        return 3144134277;
+    }
+    if i == 2 {
+        return 1013904242;
+    }
+    if i == 3 {
+        return 2773480762;
+    }
+    if i == 4 {
+        return 1359893119;
+    }
+    if i == 5 {
+        return 2600822924;
+    }
+    if i == 6 {
+        return 528734635;
+    }
+    1541459225
+}
+
+// W schedule helpers — 64 words stored stride-8 (like a Vec element).
+pub fn nb_w_get(w_addr: i64, i: i64) -> i64 {
+    __mind_load_i64(w_addr + i * 8)
+}
+
+pub fn nb_w_set(w_addr: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(w_addr + i * 8, v);
+    0
+}
+
+// compress_block — process one 64-byte block at `block_addr` (stride-1 bytes)
+// into the 8-word H state at `h_addr` (stride-8). Mirrors sha256_compress.
+// One round of compression. Working vars a..h live in the stride-8 scratch `v`
+// (v[0]=a..v[7]=h); state stays in MEMORY so the 64-round driver carries ONLY its
+// loop counter (single-carry while — the nfn-emittable subset; an 8-`let mut`
+// loop-carry is out of subset and fails the flip). Pure i64 + &0xffffffff masks.
+pub fn nb_sha256_round(v: i64, w_addr: i64, rnd: i64) -> i64 {
+    let va: i64 = __mind_load_i64(v + 0 * 8);
+    let vb: i64 = __mind_load_i64(v + 1 * 8);
+    let vc: i64 = __mind_load_i64(v + 2 * 8);
+    let vd: i64 = __mind_load_i64(v + 3 * 8);
+    let ve: i64 = __mind_load_i64(v + 4 * 8);
+    let vf: i64 = __mind_load_i64(v + 5 * 8);
+    let vg: i64 = __mind_load_i64(v + 6 * 8);
+    let vh: i64 = __mind_load_i64(v + 7 * 8);
+    let t1: i64 = nb_mask32(vh + nb_bsig1(ve) + nb_ch(ve, vf, vg) + nb_k_word(rnd) + nb_w_get(w_addr, rnd));
+    let t2: i64 = nb_mask32(nb_bsig0(va) + nb_maj(va, vb, vc));
+    __mind_store_i64(v + 7 * 8, vg);
+    __mind_store_i64(v + 6 * 8, vf);
+    __mind_store_i64(v + 5 * 8, ve);
+    __mind_store_i64(v + 4 * 8, nb_mask32(vd + t1));
+    __mind_store_i64(v + 3 * 8, vc);
+    __mind_store_i64(v + 2 * 8, vb);
+    __mind_store_i64(v + 1 * 8, va);
+    __mind_store_i64(v + 0 * 8, nb_mask32(t1 + t2));
+    0
+}
+
+// Pack one big-endian message word W[wi] from 4 stride-1 bytes at block_addr.
+pub fn nb_sha256_w0(block_addr: i64, w_addr: i64, wi: i64) -> i64 {
+    let base: i64 = wi * 4;
+    let b0: i64 = __mind_load_i8(block_addr + base + 0);
+    let b1: i64 = __mind_load_i8(block_addr + base + 1);
+    let b2: i64 = __mind_load_i8(block_addr + base + 2);
+    let b3: i64 = __mind_load_i8(block_addr + base + 3);
+    let word: i64 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    nb_w_set(w_addr, wi, word)
+}
+
+// W[0..15]: big-endian pack, indices wi..15.
+pub fn nb_sha256_w0_loop(block_addr: i64, w_addr: i64, wi: i64) -> i64 {
+    if wi >= 16 {
+        return 0;
+    }
+    let _s: i64 = nb_sha256_w0(block_addr, w_addr, wi);
+    nb_sha256_w0_loop(block_addr, w_addr, wi + 1)
+}
+
+// W[16..63]: schedule extension, indices wj..63.
+pub fn nb_sha256_wsched_loop(w_addr: i64, wj: i64) -> i64 {
+    if wj >= 64 {
+        return 0;
+    }
+    let s0: i64 = nb_ssig0(nb_w_get(w_addr, wj - 15));
+    let s1: i64 = nb_ssig1(nb_w_get(w_addr, wj - 2));
+    let val: i64 = nb_mask32(nb_w_get(w_addr, wj - 16) + s0 + nb_w_get(w_addr, wj - 7) + s1);
+    let _s2: i64 = nb_w_set(w_addr, wj, val);
+    nb_sha256_wsched_loop(w_addr, wj + 1)
+}
+
+// Copy 8 H words into the working-var scratch `v`, indices vi..7.
+pub fn nb_sha256_vinit_loop(v: i64, h_addr: i64, vi: i64) -> i64 {
+    if vi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(v + vi * 8, __mind_load_i64(h_addr + vi * 8));
+    nb_sha256_vinit_loop(v, h_addr, vi + 1)
+}
+
+// 64 rounds, indices rnd..63 (state is memory-backed so this carries only rnd).
+pub fn nb_sha256_round_loop(v: i64, w_addr: i64, rnd: i64) -> i64 {
+    if rnd >= 64 {
+        return 0;
+    }
+    let _r: i64 = nb_sha256_round(v, w_addr, rnd);
+    nb_sha256_round_loop(v, w_addr, rnd + 1)
+}
+
+// Fold the working vars back into H, indices fi..7.
+pub fn nb_sha256_fold_loop(h_addr: i64, v: i64, fi: i64) -> i64 {
+    if fi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(h_addr + fi * 8, nb_mask32(__mind_load_i64(h_addr + fi * 8) + __mind_load_i64(v + fi * 8)));
+    nb_sha256_fold_loop(h_addr, v, fi + 1)
+}
+
+// Compress one block using scratch owned by the enclosing hash invocation.
+// nb_sha256_w0_loop overwrites W[0..15], nb_sha256_wsched_loop overwrites
+// W[16..63], and nb_sha256_vinit_loop overwrites v[0..7] before any round reads
+// them, so the same buffers are lifetime-safe to reuse for the next block.
+pub fn nb_sha256_compress(block_addr: i64, h_addr: i64, w_addr: i64, v: i64) -> i64 {
+    let _w0: i64 = nb_sha256_w0_loop(block_addr, w_addr, 0);
+    let _ws: i64 = nb_sha256_wsched_loop(w_addr, 16);
+    // Working vars a..h in a stride-8 scratch (memory-backed, single-carry round).
+    let _vi: i64 = nb_sha256_vinit_loop(v, h_addr, 0);
+    let _rl: i64 = nb_sha256_round_loop(v, w_addr, 0);
+    nb_sha256_fold_loop(h_addr, v, 0)
+}
+
+// Copy in_len input bytes into the pad buffer, indices ci..in_len-1.
+pub fn nb_sha256_copyin_loop(buf: i64, in_addr: i64, in_len: i64, ci: i64) -> i64 {
+    if ci >= in_len {
+        return 0;
+    }
+    __mind_store_i8(buf + ci, __mind_load_i8(in_addr + ci));
+    nb_sha256_copyin_loop(buf, in_addr, in_len, ci + 1)
+}
+
+// Zero-fill the padding region [zi, end).
+pub fn nb_sha256_zero_loop(buf: i64, zi: i64, end: i64) -> i64 {
+    if zi >= end {
+        return 0;
+    }
+    __mind_store_i8(buf + zi, 0);
+    nb_sha256_zero_loop(buf, zi + 1, end)
+}
+
+// Init the 8 H words from nb_h_init, indices hi..7.
+pub fn nb_sha256_hinit_loop(h_addr: i64, hi: i64) -> i64 {
+    if hi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(h_addr + hi * 8, nb_h_init(hi));
+    nb_sha256_hinit_loop(h_addr, hi + 1)
+}
+
+// Process each 64-byte block, indices blk..num_blocks-1, reusing the scratch
+// private to this nb_sha256 call. Compression completes and folds into h_addr
+// before recursion, so no two blocks have overlapping scratch lifetimes.
+pub fn nb_sha256_blocks_loop(buf: i64, h_addr: i64, w_addr: i64, v: i64, blk: i64, num_blocks: i64) -> i64 {
+    let mut b: i64 = blk;
+    while b < num_blocks {
+        let _c: i64 = nb_sha256_compress(buf + b * 64, h_addr, w_addr, v);
+        b = b + 1;
+    }
+    0
+}
+
+// Serialise the 8-word digest big-endian, indices di..7.
+pub fn nb_sha256_out_loop(h_addr: i64, out_addr: i64, di: i64) -> i64 {
+    if di >= 8 {
+        return 0;
+    }
+    let word: i64 = __mind_load_i64(h_addr + di * 8);
+    __mind_store_i8(out_addr + di * 4 + 0, (word >> 24) & 255);
+    __mind_store_i8(out_addr + di * 4 + 1, (word >> 16) & 255);
+    __mind_store_i8(out_addr + di * 4 + 2, (word >> 8) & 255);
+    __mind_store_i8(out_addr + di * 4 + 3, word & 255);
+    nb_sha256_out_loop(h_addr, out_addr, di + 1)
+}

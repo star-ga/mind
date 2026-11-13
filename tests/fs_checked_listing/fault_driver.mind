@@ -1,0 +1,123 @@
+// Author: STARGA Inc. Explicit expected syscall and allocation observations.
+// Instrumented signature has an extra control pointer; production API is unchanged.
+
+fn fcf_expect(id: i64, got: i64, want: i64) -> i64 {
+    if got != want {
+        print(id);
+        print(got);
+        print(want);
+        return 1;
+    }
+    0
+}
+
+fn fcf_case(mode: i64, fail_ordinal: i64) -> i64 {
+    let control: i64 = __mind_alloc(1152);
+    let input: i64 = __mind_alloc(32);
+    if control == 0 || input == 0 {
+        if control != 0 { __mind_free(control); }
+        if input != 0 { __mind_free(input); }
+        return fcf_expect(9900, 0, 1);
+    }
+    let _ = fcf_zero(control, 1152);
+    let _ = fcf_zero(input, 32);
+    __mind_store_i64(control, mode);
+    __mind_store_i64(control + 16, fail_ordinal);
+    __mind_store_i8(input, 46);
+    __mind_store_i64(input + 16, 713);
+    __mind_store_i64(input + 24, 827);
+    let mut max_entries: i64 = 8;
+    let mut max_names: i64 = 64;
+    let mut expected: i64 = 0;
+    let mut reads: i64 = 2;
+    let mut opens: i64 = 1;
+    let mut closes: i64 = 1;
+    let mut count: i64 = 1;
+    if mode == 1 { expected = 0 - 2; reads = 0; closes = 0; }
+    if mode == 2 { expected = 0 - 5; reads = 1; }
+    if mode == 3 { expected = 0 - 5; }
+    if mode == 4 { expected = 0 - 5; }
+    if mode == 5 { expected = 0 - 4; reads = 1; }
+    if mode == 6 { expected = 0 - 5; reads = 1; }
+    if mode == 7 { expected = 0 - 5; reads = 1; }
+    if mode == 8 { reads = 1; count = 0; max_entries = 0; max_names = 0; }
+    if mode == 9 { reads = 3; count = 2; }
+    if mode == 10 { expected = 0 - 5; }
+    if mode == 11 { expected = 0 - 13; }
+    if mode == 12 { expected = 0 - 75; reads = 1; max_entries = 1; }
+    if mode == 13 { expected = 0 - 75; reads = 1; max_names = 1; }
+    if mode == 14 { count = 5; }
+    if mode == 15 { expected = 0 - 4; reads = 1; }
+    if mode == 17 { expected = 0 - 38; reads = 0; closes = 0; }
+    if mode == 18 || mode == 19 { expected = 0 - 5; reads = 1; }
+    if mode == 20 { expected = 0 - 5; }
+    if fail_ordinal > 0 {
+        expected = 0 - 12;
+        reads = 1;
+        if fail_ordinal <= 3 { opens = 0; reads = 0; closes = 0; }
+    }
+    let actual: i64 = fs_read_dir_checked(input, 1, max_entries, max_names, input + 16, control);
+    let id: i64 = 10000 + mode * 100 + fail_ordinal;
+    let mut failures: i64 = fcf_expect(id, actual, expected);
+    failures = failures + fcf_expect(id + 10000, __mind_load_i64(control + 48), opens);
+    failures = failures + fcf_expect(id + 20000, __mind_load_i64(control + 56), reads);
+    failures = failures + fcf_expect(id + 30000, __mind_load_i64(control + 64), closes);
+    failures = failures + fcf_expect(id + 40000, __mind_load_i64(control + 72), 0);
+    failures = failures + fcf_expect(id + 50000, __mind_load_i64(input + 24), 827);
+    failures = failures + fcf_expect(id + 60000, __mind_load_i64(input), 46);
+    let list: i64 = __mind_load_i64(input + 16);
+    if expected != 0 {
+        let unchanged: i64 = if list == 713 { 1 } else { 0 };
+        failures = failures + fcf_expect(id + 70000, unchanged, 1);
+    } else {
+        if actual == 0 && list > 0 && list != 713 {
+            failures = failures + fcf_expect(id + 80000, __mind_load_i64(list + 8), count);
+            if __mind_load_i64(list + 8) == count {
+                let entries: i64 = __mind_load_i64(list);
+                let mut i: i64 = 0;
+                while i < count {
+                    let entry: i64 = __mind_load_i64(entries + i * 8);
+                    let name: i64 = __mind_load_i64(entry);
+                    let mut wanted_name: i64 = 97 + i;
+                    let mut wanted_kind: i64 = 2;
+                    if mode == 9 && i == 1 { wanted_name = 255; wanted_kind = 0; }
+                    failures = failures + fcf_expect(id + 90000 + i, __mind_load_i8(name) & 255, wanted_name);
+                    failures = failures + fcf_expect(id + 100000 + i, __mind_load_i64(entry + 8), 1);
+                    failures = failures + fcf_expect(id + 110000 + i, __mind_load_i64(entry + 16), wanted_kind);
+                    failures = failures + fcf_expect(id + 120000 + i, __mind_load_i8(name + 1) & 255, 0);
+                    i = i + 1;
+                }
+            }
+            let _ = fs_dir_list_free(list, control);
+        } else {
+            failures = failures + fcf_expect(id + 130000, 0, 1);
+        }
+    }
+    if fail_ordinal > 0 {
+        failures = failures + fcf_expect(id + 140000, __mind_load_i64(control + 8), fail_ordinal);
+        failures = failures + fcf_expect(id + 150000, __mind_load_i64(control + 32), fail_ordinal - 1);
+    }
+    failures = failures + fcf_expect(id + 160000, __mind_load_i64(control + 24), 0);
+    failures = failures + fcf_expect(id + 170000, __mind_load_i64(control + 40), 0);
+    let _ = fcf_cleanup(control);
+    __mind_free(input);
+    __mind_free(control);
+    failures
+}
+
+fn fcf_all() -> i64 {
+    let mut failures: i64 = 0;
+    let mut mode: i64 = 0;
+    while mode <= 20 {
+        failures = failures + fcf_case(mode, 0);
+        mode = mode + 1;
+    }
+    let mut ordinal: i64 = 1;
+    while ordinal <= 15 {
+        failures = failures + fcf_case(14, ordinal);
+        ordinal = ordinal + 1;
+    }
+    if failures != 0 { return 1; }
+    print(0);
+    0
+}

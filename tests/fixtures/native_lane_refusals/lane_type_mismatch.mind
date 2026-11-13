@@ -1,0 +1,2 @@
+// lane.type.mismatch: an f64 binding initialised with an integer.
+fn main() -> i64 { let x: f64 = 1; return 0; }

@@ -1,0 +1,11 @@
+// A8 x W2-trap: a fn that reads a u64 (or usize) const can hold a u64 value
+// (u64x_prepare), and native divides with signed idiv, which differs from MLIR's
+// unsigned division once the top bit is set (`(D * 4611686018427387904) / 3`
+// with D = 3). The native lattice has no u64 code, so every `/` and `%` in such
+// a fn poisons the module (fail-closed, 0 bytes) -- even this harmless one.
+// MLIR divides unsigned: 9 / 2 = 4.
+const D: u64 = 9;
+
+fn main() -> i64 {
+    D / 2
+}

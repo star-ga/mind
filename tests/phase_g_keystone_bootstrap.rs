@@ -244,7 +244,13 @@ fn phase_g_02_mindc_build_via_mind_toml_exits_0() {
     let out = scratch().join("phase_g_02_libmindc_mind.so");
 
     let result = Command::new(&bin)
-        .args(["build", "--release", &format!("--out={}", out.display())])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--release",
+            &format!("--out={}", out.display()),
+        ])
         .current_dir(repo_root())
         .output()
         .expect("failed to spawn mindc");
@@ -321,6 +327,7 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
     let r_manifest = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=cdylib",
             &format!("--out={}", out_manifest.display()),
@@ -339,6 +346,7 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
     let r_direct = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             src_path.to_str().unwrap(),
             "--release",
             "--emit=cdylib",
@@ -435,6 +443,7 @@ fn phase_g_04_self_consistent_byte_identity() {
         Command::new(&bin)
             .args([
                 "build",
+                "--backend=mlir",
                 "--release",
                 "--emit=cdylib",
                 "--no-cache",
@@ -524,6 +533,7 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
     let r1 = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=cdylib",
             &format!("--out={}", out.display()),
@@ -549,9 +559,13 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
     // (an edit to a sibling module must invalidate). Resolve that set through
     // the compiler's own selector so this probe and the build cannot disagree
     // about which files — or in which order — the key covers.
-    let build_sources =
-        libmind::project::collect_sources(&repo_root(), "examples/mindc_mind/main.mind")
-            .expect("collect the keystone project sources");
+    let (build_sources, _) = libmind::project::resolve_sources(
+        &repo_root(),
+        "examples/mindc_mind/main.mind",
+        None,
+        false,
+    )
+    .expect("resolve the keystone project sources");
     let cache_material = libmind::build::compile_cache_material(
         &source_bytes,
         libmind::build::CacheKeyFlags {
@@ -579,6 +593,7 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
     let r2 = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=cdylib",
             "--verbose",
@@ -647,6 +662,7 @@ fn phase_g_06_report_artifact_sha256() {
     let r = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=cdylib",
             &format!("--out={}", out.display()),
@@ -714,6 +730,7 @@ fn phase_g_06_report_artifact_sha256() {
     let r2 = Command::new(&bin)
         .args([
             "build",
+            "--backend=mlir",
             "--release",
             "--emit=cdylib",
             "--no-cache",

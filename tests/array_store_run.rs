@@ -48,7 +48,7 @@ fn build_and_run(mindc: &Path, src: &str) -> i32 {
     let _ = std::fs::remove_file(&out);
     std::fs::write(&srcf, src).expect("write src");
     let c = Command::new(mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .arg("--emit=binary")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .arg(format!("--out={}", out.display()))

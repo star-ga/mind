@@ -1269,21 +1269,19 @@ fn tensor_type(shape: &[ShapeDim], dtype: &str) -> String {
 
 fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
     match (fill, dtype) {
-        (Some(value), DType::F32 | DType::F16 | DType::BF16) => {
+        // Spec 3.3: i32 `Q(x)`; out of range prints the refusal name (mlir-opt rejects it).
+        (Some(value), DType::Q16) => crate::opt::fold::q16_const(value)
+            .map_or("Q16ConstantOutOfRange".to_string(), |q| q.to_string()),
+        (Some(value), DType::F64 | DType::F32 | DType::F16 | DType::BF16) => {
             if value.fract() == 0.0 {
                 format!("{:.1}", value)
             } else {
                 value.to_string()
             }
         }
-        (Some(value), _) => {
-            if value.fract() == 0.0 {
-                (value as i64).to_string()
-            } else {
-                value.to_string()
-            }
-        }
-        (None, DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
+        (Some(value), _) if value.fract() == 0.0 => (value as i64).to_string(),
+        (Some(value), _) => value.to_string(),
+        (None, DType::F64 | DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
         (None, _) => "0".to_string(),
     }
 }

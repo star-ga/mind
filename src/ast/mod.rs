@@ -15,6 +15,7 @@
 use crate::types::ConvPadding;
 use crate::types::ShapeDim;
 mod spelling;
+pub use crate::target::CallConv;
 pub use spelling::SourceSpelling;
 
 /// Storage layout for a sparse tensor.
@@ -264,18 +265,16 @@ pub enum TypeAnn {
     },
 }
 
-/// Calling convention tag for an `extern "C"` block (RFC 0010 Phase A).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CallConv {
-    /// Platform-default C ABI — resolves to `.sysv` on Linux/macOS x86_64
-    /// and `.win64` on Windows x86_64 when no explicit tag is present.
-    C,
-    /// System V AMD64 ABI.
-    SysV,
-    /// Microsoft x64 calling convention.
-    Win64,
-    /// ARM Architecture Procedure Call Standard (AArch64).
-    Aapcs,
+/// The binding of an `extern "C"` block: where each fn's code address comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ExternBinding {
+    /// No clause: the base C libraries of the target.
+    #[default]
+    Base,
+    /// `bind("<soname>")`: the shared library the loader finds by this name.
+    Library(String),
+    /// `bind(.address)`: a C prototype; each call passes the code address first.
+    Address,
 }
 
 /// A single function declaration inside an `extern "C"` block.
@@ -858,13 +857,11 @@ pub enum Node {
         inner: Box<Node>,
         span: Span,
     },
-    /// `extern "C" [callconv(.x)] { fn decls... }` block (RFC 0010 Phase A).
-    ///
-    /// Phase A accepts the syntax, stores the AST, type-checks signatures
-    /// for Copy-only types, and lowers calls to `llvm.call`. Win64 and
-    /// AAPCS parse but reuse the default `.c` lowering until Phase C/D.
+    /// `extern "C" [callconv(.x)] [bind(..)] { fn decls... }` block (RFC 0010).
     ExternBlock {
         callconv: CallConv,
+        /// Where the code of each fn comes from (spec "Extern bindings").
+        binding: ExternBinding,
         fns: Vec<ExternFn>,
         span: Span,
     },
@@ -1166,6 +1163,6 @@ impl Node {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Module {
     pub items: Vec<Node>,
-    /// Formatter-only record of spellings the desugars dropped. See [`SourceSpelling`].
+    /// Record of spellings and namespace qualifiers the desugars dropped. See [`SourceSpelling`].
     pub spelling: SourceSpelling,
 }

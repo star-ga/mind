@@ -1,0 +1,64 @@
+# MC-6 cases of tests/native_lane_gpu_loader.rs, tab-separated; a literal \n in a field is a newline.
+# row <name>: an MC-6 row (nbcu_row order); fake_rows2.mind imports exactly these.
+# admit/refuse <arg>: a cuMemsetD8_v2 byte argument the self-host admits / refuses by name
+#   (extern.byte_arg_unproven, exit 3, no artifact); each refused one builds on the byte-fence-open mutant.
+# unknown <name>: an extern the front fence refuses by name (lane.extern.unknown_symbol).
+# tail <imm> <count>: driver calls of align_probe_coop.mind followed by `add rsp, imm` (48 81 c4 imm32):
+#   5 cuLaunchCooperativeKernel sites drop 4 stack words, no pad; 1 cuLaunchKernel drops 5 + 1 pad.
+# mutant <name> <red kind> <anchor in main.mind + parts> <replacement>.
+row	cuStreamBeginCapture_v2
+row	cuGraphInstantiateWithFlags
+row	cuMemcpyHtoDAsync_v2
+row	cuMemcpyDtoHAsync_v2
+row	cuEventDestroy_v2
+row	cuStreamDestroy_v2
+row	cuMemHostRegister_v2
+row	cuMemAllocHost_v2
+row	cuGraphAddKernelNode_v2
+row	cuGraphExecUpdate_v2
+row	cuMemsetD8_v2
+row	cuStreamGetCaptureInfo_v2
+row	cuDeviceGetAttribute
+row	cuStreamCreate
+row	cuStreamSynchronize
+row	cuMemFreeHost
+row	cuEventCreate
+row	cuEventRecord
+row	cuEventSynchronize
+row	cuEventElapsedTime
+row	cuFuncGetAttribute
+row	cuOccupancyMaxActiveBlocksPerMultiprocessor
+row	cuLaunchCooperativeKernel
+row	cuGraphDestroy
+row	cuGraphExecDestroy
+row	cuGraphLaunch
+row	cuMemcpy2D_v2
+row	cuMemcpy2DAsync_v2
+row	cuMemHostAlloc
+row	cuMemHostGetDevicePointer_v2
+row	cuStreamEndCapture
+row	cuStreamQuery
+row	cuEventQuery
+admit	0 as u32
+admit	255 as u32
+admit	(255 & v) as u32
+admit	((v & 15)) as u32
+refuse	256 as u32
+refuse	v as u32
+refuse	(v & 256) as u32
+refuse	((v & 255) as i32) as u32
+refuse	(0 - 1) as u32
+tail	32	5
+tail	48	1
+unknown	cuMemAllocManaged
+unknown	cuGetProcAddress
+unknown	cuGetProcAddress_v2
+unknown	cuStreamSynchronize_ptsz
+unknown	cuMemcpy2D_v2_ptds
+unknown	cuGraphInstantiate
+unknown	cuMemsetD8
+mutant	long-name-lookup	refused	__mind_load_i8(nbx_row_name(out) + i)	__mind_load_i8(out + 8 + i)
+mutant	long-name-strtab	run_rows	nbx_ztext(s, nbx_row_name(rows + i * 80),	nbx_ztext(s, rows + i * 80 + 8,
+mutant	row-scan-at-64	refused	    while i < 128 {\n        found = nbx_find_step(	    while i < 64 {\n        found = nbx_find_step(
+mutant	byte-fence-open	builds_refused	if nbcu_byte_arg(buf, a) == 0 {	if nbcu_byte_arg(buf, a) == 2 {
+mutant	even-count-pad	run_coop	    if k - (k / 2) * 2 == 0 {\n        return code;\n    }	    if k - (k / 2) * 2 == 1 {\n        return code;\n    }

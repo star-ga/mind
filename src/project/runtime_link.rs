@@ -14,14 +14,14 @@
 //! Native CPU objects are self-contained with the bundled public runtime-support
 //! shim. Every other backend retains the installed-runtime requirement.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
 use crate::diagnostics::capability::FallbackReason;
 use crate::diagnostics::refusal::CodedRefusal;
 
-pub(super) struct RuntimeLink {
+pub(crate) struct RuntimeLink {
     pub dir: PathBuf,
     pub file_name: &'static str,
     pub link_name: &'static str,
@@ -172,9 +172,37 @@ fn runtime_names(backend: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Fallback to a launcher shell script when native linking fails. This is the
+/// executable-path analogue of the cdylib false-green guarded by #306: the
+/// emitted artifact is a `#!/bin/bash` launcher that defers to the installed
+/// MIND runtime, NOT a natively-linked binary. Reporting "Finished" with a
+/// launcher in place of a real binary — silently — is exactly the kind of
+/// false-green that must never happen. Surface it: name the artifact for what
+/// it is and show why the native link failed, so a degraded build cannot pass
+/// for a clean one.
+pub(super) fn warn_launcher(output: &Path, link_result: Result<()>) {
+    let link_err = link_result
+        .err()
+        .map(|e| {
+            e.to_string()
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("native link failed")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_else(|| "native link failed".to_string());
+    eprintln!(
+        "[WARN] {}: native link failed — emitting a launcher script that requires the \
+         installed MIND runtime, not a native binary ({link_err})",
+        output.display()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn only_explicit_cpu_uses_the_public_shim_only_policy() {
@@ -184,5 +212,31 @@ mod tests {
         ] {
             assert!(installed_runtime_required(backend), "{backend}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_launcher_reads_the_root_the_build_locked() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = super::super::build_lock::temporary_manifest("locked", "src/main.mind");
+        fs::write(root.path().join("Mind.toml"), manifest).unwrap();
+        let out = root.path().join("launcher");
+        let runtime = RuntimeLink {
+            dir: root.path().to_path_buf(),
+            file_name: "libmind_cuda.so",
+            link_name: "mind_cuda",
+        };
+        super::super::write_launcher(&out, "cuda", &runtime, root.path()).unwrap();
+        let script = fs::read_to_string(&out).unwrap();
+        let entry = root.path().join("src/main.mind");
+        assert!(script.contains("# locked v0.1.0"), "{script}");
+        assert!(
+            script.contains(&format!("MIND_ROOT=\"{}\"", root.path().display())),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("MIND_ENTRY=\"{}\"", entry.display())),
+            "{script}"
+        );
     }
 }

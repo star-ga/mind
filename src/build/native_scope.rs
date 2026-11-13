@@ -550,6 +550,50 @@ fn local_import_segments(raw: &[String]) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Refuse every `import std.<m>` / `use std.<m>` naming a module outside the
+/// native seed, used or not (`lane.import.not_seed`).
+///
+/// `local_import_segments` drops `std` paths because the seed blob satisfies
+/// them, which is true only for the manifest's `seed` rows. A non-seed module
+/// is not in the image the native compiler receives: before this check an
+/// unused import was silently nothing and a used one refused as an unrelated
+/// `lane.call.unknown` at the first call. The import is refused at its own
+/// line instead, naming the module, whether or not anything calls it.
+#[cfg(feature = "std-surface")]
+pub(crate) fn refuse_non_seed_std_imports(
+    ast: &crate::ast::Module,
+    text: &str,
+    path: &str,
+    seed: &[&str],
+) -> Result<(), String> {
+    let mut found = Vec::new();
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            let crate::ast::Node::Import {
+                path: segs, span, ..
+            } = node
+            else {
+                return;
+            };
+            let module = segs.get(1).map_or("", String::as_str);
+            if segs.first().map(String::as_str) == Some("std") && !seed.contains(&module) {
+                let line = text[..span.start().min(text.len())].matches('\n').count() + 1;
+                found.push(format!("`std.{}` (line {line})", segs[1..].join(".")));
+            }
+        });
+    }
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "`{path}`: import(s) {} name std module(s) outside the native seed, so the native \
+         lane has nothing to bind them to. Register the module as a `seed` row in \
+         examples/mindc_mind/testdata/stdlib_manifest.txt (a reseed event) or rerun with \
+         `--backend mlir`. No artifact written. (lane.import.not_seed)",
+        found.join(", ")
+    ))
+}
+
 /// Type-check the CAPTURED sources against the resolver's own installed scope.
 ///
 /// A seam, deliberately: parameterised by the captured set so a test can hand it

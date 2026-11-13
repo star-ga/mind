@@ -79,6 +79,17 @@ and will not change in incompatible ways without a major-version bump:
   refuse to compile until they handle the new variant; this is
   intentional per the conditionally-stable contract.
 
+- **mic@3 `OP_EXTERN_BIND` (0x2C)** — the binding of an `ExternFnDecl` (spec
+  "Extern bindings"). The record comes directly after the declaration record
+  and counts as one record of its stream. Fields: the string index of the
+  declaration name, a kind byte (0x01 library, 0x02 address), then for kind
+  0x01 the string index of the library name. A base binding writes no record,
+  so a module with no `bind` clause keeps its bytes and its `trace_hash`. The
+  version byte does not change. A reader that does not know the opcode refuses
+  the artifact. The parser refuses kind 0x00, an unknown kind, a record that is
+  not directly after its base declaration, and a second record. The v0x04 draft
+  writer refuses the record.
+
 ## What is experimental
 
 - The unreleased canonical `0x04` binary revision preserves supplied semantic

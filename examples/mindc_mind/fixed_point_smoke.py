@@ -28,6 +28,9 @@ import ctypes
 import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+from _selfhost_sources import compiler_library  # noqa: E402  (main.mind + parts: the ONE compiler unit)
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -35,7 +38,7 @@ import sys
 _HERE       = pathlib.Path(__file__).parent.resolve()
 COMBINED_SO = _HERE / "libmindc_mind.so"
 SOURCE_PATH = _HERE / "main.mind"
-ORACLE_PATH = pathlib.Path("/tmp/oracle_pure.mlir")
+ORACLE_PATH = pathlib.Path(__import__("os").environ.get("MIND_FIXED_POINT_ORACLE", "/tmp/oracle_pure.mlir"))
 
 # ---------------------------------------------------------------------------
 # Low-level heap helpers (same as bootstrap_smoke.py)
@@ -236,7 +239,7 @@ def run_fixed_point(
           f"{oracle_bytes.count(b'%')} SSA values)")
 
     # Load source
-    source_bytes = source_path.read_bytes()
+    source_bytes = compiler_library(source_path.read_bytes())
     print(f"Source:  {source_path.name} ({len(source_bytes)} bytes, "
           f"{source_bytes.count(b'\n')} lines)")
 

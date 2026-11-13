@@ -136,3 +136,130 @@ fn check_node(node: &Node, src: &str, file: Option<&str>, errs: &mut Vec<Pretty>
         check_node(child, src, file, errs);
     }
 }
+
+/// E2041: a call the MLIR backend cannot lower, refused by name. Compiled
+/// only with `mlir-build`: the refusal belongs to the MLIR route.
+///
+/// The set is read off the registry, never a second list: a `__mind_*` row
+/// registered in some profile that the Rust/MLIR profile does not select (the
+/// native-only AVX2 ymm, CPU-feature, timing and shared-memory rows). Such a
+/// call used to type-check, lower to an external call and fail in the linker
+/// with an undefined reference. `pipeline` records these with the runnable
+/// blockers, so every MLIR build refuses before it lowers or links. `mindc
+/// check`, `--emit-mic3` and `--emit-evidence` stay backend-neutral: the native
+/// backend lowers these rows.
+#[cfg(feature = "mlir-build")]
+pub(crate) const MLIR_UNLOWERED_INTRINSIC_CODE: &str = "E2041";
+
+/// Report E2041 at every call, in any expression position, whose callee has no
+/// MLIR lowering.
+#[cfg(feature = "mlir-build")]
+pub(crate) fn mlir_unlowered_intrinsic_calls(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+) -> Vec<Pretty> {
+    let mut out = Vec::new();
+    for item in &module.items {
+        super::nerve_walk::walk(item, &mut |node| {
+            if let Node::Call { callee, span, .. } = node
+                && mlir_has_no_lowering(callee)
+            {
+                out.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "intrinsic `{callee}` has no MLIR lowering: it is a native-backend row. \
+                         Build with `--backend native`, or remove the call"
+                    ),
+                    *span,
+                    MLIR_UNLOWERED_INTRINSIC_CODE,
+                ));
+            }
+        });
+    }
+    out
+}
+
+/// A registered intrinsic that the Rust/MLIR profile does not select.
+#[cfg(feature = "mlir-build")]
+fn mlir_has_no_lowering(callee: &str) -> bool {
+    crate::intrinsics::registered_intrinsic_arity(callee).is_some()
+        && std_surface_intrinsic_arity(callee).is_none()
+}
+
+#[cfg(all(test, feature = "mlir-build"))]
+mod mlir_unlowered_tests {
+    use super::*;
+    use crate::intrinsics::{IntrinsicProfile, STD_SURFACE_INTRINSICS};
+
+    /// The E2041 diagnostics for one call to `name` with `arity` zero arguments.
+    fn refusals(name: &str, arity: usize) -> Vec<Pretty> {
+        let args = vec!["0"; arity].join(", ");
+        let src =
+            format!("fn main() -> i64 {{\n    let r: i64 = {name}({args});\n    return 0;\n}}\n");
+        let module = crate::parser::parse(&src).expect("fixture parses");
+        mlir_unlowered_intrinsic_calls(&module, &src, Some("p.mind"))
+    }
+
+    /// E2041 refuses exactly the registry rows without the Rust/MLIR profile,
+    /// each by name. The expected set is read off the registry, never a literal
+    /// count, so a row registered later is covered the day it lands.
+    #[test]
+    fn every_native_only_row_is_refused_by_name_and_no_mlir_row_is() {
+        let mut expected = Vec::new();
+        let mut refused = Vec::new();
+        for spec in STD_SURFACE_INTRINSICS {
+            let mlir = spec
+                .contract
+                .is_none_or(|c| c.profiles.contains(&IntrinsicProfile::RustMlir));
+            if !mlir {
+                expected.push(spec.physical_name);
+            }
+            let diags = refusals(spec.physical_name, spec.arity);
+            match diags.as_slice() {
+                [] => {}
+                [d] => {
+                    assert_eq!(d.code, MLIR_UNLOWERED_INTRINSIC_CODE);
+                    assert!(
+                        d.message.contains(&format!("`{}`", spec.physical_name)),
+                        "{}",
+                        d.message
+                    );
+                    refused.push(spec.physical_name);
+                }
+                many => panic!("{}: {} E2041 diagnostics", spec.physical_name, many.len()),
+            }
+        }
+        println!("E2041 refused rows ({}): {refused:?}", refused.len());
+        assert_eq!(
+            refused, expected,
+            "E2041 must refuse exactly the rows without the Rust/MLIR profile"
+        );
+        assert!(
+            !expected.is_empty(),
+            "no native-only row: the refusal leg ran on nothing"
+        );
+        for name in [
+            "__mind_ymm_vmovdqu_ld",
+            "__mind_vpaddd_i32x8",
+            "__mind_cpu_relax",
+        ] {
+            assert!(refused.contains(&name), "{name}");
+        }
+        for name in ["__mind_argc", "__mind_argv", "__mind_open"] {
+            assert!(refusals(name, 0).is_empty(), "{name} lowers on MLIR");
+        }
+    }
+
+    /// A call in a position the type inference skips (a `while` body) is
+    /// still refused.
+    #[test]
+    fn a_native_only_call_in_a_loop_body_is_refused() {
+        let src = "fn main() -> i64 {\n    let mut i: i64 = 0;\n    while i < 1 {\n        __mind_cpu_relax();\n        i = i + 1;\n    }\n    return 0;\n}\n";
+        let module = crate::parser::parse(src).expect("fixture parses");
+        let diags = mlir_unlowered_intrinsic_calls(&module, src, None);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("`__mind_cpu_relax`"));
+    }
+}

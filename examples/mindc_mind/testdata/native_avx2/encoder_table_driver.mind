@@ -1,0 +1,249 @@
+// Copyright 2026 STARGA Inc.
+// Encoder-table driver. The harness composes this file after
+// nb_emit_core.mind, nb_cpu_features.mind, nb_x86_vex.mind and nb_x86_ymm_epi.mind and compiles the
+// unit with the compiler under test, so the bytes below are produced by the
+// compiler's own emitter code. It writes one record per row of
+// native_avx2_encoder_table.tsv, in file order: [length byte][instruction bytes].
+
+// Append piece (n bytes from i) to out.
+fn cat(out: String, piece: String, i: i64) -> String {
+    if i >= string_len(piece) {
+        return out;
+    }
+    cat(string_push_byte(out, string_get_byte(piece, i)), piece, i + 1)
+}
+
+fn rec(out: String, piece: String) -> String {
+    cat(string_push_byte(out, string_len(piece)), piece, 0)
+}
+
+// fixed: rows (the Layer-A building blocks on ymm15).
+fn fixed(out: String) -> String {
+    let e: String = string_new();
+    let o1: String = rec(rec(rec(out, nbv_ld15(e, 0)), nbv_ld15(e, 1)), nbv_ld15(e, 2));
+    let o2: String = rec(rec(rec(o1, nbv_op15(e, 254)), nbv_op15(e, 250)), nbv_op15(e, 252));
+    let o3: String = rec(rec(rec(o2, nbv_op15(e, 212)), nbv_op15(e, 251)), nbv_shuf15(e));
+    rec(rec(rec(o3, nbv_st15(e)), nbv_vzeroupper(e)), nbv_vzeroall(e))
+}
+
+// bank: memory forms, op -> base -> disp -> reg.
+fn base_of(i: i64) -> i64 {
+    if i == 3 {
+        return 6;
+    }
+    if i == 4 {
+        return 3;
+    }
+    if i == 5 {
+        return 4;
+    }
+    if i == 6 {
+        return 5;
+    }
+    if i == 9 {
+        return 12;
+    }
+    if i == 10 {
+        return 13;
+    }
+    if i == 11 {
+        return 15;
+    }
+    i
+}
+
+fn disp_of(i: i64) -> i64 {
+    if i == 1 {
+        return 8;
+    }
+    if i == 2 {
+        return 0 - 4;
+    }
+    if i == 3 {
+        return 4660;
+    }
+    if i == 4 {
+        return 0 - 4660;
+    }
+    if i == 5 {
+        return 127;
+    }
+    if i == 6 {
+        return 0 - 128;
+    }
+    0
+}
+
+// Op k (0..7): vpaddd vpsubd vpaddb vpaddq vpsubq vpshufb (NDS = reg) then
+// vmovdqu load / store (no NDS, F3).
+fn mform(k: i64, r: i64, b: i64, d: i64) -> String {
+    let e: String = string_new();
+    if k == 5 {
+        return nbv_op_rm(e, 2, 0, 1, 0, r, r, b, d);
+    }
+    if k == 6 {
+        return nbv_op_rm(e, 1, 111, 2, 0, r, 0, b, d);
+    }
+    if k == 7 {
+        return nbv_op_rm(e, 1, 127, 2, 0, r, 0, b, d);
+    }
+    nbv_op_rm(e, 1, opc_of(k), 1, 0, r, r, b, d)
+}
+
+fn opc_of(k: i64) -> i64 {
+    if k == 1 {
+        return 250;
+    }
+    if k == 2 {
+        return 252;
+    }
+    if k == 3 {
+        return 212;
+    }
+    if k == 4 {
+        return 251;
+    }
+    254
+}
+
+fn mregs(out: String, k: i64, b: i64, d: i64, ri: i64) -> String {
+    if ri >= 3 {
+        return out;
+    }
+    let r: i64 = if ri == 0 {
+        0
+    } else {
+        ri * 7 + 1
+    };
+    mregs(rec(out, mform(k, r, b, d)), k, b, d, ri + 1)
+}
+
+fn mdisps(out: String, k: i64, bi: i64, di: i64) -> String {
+    if di >= 7 {
+        return out;
+    }
+    mdisps(mregs(out, k, base_of(bi), disp_of(di), 0), k, bi, di + 1)
+}
+
+fn mbases(out: String, k: i64, bi: i64) -> String {
+    if bi >= 12 {
+        return out;
+    }
+    mbases(mdisps(out, k, bi, 0), k, bi + 1)
+}
+
+fn mops(out: String, k: i64) -> String {
+    if k >= 8 {
+        return out;
+    }
+    mops(mbases(out, k, 0), k + 1)
+}
+
+// bank: register forms (k 0..5 R-01b, 6..11 R-02e), op -> d (0 1 7 8 14 15) -> a (0 7 15) -> b (0 7 8 15).
+fn d_of(i: i64) -> i64 {
+    if i == 2 {
+        return 7;
+    }
+    if i == 3 {
+        return 8;
+    }
+    if i == 4 {
+        return 14;
+    }
+    if i == 5 {
+        return 15;
+    }
+    i
+}
+
+fn a_of(i: i64) -> i64 {
+    if i == 0 {
+        return 0;
+    }
+    i * 8 - 1
+}
+
+fn b_of(i: i64) -> i64 {
+    if i == 3 {
+        return 15;
+    }
+    if i == 0 {
+        return 0;
+    }
+    i + 6
+}
+
+// R-02e register rows, k 6..11 = kinds 94..99, through the bank's own emitter.
+fn rform(k: i64, d: i64, a: i64, b: i64) -> String {
+    if k >= 6 {
+        return nbbe_emit_op(string_new(), k + 88, rops_cell(d, a, b));
+    }
+    if k == 5 {
+        return nbv_op_rrr(string_new(), 2, 0, 1, 0, d, a, b);
+    }
+    nbv_op_rrr(string_new(), 1, opc_of(k), 1, 0, d, a, b)
+}
+
+fn rops_cell(d: i64, a: i64, b: i64) -> i64 {
+    let ops: i64 = __mind_alloc(32);
+    __mind_store_i64(ops, d);
+    __mind_store_i64(ops + 8, a);
+    __mind_store_i64(ops + 16, b);
+    __mind_store_i64(ops + 24, 0);
+    ops
+}
+
+fn rbs(out: String, k: i64, d: i64, a: i64, bi: i64) -> String {
+    if bi >= 4 {
+        return out;
+    }
+    rbs(rec(out, rform(k, d, a, b_of(bi))), k, d, a, bi + 1)
+}
+
+fn ras(out: String, k: i64, d: i64, ai: i64) -> String {
+    if ai >= 3 {
+        return out;
+    }
+    ras(rbs(out, k, d, a_of(ai), 0), k, d, ai + 1)
+}
+
+fn rds(out: String, k: i64, di: i64) -> String {
+    if di >= 6 {
+        return out;
+    }
+    rds(ras(out, k, d_of(di), 0), k, di + 1)
+}
+
+fn rops(out: String, k: i64) -> String {
+    if k >= 12 {
+        return out;
+    }
+    rops(rds(out, k, 0), k + 1)
+}
+
+// seq: rows: the complete emitted sequences. Layer-A kinds 60..66 with argument
+// slots 100, 101, 102 and result slot 103 (disp32 forms); kind 67 into slot 582
+// (disp -4664); the ISA guard.
+fn seqs(out: String, kind: i64, ids: i64) -> String {
+    if kind > 67 {
+        return rec(out, nbc_isa_guard(string_new()));
+    }
+    seqs(rec(out, seq_body(kind, ids)), kind + 1, ids)
+}
+
+fn seq_body(kind: i64, ids: i64) -> String {
+    if kind == 67 {
+        return nbc_emit(string_new(), kind, ids, 582, 0);
+    }
+    nbv_emit(string_new(), kind, ids, 103, 0)
+}
+
+fn main() -> i64 {
+    let ids: i64 = __mind_alloc(24);
+    __mind_store_i64(ids, 100);
+    __mind_store_i64(ids + 8, 101);
+    __mind_store_i64(ids + 16, 102);
+    let out: String = seqs(rops(mops(fixed(string_new()), 0), 0), 60, ids);
+    __mind_write(1, string_addr(out), string_len(out), 0 - 1);
+    0
+}

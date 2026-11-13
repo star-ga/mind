@@ -1,0 +1,3 @@
+// lane.extern.unknown_symbol: a name outside the closed table.
+extern "C" { fn nosuchsymbol(x: i32) -> i32; }
+fn main() -> i64 { return 0; }

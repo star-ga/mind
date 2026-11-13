@@ -111,7 +111,7 @@ pub fn env() -> Option<&'static Env> {
         .expect("write Mind.toml");
         std::fs::write(proj.join("main.mind"), src).expect("write main.mind");
         let out = Command::new(crate::common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(&proj)
             .output()
             .expect("spawn mindc build");

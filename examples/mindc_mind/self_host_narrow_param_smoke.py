@@ -27,10 +27,10 @@ scan, matching the full reach of the Sub-step C carry/merge machinery
 (nb_if_carry_promote + nb_while_live_writes). The if-wrapped inner while (formerly kept
 fail-closed pre-Sub-step-C, when it dropped the carry got=2 want=6) now emits + runs
 correct at every width incl. two's-complement overflow (asserted in IF_WRAPPED_WHILE
-below), as do sibling-nested and both-branch writes (XN_SIBLING_NESTED_WRITE). Only a
-narrow write on a `break`/`continue` exit edge stays fail-closed — via the SEPARATE
-nb_fns_branch_exit_carry guard (REFUSE_NARROW_EXIT) — so no genuinely-broken shape was
-downgraded to a silent miscompile.
+below), as do sibling-nested and both-branch writes (XN_SIBLING_NESTED_WRITE). A
+narrow write on a `break`/`continue` exit edge must retain its wrapped live value.
+The merged compiler includes SSA exit-edge copies and per-function HOME routing;
+NARROW_EXIT asserts the result independently of the selected lowering.
 
 F2 FIXED: a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested
 loops mutating an OUTER carried var) now lowers CORRECTLY. nb_while_carry descends
@@ -47,12 +47,13 @@ triple-nest 2x2x2=8, i8/i16/i32/i64 + overflow wrap). The bug was width-independ
 every width. Body-local `let mut` counters (bound after the outer loop) are NOT
 promoted (they reset each iteration), matching lower.rs's `env.contains_key` guard.
 
-One sub-shape remains genuinely broken and MUST still fail closed (empty ELF):
-  * a narrow read-only param CARRIED ACROSS a top-level loop then returned — the
-    narrow-param loop-carry machinery only records a REASSIGNED carry slot; a
-    read-only narrow param read post-loop (with or without a trailing cast/binop)
-    is not yet threaded. Independent of the cast: even `return x as i64` (no binop)
-    is refused when a loop is present. Refused here (loud, no silent miscompile).
+The narrow read-only shape formerly refused by the module-level pre-gate now
+has per-function HOME support. Together with the merged exit-edge handling,
+these shapes must emit and run to their exact references:
+  * a narrow read-only param read after a top-level loop (READONLY_CARRY, incl. a
+    sign-discriminating entry wrap);
+  * a narrow write on a break/continue exit edge (NARROW_EXIT, incl. an overflow on
+    the edge).
 
 The `(x as i64) + c` CAST-IN-BINOP lowering itself is now FIXED: parse_postfix_rest
 consumes `as TYPE` in postfix position so the cast binds tighter than any infix op
@@ -64,8 +65,9 @@ widened into +/* binops with NO loop (the shape the bug reproduces on): emit + r
 
 Asserts: (1) the top-level-carry shapes EMIT and run to the Python-reference exit
 (incl. two's-complement overflow wrap); (2) the now-fixed no-loop cast-in-binop
-shapes EMIT and run correct; (3) the two broken sub-shapes emit an EMPTY ELF
-(refused); (4) i64 + narrow-no-loop controls still emit + run (no over-rejection).
+shapes EMIT and run correct; (3) the HOME-routed read-only and exit-edge shapes
+emit and run correct; (4) i64 + narrow-no-loop controls still emit + run (no
+over-rejection).
 Guarded on >=1 of each so it cannot pass vacuously.
 
 Env: MINDC_SO (prebuilt .so) or MINDC_BIN (default mindc).
@@ -246,11 +248,33 @@ IF_IN_LOOP_CARRY = [
     ("i64 param while{ if(taken){ x+=1 } } x3, f(10) -> 13 (I64 gap Finding #2 FIXED)", 13,
      "fn f(x: i64) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
-REFUSE = [
-    ("i8 read-only param carried across a top-level loop then (x as i64)+c "
-     "(narrow read-only loop-carry gap — NOT the cast, which now composes; "
-     "even `return x as i64` w/ a loop is refused)",
+# NOW PERMITTED + RUN CORRECT (HOME lowering): a narrow READ-ONLY param read after a
+# top-level loop. The SSA path only threads a REASSIGNED narrow carry slot, so the
+# nb_fns_reassign_narrow_param pre-gate refused the whole module (0B). That pre-gate is
+# per function since the HOME lowering (hm_fn_pregate routes the function to
+# nb_lower_fn_home, where the param lives in its own frame slot, wrapped once at
+# entry), so these MUST emit and run to the independent Python reference. The second
+# case is sign-discriminating: f(200) wraps to -56 at the i8 boundary, so `x < 0`
+# holds only when the entry wrap is applied.
+def _ro_ref(x0: int, iters: int, bits: int) -> int:
+    x = wrap(x0, bits)
+    c = 0
+    while c < iters:
+        c += 1
+    return x + c
+
+
+def _ro_sign_ref(x0: int, iters: int, bits: int) -> int:
+    x = wrap(x0, bits)
+    c = iters
+    return 100 + c if x < 0 else c
+
+
+READONLY_CARRY = [
+    ("i8 read-only param carried across a top-level loop then (x as i64)+c, f(10)", _ro_ref(10, 3, 8),
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        c = c + 1;\n    }\n    return (x as i64) + c;\n}\nfn main() -> i64 { return f(10); }\n"),
+    ("i8 read-only param after a loop, sign-discriminate f(200) -> -56 < 0", _ro_sign_ref(200, 3, 8),
+     "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        c = c + 1;\n    }\n    if x < 0 { return 100 + c; }\n    return c;\n}\nfn main() -> i64 { return f(200); }\n"),
 ]
 # NOW PERMITTED + RUN CORRECT (this change — narrow if-wrapped-while relaxation): a narrow
 # param reassigned by a while WRAPPED in an `if` INSIDE a loop body
@@ -299,19 +323,60 @@ XN_SIBLING_NESTED_WRITE = [
     ("i8 while{ if{ x+=1 } else { if{ while{ x+=1 } } } } — else writes x via if>while (deep), 4it -> 6", 6,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { let mut d: i64 = 0; while d < 2 { x = x + 1; d = d + 1; } } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
 ]
-# RETAINED FAIL-CLOSED (regression guard): a narrow param write on a `break`/`continue`
-# EXIT edge inside an if-branch bypasses the branch's merge-phi stores when the exit is
-# taken, silently dropping the write (a running ELF with a WRONG value). Although the
-# narrow param IS reassigned (so nb_region_while_carries_narrow permits it), the SEPARATE
-# nb_fns_branch_exit_carry guard refuses the whole module 0B. MUST emit an EMPTY ELF —
-# proves the relaxation did NOT downgrade this genuinely-broken shape to a silent miscompile.
-REFUSE_NARROW_EXIT = [
-    ("i8 break-after-write in branch: while{ if a==2 {x+=100; break;} else {x+=1} }",
-     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i8 continue-after-write in branch: while{ a+=1; if a==3 {x+=50; continue;} x+=1 }",
-     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        if a == 3 { x = x + 50; continue; }\n        x = x + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i16 break-after-write in branch (mirror at wider width)",
-     "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+# A narrow write on a `break`/`continue` exit edge must survive with its width wrap.
+# Both parents' distinct cases are retained, including the older f(120) fixture
+# and the sign-discriminating overflow cases. The reference wraps every assignment;
+# no selected lowering path, empty emit, or wrong value can waive the expectation.
+def _exit_ref(x0: int, bits: int, kind: str, big: int) -> int:
+    """Reference for the break / continue write-on-exit-edge shapes (wrap per assign)."""
+    x = wrap(x0, bits)
+    a = 0
+    if kind == "break":
+        while a < 10:
+            if a == 2:
+                x = wrap(x + big, bits)
+                break
+            x = wrap(x + 1, bits)
+            a += 1
+        return x
+    while a < 5:
+        a += 1
+        if a == 3:
+            x = wrap(x + big, bits)
+            continue
+        x = wrap(x + 1, bits)
+    return x
+
+
+def _exit_sign(x0: int, bits: int, big: int) -> int:
+    return 111 if _exit_ref(x0, bits, "break", big) < 0 else 99
+
+
+_BRK = ("fn f(x: {t}) -> i64 {{\n    let mut a: i64 = 0;\n    while a < 10 {{\n        if a == 2 {{ "
+        "x = x + {big}; break; }} else {{ x = x + 1; }}\n        a = a + 1;\n    }}\n    return x as i64;\n}}\n"
+        "fn main() -> i64 {{ return f({x0}); }}\n")
+_CONT = ("fn f(x: {t}) -> i64 {{\n    let mut a: i64 = 0;\n    while a < 5 {{\n        a = a + 1;\n        "
+         "if a == 3 {{ x = x + {big}; continue; }}\n        x = x + 1;\n    }}\n    return x as i64;\n}}\n"
+         "fn main() -> i64 {{ return f({x0}); }}\n")
+_BRK_SIGN = ("fn f(x: {t}) -> i64 {{\n    let mut a: i64 = 0;\n    while a < 10 {{\n        if a == 2 {{ "
+             "x = x + {big}; break; }} else {{ x = x + 1; }}\n        a = a + 1;\n    }}\n"
+             "    if x < 0 {{ return 111; }}\n    return 99;\n}}\nfn main() -> i64 {{ return f({x0}); }}\n")
+NARROW_EXIT = [
+    ("i8 break-after-write in branch: while{ if a==2 {x+=100; break;} else {x+=1} } f(0)",
+     _exit_ref(0, 8, "break", 100), _BRK.format(t="i8", big=100, x0=0)),
+    ("i8 continue-after-write in branch: while{ a+=1; if a==3 {x+=50; continue;} x+=1 } f(0)",
+     _exit_ref(0, 8, "continue", 50), _CONT.format(t="i8", big=50, x0=0)),
+    ("i16 break-after-write in branch (mirror at wider width) f(0)",
+     _exit_ref(0, 16, "break", 100), _BRK.format(t="i16", big=100, x0=0)),
+    # Preserve the other merge parent's distinct f(120) overflow fixture.
+    ("i8 break-after-OVERFLOWING-write: f(120) -> 122 + 100 wraps before the break",
+     _exit_ref(120, 8, "break", 100), _BRK.format(t="i8", big=100, x0=120)),
+    ("i8 break-after-write OVERFLOW on the exit edge, sign-discriminate f(40) +100",
+     _exit_sign(40, 8, 100), _BRK_SIGN.format(t="i8", big=100, x0=40)),
+    ("i8 continue-after-write OVERFLOW on the exit edge f(30) +100",
+     _exit_ref(30, 8, "continue", 100), _CONT.format(t="i8", big=100, x0=30)),
+    ("i16 break-after-write OVERFLOW on the exit edge, sign-discriminate f(5000) +30000",
+     _exit_sign(5000, 16, 30000), _BRK_SIGN.format(t="i16", big=30000, x0=5000)),
 ]
 # SUB-STEP B FIXED the single-branch part of Finding #2: i64/narrow `while{ if{ x+=1 } }`
 # now carries correct (returns 3, asserted in IF_IN_LOOP_CARRY above). Two related shapes
@@ -337,8 +402,8 @@ I64_IF_IN_WHILE_GAP_NOTE = (
     "nested regions. Gated permanently by self_host_if_region_carry_smoke.py (20 loop-carry + "
     "6 straight-line shapes vs an independent Python reference). Narrow (i8/i16/i32) "
     "if-wrapped-while shapes now ALSO emit + run correct (this change relaxed the "
-    "scan-based permit guard refuse->run via nb_region_reassigns_narrow; only a narrow "
-    "write on a break/continue exit edge stays fail-closed via a separate guard)."
+    "scan-based permit guard refuse->run via nb_region_reassigns_narrow); a narrow "
+    "write on a break/continue exit edge must retain its wrapped live value."
 )
 
 # Regression battery for the STANDALONE both-branch-same-var if-merge else-read fix
@@ -426,9 +491,9 @@ def main() -> int:
     if_in_loop_ok = 0
     both_branch_ok = 0
     xn_ok = 0
-    refused = 0
+    readonly_ok = 0
     if_wrapped_ok = 0
-    exit_refused = 0
+    exit_ok = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -537,13 +602,19 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  var carried by if-in-loop (Sub-step B): {label} "
                   f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
-        for label, src in REFUSE:
+        for label, exp, src in READONLY_CARRY:
             elf = emit(src)
-            ok = len(elf) == 0
+            if not elf:
+                print(f"  FAIL  narrow read-only carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
             all_ok = all_ok and ok
-            refused += 1 if ok else 0
-            print(f"  {'PASS' if ok else 'FAIL'}  still-broken sub-shape refused: {label} "
-                  f"(emit {len(elf)}B, want 0 — fail-closed, NOT run)")
+            readonly_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow read-only param after a loop (HOME): {label} "
+                  f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
         for label, exp, src in IF_WRAPPED_WHILE:
             elf = emit(src)
@@ -573,14 +644,19 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  narrow sibling/both-branch write carry (now "
                   f"permitted): {label} -> exit {rc} (python-ref {exp} -> byte {want})")
 
-        for label, src in REFUSE_NARROW_EXIT:
+        for label, exp, src in NARROW_EXIT:
             elf = emit(src)
-            ok = len(elf) == 0
+            if not elf:
+                print(f"  FAIL  narrow write-on-exit-edge OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
             all_ok = all_ok and ok
-            exit_refused += 1 if ok else 0
-            print(f"  {'PASS' if ok else 'FAIL'}  narrow break/continue write-on-exit-edge "
-                  f"refused (separate branch-exit guard): {label} (emit {len(elf)}B, want 0 — "
-                  f"fail-closed, NOT run)")
+            exit_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow break/continue write-on-exit-edge: "
+                  f"{label} -> exit {rc} (python-ref {exp} -> byte {want})")
 
         for label, exp, src in BOTH_BRANCH_SAME_VAR:
             elf = emit(src)
@@ -631,8 +707,9 @@ def main() -> int:
     if if_in_loop_ok < len(IF_IN_LOOP_CARRY):
         print("FAIL: vacuous/incomplete (a Sub-step B if-in-loop carry did not run correct)")
         return 1
-    if refused < 1:
-        print("FAIL: vacuous (no broken sub-shape refused)")
+    if readonly_ok < len(READONLY_CARRY):
+        print("FAIL: a narrow read-only param read after a loop did not run correct "
+              "(the HOME lowering must keep the entry-wrapped param in its slot)")
         return 1
     if if_wrapped_ok < len(IF_WRAPPED_WHILE):
         print("FAIL: a narrow if-wrapped inner-while carry did not run correct "
@@ -648,10 +725,9 @@ def main() -> int:
         print("FAIL: a narrow sibling/both-branch-nested-write carry did not run correct "
               "(the sibling/both-branch write must merge + carry via nb_if_carry_promote)")
         return 1
-    if exit_refused < len(REFUSE_NARROW_EXIT):
-        print("FAIL: a narrow break/continue write-on-exit-edge shape was PERMITTED "
-              "(the separate nb_fns_branch_exit_carry guard must keep it fail-closed — "
-              "the relaxation must NOT downgrade it to a silent miscompile)")
+    if exit_ok < len(NARROW_EXIT):
+        print("FAIL: a narrow break/continue write-on-exit-edge shape did not run correct "
+              "(the write and its two's-complement wrap must survive the exit edge)")
         return 1
     if ran < 1:
         print("FAIL: vacuous (no i64 control ran)")
@@ -663,10 +739,10 @@ def main() -> int:
               "sibling-nested / both-branch writes all emit + run correct (two's-complement "
               "wrap incl. sign-discriminated overflow, no stale/hang) vs an independent "
               "Python ref; the widening cast-in-binop `(x as i64)+c` composes; NARROWING "
-              "casts `(y as i8/i16/i32)` truncate two's-complement (movsx) + compose; while "
-              "the narrow read-only loop-carry sub-shape stays fail-closed AND a narrow "
-              "write on a break/continue exit edge stays fail-closed (separate branch-exit "
-              "guard) — no silent miscompile — and i64 fns are unaffected")
+              "casts `(y as i8/i16/i32)` truncate two's-complement (movsx) + compose; the "
+              "narrow read-only param after a loop and a narrow write on a break/continue "
+              "exit edge (incl. overflow on the edge) run to the exact references "
+              "— no silent miscompile — and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1

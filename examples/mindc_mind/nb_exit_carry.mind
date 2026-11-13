@@ -1,0 +1,82 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The branch-exit-carry pre-gate of the native router (hm_fn_pregate in
+// main.mind): 1 iff some `if` branch, at any depth, both leaves the enclosing
+// loop and assigns a name. HOME routing keeps this classification; the SSA
+// exit-edge fix handles its admitted cases too. One walk makes three facts of
+// each statement list bottom-up, so it visits each statement once: an n-arm
+// else-if chain costs O(n). The walks it replaces re-walked every later arm at
+// each arm (O(n^2)) for every function the router saw.
+// PART RULE: intrinsics and other parts only. AST kinds (main.mind ast_*()):
+// 16 if, 20 while, 21 assign, 22 break, 23 continue.
+
+import nb_ast;
+
+// Facts of a statement list, summed as bits:
+//   1 = a `break`/`continue` that binds to the ENCLOSING loop: nested `if`
+//       branches count, nested `while` bodies do not (an exit there binds to
+//       that inner loop, and the outer merge stores still run after it).
+//   2 = a name assign (ast_assign) at any depth, `while` bodies included. Memory
+//       stores (index/deref assigns) are not phi-merged, so they do not count.
+//   4 = an exit-carry branch: an `if` branch with both 1 and 2, found in any
+//       nested `if` branch or `while` body (the check applies again in every
+//       nested loop context).
+pub fn nb_stmts_branch_exit_carry(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
+    if nbec_stmts(sa, sl, i, 0) >= 4 {
+        return 1;
+    }
+    0
+}
+
+// The facts of statements [i0, sl) joined to acc0. A loop: a statement list
+// takes no stack frame per statement (nb_stack_budget.mind).
+pub fn nbec_stmts(sa: i64, sl: i64, i0: i64, acc0: i64) -> i64 {
+    let mut i: i64 = i0;
+    let mut acc: i64 = acc0;
+    while i < sl {
+        acc = acc | nbec_stmt(__mind_load_i64(sa + i * 8));
+        i = i + 1;
+    }
+    acc
+}
+
+pub fn nbec_block(blk: i64) -> i64 {
+    nbec_stmts(ast_child0(blk), ast_aux(blk), 0, 0)
+}
+
+pub fn nbec_stmt(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == 22 {
+        return 1;
+    }
+    if k == 23 {
+        return 1;
+    }
+    if k == 21 {
+        return 2;
+    }
+    if k == 20 {
+        let w: i64 = nbec_block(ast_child1(stmt));
+        return w - w % 2;
+    }
+    if k == 16 {
+        let t: i64 = nbec_block(ast_child1(stmt));
+        let e: i64 = if ast_child2(stmt) == 0 {
+            0
+        } else {
+            nbec_block(ast_child2(stmt))
+        };
+        return t | e | nbec_carry(t) | nbec_carry(e);
+    }
+    0
+}
+
+// 4 when the facts of one branch hold both an exit (1) and an assign (2).
+pub fn nbec_carry(f: i64) -> i64 {
+    if f % 4 == 3 {
+        return 4;
+    }
+    0
+}

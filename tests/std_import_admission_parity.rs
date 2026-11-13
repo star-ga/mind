@@ -23,7 +23,7 @@
 //! * The refusal holds in every import order and next to an import whose
 //!   graph is several levels deep: admission is a membership test on the
 //!   build's link set, not the order of a walk.
-//! * A file fn named like a std helper (`ch`, reached through `std.hkdf` or
+//! * A file fn named like a std helper (`sha_ch`, reached through `std.hkdf` or
 //!   imported directly through `std.sha256`) or like a std function another
 //!   std module calls (`sha256`, called by `std.hkdf`) does not replace the
 //!   std definition inside std code: the build keeps the std one, and so does
@@ -65,10 +65,10 @@ fn score() -> i64 {
 "#;
 
 /// HMAC-SHA256('', '')[0] = 0xb6 = 182 through `import std.hkdf`, with a file
-/// fn named like std.sha256's private helper `ch`.
+/// fn named like std.sha256's private helper `sha_ch`.
 const HKDF_FILE_CH: &str = r#"import std.hkdf;
 
-fn ch(x: i64, y: i64, z: i64) -> i64 {
+fn sha_ch(x: i64, y: i64, z: i64) -> i64 {
     return 0;
 }
 
@@ -82,10 +82,10 @@ fn score() -> i64 {
 "#;
 
 /// SHA-256('')[0] = 0xe3 = 227 through a DIRECT `import std.sha256`, with a
-/// file fn named like its private helper `ch`.
+/// file fn named like its private helper `sha_ch`.
 const SHA256_FILE_CH: &str = r#"import std.sha256;
 
-fn ch(x: i64, y: i64, z: i64) -> i64 {
+fn sha_ch(x: i64, y: i64, z: i64) -> i64 {
     return 0;
 }
 
@@ -228,6 +228,7 @@ fn assert_native(stem: &str, program: &str, expected: i64) {
 }
 
 /// The native leg of a refused call: the build must fail to link `symbol`.
+/// An executable names a MIND function `mind.<name>` at the object level.
 fn assert_native_link_refuses(stem: &str, program: &str, symbol: &str) {
     let dir = native_project(stem, program);
     let built = common::run_build_captured(&common::require_mindc(), &dir, &[]);
@@ -243,7 +244,7 @@ fn assert_native_link_refuses(stem: &str, program: &str, symbol: &str) {
         return;
     }
     assert!(
-        log.contains(&format!("undefined reference to `{symbol}'")),
+        log.contains(&format!("undefined reference to `mind.{symbol}'")),
         "expected the linker's missing-symbol refusal for {symbol}:\n{log}"
     );
 }
@@ -256,7 +257,8 @@ fn assert_parity(stem: &str, program: &str, expected: i64) {
 /// pr365 explicit-import-readmits-unlinkable-ambient-std and pr346
 /// std-import-transitive-admits-unlinkable-ambient: `import std.toml` plus
 /// `vec_free` passed `mindc test` while `mindc build` failed with
-/// "undefined reference to `vec_free'".
+/// "undefined reference to `vec_free'" (`mind.vec_free` since the MIND
+/// object symbol namespace).
 #[test]
 fn an_import_reaching_std_vec_does_not_admit_its_unlinkable_fns() {
     assert_interpreter_refuses("toml_vec_free", TOML_VEC_FREE);
@@ -319,7 +321,7 @@ fn ambient_admission_does_not_depend_on_import_order_or_depth() {
 }
 
 /// pr365 transitive-std-helper-hijacked-by-file-fn: a file fn `ch` replaced
-/// std.sha256's private `ch` inside std code reached through std.hkdf, so
+/// std.sha256's private `ch` (now `sha_ch`) inside std code reached through std.hkdf, so
 /// `mindc test` computed a wrong HMAC while the build (internal linkage for
 /// the std helper) exits 182.
 #[test]

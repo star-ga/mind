@@ -1,0 +1,21 @@
+// N2: a typed `let` keeps its declared width in the trace note (Rust mask_narrow_let).
+// Let-chain shape, one let per narrow width; each init is an i64 value that wraps
+// at the type edge, so every wrap moves the exit code.
+// Independent value: i8 200 -> -56, u8 300 -> 44, i16 40000 -> -25536,
+// u16 65600 -> 64, i32 2^31 -> -2^31, u32 2^32 + 5 -> 5.
+// -56 + 44 + (-25536 + 25536) + 64 + (2^31 - 2^31) + 5 = 57.
+fn main() -> i64 {
+    let a: i64 = 200;
+    let x8: i8 = a as i8;
+    let b: i64 = 300;
+    let y8: u8 = b as u8;
+    let c: i64 = 40000;
+    let x16: i16 = c as i16;
+    let d: i64 = 65600;
+    let y16: u16 = d as u16;
+    let e: i64 = 2147483648;
+    let x32: i32 = e as i32;
+    let f: i64 = 4294967301;
+    let y32: u32 = f as u32;
+    x8 as i64 + y8 as i64 + (x16 as i64 + 25536) + y16 as i64 + (x32 as i64 + 2147483648) + y32 as i64
+}

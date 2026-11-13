@@ -1,0 +1,6 @@
+// Reaches __mind_cpu_features_v1 (Det::World): attested nondeterministic.
+// The determinism control replaces the call with a constant.
+fn main() -> i64 {
+    let features: i64 = __mind_cpu_features_v1();
+    return features & 1;
+}

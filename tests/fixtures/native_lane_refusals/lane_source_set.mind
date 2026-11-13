@@ -1,0 +1,2 @@
+// lane.source.set: a set literal.
+fn main() -> i64 { let s = {1, 2}; return 0; }

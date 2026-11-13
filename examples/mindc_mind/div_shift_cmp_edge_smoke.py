@@ -2,8 +2,10 @@
 C3 division / shift / compare EDGE-CORRECTNESS smoke (native-ELF, CPU-as-oracle).
 
 The signed C3 emitter arms already exist byte-for-byte in main.mind:
-  * div/mod : nb_div_guarded (cqo + idiv rcx) with the branchless zero-guard
-              (x/0 == 0, x%0 == 0) and the INT_MIN/-1 guard (no #DE trap).
+  * div/mod : nb_div_guarded (cqo + idiv rcx) behind the W2-trap guard:
+              x/0, x%0, INT_MIN/-1 and INT_MIN%-1 terminate the process with
+              exit status 79 (docs/errors.md, "Integer division trap"), never
+              a #DE / SIGFPE and never a made-up value.
   * shl/sar : inline in nb_arith_rax_mem (`shl rax,cl` D3 /4 ; `sar rax,cl` D3 /7
               -- `>>` is ARITHMETIC, sign-extending).
   * compare : nb_setcc_opcode + nb_cmp_rax_mem emit the SIGNED setcc family
@@ -11,15 +13,17 @@ The signed C3 emitter arms already exist byte-for-byte in main.mind:
 
 `mod_operator_smoke.py` only pins positive `17 % 5 == 2`. Nothing exercised the
 DEFINED EDGE VALUES at runtime: negative operands (x86 idiv truncates toward
-zero, remainder takes the sign of the dividend), INT_MIN / -1 (must NOT raise
-#DE / SIGFPE), x/0 and x%0 (guarded to 0), arithmetic vs logical `>>`, and each
+zero, remainder takes the sign of the dividend), INT_MIN / -1 and INT_MIN % -1
+(must exit 79, NOT raise #DE / SIGFPE), x/0 and x%0 (exit 79), INT_MIN / -2 and
+INT_MIN % 1 (ordinary results next to the trap edge), arithmetic vs logical `>>`, and each
 of the six signed compare predicates on negative operands (proving setl, not the
 unsigned setb -- (-3) < 5 is TRUE signed, FALSE unsigned).
 
 This adds NO emitter surface. It compiles each snippet with the pure-MIND
 native-ELF backend (selftest_native_elf_h), RUNS the emitted ELF, and asserts the
-process exit code equals the value MIND defines for that edge. A SIGFPE from an
-unguarded INT_MIN/-1 idiv shows up as a negative returncode and fails LOUD.
+process exit code equals the value MIND defines for that edge. Every program,
+including the trapping ones, runs in a child process. A SIGFPE from an unguarded
+INT_MIN/-1 idiv shows up as a negative returncode and fails LOUD.
 
 All operands are routed through `let` bindings so the value lands in a stack slot
 and the mem-operand `nb_arith_rax_mem` / `nb_div_guarded` / `nb_cmp_rax_mem` arm
@@ -74,17 +78,32 @@ CASES = [
      "-17/-5 == 3"),
     ("div_by_zero",
      "fn main() -> i64 { let z: i64 = 5 - 5; return 7 / z; }",
-     0,   # guarded: x/0 == 0
-     "7/0 == 0 (zero-guard, no trap)"),
+     79,  # W2-trap: x/0 exits 79
+     "7/0 traps (exit 79)"),
     ("mod_by_zero",
      "fn main() -> i64 { let z: i64 = 5 - 5; return 7 % z; }",
-     0,   # guarded: x%0 == 0
-     "7%0 == 0 (zero-guard, no trap)"),
+     79,  # W2-trap: x%0 exits 79
+     "7%0 traps (exit 79)"),
     ("intmin_div_neg1",
      "fn main() -> i64 { let a: i64 = 1 << 63; let b: i64 = 0 - 1; "
      "let q: i64 = a / b; if q == a { return 42; } return 7; }",
-     42,  # INT_MIN / -1 == INT_MIN (guard prevents #DE); compare proves it
-     "INT_MIN/-1 == INT_MIN, NO SIGFPE"),
+     79,  # W2-trap: INT_MIN / -1 exits 79 (not #DE, not a wrapped INT_MIN)
+     "INT_MIN/-1 traps (exit 79), NO SIGFPE"),
+    ("intmin_mod_neg1",
+     "fn main() -> i64 { let a: i64 = 1 << 63; let b: i64 = 0 - 1; "
+     "let r: i64 = a % b; if r == 0 { return 42; } return 7; }",
+     79,  # W2-trap: INT_MIN % -1 exits 79
+     "INT_MIN%-1 traps (exit 79), NO SIGFPE"),
+    ("intmin_div_neg2",
+     "fn main() -> i64 { let a: i64 = 1 << 63; let b: i64 = 0 - 2; "
+     "let q: i64 = a / b; if q == 1 << 62 { return 42; } return 7; }",
+     42,  # INT_MIN / -2 == 2^62, an ordinary division next to the trap edge
+     "INT_MIN/-2 == 2^62 (no trap)"),
+    ("intmin_mod_one",
+     "fn main() -> i64 { let a: i64 = 1 << 63; let b: i64 = 1; "
+     "let r: i64 = a % b; if r == 0 { return 42; } return 7; }",
+     42,  # INT_MIN % 1 == 0, no trap
+     "INT_MIN%1 == 0 (no trap)"),
     # --- shifts (shl D3/4, sar D3/7 -- arithmetic >>) ---
     ("shl_basic",
      "fn main() -> i64 { let a: i64 = 1; let n: i64 = 4; return a << n; }",
@@ -160,7 +179,7 @@ def main() -> int:
         print(f"SKIP: {SO} not built")
         return 0
     lib = ctypes.CDLL(str(SO))
-    print("[native C3 edge-correctness: div/mod guards, sar/shl, signed setcc]")
+    print("[native C3 edge-correctness: div/mod trap (exit 79), sar/shl, signed setcc]")
     rc = 0
     for name, src, want, why in CASES:
         rc |= run_case(lib, name, src, want, why)

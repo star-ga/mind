@@ -1,0 +1,57 @@
+// Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
+// A loop-carried var that shares its ValueId with another visible name READ in
+// the loop gets a fresh `x + 0` copy ahead of the While. Shapes: let-alias,
+// assign-alias, chained aliases (sorted multi-candidate), param alias, an alias
+// first bound inside an outer loop body (the copy lands in that body), and an
+// unread alias source (no copy).
+fn fza(x1: i64) -> i64 {
+    let mut v: i64 = x1;
+    let mut c1: i64 = 0;
+    while c1 < 3 {
+        v = (v + x1);
+        c1 = (c1 + 1);
+    }
+    return v;
+}
+fn main() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = a;
+    let mut d: i64 = b;
+    let mut c1: i64 = 0;
+    while c1 < 3 {
+        d = (d + 1);
+        b = (b + a);
+        c1 = (c1 + 1);
+    }
+    let mut f: i64 = 5;
+    let mut g: i64 = 0;
+    g = f;
+    let mut c2: i64 = 0;
+    while c2 < 4 {
+        g = (g * 2);
+        if g > f {
+            g = (g - f);
+        }
+        c2 = (c2 + 1);
+    }
+    let mut u: i64 = 7;
+    let mut w: i64 = u;
+    let mut c3: i64 = 0;
+    while c3 < 2 {
+        w = (w + 1);
+        c3 = (c3 + 1);
+    }
+    let mut c4: i64 = 0;
+    while c4 < 3 {
+        let mut e: i64 = c4;
+        a = c4;
+        let mut c5: i64 = 0;
+        while c5 < 2 {
+            e = (e + c4);
+            a = (a + 1);
+            c5 = (c5 + 1);
+        }
+        c4 = (c4 + 1);
+    }
+    return ((((b + d) + g) + (w + a)) + fza(4));
+}

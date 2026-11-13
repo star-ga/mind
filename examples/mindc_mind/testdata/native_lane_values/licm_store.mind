@@ -1,0 +1,20 @@
+// LICM slice 1 must NOT hoist across a store: `v` loads what the loop just stored
+// (a call, never Pure) and `q` reads `v`.
+fn m(n: i64) -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 5);
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(p, i * 7 + 1);
+        let v: i64 = __mind_load_i64(p);
+        let q: i64 = v + 2;
+        s = s + q;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    m(8) % 239
+}

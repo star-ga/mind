@@ -1,0 +1,399 @@
+// Copyright 2026 STARGA Inc.
+// x86 VEX ymm rows: Layer A (kinds 60-64), R-02 (65-66), the ISA-guard trigger, and
+// a general VEX.256 encoder over ymm0..15 (served to the register-bank part). Bytes
+// pinned by testdata/native_avx2/native_avx2_encoder_table.tsv (llvm-mc / objdump).
+// No bitwise operator here: the part stays parseable by the bare grammar.
+
+import std.string;
+import nb_emit_core;
+import nb_cpu_features;
+
+// ---- general VEX.256 encoder ------------------------------------------------
+// ModRM mod for [base+disp]: 0 = no disp, 1 = disp8, 2 = disp32. rbp/r13
+// (low3 == 5) have no no-disp form, so disp 0 takes disp8.
+pub fn nbv_mem_mod(base: i64, disp: i64) -> i64 {
+    if disp == 0 {
+        if base % 8 == 5 {
+            return 1;
+        }
+        return 0;
+    }
+    if disp >= 0 - 128 {
+        if disp <= 127 {
+            return 1;
+        }
+    }
+    2
+}
+
+// ModRM (+ SIB 0x24 for rsp/r12, low3 == 4) + displacement for reg, [base+disp].
+pub fn nbv_mem_tail(code: String, reg: i64, base: i64, disp: i64) -> String {
+    let m: i64 = nbv_mem_mod(base, disp);
+    let c1: String = nb_push(code, m * 64 + (reg % 8) * 8 + base % 8);
+    let c2: String = nbv_sib(c1, base);
+    if m == 1 {
+        if disp < 0 {
+            return nb_push(c2, disp + 256);
+        }
+        return nb_push(c2, disp);
+    }
+    if m == 2 {
+        return nb_i32le_signed(c2, disp);
+    }
+    c2
+}
+
+pub fn nbv_sib(code: String, base: i64) -> String {
+    if base % 8 == 4 {
+        return nb_push(code, 36);
+    }
+    code
+}
+
+// VEX.256 prefix: 2-byte C5 when the map is 0F and W, X and B are clear, else
+// 3-byte C4. r / b are register numbers 0..15 (their high bit is R / B); vvvv is
+// the NDS register number (0 when the op has none: stored 1111). X is always 0.
+pub fn nbv_prefix(code: String, opmap: i64, pp: i64, w: i64, r: i64, vvvv: i64, b: i64) -> String {
+    if opmap == 1 {
+        if w == 0 {
+            if b < 8 {
+                return nb_vex2(code, r / 8, vvvv, 1, pp);
+            }
+        }
+    }
+    nb_vex3(code, r / 8, 0, b / 8, opmap, w, vvvv, 1, pp)
+}
+
+// One VEX.256 op with a memory operand [base+disp]: opmap 0F=1 0F38=2 0F3A=3,
+// pp none=0 66=1 F3=2 F2=3, reg = ModRM.reg (ymm 0..15), vvvv = NDS register.
+pub fn nbv_op_rm(code: String, opmap: i64, opcode: i64, pp: i64, w: i64, reg: i64, vvvv: i64, base: i64, disp: i64) -> String {
+    let c1: String = nbv_prefix(code, opmap, pp, w, reg, vvvv, base);
+    nbv_mem_tail(nb_push(c1, opcode), reg, base, disp)
+}
+
+// Register-direct three-operand op: reg = d (dst), vvvv = a (src1), rm = b (src2).
+pub fn nbv_op_rrr(code: String, opmap: i64, opcode: i64, pp: i64, w: i64, d: i64, a: i64, b: i64) -> String {
+    let c1: String = nbv_prefix(code, opmap, pp, w, d, a, b);
+    nb_push(nb_push(c1, opcode), 192 + (d % 8) * 8 + b % 8)
+}
+
+// vzeroupper = C5 F8 77 ; vzeroall = C5 FC 77.
+pub fn nbv_vzeroupper(code: String) -> String {
+    nb_le(code, 7862469, 3)
+}
+
+pub fn nbv_vzeroall(code: String) -> String {
+    nb_le(code, 7863493, 3)
+}
+
+// ---- Layer-A / R-02 fixed sequences on ymm15 --------------------------------
+// vmovdqu ymm15,[base] (base rax 0 / rcx 1): C5 7E 6F 38+base.
+pub fn nbv_ld15(code: String, base: i64) -> String {
+    nbv_op_rm(code, 1, 111, 2, 0, 15, 0, base, 0)
+}
+
+// vmovdqu [rax],ymm15 = C5 7E 7F 38.
+pub fn nbv_st15(code: String) -> String {
+    nbv_op_rm(code, 1, 127, 2, 0, 15, 0, 0, 0)
+}
+
+// 66 0F op ymm15,ymm15,[rcx] = C5 05 op 39: vpaddd FE, vpsubd FA, vpaddb FC,
+// vpaddq D4, vpsubq FB.
+pub fn nbv_op15(code: String, opcode: i64) -> String {
+    nbv_op_rm(code, 1, opcode, 1, 0, 15, 15, 1, 0)
+}
+
+// vpshufb ymm15,ymm15,[rdx] = C4 62 05 00 3A (66 0F38 00).
+pub fn nbv_shuf15(code: String) -> String {
+    nbv_op_rm(code, 2, 0, 1, 0, 15, 15, 2, 0)
+}
+
+// mov rcx,[rbp+disp32] = 48 8B 8D d32 ; mov rdx,[rbp+disp32] = 48 8B 95 d32.
+pub fn nbv_load_rcx(code: String, disp: i64) -> String {
+    nb_i32le_signed(nb_le(code, 9276232, 3), disp)
+}
+
+pub fn nbv_load_rdx(code: String, disp: i64) -> String {
+    nb_i32le_signed(nb_le(code, 9800520, 3), disp)
+}
+
+// Close: vmovdqu [rax],ymm15 ; vzeroupper ; rax (arg0, the result) into the dst slot. One 32-byte write, after every read.
+pub fn nbv_finish(code: String, dst_id: i64) -> String {
+    nb_store_rax(nbv_vzeroupper(nbv_st15(code)), nb_slot_disp(dst_id))
+}
+
+// (acc, row): rax = acc, rcx = row; ymm15 = [rax] op [rcx]; [rax] = ymm15.
+pub fn nbv_emit_dform(code: String, a0: i64, a1: i64, dst_id: i64, opcode: i64) -> String {
+    let c1: String = nbv_load_rcx(nb_load_rax(code, nb_slot_disp(a0)), nb_slot_disp(a1));
+    nbv_finish(nbv_op15(nbv_ld15(c1, 0), opcode), dst_id)
+}
+
+// (dst, src, mask): rax, rcx, rdx; ymm15 = [rcx] shuffled by [rdx] within each 128-bit lane; [rax] = ymm15.
+pub fn nbv_emit_shuf(code: String, a0: i64, a1: i64, a2: i64, dst_id: i64) -> String {
+    let c1: String = nbv_load_rcx(nb_load_rax(code, nb_slot_disp(a0)), nb_slot_disp(a1));
+    let c2: String = nbv_load_rdx(c1, nb_slot_disp(a2));
+    nbv_finish(nbv_shuf15(nbv_ld15(c2, 1)), dst_id)
+}
+
+// (dst, src): rax = dst, rcx = src; ymm15 = [rcx]; [rax] = ymm15.
+pub fn nbv_emit_move(code: String, a0: i64, a1: i64, dst_id: i64) -> String {
+    let c1: String = nbv_load_rcx(nb_load_rax(code, nb_slot_disp(a0)), nb_slot_disp(a1));
+    nbv_finish(nbv_ld15(c1, 1), dst_id)
+}
+
+// ---- emit router (nbp_emit_intrinsic sends kinds 60..66 here) ---------------
+// ids holds the lowered argument slot ids, dst_id the result slot. A kind this
+// part does not own reads no slot; call sites admit (kind, args_len) by nbv_kind_ok first.
+pub fn nbv_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if nbv_in(kind, 60, 66) == 0 {
+        return string_new();
+    }
+    let a0: i64 = __mind_load_i64(ids);
+    let a1: i64 = __mind_load_i64(ids + 8);
+    if kind == 60 {
+        return nbv_emit_dform(code, a0, a1, dst_id, 254);
+    }
+    if kind == 61 {
+        return nbv_emit_dform(code, a0, a1, dst_id, 250);
+    }
+    if kind == 62 {
+        return nbv_emit_dform(code, a0, a1, dst_id, 252);
+    }
+    if kind == 63 {
+        return nbv_emit_shuf(code, a0, a1, __mind_load_i64(ids + 16), dst_id);
+    }
+    if kind == 64 {
+        return nbv_emit_move(code, a0, a1, dst_id);
+    }
+    if kind == 65 {
+        return nbv_emit_dform(code, a0, a1, dst_id, 212);
+    }
+    if kind == 66 {
+        return nbv_emit_dform(code, a0, a1, dst_id, 251);
+    }
+    string_new()
+}
+
+// 1 iff this part emits `kind` at `args_len` arguments (nbp_kind_ok): vpshufb (63) takes three, the rest two.
+pub fn nbv_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 63 {
+        return nbv_in(args_len, 3, 3);
+    }
+    nbv_in(kind, 60, 66) * nbv_in(args_len, 2, 2)
+}
+
+// ---- name matcher ------------------------------------------------------------
+// Byte-exact match of buf[lo..hi) (prefix included) against the seven names, as
+// packed little-endian words. Returns the kind 60..66 or -1.
+pub fn nbv_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n < 19 {
+        return 0 - 1;
+    }
+    if n > 20 {
+        return 0 - 1;
+    }
+    let p: i64 = buf + lo;
+    let w0: i64 = 8529646644640964447;
+    // __mind_vpaddd_i32x8
+    if tc_shoc_span_eq(p, n, w0, 3704597053274612080, 3700786, 0, 19, 0, 0) == 1 {
+        return 60;
+    }
+    // __mind_vpsubd_i32x8
+    if tc_shoc_span_eq(p, n, w0, 3704597053242176368, 3700786, 0, 19, 0, 0) == 1 {
+        return 61;
+    }
+    // __mind_vpaddb_i8x32
+    if tc_shoc_span_eq(p, n, w0, 4064885014874317168, 3289976, 0, 19, 0, 0) == 1 {
+        return 62;
+    }
+    // __mind_vpshufb_i8x32
+    if tc_shoc_span_eq(p, n, w0, 7592895688965911408, 842233912, 0, 20, 0, 0) == 1 {
+        return 63;
+    }
+    // __mind_vmovdqu_i32x8
+    if tc_shoc_span_eq(p, n, w0, 7592916626647183213, 947401267, 0, 20, 0, 0) == 1 {
+        return 64;
+    }
+    // __mind_vpaddq_i64x4
+    if tc_shoc_span_eq(p, n, w0, 3920769891222970736, 3438644, 0, 19, 0, 0) == 1 {
+        return 65;
+    }
+    // __mind_vpsubq_i64x4
+    if tc_shoc_span_eq(p, n, w0, 3920769891190535024, 3438644, 0, 19, 0, 0) == 1 {
+        return 66;
+    }
+    0 - 1
+}
+
+// ---- ISA guard trigger ---------------------------------------------------------
+// 1 when a fn of the pruned emission set names a ymm row at a code position. The
+// scan is lexical over each fn's span (line comments, string and char literals
+// skipped; whole identifier runs matched with nbv_intrinsic_id), so it may set
+// the guard for a name that is never called, never miss one that is. A program
+// with no ymm row gets 0 and therefore zero guard bytes.
+// State cell: +0 lexical mode (0 code, 1 string literal, 2 line comment), +8 hit.
+pub fn nbv_fns_use_ymm(src_addr: i64, ordered: i64, n_fns: i64) -> i64 {
+    let st: i64 = __mind_alloc(16);
+    __mind_store_i64(st + 8, 0);
+    nbv_fns_scan(src_addr, ordered, n_fns, 0, st)
+}
+
+pub fn nbv_fns_scan(buf: i64, ordered: i64, n_fns: i64, k: i64, st: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    let lo: i64 = __mind_load_i64(node + 8);
+    let hi: i64 = lo + nbv_fn_span(node);
+    __mind_store_i64(st, 0);
+    let _e: i64 = nbv_scan_span(buf, lo, lo, hi, hi, st);
+    if __mind_load_i64(st + 8) == 1 {
+        return 1;
+    }
+    nbv_fns_scan(buf, ordered, n_fns, k + 1, st)
+}
+
+// Source length of a fn node (+8 span_lo, +16 span_hi, +40 body): the larger of the fn and body spans (as hm_fn_span reads it).
+pub fn nbv_fn_span(node: i64) -> i64 {
+    let body: i64 = __mind_load_i64(node + 40);
+    let a: i64 = __mind_load_i64(node + 16) - __mind_load_i64(node + 8);
+    if body == 0 {
+        return nbv_nonneg(a);
+    }
+    let b: i64 = __mind_load_i64(body + 16) - __mind_load_i64(body + 8);
+    if a > b {
+        return nbv_nonneg(a);
+    }
+    nbv_nonneg(b)
+}
+
+pub fn nbv_nonneg(v: i64) -> i64 {
+    if v < 0 {
+        return 0;
+    }
+    v
+}
+
+// Halving ranges bound the recursion depth (hm_count_span's discipline).
+pub fn nbv_scan_span(buf: i64, i: i64, a: i64, b: i64, hi: i64, st: i64) -> i64 {
+    if b - a <= 256 {
+        return nbv_scan_run(buf, i, b, hi, st);
+    }
+    let mid: i64 = a + (b - a) / 2;
+    let j: i64 = nbv_scan_span(buf, i, a, mid, hi, st);
+    nbv_scan_span(buf, j, mid, b, hi, st)
+}
+
+pub fn nbv_scan_run(buf: i64, i: i64, b: i64, hi: i64, st: i64) -> i64 {
+    if i >= b {
+        return i;
+    }
+    nbv_scan_run(buf, i + nbv_scan_one(buf, i, hi, st), b, hi, st)
+}
+
+// Bytes consumed at i (>= 1) under the current lexical mode.
+pub fn nbv_scan_one(buf: i64, i: i64, hi: i64, st: i64) -> i64 {
+    let mode: i64 = __mind_load_i64(st);
+    let c: i64 = load_byte(buf, i);
+    if mode == 2 {
+        if c == 10 {
+            __mind_store_i64(st, 0)
+        }
+        return 1;
+    }
+    if mode == 1 {
+        if c == 92 {
+            return 2;
+        }
+        if c == 34 {
+            __mind_store_i64(st, 0)
+        }
+        return 1;
+    }
+    if c == 34 {
+        __mind_store_i64(st, 1);
+        return 1;
+    }
+    if c == 39 {
+        if load_byte(buf, i + 1) == 92 {
+            return nbv_char_end(buf, i, i + 3, hi);
+        }
+        return nbv_char_end(buf, i, i + 2, hi);
+    }
+    if c == 47 {
+        if i + 1 < hi {
+            if load_byte(buf, i + 1) == 47 {
+                __mind_store_i64(st, 2);
+                return 2;
+            }
+        }
+        return 1;
+    }
+    if nbv_word_byte(c) == 0 {
+        return 1;
+    }
+    let e: i64 = nbv_word_end(buf, i + 1, hi);
+    if c == 95 {
+        if nbv_intrinsic_id(buf, i, e) > 0 {
+            __mind_store_i64(st + 8, 1)
+        }
+    }
+    e - i
+}
+
+// Bytes of the char literal opening at p ('x', '\n', a multi-byte scalar): up to its closing quote, or 1 if none within 12 bytes.
+pub fn nbv_char_end(buf: i64, p: i64, q: i64, hi: i64) -> i64 {
+    if q >= hi {
+        return 1;
+    }
+    if q >= p + 12 {
+        return 1;
+    }
+    if load_byte(buf, q) == 39 {
+        return q - p + 1;
+    }
+    nbv_char_end(buf, p, q + 1, hi)
+}
+
+// End of the identifier/number run that continues at i.
+pub fn nbv_word_end(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if nbv_word_byte(load_byte(buf, i)) == 0 {
+        return i;
+    }
+    nbv_word_end(buf, i + 1, hi)
+}
+
+// [A-Za-z0-9_]
+pub fn nbv_word_byte(c: i64) -> i64 {
+    if c == 95 {
+        return 1;
+    }
+    nbv_in(c, 97, 122) + nbv_in(c, 65, 90) + nbv_in(c, 48, 57)
+}
+
+pub fn nbv_in(c: i64, lo: i64, hi: i64) -> i64 {
+    if c < lo {
+        return 0;
+    }
+    if c > hi {
+        return 0;
+    }
+    1
+}
+
+// Program-start precondition when a ymm row is reachable (nbp_entry_guard, flag
+// bit 1): the CPUID/XGETBV check lives with the feature reader.
+pub fn nbv_entry_guard(code: String) -> String {
+    nbc_isa_guard(code)
+}
+
+// ---- capability mark nbymm001 (Layer A + R-02 + ISA guard) -------------------
+// `movabs rax, imm64` whose little-endian bytes spell "nbymm001"; like the nb_cap_* marks it has
+// no caller and survives because the compiler's own region is not pruned.
+pub fn nb_cap_ymm_v1() -> i64 {
+    3544386153286820462
+}

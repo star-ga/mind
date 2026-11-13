@@ -24,10 +24,11 @@
 //! builds even when a caller reaches lowering without the type checker, in a
 //! build without `std-surface`, or through a frozen native-only row. Two
 //! paths do not reach this verifier and are fenced
-//! elsewhere: `--backend native` refuses every intrinsic call at closure
-//! admission, and `mind eval` emits from unverified lowered IR (its own deferred
-//! marker in `src/main.rs`) but no intrinsic call reaches its output today: a
-//! top-level call is a type error and function definitions are not emitted.
+//! elsewhere: `--backend native` admits an intrinsic call only through its own
+//! profile table at its exact arity, and `mind eval` emits from unverified
+//! lowered IR (its own deferred marker in `src/main.rs`) but no intrinsic call
+//! reaches its output today: a top-level call is a type error and function
+//! definitions are not emitted.
 //! The check runs in every build, with or without the `std-surface` feature:
 //! the intrinsic table is not feature-gated, so neither is the refusal.
 
@@ -42,14 +43,21 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     super::verify::verify_module(module)
 }
 
-/// The declared i64 arity of a registered intrinsic in any profile, or `None`
-/// if `name` is not in the table. `std_surface_intrinsic_arity` answers only
-/// for the Rust/MLIR profile; a call site must match in every profile.
-fn declared_intrinsic_arity(name: &str) -> Option<usize> {
-    crate::intrinsics::STD_SURFACE_INTRINSICS
-        .iter()
-        .find(|spec| spec.physical_name == name)
-        .map(|spec| spec.arity)
+// The declared i64 arity of a registered intrinsic in any profile (the one
+// lookup the type checker's arity check shares); a call site must match in
+// every profile.
+use crate::intrinsics::registered_intrinsic_arity as declared_intrinsic_arity;
+
+/// The one intrinsic that verifies at a second argument count. A failing
+/// `assert` lowers to `__mind_assert_fail(msg, span_start, span_end)`
+/// (`src/eval/assert_trap.rs`), the three arguments the runtime-support trap
+/// reads. The table registers the trap at arity 1, the form the legacy entry
+/// of std/sha256.mind calls; that module is a native seed row, so its bytes
+/// stay as they are until the reseed. Every other count is refused.
+const ASSERT_TRAP_SPAN_FORM: (&str, usize) = ("__mind_assert_fail", 3);
+
+fn arity_admitted(name: &str, declared: usize, got: usize) -> bool {
+    got == declared || (name == ASSERT_TRAP_SPAN_FORM.0 && got == ASSERT_TRAP_SPAN_FORM.1)
 }
 
 fn validate_intrinsic_arity(instrs: &[Instr]) -> Result<(), IrVerifyError> {
@@ -57,7 +65,7 @@ fn validate_intrinsic_arity(instrs: &[Instr]) -> Result<(), IrVerifyError> {
         if let Instr::Call { name, args, .. } = instr
             && name.starts_with("__mind_")
             && let Some(arity) = declared_intrinsic_arity(name)
-            && args.len() != arity
+            && !arity_admitted(name, arity, args.len())
         {
             return Err(IrVerifyError::InvalidOperand {
                 instr_index,
@@ -84,10 +92,15 @@ mod tests {
     /// `n` constants and an `n`-argument `__mind_write`, at top level or inside
     /// a function body: the two shapes every feature set can build.
     fn write_call(n: usize, in_fn: bool) -> IRModule {
+        intrinsic_call("__mind_write", n, in_fn)
+    }
+
+    /// `n` constants and an `n`-argument call to the intrinsic `name`.
+    fn intrinsic_call(name: &str, n: usize, in_fn: bool) -> IRModule {
         let mut calls: Vec<Instr> = (0..n).map(|i| Instr::ConstI64(ValueId(i), 1)).collect();
         calls.push(Instr::Call {
             dst: ValueId(n),
-            name: "__mind_write".to_string(),
+            name: name.to_string(),
             args: (0..n).map(ValueId).collect(),
             resolved_callee: None,
         });
@@ -130,6 +143,33 @@ mod tests {
                 );
             }
             verify_module(&write_call(4, in_fn)).expect("a 4-argument __mind_write verifies");
+        }
+    }
+
+    #[test]
+    fn the_assert_trap_verifies_in_its_registered_and_its_span_form_only() {
+        let declared = declared_intrinsic_arity("__mind_assert_fail")
+            .expect("__mind_assert_fail is a registered intrinsic");
+        assert_eq!(
+            declared, 1,
+            "the registered form is the one-argument legacy trap"
+        );
+        for in_fn in [false, true] {
+            for n in [1, 3] {
+                verify_module(&intrinsic_call("__mind_assert_fail", n, in_fn))
+                    .unwrap_or_else(|e| panic!("a {n}-argument __mind_assert_fail verifies: {e}"));
+            }
+            for n in [0, 2, 4] {
+                let err = verify_module(&intrinsic_call("__mind_assert_fail", n, in_fn))
+                    .expect_err("only the registered and the span form verify");
+                assert!(
+                    err.to_string()
+                        .contains("intrinsic `__mind_assert_fail` expects 1 i64 argument(s)"),
+                    "{err}"
+                );
+            }
+            // The second count belongs to the trap alone.
+            assert!(verify_module(&write_call(3, in_fn)).is_err());
         }
     }
 }

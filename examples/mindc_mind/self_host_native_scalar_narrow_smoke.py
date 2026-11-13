@@ -107,7 +107,7 @@ def _live_exit(value_src: str, ity: str) -> int:
         b = pathlib.Path(td) / "c.bin"
         s.write_bytes(src)
         r = subprocess.run(
-            [MINDC, "build", str(s), "--release", "--emit=binary", "--out", str(b)],
+            [MINDC, "build", "--backend", "mlir", str(s), "--release", "--emit=binary", "--out", str(b)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120,
         )
         if r.returncode != 0 or not b.exists():

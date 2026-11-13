@@ -42,8 +42,8 @@ mod identity;
 
 #[cfg(test)]
 use identity::canonicalize_dir_with_missing_fallback;
-pub use identity::find_project_root_for_file;
 pub(crate) use identity::{canonical_dir, find_project_root_for_file_checked};
+pub use identity::{find_project_root_for_file, governing_project_root};
 
 /// Per-target executable link driver (ELF / PE-COFF / Mach-O dispatch). Only the
 /// host ELF arm is wired today; the others fail loud until their slice lands.
@@ -51,7 +51,8 @@ pub(crate) mod build_lock;
 mod compiled_sources;
 mod embedded_entry;
 mod host_triple;
-mod link;
+pub(crate) mod link;
+pub use link::LinkedUnitScope;
 #[cfg(feature = "mlir-build")]
 mod native_sources;
 #[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
@@ -72,7 +73,7 @@ mod artifact;
 mod sources;
 
 pub use artifact::{DEFAULT_TARGET_BLOCK, artifact_dir, artifact_stem, profile_name};
-pub use sources::{collect_sources, resolve_sources};
+pub use sources::{collect_sources, default_source_set, resolve_sources};
 
 /// RFC 0005 Phase C — std/*.mind sources baked into the binary at
 /// compile time. The project loader prepends these to the module
@@ -96,6 +97,7 @@ pub mod substrate_link;
 /// RFC-era `[mind]` toolchain pin — the declared cross-repo compatibility
 /// window. See `toolchain_pin` for why enforcement lives in one place.
 pub mod toolchain_pin;
+pub use toolchain_pin::{Backend, governing_backend, select_backend};
 
 /// RFC 0008 §3 — `[test]` table in `Mind.toml`.
 /// All fields default; an absent table is equivalent to default.
@@ -224,10 +226,10 @@ pub struct MindcraftConfig {
     /// surrounding config (not replaces it).
     #[serde(default)]
     pub overrides: Vec<MindcraftOverride>,
-    /// VCS integration — when ``use_ignore_file`` is true, the default
-    /// file set for ``mindc check`` follows the repository's ignore
-    /// rules (`.gitignore` etc.) so generated / vendored sources are
-    /// excluded by default.
+    /// VCS integration — when ``use_ignore_file`` is true, the discovery
+    /// walk of ``mindc check`` follows the repository's ignore rules
+    /// (`.gitignore` etc.). A no-path check takes every source-set member,
+    /// and a file named on the command line is always checked.
     #[serde(default)]
     pub vcs: MindcraftVcsConfig,
     /// Per-target sections. `[mindcraft.cpu]`, `[mindcraft.gpu]`,
@@ -332,8 +334,8 @@ pub struct MindcraftOverride {
 }
 
 /// RFC 0007 §5 — VCS integration. When ``use_ignore_file`` is true,
-/// the default file set for ``mindc check`` walks the repository's
-/// ignore rules so generated / vendored sources are excluded.
+/// the discovery walk of ``mindc check`` skips the files the repository's
+/// ignore rules match. A no-path check keeps every source-set member; a named file is kept.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MindcraftVcsConfig {
@@ -460,49 +462,6 @@ impl EmitKind {
     }
 }
 
-/// Code-generation backend (RI-D seam, RFC-track "drop LLVM").
-///
-/// `Mlir` (default) drives the production MLIR-text → `mlir-opt` /
-/// `mlir-translate` / `clang` pipeline and is the ONLY wired path today; its
-/// artifacts are the byte-identity–gated canonical output.
-///
-/// `Native` is the opt-in seam for the pure-MIND x86-64 native-ELF emitters
-/// (the self-host `nb_*` lane). It is NOT yet reachable from the Rust driver —
-/// selecting it fails loud rather than silently falling back to MLIR, so the
-/// default build stays fully inert while future RI-D slices land behind this
-/// flag.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Backend {
-    /// MLIR-text → mlir-opt/mlir-translate/clang (default, wired).
-    #[default]
-    Mlir,
-    /// Pure-MIND x86-64 native-ELF path (RI-D: wired for `mindc build` via the frozen pure-MIND compiler).
-    Native,
-}
-
-impl Backend {
-    /// Canonical string name for display and diagnostics.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Backend::Mlir => "mlir",
-            Backend::Native => "native",
-        }
-    }
-
-    /// Parse from a CLI string. Returns an error string on unknown input.
-    pub fn parse(s: &str) -> Result<Self, String> {
-        match s.to_ascii_lowercase().as_str() {
-            "mlir" => Ok(Backend::Mlir),
-            "native" => Ok(Backend::Native),
-            other => Err(format!(
-                "unknown backend '{}' (expected mlir|native)",
-                other
-            )),
-        }
-    }
-}
-
 /// RFC 0008 §3 — optimization / profile level.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -565,6 +524,9 @@ pub struct BuildConfig {
     /// RFC 0008 §3 — optimization level. Default `debug`.
     #[serde(default)]
     pub optimize: OptimizeLevel,
+    /// Code-generation route, `mlir` | `native`; `None` = undeclared. See [`Backend`].
+    #[serde(default, deserialize_with = "toolchain_pin::deserialize_backend")]
+    pub backend: Option<Backend>,
 }
 
 impl Default for BuildConfig {
@@ -576,6 +538,7 @@ impl Default for BuildConfig {
             target: BuildTarget::default(),
             emit: EmitKind::default(),
             optimize: OptimizeLevel::default(),
+            backend: None,
         }
     }
 }
@@ -715,14 +678,14 @@ pub struct BuildOptions {
     /// (`run_build`) resolves the root ONCE — with the bounded, git-aware
     /// [`find_project_root_for_file`] for explicit-file builds — and threads it
     /// here so the legacy path never re-ascends to a different (stray-ancestor)
-    /// root than the one the manifest was written under. `None` preserves the
-    /// legacy `find_project_root()` behaviour for direct callers.
+    /// root than the one the manifest was written under. `None` locks the cwd
+    /// project (`build_lock::lock_cwd_project`) for direct callers.
     pub project_root: Option<PathBuf>,
     /// Explicit single-file build: `mindc build <file>` where the named file
-    /// either has NO governing `Mind.toml` (a synthetic manifest is used) or
-    /// sits directly next to a *bare* manifest (no `[targets.*].sources` list —
-    /// typically a leftover synthetic `Mind.toml` a prior build wrote into a
-    /// scratch dir). In that case the "project" is exactly the named entry: the
+    /// has NO governing `Mind.toml` (a synthetic manifest is used; a marked
+    /// leftover of a killed build counts as none, see `build_lock`). A named
+    /// entry inside a real project is never single-file. Here the "project" is
+    /// exactly the named entry: the
     /// whole-directory source walk is WRONG, because the entry
     /// often sits in a shared directory (`/tmp`, `$HOME`, a scratch dir) holding
     /// unrelated `.mind` files — every one of which the binary/object path would
@@ -826,11 +789,10 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     // the unbounded ancestor scan when a direct caller supplied none. This keeps
     // the manifest-write root and the source-collection root identical, so an
     // explicit-file build can never re-ascend to a stray ancestor `Mind.toml`.
-    let project_root = match &opts.project_root {
-        Some(root) => root.clone(),
-        None => find_project_root()?,
+    let lock = match &opts.project_root {
+        Some(root) => build_lock::ProjectBuildLock::acquire(root)?,
+        None => build_lock::lock_cwd_project()?,
     };
-    let lock = build_lock::ProjectBuildLock::acquire(&project_root)?;
     build_project_locked(opts, &lock)
 }
 
@@ -860,6 +822,7 @@ fn build_project_locked_inner(
     supplied_snapshot: Option<&source_snapshot::SourceSnapshot>,
     supplied_build_inputs: Option<&build_input_snapshot::BuildInputSnapshot>,
 ) -> Result<BuildResult> {
+    let _unit = link::LinkedUnitScope::open(); // the `bind` clauses of this linked unit
     let project_root = lock.root().to_path_buf();
     let manifest = load_manifest(&project_root)?;
 
@@ -985,6 +948,7 @@ fn build_project_locked_inner(
                 .map(|cfg| cfg.backend.clone())
                 .unwrap_or_else(|| target_name.clone())
         });
+    toolchain_pin::admit_mlir_route(manifest.build.backend, &target_name, &backend)?;
 
     // A cdylib has a single defined export surface (the `[exports] c_abi`
     // symbols of the manifest entry); sibling `.mind` files are not
@@ -1085,6 +1049,7 @@ fn build_project_locked_inner(
     link_binary(
         &compiled,
         &output_path,
+        &project_root,
         &backend,
         opts,
         &build_target,
@@ -1391,7 +1356,7 @@ pub fn compile_project_sibling_objects(
     linkage: Option<&substrate_link::SubstrateArchive>,
 ) -> Result<Vec<PathBuf>> {
     use crate::eval::mlir_build;
-    use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir_with_entry};
+    use crate::pipeline::{CompileOptions, lower_to_mlir_with_entry};
     if !scope.has_linked_siblings() {
         return Ok(Vec::new());
     }
@@ -1412,21 +1377,7 @@ pub fn compile_project_sibling_objects(
         let text = source.source();
         let name = src_path.to_string_lossy().into_owned();
         let _module_path_guard = crate::qualified_enums::ModuleGuard::install(source.module_path());
-        let prod = compile_source_with_name(text, Some(&name), &sub_opts).map_err(|e| {
-            // Render the real diagnostics (file:line:col + message) instead of
-            // the opaque CompileError Display, matching the cdylib entry path.
-            let diags = e.into_diagnostics(Some(&name));
-            let rendered = diags
-                .iter()
-                .map(|d| crate::diagnostics::render(text, d))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if rendered.trim().is_empty() {
-                anyhow!("sibling module compile failed for {name}")
-            } else {
-                anyhow!("sibling module compile failed for {name}:\n{rendered}")
-            }
-        })?;
+        let prod = substrate_link::compile_object_source(text, &name, &sub_opts, "sibling module")?;
         #[cfg(feature = "autodiff")]
         let sub_mlir = lower_to_mlir_with_entry(&prod.ir, prod.grad.as_ref(), true)
             .map_err(|e| anyhow!("sibling MLIR lowering for {}: {e}", source.module_path()))?;
@@ -1684,7 +1635,7 @@ fn compile_sources(
         let _ = native_objects;
         Some(std::collections::BTreeSet::new())
     };
-    let link = private_linkage::LinkSurface::executable(native_refs.as_ref());
+    let (link, _ns) = private_linkage::LinkSurface::linked(native_refs.as_ref(), opts.emit);
     #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
     let linkage_plan = substrate_link::linkage_plan(snapshot.iter(), &substrate_closure, &link);
     #[cfg(not(all(feature = "cross-module-imports", feature = "mlir-build")))]
@@ -1837,7 +1788,7 @@ fn compile_substrate_objects(
     cc_target_triple: Option<&str>,
 ) -> Result<Option<PathBuf>> {
     use crate::eval::mlir_build;
-    use crate::pipeline::{CompileOptions, compile_source_with_name};
+    use crate::pipeline::CompileOptions;
     use crate::runtime::types::BackendTarget;
 
     if closure.is_empty() {
@@ -1872,19 +1823,7 @@ fn compile_substrate_objects(
             .find(|(n, _)| *n == modname)
         {
             let _module_path_guard = crate::qualified_enums::ModuleGuard::install(modname);
-            let prod = compile_source_with_name(src, Some(modname), &sub_opts).map_err(|e| {
-                let diags = e.into_diagnostics(Some(modname));
-                let rendered = diags
-                    .iter()
-                    .map(|d| crate::diagnostics::render(src, d))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if rendered.trim().is_empty() {
-                    anyhow!("substrate compile failed for {modname}")
-                } else {
-                    anyhow!("substrate compile failed for {modname}:\n{rendered}")
-                }
-            })?;
+            let prod = substrate_link::compile_object_source(src, modname, &sub_opts, "substrate")?;
             #[cfg(feature = "autodiff")]
             let sub_mlir =
                 crate::pipeline::lower_to_mlir_with_entry(&prod.ir, prod.grad.as_ref(), true)
@@ -2641,6 +2580,7 @@ fn outranked_by_compile(
 fn link_binary(
     objects: &[PathBuf],
     output: &Path,
+    project_root: &Path,
     backend: &str,
     opts: &BuildOptions,
     build_target: &crate::target::Target,
@@ -2683,33 +2623,20 @@ fn link_binary(
         return link_result;
     };
 
-    // Fallback to a launcher shell script when native linking fails. This is the
-    // executable-path analogue of the cdylib false-green guarded by #306: the
-    // emitted artifact is a `#!/bin/bash` launcher that defers to the installed
-    // MIND runtime, NOT a natively-linked binary. Reporting "Finished" with a
-    // launcher in place of a real binary — silently — is exactly the kind of
-    // false-green that must never happen. Surface it: name the artifact for what
-    // it is and show why the native link failed, so a degraded build cannot pass
-    // for a clean one.
-    let link_err = link_result
-        .err()
-        .map(|e| {
-            e.to_string()
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("native link failed")
-                .trim()
-                .to_string()
-        })
-        .unwrap_or_else(|| "native link failed".to_string());
-    eprintln!(
-        "[WARN] {}: native link failed — emitting a launcher script that requires the \
-         installed MIND runtime, not a native binary ({link_err})",
-        output.display()
-    );
+    runtime_link::warn_launcher(output, link_result);
+    write_launcher(output, backend, &runtime, project_root)
+}
 
-    let project_root = find_project_root()?;
-    let manifest = load_manifest(&project_root)?;
+/// The launcher-script fallback of a failed native link. `project_root` is the root
+/// whose build lock the caller holds: a search from the current directory could read
+/// another standalone build's temporary manifest (`build_lock`).
+fn write_launcher(
+    output: &Path,
+    backend: &str,
+    runtime: &runtime_link::RuntimeLink,
+    project_root: &Path,
+) -> Result<()> {
+    let manifest = load_manifest(project_root)?;
     let entry_path = project_root.join(&manifest.build.entry);
 
     #[cfg(unix)]
@@ -2802,33 +2729,25 @@ fn native_link(
         None => std::env::var("CC").unwrap_or_else(|_| "cc".to_string()),
     };
 
-    // Compile the bundled runtime-support shim (runtime-support/mind_intrinsics.c:
-    // printI64 / printNewline / __mind_alloc / __mind_store_i8 / __mind_load_i64 …)
-    // to a temporary .o and link it into the executable, so those 72 MIND_EXPORT
-    // symbols resolve STATICALLY — exactly as the cdylib path already does via
-    // `build_all`'s `emit_shared` leg (`compile_runtime_support_obj`). Without
-    // this the exe link fails with `undefined reference to printI64` and falls
-    // back to a launcher stub — the documented executable-path false-green.
-    //
-    // The shim is compiled with the fixed `mind_intrinsics.c` basename +
-    // `-ffile-prefix-map` + no debug info (RFC 0015 bit-identity), so it does not
-    // perturb reproducibility. The NamedTempFile is bound for the whole function
-    // so the .o survives on disk until the driver's link below finishes.
+    // Link runtime-support/mind_intrinsics.c so printI64 and the other shim
+    // exports resolve. Twins compile only when a linked object names one.
+    // Fixed basename, prefix map, no debug info: RFC 0015.
     #[cfg(feature = "mlir-build")]
     let runtime_shim_obj = {
         use crate::eval::mlir_build;
         let tools = mlir_build::resolve_tools()
             .map_err(|e| anyhow!("runtime-support shim: MLIR build tools unavailable: {e}"))?;
-        // Host build compiles the shim with no explicit `--target` (byte-identical
-        // to the historical path); a cross target compiles it for the target triple
-        // so the shim's ABI matches (Win64 is LLP64: `long` is 32-bit, so the shim's
-        // `int64_t` widths must come from the target, not the host).
         let shim_target_triple = if build_target.is_host() {
             None
         } else {
             Some(build_target.llvm_triple())
         };
-        mlir_build::compile_runtime_support_obj(&tools, shim_target_triple)
+        let sys_mlir = if objects.iter().any(mlir_build::linked_object_names_sys_twin) {
+            "__mind_sys_"
+        } else {
+            ""
+        };
+        mlir_build::compile_runtime_support_obj(&tools, shim_target_triple, sys_mlir)
             .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?
     };
     #[cfg(feature = "mlir-build")]
@@ -2958,8 +2877,8 @@ pub struct BenchOptions {
 
 /// Run project tests (discover test files in tests/, build each, run)
 pub fn test_project(opts: &TestOptions) -> Result<i32> {
-    let project_root = find_project_root()?;
-    let initial_lock = build_lock::ProjectBuildLock::acquire(&project_root)?;
+    let initial_lock = build_lock::lock_cwd_project()?;
+    let project_root = initial_lock.root().to_path_buf();
     let manifest = load_manifest(&project_root)?;
     let tests_dir = project_root.join("tests");
 
@@ -3108,8 +3027,8 @@ pub fn test_project(opts: &TestOptions) -> Result<i32> {
 
 /// Run project benchmarks (discover bench files in bench/, build each with --release, run)
 pub fn bench_project(opts: &BenchOptions) -> Result<i32> {
-    let project_root = find_project_root()?;
-    let initial_lock = build_lock::ProjectBuildLock::acquire(&project_root)?;
+    let initial_lock = build_lock::lock_cwd_project()?;
+    let project_root = initial_lock.root().to_path_buf();
     let manifest = load_manifest(&project_root)?;
     let bench_dir = project_root.join("bench");
 

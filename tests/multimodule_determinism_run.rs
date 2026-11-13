@@ -178,6 +178,7 @@ fn readdir_order_does_not_change_artifact_bytes() {
             .current_dir(proj)
             .args([
                 "build",
+                "--backend=mlir",
                 "--release",
                 "--emit=binary",
                 "--no-cache",
@@ -308,6 +309,7 @@ fn editing_a_sibling_module_invalidates_the_cache() {
             .current_dir(&proj)
             .args([
                 "build",
+                "--backend=mlir",
                 "--release",
                 "--emit=binary",
                 &format!("--out={}", artifact.display()),

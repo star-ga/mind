@@ -1,0 +1,13 @@
+// print: an integer writes its signed decimal, then "\n" in a second write
+// (printI64, printNewline). Edges: 0, -1, i64 max, i64 min, 255, unary minus.
+// expect: (0, b"0\n-1\n9223372036854775807\n-9223372036854775808\n255\n-42\n")
+fn main() -> i64 {
+    print(0);
+    print(0 - 1);
+    print(9223372036854775807);
+    print(0 - 9223372036854775807 - 1);
+    let b: i64 = 255;
+    print(b);
+    print(-42);
+    0
+}

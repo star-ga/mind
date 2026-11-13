@@ -35,6 +35,152 @@ use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The base set of the ELF (x86_64-linux-gnu) target: the libraries an extern
+/// block with no `bind` clause resolves against, each with the flag that links
+/// it (`None`: the C driver links it by default). One table for the list and
+/// the flags; `bind` refuses a name in it (spec "Extern bindings", rule B4).
+pub(crate) const BASE_LIBRARIES: &[(&str, Option<&str>)] = &[
+    ("libdl.so.2", Some("-ldl")),
+    ("libpthread.so.0", Some("-lpthread")),
+    ("libm.so.6", Some("-lm")),
+    ("libc.so.6", None),
+];
+
+/// An extern binding the compiler refuses (spec "Extern bindings").
+pub(crate) const EXTERN_BINDING_CODE: &str = "E2045";
+
+/// The `bind` clauses of one linked unit (spec "Extern bindings"), gathered by
+/// the MLIR lowering of each module the unit compiles: the declared library
+/// names, and the called extern names that have the base binding (for E6012).
+#[derive(Default)]
+struct LinkedUnit {
+    libraries: std::collections::BTreeSet<String>,
+    base_calls: std::collections::BTreeSet<String>,
+}
+
+thread_local! {
+    static UNIT: std::cell::RefCell<Option<LinkedUnit>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Scope of one linked unit on this thread: it opens empty and the previous
+/// unit comes back on drop. Outside a scope nothing is recorded, so state never
+/// leaks from one build into the next.
+pub struct LinkedUnitScope(Option<LinkedUnit>);
+
+impl LinkedUnitScope {
+    /// Open an empty linked unit on this thread.
+    pub fn open() -> Self {
+        Self(UNIT.with(|u| u.replace(Some(LinkedUnit::default()))))
+    }
+}
+
+impl Drop for LinkedUnitScope {
+    fn drop(&mut self) {
+        UNIT.with(|u| *u.borrow_mut() = self.0.take());
+    }
+}
+
+/// Record the binding of one extern declaration (`called`: one call to it).
+#[cfg_attr(
+    not(any(feature = "mlir-lowering", feature = "mlir-build")),
+    allow(dead_code)
+)]
+pub(crate) fn record_extern(name: &str, binding: &crate::ast::ExternBinding, called: bool) {
+    UNIT.with(|u| {
+        let mut unit = u.borrow_mut();
+        let Some(unit) = unit.as_mut() else { return };
+        match binding {
+            crate::ast::ExternBinding::Library(lib) => {
+                unit.libraries.insert(lib.clone());
+            }
+            crate::ast::ExternBinding::Base if called => {
+                unit.base_calls.insert(name.to_string());
+            }
+            _ => {}
+        }
+    });
+}
+
+/// The link arguments of the declared libraries, directly after the base
+/// flags (rules B6, B7): libc first so it stays the first DT_NEEDED entry, then
+/// each library once by its exact loader name, in ascending byte order. A unit
+/// with no library binding gets no argument, so its link line is unchanged.
+pub(crate) fn declared_library_args() -> Vec<String> {
+    let libraries: Vec<String> = UNIT.with(|u| {
+        u.borrow()
+            .iter()
+            .flat_map(|unit| unit.libraries.iter().cloned())
+            .collect()
+    });
+    if libraries.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec![
+        "-Wl,--push-state,--no-as-needed".to_string(),
+        "-lc".to_string(),
+    ];
+    args.extend(libraries.iter().map(|lib| format!("-l:{lib}")));
+    args.push("-Wl,--pop-state".to_string());
+    args
+}
+
+/// Refuse a declared library on a target with no link row for it (rule B10):
+/// `mindc` never drops the clause.
+pub(crate) fn refuse_libraries_off_elf(target: &str) -> Result<()> {
+    let libraries = declared_library_args();
+    if libraries.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "error[{}]: target `{target}` has no link row for a `bind(\"<soname>\")` library; \
+         the clause is refused, never dropped",
+        EXTERN_BINDING_CODE
+    ))
+}
+
+/// The library arguments of a shared-object link for `target_triple` (host:
+/// `None`), or the B10 refusal text for a target with no ELF link row.
+#[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
+pub(crate) fn shared_link_args(
+    target_triple: Option<&str>,
+) -> std::result::Result<Vec<String>, String> {
+    match target_triple {
+        Some(t) if !t.contains("linux") => refuse_libraries_off_elf(t)
+            .map(|()| Vec::new())
+            .map_err(|e| e.to_string()),
+        _ => Ok(declared_library_args()),
+    }
+}
+
+/// The error text of a failed clang run: the E6012 text for a failed shared
+/// link of a unit that calls base-bound extern names, else the tool's stderr.
+#[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
+pub(crate) fn failure_text(shared: bool, stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr).into_owned();
+    shared.then(|| e6012(&text)).flatten().unwrap_or(text)
+}
+
+/// The E6012 text of a failed link, or `None` when the unit calls no extern
+/// name with the base binding (the plain linker error is then the whole story).
+pub(crate) fn e6012(linker_text: &str) -> Option<String> {
+    let names: Vec<String> = UNIT.with(|u| {
+        u.borrow()
+            .iter()
+            .flat_map(|unit| unit.base_calls.iter().cloned())
+            .collect()
+    });
+    if names.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "error[E6012]: the link failed. The unit calls these extern names with the base \
+         binding: {}. A name from another library needs `extern \"C\" bind(\"<soname>\")` \
+         on its block.\n{}",
+        names.join(", "),
+        linker_text.trim_end()
+    ))
+}
+
 /// Everything the final link needs, gathered by the caller so the driver itself
 /// makes no build-orchestration decisions (it only assembles + runs the linker).
 pub struct LinkCtx<'a> {
@@ -116,10 +262,9 @@ impl LinkDriver {
             cmd.arg(format!("-l{}", runtime.link_name));
         }
 
-        // Standard libraries.
-        cmd.arg("-ldl"); // dlopen on Linux
-        cmd.arg("-lpthread");
-        cmd.arg("-lm");
+        // The base set (one table), then the declared libraries.
+        cmd.args(BASE_LIBRARIES.iter().filter_map(|(_, flag)| *flag));
+        cmd.args(declared_library_args());
 
         // Emitted-artifact hardening — byte-neutral linker directives (SAME class
         // as the cdylib path's `-Wl,-Bsymbolic-functions` / `-Wl,-z,*`). These
@@ -176,6 +321,7 @@ impl LinkDriver {
     /// (compiled with `int64_t`, since Win64 is LLP64 and `long` is 32-bit) are
     /// selected by the caller (`native_link`) and arrive through `ctx`.
     fn link_coff(&self, ctx: &LinkCtx) -> Result<()> {
+        refuse_libraries_off_elf(self.target.llvm_triple())?;
         let mut cmd = Command::new(ctx.cc);
 
         // Runtime-support shim first, so its MIND_EXPORT symbols resolve.
@@ -217,6 +363,7 @@ impl LinkDriver {
     /// `@executable_path`-relative rpath) and the Apple cross SDK. Upgrade path:
     /// the darwin slice, gated by the universal OS-keyed byte-identity gate.
     fn link_macho(&self, _ctx: &LinkCtx) -> Result<()> {
+        refuse_libraries_off_elf(self.target.llvm_triple())?;
         Err(self.not_wired("Mach-O (apple-darwin)"))
     }
 
@@ -236,15 +383,22 @@ impl LinkDriver {
         if ctx.opts.verbose {
             println!("  Link command: {cmd:?}");
         }
-        let status = cmd
-            .status()
+        let out = cmd
+            .output()
             .map_err(|e| anyhow!("failed to run linker `{}`: {e}", ctx.cc))?;
-        if !status.success() {
-            return Err(anyhow!(
-                "linking failed with exit code: {:?}",
-                status.code()
-            ));
+        let text = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() {
+            let _ = std::fs::remove_file(ctx.output);
+            return Err(match e6012(&text) {
+                Some(msg) => anyhow!(msg),
+                None => anyhow!(
+                    "linking failed with exit code: {:?}\n{}",
+                    out.status.code(),
+                    text.trim_end()
+                ),
+            });
         }
+        eprint!("{text}");
         Ok(())
     }
 }

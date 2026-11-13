@@ -1,0 +1,6 @@
+[package]
+name = "eqscope"
+version = "0.1.0"
+
+[build]
+entry = "main.mind"

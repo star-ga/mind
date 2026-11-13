@@ -33,9 +33,11 @@ use super::{Attribute, Span};
 /// corrupt the file, so the visible symptom was always the same: a source that can never clear
 /// `fmt::drift`, and therefore can never pass `mindc check` at all.
 ///
-/// These tables are keyed by SPAN and carry spelling ONLY. The AST nodes the type checker
-/// and lowering see are unchanged. `std_qualified` reads `call_qualifiers` to tell a
-/// `std.dns` / `std.entropy` world call from a user function of the same bare name.
+/// These tables are keyed by SPAN. Most fields carry formatting alone; the AST nodes the
+/// type checker and lowering see are unchanged. `call_qualifiers` is read in two places:
+/// qualified POSIX calls use it to retain module ownership when a local extern has the
+/// same bare name, and `std_qualified` reads it to tell a `std.dns` / `std.entropy` world
+/// call from a user function of the same bare name.
 ///
 /// THE RULE for the next spelling that needs preserving:
 ///

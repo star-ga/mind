@@ -1,0 +1,8 @@
+// A8 fail-closed: an int initializer on an f64 const is a type error in
+// mindc-Rust (E2001); native must refuse instead of inlining int bits.
+const K: f64 = 7;
+fn main() -> i64 {
+    let x: f64 = K;
+    let y: f64 = x * 2.0;
+    y as i64
+}

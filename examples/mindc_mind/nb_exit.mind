@@ -1,0 +1,246 @@
+// Copyright 2026 STARGA Inc.
+// Process-exit decisions of driver-row images (R-05 exit_group, R-06 NEEDED list)
+// and the glibc version buckets of the dynamic image (moved out of main.mind unchanged).
+// A part: it calls intrinsics and other parts only, never a main.mind fn.
+
+import std.string;
+import nb_emit_core;
+
+// A driver may start helper threads (cuInit), and exit (60) ends only the
+// calling thread: a trap or the entry return after driver initialisation
+// would leave the process running or report a wrong status. exit_group (231)
+// ends every thread. An image that declares no driver row keeps exit (60)
+// and every byte it had. docs/compiler/NATIVE_C_ABI_LOWERING.md has the
+// contract.
+
+// 1 when the foreign table `t` (main.mind nbx_build, reached through
+// nbx_table_of) declares at least one driver row, called or not: nbx_build
+// folds every declared row into table word t+32 (nbe_row_flag) before any fn
+// is lowered. A module without a user extern block (t == 0) answers 0.
+pub fn nbe_has_cu(t: i64) -> i64 {
+    if t <= 0 {
+        return 0;
+    }
+    __mind_load_i64(t + 32)
+}
+// The driver-row flag after one more declared row: 1 once a row without a
+// version (vlen 0, a driver row) is seen. A call, not a branch, inside the
+// nbx_build loop: the whole-module mic@3 twin fails closed on that branch.
+pub fn nbe_row_flag(flag: i64, vlen: i64) -> i64 {
+    if vlen == 0 {
+        return 1;
+    }
+    flag
+}
+// The exit system call of a compiler-emitted exit: exit_group (231) on an
+// image that declares a driver row, else exit (60).
+pub fn nbe_exit_nr(has_cu: i64) -> i64 {
+    if has_cu == 1 {
+        return 231;
+    }
+    60
+}
+// The bounds-trap system call of the module whose foreign table is `t`.
+pub fn nbe_trap_nr(t: i64) -> i64 {
+    nbe_exit_nr(nbe_has_cu(t))
+}
+// Entry kinds at nb_emit_return: 0 not the entry (ret), 1 the entry (exit),
+// 2 the entry of an explicit layout (ret into the runtime blob), 3 the entry
+// of an image that declares a driver row (exit_group). Kind 3 is made only
+// here, at the return emitters; every other is_entry reader sees 0, 1 or 2.
+pub fn nbe_ret_kind(is_entry: i64, t: i64) -> i64 {
+    if is_entry != 1 {
+        return is_entry;
+    }
+    if nbe_has_cu(t) == 1 {
+        return 3;
+    }
+    1
+}
+// 1 for the entry kinds whose return is the exit system call (1 and 3).
+pub fn nbe_entry_exits(is_entry: i64) -> i64 {
+    if is_entry == 1 {
+        return 1;
+    }
+    if is_entry == 3 {
+        return 1;
+    }
+    0
+}
+// The exit system call of an entry return of kind 1 or 3.
+pub fn nbe_entry_exit_nr(is_entry: i64) -> i64 {
+    if is_entry == 3 {
+        return nbe_exit_nr(1);
+    }
+    nbe_exit_nr(0)
+}
+// 1 when the dynamic section lists libc.so.6: a libc (versioned) row is
+// imported, or no driver row is (the historical image). 0 only for a
+// driver-only image (driver rows imported, no libc row), which then lists
+// libcuda.so.1 alone. Unlike the exit decision this follows the IMPORTED
+// (called) rows: the NEEDED list names what the loader must bind.
+pub fn nbe_needed_libc(has_libc_row: i64, has_cu_row: i64) -> i64 {
+    if has_cu_row == 0 {
+        return 1;
+    }
+    if has_libc_row == 1 {
+        return 1;
+    }
+    0
+}
+
+// The process exit status of the integer-division trap (x/0, x%0, INT_MIN/-1,
+// INT_MIN%-1). One documented value for every backend: docs/errors.md and the
+// MLIR lowering's MIND_DIV_TRAP_EXIT_CODE use the same number. Distinct from the
+// bounds trap (77, nb_oob_trap_code) and the arena-exhausted exit (70).
+pub fn nb_div_trap_code() -> i64 {
+    79
+}
+
+// Deterministic exit code for a RUNTIME array-bounds violation trap. A clean,
+// reproducible _exit(77) — the SAME outcome every run (determinism is the
+// wedge) — never undefined behaviour and never a wrong value.
+pub fn nb_oob_trap_code() -> i64 {
+    77
+}
+
+// The process exit status of __mind_assert_fail. One number on every backend.
+// 134 is the shell-visible status of the MLIR runtime SIGABRT path.
+pub fn nbe_assert_trap_code() -> i64 {
+    134
+}
+
+// 1 iff __mind_assert_fail has exactly one argument.
+pub fn nbe_assert_arity_ok(args_len: i64) -> i64 {
+    if args_len == 1 {
+        return 1;
+    }
+    0
+}
+
+// __mind_assert_fail site. The argument is already evaluated in `code` and is
+// ignored. 14 bytes and nothing else:
+//   BF 86 00 00 00  mov edi, 134
+//   B8 E7 00 00 00  mov eax, 231
+//   0F 05           syscall
+//   0F 0B           ud2
+pub fn nbe_assert_trap(code: String) -> String {
+    let t1: String = nb_push(code, 191);
+    let t2: String = nb_le(t1, nbe_assert_trap_code(), 4);
+    let t3: String = nb_push(t2, 184);
+    let t4: String = nb_le(t3, 231, 4);
+    let t5: String = nb_push(t4, 15);
+    let t6: String = nb_push(t5, 5);
+    let t7: String = nb_push(t6, 15);
+    nb_push(t7, 11)
+}
+
+// Capability mark nbtrap54. Compiled natively this body is `movabs rax, imm64`
+// whose little-endian immediate spells "nbtrap54". A compatibility mark, not a
+// signature. Earlier seeds do not carry it, so their smoke rows stay deferred.
+pub fn nbe_cap_assert_trap() -> i64 {
+    3762036627572286062
+}
+
+// ---- glibc version buckets of the dynamic image (nbx_meta, nbx_write_elf) ----
+pub fn nbx_version_step(found: i64, rows: i64, vidx: i64, i: i64, j: i64) -> i64 {
+    if found >= 0 {
+        return found;
+    }
+    if nbx_same_version(rows, i, j) == 1 {
+        return __mind_load_i64(vidx + j * 8);
+    }
+    found
+}
+pub fn nbx_version_pick(found: i64, nv: i64) -> i64 {
+    if found < 0 {
+        return nv;
+    }
+    found
+}
+pub fn nbx_version_new(found: i64) -> i64 {
+    if found < 0 {
+        return 1;
+    }
+    0
+}
+// An unversioned row (vlen 0) is a libcuda import: it never shares a glibc
+// version bucket and never claims a Verneed entry.
+pub fn nbx_row_unversioned(rows: i64, i: i64) -> i64 {
+    if __mind_load_i64(rows + i * 80 + 32) == 0 {
+        return 1;
+    }
+    0
+}
+pub fn nbx_same_version(rows: i64, a: i64, b: i64) -> i64 {
+    let ra: i64 = rows + a * 80;
+    let rb: i64 = rows + b * 80;
+    if nbx_row_unversioned(rows, a) == 1 {
+        return 0;
+    }
+    if nbx_row_unversioned(rows, b) == 1 {
+        return 0;
+    }
+    if __mind_load_i64(ra + 32) != __mind_load_i64(rb + 32) {
+        return 0;
+    }
+    if __mind_load_i64(ra + 40) != __mind_load_i64(rb + 40) {
+        return 0;
+    }
+    if __mind_load_i64(ra + 48) != __mind_load_i64(rb + 48) {
+        return 0;
+    }
+    1
+}
+// The dedup scan skips an unversioned row: it has no version to share.
+pub fn nbx_version_step_guard(found: i64, rows: i64, vidx: i64, i: i64, j: i64) -> i64 {
+    if nbx_row_unversioned(rows, i) == 1 {
+        return found;
+    }
+    nbx_version_step(found, rows, vidx, i, j)
+}
+// An unversioned row carries versym index -1 (the loader's `global, no
+// version` value 1 once the +2 bias is added) and leaves nv untouched; a
+// versioned row keeps the historical claim/new-version step.
+pub fn nbx_version_classify(nv: i64, rows: i64, vidx: i64, vrep: i64, found: i64, i: i64) -> i64 {
+    if nbx_row_unversioned(rows, i) == 1 {
+        __mind_store_i64(vidx + i * 8, 0 - 1);
+        return nv;
+    }
+    __mind_store_i64(vrep + nv * 8, i);
+    __mind_store_i64(vidx + i * 8, nbx_version_pick(found, nv));
+    nv + nbx_version_new(found)
+}
+pub fn nbx_chain_next(i: i64, n: i64) -> i64 {
+    if i < n {
+        return i + 1;
+    }
+    0
+}
+pub fn nbx_need_next(i: i64, n: i64) -> i64 {
+    if i + 1 < n {
+        return 16;
+    }
+    0
+}
+// One version-table set when some imported symbol carries a glibc version:
+// the caller turns each set into the three DT_VERSYM, DT_VERNEED and
+// DT_VERNEEDNUM entries.
+pub fn nbx_vers_tags(nv: i64) -> i64 {
+    if nv > 0 {
+        return 1;
+    }
+    0
+}
+
+// ---- byte helpers of the dynamic image writer (from main.mind) ----
+pub fn nbx_round(n: i64, a: i64) -> i64 {
+    ((n + a - 1) / a) * a
+}
+pub fn nbx_to(out: String, pos: i64) -> String {
+    let mut s: String = out;
+    while string_len(s) < pos {
+        s = nb_push(s, 0);
+    }
+    s
+}

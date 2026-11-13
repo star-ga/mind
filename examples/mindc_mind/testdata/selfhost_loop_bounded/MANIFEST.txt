@@ -1,0 +1,19 @@
+# Frozen BOUNDED-profile self-host compiler seed: the pure-MIND compiler
+# emitted with an explicit layout (arena/stack/guard below), so it and every
+# image it emits load under RLIMIT_AS = 2 GiB. Derived from the frozen
+# default seed (testdata/selfhost_loop/stage1.elf) with the v2 header, and
+# reproduces itself (stage1==stage2==stage3) under the cap.
+# published-by	self_host_bounded_profile_smoke.py --bless
+#
+# derived_from_seed_sha256	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
+# combined_source_sha256	e434682ea2c3215d8d2c8b6b233d7ef76da1ac23346c74281a8485ff1eb2223d
+# combined_source_bytes	3910995
+# layout_arena_bytes	805306368
+# layout_stack_bytes	402653184
+# layout_guard_bytes	1048576
+# stage1_sha256	3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077
+# stage2_sha256	3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077
+# stage3_sha256	3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077
+#
+# name	size_bytes	sha256
+stage1.elf	3349291	3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077

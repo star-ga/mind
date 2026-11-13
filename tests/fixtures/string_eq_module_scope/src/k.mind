@@ -1,0 +1,43 @@
+// Typed element compares. No module this one shares an importer with
+// stores into a collection, so every compare here is an integer compare.
+import m;
+
+struct Px {
+    v: i64,
+}
+
+// An indexed element compare of two typed fixed arrays.
+fn eq32(a: [u8; 32], b: [u8; 32]) -> i64 {
+    let mut i = 0;
+    while i < 32 {
+        if a[i] != b[i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn bytes8(n: i64) -> [u8; 8] {
+    let mut o: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    o[0] = 7;
+    return o;
+}
+
+// An element of a typed function result.
+fn same_low(x: i64, y: i64) -> i64 {
+    let a = bytes8(x);
+    let b = bytes8(y);
+    if a[7] == b[7] {
+        return 1;
+    }
+    return 0;
+}
+
+// A `.len()` compare of two slices of a named type.
+fn same_len(p: &[Px], q: &[Px]) -> i64 {
+    if p.len() == q.len() {
+        return 1;
+    }
+    return 0;
+}

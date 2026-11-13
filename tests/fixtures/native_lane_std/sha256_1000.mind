@@ -1,0 +1,15 @@
+import std.sha256;
+
+fn main() -> i64 {
+    let n: i64 = 1000;
+    let msg: i64 = __mind_alloc(1000);
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(msg + i, (i * 7 + 3) & 255);
+        i = i + 1;
+    }
+    let out: i64 = __mind_alloc(32);
+    let rc: i64 = sha256(msg, n, out);
+    __mind_write(1, out, 32, 0 - 1);
+    return __mind_load_i8(out + 31) + rc;
+}

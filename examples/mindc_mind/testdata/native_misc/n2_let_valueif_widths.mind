@@ -1,0 +1,22 @@
+// N2: a narrow let bound to a value-if wraps the merged value to its declared width,
+// in the code and in the trace note (note leg). Independent value:
+// fi(1): y: i8 = 300 -> 300 - 256 = 44 -> y > 255 is false -> 0.
+// fu(1): y: u16 = 70000 -> 70000 & 65535 = 4464; y + 1 = 4465 -> 4465 - 4400 = 65.
+// 0 + 65 + 3 = 68.
+fn fi(c: i64) -> i64 {
+    let y: i8 = if c == 1 { 300 } else { 300 };
+    if y > 255 {
+        return 1;
+    }
+    return 0;
+}
+
+fn fu(c: i64) -> i64 {
+    let y: u16 = if c == 1 { 70000 } else { 5 };
+    let z: i64 = y + 1;
+    return z - 4400;
+}
+
+fn main() -> i64 {
+    fi(1) + fu(1) + 3
+}

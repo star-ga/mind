@@ -1,0 +1,276 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Lexer byte classes and sub-scans (moved verbatim from main.mind): the
+// classification primitives and the bounded-depth scans over one token's
+// bytes (identifier, integer, decimal, exponent, comment line). They read
+// bytes only; the token kinds and the scan loop stay in main.mind.
+
+import nb_emit_core;
+import nb_float_lit;
+
+// ===== Classification primitives =====
+
+pub fn is_space(b: i64) -> i64 {
+    if b == 32 {
+        return 1;
+    }
+    if b == 9 {
+        return 1;
+    }
+    if b == 10 {
+        return 1;
+    }
+    if b == 13 {
+        return 1;
+    }
+    0
+}
+
+pub fn is_alpha(b: i64) -> i64 {
+    if b >= 65 {
+        if b <= 90 {
+            return 1;
+        }
+    }
+    if b >= 97 {
+        if b <= 122 {
+            return 1;
+        }
+    }
+    if b == 95 {
+        return 1;
+    }
+    0
+}
+
+pub fn is_alnum(b: i64) -> i64 {
+    if is_alpha(b) == 1 {
+        return 1;
+    }
+    is_digit(b)
+}
+
+// ===== Sub-scans =====
+
+// Census X1 capacity: every lexer sub-scan below walked its run one stack
+// frame per source byte (no tail calls in the native compiler), so one long
+// token overflowed the bounded compiler's stack: a 839 KB string literal took
+// 480 B of stack per byte in scan_string_end (SIGSEGV), and a long identifier,
+// digit run or comment line did the same at their own frame sizes. Each scan
+// now walks at most lx_leaf() bytes per recursion chain: a short run is found
+// by the first leaf (the common token, no extra cost), a longer one by halving
+// the rest of the buffer (depth log2(n / lx_leaf()) + lx_leaf()). The
+// positions returned are those of the per-byte walk, so the token stream of
+// every program is unchanged.
+pub fn lx_leaf() -> i64 {
+    64
+}
+pub fn lx_lim(i: i64, hi: i64) -> i64 {
+    if hi - i > lx_leaf() {
+        return i + lx_leaf();
+    }
+    hi
+}
+pub fn scan_ident_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return i;
+    }
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_ident_leaf(buf, i, lim);
+    if r < lim {
+        return r;
+    }
+    scan_ident_span(buf, lim, buf_len)
+}
+// First non-alnum position in [i, hi), or hi.
+pub fn scan_ident_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if is_alnum(load_byte(buf, i)) == 1 {
+        return scan_ident_leaf(buf, i + 1, hi);
+    }
+    i
+}
+pub fn scan_ident_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_ident_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_ident_span(buf, mid, hi);
+    }
+    scan_ident_leaf(buf, lo, hi)
+}
+
+pub fn scan_int_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return i;
+    }
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_int_leaf(buf, i, lim);
+    if r < lim {
+        return r;
+    }
+    scan_int_span(buf, lim, buf_len)
+}
+// First non-digit position in [i, hi), or hi.
+pub fn scan_int_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if is_digit(load_byte(buf, i)) == 1 {
+        return scan_int_leaf(buf, i + 1, hi);
+    }
+    i
+}
+pub fn scan_int_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_int_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_int_span(buf, mid, hi);
+    }
+    scan_int_leaf(buf, lo, hi)
+}
+
+// Decimal integer part WITH `_` digit separators, mirroring the Rust parser
+// (parser/mod.rs:4253): an `_` is part of the literal ONLY when it sits BETWEEN
+// two digits (`d _ d`). A trailing `_`, a doubled `__`, or an `_` before a
+// non-digit is NOT consumed — it is left for the surrounding lex, so `1_` lexes
+// as int `1` + ident `_` exactly as Rust leaves it (d.parse drops the `_`s).
+pub fn scan_dec_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return i;
+    }
+    let r: i64 = scan_dec_leaf(buf, i, lx_lim(i, buf_len), buf_len);
+    if r >= 0 {
+        return r;
+    }
+    let c: i64 = 0 - 1 - r;
+    if c >= buf_len {
+        return c;
+    }
+    let r2: i64 = scan_dec_span(buf, c, buf_len, buf_len);
+    if r2 >= 0 {
+        return r2;
+    }
+    0 - 1 - r2
+}
+// The digit-run walk over [i, hi): the stop position (>= 0), or -1 - c when the
+// run reaches hi and continues at c (hi, or hi + 1 after a `_d` pair that
+// straddles hi). The `_` lookahead reads past hi, exactly as the per-byte walk.
+pub fn scan_dec_leaf(buf: i64, i: i64, hi: i64, buf_len: i64) -> i64 {
+    if i >= hi {
+        return 0 - 1 - i;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 1 {
+        return scan_dec_leaf(buf, i + 1, hi, buf_len);
+    }
+    if c == 95 {
+        if i + 1 < buf_len {
+            if is_digit(load_byte(buf, i + 1)) == 1 {
+                return scan_dec_leaf(buf, i + 2, hi, buf_len);
+            }
+        }
+    }
+    i
+}
+pub fn scan_dec_span(buf: i64, lo: i64, hi: i64, buf_len: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_dec_span(buf, lo, mid, buf_len);
+        if r >= 0 {
+            return r;
+        }
+        return scan_dec_span(buf, 0 - 1 - r, hi, buf_len);
+    }
+    scan_dec_leaf(buf, lo, hi, buf_len)
+}
+
+// `i` points at the first REQUIRED exponent digit. Returns the index past the
+// exponent digit run, or -1 if there is no digit. Rust makes a bare `1e` / `1e+`
+// a HARD parse error (parser/mod.rs:4289 `.ok_or_else(...expected exponent
+// digits)`), so an empty exponent fails closed (-1). Underscores are NOT accepted
+// here (Rust uses a plain digits() for the exponent).
+pub fn scan_exp_digits(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return -1;
+    }
+    if is_digit(load_byte(buf, i)) == 0 {
+        return -1;
+    }
+    scan_int_end(buf, i + 1, buf_len)
+}
+
+// If `i` points at a well-formed exponent tail `(e|E)[+|-]?<digit>+`, return the
+// index just past it; otherwise -1. Mirrors parser/mod.rs:4279-4291 (after a
+// dotted mantissa) and :4308-4329 (integer mantissa). The exponent digits are
+// MANDATORY; a missing/empty exponent fails closed so the mantissa lexes as an
+// integer instead of emitting a float for a shape Rust rejects.
+pub fn scan_float_exp(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return -1;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c != 101 {
+        if c != 69 {
+            return -1;
+        }
+    }
+    let after_e: i64 = i + 1;
+    if after_e >= buf_len {
+        return -1;
+    }
+    let s: i64 = load_byte(buf, after_e);
+    if s == 43 {
+        return scan_exp_digits(buf, after_e + 1, buf_len);
+    }
+    if s == 45 {
+        return scan_exp_digits(buf, after_e + 1, buf_len);
+    }
+    scan_exp_digits(buf, after_e, buf_len)
+}
+
+pub fn scan_comment_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return i;
+    }
+    let lim: i64 = lx_lim(i, buf_len);
+    let r: i64 = scan_nl_leaf(buf, i, lim);
+    if r < lim {
+        return r + 1;
+    }
+    let r2: i64 = scan_nl_span(buf, lim, buf_len);
+    if r2 < buf_len {
+        return r2 + 1;
+    }
+    buf_len
+}
+// Position of the first newline in [i, hi), or hi.
+pub fn scan_nl_leaf(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if load_byte(buf, i) == 10 {
+        return i;
+    }
+    scan_nl_leaf(buf, i + 1, hi)
+}
+pub fn scan_nl_span(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > lx_leaf() {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let r: i64 = scan_nl_span(buf, lo, mid);
+        if r < mid {
+            return r;
+        }
+        return scan_nl_span(buf, mid, hi);
+    }
+    scan_nl_leaf(buf, lo, hi)
+}

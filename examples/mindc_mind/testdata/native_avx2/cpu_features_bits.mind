@@ -1,0 +1,10 @@
+// Copyright 2026 STARGA Inc.
+// Writes __mind_cpu_features_v1() as 8 little-endian bytes to stdout and exits 0.
+// The gate compares it, natively and under each emulated CPU model, with an
+// independent CPUID/XGETBV reader built by the C toolchain.
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    __mind_store_i64(buf, __mind_cpu_features_v1());
+    __mind_write(1, buf, 8, 0 - 1);
+    0
+}

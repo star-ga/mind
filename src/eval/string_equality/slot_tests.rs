@@ -285,3 +285,26 @@ fn a_string_record_literal_is_a_string() {
     }";
     assert_eq!(byte_compares(src), 1);
 }
+
+/// A count or a flag of a parameter declared a collection is an integer,
+/// whatever a call stores into the parameter: lowering picks the method by
+/// the declared type. The parameter itself, an element of it and a method
+/// result that is the collection handle still may be strings.
+#[test]
+fn counts_of_a_collection_parameter_stay_integers() {
+    let calls = "pub fn probe() -> i64 { let s = \"abc\"; return same(s, s) }";
+    let with = |body: &str| {
+        format!("fn same(p: &[i64], q: &[i64]) -> i64 {{\n{body}\nreturn 0\n}}\n{calls}")
+    };
+    for count in ["p.len() == q.len()", "p.is_empty() == q.is_empty()"] {
+        let src = with(&format!("if {count} {{ return 1 }}"));
+        assert_eq!(refusals(&src), vec![], "{count}");
+    }
+    for value in ["p == q", "p[0] == q[0]", "p.push(1) == q.push(1)"] {
+        let src = with(&format!("if {value} {{ return 1 }}"));
+        assert_eq!(refusals(&src), vec![UNTYPED], "{value}");
+    }
+    // A shadowing binding of unknown type is not the parameter.
+    let shadowed = with("let p = g(1)\nlet q = g(2)\nif p.len() == q.len() { return 1 }");
+    assert_eq!(refusals(&shadowed), vec![UNTYPED]);
+}

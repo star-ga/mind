@@ -137,7 +137,7 @@ fn build_and_run_reject_runnable_blocker() {
 
     // (1) `mindc build` must now ALSO reject it (was rc=0 before the fix).
     let build = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("run mindc build");
@@ -155,7 +155,7 @@ fn build_and_run_reject_runnable_blocker() {
 
     // (2) `mindc run` must now ALSO reject it (was rc=0 before the fix).
     let run = Command::new(&mindc)
-        .arg("run")
+        .args(["run", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("run mindc run");
@@ -213,7 +213,7 @@ fn project_build_and_run_reject_non_entry_source_fallback() {
     // the user-visible artifact path, not an intermediate object/cache.
     let requested = td.path().join("requested-fallback");
     let build = Command::new(&mindc)
-        .args(["build", "--no-cache", "--out"])
+        .args(["build", "--backend", "mlir", "--no-cache", "--out"])
         .arg(&requested)
         .current_dir(td.path())
         .output()
@@ -237,7 +237,7 @@ fn project_build_and_run_reject_non_entry_source_fallback() {
         fs::remove_dir_all(td.path().join("target")).expect("remove failed-build target");
     }
     let run = Command::new(&mindc)
-        .arg("run")
+        .args(["run", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("run project run");
@@ -276,7 +276,7 @@ fn project_valid_linked_dependency_builds_and_runs() {
     );
     let requested = td.path().join("linked-project");
     let build = Command::new(&mindc)
-        .args(["build", "--no-cache", "--out"])
+        .args(["build", "--backend", "mlir", "--no-cache", "--out"])
         .arg(&requested)
         .current_dir(td.path())
         .output()
@@ -289,7 +289,7 @@ fn project_valid_linked_dependency_builds_and_runs() {
     assert!(requested.is_file(), "valid build produced no artifact");
 
     let run = Command::new(&mindc)
-        .arg("run")
+        .args(["run", "--backend", "mlir"])
         .current_dir(td.path())
         .output()
         .expect("run valid project run");
@@ -299,4 +299,329 @@ fn project_valid_linked_dependency_builds_and_runs() {
         "valid linked project did not execute its dependency result: {}",
         output_text(&run)
     );
+}
+
+/// A native-only intrinsic is refused by name (E2041) before the MLIR backend
+/// lowers or links, on every runnable MLIR path. It used to write a shared
+/// object with an undefined symbol, or fail in the linker. `mindc check` and
+/// `--emit-evidence` stay backend-neutral (the native backend lowers the row),
+/// and `__mind_now_ns`, which no native row defines, keeps its E2024 refusal.
+#[test]
+fn a_native_only_intrinsic_is_refused_by_name_before_the_mlir_link() {
+    let mindc = mindc_bin();
+    let td = tempfile::tempdir().expect("tempdir");
+    // Positive control first: a program with no native-only call links. On a
+    // host without the MLIR toolchain the gate reports the skip (and fails
+    // under MIND_BENCH_REQUIRE=1) instead of returning silently.
+    let ok = td.path().join("ok.mind");
+    fs::write(
+        &ok,
+        "fn main() -> i64 {\n    let p: i64 = __mind_alloc(64);\n    return 0;\n}\n",
+    )
+    .expect("write control");
+    let so = td.path().join("ok.so");
+    let built = Command::new(&mindc)
+        .arg(&ok)
+        .arg("--emit-shared")
+        .arg(&so)
+        .output()
+        .expect("control");
+    if crate::common::gate::is_capability_gap(&output_text(&built)) {
+        crate::common::gate::skipped(
+            "build_run_runnable_blocker_gate",
+            "native-only intrinsic refusal: needs the MLIR toolchain",
+        );
+        return;
+    }
+    assert!(
+        built.status.success() && so.exists(),
+        "control: {}",
+        output_text(&built)
+    );
+    let refused: [(&str, &str, &str); 4] = [
+        ("ymm", "__mind_ymm_vmovdqu_ld(0, p, 0);", "E2041"),
+        ("vp", "let q: i64 = __mind_vpaddd_i32x8(p, p);", "E2041"),
+        ("relax", "let q: i64 = __mind_cpu_relax();", "E2041"),
+        ("now", "let q: i64 = __mind_now_ns(0);", "E2024"),
+    ];
+    for (case, stmt, code) in refused {
+        let name = stmt
+            .split(['(', ' '])
+            .find(|w| w.starts_with("__mind_"))
+            .expect("intrinsic name");
+        let src = td.path().join(format!("{case}.mind"));
+        fs::write(
+            &src,
+            format!("fn main() -> i64 {{\n    let p: i64 = __mind_alloc(64);\n    {stmt}\n    return 0;\n}}\n"),
+        )
+        .expect("write source");
+        for flag in ["--emit-shared", "--emit-obj"] {
+            let out = td.path().join(format!("{case}{flag}.bin"));
+            let built = Command::new(&mindc)
+                .arg(&src)
+                .arg(flag)
+                .arg(&out)
+                .arg("--allow-nondeterministic")
+                .output()
+                .expect("run mindc");
+            let text = output_text(&built);
+            assert_eq!(built.status.code(), Some(1), "{case} {flag}: {text}");
+            assert!(
+                text.contains(code) && text.contains(name),
+                "{case} {flag}: {text}"
+            );
+            assert!(
+                !out.exists(),
+                "{case} {flag}: a refused build wrote {out:?}"
+            );
+        }
+        if code == "E2041" {
+            let check = Command::new(&mindc)
+                .arg("check")
+                .arg(&src)
+                .output()
+                .expect("check");
+            assert!(
+                check.status.success(),
+                "{case}: check is backend-neutral: {}",
+                output_text(&check)
+            );
+            let evidence = td.path().join(format!("{case}.mic3"));
+            let emitted = Command::new(&mindc)
+                .arg(&src)
+                .args(["--emit-evidence"])
+                .arg(&evidence)
+                .arg("--allow-nondeterministic")
+                .output()
+                .expect("emit evidence");
+            assert!(
+                emitted.status.success(),
+                "{case}: {}",
+                output_text(&emitted)
+            );
+        }
+    }
+}
+
+/// A native-only call in a project SIBLING module is refused (E2041) on the
+/// shared-library routes, `mindc build --emit=cdylib` and the flat
+/// `--emit-shared`. The sibling object compile never read the runnable
+/// blockers, so both wrote a `.so` with `__mind_vpaddd_i32x8` undefined.
+#[test]
+fn a_native_only_call_in_a_sibling_module_is_refused_on_the_cdylib_routes() {
+    let mindc = mindc_bin();
+    let td = tempfile::tempdir().expect("tempdir");
+    write_linked_project(
+        td.path(),
+        "siblingvp",
+        "import helper;\nfn main() -> i64 {\n    return degraded();\n}\n",
+        "pub fn degraded() -> i64 {\n    let p: i64 = __mind_alloc(64);\n    let q: i64 = __mind_vpaddd_i32x8(p, p);\n    return q;\n}\n",
+    );
+    let cdylib = td.path().join("libsiblingvp.so");
+    let flat = td.path().join("flat.so");
+    let routes: [(&str, Vec<String>, &Path); 2] = [
+        (
+            "build --emit=cdylib",
+            vec![
+                "build".into(),
+                "--backend".into(),
+                "mlir".into(),
+                "--emit=cdylib".into(),
+                format!("--out={}", cdylib.display()),
+            ],
+            &cdylib,
+        ),
+        (
+            "--emit-shared",
+            vec![
+                "src/main.mind".into(),
+                "--emit-shared".into(),
+                flat.display().to_string(),
+            ],
+            &flat,
+        ),
+    ];
+    for (route, args, artifact) in routes {
+        let out = Command::new(&mindc)
+            .args(&args)
+            .current_dir(td.path())
+            .output()
+            .expect("run mindc");
+        let text = output_text(&out);
+        if crate::common::gate::is_capability_gap(&text) {
+            crate::common::gate::skipped(
+                "build_run_runnable_blocker_gate",
+                "sibling native-only refusal: needs the MLIR toolchain",
+            );
+            return;
+        }
+        assert!(!out.status.success(), "{route}: must refuse: {text}");
+        assert!(
+            text.contains("E2041") && text.contains("__mind_vpaddd_i32x8"),
+            "{route}: the refusal must name E2041 and the intrinsic: {text}"
+        );
+        assert!(
+            !artifact.exists(),
+            "{route}: a refused build wrote {artifact:?}"
+        );
+    }
+}
+
+/// Build `source` as a one-file project with `mindc build`; the output and
+/// the artifact path.
+fn build_project(source: &str, name: &str) -> (Output, tempfile::TempDir, std::path::PathBuf) {
+    let td = tempfile::tempdir().expect("tempdir");
+    let src_dir = td.path().join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("main.mind"), source).expect("write src");
+    fs::write(td.path().join("Mind.toml"), manifest("src/main.mind")).expect("write manifest");
+    let artifact = td.path().join(name);
+    let build = Command::new(mindc_bin())
+        .args(["build", "--backend", "mlir", "--no-cache", "--out"])
+        .arg(&artifact)
+        .current_dir(td.path())
+        .output()
+        .expect("run mindc build");
+    (build, td, artifact)
+}
+
+/// `print` of a `String` value writes its bytes, never its record address.
+/// Before the fix every non-literal string operand went through `printI64`, so
+/// the program below wrote one decimal handle per string.
+const PRINT_STRINGS_MIND: &str = r#"import std.string;
+
+fn long_text(n: i64) -> String {
+    let mut s: String = string_new();
+    let mut i: i64 = 0;
+    while i < n {
+        s = string_push_byte(s, 97 + i % 26);
+        i = i + 1;
+    }
+    return s;
+}
+
+fn label() -> String {
+    return "fn-result";
+}
+
+fn show(s: &string) -> i64 {
+    print("<", s, ">");
+    return 0;
+}
+
+fn main() -> i64 {
+    let empty: String = string_new();
+    let ascii: String = "hello";
+    let utf8: String = "héllo €";
+    let built: String = string_push_str(string_new(), "built");
+    let lower: string = "lower";
+    let long: String = long_text(5000);
+    print("[", empty, "]");
+    print("[", ascii, "]");
+    print("[", utf8, "]");
+    print("[", built, "]");
+    print("[", lower, "]");
+    print("[", label(), "]");
+    print("[", if string_len(ascii) > 0 { ascii } else { lower }, "]");
+    let shown: i64 = show(&ascii);
+    print("[", long, "]");
+    print("|", 42 + shown);
+    return 0;
+}
+"#;
+
+#[test]
+fn print_of_string_values_writes_their_bytes() {
+    let (build, _td, artifact) = build_project(PRINT_STRINGS_MIND, "print_strings");
+    if !crate::common::gate::compiled("build_run_runnable_blocker_gate", &build) {
+        return;
+    }
+    let run = Command::new(&artifact)
+        .output()
+        .expect("run the built program");
+    assert_eq!(run.status.code(), Some(0), "{}", output_text(&run));
+    let long: String = (0..5000usize)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+    let want = format!("[][hello][héllo €][built][lower][fn-result][hello]<hello>[{long}]|42\n");
+    assert_eq!(
+        run.stdout,
+        want.as_bytes(),
+        "stdout bytes differ (a handle printed as an integer is the old defect)"
+    );
+}
+
+/// Each `print` operand a runnable artifact cannot write correctly is refused
+/// by name at build time, while `mindc check` (shared with the interpreter,
+/// which prints every value) still accepts the source.
+#[test]
+fn print_of_aggregate_or_untyped_value_is_refused_by_name() {
+    // A `&[T]` slice operand never reaches this gate: type-check refuses it (E2033).
+    let cases: [(&str, &str, &str); 7] = [
+        (
+            "struct P { x: i64, y: i64 }\nfn main() -> i64 {\n    let p: P = P { x: 1, y: 2 };\n    print(p);\n    return 0;\n}\n",
+            "struct",
+            "a struct value",
+        ),
+        (
+            "fn main() -> i64 {\n    let a: [i64; 3] = [1, 2, 3];\n    print(a);\n    return 0;\n}\n",
+            "array",
+            "an array, slice, set or tensor",
+        ),
+        (
+            "fn show(t: tensor<f32[4]>) -> i64 {\n    print(t);\n    return 0;\n}\nfn main() -> i64 { return 0; }\n",
+            "tensor",
+            "an array, slice, set or tensor",
+        ),
+        (
+            "fn show(m: map<i64, i64>) -> i64 {\n    print(m);\n    return 0;\n}\nfn main() -> i64 { return 0; }\n",
+            "map",
+            "a map",
+        ),
+        (
+            "fn show(t: (i64, i64)) -> i64 {\n    print(t);\n    return 0;\n}\nfn main() -> i64 { return 0; }\n",
+            "tuple",
+            "a tuple",
+        ),
+        (
+            "fn show(o: Option<i64>) -> i64 {\n    print(o);\n    return 0;\n}\nfn main() -> i64 { return 0; }\n",
+            "option",
+            "an `Option` or `Result` value",
+        ),
+        (
+            "fn show<T>(x: T) -> i64 {\n    print(x);\n    return 0;\n}\nfn main() -> i64 { return 0; }\n",
+            "untyped",
+            "whose type is not known",
+        ),
+    ];
+    for (source, kind, phrase) in cases {
+        let (build, td, artifact) = build_project(source, kind);
+        let text = output_text(&build);
+        if crate::common::gate::is_capability_gap(&text) {
+            crate::common::gate::skipped(
+                "build_run_runnable_blocker_gate",
+                "print-operand-refusal: needs mlir-build; skipping",
+            );
+            return;
+        }
+        assert!(!build.status.success(), "{kind}: build must refuse: {text}");
+        assert!(
+            text.contains("lower.print_operand") && text.contains(phrase),
+            "{kind}: refusal must name the key and `{phrase}`: {text}"
+        );
+        assert!(
+            !artifact.exists(),
+            "{kind}: a refused build wrote {artifact:?}"
+        );
+        let check = Command::new(mindc_bin())
+            .args(["check", "src/main.mind"])
+            .current_dir(td.path())
+            .output()
+            .expect("run mindc check");
+        assert!(
+            !output_text(&check).contains("lower.print_operand"),
+            "{kind}: check must not refuse the print: {}",
+            output_text(&check)
+        );
+    }
 }

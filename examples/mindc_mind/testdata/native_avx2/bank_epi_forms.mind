@@ -1,0 +1,65 @@
+// Copyright 2026 STARGA Inc.
+// R-02e epilogue rows (kinds 94-99): every row on ymm0 / 7 / 8 / 14 (ymm8 as the rm
+// operand forces the 3-byte VEX), vpcmpgtq both ways, and the count register of
+// vpsrlq / vpsllq at 13 and 5 (high qword of the xmm count set: ignored), at 64 and
+// at 200 (count > 63 -> 0). Prints 320 bytes; twin: bank_epi_scalar.mind.
+
+fn epi(a: i64, b: i64, c: i64, o: i64) -> i64 {
+    __mind_ymm_vmovdqu_ld(7, a, 0);
+    __mind_ymm_vmovdqu_ld(8, b, 0);
+    __mind_ymm_vpmuludq_i64x4_r(0, 7, 8);
+    __mind_ymm_vmovdqu_st(0, o, 0);
+    __mind_ymm_vpand_i64x4_r(14, 8, 7);
+    __mind_ymm_vmovdqu_st(14, o, 32);
+    __mind_ymm_vpor_i64x4_r(0, 7, 8);
+    __mind_ymm_vmovdqu_st(0, o, 64);
+    __mind_ymm_vpcmpgtq_i64x4_r(14, 7, 8);
+    __mind_ymm_vmovdqu_st(14, o, 96);
+    __mind_ymm_vpcmpgtq_i64x4_r(0, 8, 7);
+    __mind_ymm_vmovdqu_st(0, o, 128);
+    __mind_ymm_vmovdqu_ld(14, c, 0);
+    __mind_ymm_vpsrlq_i64x4_r(0, 7, 14);
+    __mind_ymm_vmovdqu_st(0, o, 160);
+    __mind_ymm_vpsllq_i64x4_r(0, 8, 14);
+    __mind_ymm_vmovdqu_st(0, o, 192);
+    __mind_ymm_vmovdqu_ld(14, c, 32);
+    __mind_ymm_vpsrlq_i64x4_r(0, 7, 14);
+    __mind_ymm_vmovdqu_st(0, o, 224);
+    __mind_ymm_vmovdqu_ld(14, c, 64);
+    __mind_ymm_vpsllq_i64x4_r(7, 8, 14);
+    __mind_ymm_vmovdqu_st(7, o, 256);
+    __mind_ymm_vmovdqu_ld(14, c, 96);
+    __mind_ymm_vpsllq_i64x4_r(8, 8, 14);
+    __mind_ymm_vmovdqu_st(8, o, 288);
+    0
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(32);
+    let b: i64 = __mind_alloc(32);
+    let c: i64 = __mind_alloc(128);
+    let o: i64 = __mind_alloc(320);
+    let mut i: i64 = 0;
+    let mut x: i64 = 4242;
+    while i < 32 {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(a + i, x / 65536);
+        x = (x * 1103515245 + 12345) & 2147483647;
+        __mind_store_i8(b + i, x / 65536);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 16 {
+        __mind_store_i64(c + i * 8, 0);
+        i = i + 1;
+    }
+    __mind_store_i64(c, 13);
+    __mind_store_i64(c + 8, 1);
+    __mind_store_i64(c + 32, 64);
+    __mind_store_i64(c + 64, 200);
+    __mind_store_i64(c + 96, 5);
+    __mind_store_i64(c + 104, 9);
+    let _e: i64 = epi(a, b, c, o);
+    __mind_write(1, o, 320, 0 - 1);
+    0
+}

@@ -1,0 +1,205 @@
+{
+  "comment": "H2b external digest pins. These digests live outside any gate run: changing an excluded file without updating this catalogue is a red pin check. Referenced by .gitignore reason lines as the pin site for digest-pinned-gate-input exclusions (Ruling Q1.3 / Schedule R7).",
+  "entries": [
+    {
+      "path": "examples/mindc_mind/native_c_call_emit_driver.mind",
+      "sha256": "20dc4ded38b0c2e68322f7f2487cde3f2cb38c2ed3f8cedb9198a3a03267e75e",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_c_call_emit_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_c_call_emit.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_c_call_plan_driver.mind",
+      "sha256": "c7ccfafd4f3208972279b18bb0558a3088c46cd76b9326954500d278cb25711d",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_c_call_plan_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_c_call_plan.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_allocator.mind",
+      "sha256": "d317e62c85137bcd4fd02d464b0fc4df6ef52bbbac136d6ff1f70dcedaa56647",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_allocator_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic_layout.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_allocator_driver.mind",
+      "sha256": "4050cb25e2c5e11ee600ff5c61bf36e7512e9b3c74f27268390a298a1ce58e29",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_allocator_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic_allocator.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_fixture.mind",
+      "sha256": "2a433e828f6ffd7d48232e01d16ffd2d493829670610be104412c6eb3eecc02a",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_writer_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_image.mind",
+      "sha256": "aabec6a25194d6f18009100e3c1de1786944307df12682efac6b4d060ba5c344",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_libc_io_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_image_fixture.mind",
+      "sha256": "cd6c3552d8ecfe1ce38cfe3a5e4f03e4b75047d6418633a04941482e6bfe0400",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_image_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic.mind",
+        "examples/mindc_mind/native_dynamic_image.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_layout_driver.mind",
+      "sha256": "72df1a622ad0067dfa334e3725cdcdd3089a10873cf5948a9f8816c6ef7178fe",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_layout_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic_layout.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_dynamic_mic_fixture.mind",
+      "sha256": "af1f70292da86f4f4ba27a9c51cb0e005c9efebcf003f9bf8220fcf70ace1118",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_dynamic_image_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_emission_context.mind",
+      "sha256": "32f89926eb89e41d72385f264c95417f0ab59164741b738f3b5db3119d3bfc7a",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/self_host_native_emission_context_smoke.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic_layout.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_libc_io_fixture.mind",
+      "sha256": "82cbee028b26cf92ae4aba3d6b9dfdc4c6fa52172c23e3cf079ce31f276e18bf",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_libc_io_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_libc_io.mind",
+        "examples/mindc_mind/native_dynamic.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_libc_startup.mind",
+      "sha256": "c33baa2e1a116c2062301c30819082bb5945853df651e8a6f1cb4645fbd2d7b9",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_libc_startup_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_dynamic_layout.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_libc_startup_fixture.mind",
+      "sha256": "45eff00c5d90901d1fff1cb5aa5c0563b5279d4efbeb8b2c21f1cdee0f6fff3a",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_libc_startup_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_libc_startup.mind",
+        "examples/mindc_mind/native_dynamic.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_scoped_source_driver.mind",
+      "sha256": "6bda94137f433e28fb126d75180ed5bdaa76b72809a8c8b188e49f1afe37bea4",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/testdata/native_scoped_fixed/SUPPLEMENT.json",
+      "sealed_imports": [
+        "examples/mindc_mind/native_scoped_source_image.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/native_source_image.mind",
+      "sha256": "08fc2f5453f76c73d3b8357acaa4cd898a64f58eab5ccddbdb04e3061253b554",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/self_host_native_emission_context_smoke.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_libc_io.mind",
+        "examples/mindc_mind/native_emission_context.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/testdata/native_source_driver/note_fixture_tail.mind",
+      "sha256": "8bb3578ca3a69d93788776bdde9781beefdf9e5e5b2516228ce85b8f6f46e0fc",
+      "kind": "caller-exclusion",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/native_source_driver_check.py",
+      "sealed_imports": [
+        "examples/mindc_mind/native_source_driver.mind"
+      ]
+    },
+    {
+      "path": "examples/mindc_mind/source_note_driver.mind",
+      "sha256": "3bb015cd53f7c2fbf4f76ca2e86db33e68db58dc3d4cd821acb76ced580e74ab",
+      "kind": "restored-unproven-identity",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/self_host_source_note_smoke.py",
+      "sealed_imports": [],
+      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so Q1.1 forbids formatting this file"
+    },
+    {
+      "path": "examples/mindc_mind/string_escape_driver.mind",
+      "sha256": "7844370b17045e3724f4c72e01754de1d6509b0c8cf87e28167fd18b66133fca",
+      "kind": "restored-unproven-identity",
+      "reason_class": "digest-pinned-gate-input",
+      "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
+      "owning_gate": "examples/mindc_mind/self_host_native_string_escape_smoke.py",
+      "sealed_imports": [],
+      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so Q1.1 forbids formatting this file"
+    }
+  ]
+}

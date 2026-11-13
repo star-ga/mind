@@ -1,0 +1,312 @@
+// Known-answer checks for std.evidence and std.evidence_mic (the load-side
+// refusals are in tests/std_evidence_load). Two runners use
+// this one file: `mindc test tests/std_evidence_kat/main.mind` runs the
+// #[test] functions, and the program built in this directory runs every
+// check (exit 0 = all passed, else the id of the first failed check) and
+// prints the length and a byte sum of one export, so two runs or two hosts
+// can be compared. Expected bytes are derived by hand from the layouts in
+// std/evidence.mind and std/evidence_mic.mind; the 32-byte digests were
+// computed with an independent SHA-256 over the hand-derived preimage
+// "std.evidence", 01, count and dropped (8 LE bytes each), the parent flag
+// byte (and the 32 parent bytes), then the records.
+
+import std.mic_record;
+import std.evidence;
+import std.evidence_mic;
+
+fn b(a: i64, i: i64) -> i64 {
+    __mind_load_i8(a + i) & 255
+}
+
+// 1 when the n bytes at x and y are equal.
+fn same(x: i64, y: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        if b(x, i) != b(y, i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    1
+}
+
+fn w1(d: i64, p: i64, c: i64) -> i64 {
+    __mind_store_i8(d + p, c);
+    p + 1
+}
+
+// One little-endian i64 word, byte by byte.
+fn w8(d: i64, p: i64, v: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 8 {
+        __mind_store_i8(d + p + k, (v >> (k * 8)) & 255);
+        k = k + 1;
+    }
+    p + 8
+}
+
+fn ws(d: i64, p: i64, c0: i64, c1: i64, c2: i64, c3: i64) -> i64 {
+    w1(d, w1(d, w1(d, w1(d, p, c0), c1), c2), c3)
+}
+
+// Key length byte, "std.evidence." and the suffix for field (0 count,
+// 1 digest, 2 dropped, 3 parent, 4 records, 5 schema).
+fn exp_key(d: i64, p: i64, field: i64) -> i64 {
+    let mut q: i64 = p;
+    if field == 0 {
+        q = w1(d, q, 18);
+    }
+    if field == 1 || field == 3 || field == 5 {
+        q = w1(d, q, 19);
+    }
+    if field == 2 || field == 4 {
+        q = w1(d, q, 20);
+    }
+    q = ws(d, ws(d, ws(d, q, 115, 116, 100, 46), 101, 118, 105, 100), 101, 110, 99, 101);
+    q = w1(d, q, 46);
+    if field == 0 {
+        q = w1(d, ws(d, q, 99, 111, 117, 110), 116);
+    }
+    if field == 1 {
+        q = w1(d, w1(d, ws(d, q, 100, 105, 103, 101), 115), 116);
+    }
+    if field == 2 {
+        q = w1(d, w1(d, w1(d, ws(d, q, 100, 114, 111, 112), 112), 101), 100);
+    }
+    if field == 3 {
+        q = w1(d, w1(d, ws(d, q, 112, 97, 114, 101), 110), 116);
+    }
+    if field == 4 {
+        q = w1(d, w1(d, w1(d, ws(d, q, 114, 101, 99, 111), 114), 100), 115);
+    }
+    if field == 5 {
+        q = w1(d, w1(d, ws(d, q, 115, 99, 104, 101), 109), 97);
+    }
+    q
+}
+
+// sha256 of the 110-byte preimage: "std.evidence", 01, count 2, dropped 1,
+// flag 00 (no parent), records (1,1,22,5,7) (2,2,0,3,0).
+fn digest_no_parent(d: i64, p: i64) -> i64 {
+    let mut q: i64 = ws(d, ws(d, p, 162, 16, 116, 75), 189, 23, 43, 107);
+    q = ws(d, ws(d, q, 247, 185, 167, 54), 190, 115, 154, 146);
+    q = ws(d, ws(d, q, 64, 43, 66, 236), 41, 30, 129, 108);
+    ws(d, ws(d, q, 60, 174, 209, 213), 129, 69, 104, 31)
+}
+
+// The expected export of filled_sink() with no parent: 237 bytes.
+fn expected_export(d: i64) -> i64 {
+    let mut p: i64 = ws(d, 0, 77, 73, 67, 51);
+    p = w1(d, p, 2);
+    while p < 12 {
+        p = w1(d, p, 0);
+    }
+    p = w1(d, w1(d, p, 77), 5);
+    p = w1(d, w1(d, exp_key(d, p, 0), 1), 4);
+    p = digest_no_parent(d, w1(d, w1(d, exp_key(d, p, 1), 2), 32));
+    p = w1(d, w1(d, exp_key(d, p, 2), 1), 2);
+    p = w1(d, w1(d, exp_key(d, p, 4), 2), 80);
+    p = w8(d, w8(d, w8(d, w8(d, w8(d, p, 1), 1), 22), 5), 7);
+    p = w8(d, w8(d, w8(d, w8(d, w8(d, p, 2), 2), 0), 3), 0);
+    p = w1(d, w1(d, exp_key(d, p, 5), 1), 2);
+    p
+}
+
+fn filled_sink() -> i64 {
+    let s: i64 = evd_new(2);
+    let _ = evidence_record(s, 1, 1, 22, 5, 7);
+    let _ = evidence_record(s, 2, 2, 0, 3, 0);
+    let _ = evidence_record(s, 3, 1, 9, 9, 9);
+    s
+}
+
+fn check_sink() -> i64 {
+    if evd_new(0) != 0 || evd_new(65537) != 0 {
+        return 10;
+    }
+    if evidence_record(0, 1, 1, 1, 1, 1) != 0 - 1 || evd_len(0) != 0 - 1 {
+        return 11;
+    }
+    let s: i64 = evd_new(2);
+    // Module or kind codes outside the defined set are refused and not stored.
+    if evidence_record(s, 0, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 4, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 0, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 5, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 || evd_dropped(s) != 0 {
+        return 18;
+    }
+    // Defined codes in a pair no wrapper writes are refused too.
+    if evidence_record(s, 3, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 3, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 3, 3, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 {
+        return 98;
+    }
+    if evidence_record(s, 1, 1, 22, 5, 7) != 0 || evidence_record(s, 2, 2, 0, 3, 0) != 0 {
+        return 12;
+    }
+    if evidence_record(s, 3, 1, 9, 9, 9) != 1 || evd_len(s) != 2 || evd_dropped(s) != 1 {
+        return 13;
+    }
+    if evd_field(s, 0, 0) != 1 || evd_field(s, 0, 2) != 22 || evd_field(s, 0, 4) != 7 || evd_field(s, 1, 3) != 3 {
+        return 14;
+    }
+    if evd_field(s, 2, 0) != 0 - 1 || evd_field(s, 0, 5) != 0 - 1 || evd_field(s, 0 - 1, 0) != 0 - 1 {
+        return 15;
+    }
+    let w: i64 = __mind_alloc(8);
+    if evd_le_put(w, 0 - 2) != w + 8 || b(w, 0) != 254 || b(w, 7) != 255 || evd_le_get(w) != 0 - 2 {
+        return 16;
+    }
+    if evd_free(s) != 1 || evd_free(0) != 0 {
+        return 17;
+    }
+    // dropped stops at evd_max_dropped() instead of wrapping negative.
+    let t: i64 = evd_from_le(0, 0, 0, evd_max_dropped());
+    if t <= 0 || evidence_record(t, 1, 2, 0, 0, 0) != 0 || evidence_record(t, 1, 2, 0, 0, 0) != 1 || evd_dropped(t) != evd_max_dropped() {
+        return 19;
+    }
+    0
+}
+
+// 1 for the 8 (module, kind) pairs the std wrappers write: fs_checked and
+// x509 refuse or accept, procgroup refuse, accept, fail or child.
+fn pair_written(m: i64, k: i64) -> i64 {
+    if (m == 1 || m == 3) && (k == 1 || k == 2) {
+        return 1;
+    }
+    if m == 2 && k >= 1 && k <= 4 {
+        return 1;
+    }
+    0
+}
+
+// evd_code_ok accepts exactly those 8 pairs over module and kind codes -1..9.
+fn check_pairs() -> i64 {
+    let mut n: i64 = 0;
+    let mut m: i64 = 0 - 1;
+    while m <= 9 {
+        let mut k: i64 = 0 - 1;
+        while k <= 9 {
+            if evd_code_ok(m, k) != pair_written(m, k) {
+                return 99;
+            }
+            n = n + evd_code_ok(m, k);
+            k = k + 1;
+        }
+        m = m + 1;
+    }
+    if n != 8 {
+        return 99;
+    }
+    0
+}
+
+// evd_from_le checks its length and the record codes.
+fn check_from_le() -> i64 {
+    let src: i64 = __mind_alloc(48);
+    let _ = w8(src, w8(src, w8(src, w8(src, w8(src, 0, 1), 2), 0), 0), 0);
+    let ok: i64 = evd_from_le(src, 40, 1, 0);
+    if ok <= 0 || evd_len(ok) != 1 || evd_field(ok, 0, 1) != 2 || evd_le_valid(src, 40, 1) != 1 {
+        return 70;
+    }
+    if evd_from_le(src, 39, 1, 0) != 0 || evd_from_le(src, 48, 1, 0) != 0 || evd_from_le(src, 40, 1, 0 - 1) != 0 {
+        return 71;
+    }
+    __mind_store_i8(src, 9);
+    if evd_from_le(src, 40, 1, 0) != 0 || evd_le_valid(src, 40, 1) != 0 {
+        return 72;
+    }
+    0
+}
+
+fn check_export() -> i64 {
+    let s: i64 = filled_sink();
+    let e: i64 = evd_export(s, 0, 0);
+    if e <= 0 || mrec_buf_len(e) != 237 {
+        return 20;
+    }
+    let want: i64 = __mind_alloc(237);
+    if expected_export(want) != 237 || same(mrec_buf_addr(e), want, 237) != 1 {
+        return 21;
+    }
+    let e2: i64 = evd_export(filled_sink(), 0, 0);
+    if mrec_buf_len(e2) != 237 || same(mrec_buf_addr(e2), want, 237) != 1 {
+        return 22;
+    }
+    let r: i64 = evd_load(want, 237);
+    if r <= 0 || evd_len(r) != 2 || evd_dropped(r) != 1 || evd_field(r, 0, 2) != 22 || evd_field(r, 1, 3) != 3 {
+        return 23;
+    }
+    let e3: i64 = evd_export(r, 0, 0);
+    if mrec_buf_len(e3) != 237 || same(mrec_buf_addr(e3), want, 237) != 1 {
+        return 24;
+    }
+    if evd_export_free(e3) != 1 || evd_export_free(0) != 0 || evd_free(r) != 1 {
+        return 81;
+    }
+    let parent: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(parent + i, i + 1);
+        i = i + 1;
+    }
+    let ep: i64 = evd_export(s, parent, 32);
+    // The parent entry adds 1 + 19 + 1 + 1 + 32 bytes; the digest of the
+    // 142-byte preimage with parent bytes 1..32 starts 71 202.
+    if mrec_buf_len(ep) != 291 || b(mrec_buf_addr(ep), 14 + 21 + 22) != 71 || b(mrec_buf_addr(ep), 58) != 202 || evd_load(mrec_buf_addr(ep), 291) <= 0 {
+        return 25;
+    }
+    if evd_export(0, 0, 0) != evd_e_sink() || evd_load(want, 236) >= 0 {
+        return 26;
+    }
+    // parent_len is 0 (with parent_addr 0) or 32 (with parent_addr > 0) only.
+    if evd_export(s, parent, 31) != evd_e_parent() || evd_export(s, parent, 0) != evd_e_parent() || evd_export(s, 0, 32) != evd_e_parent() || evd_export(s, 0 - 8, 32) != evd_e_parent() {
+        return 80;
+    }
+    0
+}
+
+fn digest_line() -> i64 {
+    let e: i64 = evd_export(filled_sink(), 0, 0);
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < mrec_buf_len(e) {
+        sum = (sum * 31 + b(mrec_buf_addr(e), i)) % 1000000007;
+        i = i + 1;
+    }
+    print("evd_export_len ", mrec_buf_len(e));
+    print("evd_export_sum ", sum);
+    0
+}
+
+#[test]
+fn test_evidence_sink() {
+    assert check_sink() == 0;
+}
+
+#[test]
+fn test_evidence_export_bytes() {
+    assert check_export() == 0;
+}
+
+#[test]
+fn test_evidence_pairs() {
+    assert check_pairs() == 0;
+}
+
+#[test]
+fn test_evidence_from_le() {
+    assert check_from_le() == 0;
+}
+
+fn main() -> i64 {
+    let mut rc: i64 = check_sink();
+    if rc == 0 {
+        rc = check_pairs();
+    }
+    if rc == 0 {
+        rc = check_from_le();
+    }
+    if rc == 0 {
+        rc = check_export();
+    }
+    if rc == 0 {
+        rc = digest_line();
+    }
+    rc
+}

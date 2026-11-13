@@ -1,0 +1,6 @@
+name	source_change	required_detection
+parameter_comparison	force ncb_param_same to return1 despite actual unequal source tag	close_wrong_param gives normal incorrect binding
+whole_plan_comparison	force ncb_same result1 for every nonempty comparison	forged_header_6 accepted normally
+library_varargs	force ncb_lib_varargs return0	open_default returns wrong canonical metadata
+callready	set ncb_header callready1	close_default returns wrong canonical metadata
+source_snapshot	omit source payload copy but keep all other bytes and lengths	close_default differs from exact immutable source

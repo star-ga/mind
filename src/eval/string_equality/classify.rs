@@ -45,6 +45,20 @@ const SCALAR_COLLECTION_METHODS: &[&str] = &[
     "free",
 ];
 
+/// Collection methods whose result is a count or a flag, never a handle:
+/// the result of one on a parameter declared a collection, whatever a call
+/// stores into it.
+const COUNT_METHODS: &[&str] = &[
+    "len",
+    "length",
+    "cap",
+    "is_empty",
+    "contains",
+    "contains_key",
+    "contains_key_str",
+    "has",
+];
+
 /// Fields of the std `String` record, all `i64`.
 const STRING_RECORD_FIELDS: &[&str] = &["addr", "len", "cap", "length"];
 
@@ -457,6 +471,16 @@ impl Decls {
         env: &Env,
         depth: usize,
     ) -> Fact {
+        // Lowering resolves the method by the parameter's declared type, so a
+        // value stored into the parameter that its type does not hold does
+        // not change what a count or a flag of the collection is.
+        if let Node::Lit(Literal::Ident(name), _) = receiver
+            && let Some(Fact::Elems(_) | Fact::Map(_)) =
+                env.get(name).and_then(|b| b.shape.as_ref())
+            && COUNT_METHODS.contains(&method)
+        {
+            return Fact::NotStr;
+        }
         let receiver_fact = self.fact_at(receiver, env, depth);
         match &receiver_fact {
             Fact::Elems(element) | Fact::Map(element) => {

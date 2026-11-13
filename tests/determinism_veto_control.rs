@@ -6,35 +6,30 @@
 //!
 //! # Why this file exists
 //!
-//! Several std-surface integration tests legitimately pass
-//! `--allow-nondeterministic` because the surface they exercise genuinely reads
-//! the world (`std/net.mind` calls `getsockname()`, `std/iouring.mind` issues a
-//! raw `syscall()`, `std/fs.mind` calls `read()`, `std/process.mind` calls
-//! `fork()`). Those call sites are correct — but on their own they are only a
-//! NEGATIVE control: every one of them would stay green if the veto in
-//! `src/bin/mindc.rs` were removed outright, because passing a flag to a gate
-//! that no longer exists is silently harmless. The whole
+//! Several std-surface integration tests legitimately pass `--allow-nondeterministic` because the
+//! surface they exercise genuinely reads the world (`std/net.mind` calls `getsockname()`,
+//! `std/iouring.mind` issues a raw `syscall()`, `std/fs.mind` calls `read()`, `std/process.mind`
+//! calls `fork()`). Those call sites are correct — but on their own they are only a NEGATIVE
+//! control: every one of them would stay green if the veto in `src/bin/mindc.rs` were removed
+//! outright, because passing a flag to a gate that no longer exists is silently harmless. The whole
 //! determinism-by-default claim would then be unasserted anywhere in `tests/`.
 //!
-//! This file is the missing positive control: it compiles the SAME sources
-//! WITHOUT the flag and requires the compile to FAIL with `error[determinism]`
-//! naming the offending intrinsic. Delete the veto and this test goes red.
+//! This file is the missing positive control: it compiles the SAME sources WITHOUT the flag and
+//! requires the compile to FAIL with `error[determinism]` naming the offending intrinsic. Delete
+//! the veto and this test goes red.
 //!
-//! The CALLERS of std functions that read the world (`std.entropy`, `std.dns`,
-//! `std.https`) live in `determinism_veto_std_callers`. This file also covers,
-//! under `cross-module-imports`, the last case: a program whose OWN project
-//! modules make such a call, one or more calls away from the entry, which the
-//! veto and the evidence label reach by following the calls across modules.
+//! The CALLERS of std functions that read the world (`std.entropy`, `std.dns`, `std.https`) live in
+//! `determinism_veto_std_callers`. This file also covers, under `cross-module-imports`, the last
+//! case: a program whose OWN project modules make such a call, one or more calls away from the
+//! entry, which the veto and the evidence label reach by following the calls across modules.
 //!
-//! The check under test runs on the lowered IR before any emission backend is
-//! consulted, so this gate needs neither the `mlir-build` feature nor an MLIR
-//! toolchain: it only needs a `mindc` that can parse the std surface. It
-//! therefore runs in the default (`std-surface`) `Build & Test` matrix on every
-//! OS, not only in the feature-gated std-surface jobs.
+//! The check under test runs on the lowered IR before any emission backend is consulted, so this
+//! gate needs neither the `mlir-build` feature nor an MLIR toolchain: it only needs a `mindc` that
+//! can parse the std surface. It therefore runs in the default (`std-surface`) `Build & Test`
+//! matrix on every OS, not only in the feature-gated std-surface jobs.
 //!
-//! Fail-closed: the binary is resolved via `CARGO_BIN_EXE_mindc`, so there is
-//! no skip path — a missing binary is a failure, and a run that asserted
-//! nothing (`ran=0`) is a failure too.
+//! Fail-closed: the binary is resolved via `CARGO_BIN_EXE_mindc`, so there is no skip path — a
+//! missing binary is a failure, and a run that asserted nothing (`ran=0`) is a failure too.
 //!
 //! Run with:
 //!   cargo test --test determinism_veto_control
@@ -46,11 +41,13 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `(source under `std/`, intrinsic the diagnostic must name, flag site defended)`
+/// `(source under `std/`, a world-reading intrinsic it calls, flag site defended)`.
+/// The veto names the FIRST hard call in the lowered IR, so the test requires the
+/// classifier's own pick, and that the source really calls it (not this column).
 const CASES: &[(&str, &str, &str)] = &[
     // tests/std_surface_http.rs (compiles std/net.mind + std/http.mind)
     ("net.mind", "getsockname", "tests/std_surface_http.rs"),
-    // tests/std_surface_iouring.rs (two sites)
+    // tests/std_surface_iouring.rs (one shared compile, `iouring_so`)
     ("iouring.mind", "syscall", "tests/std_surface_iouring.rs"),
     // tests/std_surface_net_fs_process.rs (world-reading fixtures)
     ("fs.mind", "read", "tests/std_surface_net_fs_process.rs"),
@@ -61,14 +58,20 @@ const CASES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The first HARD nondeterministic call in `src`, by the classifier `mindc`'s veto uses.
+fn classified_offender(src: &str) -> Option<String> {
+    let module = libmind::parser::parse(src).expect("std source must parse");
+    let ir = libmind::eval::lower::lower_to_ir(&module).expect("std source must lower");
+    libmind::ir::ir_first_hard_nondeterministic_call(&ir)
+}
+
 fn std_source(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("std")
         .join(name)
 }
 
-/// Run `mindc <src> --emit-shared <tmp> [--allow-nondeterministic]`.
-/// Returns `(success, stderr)`.
+/// Run `mindc <src> --emit-shared <tmp> [--allow-nondeterministic]`: `(success, stderr)`.
 fn compile(src: &Path, tag: &str, allow: bool) -> (bool, String) {
     let mindc = common::mindc_bin();
     assert!(
@@ -98,15 +101,26 @@ fn compile(src: &Path, tag: &str, allow: bool) -> (bool, String) {
     )
 }
 
-/// Without `--allow-nondeterministic`, a world-reading source must be REFUSED
-/// when a runnable artifact is requested, and the diagnostic must name the
-/// intrinsic that caused the refusal.
+/// Without `--allow-nondeterministic`, a world-reading source must be REFUSED when a runnable
+/// artifact is requested, and the diagnostic must name the intrinsic that caused the refusal.
 #[test]
 fn veto_fires_without_allow_nondeterministic() {
     let mut ran = 0usize;
-    for (name, offender, site) in CASES {
+    for (name, known, site) in CASES {
         let src = std_source(name);
         assert!(src.exists(), "missing std source {src:?}");
+        let text = std::fs::read_to_string(&src).expect("read std source");
+        assert!(
+            text.contains(&format!("{known}(")),
+            "std/{name}: no longer calls `{known}()`; update this case's known offender"
+        );
+        let offender = classified_offender(&text).unwrap_or_else(|| {
+            panic!("std/{name}: the classifier found no hard-nondeterministic call at all")
+        });
+        assert!(
+            text.contains(&format!("{offender}(")),
+            "std/{name}: classifier named `{offender}()`, which the source does not call"
+        );
         let (ok, stderr) = compile(&src, &format!("refusal_{name}"), false);
         assert!(
             !ok,
@@ -128,11 +142,9 @@ fn veto_fires_without_allow_nondeterministic() {
     assert_eq!(ran, CASES.len(), "vacuous run: ran={ran}");
 }
 
-/// Complement: WITH the flag the veto must NOT fire — the flag is what
-/// authorises the build. (The compile may still fail for an unrelated reason,
-/// e.g. `--emit-shared` without the `mlir-build` feature; what must never
-/// appear is `error[determinism]`.) This pins the veto to the flag rather than
-/// to "this source never compiles".
+/// Complement: WITH the flag the veto must NOT fire, so the veto is pinned to the flag, not to
+/// "this source never compiles". The compile may still fail for an unrelated reason (e.g.
+/// `--emit-shared` without `mlir-build`); what must never appear is `error[determinism]`.
 #[test]
 fn veto_is_silent_with_allow_nondeterministic() {
     let mut ran = 0usize;
@@ -146,6 +158,78 @@ fn veto_is_silent_with_allow_nondeterministic() {
     }
     println!("determinism_veto_control(authorised): ran={ran} fail=0");
     assert_eq!(ran, CASES.len(), "vacuous run: ran={ran}");
+}
+
+/// The measurement class is `Det::World`: the annotation check, the veto's classifier and the
+/// `--emit-shared` determinism check each name it; a constant body is flagged by none.
+// deferred: would add the --emit-evidence label case, stubbed because the type checker refuses a
+// FrozenNative-only name; upgrade path: one evidence_release_smoke case once arity spans profiles.
+const MEASURE_CALLS: &[(&str, &str)] = &[
+    ("__mind_rdtscp_v1", "__mind_rdtscp_v1()"),
+    ("__mind_lfence_v1", "__mind_lfence_v1()"),
+    (
+        "__mind_sys_perf_event_open",
+        "__mind_sys_perf_event_open(0, 0, 0 - 1, 0 - 1, 0)",
+    ),
+];
+fn counter_source(expr: &str) -> String {
+    format!(
+        "#[deterministic]\nfn counter() -> i64 {{ {expr} }}\nfn main() -> i64 {{ counter() }}\n"
+    )
+}
+/// The `determinism::nondeterministic_in_deterministic` messages for `src`.
+fn annotation_flags(src: &str) -> Vec<String> {
+    let module = libmind::parser::parse(src).expect("measure source must parse");
+    let env = libmind::type_checker::TypeEnv::default();
+    libmind::type_checker::check_module_types_in_file(&module, src, None, &env)
+        .into_iter()
+        .filter(|d| d.code == "determinism::nondeterministic_in_deterministic")
+        .map(|d| d.message)
+        .collect()
+}
+#[test]
+fn measurement_class_is_world_and_vetoed() {
+    let control = counter_source("41");
+    assert_eq!(
+        classified_offender(&control),
+        None,
+        "control: a constant is not world"
+    );
+    assert!(
+        annotation_flags(&control).is_empty(),
+        "control: a constant is deterministic"
+    );
+    let mut ran = 0usize;
+    for (name, call) in MEASURE_CALLS {
+        let src = counter_source(call);
+        assert_eq!(
+            classified_offender(&src).as_deref(),
+            Some(*name),
+            "`{name}` is not classified world by the veto's classifier"
+        );
+        let flags = annotation_flags(&src);
+        assert!(
+            flags.iter().any(|m| m.contains(&format!("`{name}`"))),
+            "`#[deterministic]` fn returning `{name}` was not flagged: {flags:?}"
+        );
+        let path = common::scratch_dir("determinism_veto_control")
+            .join(format!("mind_determinism_veto_{name}.mind"));
+        std::fs::write(&path, &src).expect("write measure source");
+        let (ok, stderr) = compile(&path, &format!("measure_{name}"), false);
+        assert!(
+            !ok,
+            "`{name}`: a runnable artifact was produced\nstderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("determinism::nondeterministic_in_deterministic")
+                && stderr.contains(&format!("calls non-deterministic `{name}`")),
+            "`{name}`: not refused by the determinism check\nstderr: {stderr}"
+        );
+        println!("measure `{name}`: refused by determinism::nondeterministic_in_deterministic");
+        ran += 1;
+    }
+    println!("determinism_veto_control(measure): ran={ran} fail=0");
+    assert_eq!(ran, MEASURE_CALLS.len(), "vacuous run: ran={ran}");
 }
 
 /// `mindc <args>`: `(success, stdout + stderr)`.

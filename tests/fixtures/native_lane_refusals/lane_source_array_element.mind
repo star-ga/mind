@@ -1,0 +1,2 @@
+// lane.source.array_element: a non-literal array element.
+fn main() -> i64 { let x: i64 = 1; let a = [x, 2]; return a[0]; }

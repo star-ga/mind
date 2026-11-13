@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import fnmatch
 import json
 import subprocess
 import sys
@@ -430,6 +431,69 @@ def _self_test() -> int:
     if cargo_test_execution_argv(boundary, True) != expected:
         raise AssertionError("Cargo options were not inserted before the libtest separator")
     return 0
+
+
+# --- Lockfile / cargo-call scanning for check_release_gating.py (rule R7) ---
+ROOT = Path(__file__).resolve().parents[1]
+LOCKFILE = "Cargo.lock"
+# A cargo (or cross) call: optional `+toolchain` / global flags, then the subcommand.
+CARGO_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:cargo|cross)((?:\s+[+-]\S+)*)\s+([A-Za-z][A-Za-z0-9_-]*)"
+    r"(?![A-Za-z0-9_-])"
+)
+# Subcommands that never resolve the dependency graph. Every other subcommand,
+# plugins included, must be locked: a list of the RESOLVING ones missed `deny`.
+NON_RESOLVING = frozenset({"fmt", "help", "version"})
+LOCK_FLAG_RE = re.compile(r"(?<![A-Za-z0-9_-])--(?:locked|frozen)(?![A-Za-z0-9_-])")
+LOCK_EXEMPT_RE = re.compile(r"^#\s*lockfile-exempt:\s*(\S.{19,})$")
+
+
+def unlocked_cargo_commands(path: Path) -> tuple[list[str], list[str]]:
+    """(unlocked resolving commands, stale exemptions) in one workflow's run blocks."""
+    from gate_runner_wiring_lint import (  # local: keeps this module free of a top-level lint import
+        join_continuations,
+        run_block_lines,
+        split_segments,
+        strip_shell_comment,
+    )
+
+    unlocked: list[str] = []
+    stale: list[str] = []
+    exempt_at: int | None = None
+    for lineno, cmd in join_continuations(run_block_lines(path.read_text(encoding="utf-8"))):
+        if cmd.startswith("#"):
+            if LOCK_EXEMPT_RE.match(cmd):
+                exempt_at = lineno
+            continue
+        hits = []
+        for seg in split_segments(strip_shell_comment(cmd)):
+            for m in CARGO_RE.finditer(seg):
+                # Only flags before a bare `--` are cargo's; after it they are libtest's.
+                own = re.split(r"\s--(?:\s|$)", seg[m.start():], maxsplit=1)[0]
+                if m.group(2) not in NON_RESOLVING and not LOCK_FLAG_RE.search(own):
+                    hits.append(f"{path.relative_to(ROOT)}:{lineno}: {seg.strip()}")
+                    break
+        if exempt_at is not None and not hits:
+            stale.append(f"{path.relative_to(ROOT)}:{exempt_at}")
+        if exempt_at is None:
+            unlocked.extend(hits)
+        exempt_at = None
+    return unlocked, stale
+
+
+def lockfile_ignored(gitignore: Path) -> list[str]:
+    """Non-negated .gitignore patterns that match the root Cargo.lock."""
+    if not gitignore.is_file():
+        return []
+    hits = []
+    for raw in gitignore.read_text(encoding="utf-8").splitlines():
+        pat = raw.strip()
+        if not pat or pat.startswith(("#", "!")):
+            continue
+        bare = pat.removeprefix("**/").removeprefix("/").rstrip("/")
+        if fnmatch.fnmatchcase(LOCKFILE, bare):
+            hits.append(pat)
+    return hits
 
 
 if __name__ == "__main__":

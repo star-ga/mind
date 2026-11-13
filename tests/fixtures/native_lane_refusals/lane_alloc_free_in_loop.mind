@@ -1,0 +1,2 @@
+// lane.alloc.free_in_loop: native free does not reclaim arena storage inside a loop.
+fn main() -> i64 { let p = __mind_alloc(8); let mut i = 0; while i < 3 { __mind_free(p); i = i + 1; } return i; }

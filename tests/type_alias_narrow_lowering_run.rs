@@ -217,7 +217,7 @@ assert lib.builtin_return_control() == 1
     .expect("write alias owner consumer");
 
     let built = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&project)
         .output()
         .expect("build alias owner project");

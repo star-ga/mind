@@ -33,7 +33,14 @@ fn assert_e2002_refusal(mindc: &std::path::Path, proj: &std::path::Path, case: &
 
     let artifact = proj.join(format!("target/debug/{case}"));
     let built = Command::new(mindc)
-        .args(["build", "--out", artifact.to_str().unwrap(), "--no-cache"])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--out",
+            artifact.to_str().unwrap(),
+            "--no-cache",
+        ])
         .current_dir(proj)
         .output()
         .expect("run negative qualified enum build");
@@ -146,7 +153,7 @@ fn qualified_enum_paths_run_and_unknown_paths_refuse() {
     std::fs::write(src.join("main.mind"), MAIN).expect("write main");
 
     let out = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&proj)
         .output()
         .expect("run qualified enum build");
@@ -177,7 +184,14 @@ fn qualified_enum_paths_run_and_unknown_paths_refuse() {
     let first = std::fs::read(&so).expect("read first qualified enum artifact");
     let repeat = proj.join("target/debug/qualified_enum_repeat.so");
     let rebuilt = Command::new(&mindc)
-        .args(["build", "--out", repeat.to_str().unwrap(), "--no-cache"])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--out",
+            repeat.to_str().unwrap(),
+            "--no-cache",
+        ])
         .current_dir(&proj)
         .output()
         .expect("repeat qualified enum build");
@@ -396,7 +410,14 @@ fn main() -> i32 {
     .expect("write explicitly exported named types main");
     let explicit = proj.join("target/debug/explicit_types.so");
     let built = Command::new(&mindc)
-        .args(["build", "--out", explicit.to_str().unwrap(), "--no-cache"])
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--out",
+            explicit.to_str().unwrap(),
+            "--no-cache",
+        ])
         .current_dir(&proj)
         .output()
         .expect("build explicitly exported named types");
@@ -471,7 +492,7 @@ pub fn crate_alias() -> i64 {
         .expect("check nested aliases");
     assert!(checked.status.success(), "nested alias check failed");
     let built = Command::new(&mindc)
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&proj)
         .output()
         .expect("build nested aliases");

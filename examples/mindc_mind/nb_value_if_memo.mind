@@ -1,0 +1,85 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The value-if memo of the native SSA statement path. is_value_if_expr in
+// main.mind asks whether an `if` and every `if` in the tails of its branches
+// are value ifs, so it walks the whole else-if chain below it. nb_stmt asked it
+// again at every arm, so an n-arm chain or match cost O(n^2). nbvi_value_if
+// gives the same answer and keeps the answer of each `if` it reaches in the
+// fn's branch memo (nb_branch_memo.mind) under the key node + 1. That key is
+// odd, so it never meets an if-node key or an else-list key (both 8-aligned).
+// The arms below the first query then cost O(1) each. The AST of a fn does not
+// change while the fn is lowered; the merged-name records rely on that too.
+// PART RULE: intrinsics and other parts only. AST kinds (main.mind ast_*()):
+// 6 let, 8 return, 16 if.
+
+import nb_ast;
+import nb_branch_memo;
+
+// is_value_if_expr(node), answered from memo w when it has the answer (w == 0:
+// no memo, a plain walk).
+pub fn nbvi_value_if(node: i64, w: i64) -> i64 {
+    if w == 0 {
+        return nbvi_walk(node, 0);
+    }
+    let hit: i64 = nbwm_find(w, node + 1);
+    if hit != 0 {
+        return __mind_load_i64(hit);
+    }
+    let r: i64 = nbvi_walk(node, w);
+    let rec: i64 = nbwm_cnew(w, node + 1);
+    if rec != 0 {
+        __mind_store_i64(rec, r)
+    }
+    r
+}
+
+// is_value_if_expr: an else-ful `if` whose two branches are value blocks.
+pub fn nbvi_walk(node: i64, w: i64) -> i64 {
+    if ast_kind(node) != 16 {
+        return 0;
+    }
+    if ast_child2(node) == 0 {
+        return 0;
+    }
+    if nbvi_block(ast_child1(node), w) == 0 {
+        return 0;
+    }
+    if nbvi_block(ast_child2(node), w) == 0 {
+        return 0;
+    }
+    1
+}
+
+// branch_is_value_block: empty, or leading lets and then one value that is not
+// a `return`; a trailing `if` must be a value if itself.
+pub fn nbvi_block(blk: i64, w: i64) -> i64 {
+    let sa: i64 = ast_child0(blk);
+    let sl: i64 = ast_aux(blk);
+    if sl == 0 {
+        return 1;
+    }
+    if nbvi_lets(sa, sl, 0) != sl - 1 {
+        return 0;
+    }
+    let lk: i64 = ast_kind(__mind_load_i64(sa + (sl - 1) * 8));
+    if lk == 8 {
+        return 0;
+    }
+    if lk == 16 {
+        return nbvi_value_if(__mind_load_i64(sa + (sl - 1) * 8), w);
+    }
+    1
+}
+
+// count_leading_lets: the number of leading `let` statements from i.
+pub fn nbvi_lets(sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return i;
+    }
+    if ast_kind(__mind_load_i64(sa + i * 8)) != 6 {
+        return i;
+    }
+    nbvi_lets(sa, sl, i + 1)
+}

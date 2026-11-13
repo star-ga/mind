@@ -1,0 +1,105 @@
+// tools/seed_ledger/seed_ledger.mind — the seed drift ledger guard (entry).
+//
+// The frozen self-host seed (testdata/selfhost_loop/stage1.elf) is minted from
+// a fixed set of source files, and a set of pinned files (seed ELFs, MANIFESTs,
+// the std seed blob pin, the mirror pins, the reference notes, the bridge
+// oracle) is bound to that seed. SEED_LEDGER.tsv holds one sha256 row per such
+// file, as of the last re-pin, and one row per seed source G2 table row
+// (tests/fixtures/g2_expected_outcomes.tsv). A row that differs is DRIFT.
+// Drift is visible data: each drifted file needs one line in SEED_DRIFT.txt.
+//
+// check (default): red when a drifted file has no SEED_DRIFT line (UNLISTED),
+//   when a SEED_DRIFT line names a file that does not drift (STALE), when a
+//   seed source of _selfhost_sources.py has no ledger row and no drift line,
+//   or when the rows were edited by hand (rows_sha256 mismatch). With no seed
+//   source drifted it also requires the tree to BE the minted seed
+//   (seed_ledger_mint.mind), so a hand re-pin without a mint is red.
+// write (stdin starts with "write"): the re-pin. Refused unless the seed
+//   sources, joined by "\n" in composition order, hash to the frozen seed's
+//   combined_source_sha256 AND stage1.elf hashes to its published stage sha256. Then every row gets the current sha256 and
+//   SEED_DRIFT.txt is emptied.
+//
+// The mode comes from stdin (fd 0, read with __mind_read) because the MLIR
+// backend has no argv lowering.
+// Paths are relative to the working directory (the repository root).
+// The tool is its own project (Mind.toml here; modules: bytes, rows, check).
+// Build it outside the repository tree, with no entry path (the project build):
+//   cp -r tools/seed_ledger/. $D && cd $D && mindc build --release --emit=binary --out=<bin>
+
+import std.fs;
+import std.string;
+import std.vec;
+import seed_ledger_bytes;
+import seed_ledger_rows;
+import seed_ledger_check;
+import seed_ledger_mint;
+
+// ---- write (the re-pin) ---------------------------------------------------------
+
+fn write_text(path: i64, s: String) -> i64 {
+    return write_string(s_addr(path), string_addr(s), string_len(s));
+}
+
+
+fn write_mode() -> i64 {
+    let src: Vec = seed_sources(read_file(sources_path()));
+    let composite: i64 = composite_digest(src);
+    if composite_mismatch(src) + stage1_mismatch() != 0 {
+        out("seed_ledger: re-pin REFUSED: the tree is not the minted seed (combined_source_sha256\n");
+        out("  and the published stage sha256 of testdata/selfhost_loop/MANIFEST.txt must both match); reseed first\n");
+        return 1;
+    }
+    if manifest_without_mint() != 0 {
+        out("seed_ledger: re-pin REFUSED: testdata/selfhost_loop/MANIFEST.txt changed since the last\n");
+        out("  re-pin but stage1.elf did not (a header edit is not a mint); reseed first\n");
+        return 1;
+    }
+    let mut rows: Vec = vec_new();
+    let mut i: i64 = 0;
+    while i < vec_len(src) {
+        rows = vec_push(rows, row(slice_of("seed"), file_digest(vec_get(src, i)), vec_get(src, i)));
+        i = i + 1;
+    }
+    let mut g: i64 = 0;
+    while g < vec_len(src) {
+        let key: i64 = g2_key(vec_get(src, g));
+        rows = vec_push(rows, row(slice_of("g2"), g2_digest(key), key));
+        g = g + 1;
+    }
+    let pins: Vec = pin_paths();
+    let mut p: i64 = 0;
+    while p < vec_len(pins) {
+        rows = vec_push(rows, row(slice_of("pin"), file_digest(vec_get(pins, p)), vec_get(pins, p)));
+        p = p + 1;
+    }
+    let mut text: String = "# Seed drift ledger: one sha256 row per seed-bound file, as of the last re-pin.\n";
+    text = string_push_str(text, "# Rows change only through the re-pin: printf write | seed_ledger (refused\n");
+    text = string_push_str(text, "# unless the seed sources compose to the frozen seed). rows_sha256 makes a\n");
+    text = string_push_str(text, "# hand edit red. Columns: role, sha256 (- = absent), path.\n");
+    text = string_push_str(text, "# rows_sha256\t");
+    text = push_slice(text, rows_digest(rows));
+    text = string_push_byte(text, 10);
+    text = string_push_str(text, serialize_rows(rows));
+    let mut drift: String = "# Seed drift: seed-bound files that differ from their SEED_LEDGER.tsv row.\n";
+    drift = string_push_str(drift, "# One line per file: path, first commit, reason (tab-separated). CI is red\n");
+    drift = string_push_str(drift, "# when a drifted file has no line, or a line names a file that does not drift.\n");
+    drift = string_push_str(drift, "# Empty on main and on a tag commit: the land step refuses a non-empty list.\n");
+    if write_text(ledger_path(), text) == 0 || write_text(drift_path(), drift) == 0 {
+        out("seed_ledger: re-pin write failed verdict=RED\n");
+        return 1;
+    }
+    out("seed_ledger: re-pin composite=");
+    out_slice(composite);
+    out_num(" rows=", vec_len(rows));
+    out("\n");
+    return check();
+}
+
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    let n: i64 = __mind_read(0, buf, 5, 0 - 1);
+    if n == 5 && bytes_eq(buf, 5, string_addr("write"), 5) == 1 {
+        return write_mode();
+    }
+    return check();
+}

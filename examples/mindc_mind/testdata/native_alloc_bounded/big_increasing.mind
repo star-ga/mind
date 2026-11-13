@@ -1,0 +1,18 @@
+// A 300..319 MB scratch buffer allocated, touched at its last word and freed,
+// 20 times, each request 1 MB larger than the last (verifier repro
+// edge2/f15_big_increasing, W11c round 2). ~6.2 GB requested in total; only
+// one buffer is ever live. Expected exit 15, empty stdout.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut s: i64 = 0;
+    while i < 20 {
+        let n: i64 = 300000000 + i * 1000000;
+        let p: i64 = __mind_alloc(n);
+        __mind_store_i64(p + n - 8, i);
+        s = s + __mind_load_i64(p + n - 8) - i;
+        let f: i64 = __mind_free(p);
+        s = s + f;
+        i = i + 1;
+    }
+    s + 15
+}

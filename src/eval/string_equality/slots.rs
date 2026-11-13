@@ -94,12 +94,18 @@ impl Contradicted {
     }
 
     /// The slots other modules of a project build can declare or read:
-    /// every one but the module's own local and module-level bindings.
+    /// every one but the module's own local and module-level bindings and
+    /// its element facts. Element facts are keyed by fact, not by slot, so
+    /// one module's store into its own `[u8; N]` names every `[u8; N]` of
+    /// the project: the project summary keeps them per module instead and
+    /// gives them only to the modules that can exchange a collection with it
+    /// (see `project::Summary::seed`).
     #[cfg(feature = "cross-module-imports")]
     pub(super) fn shared(&self) -> Contradicted {
         Contradicted {
             locals: BTreeMap::new(),
             globals: BTreeSet::new(),
+            elements: Vec::new(),
             ..self.clone()
         }
     }

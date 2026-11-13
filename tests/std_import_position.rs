@@ -267,7 +267,7 @@ fn a_std_import_in_a_module_block_links_and_runs() {
          fn main() -> i64 {\n    return first_byte();\n}\n",
     )
     .expect("write main.mind");
-    let out = mindc(&["build"], &dir);
+    let out = mindc(&["build", "--backend", "mlir"], &dir);
     if !common::gate::compiled("std_import_position_build", &out) {
         return;
     }

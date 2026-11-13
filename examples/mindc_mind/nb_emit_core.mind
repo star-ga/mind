@@ -1,0 +1,334 @@
+// Copyright 2026 STARGA Inc.
+// Shared emitter core: the byte and instruction helpers that main.mind and the
+// compiler parts both call. Moved out of main.mind unchanged (each fn keeps its
+// comment) so a part can reuse them: a part cannot call a main.mind fn (main.mind
+// is the crate root), and a second copy in a lane would be a duplicate definition.
+// Every fn here calls std.* and other fns in this file only. PARTS.md says how to
+// add one.
+
+import std.string;
+
+pub fn load_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+// ---- low-level byte emitters into a code String ----
+// Push the low byte of `b` (string_push_byte stores via __mind_store_i8).
+pub fn nb_push(code: String, b: i64) -> String {
+    string_push_byte(code, b)
+}
+
+// Append `n` low bytes of `v`, least-significant first (two's-complement i64).
+// `n` in 1..8. `& 255` isolates the low byte (bitwise, correct for any sign); the
+// shift MUST be a floor/arithmetic >>8 (not the language's trunc-toward-zero `/`),
+// else a NEGATIVE i64 whose bit-magnitude is < 2^56 loses its sign bytes — e.g. the
+// f64 bit pattern -inf = 0xFFF0000000000000 (small-magnitude signed i64) truncated
+// to 0x00F0000000000000, so `x as i64` of -inf mis-emitted. For v>=0 floor == trunc
+// (every ELF-header/disp32 caller is unaffected, byte-identical); for v<0 use
+// -((-(v+1))/256)-1 == floor(v/256) == an arithmetic 8-bit right shift, for EVERY
+// negative v. The older `(v-255)/256` form overflowed for v in [i64::MIN, i64::MIN+254]
+// (v-255 wraps positive), so the sign-bit pattern of -0.0 (0x8000000000000000) encoded
+// as the NaN 0x7fffffffffffff00; -(v+1) is in [0, i64::MAX] and cannot overflow.
+pub fn nb_le(code: String, v: i64, n: i64) -> String {
+    if n <= 0 {
+        return code;
+    }
+    let c1: String = string_push_byte(code, v & 255);
+    let next: i64 = if v < 0 {
+        (0 - ((0 - (v + 1)) / 256)) - 1
+    } else {
+        v / 256
+    };
+    nb_le(c1, next, n - 1)
+}
+
+// Frame displacement of value/slot `id`: rbp - 8*(id+1). Two's-complement i32.
+pub fn nb_slot_disp(id: i64) -> i64 {
+    0 - (8 * (id + 1))
+}
+
+// store_rax(disp): `mov [rbp+disp32], rax`  = 48 89 85 <disp32>
+pub fn nb_store_rax(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, 133);
+    nb_i32le_signed(c3, disp)
+}
+
+// load_rax(disp): `mov rax, [rbp+disp32]` = 48 8B 85 <disp32>
+pub fn nb_load_rax(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    nb_i32le_signed(c3, disp)
+}
+
+// Emit a (possibly negative) value as a 4-byte little-endian disp32. A negative
+// disp must encode as its 32-bit two's complement (v + 2^32), so the low 4 bytes
+// are correct; nb_le's `& 255` then picks the right bytes.
+pub fn nb_i32le_signed(code: String, v: i64) -> String {
+    let u: i64 = if v < 0 {
+        v + 4294967296
+    } else {
+        v
+    };
+    nb_le(code, u, 4)
+}
+
+// emit_store_i64(addr_disp, val_disp): 8-byte store through the i64 handle.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rcx,[rbp+val] = 48 8B 8D
+//   <disp32> ; mov [rax],rcx = 48 89 08.
+pub fn nb_emit_store_i64(code: String, addr_disp: i64, val_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 141);
+    let c8: String = nb_i32le_signed(c7, val_disp);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 137);
+    nb_push(c10, 8)
+}
+
+// emit_load_i64(addr_disp): 8-byte load through the i64 handle. Result in rax.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rax,[rax] = 48 8B 00.
+pub fn nb_emit_load_i64(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    nb_push(c6, 0)
+}
+
+// emit_free: the no-free bump arena (mirror src/native::__mind_free arm). The ptr
+// arg is intentionally unread; the contract value is 0.
+//   xor rax,rax = 48 31 C0
+pub fn nb_emit_free_xor(code: String) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 49);
+    nb_push(c2, 192)
+}
+
+// 2-byte VEX prefix (C5): 0F-escape map, no X/B/W. r = R-extension bit (0/1),
+// vvvv = src1 register number (0..15; pass 0 when the op has NO vvvv operand ->
+// stored 1111), l = 1 for 256-bit YMM, pp = 00/01/10/11 (mandatory-prefix code).
+//   byte1 = (~R<<7)|(~vvvv<<3)|(L<<2)|pp  where ~R=(1-R) as 1 bit, ~vvvv=(15-vvvv)
+//   as 4 bits (15 - x == 4-bit bitwise NOT for x in 0..15).
+pub fn nb_vex2(code: String, r: i64, vvvv: i64, l: i64, pp: i64) -> String {
+    let c1: String = nb_push(code, 197);
+    nb_push(c1, (1 - r) * 128 + (15 - vvvv) * 8 + l * 4 + pp)
+}
+
+// 3-byte VEX prefix (C4): for the 0F38/0F3A opcode maps or when W/X/B is needed.
+//   byte1 = (~R<<7)|(~X<<6)|(~B<<5)|mmmmm  (mmmmm: 0F=1, 0F38=2, 0F3A=3)
+//   byte2 = (W<<7)|(~vvvv<<3)|(L<<2)|pp.
+pub fn nb_vex3(code: String, r: i64, x: i64, b: i64, mmmmm: i64, w: i64, vvvv: i64, l: i64, pp: i64) -> String {
+    let c1: String = nb_push(code, 196);
+    let c2: String = nb_push(c1, (1 - r) * 128 + (1 - x) * 64 + (1 - b) * 32 + mmmmm);
+    nb_push(c2, w * 128 + (15 - vvvv) * 8 + l * 4 + pp)
+}
+
+// Full byte-span comparison for the packed registry representation.  The
+// four legacy words remain the public ABI, but they cannot carry bytes after
+// offset 31.  Decode each expected word a byte at a time and compare the
+// caller's actual span, including an optional fifth (tail) word.
+pub fn tc_shoc_word_byte(word: i64, i: i64) -> i64 {
+    if i <= 0 {
+        return word % 256;
+    }
+    tc_shoc_word_byte(word / 256, i - 1)
+}
+
+pub fn tc_shoc_span_word_len(len: i64, base: i64) -> i64 {
+    if len <= base {
+        return 0;
+    }
+    if len - base >= 8 {
+        return 8;
+    }
+    len - base
+}
+
+pub fn tc_shoc_span_word_eq(buf: i64, base: i64, width: i64, word: i64, i: i64) -> i64 {
+    if i >= width {
+        return 1;
+    }
+    if load_byte(buf, base + i) != tc_shoc_word_byte(word, i) {
+        return 0;
+    }
+    tc_shoc_span_word_eq(buf, base, width, word, i + 1)
+}
+
+pub fn tc_shoc_span_eq(buf: i64, len: i64, e0: i64, e1: i64, e2: i64, e3: i64, elen: i64, tail: i64, tail_len: i64) -> i64 {
+    if len != elen {
+        return 0;
+    }
+    let n0: i64 = tc_shoc_span_word_len(len, 0);
+    let n1: i64 = tc_shoc_span_word_len(len, 8);
+    let n2: i64 = tc_shoc_span_word_len(len, 16);
+    let n3: i64 = tc_shoc_span_word_len(len, 24);
+    if tc_shoc_span_word_eq(buf, 0, n0, e0, 0) == 0 {
+        return 0;
+    }
+    if tc_shoc_span_word_eq(buf, 8, n1, e1, 0) == 0 {
+        return 0;
+    }
+    if tc_shoc_span_word_eq(buf, 16, n2, e2, 0) == 0 {
+        return 0;
+    }
+    if tc_shoc_span_word_eq(buf, 24, n3, e3, 0) == 0 {
+        return 0;
+    }
+    if tc_shoc_span_word_eq(buf, 32, tail_len, tail, 0) == 0 {
+        return 0;
+    }
+    1
+}
+
+// Row record (80 B): name length, three little-endian name words (24 bytes of
+// name, the longest bindable symbol is 19), version length, two version words,
+// signature, signature word 2, arity. An empty version (vlen 0) is a libcuda
+// row: unversioned, never in a Verneed bucket.
+pub fn nbx_put(out: i64, nlen: i64, n0: i64, n1: i64, n2: i64, vlen: i64, v0: i64, v1: i64, sig: i64, sig2: i64, arity: i64) -> i64 {
+    __mind_store_i64(out, nlen);
+    __mind_store_i64(out + 8, n0);
+    __mind_store_i64(out + 16, n1);
+    __mind_store_i64(out + 24, n2);
+    __mind_store_i64(out + 32, vlen);
+    __mind_store_i64(out + 40, v0);
+    __mind_store_i64(out + 48, v1);
+    __mind_store_i64(out + 56, sig);
+    __mind_store_i64(out + 64, sig2);
+    __mind_store_i64(out + 72, arity);
+    1
+}
+
+// Linux syscall argument 3 lives in r10, not the SysV call register rcx.
+// All inputs have stack homes; syscall clobbers rcx/r11, neither is live across it.
+pub fn nb_load_sysarg(code: String, i: i64, disp: i64) -> String {
+    if i == 3 {
+        let c1: String = nb_push(code, 76);
+        let c2: String = nb_push(c1, 139);
+        let c3: String = nb_push(c2, 149);
+        return nb_i32le_signed(c3, disp);
+    }
+    nb_load_argreg(code, i, disp)
+}
+
+// Raw Linux x86-64 syscall: rax=nr; rdi,rsi,rdx,r10,r8,r9=args.
+// Result is left untouched in rax, including negative errno on failure.
+// Arguments are loaded recursively rather than through a `let mut` copy of
+// `code` carried by a while loop: the bootstrap seed's mic@3 builder predates
+// the loop-carried alias-break rules, so that shape would give the seed and
+// the current compiler different trace notes for main.mind itself.
+pub fn nb_emit_sysargs(code: String, ids: i64, i: i64, arity: i64) -> String {
+    if i >= arity {
+        return code;
+    }
+    let slot: i64 = __mind_load_i64(ids + i * 8);
+    let c1: String = nb_load_sysarg(code, i, nb_slot_disp(slot));
+    nb_emit_sysargs(c1, ids, i + 1, arity)
+}
+
+pub fn nb_emit_syscall(code: String, nr: i64, ids: i64, arity: i64) -> String {
+    let out: String = nb_emit_sysargs(code, ids, 0, arity);
+    let c1: String = nb_push(out, 184);
+    let c2: String = nb_i32le_signed(c1, nr);
+    let c3: String = nb_push(c2, 15);
+    nb_push(c3, 5)
+}
+
+// System-V integer arg registers (index 0..5): (modrm_reg_field, needs_rex).
+//   0 rdi(7,F) 1 rsi(6,F) 2 rdx(2,F) 3 rcx(1,F) 4 r8(0,T) 5 r9(1,T)
+pub fn nb_argreg_field(i: i64) -> i64 {
+    if i == 0 {
+        return 7;
+    }
+    if i == 1 {
+        return 6;
+    }
+    if i == 2 {
+        return 2;
+    }
+    if i == 3 {
+        return 1;
+    }
+    if i == 4 {
+        return 0;
+    }
+    1
+}
+
+pub fn nb_argreg_ext(i: i64) -> i64 {
+    if i >= 4 {
+        return 1;
+    }
+    0
+}
+
+// load_argreg(i, disp): load slot into incoming param reg i.
+//   (0x48 | ext<<2) 0x8B (0x80 | (reg&7)<<3 | 0x05) <disp32>
+pub fn nb_load_argreg(code: String, i: i64, disp: i64) -> String {
+    let reg: i64 = nb_argreg_field(i);
+    let ext: i64 = nb_argreg_ext(i);
+    let rex: i64 = 72 + ext * 4;
+    let modrm: i64 = 128 + (reg & 7) * 8 + 5;
+    let c1: String = nb_push(code, rex);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, modrm);
+    nb_i32le_signed(c3, disp)
+}
+
+// ---- plan lookup + reg-form def/use wrappers (the def/use seam) ----
+// nb_plan_reg: reg_code (0=rbx,1=r12) for `id`, or -1 (spill). plan==0 => -1.
+pub fn nb_plan_reg_find(plan: i64, n: i64, id: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if __mind_load_i64(plan + 8 + i * 16) == id {
+        return __mind_load_i64(plan + 8 + i * 16 + 8);
+    }
+    nb_plan_reg_find(plan, n, id, i + 1)
+}
+pub fn nb_plan_reg(plan: i64, id: i64) -> i64 {
+    if plan == 0 {
+        return 0 - 1;
+    }
+    nb_plan_reg_find(plan, __mind_load_i64(plan), id, 0)
+}
+// Store rax into value `id`'s home: mov rbx,rax=48 89 C3 / mov r12,rax=49 89 C4,
+// else the stack home nb_store_rax(nb_slot_disp(id)).
+pub fn nb_val_store_rax(plan: i64, id: i64, code: String) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc == 0 {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 137);
+        return nb_push(c2, 195);
+    }
+    if rc == 1 {
+        let c1: String = nb_push(code, 73);
+        let c2: String = nb_push(c1, 137);
+        return nb_push(c2, 196);
+    }
+    nb_store_rax(code, nb_slot_disp(id))
+}
+// Load value `id` into rax: mov rax,rbx=48 8B C3 / mov rax,r12=49 8B C4, else
+// nb_load_rax(nb_slot_disp(id)).
+pub fn nb_val_load_rax(plan: i64, id: i64, code: String) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc == 0 {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 139);
+        return nb_push(c2, 195);
+    }
+    if rc == 1 {
+        let c1: String = nb_push(code, 73);
+        let c2: String = nb_push(c1, 139);
+        return nb_push(c2, 196);
+    }
+    nb_load_rax(code, nb_slot_disp(id))
+}

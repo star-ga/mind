@@ -1,0 +1,108 @@
+// Copyright 2026 STARGA Inc.
+// Epilogue register rows of the resident ymm bank (R-02e, kinds 94-99, ruling A-3
+// 2026-11-09): six register-form (d, a, b) ops on literal ymm0..14, discard-only,
+// each ONE call into the shared verified encoder (nb_x86_vex.mind nbv_op_rrr): no
+// prefix byte is pushed here. Operand shape, literal fences, the leaf walk and
+// vzeroall / vzeroupper are the bank's (nb_x86_ymm_bank_checks.mind / _walk.mind):
+// every row has the shape of kinds 76-79 / 82-83, so those tables carry over.
+// Semantics are final under each name (a change is a _v2 name):
+// 94 vpmuludq_i64x4_r d[i] = u64(lo32 a[i]) * u64(lo32 b[i])   66 0F F4
+// 95 vpand_i64x4_r    d = a & b                                66 0F DB
+// 96 vpor_i64x4_r     d = a | b                                66 0F EB
+// 97 vpcmpgtq_i64x4_r d[i] = a[i] > b[i] (signed) ? -1 : 0     66 0F38 37
+// 98 vpsrlq_i64x4_r   d[i] = a[i] >> c logical, c = low 64 bits of b, c > 63 -> 0   66 0F D3
+// 99 vpsllq_i64x4_r   d[i] = a[i] << c, c as for 98                                 66 0F F3
+
+import std.string;
+import nb_x86_vex;
+
+// ---- epilogue name -> kind (94..99), or -1 ----
+// Every name starts "__mind_y" and ends "_i64x4_r"; spans 23 (vpor), 24 (vpand),
+// 25 (vpsrlq, vpsllq), 27 (vpmuludq, vpcmpgtq). Words at +0, +8, +16 and hi-8
+// cover every byte of every span (the 23-byte span reads +0, +8, hi-8 only).
+pub fn nbbe_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n < 23 {
+        return 0 - 1;
+    }
+    if n > 27 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(buf + lo) != 8745819426754748255 {
+        return 0 - 1;
+    }
+    if __mind_load_i64(buf + hi - 8) != 8241363533987998047 {
+        return 0 - 1;
+    }
+    let w8: i64 = __mind_load_i64(buf + lo + 8);
+    if n == 23 {
+        return nbbe_match(w8, 0, 6877682109761154413, 0, 96);
+    }
+    let w16: i64 = __mind_load_i64(buf + lo + 16);
+    if n == 24 {
+        return nbbe_match(w8, w16, 7236828786881162605, 8241363533987998047, 95);
+    }
+    if n == 25 {
+        return nbbe_shift(w8, w16);
+    }
+    if n == 27 {
+        return nbbe_wide(w8, w16);
+    }
+    0 - 1
+}
+
+// k when the words at +8 and +16 are the expected ones, else -1.
+pub fn nbbe_match(w8: i64, w16: i64, e8: i64, e16: i64, k: i64) -> i64 {
+    if w8 != e8 {
+        return 0 - 1;
+    }
+    if w16 != e16 {
+        return 0 - 1;
+    }
+    k
+}
+
+// 25-byte spans: "mm_vpsrl" / "mm_vpsll" + "q_i64x4_".
+pub fn nbbe_shift(w8: i64, w16: i64) -> i64 {
+    let r: i64 = nbbe_match(w8, w16, 7814435230300728685, 6860240298038615921, 98);
+    if r > 0 {
+        return r;
+    }
+    nbbe_match(w8, w16, 7812746380440464749, 6860240298038615921, 99)
+}
+
+// 27-byte spans: "mm_vpmul" "udq_i64x" (94) / "mm_vpcmp" "gtq_i64x" (97).
+pub fn nbbe_wide(w8: i64, w16: i64) -> i64 {
+    let r: i64 = nbbe_match(w8, w16, 7815273058161093997, 8661607809541039221, 94);
+    if r > 0 {
+        return r;
+    }
+    nbbe_match(w8, w16, 8101240639382842733, 8661607809541043303, 97)
+}
+
+// ops = [d, a, b, disp]; reg = d, vvvv = a, rm = b (for 98 / 99 rm is the xmm count).
+// VEX.256 W0, pp 66 = 1, map 0F = 1, 0F38 = 2. Any other kind returns `code`.
+pub fn nbbe_emit_op(code: String, kind: i64, ops: i64) -> String {
+    let d: i64 = __mind_load_i64(ops + 0);
+    let a: i64 = __mind_load_i64(ops + 8);
+    let b: i64 = __mind_load_i64(ops + 16);
+    if kind == 94 {
+        return nbv_op_rrr(code, 1, 244, 1, 0, d, a, b);
+    }
+    if kind == 95 {
+        return nbv_op_rrr(code, 1, 219, 1, 0, d, a, b);
+    }
+    if kind == 96 {
+        return nbv_op_rrr(code, 1, 235, 1, 0, d, a, b);
+    }
+    if kind == 97 {
+        return nbv_op_rrr(code, 2, 55, 1, 0, d, a, b);
+    }
+    if kind == 98 {
+        return nbv_op_rrr(code, 1, 211, 1, 0, d, a, b);
+    }
+    if kind == 99 {
+        return nbv_op_rrr(code, 1, 243, 1, 0, d, a, b);
+    }
+    code
+}

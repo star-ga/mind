@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::ast::{CallConv, ExternFn, TypeAnn};
+use crate::ast::{CallConv, ExternBinding, ExternFn, TypeAnn};
 
 /// An exported `extern "C"` declaration, including the calling convention
 /// the ordinary function signature does not carry.
@@ -28,6 +28,8 @@ pub struct ExportedExtern {
     pub is_varargs: bool,
     pub param_types: Vec<TypeAnn>,
     pub ret_type: Option<TypeAnn>,
+    /// The `bind` clause of the declaring block (spec "Extern bindings").
+    pub binding: ExternBinding,
 }
 
 /// Keep one record per distinct declaration. Identical declarations coalesce.
@@ -35,7 +37,7 @@ pub struct ExportedExtern {
 pub(super) fn remember(
     exported_externs: &mut Vec<ExportedExtern>,
     aliases: &crate::eval::type_aliases::LocalTypeAliases,
-    callconv: CallConv,
+    (callconv, binding): (CallConv, &ExternBinding),
     function: &ExternFn,
 ) {
     let candidate = ExportedExtern {
@@ -48,6 +50,7 @@ pub(super) fn remember(
             .map(|param| aliases.resolve(&param.ty))
             .collect(),
         ret_type: function.ret_type.as_ref().map(|ty| aliases.resolve(ty)),
+        binding: binding.clone(),
     };
     if !exported_externs.contains(&candidate) {
         exported_externs.push(candidate);

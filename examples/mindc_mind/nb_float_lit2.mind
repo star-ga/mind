@@ -1,0 +1,337 @@
+// Copyright 2026 STARGA Inc.
+// Numeric-literal decode, part 2: decimal to binary64 bits, rounding and literal checks.
+// Moved verbatim from main.mind; a part calls std.* and other parts only.
+
+import nb_emit_core;
+import nb_float_lit;
+
+// Parse a `<intdigits>.<fracdigits>` span into IEEE-754 f64 bits (see block header).
+// PRECONDITION: only called on spans nb_float_lit_is_dyadic accepted — its
+// 18-digit-content numerator-overflow guard keeps every intermediate here
+// (ipart*den + fpart, nb_pow10, nb_strip_pow5) overflow-free. Do NOT call this
+// on an unguarded span: a wrapped numerator silently yields ~0.0 bits.
+pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
+    // W8b: every well-formed decimal literal (dotted, exponent, `_`-separated,
+    // any length) now lowers to its CORRECTLY ROUNDED binary64 bits through the
+    // exact bignum path below. The dyadic-only integer path above
+    // (nb_ratio_to_f64_bits / nb_strip_pow5) is kept for its selftests.
+    nb_dec2f64_bits(buf, lo, hi)
+}
+
+pub fn bn_shr1_if(d: i64, i: i64) -> i64 {
+    if i <= 0 {
+        return 0;
+    }
+    bn_shr1(d)
+}
+
+// q = floor(r / (d >> (55 - i)) ...) bit by bit from bit i down to 0; d enters as
+// Den << i and is halved after every step; r leaves as the exact remainder.
+pub fn bn_div_bits(r: i64, d: i64, i: i64, q: i64) -> i64 {
+    if i < 0 {
+        return q;
+    }
+    let q2: i64 = bn_div_step(r, d, bn_cmp(r, d), q, i);
+    let _h: i64 = bn_shr1_if(d, i);
+    bn_div_bits(r, d, i - 1, q2)
+}
+
+// Index of the first exponent marker 'e'/'E' in [i,hi), else hi.
+pub fn nb_d2f_find_exp(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c == 101 {
+        return i;
+    }
+    if c == 69 {
+        return i;
+    }
+    nb_d2f_find_exp(buf, i + 1, hi)
+}
+
+// Exponent digits, saturated at ~1e8 (anything that large is already +inf / +0).
+pub fn nb_d2f_exp_digits(buf: i64, i: i64, hi: i64, acc: i64) -> i64 {
+    if i >= hi {
+        return acc;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 0 {
+        return acc;
+    }
+    if acc > 100000000 {
+        return nb_d2f_exp_digits(buf, i + 1, hi, acc);
+    }
+    nb_d2f_exp_digits(buf, i + 1, hi, acc * 10 + (c - 48))
+}
+
+// Signed exponent value of the tail starting at the marker ep (0 when absent).
+pub fn nb_d2f_exp_val(buf: i64, ep: i64, hi: i64) -> i64 {
+    if ep + 1 >= hi {
+        return 0;
+    }
+    let s: i64 = load_byte(buf, ep + 1);
+    if s == 45 {
+        return 0 - nb_d2f_exp_digits(buf, ep + 2, hi, 0);
+    }
+    if s == 43 {
+        return nb_d2f_exp_digits(buf, ep + 2, hi, 0);
+    }
+    nb_d2f_exp_digits(buf, ep + 1, hi, 0)
+}
+
+// Fold one mantissa digit: N = N*10 + dv; ctx+8 counts fraction digits, ctx+16
+// counts significant digits (from the first non-zero one on).
+pub fn nb_d2f_digit(n: i64, ctx: i64, dv: i64) -> i64 {
+    if __mind_load_i64(ctx) == 1 {
+        __mind_store_i64(ctx + 8, __mind_load_i64(ctx + 8) + 1)
+    }
+    let _m: i64 = bn_muladd(n, 10, dv);
+    if bn_len(n) > 0 {
+        __mind_store_i64(ctx + 16, __mind_load_i64(ctx + 16) + 1)
+    }
+    0
+}
+
+// Mantissa scan over [i,end): digits fold into N, '.' flips ctx+0, '_' is skipped.
+pub fn nb_d2f_scan(buf: i64, i: i64, end: i64, n: i64, ctx: i64) -> i64 {
+    if i >= end {
+        return 0;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c == 46 {
+        __mind_store_i64(ctx, 1);
+        return nb_d2f_scan(buf, i + 1, end, n, ctx);
+    }
+    if is_digit(c) == 1 {
+        let _d: i64 = nb_d2f_digit(n, ctx, c - 48);
+        return nb_d2f_scan(buf, i + 1, end, n, ctx);
+    }
+    nb_d2f_scan(buf, i + 1, end, n, ctx)
+}
+
+// Scale the exact ratio N / Den by 10^e10 (numerator for e10 >= 0, else denominator).
+pub fn nb_d2f_scale(n: i64, d: i64, e10: i64) -> i64 {
+    if e10 >= 0 {
+        return bn_mul_pow10(n, e10);
+    }
+    bn_mul_pow10(d, 0 - e10)
+}
+
+// Multiply the ratio by 2^t (shift the numerator for t >= 0, else the denominator).
+pub fn nb_d2f_align(n: i64, d: i64, t: i64) -> i64 {
+    if t >= 0 {
+        return bn_shl(n, t);
+    }
+    bn_shl(d, 0 - t)
+}
+
+pub fn nb_d2f_round_up(rbit: i64, sticky: i64, odd: i64) -> i64 {
+    if rbit == 0 {
+        return 0;
+    }
+    if sticky == 1 {
+        return 1;
+    }
+    odd
+}
+
+// Round value = (q + rem) * 2^-t, q in [2^54, 2^56), rs = (rem != 0), to binary64.
+pub fn nb_d2f_round(q: i64, t: i64, rs: i64) -> i64 {
+    let b: i64 = nb_msb_index(q);
+    let e: i64 = b - t;
+    if e > 1023 {
+        return nb_f64_inf_bits();
+    }
+    let extra: i64 = if e < 0 - 1022 {
+        (0 - 1022) - e
+    } else {
+        0
+    };
+    let s: i64 = (b - 52) + extra;
+    if s >= 57 {
+        return 0;
+    }
+    let mant: i64 = q >> s;
+    let rbit: i64 = (q >> (s - 1)) & 1;
+    let low: i64 = q & ((1 << (s - 1)) - 1);
+    let sticky: i64 = if low != 0 {
+        1
+    } else {
+        rs
+    };
+    let up: i64 = nb_d2f_round_up(rbit, sticky, mant & 1);
+    let bits: i64 = (((e + extra) + 1022) << 52) + (mant + up);
+    if bits >= nb_f64_inf_bits() {
+        return nb_f64_inf_bits();
+    }
+    bits
+}
+
+// Correctly rounded (round-half-even) binary64 bits of the unsigned decimal float
+// literal span [lo,hi): `<digits>[.<digits>][(e|E)[+|-]<digits>]`, `_` separators.
+pub fn nb_dec2f64_bits(buf: i64, lo: i64, hi: i64) -> i64 {
+    let ep: i64 = nb_d2f_find_exp(buf, lo, hi);
+    let cap: i64 = ((hi - lo) + 400) * 4 / 30 + 8;
+    let n: i64 = bn_new(cap);
+    let ctx: i64 = __mind_alloc(24);
+    __mind_store_i64(ctx, 0);
+    __mind_store_i64(ctx + 8, 0);
+    __mind_store_i64(ctx + 16, 0);
+    let _m: i64 = nb_d2f_scan(buf, lo, ep, n, ctx);
+    if bn_len(n) == 0 {
+        return 0;
+    }
+    let e10: i64 = nb_d2f_exp_val(buf, ep, hi) - __mind_load_i64(ctx + 8);
+    let dexp: i64 = __mind_load_i64(ctx + 16) + e10;
+    // value in [10^(dexp-1), 10^dexp): >= 1e309 is +inf, < 1e-324 rounds to +0.
+    if dexp >= 310 {
+        return nb_f64_inf_bits();
+    }
+    if dexp <= 0 - 324 {
+        return 0;
+    }
+    let d: i64 = bn_new(cap);
+    let _one: i64 = bn_muladd(d, 1, 1);
+    let _p: i64 = nb_d2f_scale(n, d, e10);
+    let t: i64 = 55 + bn_bitlen(d) - bn_bitlen(n);
+    let _a: i64 = nb_d2f_align(n, d, t);
+    let _w: i64 = bn_shl(d, 55);
+    let q: i64 = bn_div_bits(n, d, 55, 0);
+    let rs: i64 = if bn_len(n) == 0 {
+        0
+    } else {
+        1
+    };
+    nb_d2f_round(q, t, rs)
+}
+
+// 1 iff [i,hi) holds only float-literal bytes (digit _ . e E + -).
+pub fn nb_float_lit_ok_rest(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return 1;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 1 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 95 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 46 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 101 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 69 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 43 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 45 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    0
+}
+
+// W8b emit guard (replaces the dyadic-only guard at every float-literal lowering
+// site): 1 iff the span is a decimal float literal nb_dec2f64_bits rounds exactly.
+// The lexer only produces well-formed spans; this stays as a fail-closed backstop.
+pub fn nb_float_lit_ok(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    if is_digit(load_byte(buf, lo)) == 0 {
+        return 0;
+    }
+    nb_float_lit_ok_rest(buf, lo + 1, hi)
+}
+
+// 1 iff 5^k divides `num` (num >= 0). Each step requires num divisible by 5; a
+// single non-multiple means 5^k (k>=1) does not divide num. `num - (num/5)*5` is
+// the integer remainder (no `%` dependency, matching nb_strip_pow5's `/` style).
+pub fn nb_pow5_divides(num: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return 1;
+    }
+    if num - (num / 5) * 5 != 0 {
+        return 0;
+    }
+    nb_pow5_divides(num / 5, k - 1)
+}
+
+// 1 iff [lo,hi) contains an EXPONENT marker byte 'e' (101) or 'E' (69). The
+// native-ELF float pipeline (nb_float_lit_bits) parses ONLY the dotted
+// <int>.<frac> form with integer arithmetic — it has no exponent handling. An
+// exponent-form literal (1e19, 1.5e3, ...) still lexes as a tk_float (the lexer's
+// scan_float_exp path), and parse_int_span silently absorbs the 'e' as a bogus
+// decimal digit (byte 101 - 48 = 53), so 1e19 mis-parses to 6319 and the float
+// arm emits a RUNNING wrong-value ELF (exit 6319 & 0xff = 175) — a fail-OPEN
+// silent miscompile. Detecting the marker lets nb_float_lit_is_dyadic refuse
+// (return 0), which the nb_expr float arm turns into the systemic fail-closed
+// 0-byte poison (lcell+80=1). main.mind is float-free, so this never runs during
+// self-compile; a dotted in-range literal contains no 'e'/'E' and is unaffected
+// (byte-identical). upgrade path: real exponent scaling in the same bignum
+// dec2flt follow-up as the block header.
+pub fn nb_span_has_exp(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    let b: i64 = load_byte(buf, lo);
+    if b == 101 {
+        return 1;
+    }
+    if b == 69 {
+        return 1;
+    }
+    nb_span_has_exp(buf, lo + 1, hi)
+}
+
+// 1 iff the decimal literal in [lo,hi) is EXACTLY a dyadic rational q * 2^-fk —
+// i.e. 5^fk divides num = ipart*10^fk + fpart. nb_float_lit_bits is exact ONLY in
+// that case; a non-dyadic literal (0.1, 3.14, 0.7 ...) truncates in
+// nb_strip_pow5's integer /5 and yields SILENT wrong IEEE-754 bits (0.1 -> 0.0,
+// 3.14 -> 3.0). Same parse as nb_float_lit_bits.
+pub fn nb_float_lit_is_dyadic(buf: i64, lo: i64, hi: i64) -> i64 {
+    // EXPONENT-FORM fail-close: nb_float_lit_bits handles only the dotted
+    // <int>.<frac> form; an exponent literal (1e19, 1.5e3) mis-parses through
+    // parse_int_span (the 'e' absorbed as digit 53) and would emit a running
+    // wrong-value ELF. Refuse it here so the nb_expr float arm poisons (0-byte
+    // fail-closed) instead of a silent miscompile.
+    if nb_span_has_exp(buf, lo, hi) == 1 {
+        return 0;
+    }
+    let dot: i64 = nb_find_dot(buf, lo, hi);
+    let fdigits: i64 = hi - (dot + 1);
+    let fk: i64 = if fdigits < 0 {
+        0
+    } else {
+        fdigits
+    };
+    // NUMERATOR-OVERFLOW fail-close (B0-lift follow-up, blind-review CRITICAL):
+    // num = ipart*10^fk + fpart is computed in WRAPPING i64. A literal whose
+    // integer-digit content (intpart digits + fk) exceeds 18 decimal digits can
+    // exceed 2^63 (~9.2e18, 19 digits) and WRAP — and the wrapped num can PASS
+    // the pow5 test below while nb_float_lit_bits emits ~0.0 bits (observed
+    // fail-OPEN: 9223372036854775808.0 -> 0.0, so `(f as i64)` exited 0 where
+    // the oracle saturates to INT64_MAX; 18446744073709551616.0 wraps num to
+    // EXACTLY 0). <= 18 content digits guarantees num < 10^18 < 2^63 and
+    // 10^fk itself exact — the whole integer pipeline is overflow-free. This
+    // OVER-refuses some exactly-representable huge dyadics (e.g. 2^60.0, which
+    // the wrapped path already refused by luck) — fail-closed 0B, never wrong
+    // bits. upgrade path: a bignum numerator (the same follow-up as the
+    // correctly-rounded dec2flt in the block header). Leading zeros count
+    // toward the bound (over-refusal only). main.mind is float-free, so this
+    // guard never runs during self-compile.
+    if (dot - lo) + fk > 18 {
+        return 0;
+    }
+    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
+    let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
+    let den: i64 = nb_pow10(fk);
+    let num: i64 = ipart * den + fpart;
+    nb_pow5_divides(num, fk)
+}

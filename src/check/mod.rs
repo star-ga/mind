@@ -29,10 +29,14 @@ use std::path::{Path, PathBuf};
 
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
-use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
+use crate::project::{
+    MindcraftConfig, ProjectManifest, RuleSeverity, governing_project_root, load_manifest,
+};
 use crate::type_checker::check_module_types_in_file;
 
-use gitignore::GitignoreFilter;
+use gitignore::{
+    build_gitignore_filter_from, collect_mind_files, find_git_root, find_git_root_from, project_set,
+};
 
 // ---------------------------------------------------------------------------
 // Public diagnostic schema
@@ -185,11 +189,15 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
         return run_check_fix(opts);
     }
 
-    let config = load_check_config();
+    let project = load_check_project();
+    let config = project
+        .as_ref()
+        .map(|(_, m)| m.mindcraft.clone())
+        .unwrap_or_default();
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
 
-    let files = match resolve_paths(&opts.paths, &config) {
+    let files = match resolve_paths(&opts.paths, &config, project) {
         Ok(f) => f,
         Err(e) => {
             let first = opts.paths.first().map(Path::new);
@@ -253,7 +261,7 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
                 return 1;
             }
         },
-        ReporterKind::Lsp => match emit_lsp_diagnostics(&all_diags) {
+        ReporterKind::Lsp => match reporter::emit_lsp_diagnostics(&all_diags) {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("error[check]: LSP serialisation failed: {e}");
@@ -279,11 +287,15 @@ const MAX_FIX_ITERATIONS: usize = 5;
 /// Re-check until no fixable diagnostics remain or `MAX_FIX_ITERATIONS` is
 /// reached.  Prints a summary line and returns the exit code.
 fn run_check_fix(opts: &CheckOptions) -> i32 {
-    let config = load_check_config();
+    let project = load_check_project();
+    let config = project
+        .as_ref()
+        .map(|(_, m)| m.mindcraft.clone())
+        .unwrap_or_default();
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
 
-    let files = match resolve_paths(&opts.paths, &config) {
+    let files = match resolve_paths(&opts.paths, &config, project) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("error[check]: {e}");
@@ -508,87 +520,32 @@ fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// LSP reporter
+// Project and config loading
 // ---------------------------------------------------------------------------
 
-/// LSP severity codes (as per the LSP specification).
-///
-/// 1=Error, 2=Warning, 3=Information, 4=Hint.
-fn lsp_severity(s: CheckSeverity) -> u8 {
-    match s {
-        CheckSeverity::Error => 1,
-        CheckSeverity::Warn => 2,
-        CheckSeverity::Info => 3,
-    }
-}
-
-/// Emit diagnostics as a JSON array of LSP `Diagnostic` objects.
-///
-/// Schema (per LSP specification §3.17):
-/// ```json
-/// [
-///   {
-///     "uri": "file:///absolute/path/to/file.mind",
-///     "range": {
-///       "start": { "line": 0, "character": 0 },
-///       "end":   { "line": 0, "character": 5 }
-///     },
-///     "severity": 1,
-///     "message": "...",
-///     "source": "mindc",
-///     "code": "lint::trailing_whitespace"
-///   }
-/// ]
-/// ```
-///
-/// LSP line/character values are 0-based; `CheckDiagnostic` uses 1-based.
-fn emit_lsp_diagnostics(diags: &[CheckDiagnostic]) -> Result<String, serde_json::Error> {
-    use serde_json::{Value, json};
-
-    let items: Vec<Value> = diags
-        .iter()
-        .map(|d| {
-            let line0 = d.line.saturating_sub(1);
-            let char0 = d.col.saturating_sub(1);
-            // For LSP `end`, we use the same line/col as start since we only
-            // have one position. Downstream tooling can use the `code` to
-            // look up the full span if needed.
-            let uri = format!("file://{}", d.file.display());
-            json!({
-                "uri": uri,
-                "range": {
-                    "start": { "line": line0, "character": char0 },
-                    "end":   { "line": line0, "character": char0 }
-                },
-                "severity": lsp_severity(d.severity),
-                "message": d.message,
-                "source": "mindc",
-                "code": d.rule_id,
-            })
-        })
-        .collect();
-
-    serde_json::to_string_pretty(&items)
-}
-
-// ---------------------------------------------------------------------------
-// Config loading
-// ---------------------------------------------------------------------------
-
-fn load_check_config() -> MindcraftConfig {
-    if let Ok(root) = find_project_root() {
-        if let Ok(manifest) = load_manifest(&root) {
-            return manifest.mindcraft;
-        }
-    }
-    MindcraftConfig::default()
+/// The project that governs the current directory (the root `mindc build`
+/// takes there) and its manifest, read once for the config and the file set.
+fn load_check_project() -> Option<(PathBuf, ProjectManifest)> {
+    let root = governing_project_root().ok()?;
+    let manifest = load_manifest(&root).ok()?;
+    Some((root, manifest))
 }
 
 // ---------------------------------------------------------------------------
 // Path resolution with VCS filtering
 // ---------------------------------------------------------------------------
 
-fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathBuf>, String> {
+/// The files `paths` name, sorted. A named file is itself, also when the
+/// ignore file matches it. A directory is the `*.mind` files below it that
+/// the ignore filter keeps, in a project's source set or not. With no path, a
+/// project's check takes every file of the source set its build compiles
+/// (`gitignore::project_set`) and reports how many walked files that leaves
+/// out; outside a project it walks the current directory.
+fn resolve_paths(
+    paths: &[String],
+    config: &MindcraftConfig,
+    project: Option<(PathBuf, ProjectManifest)>,
+) -> Result<Vec<PathBuf>, String> {
     let roots: Vec<PathBuf> = if paths.is_empty() {
         vec![std::env::current_dir().map_err(|e| format!("cannot read current directory: {e}"))?]
     } else {
@@ -621,12 +578,17 @@ fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathB
         None
     };
 
+    if let Some(project) = project.filter(|_| paths.is_empty()) {
+        if let Some(set) = project_set(project, filter.as_ref(), repo_root.as_deref())? {
+            return Ok(set);
+        }
+    }
+
     let mut out: Vec<PathBuf> = Vec::new();
     for root in roots {
         if root.is_file() {
-            if should_include(&root, filter.as_ref(), repo_root.as_deref()) {
-                out.push(root);
-            }
+            // A named file is checked, also when the ignore file matches it.
+            out.push(root);
         } else if root.is_dir() {
             collect_mind_files(&root, &mut out, filter.as_ref(), repo_root.as_deref())
                 .map_err(|e| format!("{}: {e}", root.display()))?;
@@ -637,83 +599,6 @@ fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathB
 
     out.sort(); // deterministic ordering
     Ok(out)
-}
-
-/// Walk `dir` recursively, collecting `*.mind` files that pass the filter.
-fn collect_mind_files(
-    dir: &Path,
-    out: &mut Vec<PathBuf>,
-    filter: Option<&GitignoreFilter>,
-    repo_root: Option<&Path>,
-) -> io::Result<()> {
-    let mut children: Vec<_> = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
-    children.sort();
-
-    for child in children {
-        if child.is_dir() {
-            collect_mind_files(&child, out, filter, repo_root)?;
-        } else if child.extension().is_some_and(|ext| ext == "mind")
-            && should_include(&child, filter, repo_root)
-        {
-            out.push(child);
-        }
-    }
-    Ok(())
-}
-
-/// Return `true` if `path` should be included in the check run.
-fn should_include(path: &Path, filter: Option<&GitignoreFilter>, repo_root: Option<&Path>) -> bool {
-    let Some(filter) = filter else {
-        return true;
-    };
-    let rel = match repo_root {
-        Some(root) => path.strip_prefix(root).unwrap_or(path),
-        None => path,
-    };
-    let rel_str = rel.to_string_lossy().replace('\\', "/");
-    !filter.is_ignored(&rel_str)
-}
-
-/// Build a [`GitignoreFilter`] from the repo's `.gitignore` and
-/// `.git/info/exclude` (if present), rooted at `root`.
-fn build_gitignore_filter_from(root: Option<&Path>) -> GitignoreFilter {
-    let mut f = GitignoreFilter::default();
-    if let Some(r) = root {
-        f.load_file(&r.join(".gitignore"));
-        f.load_file(&r.join(".git/info/exclude"));
-    } else {
-        // Fallback: look in current directory.
-        f.load_file(Path::new(".gitignore"));
-    }
-    f
-}
-
-/// Walk upward from `start` to find the git repository root (dir that contains
-/// `.git`). Returns `None` if not inside a git repo.
-fn find_git_root_from(start: &Path) -> Option<PathBuf> {
-    let mut cur = start.to_path_buf();
-    // Canonicalize so relative paths work.
-    if let Ok(abs) = cur.canonicalize() {
-        cur = abs;
-    }
-    loop {
-        if cur.join(".git").exists() {
-            return Some(cur);
-        }
-        if !cur.pop() {
-            return None;
-        }
-    }
-}
-
-/// Walk upward from CWD to find the git repository root (dir that contains
-/// `.git`). Returns `None` if not inside a git repo.
-fn find_git_root() -> Option<PathBuf> {
-    let cur = std::env::current_dir().ok()?;
-    find_git_root_from(&cur)
 }
 
 // ---------------------------------------------------------------------------

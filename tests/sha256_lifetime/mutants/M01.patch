@@ -1,0 +1,5 @@
+--- sha256.mind
++++ sha256.mind
+@@ -521 +521 @@
+-    __mind_free(w_addr);
++    // MUTATION: omitted schedule release.

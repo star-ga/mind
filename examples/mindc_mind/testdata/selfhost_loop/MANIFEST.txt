@@ -1,21 +1,24 @@
 # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 # compiler that reproduces itself byte-identically (stage1==stage2==stage3)
 # and seeds the PRIMARY reproduction-independence loop. NOT skippable in CI.
-# published-by	self_host_loop_smoke.py --advance
+# published-by	self_host_loop_smoke.py --advance --hops 2
 #
 # PROVENANCE RECEIPT — every value below is derived from this run's inputs
 # and outputs and is reproducible by re-running the same mode on the same
 # tree. No timestamp is recorded: it could not be re-derived and would only
 # make this file differ from itself.
-# advanced_from_seed_sha256	c57625d29ce0b3239a7161914bd23b64e4696fd5978f23f2b45970e4326e4c4f
-# combined_source_sha256	8d32010f08bb86fdb4d049423cdcd94209cd0ad1292187860c5abdb6b330ad6b
-# combined_source_bytes	3068780
-# user_lo	381050
-# stage1_sha256	377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b
-# stage2_sha256	377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b
-# stage3_sha256	377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b
-# oracle_sha256	377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b
-# oracle_provenance	fresh-build
+# advance_hops	2
+# advanced_from_seed_sha256	bb35955f3a84e5bd3cbfe737f76673922a0793888771fe268faa784c68d51c1e
+# combined_source_sha256	e434682ea2c3215d8d2c8b6b233d7ef76da1ac23346c74281a8485ff1eb2223d
+# combined_source_bytes	3910995
+# user_lo	419266
+# intermediate_stage1_sha256	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
+# stage2_sha256	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
+# stage3_sha256	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
+# published_stage	stage2
+# oracle_sha256	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
+# oracle_provenance	env-verified
+# seed_chain	abb0622b558bf5e482cc538ca8adc852ac6e6f211fdf24232b90ef75ec6b2d00 -> 8216c1ab95fcfc599dacd4dbc8773dcb6c85731ba60e4b3841aa749a5b660683:intermediate -> af1bf1d78e5aa7cd1d0fd7d01e2da521152297fea0204f4552bda6db2cd1ad25 -> 5131e278a39949caa09cc96a9e55d6d8b048d9749cd1108b9df4e7f872ae6bf8 -> dc1878c4f4501c6bbd0df695dc5532ab3cf65ca36a9cddc1c954b74112010cfa:intermediate -> bb35955f3a84e5bd3cbfe737f76673922a0793888771fe268faa784c68d51c1e -> 6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c:intermediate -> 6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c
 #
 # name	size_bytes	sha256
-stage1.elf	2450978	377563045b8d626380bbc0ac4aa2e7994de3831e59569d0cefb6ec81bc83201b
+stage1.elf	3434737	6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c

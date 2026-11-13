@@ -20,14 +20,16 @@
 //!  - the DECLARED order of `[targets.*].sources` — the author's contract,
 //!    preserved verbatim (see `resolve_declared_sources`);
 //!  - the WALKED order of the entry-parent directory tree — no author intent
-//!    exists, so it is canonicalised by sorting.
+//!    exists, so it is canonicalised by sorting. Without a declared list the
+//!    walk is only the pool imports resolve against: the source set is the
+//!    entry directory's files plus their import closure (`import_closure`).
 //!
 //! [`resolve_sources`] is the one place that chooses between them; both the
 //! legacy `build_project` compile path and the `run_build` cache key derive
 //! their source set from it, so a build can never be keyed on one source set
 //! and compiled from another.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -89,7 +91,8 @@ fn is_project_root_tests(path: &Path, root: &Path) -> bool {
     path == root.join("tests")
 }
 
-/// Collect all .mind source files from a project.
+/// Collect every `.mind` file under the entry's directory: the candidate pool
+/// a project's imports resolve against, not its source set.
 pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>> {
     let (root, entry_path) = project_path(project_root, entry, "manifest entry")?;
     if !entry_path.is_file() {
@@ -249,6 +252,156 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
     Ok(sources)
 }
 
+/// Module-file stems that name the CRATE ROOT rather than a submodule.
+/// A file `main.mind` / `lib.mind` / `mod.mind` collapses to its parent path
+/// (`src/main.mind` -> `crate`), so it can NOT be imported under its own stem
+/// (`use lib;` will not resolve to a `lib` module — the file is `crate`, not
+/// `crate.lib`). This is the single source of truth for that reserved set.
+pub const RESERVED_ROOT_STEMS: [&str; 3] = ["main", "lib", "mod"];
+
+/// `true` when `stem` is a reserved crate-root module name (see
+/// [`RESERVED_ROOT_STEMS`]). Callers use this to diagnose a file whose name
+/// collapses to the crate root instead of resolving as a named module.
+pub fn is_reserved_root_stem(stem: &str) -> bool {
+    RESERVED_ROOT_STEMS.contains(&stem)
+}
+
+/// Derive a dotted module path from a source file path relative to the
+/// project source root. `src/lexer/token.mind` -> `crate.lexer.token`;
+/// `src/main.mind` -> `crate`.
+pub fn module_path_of(file: &Path, src_root: &Path) -> String {
+    let rel = file.strip_prefix(src_root).unwrap_or(file);
+    let mut parts: Vec<String> = rel
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .map(|s| s.trim_end_matches(".mind").to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // `main` / `lib` / `mod` are the crate root, not a named submodule.
+    if matches!(parts.last().map(String::as_str), Some(s) if is_reserved_root_stem(s)) {
+        parts.pop();
+    }
+    if parts.is_empty() {
+        "crate".to_string()
+    } else {
+        format!("crate.{}", parts.join("."))
+    }
+}
+
+/// A file's import paths as the parser records them, split into segments. A
+/// file that does not parse declares none here; its own compile or check
+/// reports the parse error.
+fn declared_imports(source: &str) -> Vec<Vec<String>> {
+    crate::parser::parse_with_imports(source)
+        .map(|(_, imports)| imports)
+        .unwrap_or_default()
+        .iter()
+        .map(String::as_str)
+        .map(segments)
+        .collect()
+}
+
+fn segments(dotted: &str) -> Vec<String> {
+    dotted.split('.').map(str::to_string).collect()
+}
+
+/// The walked files one import path names: the exact module key, else the
+/// `crate.`-prefixed key (the build's module-table lookup), else, for a bare
+/// local name, the one walked file with that stem (project discovery's lookup).
+/// An ambiguous stem names nothing, as it does at discovery.
+fn walked_targets<'a>(
+    path: &[String],
+    by_key: &'a BTreeMap<String, Vec<usize>>,
+    by_stem: &'a BTreeMap<String, Vec<usize>>,
+) -> &'a [usize] {
+    let key = path.join(".");
+    if let Some(found) = by_key.get(&key) {
+        return found;
+    }
+    if !key.starts_with("crate.") {
+        if let Some(found) = by_key.get(&format!("crate.{key}")) {
+            return found;
+        }
+    }
+    match (path, by_stem.get(path[0].as_str())) {
+        ([name], Some(found)) if name != "std" && found.len() == 1 => found,
+        _ => &[],
+    }
+}
+
+/// The source set of a project without a declared list: the manifest entry,
+/// the other `.mind` files in the entry's own directory (the package's
+/// top-level modules, whose declarations the project shares without an
+/// import), the `roots` (a file `check` or `test` analyses in the project),
+/// and every walked file these reach through imports, transitively. A file in
+/// a subdirectory that nothing imports (a `docs/` repro, an old module, a
+/// harness) is not a translation unit and does not enter the analysis: the
+/// artifact is a function of the program, never of what else sits on disk.
+/// The result keeps the walk's byte order.
+fn import_closure(
+    project_root: &Path,
+    entry: &str,
+    roots: &[(&Path, &[String])],
+) -> Result<Vec<PathBuf>> {
+    let walked = collect_sources(project_root, entry)?;
+    let entry_path = resolve_project_entry(project_root, entry)?;
+    let source_root = entry_path.parent().unwrap_or(project_root);
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let entry_source = fs::read_to_string(&entry_path)
+        .map_err(|e| anyhow!("cannot read entry {}: {e}", entry_path.display()))?;
+    let mut pending = declared_imports(&entry_source);
+    let mut members = BTreeSet::from([entry_path.clone()]);
+    for (root, imports) in roots {
+        members.insert(canonical(root));
+        pending.extend(imports.iter().map(String::as_str).map(segments));
+    }
+    let mut included = BTreeSet::new();
+    let mut top_level = Vec::new();
+    let mut by_key = BTreeMap::<String, Vec<usize>>::new();
+    let mut by_stem = BTreeMap::<String, Vec<usize>>::new();
+    for (index, path) in walked.iter().enumerate() {
+        by_key
+            .entry(module_path_of(path, source_root))
+            .or_default()
+            .push(index);
+        // A root, or a top-level module in the entry's own directory, is a
+        // member; leaving it out of the stem index keeps a bare import from
+        // turning ambiguous on a file that is already in the set.
+        if members.contains(&canonical(path)) {
+            included.insert(index);
+        } else if path.parent() == Some(source_root) {
+            top_level.push(index);
+        } else if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+            by_stem.entry(stem.to_string()).or_default().push(index);
+        }
+    }
+    let read_imports = |path: &Path| -> Result<Vec<Vec<String>>> {
+        let source = fs::read_to_string(path)
+            .map_err(|e| anyhow!("cannot read project source {}: {e}", path.display()))?;
+        Ok(declared_imports(&source))
+    };
+    // The entry directory's modules are members; their imports are followed.
+    for index in top_level {
+        included.insert(index);
+        pending.extend(read_imports(&walked[index])?);
+    }
+    while let Some(path) = pending.pop() {
+        if path.is_empty() {
+            continue;
+        }
+        for &index in walked_targets(&path, &by_key, &by_stem) {
+            if included.insert(index) {
+                pending.extend(read_imports(&walked[index])?);
+            }
+        }
+    }
+    Ok(walked
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, path)| included.contains(&index).then_some(path))
+        .collect())
+}
+
 /// Resolve a target's explicitly declared `sources = [...]` list against the
 /// project root, preserving DECLARED order (no sorting — the manifest order is
 /// the author's contract). Every declared path must exist: a missing declared
@@ -307,8 +460,10 @@ fn resolve_declared_sources(
 /// - `single_file`: an explicit `mindc build <file>` with no governing project
 ///   manifest — the "project" is exactly the named entry, never its directory.
 /// - `declared`: the target block's `sources = [...]` list, when present.
-/// - otherwise: the entry-parent directory walk, sorted (see
-///   [`collect_sources`]).
+/// - otherwise: the `.mind` files in the entry's directory and the walked
+///   files their imports reach, in the walk's sorted order (see
+///   [`collect_sources`]); a subdirectory file nothing imports is not a
+///   translation unit.
 pub fn resolve_sources(
     project_root: &Path,
     entry: &str,
@@ -324,15 +479,102 @@ pub fn resolve_sources(
     }
     match declared {
         Some(list) => Ok((resolve_declared_sources(project_root, list, entry)?, true)),
-        None => Ok((collect_sources(project_root, entry)?, false)),
+        None => Ok((import_closure(project_root, entry, &[])?, false)),
+    }
+}
+
+/// The source set `mindc build` compiles for the project at `project_root`
+/// when it is given no path and no `--target`; `mindc check` with no path
+/// analyses exactly these files. `None` when the manifest is the temporary
+/// one of a standalone build (never a project), or when it resolves no source
+/// set (the build reports that manifest): the caller then keeps every file.
+pub fn default_source_set(
+    project_root: &Path,
+    manifest: &super::ProjectManifest,
+) -> Option<Vec<PathBuf>> {
+    if super::build_lock::is_temporary_manifest(&project_root.join("Mind.toml")) {
+        return None;
+    }
+    let block = manifest.targets.get(manifest.build.target.as_str());
+    let declared = block.and_then(|target| target.sources.as_deref());
+    let set = resolve_sources(project_root, &manifest.build.entry, declared, false);
+    set.ok().map(|(files, _declared)| files)
+}
+
+/// [`resolve_sources`] for a file that `check` or `test` analyses inside the
+/// project: the same set, plus what that file imports. A file the entry
+/// already reaches adds nothing, so check and build see one source set.
+// Called only by project discovery, which needs `cross-module-imports`.
+#[cfg_attr(not(feature = "cross-module-imports"), allow(dead_code))]
+pub(crate) fn resolve_sources_for(
+    project_root: &Path,
+    entry: &str,
+    declared: Option<&[String]>,
+    root: &Path,
+    root_imports: &[String],
+) -> Result<(Vec<PathBuf>, bool)> {
+    match declared {
+        Some(_) => resolve_sources(project_root, entry, declared, false),
+        None => Ok((
+            import_closure(project_root, entry, &[(root, root_imports)])?,
+            false,
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_sources, resolve_sources};
+    use super::{collect_sources, resolve_sources, resolve_sources_for};
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn walk_default_is_the_entry_import_closure() {
+        let project = tempdir().expect("temp project");
+        let root = project.path().canonicalize().expect("root");
+        for dir in ["docs", "lib", "tests"] {
+            fs::create_dir_all(root.join(dir)).expect(dir);
+        }
+        let write = |rel: &str, text: &str| fs::write(root.join(rel), text).expect(rel);
+        write("main.mind", "import helper;\nfn main() -> i64 { 0 }\n");
+        write("helper.mind", "import util;\nfn h() -> i64 { 1 }\n");
+        write("lib/util.mind", "fn u() -> i64 { 2 }\n");
+        write("types.mind", "struct T { x: i64 }\n");
+        write("docs/stray.mind", "fn broken( {\n");
+        write("tests/t.mind", "import docs.stray;\n");
+        // Root-relative names with `/` on every host: a path's own separator
+        // is the host's (`docs\stray.mind` on Windows).
+        let rel = |set: &[std::path::PathBuf]| -> Vec<String> {
+            let name = |p: &std::path::PathBuf| {
+                let rel = p.strip_prefix(&root).expect("in root");
+                let parts = rel.components().map(|c| c.as_os_str().to_string_lossy());
+                parts.collect::<Vec<_>>().join("/")
+            };
+            set.iter().map(name).collect()
+        };
+
+        // Positive control: the walk sees the stray file.
+        let walked = collect_sources(&root, "main.mind").expect("walk");
+        assert!(rel(&walked).contains(&"docs/stray.mind".to_string()));
+
+        let (set, explicit) = resolve_sources(&root, "main.mind", None, false).expect("closure");
+        assert!(!explicit);
+        let set_names = ["helper.mind", "lib/util.mind", "main.mind", "types.mind"];
+        assert_eq!(rel(&set), set_names);
+
+        // A file `check` analyses adds what it imports, even a broken file.
+        let t = root.join("tests/t.mind");
+        let imports = ["docs.stray".to_string()];
+        let checked = resolve_sources_for(&root, "main.mind", None, &t, &imports);
+        let all = [
+            "docs/stray.mind",
+            "helper.mind",
+            "lib/util.mind",
+            "main.mind",
+            "types.mind",
+        ];
+        assert_eq!(rel(&checked.expect("check set").0), all);
+    }
 
     #[test]
     fn rejects_parent_and_absolute_manifest_entries() {

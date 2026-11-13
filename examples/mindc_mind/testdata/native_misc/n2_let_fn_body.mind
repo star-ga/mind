@@ -1,0 +1,16 @@
+// N2: a typed `let` in a helper fn body with a param keeps its declared width in the
+// trace note. Independent value: wi(250) -> (250 + 10) as i8 = 4; wu(250) -> 4 as u8 = 4;
+// 4 + 4 + 30 = 38.
+fn wi(p: i64) -> i64 {
+    let v: i8 = (p + 10) as i8;
+    v as i64
+}
+
+fn wu(p: i64) -> i64 {
+    let v: u8 = (p + 10) as u8;
+    v as i64
+}
+
+fn main() -> i64 {
+    wi(250) + wu(250) + 30
+}

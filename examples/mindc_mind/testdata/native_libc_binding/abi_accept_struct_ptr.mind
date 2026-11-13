@@ -1,0 +1,15 @@
+// Positive control for the E2040 rows: the pointer form is accepted.
+#[repr(C)]
+struct Pair {
+    a: f32,
+    b: f32,
+}
+
+extern "C" {
+    fn pair_sum_ptr(p: *const Pair) -> f32;
+    fn pair_make_ptr(out: *mut Pair, a: f32, b: f32);
+}
+
+pub fn t_pair() -> i64 {
+    return 0
+}

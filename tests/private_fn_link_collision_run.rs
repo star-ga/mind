@@ -45,7 +45,7 @@ fn build_and_run(dir: &Path, files: &[(&str, &str)]) -> Option<i32> {
         std::fs::write(dir.join(name), text).expect("write source");
     }
     let out = Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(dir)
         .output()
         .expect("run mindc build");

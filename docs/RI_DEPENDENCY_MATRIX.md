@@ -307,6 +307,13 @@ pre-table set, whose names resolve with no import) plus what it imports. The nat
 seed blob is unchanged (21): `--backend native` refuses an import of any other shipped
 module at the import (`scope.std_module_not_in_native_seed`) until a reseed.
 
+**Update (2026-11-06, main d25e07da joined into the 0.10.4 candidate):** the joined
+tree bundles 59 of 59 `std/*.mind` (the candidate's `posix`, `fs_checked`, the eight
+`x509_*` path-validation modules and the four `tls13_client*` modules have rows), and
+every bundled module except `std.vec`, `std.map`, `std.string`, `std.cli` and `std.io`
+is a `substrate_link::SUBSTRATE_MODULES` member, so an import that `mindc check` admits
+also links. The native seed blob rows are unchanged (21).
+
 **Structural fact this shares with row 12:** the defect was the same one the
 2026-08-21 audit found in `admit_binop` and the tensor-builtin fix found in
 `admit_call` — a fact asserted by its *duplicate spelling* rather than derived from

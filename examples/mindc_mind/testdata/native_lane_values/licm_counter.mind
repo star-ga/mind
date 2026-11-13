@@ -1,0 +1,17 @@
+// LICM slice 1 must NOT hoist: `t` reads the loop counter the condition reads and
+// the body assigns; `w` reads `t`. Hoisting either changes the sum.
+fn k(n: i64, a: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t: i64 = i * 3 + a;
+        let w: i64 = t + 1;
+        s = s + w;
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    k(9, 4) % 241
+}

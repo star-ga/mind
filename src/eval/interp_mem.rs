@@ -220,13 +220,22 @@ fn free(addr: i64) -> Result<i64, String> {
     })
 }
 
-/// `__mind_realloc` — grow or shrink an allocation. `addr == 0` is
-/// equivalent to `alloc(new_size)`. On success, copies min(old_size,
-/// new_size) bytes to the new address and returns it. The old allocation
-/// remains valid (bump-arena semantics: `free` is a no-op), matching the
-/// self-host compiler's arena.
+/// Minimum block for `realloc(NULL, 0)`. glibc `malloc(0)` returns a live
+/// pointer; `alloc(0)` returns 0, so this edge allocates the same 24 bytes
+/// the native-lane guard does (`src/build/native_bridge/alloc_guard.rs`).
+const REALLOC_NULL_ZERO_BYTES: i64 = 24;
+
+/// `__mind_realloc` — grow or shrink an allocation. `addr == 0` and
+/// `new_size > 0` is `alloc(new_size)`. `addr == 0` and `new_size == 0` is
+/// [`REALLOC_NULL_ZERO_BYTES`]. On success, copies min(old_size, new_size)
+/// bytes to the new address and returns it. The old allocation remains valid
+/// (bump-arena semantics: `free` is a no-op), matching the self-host
+/// compiler's arena. A non-positive size of a live address returns 0.
 fn realloc(addr: i64, new_size: i64) -> Result<i64, String> {
     if addr == 0 {
+        if new_size == 0 {
+            return alloc(REALLOC_NULL_ZERO_BYTES);
+        }
         return alloc(new_size);
     }
     if new_size <= 0 {
@@ -528,6 +537,17 @@ mod tests {
         let fresh = eval_intrinsic("__mind_realloc", &[0, 4]).unwrap();
         assert_ne!(fresh, 0);
         assert_eq!(eval_intrinsic("__mind_load_i32", &[fresh]).unwrap(), 0);
+        // realloc(NULL, 0) is a live minimum block; a negative size is 0.
+        let null_zero = eval_intrinsic("__mind_realloc", &[0, 0]).unwrap();
+        assert_ne!(null_zero, 0);
+        assert_eq!(eval_intrinsic("__mind_load_i64", &[null_zero]).unwrap(), 0);
+        assert_eq!(eval_intrinsic("__mind_realloc", &[0, -5]).unwrap(), 0);
+        assert_eq!(eval_intrinsic("__mind_realloc", &[p, 0]).unwrap(), 0);
+        assert_eq!(eval_intrinsic("__mind_realloc", &[p, -1]).unwrap(), 0);
+        assert_eq!(
+            eval_intrinsic("__mind_load_i32", &[p]).unwrap(),
+            2_864_434_397
+        );
     }
 
     #[test]

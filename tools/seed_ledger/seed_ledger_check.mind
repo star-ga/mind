@@ -1,0 +1,147 @@
+// tools/seed_ledger/seed_ledger_check.mind — the check: drift, unlisted, stale, hand edits.
+//
+// Prints one line per finding and the summary line; returns 0 only when GREEN.
+// Part of the seed drift ledger tool; seed_ledger.mind is the entry.
+
+import std.vec;
+import seed_ledger_bytes;
+import seed_ledger_rows;
+import seed_ledger_mint;
+
+// ---- check ----------------------------------------------------------------------
+
+pub fn report(tag: String, path: i64, why: String) -> i64 {
+    out(tag);
+    out_slice(path);
+    out(why);
+    return 1;
+}
+
+pub fn check() -> i64 {
+    let text: i64 = read_file(ledger_path());
+    if text == 0 {
+        out("seed_ledger: SEED_LEDGER.tsv missing verdict=RED\n");
+        return 1;
+    }
+    let lines: Vec = data_lines(text);
+    let mut rows: Vec = vec_new();
+    let mut paths: Vec = vec_new();
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < vec_len(lines) {
+        let f: i64 = vec_get(lines, i);
+        if field_count(f) != 3 || is_role(field(f, 0)) == 0 {
+            bad = bad + 1;
+        } else {
+            rows = vec_push(rows, row(field(f, 0), field(f, 1), field(f, 2)));
+            paths = vec_push(paths, field(f, 2));
+        }
+        i = i + 1;
+    }
+    let mut edited: i64 = 1;
+    let pin: i64 = header_value(text, "# rows_sha256\t");
+    if pin != 0 {
+        edited = 1 - slice_eq(pin, rows_digest(rows));
+    }
+    let mut drift: Vec = vec_new();
+    let mut seed_drift: i64 = 0;
+    let mut j: i64 = 0;
+    while j < vec_len(rows) {
+        let r: i64 = vec_get(rows, j);
+        if slice_eq(row_digest(row_field(r, 0), row_field(r, 2)), row_field(r, 1)) == 0 {
+            drift = vec_push(drift, row_field(r, 2));
+            if slice_eq(row_field(r, 0), slice_of("seed")) == 1 {
+                seed_drift = seed_drift + 1;
+            }
+            let _ = report("drift\t", row_field(r, 2), "\tchanged\n");
+        }
+        j = j + 1;
+    }
+    let src: Vec = seed_sources(read_file(sources_path()));
+    let mut s: i64 = 0;
+    while s < vec_len(rows) {
+        let r: i64 = vec_get(rows, s);
+        if slice_eq(row_field(r, 0), slice_of("seed")) == 1 && index_of(src, row_field(r, 2)) < 0 {
+            if index_of(drift, row_field(r, 2)) < 0 {
+                drift = vec_push(drift, row_field(r, 2));
+                seed_drift = seed_drift + 1;
+                let _ = report("drift\t", row_field(r, 2), "\tremoved from the seed source list\n");
+            }
+        }
+        s = s + 1;
+    }
+    let mut k: i64 = 0;
+    while k < vec_len(src) {
+        if index_of(paths, vec_get(src, k)) < 0 {
+            drift = vec_push(drift, vec_get(src, k));
+            seed_drift = seed_drift + 1;
+            let _ = report("drift\t", vec_get(src, k), "\tnew seed source, no ledger row\n");
+        }
+        if index_of(paths, g2_key(vec_get(src, k))) < 0 {
+            drift = vec_push(drift, g2_key(vec_get(src, k)));
+            let _ = report("drift\t", g2_key(vec_get(src, k)), "\tnew seed source, no G2 ledger row\n");
+        }
+        k = k + 1;
+    }
+    let mut listed: Vec = vec_new();
+    let dtext: i64 = read_file(drift_path());
+    if dtext != 0 {
+        let dl: Vec = data_lines(dtext);
+        let mut m: i64 = 0;
+        while m < vec_len(dl) {
+            listed = vec_push(listed, field(vec_get(dl, m), 0));
+            m = m + 1;
+        }
+    }
+    let mut unlisted: i64 = 0;
+    let mut d: i64 = 0;
+    while d < vec_len(drift) {
+        if index_of(listed, vec_get(drift, d)) < 0 {
+            unlisted = unlisted + report("UNLISTED\t", vec_get(drift, d), "\tadd a SEED_DRIFT.txt line\n");
+        }
+        d = d + 1;
+    }
+    let mut stale: i64 = 0;
+    let mut q: i64 = 0;
+    while q < vec_len(listed) {
+        if index_of(drift, vec_get(listed, q)) < 0 {
+            stale = stale + report("STALE\t", vec_get(listed, q), "\tlisted in SEED_DRIFT.txt but not drifted\n");
+        }
+        q = q + 1;
+    }
+    let pins: Vec = pin_paths();
+    let mut pin_missing: i64 = 0;
+    let mut pn: i64 = 0;
+    while pn < vec_len(pins) {
+        if index_of(paths, vec_get(pins, pn)) < 0 {
+            pin_missing = pin_missing + report("PIN_ROW_MISSING\t", vec_get(pins, pn), "\n");
+        }
+        pn = pn + 1;
+    }
+    // The tree claims to be the minted seed unless a seed source drifts.
+    let mut mint: i64 = stage1_mismatch();
+    if seed_drift == 0 {
+        mint = mint + composite_mismatch(src);
+    }
+    let mut red: i64 = bad + edited + unlisted + stale + mint + pin_missing;
+    if vec_len(src) == 0 {
+        out("seed_ledger: no seed sources parsed from _selfhost_sources.py\n");
+        red = red + 1;
+    }
+    out_num("seed_ledger: rows=", vec_len(rows));
+    out_num(" seed_sources=", vec_len(src));
+    out_num(" drift=", vec_len(drift));
+    out_num(" listed=", vec_len(listed));
+    out_num(" unlisted=", unlisted);
+    out_num(" stale=", stale);
+    out_num(" malformed=", bad);
+    out_num(" rows_edited=", edited);
+    out_num(" mint_mismatch=", mint);
+    out_num(" pin_rows_missing=", pin_missing);
+    if red == 0 {
+        out(" verdict=GREEN\n");
+        return 0;
+    }
+    out(" verdict=RED\n");
+    return 1;
+}

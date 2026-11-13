@@ -120,16 +120,17 @@ fn det_exp(x: f64) -> f64 {
     t = 1.0 + r * t;
     let mut y: f64 = t * 1.0;
     let mut j: i64 = 0;
-    if k >= 0 {
-        while j < k {
-            y = y * 2.0;
-            j = j + 1;
-        }
-    } else {
-        while j < (0 - k) {
-            y = y / 2.0;
-            j = j + 1;
-        }
+    // Scale by 2^k as two sequential loops (at most one runs: for k >= 0 the second
+    // guard `j < -k` is false once j == k; for k < 0 the first never runs). Same
+    // multiply/divide sequence as an if/else around the two loops, written in the
+    // control-flow shape the pure-MIND native compiler lowers.
+    while j < k {
+        y = y * 2.0;
+        j = j + 1;
+    }
+    while j < (0 - k) {
+        y = y / 2.0;
+        j = j + 1;
     }
     return y;
 }
@@ -177,8 +178,13 @@ fn det_log_core(x: f64) -> f64 {
     let s2: f64 = s * s;
     let mut acc: f64 = 0.0;
     let mut n: i64 = 29;
+    // nf tracks `n as f64` exactly (odd integers 29..1 are exact in binary64), so
+    // `1.0 / nf` is bit-identical to `1.0 / (n as f64)`; the cast stays out of the
+    // loop body for the pure-MIND native compiler.
+    let mut nf: f64 = 29.0;
     while n >= 1 {
-        acc = 1.0 / (n as f64) + s2 * acc;
+        acc = 1.0 / nf + s2 * acc;
+        nf = nf - 2.0;
         n = n - 2;
     }
     return (k as f64) * ln2 + 2.0 * s * acc;
@@ -315,11 +321,11 @@ fn kernel_sin(r: f64) -> f64 {
     let z: f64 = r * r;
     let w: f64 = r * z;
     let s1: f64 = 0.0 - 0.16666666666666632;
-    let s2: f64 = 0.008333333333322118;
-    let s3: f64 = 0.0 - 0.00019841269836761127;
-    let s4: f64 = 0.000002755731309913025;
+    let s2: f64 = 0.00833333333332249;
+    let s3: f64 = 0.0 - 0.0001984126982985795;
+    let s4: f64 = 0.0000027557313707070068;
     let s5: f64 = 0.0 - 0.000000025050760253406863;
-    let s6: f64 = 0.00000000015896910255;
+    let s6: f64 = 0.000000000158969099521155;
     let mut p: f64 = s6;
     p = s5 + z * p;
     p = s4 + z * p;
@@ -332,11 +338,11 @@ fn kernel_sin(r: f64) -> f64 {
 // cos(r) for |r| <= pi/4.
 fn kernel_cos(r: f64) -> f64 {
     let z: f64 = r * r;
-    let c1: f64 = 0.041666666666666664;
+    let c1: f64 = 0.0416666666666666;
     let c2: f64 = 0.0 - 0.001388888888887411;
     let c3: f64 = 0.00002480158728947673;
-    let c4: f64 = 0.0 - 0.0000002755731309913025;
-    let c5: f64 = 0.0000000020876146382232963;
+    let c4: f64 = 0.0 - 0.00000027557314351390663;
+    let c5: f64 = 0.000000002087572321298175;
     let c6: f64 = 0.0 - 0.000000000011359647557788195;
     let mut p: f64 = c6;
     p = c5 + z * p;
@@ -360,16 +366,14 @@ fn reduce_quad(x: f64) -> i64 {
 fn reduce_arg(x: f64) -> f64 {
     let inv_pio2: f64 = 0.6366197723675814;
     let pio2_1: f64 = 1.5707963267341256;
-    let pio2_1t: f64 = 0.00000000006077100506506192;
     let pio2_2: f64 = 0.00000000006077100506303966;
     let pio2_2t: f64 = 0.0000000000000000000020222662487959506;
     let n: i64 = rnd_to_i64(x * inv_pio2);
     let fnn: f64 = n as f64;
     let r: f64 = x - fnn * pio2_1;
-    let w: f64 = fnn * pio2_1t;
-    let t: f64 = r - w;
-    // Second refinement step keeps the reduction exact across the domain.
-    let r2: f64 = t;
+    // pi/2 is pio2_1 + pio2_2 + pio2_2t. Each part leaves x one time: pio2_2 is
+    // the tail of pio2_1, so no other tail of pio2_1 is subtracted before it.
+    let r2: f64 = r;
     let w2: f64 = fnn * pio2_2;
     let r3: f64 = r2 - w2;
     let w3: f64 = fnn * pio2_2t - ((r2 - r3) - w2);

@@ -1,8 +1,8 @@
 // std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
 // pure MIND (draft-kwiatkowski-tls-ecdhe-mlkem, IANA TLS NamedGroup 0x11EC).
 //
-// Built ON TOP of std/x25519.mind (RFC 7748 Curve25519 ECDH, #9) and
-// std/mlkem768.mind (FIPS 203 ML-KEM-768, #34).  Neither primitive is
+// Built ON TOP of std/x25519.mind (RFC 7748 Curve25519 ECDH, #9)
+// and std/mlkem768.mind (FIPS 203 ML-KEM-768, #34).  Neither primitive is
 // reimplemented here: this module only composes their public entry points
 // (`x25519`, `mlkem768_keygen`, `mlkem768_encaps`, `mlkem768_decaps`) and
 // concatenates the two shared secrets per the hybrid combiner.

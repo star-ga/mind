@@ -1,0 +1,6 @@
+// A8: the common `const N: usize = ...;` shape. Expected exit 8.
+const K: usize = 7;
+
+fn main() -> i64 {
+    K + 1
+}

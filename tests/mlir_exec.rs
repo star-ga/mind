@@ -14,9 +14,23 @@
 
 mod common;
 
+/// The tools `--mlir-exec` resolves, the runner by the route's own name for
+/// this LLVM release (`mlir-runner` from LLVM 20). `false` after the skip gate,
+/// which fails the test instead under `MIND_BENCH_REQUIRE=1`.
 #[cfg(feature = "mlir-exec")]
-/// Get the path to the mind binary from the cargo target directory
-#[cfg(feature = "mlir-exec")]
+fn exec_tools_present() -> bool {
+    let Ok(opt) = which::which("mlir-opt") else {
+        crate::common::gate::skipped("mlir_exec", "mlir-opt not on PATH");
+        return false;
+    };
+    let runner = libmind::eval::mlir_run::runner_tool_name(&opt);
+    if which::which(runner).is_err() {
+        crate::common::gate::skipped("mlir_exec", &format!("{runner} not on PATH"));
+        return false;
+    }
+    true
+}
+
 #[cfg(feature = "mlir-exec")]
 #[test]
 fn mlir_exec_scalar_add() {
@@ -26,8 +40,7 @@ fn mlir_exec_scalar_add() {
         return;
     }
 
-    if which::which("mlir-opt").is_err() || which::which("mlir-cpu-runner").is_err() {
-        crate::common::gate::skipped("mlir_exec", "mlir-opt / mlir-cpu-runner not on PATH");
+    if !exec_tools_present() {
         return;
     }
 
@@ -41,7 +54,12 @@ fn mlir_exec_scalar_add() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("3"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("3"),
+        "stdout: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(all(feature = "mlir-exec", feature = "cpu-exec"))]
@@ -53,8 +71,7 @@ fn parity_cpu_vs_mlir_exec_simple() {
         return;
     }
 
-    if which::which("mlir-opt").is_err() || which::which("mlir-cpu-runner").is_err() {
-        crate::common::gate::skipped("mlir_exec", "mlir-opt / mlir-cpu-runner not on PATH");
+    if !exec_tools_present() {
         return;
     }
 

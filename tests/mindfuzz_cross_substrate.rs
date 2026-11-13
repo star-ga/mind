@@ -1187,9 +1187,9 @@ fn stage_reproducer(idx: usize, header: &str, src: &str) -> PathBuf {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn mindfuzz_cross_substrate_determinism() {
-    println!(
-        "mindfuzz_cross_substrate: SKIP — dlopen()s a Linux ELF; gated to \
-         #[cfg(target_os = \"linux\")]"
+    crate::common::gate::skipped(
+        "mindfuzz_cross_substrate",
+        "dlopen()s a Linux ELF; gated to target_os = linux",
     );
 }
 

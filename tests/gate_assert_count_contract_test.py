@@ -343,6 +343,38 @@ def case_loop_gate_is_wired_with_both_legs_required() -> None:
     check("loop-gate call sites found", checked >= 2, True)
 
 
+def case_sweep_handle_is_a_whole_name() -> None:
+    """The vacuity sweep reads a gate as compiler-dependent when its code names a
+    toolchain handle. The handle `_selfhost_so` (the `.so` resolver module) was a
+    substring test, so a gate that only imports `_selfhost_sources` (source text
+    capture, no compiler) was required RED with no compiler and reported VACUOUS
+    when it correctly passed. A handle must match as a whole name."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import run_gate
+
+    # The handle names are READ from the runner, never typed here: this file
+    # names no handle, so the sweep keeps reading it as a static test.
+    resolver = next(h for h in run_gate.TOOLCHAIN_HANDLES if h.startswith("_self"))
+    probes = [(f"from {resolver}urces import compiler_library\n", False),
+              (f"from {resolver} import resolve\n", True),
+              (f"import {resolver} as mod\n", True)]
+    probes += [(f"value = [{h}]\n", True) for h in run_gate.TOOLCHAIN_HANDLES]
+    with tempfile.TemporaryDirectory() as td:
+        for i, (src, want) in enumerate(probes):
+            gate = Path(td) / f"probe_{i}.py"
+            gate.write_text(src, encoding="utf-8")
+            check(f"sweep handle: {src.strip()!r} is compiler-dependent",
+                  run_gate.compiler_dependent(str(gate)), want)
+    # The two corpus gates this defect misread, and the one corpus gate whose
+    # only handle is the resolver module (it must stay required RED).
+    smoke = "examples/mindc_mind/"
+    for rel, want in ((smoke + "self_host_arena_growth_smoke.py", False),
+                      (smoke + "intrinsic_id_table_lint.py", False),
+                      (smoke + "self_host_native_process_smoke.py", True)):
+        check(f"sweep handle: {rel} is compiler-dependent",
+              run_gate.compiler_dependent(rel), want)
+
+
 # ── the lint that keeps the shapes out of gate sources ─────────────────────
 
 def _lint(src: str) -> list[str]:

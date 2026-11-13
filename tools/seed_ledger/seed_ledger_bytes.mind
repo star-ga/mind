@@ -1,0 +1,160 @@
+// tools/seed_ledger/seed_ledger_bytes.mind — byte slices, output and sha256 digests.
+//
+// Slices are 16-byte [addr, len] records; paths keep a trailing NUL.
+// Part of the seed drift ledger tool; seed_ledger.mind is the entry.
+
+import std.fs;
+import std.io;
+import std.string;
+import std.vec;
+import std.sha256;
+
+// ---- byte helpers ---------------------------------------------------------
+
+pub fn copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    return n;
+}
+
+pub fn bytes_eq(a: i64, alen: i64, b: i64, blen: i64) -> i64 {
+    if alen != blen {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i < alen {
+        if __mind_load_i8(a + i) != __mind_load_i8(b + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// Index of the first `needle` at or after `from`, or -1.
+pub fn find(buf: i64, len: i64, from: i64, needle: String) -> i64 {
+    let n: i64 = string_len(needle);
+    let na: i64 = string_addr(needle);
+    let mut i: i64 = from;
+    while i + n <= len {
+        if bytes_eq(buf + i, n, na, n) == 1 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// A slice [addr, len] as a 16-byte record; paths keep a trailing NUL.
+pub fn slice(addr: i64, len: i64) -> i64 {
+    let p: i64 = __mind_alloc(len + 1);
+    copy_bytes(addr, p, len);
+    __mind_store_i8(p + len, 0);
+    let rec: i64 = __mind_alloc(16);
+    __mind_store_i64(rec, p);
+    __mind_store_i64(rec + 8, len);
+    return rec;
+}
+
+pub fn s_addr(rec: i64) -> i64 {
+    return __mind_load_i64(rec);
+}
+
+pub fn s_len(rec: i64) -> i64 {
+    return __mind_load_i64(rec + 8);
+}
+
+pub fn slice_of(s: String) -> i64 {
+    return slice(string_addr(s), string_len(s));
+}
+
+pub fn slice_cat(a: i64, b: i64) -> i64 {
+    let n: i64 = s_len(a) + s_len(b);
+    let p: i64 = __mind_alloc(n + 1);
+    copy_bytes(s_addr(a), p, s_len(a));
+    copy_bytes(s_addr(b), p + s_len(a), s_len(b));
+    return slice(p, n);
+}
+
+pub fn slice_eq(a: i64, b: i64) -> i64 {
+    return bytes_eq(s_addr(a), s_len(a), s_addr(b), s_len(b));
+}
+
+// Index of a slice equal to `s` in a Vec of slices, or -1.
+pub fn index_of(v: Vec, s: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vec_len(v) {
+        if slice_eq(vec_get(v, i), s) == 1 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+pub fn out(s: String) -> i64 {
+    return print_bytes(string_addr(s), string_len(s));
+}
+
+pub fn out_slice(rec: i64) -> i64 {
+    return print_bytes(s_addr(rec), s_len(rec));
+}
+
+pub fn out_num(label: String, n: i64) -> i64 {
+    return out(string_push_i64(label, n));
+}
+
+pub fn push_slice(s: String, rec: i64) -> String {
+    let mut acc: String = s;
+    let mut i: i64 = 0;
+    while i < s_len(rec) {
+        acc = string_push_byte(acc, __mind_load_i8(s_addr(rec) + i));
+        i = i + 1;
+    }
+    return acc;
+}
+
+// ---- digests ----------------------------------------------------------------
+
+fn hex_digit(v: i64) -> i64 {
+    if v < 10 {
+        return 48 + v;
+    }
+    return 87 + v;
+}
+
+// sha256 of [addr, addr + len) as a 64-byte lowercase hex slice.
+pub fn sha_hex(addr: i64, len: i64) -> i64 {
+    let dig: i64 = __mind_alloc(32);
+    sha256(addr, len, dig);
+    let hex: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 32 {
+        let b: i64 = __mind_load_i8(dig + i) & 255;
+        __mind_store_i8(hex + 2 * i, hex_digit(b >> 4));
+        __mind_store_i8(hex + 2 * i + 1, hex_digit(b & 15));
+        i = i + 1;
+    }
+    return slice(hex, 64);
+}
+
+// The file bytes as a slice, or 0 when the path does not exist.
+pub fn read_file(path: i64) -> i64 {
+    if exists(s_addr(path)) == 0 {
+        return 0;
+    }
+    let rec: i64 = read_to_string(s_addr(path));
+    return slice(__mind_load_i64(rec), __mind_load_i64(rec + 8));
+}
+
+// Current sha256 hex of a path, or "-" when the file is absent.
+pub fn file_digest(path: i64) -> i64 {
+    let data: i64 = read_file(path);
+    if data == 0 {
+        return slice_of("-");
+    }
+    return sha_hex(s_addr(data), s_len(data));
+}

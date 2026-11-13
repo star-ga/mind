@@ -25,6 +25,8 @@
 // direction is hand-written.
 //
 // Build & run:  cd examples/bimap_pairs && mindc run
+// expected_stdout.txt holds the output `mindc run` printed; the CI job
+// std_mind_programs requires the built program to print exactly those bytes.
 
 import std.string;
 import std.io;

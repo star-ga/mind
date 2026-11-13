@@ -19,6 +19,14 @@
 //! A tee thread copies `mlir-opt`'s stdout into a buffer (which becomes
 //! `optimized_mlir`) and into `mlir-translate`'s stdin.
 //!
+//! Staged pipelines: when `crate::mlir::staged_opt` cuts the pipeline (the
+//! tensor preset, cut before `one-shot-bufferize` to order dense constants),
+//! every stage before the last runs to completion first, with `mlir-translate`
+//! already starting; only the last `mlir-opt` invocation streams. Its
+//! arguments, stdin text and failure report come from the same
+//! `staged_opt::LastStage` the serial path runs, so both legs run the same
+//! stages on the same text.
+//!
 //! Byte-identity: the serial path hands `mlir-translate` the TRIMMED decoded
 //! text of `mlir-opt`'s stdout (`decode_to_string`). The tee forwards exactly
 //! the ASCII-whitespace-trimmed byte range of the raw stream, and after both
@@ -30,7 +38,8 @@
 //! time, never bytes.
 //!
 //! Error attribution matches the serial path: an `mlir-opt` failure, timeout
-//! or spawn error is reported as `mlir-opt` (with the bufferize hint) and the
+//! or spawn error is reported as `mlir-opt` (exactly as `staged_opt` reports
+//! it: temporary path renamed, old-toolchain note or bufferize hint) and the
 //! concurrent `mlir-translate` is killed; only after `mlir-opt` succeeds is
 //! `mlir-translate`'s own outcome surfaced.
 
@@ -41,9 +50,10 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use super::{
-    BuildError, BuildTools, decode_to_string, drain_pipe, join_drain, kill_and_reap, run_mlir_opt,
+    BuildError, BuildTools, decode_to_string, drain_pipe, join_drain, kill_and_reap,
     run_mlir_translate, spawn_tool, wait_with_timeout,
 };
+use crate::mlir::staged_opt::{self, LastStage};
 
 /// What the opt→translate stage produced. `llvm_ir` is kept as a `Result` so
 /// the caller can write `optimized_mlir` before surfacing a translate failure,
@@ -64,8 +74,9 @@ struct TeeResult {
     write_ok: bool,
 }
 
-/// Run `mlir-opt --pass-pipeline=builtin.module(<pipeline>)` on `input` with
-/// its output streamed into a concurrently running `mlir-translate`.
+/// Run `pipeline` over `input` through `mlir-opt` (staged as
+/// `staged_opt::prepare` cuts it), with the output of the last `mlir-opt`
+/// invocation streamed into a concurrently running `mlir-translate`.
 ///
 /// Timeouts: `mlir-opt` gets `tools.timeout` from the end of its stdin write
 /// (as in `run_command`); `mlir-translate` gets `tools.timeout` from the moment
@@ -85,17 +96,25 @@ pub(super) fn run_mlir_opt_into_translate(
     ) {
         Ok(child) => child,
         // Serial path: an mlir-opt failure outranks a missing mlir-translate.
-        Err(_) => return serial(input, pipeline, tools),
+        Err(_) => return serial(staged_opt::prepare(input, pipeline, tools)?, tools),
     };
     let translate_stdout = drain_pipe(translate.stdout.take());
     let translate_stderr = drain_pipe(translate.stderr.take());
     let Some(translate_stdin) = translate.stdin.take() else {
         kill_and_reap(&mut translate);
-        return serial(input, pipeline, tools);
+        return serial(staged_opt::prepare(input, pipeline, tools)?, tools);
     };
 
-    let opt_args = vec![format!("--pass-pipeline=builtin.module({pipeline})")];
-    let mut opt = match spawn_tool(&tools.mlir_opt, &opt_args, Stdio::piped(), "mlir-opt") {
+    // The stages before the last run to completion while mlir-translate starts;
+    // a failure there is reported as the serial path reports it.
+    let last = match staged_opt::prepare(input, pipeline, tools) {
+        Ok(last) => last,
+        Err(err) => {
+            kill_and_reap(&mut translate);
+            return Err(err);
+        }
+    };
+    let mut opt = match spawn_tool(&tools.mlir_opt, &last.args(), Stdio::piped(), "mlir-opt") {
         Ok(child) => child,
         Err(err) => {
             kill_and_reap(&mut translate);
@@ -109,7 +128,7 @@ pub(super) fn run_mlir_opt_into_translate(
         .map(|out| tee_thread(out, translate_stdin));
 
     if let Some(mut stdin) = opt.stdin.take() {
-        if let Err(err) = stdin.write_all(input.as_bytes()) {
+        if let Err(err) = stdin.write_all(last.input().as_bytes()) {
             kill_and_reap(&mut opt);
             kill_and_reap(&mut translate);
             return Err(BuildError::Io(err));
@@ -126,11 +145,7 @@ pub(super) fn run_mlir_opt_into_translate(
     };
     if !opt_status.success() {
         kill_and_reap(&mut translate);
-        let stderr = decode_to_string(&join_drain(opt_stderr));
-        return Err(BuildError::Subprocess {
-            tool: "mlir-opt",
-            stderr: crate::diagnostics::toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
-        });
+        return Err(last.failure(tools, &join_drain(opt_stderr)));
     }
 
     // mlir-opt succeeded: wait for mlir-translate BEFORE joining the tee, so a
@@ -188,12 +203,8 @@ pub(super) fn run_mlir_opt_into_translate(
 
 /// The serial opt-then-translate path, used when mlir-translate cannot be
 /// spawned up front.
-fn serial(
-    input: &str,
-    pipeline: &str,
-    tools: &BuildTools,
-) -> Result<OptTranslateOutput, BuildError> {
-    let optimized_mlir = run_mlir_opt(input, pipeline, tools)?;
+fn serial(last: LastStage<'_>, tools: &BuildTools) -> Result<OptTranslateOutput, BuildError> {
+    let optimized_mlir = last.run(tools)?;
     let llvm_ir = run_mlir_translate(&optimized_mlir, tools);
     Ok(OptTranslateOutput {
         optimized_mlir,

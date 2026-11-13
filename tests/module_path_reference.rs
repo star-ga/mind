@@ -55,7 +55,7 @@ fn the_formatter_keeps_the_path_spelling() {
 fn a_path_call_into_an_imported_module_builds_and_runs() {
     let dir = project("module_path_run");
     let out = Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(&dir)
         .output()
         .expect("run mindc build");

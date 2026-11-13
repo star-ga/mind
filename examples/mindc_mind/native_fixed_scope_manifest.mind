@@ -1,0 +1,635 @@
+// Copyright 2026 STARGA Inc.
+// NSF/1 toolchain-owned source-unit manifest, captured at 17ea2dff.
+// Exact current std files in canonical seed-module order, each followed by LF.
+// This is NOT the historical frozen seed manifest or a caller assertion.
+// Prefix: 395479 bytes, SHA256 199f304b1209959946d67bde175407719f9641bb423aa6c95fa8245d259cb202.
+// Output48: start,length,digest32. Caller supplies writable disjoint storage.
+pub fn nsf_manifest(index: i64, out: i64) -> i64 {
+    // std.arena 15bacf0d2f51064c90424261276ac417cea4b1886e8f25ec4e5bef576cac892d
+    if index == 0 {
+        __mind_store_i64(out, 0);
+        __mind_store_i64(out + 8, 5290);
+        __mind_store_i64(out + 16, 5478155259279817237);
+        __mind_store_i64(out + 24, 1712610475675632272);
+        __mind_store_i64(out + 32, 0 - 1430579601717746482);
+        __mind_store_i64(out + 40, 3281343384847866702);
+        return 1;
+    }
+    // std.async 249e9eaef465256c0980a7435be65c9ddbfd4f283daae9479500affdb54cb3dd
+    if index == 1 {
+        __mind_store_i64(out, 5291);
+        __mind_store_i64(out + 8, 9840);
+        __mind_store_i64(out + 16, 7792746831810567716);
+        __mind_store_i64(out + 24, 0 - 7107552832246022135);
+        __mind_store_i64(out + 32, 5181860025912524251);
+        __mind_store_i64(out + 40, 0 - 2471547425967374187);
+        return 1;
+    }
+    // std.blas 1f582bae4583b038faf9ceac346fa7fb546a28dfa61bb6d462de9c9a5e8c2a27
+    if index == 2 {
+        __mind_store_i64(out, 15132);
+        __mind_store_i64(out + 8, 10071);
+        __mind_store_i64(out + 16, 4084909197323098143);
+        __mind_store_i64(out + 24, 0 - 313159377050732038);
+        __mind_store_i64(out + 32, 0 - 3119275288385000876);
+        __mind_store_i64(out + 40, 2822222454449823330);
+        return 1;
+    }
+    // std.cli aec5b8149fa5f67adc026819a9a518f9777b97bccd6cd6d2a1c830a562ca54b9
+    if index == 3 {
+        __mind_store_i64(out, 25204);
+        __mind_store_i64(out + 8, 12843);
+        __mind_store_i64(out + 16, 8860451419564066222);
+        __mind_store_i64(out + 24, 0 - 497465613130136868);
+        __mind_store_i64(out + 32, 0 - 3254294049840465033);
+        __mind_store_i64(out + 40, 0 - 5092222753622144863);
+        return 1;
+    }
+    // std.fs 6ccdb2bb039a3ccd8cad2f1252fdd3b5061b1528a40a5dc7a158387346e0dc34
+    if index == 4 {
+        __mind_store_i64(out, 38048);
+        __mind_store_i64(out + 8, 20169);
+        __mind_store_i64(out + 16, 0 - 3657879456507048596);
+        __mind_store_i64(out + 24, 0 - 5344649803824386676);
+        __mind_store_i64(out + 32, 0 - 4081093987164415226);
+        __mind_store_i64(out + 40, 3809165978034002081);
+        return 1;
+    }
+    // std.io f2c8d436358c28daf23a076e2fddb8823afb57d78c44617fec27d9d08898084a
+    if index == 5 {
+        __mind_store_i64(out, 58218);
+        __mind_store_i64(out + 8, 6875);
+        __mind_store_i64(out + 16, 0 - 2726775414191765262);
+        __mind_store_i64(out + 24, 0 - 9027222257284990222);
+        __mind_store_i64(out + 32, 9178692887256759098);
+        __mind_store_i64(out + 40, 5334681472007219180);
+        return 1;
+    }
+    // std.io_canon ffaca152b041d9d640ab3c837ee7b1560717aa7125f249d0954d361bf02e06d5
+    if index == 6 {
+        __mind_store_i64(out, 65094);
+        __mind_store_i64(out + 8, 10493);
+        __mind_store_i64(out + 16, 0 - 2965266654090384129);
+        __mind_store_i64(out + 24, 6247028688693275456);
+        __mind_store_i64(out + 32, 0 - 3437950597885978873);
+        __mind_store_i64(out + 40, 0 - 3096736084987064939);
+        return 1;
+    }
+    // std.iouring 2c2558c90df43a559ea72286455f2aa2b3950403eeb63e673516527d03307c90
+    if index == 7 {
+        __mind_store_i64(out, 75588);
+        __mind_store_i64(out + 8, 75068);
+        __mind_store_i64(out + 16, 6141489381922841900);
+        __mind_store_i64(out + 24, 0 - 6761487138335578210);
+        __mind_store_i64(out + 32, 7439584767831741875);
+        __mind_store_i64(out + 40, 0 - 8035494843590240715);
+        return 1;
+    }
+    // std.json 2808cf0d4db16b9688671880c98583b1c3a75cbd9355f690f3fff43ce260ec01
+    if index == 8 {
+        __mind_store_i64(out, 150657);
+        __mind_store_i64(out + 8, 61562);
+        __mind_store_i64(out + 16, 0 - 7607792201010051032);
+        __mind_store_i64(out + 24, 0 - 5655529606563207288);
+        __mind_store_i64(out + 32, 0 - 8001113594951587901);
+        __mind_store_i64(out + 40, 138592213343207411);
+        return 1;
+    }
+    // std.map 05c5e98c5c6070a2533805a4398ab2ab59c76b0fc321f23c991fe0d8ff243d60
+    if index == 9 {
+        __mind_store_i64(out, 212220);
+        __mind_store_i64(out + 8, 6151);
+        __mind_store_i64(out + 16, 0 - 6741782691556244219);
+        __mind_store_i64(out + 24, 0 - 6074640967199803309);
+        __mind_store_i64(out + 32, 4391609708300715865);
+        __mind_store_i64(out + 40, 6934739682494259097);
+        return 1;
+    }
+    // std.net 2c07f3970be116d7360e623ee20a3bd85b57fff7d71dcc2621612bd9c3dacaf6
+    if index == 10 {
+        __mind_store_i64(out, 218372);
+        __mind_store_i64(out + 8, 9522);
+        __mind_store_i64(out + 16, 0 - 2947921466157234388);
+        __mind_store_i64(out + 24, 0 - 2865684771065688522);
+        __mind_store_i64(out + 32, 2795642282106115931);
+        __mind_store_i64(out + 40, 0 - 663477460386750175);
+        return 1;
+    }
+    // std.process 77899ba0541605c6bd29caae1724c1980639b97c893090401d7fe1b7411b48f6
+    if index == 11 {
+        __mind_store_i64(out, 227895);
+        __mind_store_i64(out + 8, 24593);
+        __mind_store_i64(out + 16, 0 - 4177908526588655241);
+        __mind_store_i64(out + 24, 0 - 7439625425304016451);
+        __mind_store_i64(out + 32, 4652271782134888710);
+        __mind_store_i64(out + 40, 0 - 700279772984279267);
+        return 1;
+    }
+    // std.reactor 280ec933dc7e9020e5cbe8a15aa86837a254e38acb1dc7edfe9874823442f6d2
+    if index == 12 {
+        __mind_store_i64(out, 252489);
+        __mind_store_i64(out + 8, 5679);
+        __mind_store_i64(out + 16, 2346514890086747688);
+        __mind_store_i64(out + 24, 3992626176880856037);
+        __mind_store_i64(out + 32, 0 - 1313048006309489502);
+        __mind_store_i64(out + 40, 0 - 3245333688179451650);
+        return 1;
+    }
+    // std.regex 03591c11b0b5e5e1ee97a62289748990067fe5fb486061274b247773817bc623
+    if index == 13 {
+        __mind_store_i64(out, 258169);
+        __mind_store_i64(out + 8, 38143);
+        __mind_store_i64(out + 16, 0 - 2169127877703083773);
+        __mind_store_i64(out + 24, 0 - 8031760328097884178);
+        __mind_store_i64(out + 32, 2837655106800156422);
+        __mind_store_i64(out + 40, 2577883632634373195);
+        return 1;
+    }
+    // std.ring a2fb85d1c184976cb519e75a78f23a374740d8fea4319a516fd316ba65277c62
+    if index == 14 {
+        __mind_store_i64(out, 296313);
+        __mind_store_i64(out + 8, 5625);
+        __mind_store_i64(out + 16, 7824868845558299554);
+        __mind_store_i64(out + 24, 3979759819470346677);
+        __mind_store_i64(out + 32, 5880066848205586503);
+        __mind_store_i64(out + 40, 7096590430696297327);
+        return 1;
+    }
+    // std.sha256 95f170a12259dc6ee69c607ea26eb30a1954487f6ca158f25b8fd626436f99c6
+    if index == 15 {
+        __mind_store_i64(out, 301939);
+        __mind_store_i64(out + 8, 15951);
+        __mind_store_i64(out + 16, 7988357844320711061);
+        __mind_store_i64(out + 24, 771081605394504934);
+        __mind_store_i64(out + 32, 0 - 983859031216466919);
+        __mind_store_i64(out + 40, 0 - 4136152448558002341);
+        return 1;
+    }
+    // std.string 404dce17a3ca9cdb9a82f426b9c99f8951907c436cc61130ae056c2c21250f5b
+    if index == 16 {
+        __mind_store_i64(out, 317891);
+        __mind_store_i64(out + 8, 11692);
+        __mind_store_i64(out + 16, 0 - 2621998081208595136);
+        __mind_store_i64(out + 24, 0 - 8529877372156738918);
+        __mind_store_i64(out + 32, 3463767756715626577);
+        __mind_store_i64(out + 40, 6561504006511527342);
+        return 1;
+    }
+    // std.time 1b063ebc49e02de2ae08ff484d9ff722ec6b30c4a2310f4860ea34536e734f06
+    if index == 17 {
+        __mind_store_i64(out, 329584);
+        __mind_store_i64(out + 8, 1028);
+        __mind_store_i64(out + 16, 0 - 2148814839890442725);
+        __mind_store_i64(out + 24, 2519657670823053486);
+        __mind_store_i64(out + 32, 5192423470527441900);
+        __mind_store_i64(out + 40, 454709005067283040);
+        return 1;
+    }
+    // std.toml eeee96564c754d3276b3a3da9f0e5e487b9f647aa08452836c3c5c99bfcebe14
+    if index == 18 {
+        __mind_store_i64(out, 330613);
+        __mind_store_i64(out + 8, 41203);
+        __mind_store_i64(out + 16, 3624682245833813742);
+        __mind_store_i64(out + 24, 5214621498272363382);
+        __mind_store_i64(out + 32, 0 - 8983972481867669637);
+        __mind_store_i64(out + 40, 1494859448640617580);
+        return 1;
+    }
+    // std.tui 1a0a1c5ddc5a326f4e658fafd81662056ee7482074c380dc03b4c2fd5eeb4fa6
+    if index == 19 {
+        __mind_store_i64(out, 371817);
+        __mind_store_i64(out + 8, 19260);
+        __mind_store_i64(out + 16, 8012566589546957338);
+        __mind_store_i64(out + 24, 387897637821441358);
+        __mind_store_i64(out + 32, 0 - 2557829684821170322);
+        __mind_store_i64(out + 40, 0 - 6462688147036523517);
+        return 1;
+    }
+    // std.vec 286f3301179899827e02d3bcd959dc54ca7277556bb70d079e9c64d412cd003e
+    if index == 20 {
+        __mind_store_i64(out, 391078);
+        __mind_store_i64(out + 8, 4400);
+        __mind_store_i64(out + 16, 0 - 9036023952770371800);
+        __mind_store_i64(out + 24, 6114861185773011582);
+        __mind_store_i64(out + 32, 508264004586009290);
+        __mind_store_i64(out + 40, 4467796311108000926);
+        return 1;
+    }
+    0
+}
+
+// Exact token spelling, not a caller-supplied module label.
+pub fn nsf_module_index(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 5 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 97 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 0;
+        }
+    }
+    if hi - lo == 5 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 121 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 99 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 1;
+        }
+    }
+    if hi - lo == 4 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 98 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 108 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 2;
+        }
+    }
+    if hi - lo == 3 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 108 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 105 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 3;
+        }
+    }
+    if hi - lo == 2 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 102 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 4;
+        }
+    }
+    if hi - lo == 2 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 5;
+        }
+    }
+    if hi - lo == 8 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 95 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 7) != 110 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 6;
+        }
+    }
+    if hi - lo == 7 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 117 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 7;
+        }
+    }
+    if hi - lo == 4 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 106 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 110 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 8;
+        }
+    }
+    if hi - lo == 3 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 112 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 9;
+        }
+    }
+    if hi - lo == 3 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 116 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 10;
+        }
+    }
+    if hi - lo == 7 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 112 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 115 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 11;
+        }
+    }
+    if hi - lo == 7 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 99 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 6) != 114 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 12;
+        }
+    }
+    if hi - lo == 5 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 103 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 120 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 13;
+        }
+    }
+    if hi - lo == 4 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 14;
+        }
+    }
+    if hi - lo == 6 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 104 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 97 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 50 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 53 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 54 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 15;
+        }
+    }
+    if hi - lo == 6 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 115 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 114 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 4) != 110 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 5) != 103 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 16;
+        }
+    }
+    if hi - lo == 4 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 105 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 101 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 17;
+        }
+    }
+    if hi - lo == 4 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 111 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 109 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 3) != 108 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 18;
+        }
+    }
+    if hi - lo == 3 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 116 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 117 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 105 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 19;
+        }
+    }
+    if hi - lo == 3 {
+        let mut ok: i64 = 1;
+        if __mind_load_i8(src + lo + 0) != 118 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 1) != 101 {
+            ok = 0;
+        }
+        if __mind_load_i8(src + lo + 2) != 99 {
+            ok = 0;
+        }
+        if ok == 1 {
+            return 20;
+        }
+    }
+    0 - 1
+}

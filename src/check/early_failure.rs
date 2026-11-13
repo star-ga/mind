@@ -20,7 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{CheckDiagnostic, CheckPhase, CheckSeverity, ReporterKind, emit_lsp_diagnostics};
+use super::reporter::emit_lsp_diagnostics;
+use super::{CheckDiagnostic, CheckPhase, CheckSeverity, ReporterKind};
 
 /// Report `message` through `reporter` and return exit code 1.
 ///
@@ -47,7 +48,7 @@ pub(super) fn report(reporter: ReporterKind, file: Option<&Path>, message: &str)
 }
 
 /// The diagnostic for [`report`]. The rule id carries the error's own code when the message
-/// names one (`error[type-check][E2003]: ...` becomes `type_check::E2003`) and `check::project`
+/// names one (`error[type-check][E2042]: ...` becomes `type_check::E2042`) and `check::project`
 /// otherwise. The leading `error[...]: ` prefix is dropped from the message, because the
 /// severity and rule id already say it.
 fn diagnostic(file: Option<&Path>, message: &str) -> CheckDiagnostic {
@@ -85,9 +86,9 @@ mod tests {
     fn a_coded_message_keeps_its_code_and_loses_its_prefix() {
         let d = diagnostic(
             Some(Path::new("main.mind")),
-            "error[type-check][E2003]: local import(s) `sibling` require a project",
+            "error[type-check][E2042]: local import(s) `sibling` require a project",
         );
-        assert_eq!(d.rule_id, "type_check::E2003");
+        assert_eq!(d.rule_id, "type_check::E2042");
         assert_eq!(d.message, "local import(s) `sibling` require a project");
         assert_eq!(d.file, PathBuf::from("main.mind"));
         assert_eq!(d.severity, CheckSeverity::Error);

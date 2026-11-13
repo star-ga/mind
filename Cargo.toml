@@ -409,7 +409,7 @@ ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI w
 # build. Both features stay non-default, so the default-build byte-identity
 # hot path is untouched.
 cross-module-imports = ["std-surface"]  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
-std-surface = []  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowering (i64 ABI)
+std-surface = ["sha2"]  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowering (i64 ABI); sha2 hashes the native std seed pin
 # Per-construct std-surface promotion (Stage 0a). The 10 promoted std bricks
 # stay under `std-surface`. The UNPROMOTED constructs — genuine collapsing
 # aggregate (tuple) returns, type-variable generics, and `region { }` — are
@@ -439,3 +439,4 @@ full = ["aot", "autodiff", "cpu-exec", "cpu-conv", "pkg", "ffi-c"]
 
 [build-dependencies]
 cc = "1"
+sha2 = "0.10"

@@ -1,0 +1,12 @@
+import std.sha256;
+
+fn arena_align8(n: i64) -> i64 {
+    return n + 1;
+}
+
+fn main() -> i64 {
+    let msg: i64 = __mind_alloc(8);
+    let out: i64 = __mind_alloc(32);
+    let rc: i64 = sha256(msg, 0, out);
+    return __mind_load_i8(out) + rc + arena_align8(0);
+}

@@ -1,0 +1,44 @@
+// LICM slice 1 keeps the narrow code of a hoisted name: `>>` on an i8 left masks
+// its count to 7 and shifts arithmetically.
+// Independent value: 9 & 7 = 1, so -128 >> 1 = -64. param chain: 2 trips * -64 = -128.
+// local chain: 1 trip * -64. lone shift of the parameter: -64.
+// -128 - 64 - 64 + 464 = 208.
+fn chain_param(a: i8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: i8 = a + 0;
+        let y: i8 = x >> 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn chain_local(n: i64) -> i64 {
+    let a: i8 = 0 - 128;
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let x: i8 = a + 0;
+        let y: i8 = x >> 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn lone(a: i8, n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let y: i8 = a >> 9;
+        s = s + (y as i64);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    chain_param(0 - 128, 2) + chain_local(1) + lone(0 - 128, 1) + 464
+}

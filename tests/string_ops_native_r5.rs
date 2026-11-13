@@ -141,7 +141,15 @@ fn project_alias_resolution_in_lowering_is_mains() {
         let so = dir.join("x.so");
         let _ = std::fs::remove_file(&so);
         let build = Command::new(mindc_bin())
-            .args(["build", "--emit", "cdylib", "--out", so.to_str().unwrap()])
+            .args([
+                "build",
+                "--backend",
+                "mlir",
+                "--emit",
+                "cdylib",
+                "--out",
+                so.to_str().unwrap(),
+            ])
             .current_dir(&dir)
             .output()
             .expect("spawn mindc build");
@@ -302,7 +310,15 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
         let _ = std::fs::remove_file(&so);
         let build = mindc_in(
             &dir,
-            &["build", "--emit", "cdylib", "--out", so.to_str().unwrap()],
+            &[
+                "build",
+                "--backend",
+                "mlir",
+                "--emit",
+                "cdylib",
+                "--out",
+                so.to_str().unwrap(),
+            ],
         );
         assert_refused(case, "build", &build);
         assert!(!so.exists(), "{case}: a refused build left an artifact");
@@ -313,7 +329,15 @@ fn a_string_stored_in_an_imported_variant_payload_is_tracked() {
         std::fs::write(dir.join("main.mind"), ints).expect("write main");
         let build = mindc_in(
             &dir,
-            &["build", "--emit", "cdylib", "--out", so.to_str().unwrap()],
+            &[
+                "build",
+                "--backend",
+                "mlir",
+                "--emit",
+                "cdylib",
+                "--out",
+                so.to_str().unwrap(),
+            ],
         );
         if common::gate::compiled("string_ops_native_r5", &build) {
             assert_eq!(probe_value(case, &so), 1, "{case}: integer payloads");

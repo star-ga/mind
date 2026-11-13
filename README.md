@@ -76,9 +76,11 @@ This repository contains the open-core stack: the MIND language, type system, co
 | macOS ARM64 (Apple Silicon) | Fully supported | Yes |
 | Windows x86_64 | Fully supported | Yes |
 
+The default native backend runs on x86-64 Linux only. On any other host, select the MLIR backend with `--backend mlir` or `[build] backend = "mlir"`.
+
 ### Optional Dependencies
 
-- **LLVM/MLIR 23** (latest) and **LLVM/MLIR 20** (oldest supported) (`mlir-opt`, `mlir-translate`, `clang`): the toolchains CI builds and tests the native backend with. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
+- **LLVM/MLIR 23** (latest) and **LLVM/MLIR 20** (oldest supported) (`mlir-opt`, `mlir-translate`, `clang`): the toolchains CI builds and tests the MLIR backend (`--backend mlir`) with. The default native backend needs none of them. MLIR 18 builds most programs but cannot bufferize a tensor carried across a loop or returned from several exits; `mindc` says so when it hits one
 - **MLIR tools**: Required for `mlir-exec` feature
 - **C compiler**: Required for FFI examples
 
@@ -360,8 +362,8 @@ lanes pending RFC 0021 step 5 demotion to `mind-model@2`. See
 
 ## Testing
 
-The MIND compiler includes a comprehensive test suite with 3,570+ tests
-(`#[test]` / `#[tokio::test]` across `src/` and `tests/`) in 463+ test files
+The MIND compiler includes a comprehensive test suite with 4,024+ tests
+(`#[test]` / `#[tokio::test]` across `src/` and `tests/`) in 492+ test files
 covering parsing, type checking, IR generation, MLIR lowering, and execution.
 Both figures are RE-DERIVED from the tree by `scripts/check_claims.py`
 (`[counts]` in `config/capabilities.toml`): the Docs Claims gate fails if the

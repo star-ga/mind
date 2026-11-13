@@ -13,8 +13,42 @@ still advances before the back-edge.
 
 This battery compiles each program through the pure-MIND native-ELF entry
 (`selftest_native_elf_h`), RUNS the resulting x86-64 ELF, and asserts the exit
-code (main's i64 return) matches an independent hand-computed reference. It also
-proves each `for` compiles BYTE-IDENTICALLY to its explicit `let`+`while` form.
+code (main's i64 return) matches an independent hand-computed reference. Every
+reference was also checked against the Rust MLIR build of the same program where
+that build accepts it; two do not build there (`0..n + 2` -> E5005, and the f64
+carry through `continue` -> an mlir-opt block-argument type error).
+
+Bound shapes: literal, variable, expression, parameter, call, negative, reversed,
+empty, nested (incl. an inner bound reading the outer var). Exits: `break` and
+`continue` at the loop level, inside a nested `if`, in an `else`, in inner and
+outer loops, and AFTER a write to a loop-carried var — the exit edge must move
+that var's live value into its loop slot (nb_exit_edge_copies), or the next
+iteration / the code after the loop reads the stale one. The byte-neutral desugar
+of an own-level `continue` steps VAR inside the branch (`if c { VAR = VAR + 1;
+continue; }`), so every range-for `continue` depends on that edge. Two plain
+`while` shapes pin the same root cause outside `for`, and a swap through two
+carried vars pins that the edge moves run as a parallel copy.
+
+Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
+as a dead tail; every walk of the loop body must drop it the same way.
+
+Nested hidden-counter loops with the SAME header text (`for i in 0..hi() { for i
+in 0..hi() { .. } }`) must keep two counters: a counter is named by its span bytes,
+so it spans the whole `for` statement (a nested one is a strict substring of its
+parent), never the header alone.
+
+The loop-carry walk the range-for desugars onto must carry exactly the vars the
+Rust While arm carries: an OUTER var written in a nested loop (often under an
+`if`) is seeded from its binding at loop entry, and a name a top-level body
+`let` re-declared is the body-local shadow, never the outer var.
+
+A run that does not exit normally is "HANG" / "SIG<n>", never an int: a masked
+timeout sentinel read as exit 255, which is a real expected value here.
+
+The hygiene gate: parse_for must pick the hidden-counter form wherever the Rust
+For arm goes hygienic — VAR bound in an enclosing scope (parameter, outer block
+`let`, enclosing range-for) or re-declared by a top-level body `let` — and keep
+the byte-neutral form everywhere else (DESUGAR_PAIRS pins the choice).
 
 Env: MINDC_SO = pure-MIND self-host cdylib. Exit 0 = ALL PASS.
 """
@@ -55,7 +89,12 @@ def mind_elf(lib, src: bytes) -> bytes:
     return ctypes.string_at(rd(sh, 0), n) if n > 0 else b""
 
 
-def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
+def run_elf(elf: bytes, tmp: pathlib.Path) -> "int | str":
+    """main's return value (low 8 bits), or "HANG" / "SIG<n>" for a run that did
+    not exit normally. The abnormal outcomes are strings, never ints: an int
+    sentinel masked with 0xFF aliased a real exit code (a timeout's -1 read as
+    255, which is exactly what while_inner_break_outer_var expects, so a hang
+    passed it; a SIGSEGV's -11 read as 245)."""
     p = tmp / "mind.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -63,9 +102,12 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     # (an infinite loop) fails LOUD instead of hanging the battery. Any real case
     # here terminates in well under a second.
     try:
-        return subprocess.run([str(p)], timeout=10).returncode
+        rc = subprocess.run([str(p)], timeout=10).returncode
     except subprocess.TimeoutExpired:
-        return -1  # sentinel: never matches an expected exit code -> FAIL
+        return "HANG"
+    if rc < 0:
+        return f"SIG{-rc}"
+    return rc & 0xFF
 
 
 # (name, source, expected exit code). main()->i64 return IS the process exit code
@@ -101,7 +143,210 @@ CASES = [
     ("count10", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..10 { c = c + 1; } return c; }", 10),
     # for driving an accumulator that feeds the return via a helper param path
     ("call_in_body", b"fn inc(x: i64) -> i64 { return x + 1; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { c = inc(c); } return c; }", 4),
+    # ---- bound shapes ----
+    # negative lower bound: 100 + (-3 -2 -1 +0 +1) = 95
+    ("neg_lo", b"fn main() -> i64 { let mut s: i64 = 100; for i in -3..2 { s = s + i; } return s; }", 95),
+    # both bounds negative: i = -5,-4,-3,-2 -> 4 iterations
+    ("neg_both", b"fn main() -> i64 { let mut c: i64 = 0; for i in -5..-1 { c = c + 1; } return c; }", 4),
+    # reversed range (LO > HI): empty
+    ("reversed", b"fn main() -> i64 { let mut c: i64 = 0; for i in 5..2 { c = c + 1; } return c; }", 0),
+    # reversed negative range: empty
+    ("reversed_neg", b"fn main() -> i64 { let mut c: i64 = 0; for i in -1..-3 { c = c + 1; } return c; }", 0),
+    # variable bounds: 2+3+4+5 = 14
+    ("var_bounds", b"fn main() -> i64 { let a: i64 = 2; let b: i64 = 6; let mut s: i64 = 0; for i in a..b { s = s + i; } return s; }", 14),
+    # variable upper bound holding 0: empty
+    ("var_empty", b"fn main() -> i64 { let n: i64 = 0; let mut c: i64 = 0; for i in 0..n { c = c + 1; } return c; }", 0),
+    # expression bound n + 2 = 5: 0+1+2+3+4 = 10
+    ("expr_bound", b"fn main() -> i64 { let n: i64 = 3; let mut s: i64 = 0; for i in 0..n + 2 { s = s + i; } return s; }", 10),
+    # parameter bound: f(5) = 0+1+2+3+4 = 10
+    ("param_bound", b"fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { s = s + i; } return s; } fn main() -> i64 { return f(5); }", 10),
+    # inner bound reads the outer induction var: 0+1+2+3 = 6
+    ("nested_dep", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { for j in 0..i { c = c + 1; } } return c; }", 6),
+    # ---- break / continue, every bound shape ----
+    # A loop-carried var's write on the path to a `continue`/`break` must reach the
+    # next iteration / the code after the loop (the exit edge carries it).
+    # write then continue: 0+1+100+3+4 = 108
+    ("continue_write", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { if i == 2 { s = s + 100; continue; } s = s + i; } return s; }", 108),
+    # write then break: 0+1+2+50 = 53
+    ("break_write", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..9 { if i == 3 { s = s + 50; break; } s = s + i; } return s; }", 53),
+    # continue with a variable bound: 0+2+3+4+5 = 14
+    ("continue_var_bound", b"fn main() -> i64 { let n: i64 = 6; let mut s: i64 = 0; for i in 0..n { if i == 1 { continue; } s = s + i; } return s; }", 14),
+    # continue over a negative range: 50 + (-3 -2 -1 +1 +2) = 47
+    ("continue_neg", b"fn main() -> i64 { let mut s: i64 = 50; for i in -3..3 { if i == 0 { continue; } s = s + i; } return s; }", 47),
+    # continue with a call bound (hidden-counter form): 0+2+3+4 = 9
+    ("continue_call_bound", b"fn hi() -> i64 { return 5; } fn main() -> i64 { let mut s: i64 = 0; for i in 0..hi() { if i == 1 { continue; } s = s + i; } return s; }", 9),
+    # continue in the else arm: i = 0,1,2 add 11 each -> 33
+    ("continue_else", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..6 { if i < 3 { s = s + 1; } else { continue; } s = s + 10; } return s; }", 33),
+    # two carried vars, one written before the branch: a = 6, b = 7 + 5 = 12 -> 72
+    ("continue_two_vars", b"fn main() -> i64 { let mut a: i64 = 0; let mut b: i64 = 0; for i in 0..6 { a = a + 1; if i == 2 { b = b + 7; continue; } b = b + 1; } return a * 10 + b; }", 72),
+    # continue/break nested in a second if: skip i = 3,4 -> 7 ; stop at 5 -> 5
+    ("continue_nested_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..9 { if i > 2 { if i < 5 { continue; } } c = c + 1; } return c; }", 7),
+    ("break_nested_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..9 { if i > 2 { if i == 5 { break; } } c = c + 1; } return c; }", 5),
+    # nested loops: inner continue 3*3 = 9 ; inner break 3*2 = 6 ; outer continue 3*3 = 9 ;
+    # outer break 2*3 = 6 ; both levels continue: i in {0,2,3}, j in {0,1,3} -> 27
+    ("nested_inner_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { if j == 1 { continue; } c = c + 1; } } return c; }", 9),
+    ("nested_inner_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { if j == 2 { break; } c = c + 1; } } return c; }", 6),
+    ("nested_outer_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } for j in 0..3 { c = c + 1; } } return c; }", 9),
+    ("nested_outer_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 2 { break; } for j in 0..3 { c = c + 1; } } return c; }", 6),
+    ("nested_both_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } for j in 0..4 { if j == 2 { continue; } c = c + i + j; } } return c; }", 27),
+    # body writes VAR, continue BEFORE that write (hidden-counter form; the body-local
+    # `let VAR = CTR` copy needs no exit move): i in {0,1,3,4} each + 10 -> 48
+    ("body_assign_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 2 { continue; } i = i + 10; c = c + i; } return c; }", 48),
+    # f64 carried through a continue edge: 4 * 1.0 + 10.0 = 14.0 > 13.5 -> 1 (dropped write -> 4.0 -> 2)
+    ("continue_f64", b"fn main() -> i64 { let mut a: f64 = 0.0; for i in 0..5 { if i == 2 { a = a + 10.0; continue; } a = a + 1.0; } if a > 13.5 { return 1; } return 2; }", 1),
+    # The same exit edges in a plain `while` (one root cause): x is written before the
+    # exit and again after it, so the loop slot differs from the live value at the exit.
+    # continue: x ends 11 after 5 counted rounds -> 115 (pre-fix: HANG)
+    ("while_continue_after_write", b"fn main() -> i64 { let mut x: i64 = 0; let mut n: i64 = 0; while x < 10 { x = x + 1; if x == 3 { continue; } x = x + 1; n = n + 1; } return x * 10 + n; }", 115),
+    # break: x = 3 at the break (pre-fix: 2)
+    ("while_break_after_write", b"fn main() -> i64 { let mut x: i64 = 0; while x < 100 { x = x + 1; if x == 3 { break; } x = x + 1; } return x; }", 3),
+    # Exit-ONLY branches the old branch-exit guard admitted, but which still read a stale
+    # loop slot because an INNER loop wrote the carried var first (silent wrong values on
+    # the pre-fix compiler: 36 and 203). References from the Rust MLIR build.
+    ("while_inner_loop_then_continue", b"fn main() -> i64 { let mut a: i64 = 0; let mut x: i64 = 0; while a < 4 { a = a + 1; let mut k: i64 = 0; while k < 2 { x = x + 1; k = k + 1; } if a == 2 { continue; } x = x + 10; } return x; }", 38),
+    ("while_inner_break_outer_var", b"fn main() -> i64 { let mut a: i64 = 0; let mut b: i64 = 0; let mut x: i64 = 0; while a < 3 { a = a + 1; while b < 10 { b = b + 1; x = x + b; if b == 2 { break; } } if a == 2 { continue; } x = x + 100; } return x % 256; }", 255),
+    # control for SHADOW_EXIT_CASES below: the same loop without the shadowing
+    # `let` gives the same x == 5.
+    ("shadow_control", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { continue; } } return x; }", 5),
+    # A branch swaps two carried vars through bare-ident copies, then exits: at the
+    # exit `a` is bound to b's loop slot and `b` to a's, so the edge moves are a
+    # cycle and must run as a PARALLEL copy (sequential moves give a == b).
+    # a,b = 1,2 -> (2,12) -> swap (12,2) -> (13,12) -> (14,22): 14*16+22 = 246 ; the
+    # break leaves (12,2): 194. References from the Rust MLIR build.
+    ("swap_in_branch_continue", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; let mut i: i64 = 0; while i < 4 { i = i + 1; if i == 2 { let t: i64 = a; a = b; b = t; continue; } a = a + 1; b = b + 10; } return a * 16 + b; }", 246),
+    ("swap_in_branch_break", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; let mut i: i64 = 0; while i < 4 { i = i + 1; if i == 2 { let t: i64 = a; a = b; b = t; break; } a = a + 1; b = b + 10; } return a * 16 + b; }", 194),
+    ("for_swap_in_branch_continue", b"fn main() -> i64 { let mut a: i64 = 1; let mut b: i64 = 2; for i in 0..4 { if i == 1 { let t: i64 = a; a = b; b = t; continue; } a = a + 1; b = b + 10; } return a * 16 + b; }", 246),
+    # ---- unconditional exits in a NESTED range-for ----
+    # The desugar appends `VAR = VAR + 1` after the body, so an unconditional
+    # `break`/`continue` leaves a dead tail. The loop's own emit drops it
+    # (nb_truncate_dead); the frame count and an enclosing loop's carry pre-walk
+    # must drop it too, or the outer loop's post_ids land past the slots the emit
+    # writes and the outer counter never advances (pre-fix: HANG on all four).
+    ("nested_uncond_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { c = c + 1; break; } } return c; }", 3),
+    ("nested_uncond_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { c = c + 1; continue; } } return c; }", 12),
+    ("nested_dead_tail_continue", b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; let mut j: i64 = 0; while j < 3 { j = j + 1; c = c + 1; continue; c = c + 100; } } return c; }", 9),
+    ("nested_dead_tail_break", b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; let mut j: i64 = 0; while j < 3 { j = j + 1; c = c + 1; break; c = c + 100; } } return c; }", 3),
+    # the same dead tail with the inner loop inside an `if` of the outer body: the
+    # outer pre-walk counts the if through nb_count_stmt (its merge slots and next_id)
+    ("nested_uncond_break_in_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { if i >= 0 { for j in 0..3 { c = c + 1; break; } } c = c + 10; } return c; }", 33),
+    ("nested_dead_tail_in_if_merge", b"fn main() -> i64 { let mut x: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; if i > 1 { let mut k: i64 = 0; while k < 5 { k = k + 1; x = x + 1; break; x = x + 100; } } x = x + 10; } return x; }", 32),
+    # ---- the oracle's hygiene gate, every arm (Rust For arm, src/eval/lower.rs) ----
+    # A top-level `let VAR` in the body re-declares the loop var (body_redeclares):
+    # the step must advance the counter, not the shadow. Shadows 0,2,4,6,8.
+    ("redeclare_var", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; s = s + i; } return s; }", 20),
+    ("redeclare_var_break", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; if i == 6 { break; } s = s + i; } return s; }", 6),
+    ("redeclare_var_continue", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; if i == 4 { continue; } s = s + i; } return s; }", 16),
+    # VAR bound OUTSIDE the for's own block (env.contains_key): a parameter, an
+    # enclosing block's `let`, or an enclosing range-for's VAR. The outer binding
+    # must survive the loop and must not be stepped by it.
+    ("param_shadow", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }", 37),
+    ("param_shadow_continue", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 1 { continue; } c = c + i; } return i * 10 + c; } fn main() -> i64 { return f(7); }", 79),
+    ("param_shadow_break", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 3 { break; } c = c + i; } return i * 10 + c; } fn main() -> i64 { return f(7); }", 73),
+    ("second_param_shadow", b"fn f(a: i64, i: i64) -> i64 { let mut c: i64 = a; for i in 0..3 { c = c + 1; } return i + c; } fn main() -> i64 { return f(10, 20); }", 33),
+    ("outer_let_for_in_if", b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { for i in 0..3 { c = c + 1; } c = c + i; } return c; }", 103),
+    ("outer_let_for_in_while", b"fn main() -> i64 { let i: i64 = 50; let mut k: i64 = 0; let mut c: i64 = 0; while k < 2 { k = k + 1; for i in 0..3 { c = c + 1; } c = c + i; } return c; }", 106),
+    ("outer_let_for_in_while_continue", b"fn main() -> i64 { let i: i64 = 50; let mut k: i64 = 0; let mut c: i64 = 0; while k < 2 { k = k + 1; for i in 0..4 { if i == 2 { continue; } c = c + 1; } c = c + i; } return c; }", 106),
+    # nested same-name fors: 3 * (2 + i*10) over i = 0,1,2 -> 36 ; with an inner
+    # continue (3 counted per outer round) -> 39 ; three levels -> 1624 % 256 = 88
+    ("nested_same_var", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for i in 0..2 { c = c + 1; } c = c + i * 10; } return c; }", 36),
+    ("nested_same_var_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for i in 0..4 { if i == 1 { continue; } c = c + 1; } c = c + i * 10; } return c; }", 39),
+    ("nested_same_var_3", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..2 { for i in 0..3 { for i in 0..4 { c = c + 1; } c = c + i * 100; } c = c + i * 1000; } return c % 256; }", 88),
+    # A write to VAR (or to an inline END) inside a NESTED loop of the body is still
+    # a body write for the oracle (collect_assign_targets descends into loops): the
+    # write hits the per-iteration copy, and END is read once. i: +20 per round in
+    # the last case, skipping i == 1 -> 20 + 22 + 23 = 65.
+    ("assign_var_in_nested_while", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { let mut k: i64 = 0; while k < 2 { i = i + 1; k = k + 1; } c = c + 1; } return c; }", 3),
+    ("assign_var_in_nested_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..2 { i = i + 1; } c = c + 1; } return c; }", 3),
+    ("end_assigned_in_nested_while", b"fn main() -> i64 { let mut n: i64 = 3; let mut c: i64 = 0; for i in 0..n { let mut k: i64 = 0; while k < 1 { n = n + 1; k = k + 1; } c = c + 1; } return c; }", 3),
+    ("assign_var_nested_while_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } let mut k: i64 = 0; while k < 2 { i = i + 10; k = k + 1; } c = c + i; } return c; }", 65),
+    # ---- nested hidden-counter loops with the SAME header text ----
+    # Both loops hygienic (a param VAR, a call END or a body write to VAR) and both
+    # headers `for i in 0..X`: the hidden counter is named by its span bytes, so a
+    # header-only span named the two counters alike and the inner `let CTR`
+    # captured the outer step (pre-fix: 103, 3, 3, a HANG under `break`, and two
+    # `continue` shapes refused as an ambiguous exit move). References from the Rust
+    # MLIR build of the same programs.
+    ("same_hdr_param", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { for i in 0..n { c = c + 1; } } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 109),
+    ("same_hdr_call", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { c = c + 1; } } return c; }", 9),
+    ("same_hdr_body_write", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 1; for i in 0..3 { i = i + 1; c = c + 1; } } return c; }", 9),
+    ("same_hdr_call_read", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { c = c + i; } c = c + i * 10; } return c; }", 39),
+    ("same_hdr_call_3", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { for i in 0..hi() { c = c + 1; } } } return c; }", 8),
+    ("same_hdr_call_break", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { if i == 1 { break; } c = c + 1; } c = c + 10; } return c; }", 33),
+    ("same_hdr_param_break", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { for i in 0..n { if i == 2 { break; } c = c + 1; } c = c + 10; } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 136),
+    ("same_hdr_call_continue", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { if i == 1 { continue; } for i in 0..hi() { if i == 0 { continue; } c = c + 1; } } return c; }", 4),
+    ("same_hdr_call_outer_cont", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { if i == 1 { continue; } for i in 0..hi() { c = c + 1; } } return c; }", 6),
+    ("same_hdr_call_inner_cont", b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { for i in 0..hi() { if i == 0 { continue; } c = c + 1; } c = c + 100; } return c % 256; }", 50),
+    ("same_hdr_param_continue", b"fn f(i: i64, n: i64) -> i64 { let mut c: i64 = 0; for i in 0..n { if i == 1 { continue; } for i in 0..n { if i == 1 { continue; } c = c + 1; } } return c + i * 100; } fn main() -> i64 { return f(1, 3); }", 104),
+    ("same_hdr_in_while", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; let mut k: i64 = 0; while k < 2 { k = k + 1; for i in 0..hi() { for i in 0..hi() { c = c + 1; } } } return c; }", 8),
+    ("sibling_then_nested", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } for i in 0..hi() { for i in 0..hi() { c = c + 10; } } return c; }", 42),
+    # A same-TEXT earlier sibling is harmless (it has finished before the later
+    # let); these pin that the whole-statement counter span keeps it that way, also
+    # when the later copy sits inside a while or inside another loop.
+    ("same_text_sibling_before_while", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } let mut k: i64 = 0; while k < 3 { k = k + 1; for i in 0..hi() { c = c + 1; } } return c; }", 8),
+    ("same_text_sibling_then_inner", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } for j in 0..3 { for i in 0..hi() { c = c + 1; } } return c; }", 8),
+    # ---- loop-carried vars: seed slot and body-local shadows ----
+    # An OUTER var written only inside a nested loop (here under an `if`) is promoted
+    # into the enclosing loop's carry table. Its init slot was looked up in the
+    # carry pre-walk's COUNT env, where the inner `if` had left a count-only slot-0
+    # binding of the name, so the copy-in seeded it from slot 0 — whatever var
+    # lives there (pre-fix, in order: 85, 12, 13, 6, 174, 7, 0, 21, 211, 0, 21).
+    # References from the Rust MLIR build of the same programs.
+    ("nested_for_if_count", b"fn main() -> i64 { let mut s: i64 = 5; let mut c: i64 = 0; c = c + 2; for i in 0..3 { for j in 0..3 { if j == 1 { c = c + 1; } } } return c * 10 + s; }", 55),
+    ("nested_for_diag_count", b"fn main() -> i64 { let mut a: i64 = 9; let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { if j == i { c = c + 1; } } } return c + a * 0; }", 3),
+    ("while_for_if_count", b"fn main() -> i64 { let mut a: i64 = 9; let mut c: i64 = 0; let mut k: i64 = 0; while k < 2 { k = k + 1; for j in 0..3 { if j > 0 { c = c + 1; } } } return c + a * 0; }", 4),
+    ("nested_for_triple_if", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { for k in 0..3 { if i + j + k == 3 { c = c + 1; } } } } return c + z * 0; }", 7),
+    ("nested_for_if_else_two_vars", b"fn main() -> i64 { let mut z: i64 = 4; let mut a: i64 = 0; let mut b: i64 = 0; for i in 0..4 { for j in 0..4 { if i < j { a = a + 1; } else { b = b + 1; } } } return a * 16 + b + z * 0; }", 106),
+    ("nested_for_write_then_inner_if", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 1; for i in 0..3 { c = c + 10; for j in 0..2 { if j == 1 { c = c + 1; } } } return c + z * 0; }", 34),
+    ("nested_for_if_break", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 0; for i in 0..3 { for j in 0..5 { if j == i { c = c + 1; break; } } } return c + z * 0; }", 3),
+    ("while_nested_if_zero_rounds", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 0 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 5 { c = c + 21; } } } return c; }", 1),
+    ("while_nested_if_one_round", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; } } } return c; }", 22),
+    ("while_nested_if_two_vars", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut s: i64 = 0; s = s + 2; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; s = s + 1; } } } return c * 10 + s; }", 223),
+    ("for_nested_if_break_empty_outer", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; for k in -1..-3 { let mut w: i64 = 0; while w < 2 { w = w + 1; if k > -1 { c = c + 21; break; } } break; } return c; }", 1),
+    ("for_nested_if_break_one_round", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; for k in 0..1 { let mut w: i64 = 0; while w < 2 { w = w + 1; if k > -1 { c = c + 21; break; } } break; } return c; }", 22),
+    # the same seed slot for a TOP-LEVEL write whose first sighting comes after an
+    # inner loop whose body `let`s the same name (the inner pre-walk leaves that
+    # count-only binding in the env; pre-fix: 115 for both)
+    ("for_inner_let_then_top_write", b"fn main() -> i64 { let mut z: i64 = 7; let mut c: i64 = 1; for k in 0..2 { for w in 0..1 { let c: i64 = 9; z = z + c; } c = c + 1; } return c * 10 + z; }", 55),
+    ("while_inner_let_then_top_write", b"fn main() -> i64 { let mut z: i64 = 7; let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut w: i64 = 0; while w < 1 { w = w + 1; let c: i64 = 9; z = z + c; } c = c + 1; } return c * 10 + z; }", 55),
+    # A top-level body `let` re-declares an outer name: later writes in the body
+    # update the shadow, re-created every iteration (the Rust arm's body_local_decls
+    # guard). Carrying it rebound the OUTER name to the shadow's slot, so the code
+    # after the loop read the shadow (pre-fix, in order: 6, 6, 7, 11, 6, 6, 7).
+    ("for_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; c = c + 1; } return c; }", 1),
+    ("for_body_let_shadow_if", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; if i > 0 { c = c + 1; } } return c; }", 1),
+    ("for_body_let_shadow_inner_loop", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; for j in 0..2 { c = c + 1; } } return c; }", 1),
+    ("inner_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 3; for i in 0..2 { for j in 0..2 { let mut c: i64 = 9; c = c + 1; } c = c + 1; } return c; }", 5),
+    ("while_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; c = c + 1; } return c; }", 1),
+    ("while_body_let_shadow_if", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; if k > 0 { c = c + 1; } } return c; }", 1),
+    ("while_body_let_shadow_inner_loop", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; let mut w: i64 = 0; while w < 2 { w = w + 1; c = c + 1; } } return c; }", 1),
+    # the hygienic per-iteration `let VAR = CTR` copy is exactly such a shadow: a body
+    # write to VAR must leave a parameter VAR alone (pre-fix: 209, 55)
+    ("param_body_write", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 10; c = c + i; } return i * 100 + c; } fn main() -> i64 { return f(7) % 256; }", 221),
+    ("param_body_write_continue", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } i = i + 10; c = c + i; } return i * 100 + c; } fn main() -> i64 { return f(2) % 256; }", 235),
+    # a write BEFORE the shadowing let is the outer var's, the ones after are not
+    # (pre-fix: 51)
+    ("assign_then_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 3 { k = k + 1; c = c + 1; let mut c: i64 = 50; c = c + 1; } return c; }", 4),
+    # controls that passed before: a direct inner write and an if before the inner loop
+    ("inner_direct_write_control", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; c = c + 21; } } return c; }", 43),
+    ("if_then_inner_loop_control", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; if k > 0 { c = c + 5; } let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; } } } return c; }", 27),
+    # controls: shapes the oracle keeps byte-neutral (the gate must not over-fire;
+    # DESUGAR_PAIRS below pins their form, these pin their values)
+    ("prior_sibling_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }", 4),
+    ("closed_block_let_then_for", b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } for i in 0..3 { c = c + i; } return c; }", 12),
+    ("redeclare_in_branch_only", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..4 { if i > 1 { let i: i64 = 100; s = s + i; } s = s + i; } return s; }", 206),
 ]
+
+# A `let` in the loop body that SHADOWS a carried var: the exit edge resolves the
+# carried name LEXICALLY (nb_lets_lookup_carried stops at the body-local declaration),
+# so the move carries the outer binding, never the shadow. Formerly refused here;
+# the lexical value is asserted instead (x == 5; a copied shadow would give 52, and
+# the MLIR build gives 52 -- the known MLIR shadow-carry defect recorded in
+# self_host_native_shadow_scope_smoke.py, which pins the same lexical rule).
+SHADOW_EXIT_CASES = [
+    ("shadow_at_exit", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { let x: i64 = 50; continue; } } return x; }", 5),
+]
+# Shapes that must still refuse fail-closed (empty ELF); none at present.
+REFUSE_CASES = []
 
 # ---------------------------------------------------------------------------
 # GATED hygiene cases (audit #4 / #5i) — SELF-HOST leg of the cross-substrate
@@ -158,13 +403,44 @@ GATED_CASES = [
      3, False, "END call pre-lowered once into hidden bound"),
 ]
 
-# DESUGAR_PAIRS (byte-identity of `for` vs the NAIVE explicit `let mut i; while
-# i<HI { B; i=i+1 }` form) is RETIRED as of Step 2: the hygienic desugar emits a
-# hidden counter + a pre-lowered bound + a body-local element copy, so it is
-# deliberately NO LONGER byte-identical to the naive while form the pairs encode.
-# Value-correctness across the same shapes is covered by CASES above; the
-# hygiene-specific behavior is covered by GATED_CASES.
-DESUGAR_PAIRS = []
+# DESUGAR_PAIRS pin WHICH desugar parse_for picks, which values alone cannot: a
+# gate that over-fires still computes the right value through the hidden counter,
+# but leaves the oracle's byte-neutral form (and its mic@3 parity). Each entry is
+# (name, `for` source, the explicit byte-neutral `let VAR = LO; while VAR < HI {
+# BODY; VAR = VAR + 1; }` source, identical?). identical=True: the oracle keeps the
+# byte-neutral desugar, so the two ELFs must match byte for byte. identical=False:
+# the oracle goes hygienic (VAR in an enclosing scope, a body `let VAR`), so the
+# byte-neutral bytes would be the wrong program.
+DESUGAR_PAIRS = [
+    ("count_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..5 { c = c + 1; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 5 { c = c + 1; i = i + 1; } return c; }",
+     True),
+    ("prior_sibling_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } let i: i64 = 0; while i < 2 { c = c + i; i = i + 1; } return c; }",
+     True),
+    ("closed_let_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } for i in 0..3 { c = c + i; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } let i: i64 = 0; while i < 3 { c = c + i; i = i + 1; } return c; }",
+     True),
+    ("enclosing_other_var_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { for j in 0..i { c = c + j; } } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 4 { let j: i64 = 0; while j < i { c = c + j; j = j + 1; } i = i + 1; } return c; }",
+     True),
+    ("param_shadow_hygienic",
+     b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }",
+     b"fn f(i: i64) -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }",
+     False),
+    ("outer_let_hygienic",
+     b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { for i in 0..3 { c = c + 1; } c = c + i; } return c; }",
+     b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } c = c + i; } return c; }",
+     False),
+    ("redeclare_hygienic",
+     b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; s = s + i; } return s; }",
+     b"fn main() -> i64 { let mut s: i64 = 0; let i: i64 = 0; while i < 5 { let i: i64 = i * 2; s = s + i; i = i + 1; } return s; }",
+     False),
+]
 
 
 def main() -> int:
@@ -178,19 +454,47 @@ def main() -> int:
                 print(f"  FAIL  {name}: native entry failed closed (empty ELF)")
                 rc = 1
                 continue
-            got = run_elf(elf, tmp) & 0xFF
+            got = run_elf(elf, tmp)
             if got != want:
                 print(f"  FAIL  {name}: exit {got}, want {want}")
                 rc = 1
             else:
                 print(f"  PASS  {name}: exit {got} == {want}")
 
-        for name, a, b in DESUGAR_PAIRS:
-            ea, eb = mind_elf(lib, a), mind_elf(lib, b)
-            if ea and eb and ea == eb:
-                print(f"  PASS  {name}: `for` ELF byte-identical to explicit while-desugar ({len(ea)} B)")
+        for name, src, want in SHADOW_EXIT_CASES:
+            elf = mind_elf(lib, src)
+            if not elf:
+                print(f"  FAIL  {name}: native entry failed closed (empty ELF), want exit {want}")
+                rc = 1
+                continue
+            got = run_elf(elf, tmp)
+            if got != want:
+                print(f"  FAIL  {name}: exit {got}, want {want} (lexical value)")
+                rc = 1
             else:
-                print(f"  FAIL  {name}: for form ({len(ea)} B) != explicit while-desugar ({len(eb)} B)")
+                print(f"  PASS  {name}: exit {got} == {want} (lexical value)")
+
+        for name, src in REFUSE_CASES:
+            elf = mind_elf(lib, src)
+            if elf:
+                print(f"  FAIL  {name}: emitted a {len(elf)} B ELF (exit {run_elf(elf, tmp)}), "
+                      f"want a fail-closed refusal (empty ELF)")
+                rc = 1
+            else:
+                print(f"  PASS  {name}: refused fail-closed (empty ELF)")
+
+        for name, a, b, identical in DESUGAR_PAIRS:
+            ea, eb = mind_elf(lib, a), mind_elf(lib, b)
+            if not (ea and eb):
+                print(f"  FAIL  {name}: a form failed closed (for {len(ea)} B, explicit {len(eb)} B)")
+                rc = 1
+            elif (ea == eb) == identical:
+                how = "byte-identical to" if identical else "differs from"
+                print(f"  PASS  {name}: `for` ELF {how} the byte-neutral while-desugar ({len(ea)} B)")
+            else:
+                want = "byte-neutral" if identical else "hygienic"
+                print(f"  FAIL  {name}: `for` took the wrong desugar (want {want}; "
+                      f"identical={ea == eb})")
                 rc = 1
 
         # ---- GATED hygiene cases: self-host substrate leg + xfail bookkeeping.
@@ -198,7 +502,7 @@ def main() -> int:
         xfail_unexpected_pass = 0
         for name, src, want, xfail, note in GATED_CASES:
             elf = mind_elf(lib, src)
-            got = (run_elf(elf, tmp) & 0xFF) if elf else None  # None = fail-closed
+            got = run_elf(elf, tmp) if elf else None  # None = fail-closed
             matches = got == want
             if xfail:
                 xfail_expected += 1
@@ -223,8 +527,8 @@ def main() -> int:
         print(f"  xfail bookkeeping: {xfail_expected} expected self-host divergences "
               f"(Step-2 gap), {xfail_unexpected_pass} unexpected passes")
 
-    print("ALL PASS  (range-for: value-correct + byte-identical to let+while desugar; "
-          "gated hygiene self-host xfails accounted)" if rc == 0
+    print("ALL PASS  (range-for: value-correct over every bound shape and exit edge; "
+          "shadowed exit carried by its lexical value; gated hygiene self-host xfails accounted)" if rc == 0
           else "FAIL  (range-for battery had failures)")
     return rc
 

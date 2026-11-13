@@ -48,9 +48,9 @@ TIERS=(exec lowering pkg)
 
 # `exec` — the executable-semantics tier. 110 mlir-build-gated files, including the
 # alias-miscompile gate, the array-OOB bounds-trap gate and the array bounds/dtype
-# gate. The C-ABI export feature also executes the manifest-cache regressions;
-# without it that entire test target is erased rather than exercised.
-FEATURES_exec="mlir-build std-surface cross-module-imports ffi-c-user"
+# gate. ffi-c-user executes the manifest-cache regressions and mlir-exec the `mind eval
+# --mlir-exec` route; without them those test targets are erased, not exercised.
+FEATURES_exec="mlir-build std-surface cross-module-imports ffi-c-user mlir-exec"
 FLOOR_TESTS_exec=2152
 FLOOR_HARNESSES_exec=336
 # MIND_BENCH_REQUIRE=1 turns "MLIR toolchain missing -> skip" into a hard failure, so
@@ -120,13 +120,13 @@ CRITICAL_exec=(
   "harness_scratch_isolation 3"     # scratch isolation for every wedge gate's artifacts
   "module_size_ratchet 5"           # the 800-line ceiling and its budget table
   "mindc_cache_build_inputs 3"      # explicit entry, manifest exports, native sources
-  "open_error_kat 1"                # #290 negative file-open errors in debug + release
+  "std_process_wait_surface 1" "const_table_build_determinism 8"  # std/process.mind checked wait (split out of std_surface_net_fs_process); 8 cases x 8 ASLR-on builds -> 1 hash each
+  "open_error_kat 1" "mlir_exec 1"  # #290 file-open errors; --mlir-exec on the version-named runner
   "imported_extern_narrow_ret_run 10"  # narrow imported extern C arguments and returns
   "emit_object_relocatable 2"       # --emit object writes a linkable ET_REL object
-  "intrinsic_call_arity 7"          # wrong-arity intrinsic calls refused at every depth
-  "intrinsic_call_arity_build 5"    # the same refusal through the mindc binary
+  "intrinsic_call_arity 7" "intrinsic_call_arity_build 5"  # wrong-arity intrinsic calls refused at every depth, and through the mindc binary
   "std_procgroup_run 19"            # 25 children spawned, reaped, deadline-killed
-  "std_surface_mic_record 11" "std_surface_mic_record_refusals 5"  # mic@3 results records
+  "std_surface_mic_record 12" "std_surface_mic_record_refusals 6"  # mic@3 results records; each file holds one leak bound
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.

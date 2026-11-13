@@ -110,4 +110,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Poison the glibc heap (fixed fill byte, no tcache) so an unzeroed
+    # __mind_alloc word is never 0 by chance: reading one fails on every run.
+    _HEAP = "glibc.malloc.perturb=165:glibc.malloc.tcache_count=0"
+    if os.environ.get("GLIBC_TUNABLES") != _HEAP:
+        env = {**os.environ, "GLIBC_TUNABLES": _HEAP}
+        os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)  # keeps the count shim
     sys.exit(main())

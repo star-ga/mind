@@ -1,0 +1,56 @@
+// Timing variant (not a stdout row): group 3 over 4096 pixels (13 rows, plane
+// 32768 bytes) then 64 + 64 accumulate taps, 400 rounds (the fixed setup,
+// checksum and exec cost stays under 10% of the run). Stdout = one i64
+// checksum, equal to group_sum_perf_scalar.mind's (the same math as plain loops).
+
+fn gp_setup(a: i64, b: i64, c: i64, off: i64) -> i64 {
+    let mut p: i64 = 0;
+    while p < 4096 {
+        __mind_store_i64(a + p * 8, p * 3 + 1);
+        __mind_store_i64(b + p * 8, p * 5 - 7);
+        __mind_store_i64(c + p * 8, 11 - p);
+        p = p + 1;
+    }
+    let mut j: i64 = 0;
+    while j < 128 {
+        __mind_store_i64(off + j * 8, (j * 3313) % 425728);
+        j = j + 1;
+    }
+    0
+}
+
+fn gp_sum(buf: i64, words: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < words {
+        s = s * 31 + __mind_load_i64(buf + i * 8);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(32768);
+    let b: i64 = __mind_alloc(32768);
+    let c: i64 = __mind_alloc(32768);
+    let off: i64 = __mind_alloc(1024);
+    let bank: i64 = __mind_alloc(425984);
+    let out: i64 = __mind_alloc(256);
+    gp_setup(a, b, c, off);
+    let ptrs: i64 = __mind_alloc(32);
+    __mind_store_i64(ptrs, a);
+    __mind_store_i64(ptrs + 8, b);
+    __mind_store_i64(ptrs + 16, c);
+    let mut r: i64 = 0;
+    let mut round: i64 = 0;
+    while round < 400 {
+        r = r + __mind_group_bank_i64(ptrs, bank, 32768, 4096, 3);
+        r = r + __mind_group_acc32_i64(out, bank, off, 64, 64, round % 2);
+        round = round + 1;
+    }
+    let s: i64 = gp_sum(bank, 53248) * 7 + gp_sum(out, 32) + r;
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, s);
+    __mind_write(1, w, 8, 0 - 1);
+    0
+}

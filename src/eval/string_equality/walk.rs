@@ -23,7 +23,9 @@ use crate::ast::{BinOp, FnDefData, Literal, Module, Node, Pattern};
 
 use super::facts::{Bound, Class, Decls, Env, Fact, tuple_parts};
 use super::slots::Contradicted;
-use super::{MethodTargets, Ordinals, Refused, RefusedKind, Targets, assigned_in, decide};
+use super::{
+    MethodTargets, Ordinals, Refused, RefusedKind, Targets, assigned_in, decide, decide_print,
+};
 
 /// What a statement list belongs to: the function whose `return` it holds
 /// (`None` at module level and in a closure).
@@ -80,10 +82,22 @@ pub(super) fn collect_targets(
 /// walk records no slot the previous ones had not, starting from `decls`;
 /// the last walk's decisions and the final slots.
 pub(super) fn fixpoint<'a>(
-    mut decls: Decls,
+    decls: Decls,
     ordinals: &'a Ordinals,
     runs: &[&'a [Node]],
 ) -> (Targets, MethodTargets, Vec<Refused>, Decls) {
+    let (targets, methods, refused, decls, _) = fixpoint_with_elements(decls, ordinals, runs);
+    (targets, methods, refused, decls)
+}
+
+/// As [`fixpoint`], also returning the element facts the last walk stores a
+/// contradicting value into: the module's own element stores, apart from
+/// the ones `decls` was seeded with.
+pub(super) fn fixpoint_with_elements<'a>(
+    mut decls: Decls,
+    ordinals: &'a Ordinals,
+    runs: &[&'a [Node]],
+) -> (Targets, MethodTargets, Vec<Refused>, Decls, Vec<Fact>) {
     // shortcut: one whole-module walk per round of newly recorded slots; a
     // chain of stores through N slots costs N walks. Upgrade to a worklist
     // over the recorded slots if a module ever needs many rounds.
@@ -97,8 +111,9 @@ pub(super) fn fixpoint<'a>(
             flows,
             ..
         } = walk;
+        let own = flows.elements.clone();
         if !walked.contradicted.absorb(flows) {
-            return (targets, methods, refused, walked);
+            return (targets, methods, refused, walked, own);
         }
         decls = walked;
     }
@@ -346,7 +361,8 @@ impl<'a> Walk<'a> {
                         .filter(|name| !assigned.contains(*name))
                         .filter_map(|name| {
                             let fact = env.get(name)?.fact.clone();
-                            Some((name.clone(), Bound { fact, site: None }))
+                            let (site, shape) = (None, None);
+                            Some((name.clone(), Bound { fact, site, shape }))
                         })
                         .collect(),
                 );
@@ -360,6 +376,27 @@ impl<'a> Walk<'a> {
                 });
             }
             Node::FnDef(fd, _) => self.enter_fn(fd),
+            Node::Print { args, .. } => {
+                for arg in args {
+                    let at = arg as *const Node as usize;
+                    let Some(&ordinal) = self.ordinals.print_args.get(&at) else {
+                        continue;
+                    };
+                    match decide_print(self.decls.value_fact(arg, &env)) {
+                        Ok(true) => {
+                            self.targets.insert(ordinal);
+                        }
+                        Ok(false) => {}
+                        Err(kind) => self.refused.push(Refused {
+                            op: BinOp::Eq,
+                            kind,
+                            span: arg.span(),
+                            function: scope.owner.map(str::to_string),
+                        }),
+                    }
+                }
+                self.push_children(node, &env, &scope);
+            }
             Node::As { expr, ty, span } if self.decls.refused_cast(expr, ty, &env) => {
                 self.refused.push(Refused {
                     op: BinOp::Eq,

@@ -482,7 +482,7 @@ fn keccak_known_answers_agree_between_the_interpreter_and_the_native_build() {
         .expect("write Mind.toml");
         std::fs::write(dir.join("main.mind"), keccak_kat_program(mutate)).expect("write main.mind");
         let out = Command::new(common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(&dir)
             .output()
             .expect("run mindc build");
@@ -522,7 +522,7 @@ fn build_project(dir: &Path, main: &str) -> Output {
     .expect("write Mind.toml");
     std::fs::write(dir.join("main.mind"), main).expect("write main.mind");
     Command::new(common::mindc_bin())
-        .arg("build")
+        .args(["build", "--backend", "mlir"])
         .current_dir(dir)
         .output()
         .expect("run mindc build")
@@ -534,10 +534,9 @@ fn build_project(dir: &Path, main: &str) -> Output {
 /// starts linking turns this test red until its row is removed.
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 const KNOWN_UNLINKED: &[(&str, &str, &str)] = &[
-    // Not members: std.cli calls the unregistered `__mind_argc`; the shim defines
-    // std.io's `print_bytes`. std.time is a member that cannot compile yet.
-    ("std.cli", "args_new()", "undefined reference to `args_new'"),
-    ("std.io", "sgr_bold()", "undefined reference to `sgr_bold'"),
+    // std.time is a member that cannot compile yet. std.cli and std.io link
+    // now (the shim defines `__mind_argc` / `__mind_argv`, and its
+    // `print_bytes` is weak).
     ("std.time", "", "__mind_now_ns"),
 ];
 
@@ -720,7 +719,7 @@ fn a_std_module_the_project_supplies_is_not_an_unknown_import() {
     #[cfg(all(unix, feature = "mlir-build"))]
     {
         let out = Command::new(common::mindc_bin())
-            .arg("build")
+            .args(["build", "--backend", "mlir"])
             .current_dir(file.parent().expect("project dir"))
             .output()
             .expect("run mindc build");

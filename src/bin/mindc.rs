@@ -9,49 +9,40 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
-
 //! MIND command-line compiler: parse, type-check, lower to IR/MLIR, and
 //! optionally run autodiff.
-
 // Small-object primary allocator, opted in per-binary (not registered by the
 // library — see `libmind::SmallHeapAlloc`). Cuts allocation overhead on the
 // compile hot path; produces no values, so emitted artifacts are unaffected.
 #[global_allocator]
 static GLOBAL_SMALL_HEAP: libmind::SmallHeapAlloc = libmind::SmallHeapAlloc;
-
 #[path = "mindc/mic3_output.rs"]
 mod mic3_output;
-
-use std::fs;
-use std::process;
-
 use clap::{ArgAction, Parser, Subcommand};
-
+use libmind::BackendTarget;
+use libmind::build::native_bridge;
 use libmind::build::{BuildOpts, run_build};
 use libmind::check::{CheckOptions, ReporterKind, run_check};
 use libmind::deps::{CleanOpts, FetchOpts, LockOpts, run_clean, run_fetch, run_lock};
+use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::doc::{DocOptions, run_doc};
 use libmind::fmt::cli as mindc_fmt;
-use libmind::test::{ReporterKind as TestReporterKind, TestOptions as MindTestOptions, run_tests};
-use libmind::workspace::{WorkspaceOpts, resolve_workspace_members, toposort_members};
-
-use libmind::BackendTarget;
-use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{CompileOptions, compile_source_with_name};
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
+use libmind::pipeline::{MlirProducts, lower_to_mlir};
+use libmind::project::toolchain_pin::native_command_refusal;
 use libmind::project::{
     Backend, BenchOptions, BuildOptions, EmitKind, OptimizeLevel, bench_project, run_project,
 };
+use libmind::test::{ReporterKind as TestReporterKind, TestOptions as MindTestOptions, run_tests};
+use libmind::workspace::{WorkspaceOpts, resolve_workspace_members, toposort_members};
 use libmind::{ConformanceOptions, ConformanceProfile, conformance};
-
-#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
-use libmind::pipeline::{MlirProducts, lower_to_mlir};
-
+use std::fs;
 #[cfg(any(feature = "mlir-build", feature = "cross-module-imports"))]
 use std::path::Path;
-
+use std::process;
 #[derive(Parser, Debug)]
 #[command(
     author,
@@ -65,41 +56,57 @@ struct Cli {
     #[command(flatten)]
     compile: CompileArgs,
 }
-
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Build a MIND project (reads Mind.toml).
     ///
     /// RFC 0008 Phase A — single-crate orchestrator.
-    /// Reads `[build]` from Mind.toml; CLI flags override the manifest.
+    /// Reads `[build]` from Mind.toml; CLI flags override the manifest, except
+    /// `backend`: a `--backend` that disagrees with it is refused (E2044).
     Build {
-        /// Source files to compile.  When omitted, uses `[build].entry` or
-        /// auto-detects src/main.mind / src/lib.mind.
+        /// The entry file (at most one; a project's other modules are never named
+        /// here). When omitted, uses `[build].entry` or src/main.mind / src/lib.mind.
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
-        /// Build in release mode (equivalent to --optimize=release).
+        /// Build in release mode (equivalent to --optimize=release). Native: the
+        /// output directory only, never the bytes.
         #[arg(long)]
         release: bool,
-        /// Target backend (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras).
+        /// Target backend (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras). Native: cpu only.
         /// Overrides `[build].target` in Mind.toml.
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
-        /// Code-generation backend: mlir (default) | native.
+        /// Code-generation backend: native | mlir. Default: `[build] backend`
+        /// in Mind.toml, else native; a flag that disagrees with it is refused (E2044).
         ///
-        /// `mlir` drives the production MLIR-text → mlir-opt/clang pipeline.
-        /// `native` (RI-D Option A) bridges the build to the frozen pure-MIND
-        /// x86-64 native-ELF compiler for a runnable ELF with zero MLIR/LLVM/clang;
-        /// fail-closed on any construct the pure-MIND subset cannot lower (never a
-        /// silent MLIR fallback). The default `mlir` build is unaffected.
-        #[arg(long, value_name = "BACKEND", default_value = "mlir",
-              value_parser = ["mlir", "native"])]
-        backend: String,
+        /// `native` builds with the frozen pure-MIND x86-64 native-ELF compiler
+        /// (zero MLIR/LLVM/clang) on an x86-64 Linux host. It refuses by name
+        /// (exit 3, no artifact, never an MLIR fallback) a program outside its
+        /// subset, another host, `--target` other than cpu, `--package`, a
+        /// workspace root and `--emit cdylib|object`. `--release`, `--optimize`
+        /// and `--no-cache` are accepted and do not change native bytes.
+        /// `mlir` drives the MLIR-text → mlir-opt/mlir-translate/clang pipeline.
+        #[arg(long, value_name = "BACKEND", value_parser = ["mlir", "native"])]
+        backend: Option<String>,
+        /// Memory layout of a `--backend native` image: default | bounded.
+        ///
+        /// `default` keeps the historical layout (1 GiB arena, 4 GiB stack) and
+        /// byte-identical artifacts. `bounded` emits a 768 MiB arena, 1 MiB
+        /// unmapped guard and 384 MiB stack, compiles with the committed bounded
+        /// seed (`MINDC_NATIVE_ELF` still overrides it), and verifies the
+        /// artifact's segments, so both the compiler and the program load under
+        /// `RLIMIT_AS` = 2 GiB. An over-cap allocation in a bounded image exits
+        /// 70 with "error: native arena exhausted" instead of trapping.
+        #[arg(long, value_name = "PROFILE", default_value = "default",
+              value_parser = ["default", "bounded"])]
+        native_profile: String,
         /// Output artifact type: binary | cdylib | object.
         /// Overrides `[build].emit` in Mind.toml.
         #[arg(long, value_name = "EMIT")]
         emit: Option<String>,
         /// Optimization level: debug | release | size.
         /// Overrides `[build].optimize` in Mind.toml. --release is shorthand.
+        /// Native: the output directory only, never the bytes.
         #[arg(long, value_name = "LEVEL", conflicts_with = "release")]
         optimize: Option<String>,
         /// Custom output path.  Overrides the default `target/<profile>/<name>`.
@@ -119,7 +126,7 @@ enum Command {
         /// Bypass the incremental object cache for this build (RFC 0008 Phase F).
         ///
         /// New objects are still written to cache so subsequent runs benefit.
-        /// Use this when you suspect a stale cache entry.
+        /// Use this when you suspect a stale cache entry. Native: no cache.
         #[arg(long)]
         no_cache: bool,
     },
@@ -131,6 +138,10 @@ enum Command {
         /// Target backend (cpu, cuda, cuda-ampere, rocm, metal, webgpu, etc.).
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
+        /// Code-generation backend: native | mlir, chosen as for `build`. `run`
+        /// needs mlir in this release; a native selection is refused by name.
+        #[arg(long, value_name = "BACKEND", value_parser = ["mlir", "native"])]
+        backend: Option<String>,
         /// Show verbose output.
         #[arg(short, long)]
         verbose: bool,
@@ -176,6 +187,9 @@ enum Command {
         /// Target backend (cpu, cuda, etc.).
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
+        /// Code-generation backend, as for `run`: a native selection is refused.
+        #[arg(long, value_name = "BACKEND", value_parser = ["mlir", "native"])]
+        backend: Option<String>,
         /// Show verbose output.
         #[arg(short, long)]
         verbose: bool,
@@ -197,11 +211,11 @@ enum Command {
     },
     /// Run format-check + lint + type-check over MIND source files.
     ///
-    /// Exit code 0 = all passes clean; 1 = one or more error-severity
-    /// diagnostics detected.
+    /// Exit code 0 = all passes clean; 1 = one or more error-severity diagnostics detected.
+    /// A file that you name is always checked, also when the ignore file (.gitignore) matches it.
     Check {
-        /// Files or directories to check.  Directories are walked recursively
-        /// for *.mind files.  Defaults to the current directory when omitted.
+        /// Files or directories. A directory gives its *.mind files; ignored files are skipped.
+        /// No path, in a project: every file `mindc build` compiles (a note counts other non-ignored files).
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
         /// Diagnostic reporter: human (default), json, or lsp.
@@ -401,7 +415,6 @@ enum Command {
         diff: Option<String>,
     },
 }
-
 #[derive(Parser, Debug, Default)]
 struct CompileArgs {
     /// Print the compiler version and component stability versions.
@@ -508,7 +521,6 @@ struct CompileArgs {
     #[arg(long, value_name = "WHEN")]
     color: Option<String>,
 }
-
 fn main() {
     #[cfg(windows)]
     {
@@ -527,16 +539,15 @@ fn main() {
     #[cfg(not(windows))]
     mindc_main();
 }
-
 fn mindc_main() {
     let cli = Cli::parse();
-
     match &cli.command {
         Some(Command::Build {
             paths,
             release,
             target,
             backend,
+            native_profile,
             emit,
             optimize,
             out,
@@ -549,7 +560,8 @@ fn mindc_main() {
                 paths,
                 *release,
                 target,
-                backend,
+                backend.as_deref(),
+                native_profile,
                 emit,
                 optimize,
                 out,
@@ -562,9 +574,11 @@ fn mindc_main() {
         Some(Command::Run {
             release,
             target,
+            backend,
             verbose,
             args,
         }) => {
+            require_mlir_route("run", backend.as_deref());
             run_run_command(*release, target.clone(), *verbose, args.clone());
             return;
         }
@@ -589,11 +603,13 @@ fn mindc_main() {
         }
         Some(Command::Bench {
             target,
+            backend,
             verbose,
             filter,
             iterations,
             json,
         }) => {
+            require_mlir_route("bench", backend.as_deref());
             let opts = BenchOptions {
                 target: target.clone(),
                 verbose: *verbose,
@@ -704,21 +720,18 @@ fn mindc_main() {
             json,
             diff,
         }) => {
-            process::exit(run_inspect(artifact, *json, diff.as_deref()));
+            process::exit(mic3_output::run_inspect(artifact, *json, diff.as_deref()));
         }
         None => {}
     }
-
     if cli.compile.version {
         print_version();
         return;
     }
-
     if cli.compile.stability {
         print_stability();
         return;
     }
-
     let input = match &cli.compile.input {
         Some(path) => path.clone(),
         None => {
@@ -726,12 +739,10 @@ fn mindc_main() {
             process::exit(1);
         }
     };
-
     if cli.compile.autodiff && cli.compile.func.is_none() {
         eprintln!("error[autodiff]: --autodiff requires --func <name>");
         process::exit(1);
     }
-
     let target = match parse_target(&cli.compile.target) {
         Ok(target) => target,
         Err(msg) => {
@@ -739,12 +750,10 @@ fn mindc_main() {
             process::exit(1);
         }
     };
-
     let diagnostic_format =
         DiagnosticFormat::parse(&cli.compile.diagnostic_format).unwrap_or(DiagnosticFormat::Human);
     let color_choice = resolve_color_choice(&cli.compile.color);
     let emitter = DiagnosticEmitter::new(diagnostic_format, color_choice);
-
     let source = match fs::read_to_string(&input) {
         Ok(src) => src,
         Err(err) => {
@@ -752,7 +761,6 @@ fn mindc_main() {
             process::exit(1);
         }
     };
-
     let opts = CompileOptions {
         func: cli.compile.func.clone(),
         enable_autodiff: cli.compile.autodiff,
@@ -760,7 +768,6 @@ fn mindc_main() {
         profile: libmind::cache::ProfileTag::parse(&cli.compile.profile),
         ..Default::default()
     };
-
     #[cfg(feature = "cross-module-imports")]
     let single_file_scope = match libmind::project::single_file_scope::discover_with_source(
         Path::new(&input),
@@ -770,9 +777,8 @@ fn mindc_main() {
         Ok(libmind::project::single_file_scope::Discovery::Project(scope)) => Some(scope),
         Ok(libmind::project::single_file_scope::Discovery::MissingProject(imports)) => {
             eprintln!(
-                "error[type-check][E2003]: local import(s) {} require an enclosing Mind.toml \
-                 project that declares the source set",
-                imports.join(", ")
+                "{}",
+                libmind::project::single_file_scope::missing_project(&imports)
             );
             process::exit(1);
         }
@@ -784,7 +790,6 @@ fn mindc_main() {
     };
     #[cfg(feature = "cross-module-imports")]
     let _single_file_guard = single_file_scope.as_ref().map(|scope| scope.install());
-
     let products = match compile_source_with_name(&source, Some(&input), &opts) {
         Ok(products) => products,
         Err(err) => {
@@ -793,11 +798,9 @@ fn mindc_main() {
             process::exit(1);
         }
     };
-
     if cli.compile.verify_only {
         return;
     }
-
     // Determinism-by-default gate (Option C): a program that calls a HARD
     // non-deterministic builtin (PRNG / wall-clock / stdin, e.g. `random()` /
     // `now()`) is REJECTED fail-loud when producing a runnable (`--emit-obj` /
@@ -863,7 +866,6 @@ fn mindc_main() {
             process::exit(1);
         }
     }
-
     let emit_ir = cli.compile.emit_ir
         || (!cli.compile.emit_grad_ir
             && !cli.compile.emit_mlir
@@ -873,15 +875,12 @@ fn mindc_main() {
     if emit_ir {
         println!("{}", products.ir);
     }
-
     if cli.compile.emit_mic {
         let mic = libmind::ir::compact::emit_mic(&products.ir);
         println!("{}", mic);
     }
-
     mic3_output::emit_mic3_if_requested(&cli.compile, &products);
     emit_evidence_if_requested(&cli.compile, &products, project_nondeterministic);
-
     #[cfg(feature = "autodiff")]
     if cli.compile.autodiff && cli.compile.emit_grad_ir {
         match products.grad.as_ref() {
@@ -892,15 +891,12 @@ fn mindc_main() {
             }
         }
     }
-
     #[cfg(not(feature = "autodiff"))]
     if cli.compile.autodiff && cli.compile.emit_grad_ir {
         eprintln!("gradient IR emission requires building with the 'autodiff' feature");
         process::exit(1);
     }
-
     emit_mlir_if_requested(&cli.compile, &products);
-
     // P1.1: a runnable artifact (`--emit-obj` / `--emit-shared`) must never be a
     // silent miscompile. If the source uses a construct outside the i64-scalar
     // ABI the backend lowers correctly, fail loud here with file:line + RC!=0.
@@ -913,20 +909,19 @@ fn mindc_main() {
         emitter.emit_all(&products.runnable_blockers, Some(&source));
         process::exit(1);
     }
-
     emit_obj_if_requested(&cli.compile, &products);
     #[cfg(feature = "cross-module-imports")]
     emit_shared_if_requested(&cli.compile, &products, &source, single_file_scope.as_ref());
     #[cfg(not(feature = "cross-module-imports"))]
     emit_shared_if_requested(&cli.compile, &products, &source);
 }
-
 #[allow(clippy::too_many_arguments)]
 fn run_mindc_build(
     paths: &[String],
     release: bool,
     target: &Option<String>,
-    backend: &str,
+    backend: Option<&str>,
+    native_profile: &str,
     emit: &Option<String>,
     optimize: &Option<String>,
     out: &Option<String>,
@@ -934,68 +929,44 @@ fn run_mindc_build(
     package: Option<&str>,
     no_cache: bool,
 ) {
-    // Code-generation backend dispatch (RI-D seam). The default `mlir` path is
-    // left fully inert: it falls through to the existing pipeline unchanged.
-    // `native` (RI-D Option A) hands the build to the pure-MIND x86-64 native-ELF
-    // compiler (zero MLIR/LLVM/clang), fail-closed — never a silent MLIR fallback.
-    match Backend::parse(backend) {
-        Ok(Backend::Mlir) => {}
-        Ok(Backend::Native) => {
-            // RI-D Option A: hand the whole build to the pure-MIND native-ELF
-            // compiler (zero MLIR/LLVM/clang). Returns after writing the artifact.
-            libmind::build::native_bridge::run_native_backend_bridge(paths, out, emit);
-            return;
-        }
-        Err(msg) => {
-            eprintln!("error[build]: {}", msg);
+    // One route: the flag, else `[build] backend`, else native (a disagreement is
+    // refused). `native` is fail-closed — never a silent MLIR fallback.
+    let route = native_bridge::select_route(paths, backend);
+    let workspace = paths.is_empty().then(detect_workspace_root).flatten();
+    let (eff_emit, eff_optimize) = (parse_emit_opt(emit), parse_optimize_opt(release, optimize));
+    match route {
+        Backend::Mlir if native_profile != "default" => {
+            eprintln!(
+                "error[build]: --native-profile {native_profile} requires the native backend"
+            );
             process::exit(2);
         }
-    }
-
-    // Workspace detection: if we are at a workspace root and no explicit
-    // source paths are given, delegate to the workspace build path.
-    if paths.is_empty() {
-        if let Some(root) = detect_workspace_root() {
-            run_workspace_build(
-                &root, release, target, emit, optimize, out, verbose, package,
-            );
+        Backend::Mlir => {}
+        Backend::Native => {
+            native_bridge::run_native_build(&native_bridge::NativeRequest {
+                paths,
+                out: out.as_deref(),
+                emit: emit.as_deref(),
+                target: target.as_deref(),
+                package,
+                workspace_root: workspace.is_some(),
+                optimize: eff_optimize,
+                profile: native_profile,
+            });
             return;
         }
     }
-
+    // At a workspace root with no explicit source paths: the workspace build.
+    if let Some(root) = workspace {
+        run_workspace_build(
+            &root, release, target, emit, optimize, out, verbose, package,
+        );
+        return;
+    }
     // --target is passed RAW to the build layer, which resolves it against the
     // manifest (`[targets.<name>]` block name wins, then backend class, else a
     // hard error). Classifying here would reject a declared block name (e.g.
     // `windows`) before the manifest is even loaded.
-
-    // Parse --emit override.
-    let eff_emit: Option<EmitKind> = match emit {
-        None => None,
-        Some(e) => match EmitKind::parse(e) {
-            Ok(ek) => Some(ek),
-            Err(msg) => {
-                eprintln!("error[build]: {}", msg);
-                process::exit(2);
-            }
-        },
-    };
-
-    // --release is shorthand for --optimize=release.
-    let eff_optimize: Option<OptimizeLevel> = if release {
-        Some(OptimizeLevel::Release)
-    } else {
-        match optimize {
-            None => None,
-            Some(o) => match OptimizeLevel::parse(o) {
-                Ok(ol) => Some(ol),
-                Err(msg) => {
-                    eprintln!("error[build]: {}", msg);
-                    process::exit(2);
-                }
-            },
-        }
-    };
-
     let opts = BuildOpts {
         paths: paths.iter().map(std::path::PathBuf::from).collect(),
         target: target.clone(),
@@ -1005,7 +976,6 @@ fn run_mindc_build(
         verbose,
         no_cache,
     };
-
     match run_build(&opts) {
         Ok(output) => {
             println!(
@@ -1015,6 +985,10 @@ fn run_mindc_build(
                 output.artifact_path.display()
             );
             println!("   Artifact: {} bytes", output.byte_count);
+            #[cfg(feature = "mlir-build")]
+            if let Ok(tools) = libmind::eval::mlir_build::resolve_tools() {
+                println!("  Toolchain: {}", toolchain_line(&tools));
+            }
         }
         Err(err) => {
             // `render()` owns the prefix so a coded refusal keeps its code on
@@ -1024,7 +998,6 @@ fn run_mindc_build(
         }
     }
 }
-
 fn run_mindc_test(
     paths: &[String],
     filter: Option<&str>,
@@ -1041,13 +1014,11 @@ fn run_mindc_test(
             return;
         }
     }
-
     let reporter_kind = if reporter == "json" {
         TestReporterKind::Json
     } else {
         TestReporterKind::Human
     };
-
     let opts = MindTestOptions {
         paths: paths.iter().map(std::path::PathBuf::from).collect(),
         filter: filter.unwrap_or("").to_string(),
@@ -1056,7 +1027,6 @@ fn run_mindc_test(
         list,
         reporter: reporter_kind,
     };
-
     match run_tests(&opts) {
         Ok(summary) => {
             // Phase 17.8: fail-loud on a ZERO-test run. `mindc test` on a suite
@@ -1084,18 +1054,16 @@ fn run_mindc_test(
         }
     }
 }
-
 // ---------------------------------------------------------------------------
 // RFC 0008 Phase C — workspace dispatch helpers
 // ---------------------------------------------------------------------------
-
 /// Detect whether the current working directory (or a parent) is a workspace
 /// root (has a `Mind.toml` with a `[workspace]` block).
 ///
 /// Returns `Some(root)` when a workspace root is found, `None` otherwise.
 fn detect_workspace_root() -> Option<std::path::PathBuf> {
-    use libmind::project::find_project_root;
-    let root = find_project_root().ok()?;
+    use libmind::project::governing_project_root;
+    let root = governing_project_root().ok()?;
     let text = std::fs::read_to_string(root.join("Mind.toml")).ok()?;
     if text.contains("[workspace]") {
         Some(root)
@@ -1103,7 +1071,6 @@ fn detect_workspace_root() -> Option<std::path::PathBuf> {
         None
     }
 }
-
 /// Build all workspace members (or a filtered subset) in topological order.
 #[allow(clippy::too_many_arguments)]
 fn run_workspace_build(
@@ -1123,7 +1090,6 @@ fn run_workspace_build(
             process::exit(e.exit_code());
         }
     };
-
     let sorted = match toposort_members(&members) {
         Ok(s) => s,
         Err(e) => {
@@ -1131,19 +1097,16 @@ fn run_workspace_build(
             process::exit(e.exit_code());
         }
     };
-
     let ws_opts = WorkspaceOpts {
         package_filter: package.map(|s| s.to_string()),
     };
     let selected = ws_opts.filter_members(&members, &sorted);
-
     if selected.is_empty() {
         if let Some(pkg) = package {
             eprintln!("error[workspace]: package '{pkg}' not found in workspace");
             process::exit(2);
         }
     }
-
     let mut any_failed = false;
     for member in &selected {
         if verbose {
@@ -1158,7 +1121,6 @@ fn run_workspace_build(
             None // each member uses its own default output path
         };
         let member_out = std::env::current_dir().ok().and(eff_out);
-
         // Run the Phase A build for this member's root.
         let mut build_opts = BuildOpts {
             paths: member_paths.iter().map(std::path::PathBuf::from).collect(),
@@ -1172,14 +1134,12 @@ fn run_workspace_build(
         // Override paths to use the member root's entry point resolution.
         // The member root is passed via a synthetic path pointing to the member.
         build_opts.paths = vec![member.root.clone()];
-
         // Temporarily change working directory to the member root so that
         // find_project_root() inside run_build picks up the member's Mind.toml.
         let saved_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.to_path_buf());
         if std::env::set_current_dir(&member.root).is_ok() {
             build_opts.paths = vec![];
         }
-
         match run_build(&build_opts) {
             Ok(output) => {
                 println!(
@@ -1202,16 +1162,13 @@ fn run_workspace_build(
                 any_failed = true;
             }
         }
-
         // Restore working directory.
         let _ = std::env::set_current_dir(&saved_dir);
     }
-
     if any_failed {
         process::exit(1);
     }
 }
-
 fn parse_emit_opt(emit: &Option<String>) -> Option<EmitKind> {
     match emit {
         None => None,
@@ -1224,7 +1181,6 @@ fn parse_emit_opt(emit: &Option<String>) -> Option<EmitKind> {
         },
     }
 }
-
 fn parse_optimize_opt(release: bool, optimize: &Option<String>) -> Option<OptimizeLevel> {
     if release {
         Some(OptimizeLevel::Release)
@@ -1241,7 +1197,6 @@ fn parse_optimize_opt(release: bool, optimize: &Option<String>) -> Option<Optimi
         }
     }
 }
-
 /// Run tests for all workspace members (or a filtered subset).
 fn run_workspace_test(
     workspace_root: &std::path::Path,
@@ -1258,7 +1213,6 @@ fn run_workspace_test(
             process::exit(e.exit_code());
         }
     };
-
     let sorted = match toposort_members(&members) {
         Ok(s) => s,
         Err(e) => {
@@ -1266,28 +1220,23 @@ fn run_workspace_test(
             process::exit(e.exit_code());
         }
     };
-
     let ws_opts = WorkspaceOpts {
         package_filter: package.map(|s| s.to_string()),
     };
     let selected = ws_opts.filter_members(&members, &sorted);
-
     if selected.is_empty() {
         if let Some(pkg) = package {
             eprintln!("error[workspace]: package '{pkg}' not found in workspace");
             process::exit(2);
         }
     }
-
     let reporter_kind = if reporter == "json" {
         TestReporterKind::Json
     } else {
         TestReporterKind::Human
     };
-
     let mut any_failed = false;
     let saved_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.to_path_buf());
-
     for member in &selected {
         if std::env::set_current_dir(&member.root).is_err() {
             eprintln!(
@@ -1297,7 +1246,6 @@ fn run_workspace_test(
             any_failed = true;
             continue;
         }
-
         let opts = MindTestOptions {
             paths: vec![],
             filter: filter.unwrap_or("").to_string(),
@@ -1306,7 +1254,6 @@ fn run_workspace_test(
             list,
             reporter: reporter_kind.clone(),
         };
-
         match run_tests(&opts) {
             Ok(summary) => {
                 if !summary.all_passed() {
@@ -1327,6 +1274,13 @@ fn run_workspace_test(
     }
 }
 
+/// `run` / `bench` have no native implementation in this release: a native
+/// selection (flag, else `[build] backend`, else the default) is refused by name.
+fn require_mlir_route(command: &str, flag: Option<&str>) {
+    if native_bridge::select_route(&[], flag) == Backend::Native {
+        native_bridge::refuse_native(&native_command_refusal(command));
+    }
+}
 fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: Vec<String>) {
     let opts = BuildOptions {
         release,
@@ -1351,8 +1305,8 @@ fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: V
 // ---------------------------------------------------------------------------
 
 fn run_mindc_lock(check: bool, update_pkg: Option<&str>) {
-    use libmind::project::{find_project_root, load_manifest};
-    let root = match find_project_root() {
+    use libmind::project::{governing_project_root, load_manifest};
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[lock]: cannot find Mind.toml: {e}");
@@ -1380,8 +1334,8 @@ fn run_mindc_lock(check: bool, update_pkg: Option<&str>) {
 }
 
 fn run_mindc_fetch(update: bool) {
-    use libmind::project::find_project_root;
-    let root = match find_project_root() {
+    use libmind::project::governing_project_root;
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[fetch]: cannot find Mind.toml: {e}");
@@ -1400,9 +1354,9 @@ fn run_mindc_fetch(update: bool) {
 
 fn run_mindc_clean(cache: bool, all: bool) {
     use libmind::build::cache::clean_all_caches;
-    use libmind::project::find_project_root;
+    use libmind::project::governing_project_root;
 
-    let root = match find_project_root() {
+    let root = match governing_project_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error[clean]: cannot find Mind.toml: {e}");
@@ -2067,189 +2021,6 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
-}
-
-/// `mindc inspect <artifact> [--diff OTHER]` — decode + pretty-print a mic@3
-/// artifact and, with `--diff`, structurally compare two. The consumer/debug
-/// counterpart of `--emit-mic3`: it surfaces MIND's deterministic canonical IR
-/// and its tamper-evident evidence chain, and — via `--diff` — pinpoints WHERE
-/// two artifacts diverge, exactly what the self-host byte-identity gates need
-/// when a reseed or loop stops being byte-identical. Not a Rust `objdump` clone:
-/// the value is the canonical-IR + evidence surface only MIND's wedge exposes.
-///
-/// Returns the process exit code: 0 = decoded (and, with `--diff`, identical);
-/// 1 = artifacts differ (`--diff`) or a malformed artifact; 2 = I/O error.
-fn run_inspect(artifact: &str, json: bool, diff: Option<&str>) -> i32 {
-    use libmind::ir::compact::{Determinism, mic3_evidence_report, parse_mic3_envelope};
-
-    let bytes = match fs::read(artifact) {
-        Ok(b) => b,
-        Err(err) => {
-            eprintln!("error[inspect]: cannot read artifact {artifact}: {err}");
-            return 2;
-        }
-    };
-
-    // --diff MODE: mic@3 is canonical (RFC 0021), so byte-identity IS structural
-    // identity. When the bytes differ, locate the first diverging byte and parse
-    // each side to report parse status + instruction-count delta (a parse failure
-    // is itself a reported difference, never a crash).
-    if let Some(other) = diff {
-        let other_bytes = match fs::read(other) {
-            Ok(b) => b,
-            Err(err) => {
-                eprintln!("error[inspect]: cannot read artifact {other}: {err}");
-                return 2;
-            }
-        };
-        if bytes == other_bytes {
-            // Canonical mic@3: byte-identity IS structural identity — but the
-            // contract is "exit 0 = decoded", so two byte-identical GARBAGE files
-            // (e.g. both zero-length from an aborted build, or a self-diff of a
-            // corrupt artifact) must still fail closed rather than report a
-            // confident "identical: YES".
-            if let Err(err) = parse_mic3_envelope(&bytes) {
-                eprintln!("error[inspect]: {artifact} did not parse as mic@3: {err:?}");
-                if json {
-                    println!(
-                        "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":true,\"decoded\":false,\"bytes\":{}}}",
-                        json_escape(artifact),
-                        json_escape(other),
-                        bytes.len()
-                    );
-                }
-                return 1;
-            }
-            if json {
-                println!(
-                    "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":true,\"decoded\":true,\"bytes\":{}}}",
-                    json_escape(artifact),
-                    json_escape(other),
-                    bytes.len()
-                );
-            } else {
-                println!("identical:  YES ({} bytes)", bytes.len());
-            }
-            return 0;
-        }
-        let common = bytes.len().min(other_bytes.len());
-        let first_diff = (0..common)
-            .find(|&i| bytes[i] != other_bytes[i])
-            .unwrap_or(common);
-        let a_instrs = parse_mic3_envelope(&bytes)
-            .map(|m| m.instrs.len() as i64)
-            .unwrap_or(-1);
-        let b_instrs = parse_mic3_envelope(&other_bytes)
-            .map(|m| m.instrs.len() as i64)
-            .unwrap_or(-1);
-        if json {
-            println!(
-                "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":false,\"a_bytes\":{},\"b_bytes\":{},\"first_diff_offset\":{},\"a_instrs\":{},\"b_instrs\":{}}}",
-                json_escape(artifact),
-                json_escape(other),
-                bytes.len(),
-                other_bytes.len(),
-                first_diff,
-                a_instrs,
-                b_instrs
-            );
-        } else {
-            let fmt_side = |n: i64| {
-                if n < 0 {
-                    "PARSE FAIL".to_string()
-                } else {
-                    format!("{n} instrs")
-                }
-            };
-            println!("identical:        NO");
-            println!(
-                "a:                {artifact} ({} bytes, {})",
-                bytes.len(),
-                fmt_side(a_instrs)
-            );
-            println!(
-                "b:                {other} ({} bytes, {})",
-                other_bytes.len(),
-                fmt_side(b_instrs)
-            );
-            println!("first_diff_byte:  {first_diff}");
-            let lo = first_diff.saturating_sub(4);
-            let a_hi = (first_diff + 4).min(bytes.len());
-            let b_hi = (first_diff + 4).min(other_bytes.len());
-            println!("  a[{lo}..]: {}", hex_encode(&bytes[lo..a_hi]));
-            println!("  b[{lo}..]: {}", hex_encode(&other_bytes[lo..b_hi]));
-        }
-        return 1;
-    }
-
-    // INSPECT MODE: decode + pretty-print one artifact.
-    let module = match parse_mic3_envelope(&bytes) {
-        Ok(m) => m,
-        Err(err) => {
-            let reason = format!("{err:?}");
-            eprintln!("error[inspect]: {artifact} did not parse as mic@3: {reason}");
-            // Mirror run_verify: a scripted --json consumer reads stdout, so emit a
-            // well-formed error object there too (not just stderr).
-            if json {
-                println!(
-                    "{{\"artifact\":\"{}\",\"error\":\"{}\"}}",
-                    json_escape(artifact),
-                    json_escape(&reason)
-                );
-            }
-            return 1;
-        }
-    };
-    let evidence = mic3_evidence_report(&bytes).ok();
-    let det_str = |d: &Determinism| {
-        if matches!(d, Determinism::Deterministic) {
-            "deterministic"
-        } else {
-            "nondeterministic"
-        }
-    };
-
-    if json {
-        let (attested, trace_hash, determinism, fp_mode) = match &evidence {
-            Some(r) => (
-                true,
-                hex_encode(&r.trace_hash),
-                det_str(&r.determinism),
-                r.fp_mode.as_str(),
-            ),
-            None => (false, String::new(), "", ""),
-        };
-        println!(
-            "{{\"artifact\":\"{}\",\"bytes\":{},\"instrs\":{},\"next_id\":{},\"exports\":{},\"attested\":{},\"trace_hash\":\"{}\",\"determinism\":\"{}\",\"fp_mode\":\"{}\"}}",
-            json_escape(artifact),
-            bytes.len(),
-            module.instrs.len(),
-            module.next_id,
-            module.exports.len(),
-            attested,
-            trace_hash,
-            determinism,
-            fp_mode
-        );
-    } else {
-        println!("artifact:         {artifact}");
-        println!("bytes:            {}", bytes.len());
-        println!("instrs:           {}", module.instrs.len());
-        println!("ssa_next_id:      {}", module.next_id);
-        println!("exports:          {}", module.exports.len());
-        match &evidence {
-            Some(r) => {
-                println!("attested:         YES");
-                println!("trace_hash:       {}", hex_encode(&r.trace_hash));
-                println!("determinism:      {}", det_str(&r.determinism));
-                println!("fp_mode:          {}", r.fp_mode.as_str());
-            }
-            None => println!("attested:         no (no evidence_chain MAP)"),
-        }
-        println!("--- canonical IR ---");
-        println!("{module}");
-    }
-    0
 }
 
 /// `mindc verify <artifact>` — consumer-side static + evidence verification.
@@ -3047,7 +2818,7 @@ fn emit_shared_if_requested(
         Some(path) => path,
         None => return,
     };
-
+    let _unit = libmind::project::LinkedUnitScope::open();
     let mlir = match lower_to_mlir_compat(products) {
         Ok(mlir) => mlir,
         Err(err) => {
@@ -3166,12 +2937,24 @@ fn emit_shared_if_requested(
     match linked {
         Ok(_) => {
             eprintln!("Wrote shared library: {}", shared_path);
+            eprintln!("Toolchain: {}", toolchain_line(&tools));
         }
         Err(err) => {
             eprintln!("error[build]: {err}");
             process::exit(1);
         }
     }
+}
+
+/// The tools an MLIR build ran with — resolved path and LLVM major of each —
+/// so the artifact's toolchain is on record next to it.
+#[cfg(feature = "mlir-build")]
+fn toolchain_line(tools: &libmind::eval::mlir_build::BuildTools) -> String {
+    libmind::diagnostics::toolchain::describe_toolchain(&[
+        ("mlir-opt", &tools.mlir_opt),
+        ("mlir-translate", &tools.mlir_translate),
+        ("clang", &tools.clang),
+    ])
 }
 
 #[cfg(not(feature = "mlir-build"))]
