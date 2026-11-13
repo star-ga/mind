@@ -583,3 +583,66 @@ fn a_declared_source_with_another_extension_is_checked() {
         "the declared source was not reported: {stdout}{stderr}"
     );
 }
+
+#[test]
+fn project_check_follows_the_declared_source_list() {
+    // The list holds a broken file that no import reaches and that is not in
+    // the entry's directory: only the list puts it in the set.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "lib/extra.mind"]);
+    fs::create_dir(dir.path().join("lib")).expect("mkdir lib");
+    fs::write(dir.path().join("lib/extra.mind"), broken("extra_value")).expect("write extra");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a declared source was not checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("extra.mind") && stdout.contains("missing_name"),
+        "the declared source was not reported: {stdout}{stderr}"
+    );
+
+    // The list leaves out a broken file in the entry's directory. Without a
+    // list that file is a member; with the list it is not, as in the build.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind"]);
+    fs::write(dir.path().join("src/other.mind"), broken("other_value")).expect("write other");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "a file the declared list leaves out was checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stderr.contains("note[check]: 1 .mind file(s) below"),
+        "no notice of the file the list leaves out: {stderr}"
+    );
+    // Control: the file is broken, and its directory as an operand reports it.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["src"]);
+    assert_eq!(code, Some(1), "{stdout}{stderr}");
+    assert!(stdout.contains("other.mind"), "{stdout}{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_note_counts_a_member_once_under_a_directory_link() {
+    // `src/alias` is a link to `src/real`: the walk finds the member a
+    // second time under the link. It is one file, and it is in the set.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "src/real/m.mind"]);
+    fs::create_dir(dir.path().join("src/real")).expect("mkdir real");
+    let member = "fn m_value() -> i64 {\n    1\n}\n";
+    fs::write(dir.path().join("src/real/m.mind"), member).expect("write member");
+    let other = "fn other_value() -> i64 {\n    2\n}\n";
+    fs::write(dir.path().join("src/other.mind"), other).expect("write other");
+    std::os::unix::fs::symlink("real", dir.path().join("src/alias")).expect("link");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(code, Some(0), "{stdout}{stderr}");
+    // Only `src/other.mind` is outside the set.
+    assert!(
+        stderr.contains("note[check]: 1 .mind file(s) below"),
+        "the member under the link was counted as outside the set: {stderr}"
+    );
+}
