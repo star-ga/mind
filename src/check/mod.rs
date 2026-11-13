@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
 use crate::project::{
-    MindcraftConfig, ProjectManifest, RuleSeverity, find_project_root, load_manifest,
+    MindcraftConfig, ProjectManifest, RuleSeverity, governing_project_root, load_manifest,
 };
 use crate::type_checker::check_module_types_in_file;
 
@@ -526,7 +526,7 @@ fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
 /// The project that governs the current directory (the root `mindc build`
 /// takes there) and its manifest, read once for the config and the file set.
 fn load_check_project() -> Option<(PathBuf, ProjectManifest)> {
-    let root = find_project_root().ok()?;
+    let root = governing_project_root().ok()?;
     let manifest = load_manifest(&root).ok()?;
     Some((root, manifest))
 }

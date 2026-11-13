@@ -41,6 +41,19 @@ where
     }
 }
 
+/// `find_project_root` by the rule of the build lock (a temporary manifest is
+/// never a project, `build_lock::governing_root`), for a command that reads the
+/// project of the current directory without holding a build lock. Never call
+/// it under a held lock: an in-doubt manifest takes that lock, and a build's
+/// own temporary manifest is its project (the launcher fallback takes the locked root).
+pub fn governing_project_root() -> Result<PathBuf> {
+    // The search answers a root or an error, never `None`.
+    let root = super::build_lock::governing_root(|| super::find_project_root().map(Some))?;
+    root.ok_or_else(|| {
+        anyhow::anyhow!("Could not find Mind.toml in current directory or any parent")
+    })
+}
+
 /// Resolve the governing project root for an explicit source within a bounded
 /// repository or a co-located scratch manifest.
 pub fn find_project_root_for_file(entry_dir: &Path) -> Option<PathBuf> {

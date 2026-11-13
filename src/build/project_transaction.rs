@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub(super) use crate::project::build_lock::ManifestEdit;
 use crate::project::build_lock::{
-    ProjectBuildLock, lock_cwd_project, remove_leftover, temporary_manifest,
+    ProjectBuildLock, governing_root, lock_cwd_project, remove_leftover, temporary_manifest,
 };
 
 /// What the project-transaction boundary hands the rest of a build.
@@ -59,6 +59,15 @@ pub(super) fn canonical_explicit_entry(requested: &Path, cwd: &Path) -> Result<(
     Ok((entry_dir, entry_path))
 }
 
+/// The root an explicit build hands `open_explicit`: the bounded search from
+/// `entry_dir`, made before any lock and by the rule of the lock
+/// (`build_lock::governing_root`), so a concurrent standalone build's
+/// temporary manifest is waited out and searched past, never read.
+pub(super) fn probe_root(entry_dir: &Path) -> Result<Option<PathBuf>, BuildError> {
+    governing_root(|| find_project_root_for_file_checked(entry_dir))
+        .map_err(|error| BuildError::Invalid(format!("cannot discover project root: {error:#}")))
+}
+
 /// Open the build transaction for an explicit `mindc build <file>`.
 ///
 /// `probed_root` is `find_project_root_for_file(entry_dir)` evaluated before any
@@ -97,10 +106,7 @@ pub(super) fn open_explicit(
                 remove_leftover(&manifest_path).map_err(|e| BuildError::failed(e.to_string()))?;
             if removed || (root == *entry_dir && !manifest_path.exists()) {
                 drop(lock);
-                let reprobed = find_project_root_for_file_checked(entry_dir).map_err(|e| {
-                    BuildError::Invalid(format!("cannot discover project root: {e:#}"))
-                })?;
-                return open_explicit(reprobed, entry_dir, entry_path);
+                return open_explicit(probe_root(entry_dir)?, entry_dir, entry_path);
             }
             let manifest = load_manifest(&root)
                 .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;

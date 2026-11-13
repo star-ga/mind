@@ -146,3 +146,59 @@ fn metadata_scope_is_broader_than_the_linked_body_closure() {
         ["crate"]
     );
 }
+
+/// A temporary manifest is never a project for import discovery either: a
+/// killed build's leftover in the entry's directory is removed, and a live
+/// standalone build's (its lock held, then the file removed and the lock
+/// released) is waited out. Either way no project governs the entry, so its
+/// local import is refused (E2042) as in a directory that never had one.
+/// Read as a project, the entry's imports are scoped by another build's
+/// manifest.
+#[test]
+fn a_temporary_manifest_never_scopes_an_entry() {
+    use super::super::build_lock::{ProjectBuildLock, temporary_manifest};
+    use std::sync::mpsc;
+    use std::time::Duration;
+    for live in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::write(
+            root.join("helper.mind"),
+            "export { seven }\nfn seven() -> i64 { return 7; }\n",
+        )
+        .unwrap();
+        let source = "import helper;\n\nfn main() -> i64 {\n    return helper::seven();\n}\n";
+        let entry = root.join("t.mind");
+        fs::write(&entry, source).unwrap();
+        let held = live.then(|| ProjectBuildLock::acquire(&root).unwrap());
+        let manifest = root.join("Mind.toml");
+        fs::write(&manifest, temporary_manifest("t", "t.mind")).unwrap();
+        // Positive control: the planted text loads, so only the rule keeps it
+        // from being a project.
+        assert!(load_manifest(&root).is_ok());
+        let (tx, rx) = mpsc::channel();
+        let search = std::thread::spawn(move || {
+            let found = match discover_with_source(&entry, DEFAULT_TARGET_BLOCK, source) {
+                Ok(Discovery::MissingProject(imports)) => Ok(imports),
+                Ok(Discovery::Project(_)) => Err("a project scopes the entry".to_string()),
+                Ok(Discovery::SingleTranslationUnit) => Err("a single unit".to_string()),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            tx.send(found).unwrap();
+        });
+        let early = rx.recv_timeout(Duration::from_millis(300)).ok();
+        if let Some(held) = held {
+            assert_eq!(early, None, "discovery did not wait on the live build");
+            fs::remove_file(&manifest).unwrap();
+            drop(held);
+        }
+        let found = early.unwrap_or_else(|| rx.recv_timeout(Duration::from_secs(10)).unwrap());
+        search.join().unwrap();
+        assert_eq!(found, Ok(vec!["helper".to_string()]), "live {live}");
+        assert!(
+            !manifest.exists(),
+            "live {live}: the manifest is still there"
+        );
+    }
+}

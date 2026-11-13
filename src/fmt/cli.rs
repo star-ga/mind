@@ -23,7 +23,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::fmt::format_source;
-use crate::project::{MindcraftFormatConfig, find_project_root, load_manifest};
+use crate::project::{MindcraftFormatConfig, governing_project_root, load_manifest};
 
 /// Entry point called from `mindc.rs`.
 ///
@@ -98,7 +98,7 @@ pub fn run_fmt(paths: &[String], check: bool, diff: bool, stdin: bool, fix: bool
 
 fn load_fmt_config() -> MindcraftFormatConfig {
     // Walk upward from CWD for Mind.toml; fall back to defaults silently.
-    if let Ok(root) = find_project_root() {
+    if let Ok(root) = governing_project_root() {
         if let Ok(manifest) = load_manifest(&root) {
             return manifest.mindcraft.format;
         }
