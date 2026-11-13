@@ -428,3 +428,46 @@ pub(super) fn compatible_source(target: &HandleKind, value: &Node, env: &Env) ->
             && !value_contains_borrow(value, env)
             && matches!(value, Node::Lit(Literal::Ident(_), _) | Node::Call { .. }))
 }
+
+/// Whether executing `node` necessarily leaves the function through an
+/// explicit return. This is deliberately conservative for loops: their bodies
+/// may execute zero times, so a return inside one does not prove the function's
+/// declared handle result.
+pub(super) fn stmt_guarantees_return(node: &Node) -> bool {
+    match node {
+        Node::Return { .. } => true,
+        Node::Block { stmts, .. } => stmts.iter().any(stmt_guarantees_return),
+        Node::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            then_branch.iter().any(stmt_guarantees_return)
+                && else_branch.iter().any(stmt_guarantees_return)
+        }
+        _ => false,
+    }
+}
+
+/// Prove that every fallthrough path produces the declared Vec-layout result.
+/// Explicit returns are checked individually by `check_expr`; this closes the
+/// separate hole where a declaration such as `-> &[i64]` authorized callers
+/// even though its body fell through with a scalar or no value.
+pub(super) fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env) -> bool {
+    if stmts.iter().any(stmt_guarantees_return) {
+        return true;
+    }
+    match stmts.last() {
+        Some(Node::Block { stmts, .. }) => result_paths_proven(stmts, target, env),
+        Some(Node::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        }) => {
+            result_paths_proven(then_branch, target, env)
+                && result_paths_proven(else_branch, target, env)
+        }
+        Some(value) => compatible_source(target, value, env),
+        None => false,
+    }
+}

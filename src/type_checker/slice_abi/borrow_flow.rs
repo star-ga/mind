@@ -8,6 +8,7 @@ use crate::ast::{FnDefData, Node, Pattern, Span, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
 use super::aliases::type_needs_collection_flow;
+use super::provenance::result_paths_proven;
 use super::{
     Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, canonical,
     check_stmts, compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
@@ -526,15 +527,23 @@ pub(super) fn reject_borrowed_tail(
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
+    // Key on what the tail yields: a loop lowers to a unit placeholder and a
+    // store to its store call, so only the stored value can carry a handle out.
     match stmts.last() {
-        Some(Node::Return { .. }) | None => {}
+        Some(Node::Return { .. } | Node::For { .. } | Node::ForEach { .. }) | None => {}
+        #[cfg(feature = "std-surface")]
+        Some(Node::While { .. }) => {}
+        Some(Node::IndexAssign { value, .. } | Node::FieldAssign { value, .. }) => {
+            reject_borrowed_tail(std::slice::from_ref(value.as_ref()), env, src, file, errs)
+        }
         Some(Node::Block { stmts, .. }) => reject_borrowed_tail(stmts, env, src, file, errs),
         Some(Node::If {
             then_branch,
-            else_branch: Some(else_branch),
+            else_branch,
             ..
         }) => {
             reject_borrowed_tail(then_branch, env, src, file, errs);
+            let else_branch = else_branch.as_deref().unwrap_or_default();
             reject_borrowed_tail(else_branch, env, src, file, errs);
         }
         Some(value) if value_contains_borrow(value, env) => report(
@@ -571,49 +580,6 @@ pub(crate) fn check_struct_fields(
                 SLICE_CAPABILITY_CODE,
             );
         }
-    }
-}
-
-/// Whether executing `node` necessarily leaves the function through an
-/// explicit return. This is deliberately conservative for loops: their bodies
-/// may execute zero times, so a return inside one does not prove the function's
-/// declared handle result.
-pub(super) fn stmt_guarantees_return(node: &Node) -> bool {
-    match node {
-        Node::Return { .. } => true,
-        Node::Block { stmts, .. } => stmts.iter().any(stmt_guarantees_return),
-        Node::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        } => {
-            then_branch.iter().any(stmt_guarantees_return)
-                && else_branch.iter().any(stmt_guarantees_return)
-        }
-        _ => false,
-    }
-}
-
-/// Prove that every fallthrough path produces the declared Vec-layout result.
-/// Explicit returns are checked individually by `check_expr`; this closes the
-/// separate hole where a declaration such as `-> &[i64]` authorized callers
-/// even though its body fell through with a scalar or no value.
-fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env) -> bool {
-    if stmts.iter().any(stmt_guarantees_return) {
-        return true;
-    }
-    match stmts.last() {
-        Some(Node::Block { stmts, .. }) => result_paths_proven(stmts, target, env),
-        Some(Node::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        }) => {
-            result_paths_proven(then_branch, target, env)
-                && result_paths_proven(else_branch, target, env)
-        }
-        Some(value) => compatible_source(target, value, env),
-        None => false,
     }
 }
 

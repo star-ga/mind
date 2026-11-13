@@ -276,21 +276,16 @@ impl Registry {
         self.type_keys.values().any(|key| key == name)
     }
 
+    /// One owner rule for every qualified type: the sources-list owner
+    /// (`crate.src.defs`) resolves here exactly as it does in `type_source_in`.
     pub(crate) fn source_type_is_visible(
         &self,
         spelling: &str,
         imports: &[String],
         current: Option<&str>,
     ) -> bool {
-        let Some((qualifier, type_name)) = spelling.rsplit_once('.') else {
-            return false;
-        };
-        let Some(owner) = self.owner_for(qualifier, imports, current) else {
-            return false;
-        };
-        let source_key = format!("{owner}.{type_name}");
-        self.declared_types.contains(&source_key)
-            && (current == Some(owner.as_str()) || self.exported_types.contains(&source_key))
+        self.type_source_in(spelling, imports, current)
+            .is_some_and(|source| self.declared_types.contains(&source))
     }
 
     /// `owner.Name` for a visible qualified type spelling `qualifier.Name`,
@@ -410,17 +405,20 @@ impl Registry {
 #[cfg(feature = "cross-module-imports")]
 pub(crate) fn module_imports(module: &crate::ast::Module) -> Vec<String> {
     let owner = current_module_path();
-    module
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            crate::ast::Node::Import { path, .. } => {
+    let mut imports = Vec::new();
+    let mut pending: Vec<&crate::ast::Node> = module.items.iter().rev().collect();
+    while let Some(item) = pending.pop() {
+        match item {
+            // `module name { use x ... }` is a transparent Block: its imports are the file's.
+            crate::ast::Node::Block { stmts, .. } => pending.extend(stmts.iter().rev()),
+            crate::ast::Node::Import { path, .. } => imports.push(
                 crate::project::active_module_table::resolve_import(owner.as_deref(), path)
-                    .or_else(|| Some(path.join(".")))
-            }
-            _ => None,
-        })
-        .collect()
+                    .unwrap_or_else(|| path.join(".")),
+            ),
+            _ => {}
+        }
+    }
+    imports
 }
 
 #[cfg(feature = "cross-module-imports")]

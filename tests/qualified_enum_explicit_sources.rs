@@ -133,3 +133,94 @@ fn the_qualified_head_resolves_in_the_same_layout() {
     let (ok, text) = check(root);
     assert!(ok, "qualified a.T / b.T must resolve:\n{text}");
 }
+
+/// `mindc check --no-fmt <files>` from `root`, as a user checks sibling files.
+fn check_files(root: &Path, files: &[(&str, &str)]) -> (bool, String) {
+    for (name, src) in files {
+        fs::write(root.join(name), src).unwrap();
+    }
+    let mut args = vec!["check", "--no-fmt"];
+    args.extend(files.iter().map(|(name, _)| *name));
+    let out = Command::new(mindc())
+        .current_dir(root)
+        .args(&args)
+        .output()
+        .expect("run mindc check");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+const FIXED_POINT: &str = "module fixed_point {\n    type Q16_16 = i32\n    type Hidden = i32\n    fn q16_add(a: Q16_16, b: Q16_16) -> Q16_16 {\n        a + b\n    }\n    export type Q16_16\n    export fn q16_add\n}\n";
+
+const CONFIG: &str = "module config {\n    enum NormMode {\n        GroupNorm = 0,\n        Clamp = 1,\n    }\n    enum Hidden {\n        A = 0,\n    }\n    export enum NormMode\n}\n";
+
+fn alias_user(ty: &str) -> String {
+    format!(
+        "module user {{\n    use fixed_point\n    fn twice(x: fixed_point.{ty}) -> fixed_point.{ty} {{\n        fixed_point.q16_add(x, x)\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn an_exported_alias_of_a_module_block_resolves_as_a_qualified_type() {
+    // The `use` sits inside `module user { }`; its import must count.
+    let temp = tempfile::tempdir().unwrap();
+    let user = alias_user("Q16_16");
+    let files = [("fixed_point.mind", FIXED_POINT), ("user.mind", &user)];
+    let (ok, text) = check_files(temp.path(), &files);
+    assert!(ok, "fixed_point.Q16_16 must resolve:\n{text}");
+}
+
+#[test]
+fn an_undeclared_or_unexported_qualified_type_stays_refused() {
+    for ty in ["NOPE", "Hidden"] {
+        let temp = tempfile::tempdir().unwrap();
+        let user = alias_user(ty);
+        let files = [("fixed_point.mind", FIXED_POINT), ("user.mind", &user)];
+        let (ok, text) = check_files(temp.path(), &files);
+        assert!(!ok, "fixed_point.{ty} must stay refused:\n{text}");
+        let expected = format!("unknown module-qualified type `fixed_point.{ty}`");
+        assert!(text.contains(&expected), "{text}");
+    }
+}
+
+#[test]
+fn a_qualified_variant_of_a_module_block_resolves_in_a_match_pattern() {
+    let temp = tempfile::tempdir().unwrap();
+    let user = "module user {\n    use config\n    fn pick(m: config.NormMode) -> i32 {\n        match m {\n            config.NormMode.GroupNorm => {\n                1\n            },\n            config.NormMode.Clamp => {\n                2\n            },\n        }\n    }\n}\n";
+    let (ok, text) = check_files(temp.path(), &[("config.mind", CONFIG), ("user.mind", user)]);
+    assert!(ok, "config.NormMode.GroupNorm must resolve:\n{text}");
+}
+
+#[test]
+fn a_variant_of_an_unexported_enum_stays_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let user = "module user {\n    use config\n    fn pick(m: i32) -> i32 {\n        match m {\n            config.Hidden.A => {\n                1\n            },\n            _ => {\n                0\n            },\n        }\n    }\n}\n";
+    let (ok, text) = check_files(temp.path(), &[("config.mind", CONFIG), ("user.mind", user)]);
+    assert!(!ok, "config.Hidden is not exported:\n{text}");
+    assert!(text.contains("config.Hidden.A"), "{text}");
+}
+
+#[test]
+fn a_flat_alias_resolves_under_a_sources_list() {
+    // `src/fixed_point.mind` under a sources list is `crate.src.fixed_point`.
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/fixed_point.mind"), "type Q16_16 = i32\n").unwrap();
+    fs::write(
+        root.join("src/main.mind"),
+        "import fixed_point;\nfn clamp_q16(v: fixed_point.Q16_16) -> fixed_point.Q16_16 {\n    return v;\n}\nfn main() -> i64 {\n    return 0;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"alias-src\"\nversion = \"0.0.1\"\n[build]\nentry = \"src/main.mind\"\n[targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/fixed_point.mind\", \"src/main.mind\"]\n",
+    )
+    .unwrap();
+    let (ok, text) = check(root);
+    assert!(ok, "fixed_point.Q16_16 under a sources list:\n{text}");
+}

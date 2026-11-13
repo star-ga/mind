@@ -208,3 +208,75 @@ fn cyclic_constant_elements_are_refused_at_the_nesting_bound() {
         "const A = B\nconst B = A\nfn take(xs: &[i64]) -> i64 { return xs[0] as i64 }\npub fn run() -> i64 { return take([A, B]) }\n",
     );
 }
+
+/// `mindc check --no-fmt <one file>`: success flag and combined output.
+fn check_one(tag: &str, src: &str) -> (bool, String) {
+    let (dir, path) = write_source(tag, src);
+    let out = mindc(&["check", "--no-fmt", path.to_str().unwrap()], &dir);
+    (out.status.success(), combined(&out))
+}
+
+/// A trailing loop yields a unit placeholder and a trailing store yields its
+/// store call, so neither can return the borrowed slice it writes through.
+#[test]
+fn a_trailing_loop_or_store_over_a_slice_parameter_is_admitted() {
+    let cases = [
+        (
+            "tail_for_flat",
+            "fn fill(out: &mut [i32], n: u32) {\n    for i in 0..n {\n        out[i as usize] = 0\n    }\n}\n",
+        ),
+        (
+            "tail_for_module",
+            "module tailfor {\n    fn fill(out: &mut [i32], n: u32) {\n        for i in 0..n {\n            out[i as usize] = 0\n        }\n    }\n}\n",
+        ),
+        (
+            "tail_while",
+            "fn fill(out: &mut [i32], n: i64) {\n    let mut i: i64 = 0;\n    while i < n {\n        out[i] = 0;\n        i = i + 1;\n    }\n}\n",
+        ),
+        (
+            "tail_store",
+            "fn first(out: &mut [i32]) {\n    out[0] = 1\n}\n",
+        ),
+        (
+            "tail_if_store",
+            "fn first(out: &mut [i32], c: bool) {\n    if c {\n        out[0] = 1\n    }\n}\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (ok, text) = check_one(tag, src);
+        assert!(ok, "{tag} was refused:\n{text}");
+    }
+}
+
+/// Negative twin: a tail whose value IS the borrowed slice still escapes.
+#[test]
+fn a_borrowed_slice_tail_value_stays_refused() {
+    let cases = [
+        (
+            "tail_value_i64",
+            "fn leak(xs: &[i32]) -> i64 {\n    xs\n}\n",
+        ),
+        ("tail_value_unit", "fn leak(xs: &[i32]) {\n    xs\n}\n"),
+        (
+            "tail_value_if",
+            "fn leak(xs: &[i32], c: bool) -> i64 {\n    if c {\n        xs\n    }\n}\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (ok, text) = check_one(tag, src);
+        assert!(!ok, "{tag} let a borrowed slice escape:\n{text}");
+        assert!(
+            text.contains("cannot escape as an implicit non-slice function result"),
+            "{tag} was not refused as an escape:\n{text}"
+        );
+    }
+}
+
+/// The mind-law 0009 repro: a fixed-array literal of the wrong length stays E2001.
+#[test]
+fn a_fixed_array_literal_of_the_wrong_length_stays_refused() {
+    let src = "fn short_init() -> [u8; 4] {\n    let mut out: [u8; 4] = [0, 0, 0];\n    out[3] = 1;\n    return out;\n}\n\nfn long_init() -> [u8; 4] {\n    let mut out: [u8; 4] = [0, 0, 0, 0, 0];\n    return out;\n}\n";
+    let (ok, text) = check_one("array_literal_length_0009", src);
+    assert!(!ok, "0009 passed `mindc check`:\n{text}");
+    assert_eq!(text.matches("E2001").count(), 2, "{text}");
+}

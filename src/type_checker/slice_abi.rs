@@ -31,12 +31,11 @@ use aliases::{call_signature, canonical, slice_through_alias};
 pub(super) use borrow_flow::type_contains_collection_owner;
 use borrow_flow::{
     LoopControl, borrowed_kind, check_call, check_loop_flow, check_while, merge_flow,
-    reject_borrowed_control, remove_pattern_bindings, stmt_guarantees_return, type_contains_slice,
-    value_contains_borrow,
+    reject_borrowed_control, remove_pattern_bindings, type_contains_slice, value_contains_borrow,
 };
 pub(super) use borrow_flow::{check_fn, check_struct_fields};
 pub(super) use owner_assignment::{StructFieldTypes, struct_field_types};
-use provenance::{compatible_source, expr_kind, expr_type, same_type};
+use provenance::{compatible_source, expr_kind, expr_type, same_type, stmt_guarantees_return};
 
 pub(super) const SLICE_ARG_ABI_CODE: &str = "E2032";
 pub(super) const SLICE_CAPABILITY_CODE: &str = "E2033";
