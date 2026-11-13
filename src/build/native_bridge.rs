@@ -444,8 +444,8 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     let image = image.bytes;
 
     // Resolve the pure-MIND compiler ELF (the RI-D shell-out target):
-    // `MINDC_NATIVE_ELF` when set, otherwise the embedded seed of the requested
-    // profile, verified against its committed MANIFEST pin before it runs.
+    // `MINDC_NATIVE_ELF` when set, otherwise the embedded seed of the profile,
+    // verified against its MANIFEST pin when mindc is built (`build.rs`).
     // The committed seed is an x86-64 Linux ELF: on any other host, refuse before
     // it starts. `MINDC_NATIVE_ELF` is a test-only substitution hook (not the seed).
     let substituted = std::env::var_os("MINDC_NATIVE_ELF").is_some();

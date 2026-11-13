@@ -8,10 +8,13 @@
 //! `./std` and the compiler from a repo-relative `stage1.elf`, so outside a
 //! checkout it only worked with `MINDC_STD_DIR` / `MINDC_NATIVE_ELF` set. Both
 //! are now embedded at build time. The embedded bytes are not trusted because
-//! they were embedded: before use they are hashed and compared with the pins the
-//! tree already commits -- `stage1_sha256` (and the size) in the seed's
-//! `MANIFEST.txt`, and `SEED_BLOB_SHA256` in the std manifest. A mismatch
-//! refuses the build; it never falls back to a different compiler or blob.
+//! they were embedded. Each compiler seed is verified against its pin when mindc
+//! is built; a mismatch fails the build. `build.rs` hashes `stage1.elf` and
+//! compares its size and sha256 with the seed's `MANIFEST.txt` row. The pin and
+//! the bytes are compiled into the same binary, so a second hash at run time
+//! would stop no one who can change `mindc`. The std blob is hashed for each
+//! build and compared with `SEED_BLOB_SHA256` in the std manifest; a mismatch
+//! refuses the build. Neither path falls back to a different compiler or blob.
 //!
 //! The environment overrides keep their meaning exactly: when set, the named
 //! file or directory is used as before and the embedded copy is not consulted.
@@ -21,11 +24,14 @@ use std::path::{Path, PathBuf};
 /// The embedded default-profile compiler seed and its committed manifest.
 const DEFAULT_SEED_ELF: &[u8] =
     include_bytes!("../../../examples/mindc_mind/testdata/selfhost_loop/stage1.elf");
+/// `build.rs` checks each seed against its manifest; the tests check it again.
+#[cfg(test)]
 const DEFAULT_SEED_MANIFEST: &str =
     include_str!("../../../examples/mindc_mind/testdata/selfhost_loop/MANIFEST.txt");
 /// The embedded bounded-profile compiler seed and its committed manifest.
 const BOUNDED_SEED_ELF: &[u8] =
     include_bytes!("../../../examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf");
+#[cfg(test)]
 const BOUNDED_SEED_MANIFEST: &str =
     include_str!("../../../examples/mindc_mind/testdata/selfhost_loop_bounded/MANIFEST.txt");
 /// The std manifest that carries the `SEED_BLOB_SHA256` pin.
@@ -36,14 +42,19 @@ const STD_MANIFEST: &str =
 const EMBEDDED_STD_SEED: &[(&str, &[u8])] =
     include!(concat!(env!("OUT_DIR"), "/native_std_seed.rs"));
 
+/// The std blob pin hash uses the `sha2` crate: it takes the SHA extensions of
+/// the host when there are any.
 fn sha256_hex(bytes: &[u8]) -> String {
-    crate::deps::mini_sha256(bytes)
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
 }
 
-/// The `stage1.elf<TAB>size<TAB>sha256` row of a seed `MANIFEST.txt`.
+/// The `stage1.elf<TAB>size<TAB>sha256` row of a seed `MANIFEST.txt`. `build.rs`
+/// parses the row with the same rules and refuses to build on a mismatch.
+#[cfg(test)]
 fn pinned_stage1(manifest: &str) -> Option<(usize, &str)> {
     manifest.lines().find_map(|line| {
         let mut f = line.split('\t');
@@ -66,6 +77,7 @@ fn pinned_std_blob_sha(manifest: &str) -> Option<&str> {
 }
 
 /// Return `elf` only if its size and sha256 equal the manifest's `stage1.elf` row.
+#[cfg(test)]
 fn verified_seed<'a>(elf: &'a [u8], manifest: &str, what: &str) -> Result<&'a [u8], String> {
     let (size, sha) = pinned_stage1(manifest).ok_or_else(|| {
         format!("the embedded {what} seed manifest has no `stage1.elf` size/sha256 row")
@@ -198,48 +210,91 @@ pub(super) fn compiler_binds_seed_externs(bounded: bool) -> bool {
     compiler_has_mark(bounded, EXTERN_FIXED_MARK) && compiler_has_mark(bounded, SEED_EXTERN_MARK)
 }
 
+#[cfg(test)]
 fn has_mark(bytes: &[u8], mark: &[u8]) -> bool {
     bytes.windows(mark.len()).any(|w| w == mark)
 }
 
-fn compiler_has_mark(bounded: bool, mark: &[u8]) -> bool {
-    if let Some(p) = std::env::var_os("MINDC_NATIVE_ELF") {
-        return std::fs::read(p).is_ok_and(|b| has_mark(&b, mark));
+/// Every compatibility mark, in the bit order of [`marks_in`].
+const MARKS: [&[u8]; 5] = [
+    SCOPED_BINDINGS_MARK,
+    NATIVE_LANE_V1_MARK,
+    EXTERN_FIXED_MARK,
+    SEED_EXTERN_MARK,
+    NATIVE_PRINT_MARK,
+];
+
+/// What every mark starts with: `movabs rax, imm64` and the `nb` of its name.
+const MARK_PREFIX: &[u8; 4] = b"\x48\xb8nb";
+
+/// Bit `i` is set when `bytes` carries `MARKS[i]`. One pass finds them all: a
+/// build asks for five marks, and one scan of the 3.4 MB seed per mark cost
+/// 10 ms.
+fn marks_in(bytes: &[u8]) -> u8 {
+    let mut found = 0;
+    for w in bytes.windows(MARKS[0].len()) {
+        if w[..4] == *MARK_PREFIX {
+            for (bit, mark) in MARKS.iter().enumerate() {
+                found |= u8::from(w == *mark) << bit;
+            }
+        }
     }
-    has_mark(
-        if bounded {
+    found
+}
+
+/// Where the compiler of one build comes from: the file `MINDC_NATIVE_ELF`
+/// names, or the embedded seed of the profile, unpacked for this build.
+enum Seed {
+    Override(PathBuf),
+    Embedded(&'static [u8]),
+}
+
+/// Resolve the compiler and its marks once per process, with one scan of its
+/// bytes. The embedded seed is not hashed here: `build.rs` verified it.
+fn resolved(bounded: bool) -> &'static (Seed, u8) {
+    static RESOLVED: [std::sync::OnceLock<(Seed, u8)>; 2] =
+        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    RESOLVED[usize::from(bounded)].get_or_init(|| {
+        if let Some(p) = std::env::var_os("MINDC_NATIVE_ELF") {
+            // An unreadable override reads as unmarked; `compiler_elf` reports it.
+            let marks = std::fs::read(&p).map_or(0, |b| marks_in(&b));
+            return (Seed::Override(PathBuf::from(p)), marks);
+        }
+        let elf = if bounded {
             BOUNDED_SEED_ELF
         } else {
             DEFAULT_SEED_ELF
-        },
-        mark,
-    )
+        };
+        (Seed::Embedded(elf), marks_in(elf))
+    })
+}
+
+fn compiler_has_mark(bounded: bool, mark: &[u8]) -> bool {
+    let found = resolved(bounded).1;
+    let bit = MARKS.iter().position(|m| *m == mark);
+    bit.is_some_and(|bit| (found >> bit) & 1 == 1)
 }
 
 /// Resolve the compiler: `MINDC_NATIVE_ELF` when set (it must exist), otherwise
-/// the verified embedded seed for the requested profile, written to a private
-/// temporary directory so it can be executed.
+/// the embedded seed for the requested profile (verified against its pin when
+/// mindc was built), written to a private temporary directory so it can be
+/// executed.
 pub(super) fn compiler_elf(bounded: bool) -> Result<CompilerElf, String> {
-    if let Some(p) = std::env::var_os("MINDC_NATIVE_ELF") {
-        let path = PathBuf::from(p);
-        if !path.exists() {
-            return Err(format!(
-                "pure-MIND compiler ELF not found at '{}' (MINDC_NATIVE_ELF is set)",
-                path.display()
-            ));
-        }
-        return Ok(CompilerElf {
-            path,
+    match &resolved(bounded).0 {
+        Seed::Override(path) if path.exists() => Ok(CompilerElf {
+            path: path.clone(),
             _unpacked: None,
-        });
+        }),
+        Seed::Override(path) => Err(format!(
+            "pure-MIND compiler ELF not found at '{}' (MINDC_NATIVE_ELF is set)",
+            path.display()
+        )),
+        Seed::Embedded(bytes) => unpacked(bytes),
     }
-    let (elf, manifest, what) = if bounded {
-        (BOUNDED_SEED_ELF, BOUNDED_SEED_MANIFEST, "bounded")
-    } else {
-        (DEFAULT_SEED_ELF, DEFAULT_SEED_MANIFEST, "default")
-    };
-    let bytes = verified_seed(elf, manifest, what)
-        .map_err(|e| format!("{e}. Refusing rather than running an unpinned compiler."))?;
+}
+
+/// Write the embedded seed `bytes` to a new private temporary directory.
+fn unpacked(bytes: &[u8]) -> Result<CompilerElf, String> {
     let dir = tempfile::Builder::new()
         .prefix("mindc-native-seed-")
         .tempdir()
@@ -259,6 +314,8 @@ pub(super) fn compiler_elf(bounded: bool) -> Result<CompilerElf, String> {
 
 /// Write `bytes` to a new file and mark it owner-executable. The writer is
 /// closed before returning, so no writable descriptor is open at `execve`.
+/// Not synced: the file is run once from the page cache and then removed, and
+/// the `fsync` of 3.4 MB was 10 ms of every native build.
 fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut f = std::fs::OpenOptions::new()
@@ -271,7 +328,7 @@ fn write_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         f.set_permissions(std::fs::Permissions::from_mode(0o700))?;
     }
-    f.sync_all()
+    Ok(())
 }
 
 #[cfg(test)]
@@ -331,6 +388,64 @@ mod tests {
                 "the embedded {what} seed does not carry the scoped-bindings mark"
             );
         }
+    }
+
+    #[test]
+    fn one_pass_finds_exactly_the_marks_each_scan_finds() {
+        for mark in MARKS {
+            assert_eq!((&mark[..4], mark.len()), (&MARK_PREFIX[..], MARKS[0].len()));
+        }
+        let mut one = b"x\x48\xb8nb\x48\xb8nblane0".to_vec();
+        one.extend_from_slice(NATIVE_PRINT_MARK);
+        let cut = &one[..one.len() - 1];
+        for elf in [DEFAULT_SEED_ELF, BOUNDED_SEED_ELF, &one[..], cut, &b""[..]] {
+            for (bit, mark) in MARKS.iter().enumerate() {
+                let found = (marks_in(elf) >> bit) & 1 == 1;
+                assert_eq!(found, has_mark(elf, mark), "mark {bit}");
+            }
+        }
+        assert_eq!(
+            (marks_in(&one), marks_in(cut)),
+            (1 << 4, 0),
+            "the print mark alone"
+        );
+    }
+
+    #[test]
+    fn the_pin_hash_agrees_with_the_seam_and_the_fips_vectors() {
+        let check = |input: &[u8], want: &str| {
+            let seam = crate::deps::mini_sha256(input);
+            let seam: String = seam.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!((sha256_hex(input).as_str(), seam.as_str()), (want, want));
+        };
+        // Empty, one block, a tail that pads into a second block, many blocks.
+        check(
+            b"",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
+        check(
+            b"abc",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        );
+        let two = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+        check(
+            two,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        );
+        let million = vec![b'a'; 1_000_000];
+        check(
+            &million,
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        );
+    }
+
+    #[test]
+    fn the_unpacked_seed_is_the_embedded_seed_and_is_removed_on_drop() {
+        let elf = unpacked(BOUNDED_SEED_ELF).expect("unpack");
+        let path = elf.path.clone();
+        assert_eq!(std::fs::read(&path).expect("unpacked"), BOUNDED_SEED_ELF);
+        drop(elf);
+        assert!(!path.exists() && !path.parent().unwrap().exists());
     }
 
     #[test]
