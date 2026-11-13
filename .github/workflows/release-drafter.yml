@@ -3,7 +3,9 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    # No 'closed': PRs land by a local squash, so GitHub closes them unmerged and
+    # deletes the merge ref; the config load then 404s. The push to main updates the draft.
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
