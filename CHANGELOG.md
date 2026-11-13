@@ -145,6 +145,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MINDC_NATIVE_ELF` is a test-only substitution hook: it names another compiler in place of the committed seed, and only then is the x86-64 Linux host check skipped. With it unset, the host check always runs (`backend.native_host`).
 - `mindc run`, `mindc bench`, workspace builds and `--emit cdylib|object` need the MLIR backend. They refuse until you select it.
 
+### Fixed — the fixed cost of `mindc build` on the native backend
+- Each native build hashed the embedded compiler seed and std blob (3.9 MB of SHA-256) before it started the compiler. It scanned the 3.4 MB seed one time for each of five compatibility marks, synced the unpacked seed to disk, and parsed the 21 std seed modules for a program that calls none of them. On a 472 ms build of a one-function program this was 50 ms (paired runs, one host).
+- Each embedded compiler seed is verified against its pin when mindc is built; a mismatch fails the build. `build.rs` compares the size and sha256 of each `stage1.elf` with the `stage1.elf` row of its `MANIFEST.txt`. The pin and the seed are compiled into the same binary, so the check at each run stopped no one who can change `mindc`.
+- No compiler seed starts before its pin verdict. The std blob is still hashed for each build and compared with `SEED_BLOB_SHA256`; a mismatch refuses (exit 2), starts nothing and writes no artifact.
+- The seed is unpacked to a private temporary directory for each build and removed after it. Nothing is kept in a per-user cache. The unpacked seed is not synced. `build.rs` finds the five compatibility marks of each seed, and a build does not scan the seed for them. A program that calls no std seed function does not parse the seed. The std blob pin hash uses the `sha2` crate (already a dependency of the `pkg` feature; `std-surface` now enables it).
+- `MINDC_NATIVE_ELF` does not change: it names another compiler, which is not hashed.
+- The emitted bytes do not change.
+
 ### Changed — `[build] backend` in Mind.toml selects the build route
 - `[build] backend = "native"` in Mind.toml selects the native bridge, the same route as `mindc build --backend native`. Before this change, `mindc build` did not read the key and used the MLIR route.
 - `mindc build` refuses a `--backend` flag that does not agree with `[build] backend` (E2044). The flag and the manifest select one route.

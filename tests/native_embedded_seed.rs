@@ -8,11 +8,13 @@
 //! The bridge used to read the std seed from `./std` and the compiler from a
 //! repo-relative `stage1.elf`, so outside a checkout it failed with "cannot
 //! read std module 'std/arena.mind'" unless `MINDC_STD_DIR` and
-//! `MINDC_NATIVE_ELF` were set. Both are now embedded in `mindc` and verified
-//! against their committed pins before use. These controls build from a fresh
-//! temp directory with every variable cleared except `PATH` and `TMPDIR`, and
-//! require the result to equal, byte for byte, the build that names the
-//! in-repo seed and std explicitly.
+//! `MINDC_NATIVE_ELF` were set. Both are now embedded in `mindc`. Each compiler
+//! seed is verified against its pin when mindc is built; a mismatch fails the
+//! build. The std blob is verified against its pin before each use. These
+//! controls build from a fresh temp directory with every variable cleared
+//! except `PATH`, `TMPDIR`, `HOME` and `XDG_CACHE_HOME`, and require the result
+//! to equal, byte for byte, the build that names the in-repo seed and std
+//! explicitly.
 #![cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
 
 mod native_bridge_support;
@@ -24,14 +26,23 @@ const PROGRAM: &str = "fn twice(x: i64) -> i64 { return x + x; }\n\
                        fn main() -> i64 { return twice(3) + 1; }\n";
 
 /// Build `prog.mind` in `dir` natively. `explicit` names the in-repo seed and
-/// std through the environment; otherwise the environment is cleared.
-fn build(dir: &Path, tmp: &Path, profile: &str, explicit: bool) -> (i32, String, Option<Vec<u8>>) {
+/// std through the environment; otherwise the environment is cleared. `home`
+/// is both `HOME` and `XDG_CACHE_HOME`, so any per-user file shows there.
+fn build(
+    dir: &Path,
+    tmp: &Path,
+    home: &Path,
+    profile: &str,
+    explicit: bool,
+) -> (i32, String, Option<Vec<u8>>) {
     std::fs::write(dir.join("prog.mind"), PROGRAM).expect("write program");
     let out = dir.join(format!("prog-{profile}-{explicit}.elf"));
     let mut cmd = Command::new(MINDC);
     cmd.env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("TMPDIR", tmp)
+        .env("HOME", home)
+        .env("XDG_CACHE_HOME", home)
         .current_dir(dir)
         .args([
             "build",
@@ -63,11 +74,12 @@ fn build(dir: &Path, tmp: &Path, profile: &str, explicit: bool) -> (i32, String,
 fn check_profile(profile: &str) {
     let dir = tempfile::tempdir().expect("tempdir");
     let tmp = tempfile::tempdir().expect("private TMPDIR");
+    let home = tempfile::tempdir().expect("private HOME");
     assert!(
         !dir.path().starts_with(env!("CARGO_MANIFEST_DIR")),
         "the control must run outside the repository"
     );
-    let (code, stderr, embedded) = build(dir.path(), tmp.path(), profile, false);
+    let (code, stderr, embedded) = build(dir.path(), tmp.path(), home.path(), profile, false);
     assert_eq!(
         code, 0,
         "{profile}: clean-env native build failed:\n{stderr}"
@@ -82,8 +94,14 @@ fn check_profile(profile: &str) {
         leftovers.is_empty(),
         "{profile}: unpacked seed left behind: {leftovers:?}"
     );
+    // No per-user cache: the seed is unpacked for each build and kept nowhere.
+    let kept: Vec<_> = std::fs::read_dir(home.path()).expect("read HOME").collect();
+    assert!(
+        kept.is_empty(),
+        "{profile}: a native build wrote to HOME/XDG_CACHE_HOME: {kept:?}"
+    );
 
-    let (code, stderr, explicit) = build(dir.path(), tmp.path(), profile, true);
+    let (code, stderr, explicit) = build(dir.path(), tmp.path(), home.path(), profile, true);
     assert_eq!(
         code, 0,
         "{profile}: explicit-seed native build failed:\n{stderr}"

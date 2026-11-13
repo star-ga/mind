@@ -398,6 +398,10 @@ impl Reached<'_> {
 
     /// The IR leg: each module's reached functions lowered together.
     fn lowered(&self, callees: Callees, seed: &LaneSeed) -> Check<()> {
+        // No reached seed function: nothing to lower, and the seed stays unparsed.
+        if self.tier.is_empty() {
+            return Ok(());
+        }
         let parsed = seed.parsed()?;
         for (index, module) in seed.modules.iter().enumerate() {
             let own: Functions = self

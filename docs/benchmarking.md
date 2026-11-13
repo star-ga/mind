@@ -41,6 +41,12 @@ overstates every later build. Report both, labelled. The bench's untimed pre-che
 asserts the cold, cache-filling and cache-hit builds emit **byte-identical** `.so`
 files: a cache may change time, never bytes.
 
+The native backend keeps no cache. Each embedded compiler seed is verified
+against its pin when mindc is built; a mismatch fails the build. A native build
+writes the 3.4 MB seed to a private temporary directory, runs it and removes it.
+It hashes only the 0.42 MB std blob against `SEED_BLOB_SHA256`. The T2-native
+rows therefore have no warm or cold state of their own.
+
 ### Same-session references and the end-to-end gate
 
 `e2e_reference/clang_c_to_so/<shape>` and `e2e_reference/rustc_cdylib/<shape>` time
