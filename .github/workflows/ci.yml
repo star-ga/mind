@@ -1253,6 +1253,11 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 25 \
               examples/mindc_mind/native_lane_value_shapes_smoke.py \
               --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
+          # Fail-closed control: with no llvm-mc beside $MLIR_OPT, stage B must fail by name, never skip.
+          if MLIR_OPT=/nonexistent/mlir-opt MINDC_BIN=${{ github.workspace }}/target/release/mindc python3 scripts/run_gate.py \
+              examples/mindc_mind/native_lane_value_shapes_smoke.py --only avx2 --compiler \
+              examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf > /tmp/vs_no_llvm_mc.txt; then cat /tmp/vs_no_llvm_mc.txt; exit 1; fi
+          grep -E '^ +FAIL  avx2_encoder_table \[avx2\]: table: B: no stage B' /tmp/vs_no_llvm_mc.txt || { cat /tmp/vs_no_llvm_mc.txt; exit 1; }
         working-directory: ${{ github.workspace }}
 
       - name: Native-lane operator differential (native_lane_op_differential_smoke.py)
