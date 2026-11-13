@@ -215,7 +215,7 @@ enum Command {
     /// A file that you name is always checked, also when the ignore file (.gitignore) matches it.
     Check {
         /// Files or directories. A directory gives its *.mind files; ignored files are skipped.
-        /// No path, in a project: every file `mindc build` compiles (a note counts the others).
+        /// No path, in a project: every file `mindc build` compiles (a note counts other non-ignored files).
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
         /// Diagnostic reporter: human (default), json, or lsp.

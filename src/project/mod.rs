@@ -228,8 +228,8 @@ pub struct MindcraftConfig {
     pub overrides: Vec<MindcraftOverride>,
     /// VCS integration — when ``use_ignore_file`` is true, the discovery
     /// walk of ``mindc check`` follows the repository's ignore rules
-    /// (`.gitignore` etc.). A file of the project's source set, and a
-    /// file named on the command line, are checked in every case.
+    /// (`.gitignore` etc.). A no-path check takes every source-set member,
+    /// and a file named on the command line is always checked.
     #[serde(default)]
     pub vcs: MindcraftVcsConfig,
     /// Per-target sections. `[mindcraft.cpu]`, `[mindcraft.gpu]`,
@@ -335,7 +335,7 @@ pub struct MindcraftOverride {
 
 /// RFC 0007 §5 — VCS integration. When ``use_ignore_file`` is true,
 /// the discovery walk of ``mindc check`` skips the files the repository's
-/// ignore rules match. It never removes a source-set member or a named file.
+/// ignore rules match. A no-path check keeps every source-set member; a named file is kept.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MindcraftVcsConfig {
