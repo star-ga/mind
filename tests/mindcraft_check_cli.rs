@@ -25,6 +25,7 @@
 //! 8. Multi-file directory walk produces a sorted diagnostic stream.
 
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use tempfile::tempdir;
@@ -351,4 +352,297 @@ fn json_reporter_empty_result_is_empty_array() {
         "empty directory should produce []"
     );
     assert_eq!(out.status.code(), Some(0));
+}
+
+// ---------------------------------------------------------------------------
+// Tests 10-12: the file set of a project check (no feature needed)
+// ---------------------------------------------------------------------------
+
+/// A module with one type error: it returns a name that nothing declares.
+fn broken(function: &str) -> String {
+    format!("fn {function}() -> i64 {{\n    missing_name\n}}\n")
+}
+
+/// A project in the common layout: the entry is in `src/` and `docs/` is at
+/// the project root. `src/main.mind` is the whole program. Nothing imports
+/// `src/docs/stray.mind` or `docs/outside.mind`, and each has a type error.
+fn write_src_layout_project(root: &Path) {
+    fs::create_dir_all(root.join("src/docs")).expect("mkdir src/docs");
+    fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("src/main.mind"), "fn main() -> i64 {\n    0\n}\n").expect("write entry");
+    fs::write(root.join("src/docs/stray.mind"), broken("stray_value")).expect("write stray");
+    fs::write(root.join("docs/outside.mind"), broken("outside_value")).expect("write outside");
+}
+
+/// `mindc check --no-fmt --no-lint <args>` in `dir`: exit code, stdout, stderr.
+fn type_check_in(dir: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    let out = mindc()
+        .current_dir(dir)
+        .args(["check", "--no-fmt", "--no-lint"])
+        .args(args)
+        .output()
+        .expect("failed to spawn mindc check");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (out.status.code(), stdout, stderr)
+}
+
+#[test]
+fn project_check_with_no_path_takes_the_build_source_set() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+
+    // The build compiles `src/main.mind` only, so the check reads it only.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the project check read a file outside the source set:\n{stdout}{stderr}"
+    );
+    assert!(!stdout.contains("missing_name"), "{stdout}");
+    // The two files left out are counted: no file leaves the check silently.
+    assert!(
+        stderr.contains("note[check]: 2 .mind file(s) below"),
+        "no notice of the files outside the source set: {stderr}"
+    );
+
+    // Positive control: a module in the entry's directory is in the set (the
+    // build compiles it), so its error is reported. The strays stay out.
+    fs::write(dir.path().join("src/sibling.mind"), broken("sibling_value")).expect("write sibling");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a member's error was lost:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("sibling.mind") && stdout.contains("missing_name"),
+        "the member was not reported: {stdout}"
+    );
+    assert!(
+        !stdout.contains("stray.mind") && !stdout.contains("outside.mind"),
+        "a file outside the source set was read: {stdout}"
+    );
+}
+
+#[test]
+fn a_path_operand_is_never_narrowed_to_the_source_set() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+
+    // Each operand covers a file that is not in the project's source set. The
+    // check reads that file and fails on it: nothing is dropped.
+    let cases: [(&str, &[&str]); 6] = [
+        ("src/docs", &["stray.mind"]),
+        ("docs", &["outside.mind"]),
+        ("src", &["stray.mind"]),
+        (".", &["stray.mind", "outside.mind"]),
+        ("src/docs/stray.mind", &["stray.mind"]),
+        ("docs/outside.mind", &["outside.mind"]),
+    ];
+    for (operand, reported) in cases {
+        let (code, stdout, stderr) = type_check_in(dir.path(), &[operand]);
+        assert_eq!(
+            code,
+            Some(1),
+            "`mindc check {operand}` passed over a broken file:\n{stdout}{stderr}"
+        );
+        for file in reported {
+            assert!(
+                stdout.contains(file) && stdout.contains("missing_name"),
+                "`mindc check {operand}` did not report {file}:\n{stdout}{stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_temporary_manifest_does_not_scope_the_check() {
+    // A standalone build writes this manifest for its own duration; a killed
+    // build leaves it. It is never a project, so it gives no source set.
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("sub")).expect("mkdir sub");
+    fs::write(
+        dir.path().join("Mind.toml"),
+        "# mindc: temporary manifest of a standalone build; removed when that build returns\n\
+         [package]\nname = \"main\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"main.mind\"\n",
+    )
+    .expect("write temporary manifest");
+    fs::write(
+        dir.path().join("main.mind"),
+        "fn main() -> i64 {\n    0\n}\n",
+    )
+    .expect("write entry");
+    fs::write(dir.path().join("sub/other.mind"), broken("other_value")).expect("write other");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a temporary manifest narrowed the check:\n{stdout}{stderr}"
+    );
+    assert!(stdout.contains("other.mind"), "{stdout}{stderr}");
+}
+
+// ---------------------------------------------------------------------------
+// Tests 13-17: the ignore file, the source set and the declared list
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_named_file_is_checked_when_the_ignore_file_matches_it() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    fs::write(dir.path().join(".gitignore"), "gen/\n").expect("write .gitignore");
+    fs::create_dir(dir.path().join("gen")).expect("mkdir gen");
+    fs::write(dir.path().join("gen/bad.mind"), broken("bad_value")).expect("write bad");
+
+    // The file is named on the command line: it is checked.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["gen/bad.mind"]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a named file was dropped by the ignore file:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("bad.mind") && stdout.contains("missing_name"),
+        "the named file was not reported: {stdout}{stderr}"
+    );
+
+    // Control: the walk of a directory operand skips the ignored file.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["gen"]);
+    assert_eq!(code, Some(0), "{stdout}{stderr}");
+    assert!(!stdout.contains("bad.mind"), "{stdout}");
+}
+
+#[test]
+fn an_ignored_member_of_the_source_set_is_checked() {
+    let dir = tempdir().expect("tempdir");
+    write_src_layout_project(dir.path());
+    fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    fs::write(dir.path().join(".gitignore"), "gen.mind\n").expect("write .gitignore");
+    // In the entry's directory: the build compiles it, so it is a member.
+    fs::write(dir.path().join("src/gen.mind"), broken("gen_value")).expect("write member");
+    // Outside the set and ignored: the discovery walk does not find it.
+    fs::write(dir.path().join("docs/gen.mind"), broken("docs_gen_value")).expect("write other");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "an ignored member of the source set was not checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("gen.mind") && stdout.contains("missing_name"),
+        "the ignored member was not reported: {stdout}{stderr}"
+    );
+    // One broken member, one error: no file outside the set was read.
+    let errors = stdout.lines().filter(|l| l.contains("missing_name"));
+    assert_eq!(errors.count(), 1, "{stdout}");
+    // The note counts the two walked files outside the set, not the ignored one.
+    assert!(
+        stderr.contains("note[check]: 2 .mind file(s) below"),
+        "the note does not count the walked files outside the set: {stderr}"
+    );
+}
+
+/// A project whose manifest declares `sources` (root-relative) for the
+/// default target. `src/main.mind` is the whole program.
+fn write_declared_project(root: &Path, sources: &[&str]) {
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    let list: Vec<String> = sources.iter().map(|s| format!("\"{s}\"")).collect();
+    let manifest = format!(
+        "[package]\nname = \"declared\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\n\n\
+         [targets.cpu]\nbackend = \"cpu\"\nsources = [{}]\n",
+        list.join(", ")
+    );
+    fs::write(root.join("Mind.toml"), manifest).expect("write manifest");
+    let entry = "fn main() -> i64 {\n    0\n}\n";
+    fs::write(root.join("src/main.mind"), entry).expect("write entry");
+}
+
+#[test]
+fn a_declared_source_with_another_extension_is_checked() {
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "src/extra.mnd"]);
+    fs::write(dir.path().join("src/extra.mnd"), broken("extra_value")).expect("write extra");
+
+    // The build compiles a declared source whatever its extension.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a declared source was skipped for its extension:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("extra.mnd") && stdout.contains("missing_name"),
+        "the declared source was not reported: {stdout}{stderr}"
+    );
+}
+
+#[test]
+fn project_check_follows_the_declared_source_list() {
+    // The list holds a broken file that no import reaches and that is not in
+    // the entry's directory: only the list puts it in the set.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "lib/extra.mind"]);
+    fs::create_dir(dir.path().join("lib")).expect("mkdir lib");
+    fs::write(dir.path().join("lib/extra.mind"), broken("extra_value")).expect("write extra");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(1),
+        "a declared source was not checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("extra.mind") && stdout.contains("missing_name"),
+        "the declared source was not reported: {stdout}{stderr}"
+    );
+
+    // The list leaves out a broken file in the entry's directory. Without a
+    // list that file is a member; with the list it is not, as in the build.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind"]);
+    fs::write(dir.path().join("src/other.mind"), broken("other_value")).expect("write other");
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "a file the declared list leaves out was checked:\n{stdout}{stderr}"
+    );
+    assert!(
+        stderr.contains("note[check]: 1 .mind file(s) below"),
+        "no notice of the file the list leaves out: {stderr}"
+    );
+    // Control: the file is broken, and its directory as an operand reports it.
+    let (code, stdout, stderr) = type_check_in(dir.path(), &["src"]);
+    assert_eq!(code, Some(1), "{stdout}{stderr}");
+    assert!(stdout.contains("other.mind"), "{stdout}{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_note_counts_a_member_once_under_a_directory_link() {
+    // `src/alias` is a link to `src/real`: the walk finds the member a
+    // second time under the link. It is one file, and it is in the set.
+    let dir = tempdir().expect("tempdir");
+    write_declared_project(dir.path(), &["src/main.mind", "src/real/m.mind"]);
+    fs::create_dir(dir.path().join("src/real")).expect("mkdir real");
+    let member = "fn m_value() -> i64 {\n    1\n}\n";
+    fs::write(dir.path().join("src/real/m.mind"), member).expect("write member");
+    let other = "fn other_value() -> i64 {\n    2\n}\n";
+    fs::write(dir.path().join("src/other.mind"), other).expect("write other");
+    std::os::unix::fs::symlink("real", dir.path().join("src/alias")).expect("link");
+
+    let (code, stdout, stderr) = type_check_in(dir.path(), &[]);
+    assert_eq!(code, Some(0), "{stdout}{stderr}");
+    // Only `src/other.mind` is outside the set.
+    assert!(
+        stderr.contains("note[check]: 1 .mind file(s) below"),
+        "the member under the link was counted as outside the set: {stderr}"
+    );
 }

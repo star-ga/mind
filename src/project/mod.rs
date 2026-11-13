@@ -73,7 +73,7 @@ mod artifact;
 mod sources;
 
 pub use artifact::{DEFAULT_TARGET_BLOCK, artifact_dir, artifact_stem, profile_name};
-pub use sources::{collect_sources, resolve_sources};
+pub use sources::{collect_sources, default_source_set, resolve_sources};
 
 /// RFC 0005 Phase C — std/*.mind sources baked into the binary at
 /// compile time. The project loader prepends these to the module
@@ -226,10 +226,10 @@ pub struct MindcraftConfig {
     /// surrounding config (not replaces it).
     #[serde(default)]
     pub overrides: Vec<MindcraftOverride>,
-    /// VCS integration — when ``use_ignore_file`` is true, the default
-    /// file set for ``mindc check`` follows the repository's ignore
-    /// rules (`.gitignore` etc.) so generated / vendored sources are
-    /// excluded by default.
+    /// VCS integration — when ``use_ignore_file`` is true, the discovery
+    /// walk of ``mindc check`` follows the repository's ignore rules
+    /// (`.gitignore` etc.). A no-path check takes every source-set member,
+    /// and a file named on the command line is always checked.
     #[serde(default)]
     pub vcs: MindcraftVcsConfig,
     /// Per-target sections. `[mindcraft.cpu]`, `[mindcraft.gpu]`,
@@ -334,8 +334,8 @@ pub struct MindcraftOverride {
 }
 
 /// RFC 0007 §5 — VCS integration. When ``use_ignore_file`` is true,
-/// the default file set for ``mindc check`` walks the repository's
-/// ignore rules so generated / vendored sources are excluded.
+/// the discovery walk of ``mindc check`` skips the files the repository's
+/// ignore rules match. A no-path check keeps every source-set member; a named file is kept.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MindcraftVcsConfig {

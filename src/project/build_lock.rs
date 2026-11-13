@@ -50,7 +50,7 @@ pub fn temporary_manifest(pkg_name: &str, entry: &str) -> String {
     )
 }
 
-fn is_temporary_manifest(path: &Path) -> bool {
+pub(super) fn is_temporary_manifest(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|text| text.starts_with(TEMPORARY_MANIFEST_MARKER))
 }
 
