@@ -45,7 +45,7 @@ where
 /// never a project, `build_lock::governing_root`), for a command that reads the
 /// project of the current directory without holding a build lock. Never call
 /// it under a held lock: an in-doubt manifest takes that lock, and a build's
-/// own temporary manifest is its project (`link_binary` stays on the raw search).
+/// own temporary manifest is its project (the launcher fallback takes the locked root).
 pub fn governing_project_root() -> Result<PathBuf> {
     // The search answers a root or an error, never `None`.
     let root = super::build_lock::governing_root(|| super::find_project_root().map(Some))?;

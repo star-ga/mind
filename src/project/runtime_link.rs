@@ -14,7 +14,8 @@
 //! Native CPU objects are self-contained with the bundled public runtime-support
 //! shim. Every other backend retains the installed-runtime requirement.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
@@ -172,6 +173,90 @@ fn runtime_names(backend: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// The launcher-script fallback of a failed native link: a script that runs the
+/// installed runtime. `project_root` is the root whose build lock the caller holds;
+/// a search from the current directory could read another standalone build's
+/// temporary manifest (`build_lock`).
+pub(super) fn write_launcher(
+    output: &Path,
+    backend: &str,
+    runtime: &RuntimeLink,
+    project_root: &Path,
+) -> Result<()> {
+    let manifest = super::load_manifest(project_root)?;
+    let entry_path = project_root.join(&manifest.build.entry);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = format!(
+            r#"#!/bin/bash
+# {name} v{version} - Built with MIND
+# Backend: {backend}
+# Runtime: {runtime}
+
+MIND_ROOT="{project_root}"
+MIND_ENTRY="{entry}"
+MIND_BACKEND="{backend}"
+MIND_LIB_DIR="{lib_dir}"
+
+export LD_LIBRARY_PATH="$MIND_LIB_DIR:$LD_LIBRARY_PATH"
+export MIND_SOURCE_ROOT="$MIND_ROOT/src"
+export MIND_BACKEND="$MIND_BACKEND"
+
+# Execute the runtime interpreter
+if [ -f "$MIND_LIB_DIR/mind-runtime" ]; then
+    exec "$MIND_LIB_DIR/mind-runtime" --backend "$MIND_BACKEND" --entry "$MIND_ENTRY" "$@"
+elif [ -f "$MIND_LIB_DIR/{runtime}" ]; then
+    # Direct library execution via ld.so
+    exec /lib64/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    exec /lib/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    {{
+        echo "Error: MIND runtime not executable"
+        echo "See https://mindlang.dev/enterprise for licensing."
+        exit 1
+    }}
+else
+    echo "Error: MIND runtime not found at $MIND_LIB_DIR/{runtime}"
+    echo "See https://mindlang.dev/enterprise for licensing."
+    exit 1
+fi
+"#,
+            name = manifest.package.name,
+            version = manifest.package.version,
+            backend = backend,
+            runtime = runtime.file_name,
+            project_root = project_root.display(),
+            entry = entry_path.display(),
+            lib_dir = runtime.dir.display(),
+        );
+
+        fs::write(output, script)?;
+
+        let mut perms = fs::metadata(output)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(output, perms)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let script = format!(
+            "@echo off\r\nrem {} v{} - Built with MIND\r\nset MIND_BACKEND={}\r\nset PATH=%PATH%;{}\r\n\"{}/mind-runtime.exe\" --backend {} --entry \"{}\" %*\r\n",
+            manifest.package.name,
+            manifest.package.version,
+            backend,
+            runtime.dir.display(),
+            runtime.dir.display(),
+            backend,
+            entry_path.display(),
+        );
+        fs::write(output, script)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +269,31 @@ mod tests {
         ] {
             assert!(installed_runtime_required(backend), "{backend}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_launcher_reads_the_root_the_build_locked() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = super::super::build_lock::temporary_manifest("locked", "src/main.mind");
+        fs::write(root.path().join("Mind.toml"), manifest).unwrap();
+        let out = root.path().join("launcher");
+        let runtime = RuntimeLink {
+            dir: root.path().to_path_buf(),
+            file_name: "libmind_cuda.so",
+            link_name: "mind_cuda",
+        };
+        write_launcher(&out, "cuda", &runtime, root.path()).unwrap();
+        let script = fs::read_to_string(&out).unwrap();
+        let entry = root.path().join("src/main.mind");
+        assert!(script.contains("# locked v0.1.0"), "{script}");
+        assert!(
+            script.contains(&format!("MIND_ROOT=\"{}\"", root.path().display())),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("MIND_ENTRY=\"{}\"", entry.display())),
+            "{script}"
+        );
     }
 }
