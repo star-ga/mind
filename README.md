@@ -120,8 +120,9 @@ cargo run --features aot --bin mindc -- examples/hello_tensor.mind --emit-obj ou
 ### Project Commands
 
 On x86-64 Linux, `mindc build` uses the native backend by default and needs no LLVM.
-`mindc run`, `mindc bench`, and `--release` (`-O3 -flto`) need the MLIR backend.
-Select it with `--backend mlir` or with `backend = "mlir"` under `[build]` in Mind.toml.
+`mindc run` and `mindc bench` need the MLIR backend.
+`mindc build --release` on the native backend keeps the same bytes. `-O3 -flto` apply on the MLIR backend.
+Select the MLIR backend with `--backend mlir` or with `backend = "mlir"` under `[build]` in Mind.toml.
 
 ```bash
 # Build a MIND project (reads Mind.toml)
