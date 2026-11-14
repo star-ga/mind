@@ -269,12 +269,17 @@ trains centroids by mini-batch updates with every source of drift pinned:
 - A seeded k-means++ start from SplitMix64 (64-bit seed, unsigned 64-bit
   outputs), written in the program, and a batch order fixed by the input order.
   No clock, no host RNG.
-- k-means++ sampling: squared distances are summed in `i64` in input order. The
-  threshold is the next unsigned generator value modulo the total, with
-  rejection: a value at or above `2^64 - (2^64 mod total)` is discarded and the
-  next one drawn, so there is no modulo bias. The pick is the first index whose
-  running sum is above the threshold. Overflow is a hard error, never a
-  wrap.
+- Uniform draws below a bound `m`: take the next unsigned generator value `x`.
+  Compute `t = (0 - m) mod m` in wrapping `u64` arithmetic, which equals
+  `2^64 mod m`. If `x < t`, discard it and draw again. Otherwise the result is
+  `x mod m`. The accepted range has a size that is a multiple of `m`, so there
+  is no modulo bias.
+- The first centroid is the point at index `uniform(60000)`, from the first
+  accepted draw of the stream.
+- Each later k-means++ pick: squared distances to the nearest chosen centroid
+  are summed in `i64` in input order. The threshold is `uniform(total)`. The
+  pick is the first index whose running sum is above the threshold. Overflow is
+  a hard error, never a wrap.
 - Assignment ties go to the lowest centroid index.
 - A centroid with no points in a batch is left unchanged. There is no reseeding.
 - In the k-means++ start, if every remaining distance is zero (duplicate
@@ -285,6 +290,10 @@ trains centroids by mini-batch updates with every source of drift pinned:
   been given so far, including this batch. The numerator is exact in `i64`. This equals a step of
   `n / N` toward the batch mean. Batch size 1,024, 3 passes. There is no search
   per dataset.
+- Batches: each pass starts again at point 0 and takes the points in input
+  order. 60,000 points give 58 full batches and a final batch of 608, which is
+  processed as a batch with the same step rule. Batches never wrap across a
+  pass boundary, and no point is dropped.
 - Each pixel `p` becomes `round_half_even(p * 65536 / 255)` in Q16.16.
 
 The first planned consumer is the mind-mem compressed vector index, whose
