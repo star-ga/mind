@@ -475,7 +475,8 @@ pub(super) fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env
 /// What a function-body tail hands back as the implicit result, read from the
 /// value lowering gives each node.
 pub(super) enum TailYield<'a> {
-    /// The statement lists whose own tails are yielded: `if`, `match`, a block.
+    /// The statement lists whose own tails are yielded: `if`, `match`, a
+    /// block, a region.
     Branches(Vec<&'a [Node]>),
     /// No value a handle can ride on: a binding, a store (it yields its store
     /// helper's status), a loop, a jump, a print, an assert, a declaration.
@@ -489,6 +490,9 @@ pub(super) enum TailYield<'a> {
 pub(super) fn tail_yield(node: &Node) -> TailYield<'_> {
     match node {
         Node::Block { stmts, .. } => TailYield::Branches(vec![stmts]),
+        // A region evaluates to the last expression of its body, like a block.
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => TailYield::Branches(vec![body]),
         Node::If {
             then_branch,
             else_branch,
@@ -565,6 +569,6 @@ pub(super) fn tail_yield(node: &Node) -> TailYield<'_> {
         | Node::Ref { .. }
         | Node::Closure(..) => TailYield::Itself,
         #[cfg(feature = "std-surface")]
-        Node::Bitwise { .. } | Node::Region { .. } => TailYield::Itself,
+        Node::Bitwise { .. } => TailYield::Itself,
     }
 }

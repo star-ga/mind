@@ -217,8 +217,8 @@ fn check_one(tag: &str, src: &str) -> (bool, String) {
 }
 
 /// A trailing loop yields a unit placeholder, a trailing store yields its
-/// store call and a trailing `if` / `match` yields its branch tails, so none
-/// of them can return the borrowed slice it writes through.
+/// store call and a trailing `if` / `match` / `region` yields its branch or
+/// body tails, so none of them can return the borrowed slice it writes through.
 #[test]
 fn a_trailing_loop_or_store_over_a_slice_parameter_is_admitted() {
     let cases = [
@@ -250,6 +250,10 @@ fn a_trailing_loop_or_store_over_a_slice_parameter_is_admitted() {
             "tail_match_store_module",
             "module m {\n    fn f(out: &mut [i32], m: i32) {\n        match m {\n            0 => {\n                out[0] = 1\n            },\n            _ => {\n                out[1] = 2\n            },\n        }\n    }\n}\n",
         ),
+        (
+            "tail_region_store",
+            "fn f(out: &mut [i32]) {\n    region {\n        out[0] = 1\n    }\n}\n",
+        ),
     ];
     for (tag, src) in cases {
         let (ok, text) = check_one(tag, src);
@@ -277,6 +281,14 @@ fn a_borrowed_slice_tail_value_stays_refused() {
         (
             "tail_value_match_block",
             "fn leak(xs: &[i32], m: i32) -> i64 {\n    match m {\n        0 => {\n            0\n        },\n        _ => {\n            xs\n        },\n    }\n}\n",
+        ),
+        (
+            "tail_value_else",
+            "fn leak(xs: &[i32], c: bool) -> i64 {\n    if c {\n        0\n    } else {\n        xs\n    }\n}\n",
+        ),
+        (
+            "tail_value_region",
+            "fn f(xs: &[i32]) -> i64 {\n    region {\n        xs\n    }\n}\n",
         ),
     ];
     for (tag, src) in cases {

@@ -321,3 +321,38 @@ fn a_flat_qualified_variant_resolves_beside_an_alias_reexport() {
     let (ok, text) = check_files(temp.path(), &files);
     assert!(ok, "config.NormMode::GroupNorm in a flat layout:\n{text}");
 }
+
+/// Two modules whose aliases name each other form a cycle. The checker must
+/// stop on it and still accept the program, not loop. `timeout` turns a hang
+/// into rc 124 instead of a stalled test run.
+#[test]
+fn a_cyclic_alias_pair_does_not_hang_the_check() {
+    let temp = tempfile::tempdir().unwrap();
+    let a = "module a {\n    use b\n    type NormMode = b.NormMode\n    export type NormMode\n}\n";
+    let b = "module b {\n    use a\n    type NormMode = a.NormMode\n    export type NormMode\n}\n";
+    let user = "module user {\n    use config\n    use a\n    fn id(m: config.NormMode) -> config.NormMode {\n        m\n    }\n}\n";
+    let files = [
+        ("config.mind", CONFIG),
+        ("a.mind", a),
+        ("b.mind", b),
+        ("user.mind", user),
+    ];
+    for (name, src) in files {
+        fs::write(temp.path().join(name), src).unwrap();
+    }
+    let out = Command::new("timeout")
+        .current_dir(temp.path())
+        .arg("60")
+        .arg(mindc())
+        .args(["check", "--no-fmt"])
+        .args(files.iter().map(|(name, _)| *name))
+        .output()
+        .expect("run mindc check under timeout");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(out.status.code(), Some(124), "the check hung:\n{text}");
+    assert!(out.status.success(), "a cyclic alias pair:\n{text}");
+}
