@@ -158,6 +158,11 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   recurrence collapse. Opt-in until semantic, byte-reproducibility and verifier
   gates pass; see the proposal below.
 
+- **Deterministic mini-batch clustering (proposed, 2026-11-13)** – a
+  k-means-family program whose centroids are bit-identical on every substrate:
+  seeded start, fixed batch order, integer centroid sums. Ordered after the
+  compiler-first work; see the proposal below.
+
 - **Formal Verification** – Proof-carrying IR passes for safety-critical deployments.
   The first concrete instance is **RFC 0028 (Deterministic Field Calculus)**, below.
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
@@ -247,6 +252,43 @@ reverify all frozen self-host and cross-substrate checks; do **not** silently
 rewrite old canaries or present matching hashes from an unreachable pass as
 proof. Strict FP, side effects, unproven termination and verifier uncertainty
 are hard blockers. No release/performance claim until independently measured.
+
+### Deterministic mini-batch clustering (proposed, 2026-11-13)
+
+**Status:** design only; nothing ships and nothing is claimed.
+**Order:** after the compiler-first work and the Rust-independence finish line.
+
+Clustering code usually adds centroid sums in an order that changes with the
+thread count, the reduction tree or the device, so two runs on the same data can
+give slightly different centroids. This proposal is a `.mind` program (an
+`examples/` entry first, a `std/` module only if a second consumer appears) that
+trains centroids by mini-batch updates with every source of drift pinned:
+
+- Q16.16 input vectors; per-centroid sums and counts in `i64`; one fixed rounding
+  rule for the step that moves each centroid toward its batch mean.
+- A seeded k-means++ start from an integer generator in the program, and a batch
+  order fixed by the input order. No clock, no host RNG.
+- Assignment ties go to the lowest centroid index.
+- The step size and the batch size come from one fixed rule, not from a search
+  per dataset.
+
+The first planned consumer is the mind-mem compressed vector index, whose
+codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
+
+**Gates (all before any claim):**
+- `cross_substrate`: the stored centroid bytes are identical on x86-64 (AVX2) and
+  ARM64 (NEON) on real hardware, and in a second process on the same machine.
+  Positive control: a different seed gives different bytes.
+- Quality: on a fixed public dataset, the final within-cluster error is reported
+  next to an `f64` full-Lloyd reference run with the same start. The bound is set
+  once, before the run, and is not tuned per dataset.
+- Keystone 7/7 and the canary gate stay green; the program adds no new IR.
+- No speed claim without a benchmark against a reference implementation on the
+  same data, with the exact command and output.
+- GPU rung only after the GPU integer-determinism rung lands; no GPU claim before.
+
+**Falsification:** dropped if the integer program cannot stay inside the quality
+bound of the `f64` reference on the fixed dataset.
 
 ### RFC 0028 — Deterministic Field Calculus (Draft, **not scheduled**)
 
