@@ -266,20 +266,26 @@ trains centroids by mini-batch updates with every source of drift pinned:
 
 - Q16.16 input vectors; per-centroid sums and counts in `i64`; one fixed rounding
   rule for the step that moves each centroid toward its batch mean.
-- A seeded k-means++ start from an integer generator in the program, and a batch
-  order fixed by the input order. No clock, no host RNG.
+- A seeded k-means++ start from SplitMix64 (64-bit seed, unsigned 64-bit
+  outputs), written in the program, and a batch order fixed by the input order.
+  No clock, no host RNG.
 - k-means++ sampling: squared distances are summed in `i64` in input order. The
-  threshold is the next generator value modulo the total, and the pick is the
-  first index whose running sum is above it. Overflow is a hard error, never a
+  threshold is the next unsigned generator value modulo the total, with
+  rejection: a value at or above `2^64 - (2^64 mod total)` is discarded and the
+  next one drawn, so there is no modulo bias. The pick is the first index whose
+  running sum is above the threshold. Overflow is a hard error, never a
   wrap.
 - Assignment ties go to the lowest centroid index.
 - A centroid with no points in a batch is left unchanged. There is no reseeding.
 - In the k-means++ start, if every remaining distance is zero (duplicate
   points), the next centroid is the lowest-index point not yet chosen.
-- The step rule is fixed: each centroid moves toward its batch mean by
-  `batch_count / total_count`, where `total_count` is all points it has been
-  given so far, with round-half-to-even. Batch size 1,024, 3 passes. There is no
-  search per dataset.
+- The step rule is fixed, with one rounding per coordinate:
+  `c_new = c + round_half_even((S - n*c) / N)`, where `S` is the integer sum of
+  the `n` batch points assigned to the centroid and `N` is all points it has
+  been given so far, including this batch. The numerator is exact in `i64`. This equals a step of
+  `n / N` toward the batch mean. Batch size 1,024, 3 passes. There is no search
+  per dataset.
+- Each pixel `p` becomes `round_half_even(p * 65536 / 255)` in Q16.16.
 
 The first planned consumer is the mind-mem compressed vector index, whose
 codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
@@ -289,7 +295,9 @@ codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
   ARM64 (NEON) on real hardware, at 1, 2, 7 and N threads (N is the machine's
   core count, recorded with the result), and in a second process on the same
   machine. The thread-count runs cover the case this proposal exists to fix, and
-  7 covers uneven partitions.
+  7 covers uneven partitions. The build PR names how the assignment step is
+  split across threads, and each run records how many worker threads did work.
+  A run where fewer threads worked than were requested fails the gate.
 - Positive controls:
   - a different seed gives a different start set and different final centroid
     bytes;
@@ -298,8 +306,9 @@ codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
     when the integer sums are removed. If the variant does not differ, the gate
     is reported as unproven, not as passed.
 - Quality, fixed now and before any run: the dataset is the 60,000 MNIST
-  training images in the order of the training-image file, whose SHA-256 is
-  recorded in the gate fixture when it is first fetched. Pixel values are divided
+  training images in the order of the uncompressed `train-images-idx3-ubyte`
+  file. The build PR commits its SHA-256 before any run; the hash is never taken
+  on first fetch. Pixel values are divided
   by 255 into Q16.16, so a point's squared distance is at most
   784 × 2^32 ≈ 3.4e12 and the k-means++ running sum over all 60,000 points is
   at most about 2.0e17, under the `i64` limit of 9.2e18. k = 256. The metric is
@@ -307,13 +316,19 @@ codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
   centroids, divided by the same sum for an `f64` full-Lloyd reference run with
   the same start, which stops when no assignment changes or after 100
   iterations. The bound is a ratio of at most 1.02. It is not tuned per dataset.
-- Keystone 7/7 and the canary gate stay green; the program adds no new IR.
+- Keystone 7/7 and the canary gate stay green. The build PR names the existing
+  ops that give checked `i64` add and multiply and the rounding division. If one
+  is missing, it goes to the compiler queue first, and no "no new IR" claim is
+  made until then.
 - No speed claim without a benchmark against a reference implementation on the
   same data, with the exact command and output.
 - GPU rung only after the GPU integer-determinism rung lands; no GPU claim before.
 
-**Falsification:** dropped if the integer program's ratio on the fixed MNIST run
-is above 1.02.
+**Falsification:** the quality claim and the mind-mem trainer role are dropped
+if the integer program's ratio on the fixed MNIST run is above 1.02. The
+byte-identity result is a separate success criterion: if the `cross_substrate`
+gate and its controls pass, that result is still reported on its own, with the
+quality miss stated next to it.
 
 ### RFC 0028 — Deterministic Field Calculus (Draft, **not scheduled**)
 
