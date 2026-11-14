@@ -269,6 +269,9 @@ trains centroids by mini-batch updates with every source of drift pinned:
 - A seeded k-means++ start from an integer generator in the program, and a batch
   order fixed by the input order. No clock, no host RNG.
 - Assignment ties go to the lowest centroid index.
+- A centroid with no points in a batch is left unchanged. There is no reseeding.
+- In the k-means++ start, if every remaining distance is zero (duplicate
+  points), the next centroid is the lowest-index point not yet chosen.
 - The step size and the batch size come from one fixed rule, not from a search
   per dataset.
 
@@ -277,18 +280,23 @@ codebook trainer moves to `.mind` with the mind-mem Pure-MIND Core Port.
 
 **Gates (all before any claim):**
 - `cross_substrate`: the stored centroid bytes are identical on x86-64 (AVX2) and
-  ARM64 (NEON) on real hardware, and in a second process on the same machine.
-  Positive control: a different seed gives different bytes.
-- Quality: on a fixed public dataset, the final within-cluster error is reported
-  next to an `f64` full-Lloyd reference run with the same start. The bound is set
-  once, before the run, and is not tuned per dataset.
+  ARM64 (NEON) on real hardware, at 1 thread and at all cores, and in a second
+  process on the same machine. The thread-count run covers the case this
+  proposal exists to fix.
+- Positive control: a different seed gives a different start centroid set,
+  checked on the start itself before training.
+- Quality, fixed now and before any run: the dataset is the 60,000 MNIST
+  training images, pixel values as Q16.16, with k = 256. The metric is the final
+  within-cluster sum of squares, computed in `f64` from the integer centroids,
+  divided by the same sum for an `f64` full-Lloyd reference run with the same
+  start. The bound is a ratio of at most 1.02. It is not tuned per dataset.
 - Keystone 7/7 and the canary gate stay green; the program adds no new IR.
 - No speed claim without a benchmark against a reference implementation on the
   same data, with the exact command and output.
 - GPU rung only after the GPU integer-determinism rung lands; no GPU claim before.
 
-**Falsification:** dropped if the integer program cannot stay inside the quality
-bound of the `f64` reference on the fixed dataset.
+**Falsification:** dropped if the integer program's ratio on the fixed MNIST run
+is above 1.02.
 
 ### RFC 0028 — Deterministic Field Calculus (Draft, **not scheduled**)
 
