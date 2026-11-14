@@ -643,9 +643,9 @@ Hard-gate results:
 pure-MIND compile loop. The Rust `mind` crate hosts `mindc` itself and
 remains the `cargo install mind` distribution path until RFC 0010 lands
 a pure-MIND libMLIR FFI.
-
+Note (2026-11-14). The crates.io name `mind` is not this project.
+The source path is `cargo install --git https://github.com/star-ga/mind --tag vX.Y.Z --locked --bin mindc`.
 It means:
-
 - A fresh clone of `mind` can produce a working `mindc` binary using only
   `mindc` (plus the LLVM/MLIR toolchain it already requires) — no Rust
   toolchain.

@@ -194,7 +194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`std/entropy.mind`, `std/dns.mind`, `tests/std_entropy_dns_run.rs`,
   `tests/std_dns_layout_run.rs`, `tests/determinism_veto_control.rs`)
 - **X.509 path validation and a TLS 1.3 client in std (`#346`).** `import std.x509;` and
-  `import std.tls13_client;` resolve, link and run in `mindc build` executables
+  `import std.tls13_client_api;` resolve, link and run in `mindc build` executables
   and under `mindc test`.
   - `std.x509` validates a server chain (`x509_verify_server_chain`) from
     the leaf through intermediates to a caller-supplied anchor set: RSA PKCS#1
@@ -309,6 +309,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and unread bytes are never overwritten; a record longer than the record
   bound fails closed (E_OVF). This replaces the 2048-byte buffer that
   reclaimed consumed bytes before its bound check.
+- **Linux release binaries need glibc 2.28 or newer.** Each Linux asset is built in a digest-pinned manylinux_2_28 image: `quay.io/pypa/manylinux_2_28_x86_64@sha256:9555ba6c479fa69a2aa80ad1dc57154a60d562b19df159361d9379a02beb1e36` and `quay.io/pypa/manylinux_2_28_aarch64@sha256:cb37f0d66c8a75abb93cf6085cad1f1427cd7208f0c0fc48359bb1eea9924f21`. The v0.10.2 Linux asset needed GLIBC_2.39.
 
 ### Fixed
 - The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
@@ -892,7 +893,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every libc-only and no-extern program keeps its bytes with all driver rows
   deleted.
 
-### Added — the native GPU loader: libcuda.so.1 rows (ruling 16b)
+### Added — the native GPU loader: libcuda.so.1 rows
 - The closed extern table gains thirteen `libcuda.so.1` rows with unversioned
   symbols: `cuInit`, `cuDeviceGet`, `cuCtxCreate_v2`, `cuCtxDestroy_v2`,
   `cuCtxSynchronize`, `cuModuleLoadData`, `cuModuleGetFunction`,
@@ -1186,7 +1187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Not changed: no compiler source, seed or seed-row std module. The drivers compose the new modules by concatenation. The modules were joined without a `STDLIB_MIND_SOURCES` row; they are registered by "Fixed — every std import of a std module resolves" above. The native backend still refuses the TLS client program (see `tests/fixtures/tls13_client/README.md`); no native result is claimed.
 
 ### Added — native variadic C-call emitter component
-- Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred to lane L3 (VAR-03).
+- Integrated the native System V x86-64 LP64 variadic C-call emitter (`native_c_variadic_emit.mind`, `native_c_variadic_plan.mind`). The emitter handles scalar and pointer argument staging, AL vector register accounting, default argument promotions (small integers to i32, f32 to f64), and stack spilling. Note that this variadic emitter is a COMPONENT only; frontend admission, AST lowering, and GOT binding remain deferred.
 
 ### Fixed — std.sha256 uses bounded scratch and never returns an unwritten digest
 - The raw entry used to allocate a fresh 512-byte schedule per message block, plus a
@@ -1637,7 +1638,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
   self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
   unchanged).
-- **Audit hardening (cross-model review):** the f64/f32 `[T; N]` routing now covers **all six**
+- **Audit hardening (independent review):** the f64/f32 `[T; N]` routing now covers **all six**
   `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
   so a float fixed array declared inside a branch body now compiles instead of hitting the
   i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
@@ -2782,7 +2783,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`mic@3`-flip regression fix.** A regression introduced in the mic@3 canonical
   binary-IR flip (gate b above) — where the fn#10 body silently produced a wrong
-  `mic@3` flip outcome — was caught by the U1 bisect and fixed. The self-host gate
+  `mic@3` flip outcome — was caught by a bisect and fixed. The self-host gate
   now enforces all three fixed points together so a regression in any one is
   immediately visible; gate (b) and gate (c) cannot silently diverge.
 

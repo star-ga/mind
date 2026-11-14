@@ -29,7 +29,7 @@ The compiler produces deterministic binaries that execute inside the [Cognitive 
 **MIND self-hosts the full native-ELF fixed point.** The pure-MIND front-end (a) reproduces the
 canonical `mic@3` binary IR of its own source byte-for-byte (the layer the evidence chain's `trace_hash`
 anchors on), (b) reproduces the `mic@1` IR-text bootstrap fixed point, and (c) emits the NATIVE x86-64/ELF
-of the entire seeded module (21 stdlib modules + main.mind, 1 055 777 B) byte-identically against the Rust
+of the entire seeded module (21 stdlib modules + main.mind, 1 055 777 B at v0.10.0) byte-identically against the Rust
 reference — the native-ELF self-host fixed point is closed. This is the core of Rust-independence.
 
 **Backend architecture:** the pure-MIND NATIVE-ELF backend (`examples/mindc_mind/main.mind`,
@@ -62,7 +62,7 @@ This repository contains the open-core stack: the MIND language, type system, co
 
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
-| Rust | 1.82+ stable | Latest stable |
+| Rust | 1.85+ stable | Latest stable |
 | OS | Linux, macOS, Windows | Linux x86_64 |
 | Memory | 4 GB RAM | 8 GB RAM |
 | Disk | 500 MB | 2 GB (with MLIR) |
@@ -72,6 +72,7 @@ This repository contains the open-core stack: the MIND language, type system, co
 | Platform | Status | CI Tested |
 |----------|--------|-----------|
 | Linux x86_64 | Fully supported | Yes |
+| Linux ARM64 | Pre-built binary | Yes |
 | macOS x86_64 | Fully supported | Yes |
 | macOS ARM64 (Apple Silicon) | Fully supported | Yes |
 | Windows x86_64 | Fully supported | Yes |
@@ -118,26 +119,37 @@ cargo run --features aot --bin mindc -- examples/hello_tensor.mind --emit-obj ou
 
 ### Project Commands
 
+On x86-64 Linux, `mindc build` uses the native backend by default and needs no LLVM.
+`mindc run`, `mindc bench`, and `--release` (`-O3 -flto`) need the MLIR backend.
+Select it with `--backend mlir` or with `backend = "mlir"` under `[build]` in Mind.toml.
+
 ```bash
 # Build a MIND project (reads Mind.toml)
 mindc build
-mindc build --release                # optimized (-O3 -flto)
-mindc build --release --target cuda  # CUDA backend
+mindc build --release --backend mlir   # optimized (-O3 -flto)
 
-# Build and run
-mindc run
-mindc run --target cuda              # run with CUDA backend
+# Build and run (needs the MLIR backend)
+mindc run --backend mlir
 
 # Test (discovers #[test]-annotated functions, runs in parallel)
 mindc test
-mindc test --filter kv_cache         # run matching suites
-mindc test --target cuda             # GPU tests
+mindc test --filter kv_cache            # run matching suites
 
-# Benchmark (discovers bench/*.mind, builds with --release)
-mindc bench
-mindc bench --target cuda            # GPU benchmarks
-mindc bench --filter throughput      # specific benchmark
+# Benchmark (discovers bench/*.mind, builds with --release; needs MLIR)
+mindc bench --backend mlir
+mindc bench --filter throughput --backend mlir
 ```
+
+`--target cuda` is a GPU target alias. It does not make this repository emit
+or run CUDA. The default native backend accepts `--target cpu` only and refuses
+any other target (`backend.native_target`, exit 3, no artifact).
+`mindc build --backend mlir --target cuda` is refused: target `gpu` is not yet
+supported in Phase A (only `cpu` and `cerebras`). `mindc test` has no
+`--target` flag. `mindc run --backend mlir --target cuda` and
+`mindc bench --backend mlir --target cuda` pass the name `cuda` to the project
+link. That link requires `libmind_cuda_linux-x64.so` from `MIND_LIB_DIR` or
+`~/.mind/lib` (`E5002` when the file is absent). This repository does not ship
+that library. GPU execution is in the commercial mind-runtime.
 
 ### Mindcraft Source Toolchain (RFC 0007 — fmt/check shipped in v0.6.8; see note)
 
