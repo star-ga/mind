@@ -305,39 +305,29 @@ fn segments(dotted: &str) -> Vec<String> {
     dotted.split('.').map(str::to_string).collect()
 }
 
-/// The walked files one import path names: the exact module key, else the
-/// `crate.`-prefixed key (the build's module-table lookup), else, for a bare
-/// local name, the one walked file with that stem (project discovery's lookup).
-/// An ambiguous stem names nothing, as it does at discovery.
+/// Walked files for one import. The shared resolver names the module. Stem
+/// lookup stays index-based. An ambiguous stem names nothing.
 fn walked_targets<'a>(
     path: &[String],
     by_key: &'a BTreeMap<String, Vec<usize>>,
     by_stem: &'a BTreeMap<String, Vec<usize>>,
 ) -> &'a [usize] {
-    let key = path.join(".");
-    if let Some(found) = by_key.get(&key) {
-        return found;
+    let resolved =
+        super::artifact::resolve_import_module(path, |name| by_key.contains_key(name), |_| None);
+    if let Some(key) = resolved {
+        return by_key.get(&key).map(Vec::as_slice).unwrap_or(&[]);
     }
-    if !key.starts_with("crate.") {
-        if let Some(found) = by_key.get(&format!("crate.{key}")) {
-            return found;
-        }
-    }
-    match (path, by_stem.get(path[0].as_str())) {
+    let stem = path.first().and_then(|name| by_stem.get(name.as_str()));
+    match (path, stem) {
         ([name], Some(found)) if name != "std" && found.len() == 1 => found,
         _ => &[],
     }
 }
 
-/// The source set of a project without a declared list: the manifest entry,
-/// the other `.mind` files in the entry's own directory (the package's
-/// top-level modules, whose declarations the project shares without an
-/// import), the `roots` (a file `check` or `test` analyses in the project),
-/// and every walked file these reach through imports, transitively. A file in
-/// a subdirectory that nothing imports (a `docs/` repro, an old module, a
-/// harness) is not a translation unit and does not enter the analysis: the
-/// artifact is a function of the program, never of what else sits on disk.
-/// The result keeps the walk's byte order.
+/// Source set with no declared list: the entry, top-level siblings, `roots`,
+/// and files reached through imports. An item path reaches the longest module
+/// prefix, so a nested file that item names is linked. A subdirectory file
+/// nothing imports stays out. Order is the walk's byte order.
 fn import_closure(
     project_root: &Path,
     entry: &str,

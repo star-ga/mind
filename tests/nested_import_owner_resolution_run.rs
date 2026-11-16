@@ -416,3 +416,201 @@ fn distinct_local_name_still_runs_imported_body() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+const LOCAL_ENCODE: &str = "fn encode(x: i64) -> i64 {\n    return 1;\n}\n";
+const IMPORTED_ENCODE: &str = "pub fn encode(x: i64) -> i64 {\n    return 2;\n}\n";
+
+fn main_calling(import_line: &str, expr: &str) -> String {
+    format!("{import_line}\n\n{LOCAL_ENCODE}\npub fn main() -> i64 {{\n    return {expr};\n}}\n")
+}
+
+fn write_project_files(root: &Path, files: &[(&str, &str)]) -> PathBuf {
+    let project = root.join("project");
+    for (rel, body) in files {
+        let path = project.join(rel);
+        fs::create_dir_all(path.parent().expect("project file has a parent"))
+            .expect("create parent");
+        fs::write(&path, body).expect("write project file");
+    }
+    fs::write(project.join("Mind.toml"), collide_manifest()).expect("write collide manifest");
+    project
+}
+
+fn assert_three_routes_refuse_collision(mindc: &Path, project: &Path) {
+    let build = common::run_build_captured(mindc, project, &["--no-cache"]);
+    let rendered = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    if build.status.success() {
+        let artifact = common::reported_artifact(&build);
+        let run = Command::new(&artifact)
+            .output()
+            .expect("run colliding binary");
+        panic!(
+            "executable route built a colliding program and returned {:?}; the wrong body is 11\n{rendered}",
+            run.status.code()
+        );
+    }
+    assert!(
+        rendered.contains("lower::imported_local_fn_collision"),
+        "executable route lost the collision refusal:\n{rendered}"
+    );
+
+    let cdylib = project.join("collide.so");
+    let emit = Command::new(mindc)
+        .current_dir(project)
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--emit",
+            "cdylib",
+            "--no-cache",
+            "--out",
+            cdylib.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cdylib build");
+    let cdylib_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&emit.stdout),
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !emit.status.success(),
+        "cdylib route accepted the collision:\n{cdylib_text}"
+    );
+    assert!(
+        cdylib_text.contains("lower::imported_local_fn_collision"),
+        "cdylib route changed its refusal:\n{cdylib_text}"
+    );
+    assert!(!cdylib.exists(), "cdylib route published an artifact");
+
+    let native_out = project.join("native-bin");
+    let native = Command::new(mindc)
+        .current_dir(project)
+        .args([
+            "build",
+            "--backend",
+            "native",
+            "--no-cache",
+            "--out",
+            native_out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run native build");
+    let native_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        !native.status.success(),
+        "native route accepted the collision:\n{native_text}"
+    );
+    assert!(
+        native_text.contains("closure.duplicate_definition"),
+        "native route changed its refusal:\n{native_text}"
+    );
+    assert!(
+        !native_text.contains("lower::imported_local_fn_collision"),
+        "native route took the executable preflight:\n{native_text}"
+    );
+}
+
+fn refuse_item_project(root: &Path, import_line: &str, expr: &str, encoder_rel: &str) -> PathBuf {
+    let main_src = main_calling(import_line, expr);
+    write_project_files(
+        root,
+        &[
+            ("src/main.mind", main_src.as_str()),
+            (encoder_rel, IMPORTED_ENCODE),
+        ],
+    )
+}
+
+#[test]
+fn item_import_longer_than_one_segment_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("item path scratch");
+    let project = refuse_item_project(
+        temp.path(),
+        "import encoder.encode;",
+        "encode.encode(0) * 10 + encode(0)",
+        "src/encoder.mind",
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn item_import_alias_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("alias scratch");
+    let project = refuse_item_project(
+        temp.path(),
+        "import encoder.encode as enc;",
+        "enc.encode(0) * 10 + encode(0)",
+        "src/encoder.mind",
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn nested_item_import_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("nested item scratch");
+    let project = refuse_item_project(
+        temp.path(),
+        "import encoder.codec.encode;",
+        "encode.encode(0) * 10 + encode(0)",
+        "src/encoder/codec.mind",
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn use_colon_item_import_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("use colon scratch");
+    let project = refuse_item_project(
+        temp.path(),
+        "use encoder::encode;",
+        "encode.encode(0) * 10 + encode(0)",
+        "src/encoder.mind",
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn reexport_item_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("reexport item scratch");
+    let main_src = main_calling("import middle.encode;", "encode.encode(0) * 10 + encode(0)");
+    let project = write_project_files(
+        temp.path(),
+        &[
+            ("src/main.mind", main_src.as_str()),
+            ("src/encoder.mind", IMPORTED_ENCODE),
+            ("src/middle.mind", "pub import encoder.encode;\n"),
+        ],
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn reexport_middle_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("reexport middle scratch");
+    let main_src = main_calling("import middle;", "middle.encode(0) * 10 + encode(0)");
+    let project = write_project_files(
+        temp.path(),
+        &[
+            ("src/main.mind", main_src.as_str()),
+            ("src/encoder.mind", IMPORTED_ENCODE),
+            ("src/middle.mind", "pub import encoder;\n"),
+        ],
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}

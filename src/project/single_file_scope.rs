@@ -161,6 +161,17 @@ impl ProjectScope {
             entry_module,
         );
         guard._consts = Some(ConstsGuard::install(&self.consts));
+        // `pub import` targets live only on the collision map. This route
+        // keeps the scope map for bare-name lookup and unions the collision
+        // map in the preflight.
+        let parsed = self
+            .sources
+            .iter()
+            .map(|source| (source.module_path().to_string(), source.module().clone()))
+            .collect::<Vec<_>>();
+        guard._collision_imports = Some(
+            super::active_module_table::CollisionImportsGuard::install(link_import_map(&parsed)),
+        );
         guard
     }
 }
@@ -304,10 +315,13 @@ impl ProjectTableGuard {
 
 /// Import targets for one executable link. `std` imports stay out, as they do
 /// on the shared-library route. A unique file stem resolves when one module owns it.
+/// Item paths use the shared module resolver. `pub import` targets are added
+/// only to this collision map.
 fn link_import_map(parsed: &[(String, Module)]) -> BTreeMap<(String, Vec<String>), String> {
     let mut modules = BTreeSet::new();
     let mut stems: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (path, _) in parsed {
+    let mut public_imports: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
+    for (path, module) in parsed {
         if path.starts_with("std.") {
             continue;
         }
@@ -317,6 +331,10 @@ fn link_import_map(parsed: &[(String, Module)]) -> BTreeMap<(String, Vec<String>
             .entry(stem.to_string())
             .or_default()
             .push(path.clone());
+        let pubs = public_import_paths(module);
+        if !pubs.is_empty() {
+            public_imports.insert(path.clone(), pubs);
+        }
     }
     let mut resolved = BTreeMap::new();
     for (owner, module) in parsed {
@@ -331,7 +349,14 @@ fn link_import_map(parsed: &[(String, Module)]) -> BTreeMap<(String, Vec<String>
                 let Some(target) = resolve_link_import(path, &modules, &stems) else {
                     return;
                 };
-                resolved.insert((owner.clone(), path.clone()), target);
+                resolved.insert((owner.clone(), path.clone()), target.clone());
+                super::artifact::extend_public_import_targets(
+                    owner,
+                    &target,
+                    &public_imports,
+                    |path| resolve_link_import(path, &modules, &stems),
+                    &mut resolved,
+                );
             });
         }
     }
@@ -343,27 +368,30 @@ fn resolve_link_import(
     modules: &BTreeSet<String>,
     stems: &BTreeMap<String, Vec<String>>,
 ) -> Option<String> {
-    if matches!(path.first().map(String::as_str), Some("std")) {
-        return None;
-    }
-    let key = path.join(".");
-    if modules.contains(&key) {
-        return Some(key);
-    }
-    if !key.starts_with("crate.") {
-        let crate_key = format!("crate.{key}");
-        if modules.contains(&crate_key) {
-            return Some(crate_key);
-        }
-    }
-    if path.len() == 1 {
-        if let Some(found) = stems.get(&path[0]) {
-            if found.len() == 1 {
-                return found.first().cloned();
+    super::artifact::resolve_import_module(
+        path,
+        |key| modules.contains(key),
+        |stem| {
+            stems
+                .get(stem)
+                .and_then(|found| (found.len() == 1).then(|| found[0].clone()))
+        },
+    )
+}
+
+fn public_import_paths(module: &Module) -> Vec<Vec<String>> {
+    let mut paths = Vec::new();
+    for item in &module.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::Import {
+                path, public: true, ..
+            } = node
+            {
+                paths.push(path.clone());
             }
-        }
+        });
     }
-    None
+    paths
 }
 
 /// Discover project context without rereading an entry the caller captured.
@@ -599,27 +627,15 @@ fn capture_scope<'a>(
         candidates: &BTreeMap<String, Candidate>,
         stems: &BTreeMap<String, Vec<String>>,
     ) -> Option<String> {
-        if matches!(path.first().map(String::as_str), Some("std")) {
-            return None;
-        }
-        let key = path.join(".");
-        if candidates.contains_key(&key) {
-            return Some(key);
-        }
-        if !key.starts_with("crate.") {
-            let crate_key = format!("crate.{key}");
-            if candidates.contains_key(&crate_key) {
-                return Some(crate_key);
-            }
-        }
-        if path.len() == 1 {
-            if let Some(matches) = stems.get(&path[0]) {
-                if matches.len() == 1 {
-                    return matches.first().cloned();
-                }
-            }
-        }
-        None
+        super::artifact::resolve_import_module(
+            path,
+            |key| candidates.contains_key(key),
+            |stem| {
+                stems
+                    .get(stem)
+                    .and_then(|found| (found.len() == 1).then(|| found[0].clone()))
+            },
+        )
     }
 
     let mut pending = BTreeSet::new();

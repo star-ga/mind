@@ -18,6 +18,7 @@
 //! caller still owns the decoration (`lib….so` / `.o`), because that is a fact
 //! about the emit kind, not about the project.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::ProjectManifest;
@@ -83,4 +84,71 @@ pub fn artifact_dir(project_root: &Path, release: bool) -> PathBuf {
 /// defect as the artifact name, one level down.
 pub fn profile_name(release: bool) -> &'static str {
     if release { "release" } else { "debug" }
+}
+
+/// Module an import path links. Exact key, then the `crate.` key, then (only
+/// for one segment) `unique_stem`. A longer path that is not itself a module
+/// uses the longest prefix that is a module, so an item path links the module
+/// that defines the item instead of matching nothing.
+pub(super) fn resolve_import_module(
+    path: &[String],
+    has_module: impl Fn(&str) -> bool,
+    unique_stem: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if path.is_empty() || matches!(path.first().map(String::as_str), Some("std")) {
+        return None;
+    }
+    let module_key = |key: &str| -> Option<String> {
+        if has_module(key) {
+            return Some(key.to_string());
+        }
+        if !key.starts_with("crate.") {
+            let prefixed = format!("crate.{key}");
+            if has_module(&prefixed) {
+                return Some(prefixed);
+            }
+        }
+        None
+    };
+    if let Some(found) = module_key(&path.join(".")) {
+        return Some(found);
+    }
+    if path.len() == 1 {
+        return unique_stem(&path[0]);
+    }
+    for end in (1..path.len()).rev() {
+        if let Some(found) = module_key(&path[..end].join(".")) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Add `pub import` targets of `start` to `owner`'s collision map. A direct
+/// import of the same path keeps the target already recorded. Cycles stop.
+pub(super) fn extend_public_import_targets(
+    owner: &str,
+    start: &str,
+    public_imports: &BTreeMap<String, Vec<Vec<String>>>,
+    resolve: impl Fn(&[String]) -> Option<String>,
+    resolved: &mut BTreeMap<(String, Vec<String>), String>,
+) {
+    let mut seen = BTreeSet::from([start.to_string()]);
+    let mut queue = vec![start.to_string()];
+    while let Some(module_key) = queue.pop() {
+        let Some(paths) = public_imports.get(&module_key) else {
+            continue;
+        };
+        for path in paths {
+            let Some(next) = resolve(path) else {
+                continue;
+            };
+            resolved
+                .entry((owner.to_string(), path.clone()))
+                .or_insert_with(|| next.clone());
+            if seen.insert(next.clone()) {
+                queue.push(next);
+            }
+        }
+    }
 }

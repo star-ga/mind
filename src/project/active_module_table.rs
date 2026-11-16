@@ -714,16 +714,23 @@ impl Drop for CollisionImportsGuard {
 
 /// Captured import targets the collision preflight consults.
 ///
-/// A manifest scope map wins, so the shared-library route stays as it is.
-/// The executable route has no scope map. It records the same import targets
-/// here, and this function reads them. Bare-name lookup does not.
+/// The scope map and the collision map are unioned. Bare-name lookup reads
+/// only the scope map. The collision map adds `pub import` targets the scope
+/// map does not record. The executable route has no scope map, so it reads
+/// the collision map alone.
 fn collision_targets(owner: Option<&str>) -> Option<BTreeSet<String>> {
     let scoped = ACTIVE_RESOLVED_IMPORTS
         .with(|resolved| captured_import_targets_from_map(resolved.borrow().as_ref(), owner));
-    if scoped.is_some() {
-        return scoped;
+    let recorded = COLLISION_IMPORTS
+        .with(|cell| captured_import_targets_from_map(cell.borrow().as_ref(), owner));
+    match (scoped, recorded) {
+        (Some(mut left), Some(right)) => {
+            left.extend(right);
+            Some(left)
+        }
+        (Some(left), None) => Some(left),
+        (None, right) => right,
     }
-    COLLISION_IMPORTS.with(|cell| captured_import_targets_from_map(cell.borrow().as_ref(), owner))
 }
 
 impl Drop for Guard {
