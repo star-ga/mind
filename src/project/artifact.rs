@@ -18,6 +18,7 @@
 //! caller still owns the decoration (`lib….so` / `.o`), because that is a fact
 //! about the emit kind, not about the project.
 
+#[cfg(feature = "cross-module-imports")]
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -126,6 +127,7 @@ pub(super) fn resolve_import_module(
 
 /// Add `pub import` targets of `start` to `owner`'s collision map. A direct
 /// import of the same path keeps the target already recorded. Cycles stop.
+#[cfg(feature = "cross-module-imports")]
 pub(super) fn extend_public_import_targets(
     owner: &str,
     start: &str,
