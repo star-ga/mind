@@ -1575,7 +1575,7 @@ fn compile_sources(
         // scope / MODULE_CONSTS, not this surface.
         let (project_consts, poisoned_consts) = build_project_consts(&parsed);
         table.prune_exported(&poisoned_consts);
-        let table_guard = single_file_scope::ProjectTableGuard::install(table);
+        let table_guard = single_file_scope::ProjectTableGuard::install_executable(table, &parsed);
         // Cross-module ENUM propagation: collect every enum DECLARED in any
         // parsed source into one whole-project registry, set at project scope
         // before the per-file compile loop (mirroring the project table). This

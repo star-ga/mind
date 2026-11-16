@@ -33,6 +33,10 @@ thread_local! {
     /// across modules or override an exact qualified path.
     static ACTIVE_RESOLVED_IMPORTS: RefCell<Option<ResolvedImportMap>> =
         const { RefCell::new(None) };
+    /// Import targets for the executable collision preflight only.
+    /// The executable compiler does not install the visibility import map:
+    /// that map also narrows bare-name lookup. This record does not.
+    static COLLISION_IMPORTS: RefCell<Option<ResolvedImportMap>> = const { RefCell::new(None) };
     /// Evaluator parsing keeps the owner qualifier for namespace references,
     /// while the ordinary AST intentionally folds `mod.name` to `name`.
     /// Keep those references span-scoped during evaluator setup so qualified
@@ -598,21 +602,18 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
 /// the runnable-artifact preflight refuses this shape before lowering can let
 /// clang report a duplicate symbol.
 pub(crate) fn imported_fn_conflicts_with_local(owner: Option<&str>, name: &str) -> bool {
-    ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
-        let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
-        let Some(targets) = captured else {
+    let Some(targets) = collision_targets(owner) else {
+        return false;
+    };
+    ACTIVE.with(|active| {
+        let table = active.borrow();
+        let Some(table) = table.as_ref() else {
             return false;
         };
-        ACTIVE.with(|active| {
-            let table = active.borrow();
-            let Some(table) = table.as_ref() else {
-                return false;
-            };
-            table
-                .exported_fn_candidate_refs(name)
-                .into_iter()
-                .any(|(module, _)| targets.contains(module))
-        })
+        table
+            .exported_fn_candidate_refs(name)
+            .into_iter()
+            .any(|(module, _)| targets.contains(module))
     })
 }
 
@@ -679,6 +680,39 @@ impl Drop for ResolvedImportsGuard {
     fn drop(&mut self) {
         ACTIVE_RESOLVED_IMPORTS.with(|cell| *cell.borrow_mut() = self.previous.take());
     }
+}
+
+/// Installs executable-route import targets for the collision preflight
+/// and restores the previous record on drop. Lookup does not read it.
+pub(crate) struct CollisionImportsGuard {
+    previous: Option<ResolvedImportMap>,
+}
+
+impl CollisionImportsGuard {
+    pub(crate) fn install(imports: ResolvedImportMap) -> Self {
+        let previous = COLLISION_IMPORTS.with(|cell| cell.borrow_mut().replace(imports));
+        Self { previous }
+    }
+}
+
+impl Drop for CollisionImportsGuard {
+    fn drop(&mut self) {
+        COLLISION_IMPORTS.with(|cell| *cell.borrow_mut() = self.previous.take());
+    }
+}
+
+/// Captured import targets the collision preflight consults.
+///
+/// A manifest scope map wins, so the shared-library route stays as it is.
+/// The executable route has no scope map. It records the same import targets
+/// here, and this function reads them. Bare-name lookup does not.
+fn collision_targets(owner: Option<&str>) -> Option<BTreeSet<String>> {
+    let scoped = ACTIVE_RESOLVED_IMPORTS
+        .with(|resolved| captured_import_targets_from_map(resolved.borrow().as_ref(), owner));
+    if scoped.is_some() {
+        return scoped;
+    }
+    COLLISION_IMPORTS.with(|cell| captured_import_targets_from_map(cell.borrow().as_ref(), owner))
 }
 
 impl Drop for Guard {
