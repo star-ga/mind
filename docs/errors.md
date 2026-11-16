@@ -87,6 +87,19 @@ namespace. Separate project files may declare structs with the same name.
 to an `i8`, `u8`, `i16`, or `u16` array element. This prevents an opaque handle
 from being silently truncated to the destination cell width.
 
+`E2038` refuses a comparison that would compare string handles instead of
+bytes. For `==` of a string and an operand not known to be a string, the
+message is:
+
+    `==` compares a string with an operand not known to be a string; it would compare handles, not bytes, and report equal text as unequal — use `string_eq(a, b)` for byte-wise equality
+
+`!=` uses the same sentence with `!=`. Two operands whose types are not known
+at compile time use that sentence with "two operands whose types are not known
+at compile time, so both may be strings". A string-literal `match` pattern on
+a scrutinee not known to be a string says to use `string_eq(s, "...")`.
+Give the operand a declared `string` type, or compare bytes with `string_eq`
+from `std.string`.
+
 `E2039` refuses an `extern` calling convention that has no lowering row on
 the compile target: `callconv(.aapcs)` on x86-64, `callconv(.win64)` with
 varargs, `callconv(.sysv)` on a Windows target, and `callconv(.sysv)` or
@@ -115,6 +128,30 @@ reports `error[build][E2042]: ...`; `mindc check`, `mindc test` and
 project only the named file is compiled, so the import has no module to bind
 to. The error names each local import. Add a `Mind.toml` in that directory or a
 parent, so that the imported modules compile with the file.
+
+`E2043` refuses a `[build] backend` value that names no code-generation
+backend. The message is:
+
+    E2043: `[build] backend = "<raw>"` names no code-generation backend (expected `mlir` or `native`); refusing rather than building with a default
+
+Set `<raw>` to `mlir` or `native`. The same code refuses
+`[build] backend = "native"` on a command that compiles only through the MLIR
+project pipeline:
+
+    E2043: `[build] backend = "native"` selects the native bridge, but this command compiles through the MLIR project pipeline, which cannot honor it; refusing rather than building an MLIR artifact. Build the package with `mindc build` from its own root.
+
+It also refuses a code-generation name (`native` or `mlir`) in
+`[targets.<name>] backend`, because that key selects the target class
+(`cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|wasm`):
+
+    E2043: `[targets.<name>] backend = "<value>"` names a code-generation backend, but that key selects the target class (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|wasm); set `[build] backend = "<mlir-or-native>"` to select the code-generation route.
+
+`E2044` refuses a `--backend` flag that disagrees with `[build] backend` in
+Mind.toml. The message is:
+
+    E2044: `--backend <flag>` disagrees with `[build] backend = "<manifest>"` in Mind.toml; refusing to choose one. Remove the flag or change the manifest.
+
+Remove the flag or change the manifest.
 
 In a manifest-captured project, a bare cross-module name is resolved against
 the current module's exact imports. If multiple imported modules export the

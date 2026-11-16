@@ -1,7 +1,8 @@
 # Installing mindc
 
-`mindc` is the MIND compiler driver. Pre-built binaries are available for Linux,
-macOS, and Windows — no Rust toolchain required.
+`mindc` is the MIND compiler driver. Pre-built binaries are published for
+Linux x86_64, Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows
+x86_64. A pre-built binary needs no Rust toolchain.
 
 ## One-line install
 
@@ -11,126 +12,142 @@ macOS, and Windows — no Rust toolchain required.
 curl -sSL https://mindlang.dev/install.sh | sh
 ```
 
-The script:
-- Detects your OS and architecture automatically
-- Downloads the latest release from GitHub
-- Verifies the SHA256 checksum
-- Installs to `/usr/local/bin/mindc` (or `~/.local/bin/mindc` if `/usr/local/bin` is not writable)
+`https://mindlang.dev/install.sh` serves a copy of `scripts/install.sh` in
+this repository.
 
-To pin a specific version:
+The script detects the OS and the architecture, downloads the matching GitHub
+release asset, and installs `mindc` to `/usr/local/bin` when that directory is
+writable. Otherwise it installs to `~/.local/bin`. `MIND_INSTALL_DIR` overrides
+the directory.
 
-```sh
-MINDC_VERSION=v0.10.0 curl -sSL https://mindlang.dev/install.sh | sh
-```
-
-To preview what the script would do without writing any files:
+Pin a tag with `MIND_VERSION`. The script reads no positional arguments.
 
 ```sh
-curl -sSL https://mindlang.dev/install.sh | sh -s -- --dry-run
+MIND_VERSION=v0.10.3 curl -sSL https://mindlang.dev/install.sh | sh
 ```
 
-## Native codegen toolchain (for `--emit-shared` / `--emit-obj`)
+Preview the download and the install path. The script writes nothing.
 
-The released `mindc` parses, type-checks, and emits IR and MLIR **standalone** —
-`mindc check`, `--emit-ir`, and `--emit-mlir` need nothing beyond the binary.
+```sh
+MIND_DRY_RUN=1 curl -sSL https://mindlang.dev/install.sh | sh
+```
 
-Producing a **native object or shared library** (`--emit-obj`, `--emit-shared`,
-`mindc build`) lowers the emitted MLIR through the LLVM/MLIR tools, which must be
-on your `PATH`:
-
-- `mlir-opt`, `mlir-translate` (LLVM/MLIR)
-- `clang`
-
-If they are absent, codegen fails with a clear `tool not found` error rather than
-silently degrading; a build names the missing tool and any installed copy under
-`/usr/lib/llvm-<N>/bin`. Tested with LLVM/MLIR 23 (latest) and 20 (oldest supported). MLIR 18
-builds most programs but cannot bufferize a tensor carried across a loop or
-returned from several exits. On Debian/Ubuntu, LLVM/MLIR 20 (oldest supported): `apt install mlir-20-tools
-clang-20` and put `/usr/lib/llvm-20/bin` on `PATH`. LLVM/MLIR 23 (latest): add the signed
-`llvm-toolchain-noble-23` apt source, `apt install mlir-23-tools clang-23`, and put
-`/usr/lib/llvm-23/bin` on `PATH`; on macOS: `brew install llvm`
-(and add its `bin` to `PATH`).
-
-Note: `https://mindlang.dev/install.sh` is a redirect to the canonical
-`scripts/install.sh` in this repository. The redirect is configured separately
-on the mindlang.dev Cloudflare Pages site.
+When the release publishes `<asset>.sha256`, the script checks that file. If
+that file is absent, the script installs the asset without the check. The
+asset names are in the manual table below.
 
 ### Windows (PowerShell)
 
-```powershell
-irm https://mindlang.dev/install.ps1 | iex
-```
-
-Or with a pinned version:
+`scripts/install.ps1` reads `-Version`. A script fetched with `irm` and run
+with `iex` does not receive arguments, so the pin form is a script block:
 
 ```powershell
-$env:MINDC_VERSION = "v0.10.0"; irm https://mindlang.dev/install.ps1 | iex
+& ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.3
 ```
 
-The default install directory is `%USERPROFILE%\.local\bin`. The script adds
-it to your user `PATH` automatically if it is not already present.
+From a clone:
+
+```powershell
+powershell -File scripts/install.ps1 -Version v0.10.3
+```
+
+The default install directory is `%USERPROFILE%\.local\bin`.
+
+The published Windows asset is `mindc-windows-x64.zip`, with
+`mindc-windows-x64.zip.sha256` beside it. `scripts/install.ps1` in this tree
+still requests `mindc-<tag>-x86_64-pc-windows-msvc.exe` and a `SHA256SUMS`
+file. Those names are not release assets. Use the manual steps for the
+published file. Windows ARM64 has no pre-built binary.
+
+## What a build needs
+
+`mindc check`, `--emit-ir`, and `--emit-mlir` need nothing beyond the binary.
+
+On x86-64 Linux, `mindc build` uses the native backend by default. That
+backend needs no LLVM, no MLIR, and no clang. It emits an x86-64 Linux
+executable for the native-lane-v1 subset. A program outside that subset is
+refused.
+
+`mindc run`, `mindc bench`, `--emit cdylib`, and `--emit object` need the MLIR
+backend (`--backend mlir`, or `backend = "mlir"` under `[build]` in
+Mind.toml). On any host other than x86-64 Linux, `mindc build` needs that same
+selection. The MLIR route needs these tools on `PATH`:
+
+- `mlir-opt` and `mlir-translate` (LLVM/MLIR)
+- `clang`
+
+If they are absent, codegen fails with a `tool not found` error. A build names
+the missing tool and any installed copy under `/usr/lib/llvm-<N>/bin`. Tested
+with LLVM/MLIR 23 (latest) and 20 (oldest supported). MLIR 18 builds most
+programs but cannot bufferize a tensor carried across a loop or returned from
+several exits. On Debian/Ubuntu, LLVM/MLIR 20: `apt install mlir-20-tools
+clang-20`, and put `/usr/lib/llvm-20/bin` on `PATH`. LLVM/MLIR 23: add the
+signed `llvm-toolchain-noble-23` apt source, `apt install mlir-23-tools
+clang-23`, and put `/usr/lib/llvm-23/bin` on `PATH`. On macOS:
+`brew install llvm`, and add its `bin` to `PATH`.
 
 ## Manual install
 
-1. Go to the [Releases page](https://github.com/star-ga/mind/releases).
-2. Download the asset for your platform:
+1. Open the [Releases page](https://github.com/star-ga/mind/releases).
+2. Download one asset. Each asset has a sibling `<asset>.sha256` file.
 
    | Platform | Asset |
    |----------|-------|
-   | Linux x86_64 | `mindc-<version>-x86_64-unknown-linux-musl` |
-   | macOS (Intel + Apple Silicon) | `mindc-<version>-x86_64-apple-darwin-universal` |
-   | Windows x86_64 | `mindc-<version>-x86_64-pc-windows-msvc.exe` |
+   | Linux x86_64 | `mindc-linux-x64.tar.gz` |
+   | Linux ARM64 | `mindc-linux-arm64.tar.gz` |
+   | macOS Intel | `mindc-macos-x64.tar.gz` |
+   | macOS Apple Silicon | `mindc-macos-arm64.tar.gz` |
+   | Windows x86_64 | `mindc-windows-x64.zip` |
 
-3. Verify the checksum (see below).
-4. Place the binary on your `PATH` and make it executable:
+3. Check the sibling `.sha256` file (see below).
+4. Extract the archive. The Unix archive contains `mindc`. The Windows archive
+   contains `mindc.exe`. Put that file on `PATH`.
 
-   ```sh
-   # Linux / macOS
-   chmod +x mindc-<version>-x86_64-unknown-linux-musl
-   sudo mv mindc-<version>-x86_64-unknown-linux-musl /usr/local/bin/mindc
-   mindc --version
-   ```
+```sh
+tar -xzf mindc-linux-x64.tar.gz
+sudo mv mindc /usr/local/bin/mindc
+mindc --version
+```
 
-   ```powershell
-   # Windows
-   Move-Item .\mindc-<version>-x86_64-pc-windows-msvc.exe C:\mindc\mindc.exe
-   # Add C:\mindc to your PATH via System Properties > Environment Variables
-   mindc --version
-   ```
+```powershell
+Expand-Archive .\mindc-windows-x64.zip -DestinationPath .
+Move-Item .\mindc.exe $env:USERPROFILE\.local\bin\mindc.exe
+mindc --version
+```
 
 ## Verifying the download (SHA256)
 
-Every release includes a `SHA256SUMS` file. Use it to confirm the asset
-you downloaded has not been tampered with.
+Each asset has its own `<asset>.sha256` file. There is no combined
+`SHA256SUMS` file. The Linux and macOS files are the output of `sha256sum` or
+`shasum -a 256`. Run the check in the directory that holds the asset.
 
 ```sh
-# Linux
-sha256sum --check --ignore-missing SHA256SUMS
+sha256sum -c mindc-linux-x64.tar.gz.sha256
+shasum -a 256 -c mindc-macos-arm64.tar.gz.sha256
+```
 
-# macOS
-shasum -a 256 --check --ignore-missing SHA256SUMS
-
-# Windows (PowerShell)
-$hash = (Get-FileHash .\mindc-<version>-x86_64-pc-windows-msvc.exe -Algorithm SHA256).Hash.ToLower()
-Select-String $hash .\SHA256SUMS
+```powershell
+$expected = (Get-Content .\mindc-windows-x64.zip.sha256).Split()[0].ToLower()
+$actual = (Get-FileHash .\mindc-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expected) { throw "SHA-256 mismatch" }
 ```
 
 ## Build from source
 
-If you have Rust installed (1.85 or later):
+Rust 1.85 or later (`rust-version` in `Cargo.toml`). This is the release
+feature set:
 
 ```sh
-cargo install --git https://github.com/star-ga/mind --bin mindc
+cargo install --git https://github.com/star-ga/mind --tag v0.10.3 --locked --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
 ```
 
-Or from a local clone:
+From a local clone of tag `v0.10.3`:
 
 ```sh
-git clone https://github.com/star-ga/mind.git
-cd mind
-cargo build --release --bin mindc
-# binary at: target/release/mindc
+cargo build --release --locked --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff evidence-mldsa evidence-slhdsa"
 ```
+
+The binary is `target/release/mindc`.
 
 ## Verify your install
 
@@ -141,11 +158,14 @@ mindc --help
 
 ## Supported platforms
 
-| Platform | Architecture | Binary type |
-|----------|-------------|-------------|
-| Linux | x86_64 | Static (musl) — runs on any glibc-free or glibc distro |
-| macOS | x86_64 + arm64 | Universal binary (lipo) |
-| Windows | x86_64 | MSVC dynamic CRT |
+| Platform | Architecture | Binary |
+|----------|-------------|--------|
+| Linux | x86_64 | glibc 2.28 or newer. Not a static musl binary. Needs glibc and libgcc_s. |
+| Linux | ARM64 | Pre-built. Same glibc 2.28 floor. |
+| macOS | x86_64 | Separate archive. Not a universal binary. |
+| macOS | arm64 | Separate archive. Not a universal binary. |
+| Windows | x86_64 | `mindc-windows-x64.zip` |
 
-Linux ARM64 and Windows ARM64 are not yet available as pre-built binaries.
-Build from source on those platforms.
+The Linux binaries are built in a digest-pinned `manylinux_2_28` image. The
+v0.10.2 Linux asset needed glibc 2.39. On x86-64 Linux the default native
+`mindc build` needs no LLVM.
