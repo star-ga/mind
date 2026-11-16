@@ -466,7 +466,7 @@ def _unset_toolchain_env() -> tuple[dict[str, str], str]:
     still reported PASS. This leg is the case that catches them.
     """
     env = dict(os.environ)
-    for var in ("MINDC", "MINDC_BIN", "MINDC_SO", "MINDC_NATIVE_ELF"):
+    for var in ("MINDC", "MINDC_BIN", "MINDC_SO", "MINDC_NATIVE_ELF", "CARGO_TARGET_DIR"):
         env.pop(var, None)
     env["MINDC_SO_NOBUILD"] = "1"
     kept, dropped = [], []

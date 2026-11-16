@@ -433,6 +433,34 @@ if [ "${1:-}" = "--full" ]; then
     printf '%s\n' "$vs_out" | grep -E '^(VACUOUS|ran=|FAIL)' | head -12
   fi
 
+  step "release mindc for the artifact gates  [ambient cargo target dir]"
+  # Vacuity has already run, while this release bin was still absent on purpose
+  # (the unset-handle leg requires no reachable mindc). The check binary in
+  # $PF_TARGET is built without mlir-build, so it cannot emit the cdylib the
+  # artifact gates need. Build --bin mindc into the cargo target dir this
+  # process already uses. Do not override CARGO_TARGET_DIR and do not point
+  # the handles at $PF_TARGET. A missing file fails the aggregate.
+  rel_err=/tmp/preflight-mindc-release.err
+  if cargo build --release --locked --no-default-features \
+      --features "mlir-build std-surface cross-module-imports" \
+      --bin mindc --quiet >"$rel_err" 2>&1; then
+    mindc_rel=""
+    if mindc_rel=$(python3 -c 'import sys; sys.path.insert(0, "examples/mindc_mind"); from _selfhost_so import release_mindc_path; print(release_mindc_path())'); then
+      if [ -n "${mindc_rel:-}" ] && [ -f "${mindc_rel:-}" ]; then
+        export MINDC="${mindc_rel}"
+        export MINDC_BIN="${mindc_rel}"
+        echo "ok (${mindc_rel})"
+      else
+        bad "release mindc build exited 0 but the resolver found no file at ${mindc_rel:-<empty>}"
+      fi
+    else
+      bad "release mindc resolver failed"
+    fi
+  else
+    bad "could not build the mlir release mindc the artifact gates run"
+    tail -20 "$rel_err"
+  fi
+
   step "whole-module mic@3 FLIP  [examples/mindc_mind/mic3_flip_smoke.py]"
   # Banked lesson (reference_mic3_flip_required_local_gate_2026_08_06): REQUIRED for ANY
   # lower.rs / emit / mic@3 change. Keystone cargo-test + oracle-parity do NOT cover the

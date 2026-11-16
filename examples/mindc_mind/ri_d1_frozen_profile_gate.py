@@ -26,7 +26,8 @@ out-of-profile row may declare the lane's NAMED refusal (fence "lane" + its kind
 
   --compiler PATH  the native compiler ELF to run (default: the committed seed). Its
                    basename joins ALLOWED_BINS; a path that is not a file is BLOCKED (exit 2).
-  MINDC_BIN        the mindc driver (default: target/release/mindc), as the other smokes.
+  MINDC_BIN        the mindc driver (shared resolver: $MINDC_BIN, else $MINDC,
+                   else $CARGO_TARGET_DIR/release/mindc, else target/release/mindc).
 
 Exit: 0 all pass; 1 a gate failed; 2 BLOCKED (missing mindc / stage1.elf / strace).
 """
@@ -40,7 +41,9 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-MINDC = pathlib.Path(os.environ.get("MINDC_BIN", str(REPO / "target" / "release" / "mindc")))
+sys.path.insert(0, str(HERE))
+from _selfhost_so import resolve_mindc  # noqa: E402
+MINDC = pathlib.Path(resolve_mindc())
 STAGE1 = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 
 # Binaries the toolchain-free native path must NEVER spawn. A hit here means the build

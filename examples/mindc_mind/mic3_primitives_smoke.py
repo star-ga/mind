@@ -21,7 +21,7 @@ import sys
 _HERE = pathlib.Path(__file__).resolve().parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 sys.path.insert(0, str(_HERE))
-from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_so import resolve_mindc, resolve_so  # noqa: E402
 _Int64Ptr = ctypes.POINTER(ctypes.c_int64)
 
 
@@ -60,8 +60,8 @@ def main() -> int:
     if not pathlib.Path(so).exists():
         if "MINDC_SO" in os.environ:
             raise SystemExit(f"FAIL: MINDC_SO set but missing: {so}")
-        print(f"SKIP: {so} not found (opt-in local build artifact)")
-        return 0
+        print(f"FAIL: {so} not found (refusing to skip a missing oracle)")
+        return 1
 
     lib = ctypes.CDLL(so)
     lib.selftest_mic3_uleb.restype = ctypes.c_void_p
@@ -870,12 +870,9 @@ def main() -> int:
     #   (AST body emitter still rejects ast_if), so the fixed point is unchanged.
     import subprocess
 
-    _MINDC = _HERE.parent.parent / "target" / "release" / "mindc"
-
     def _live_oracle(src_text):
         """Regenerate the real mic@3 oracle via `mindc --emit-mic3`, or None."""
-        if not _MINDC.exists():
-            return None
+        _mindc = resolve_mindc()
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -883,7 +880,7 @@ def main() -> int:
             outp = pathlib.Path(td) / "case.mic3"
             srcp.write_text(src_text)
             r = subprocess.run(
-                [str(_MINDC), "--emit-mic3", str(outp), str(srcp)],
+                [str(_mindc), "--emit-mic3", str(outp), str(srcp)],
                 capture_output=True,
             )
             if r.returncode != 0 or not outp.exists():

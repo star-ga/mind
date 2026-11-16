@@ -37,13 +37,11 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 # MINDC_SO (CI) verbatim; else build the self-host .so FRESH — never trust a
 # stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
 sys.path.insert(0, str(_HERE))
-from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_so import resolve_mindc, resolve_so  # noqa: E402
 from _selfhost_sources import compiler_library, single_unit  # noqa: E402
 
 SO = resolve_so()
-MINDC = pathlib.Path(
-    os.environ.get("MINDC", str(_HERE.parents[1] / "target" / "release" / "mindc"))
-)
+MINDC = pathlib.Path(resolve_mindc())
 MAIN = _HERE / "main.mind"
 
 _P = ctypes.POINTER(ctypes.c_int64)

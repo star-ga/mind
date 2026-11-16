@@ -56,7 +56,20 @@ import struct
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 _LEGACY_SO = _HERE / "libmindc_mind.so"
-_MINDC = _REPO / "target" / "release" / "mindc"
+
+
+def release_mindc_path() -> pathlib.Path:
+    """Release `mindc` for this process. The file need not exist.
+
+    Cargo relocates the whole target tree when `CARGO_TARGET_DIR` is
+    non-empty, so the binary is `$CARGO_TARGET_DIR/release/mindc`. An empty
+    or unset value is this repo's `target/release/mindc`. A set value never
+    falls through to the repo tree: that binary is a different compiler.
+    """
+    raw = os.environ.get("CARGO_TARGET_DIR", "").strip()
+    if raw:
+        return pathlib.Path(raw) / "release" / "mindc"
+    return _REPO / "target" / "release" / "mindc"
 
 #: Provenance tags carried by every resolved path.
 FRESH_BUILD = "fresh-build"  # emitted this run (or cached against an identical stamp)
@@ -112,7 +125,7 @@ def _stamp_inputs() -> list[pathlib.Path]:
     from _selfhost_sources import COMPILER_COMPONENTS  # main.mind imports every part
 
     return [
-        _MINDC,
+        release_mindc_path(),
         _HERE / "main.mind",
         *(_REPO / part for part in COMPILER_COMPONENTS),
         _HERE / "selfhost_driver.mind",
@@ -191,7 +204,8 @@ def _build_fresh() -> pathlib.Path | None:
     if so.exists() and stampf.is_file() and stampf.read_text() == want:
         return so
     proc = subprocess.run(
-        [str(_MINDC), "build", "--backend", "mlir", "--release", "--emit=cdylib", f"--out={so}"],
+        [str(release_mindc_path()), "build", "--backend", "mlir", "--release",
+         "--emit=cdylib", f"--out={so}"],
         cwd=str(_REPO),
         capture_output=True,
         text=True,
@@ -220,7 +234,7 @@ def _refuse(so: ResolvedSo) -> None:
         "unset MINDC_SO and let this resolver build one, or emit it yourself:\n"
         f"  cargo build --release --bin mindc --features "
         f"mlir-build,std-surface,cross-module-imports\n"
-        f"  ./target/release/mindc build --backend mlir --release --emit=cdylib --out=/tmp/oracle.so\n"
+        f"  {release_mindc_path()} build --backend mlir --release --emit=cdylib --out=/tmp/oracle.so\n"
         f"  MINDC_SO=/tmp/oracle.so <re-run this gate>"
     )
     raise SystemExit(
@@ -252,6 +266,7 @@ def resolve_so(*, allow_stale: bool = False, reason: str = "") -> ResolvedSo:
         )
 
     env = os.environ.get("MINDC_SO")
+    mindc = release_mindc_path()
     if env:
         # Fail CLOSED on an explicit-but-missing MINDC_SO. Setting it is a promise
         # that a real `.so` is there and the gate must run for real -- it is how
@@ -275,18 +290,19 @@ def resolve_so(*, allow_stale: bool = False, reason: str = "") -> ResolvedSo:
         # preflight itself pointed it at the legacy in-tree artifact, and the
         # unmarked path laundered those months-old bytes as a fresh oracle.
         so = ResolvedSo(p, provenance=prov, detail=detail)
-    elif os.environ.get("MINDC_SO_NOBUILD") or not _MINDC.exists():
+    elif os.environ.get("MINDC_SO_NOBUILD") or not mindc.is_file():
         # Second route to the legacy artifact (explicit escape hatch, or no
         # release mindc to build with). The REASON differs from the build-failure
         # route below, but the consequence is identical: these bytes may be
-        # arbitrarily old.
+        # arbitrarily old. NOBUILD is tested first and must not consult the
+        # cargo target dir: the provenance gate pins that short-circuit.
         so = ResolvedSo(
             _LEGACY_SO,
             provenance=LEGACY_IN_TREE,
             detail=(
                 "MINDC_SO_NOBUILD was set"
                 if os.environ.get("MINDC_SO_NOBUILD")
-                else f"no release mindc at {_MINDC} to build a fresh oracle with"
+                else f"no release mindc at {mindc} to build a fresh oracle with"
             ),
         )
     else:
@@ -327,17 +343,26 @@ def resolve_mindc() -> str:
     subject under test.
 
     Order: `MINDC_BIN`, then `MINDC` (both already exported by ci.yml and
-    preflight.sh), then this tree's `target/release/mindc`. A handle that is set
-    but missing, and an unset handle with no built binary, are BOTH a hard exit —
-    the gate cannot state anything about a compiler it never ran, and a SKIP here
+    preflight.sh), then `release_mindc_path()` (`$CARGO_TARGET_DIR/release/mindc`
+    when that variable is non-empty, else this tree's `target/release/mindc`).
+    A handle that is set but missing does not fall through to either tree.
+    An unset handle with no built binary is the same hard exit — the gate
+    cannot state anything about a compiler it never ran, and a SKIP here
     would grade a broken wiring as a green gate.
     """
     env = os.environ.get("MINDC_BIN") or os.environ.get("MINDC")
-    p = pathlib.Path(env) if env else _MINDC
+    if env:
+        p = pathlib.Path(env)
+        where = " (from $MINDC_BIN/$MINDC)"
+    else:
+        p = release_mindc_path()
+        where = " (this tree's release build)"
+        if os.environ.get("CARGO_TARGET_DIR", "").strip():
+            where += " ($CARGO_TARGET_DIR)"
     if not p.is_file():
         raise SystemExit(
             f"FAIL[_selfhost_so]: mindc not found at {p}"
-            + (" (from $MINDC_BIN/$MINDC)" if env else " (this tree's release build)")
+            + where
             + ". Refusing to fall back to a PATH `mindc`: that would run another "
             "checkout's compiler and report a green gate about a tree that never "
             "built one. Build it with `cargo build --release --bin mindc`, or "
