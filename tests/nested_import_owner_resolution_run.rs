@@ -305,10 +305,16 @@ fn executable_route_refuses_local_name_that_collides_with_import() {
         String::from_utf8_lossy(&build.stdout),
         String::from_utf8_lossy(&build.stderr)
     );
-    assert!(
-        !build.status.success(),
-        "executable route built a colliding program:\n{rendered}"
-    );
+    if build.status.success() {
+        let artifact = common::reported_artifact(&build);
+        let run = Command::new(&artifact)
+            .output()
+            .expect("run colliding binary");
+        panic!(
+            "executable route built a colliding program and returned {:?}; the wrong body is 11\n{rendered}",
+            run.status.code()
+        );
+    }
     assert!(
         rendered.contains("lower::imported_local_fn_collision"),
         "executable route lost the collision refusal:\n{rendered}"

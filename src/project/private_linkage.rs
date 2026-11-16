@@ -438,13 +438,6 @@ pub(crate) fn install(names: Option<&BTreeSet<String>>) -> LinkageGuard {
     LinkageGuard
 }
 
-/// Whether this compile emits `name` with internal linkage.
-/// False when [`install`] was not called: the preflight then treats the
-/// symbol as global.
-pub(crate) fn name_is_internal(name: &str) -> bool {
-    CURRENT.with(|c| c.borrow().contains(name))
-}
-
 /// Mark the installed names' `func.func` definitions in `mlir` internal.
 /// Everything else, and every line when nothing is installed, is unchanged.
 pub(crate) fn apply(mlir: &str) -> String {

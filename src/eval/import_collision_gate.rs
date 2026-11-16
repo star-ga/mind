@@ -1,7 +1,7 @@
 // Copyright 2026 STARGA Inc.
 // Licensed under the Apache License, Version 2.0.
 
-//! Runnable-artifact preflight for owner collisions in imported functions.
+//! Runnable-artifact preflight for a local function that shares an imported name.
 
 use std::collections::BTreeSet;
 
@@ -10,18 +10,18 @@ use crate::diagnostics::{Diagnostic, Span};
 
 const HELP: &str = "the shipped backend cannot emit owner-colliding native symbols yet; rename the local or imported function";
 
-/// Refuse a local function that the link would emit as a global symbol
-/// duplicating a captured import. A private function the link plan marks
-/// internal is not that symbol. A qualified call of the same name still
-/// lowers onto the local definition (the import's forward declaration is
-/// skipped), so that call stays refused.
+/// On the executable route, refuse local function `N` only when this module
+/// references the imported function `N` (a qualified call, or an item import
+/// of `N`). A local that merely shares an unused export name still builds.
+/// The shared-library route has a scope map and keeps the name check.
 pub fn check_imported_local_fn_collisions(
     module: &Module,
     src: &str,
     file: Option<&str>,
 ) -> Vec<Diagnostic> {
     let owner = crate::qualified_enums::current_module_path();
-    let imported_calls = qualified_import_callees(module);
+    let references = imported_fn_references(module);
+    let executable = crate::project::active_module_table::executable_collision_record();
     module
         .items
         .iter()
@@ -36,9 +36,7 @@ pub fn check_imported_local_fn_collisions(
             if !conflicts {
                 return None;
             }
-            let internal =
-                crate::project::active_module_table::local_fn_emitted_internal(&fd.name);
-            if internal && !imported_calls.contains(fd.name.as_str()) {
+            if executable && !references.contains(fd.name.as_str()) {
                 return None;
             }
             Some(
@@ -55,6 +53,29 @@ pub fn check_imported_local_fn_collisions(
             )
         })
         .collect()
+}
+
+/// Names this module uses as an imported function: the callee of a qualified
+/// call, or the last segment (and alias) of an item import.
+fn imported_fn_references(module: &Module) -> BTreeSet<String> {
+    let mut names = qualified_import_callees(module);
+    for item in &module.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            let Node::Import { path, alias, .. } = node else {
+                return;
+            };
+            if path.len() < 2 {
+                return;
+            }
+            if let Some(last) = path.last() {
+                names.insert(last.clone());
+            }
+            if let Some(alias) = alias {
+                names.insert(alias.clone());
+            }
+        });
+    }
+    names
 }
 
 /// Bare names of `import.fn(...)` calls. The parser folds those calls to the

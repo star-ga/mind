@@ -597,11 +597,15 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
     })
 }
 
-/// Whether the link plan installed for this compile emits `name` internal.
-/// Shared-library and cdylib compiles install that plan after the preflight,
-/// so this stays false there and a same-named import is still a global clash.
-pub(crate) fn local_fn_emitted_internal(name: &str) -> bool {
-    super::private_linkage::name_is_internal(name)
+/// True on the executable route: import targets were recorded for the
+/// collision preflight and no scope map is installed. The shared-library
+/// route installs the scope map and keeps the name check.
+pub(crate) fn executable_collision_record() -> bool {
+    let scoped = ACTIVE_RESOLVED_IMPORTS.with(|cell| cell.borrow().is_some());
+    if scoped {
+        return false;
+    }
+    COLLISION_IMPORTS.with(|cell| cell.borrow().is_some())
 }
 
 /// Whether an imported typed function would collide with a local definition
