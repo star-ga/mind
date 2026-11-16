@@ -50,6 +50,38 @@ PF_TARGET="${PF_TARGET:-target-preflight}"
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '\033[31mFAIL:\033[0m %s\n' "$1"; fail=1; }
 
+# Base of the unpushed commit-message range. A detached checkout has no
+# local branch, so a single `main` lookup fails closed before the gate runs.
+# Order is fixed: local main, then the remote-tracking main, then
+# MIND_HYGIENE_BASE. A miss is named. None of the three resolving is a
+# failure. It is never a pass.
+resolve_hygiene_base() {
+  local tries=""
+  local cand=""
+  cand="refs/heads/main"
+  if git rev-parse --verify -q "${cand}" >/dev/null; then
+    printf '%s\n' "${cand}"
+    return 0
+  fi
+  tries="${cand} absent"
+  cand="refs/remotes/origin/main"
+  if git rev-parse --verify -q "${cand}" >/dev/null; then
+    printf '%s\n' "${cand}"
+    return 0
+  fi
+  tries="${tries}; ${cand} absent"
+  if [ -z "${MIND_HYGIENE_BASE:-}" ]; then
+    tries="${tries}; MIND_HYGIENE_BASE unset"
+  elif git rev-parse --verify -q "${MIND_HYGIENE_BASE}^{commit}" >/dev/null; then
+    printf '%s\n' "${MIND_HYGIENE_BASE}"
+    return 0
+  else
+    tries="${tries}; MIND_HYGIENE_BASE=${MIND_HYGIENE_BASE} not a commit"
+  fi
+  printf '%s\n' "${tries}" >&2
+  return 1
+}
+
 step "rustfmt  [ci.yml Format Check]"
 if cargo fmt --check >/dev/null 2>&1; then echo "ok"; else
   bad "rustfmt drift — run: cargo fmt"
@@ -229,7 +261,7 @@ else
   fi
 fi
 
-step "commit-message hygiene main..HEAD  [docs-claims.yml — no model/tool credit in HISTORY]"
+step "commit-message hygiene  [docs-claims.yml — no model/tool credit in HISTORY]"
 # Text-only (git log + grep), seconds, and in the FAST path for the same reason
 # the cfg-gate lint is: it is the cheapest catch for the one failure class that
 # CANNOT be fixed after the fact. A file can be corrected by the next commit; a
@@ -242,14 +274,20 @@ step "commit-message hygiene main..HEAD  [docs-claims.yml — no model/tool cred
 # scanned and reports an empty range as empty, never as a silent pass.
 if [ ! -f scripts/check_commit_messages.sh ]; then
   bad "scripts/check_commit_messages.sh MISSING — CI runs it; preflight cannot verify it"
-elif ! git rev-parse --verify -q main >/dev/null; then
-  bad "no local 'main' ref — cannot derive the unpushed range; fetch it, do not skip (a skipped message gate is how a credit reaches public history)"
 else
-  if cm_out=$(bash scripts/check_commit_messages.sh main..HEAD 2>&1); then
-    printf '%s\n' "$cm_out" | grep -E '^commit-message gate:' | tail -1
+  hygiene_base=""
+  hygiene_err=/tmp/preflight-hygiene-base.err
+  : > "${hygiene_err}"
+  if hygiene_base=$(resolve_hygiene_base 2>"${hygiene_err}"); then
+    echo "commit-message base: ${hygiene_base}"
+    if cm_out=$(bash scripts/check_commit_messages.sh "${hygiene_base}..HEAD" 2>&1); then
+      printf '%s\n' "$cm_out" | grep -E '^commit-message gate:' | tail -1
+    else
+      bad "commit-message gate FAILED — a commit message credits a model or a tool. Fix by AMENDING/REBASING the messages BEFORE pushing:"
+      printf '%s\n' "$cm_out" | grep -E '^(::error::|    msg:)' | head -12
+    fi
   else
-    bad "commit-message gate FAILED — a commit message credits a model or a tool. Fix by AMENDING/REBASING the messages BEFORE pushing:"
-    printf '%s\n' "$cm_out" | grep -E '^(::error::|    msg:)' | head -12
+    bad "commit-message hygiene base unresolved. Tried: $(tr '\n' ' ' < "${hygiene_err}"). Fetch refs/heads/main or refs/remotes/origin/main, or set MIND_HYGIENE_BASE to a commit. Do not skip (a skipped message gate is how a credit reaches public history)"
   fi
 fi
 

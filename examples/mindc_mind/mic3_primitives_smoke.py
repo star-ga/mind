@@ -60,8 +60,7 @@ def main() -> int:
     if not pathlib.Path(so).exists():
         if "MINDC_SO" in os.environ:
             raise SystemExit(f"FAIL: MINDC_SO set but missing: {so}")
-        print(f"FAIL: {so} not found (refusing to skip a missing oracle)")
-        return 1
+        raise SystemExit(f"FAIL: {so} not found (refusing to skip a missing oracle)")
 
     lib = ctypes.CDLL(so)
     lib.selftest_mic3_uleb.restype = ctypes.c_void_p
