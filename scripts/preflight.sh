@@ -83,6 +83,7 @@ resolve_hygiene_base() {
   return 1
 }
 
+if [ "${1:-}" != "--bench-only" ]; then
 step "rustfmt  [ci.yml Format Check]"
 if cargo fmt --check >/dev/null 2>&1; then echo "ok"; else
   bad "rustfmt drift — run: cargo fmt"
@@ -649,6 +650,8 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
     bad "self-host loop gate FAILED — see the smoke's own verdict below and follow the advice it prints (/tmp/preflight-loop.out)"
     grep -E "FAIL|BLOCKED|WARN\[_selfhost_so\]" /tmp/preflight-loop.out | tail -4
   fi
+
+fi
 
 fi
 
