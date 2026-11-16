@@ -13,6 +13,7 @@
 
 //! Integration tests for RFC 0021 step 3: `--emit-mic3` and `--emit-evidence`
 //! CLI flags on the `mindc` binary.
+//! ELF note type 1 is not covered here: that note is the seeded compiler module digest, not the user's --emit-mic3 bytes.
 //!
 //! These tests compile `tests/fixtures/simple.mind`, emit both artifact kinds
 //! to temp files, and verify:
