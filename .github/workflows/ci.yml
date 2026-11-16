@@ -1876,7 +1876,7 @@ jobs:
         run: |
           cargo test --locked --release --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
-            --test phase_g_keystone_bootstrap -- --nocapture
+            --test phase_g_keystone_bootstrap --test mic3_cli_emit -- --nocapture
 
   executable_miscompile_gate:
     name: Executable miscompile gate (compile + run + assert) (LLVM ${{ matrix.llvm }})

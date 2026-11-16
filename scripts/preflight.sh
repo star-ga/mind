@@ -363,6 +363,20 @@ if [ "${1:-}" = "--full" ]; then
     fi
   fi
 
+  step "independent SHA-256 of --emit-mic3 trace_hash  [tests/mic3_cli_emit.rs]"
+  # The stored evidence trace_hash must equal hashlib and sha256sum of the
+  # --emit-mic3 bytes from the same run. A pass with zero tests is a failure.
+  ih_out=$(cargo test --release --no-default-features \
+       --features "mlir-build std-surface cross-module-imports" \
+       --test mic3_cli_emit emit_trace_hash_matches_independent_sha256 -- --nocapture 2>&1); ih_rc=$?
+  ih_n=$(printf '%s\n' "$ih_out" | sed -n 's/^test result: ok\. \([0-9]*\) passed.*/\1/p' | tail -1)
+  if [ "$ih_rc" -eq 0 ] && [ "${ih_n:-0}" -ge 1 ] 2>/dev/null; then
+    echo "ok (independent trace_hash passed=${ih_n})"
+  else
+    bad "independent trace_hash gate FAILED (passed='${ih_n:-none}' rc=$ih_rc)"
+    printf '%s\n' "$ih_out" | tail -40
+  fi
+
   step "cross-substrate determinism 24/24  [ci.yml cross_substrate_identity — THE wedge invariant]"
   # Was ABSENT from preflight until 2026-08-27 while preflight still printed
   # "safe to push". Features must match ci.yml:604 EXACTLY — tests/cross_substrate_identity.rs

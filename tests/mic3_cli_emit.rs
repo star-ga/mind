@@ -261,6 +261,180 @@ fn evidence_body_prefix_equals_plain_mic3() {
 }
 
 // ---------------------------------------------------------------------------
+// 7.  Stored trace_hash equals an independent SHA-256 of --emit-mic3
+// ---------------------------------------------------------------------------
+//
+// The digest is hashlib and sha256sum of the bytes this run just wrote.
+// A stored note is not an oracle. mindc verify is not an oracle.
+
+#[test]
+fn emit_trace_hash_matches_independent_sha256() {
+    let bin = mindc_for_independent_hash();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = unique_dir("indep_hash");
+    let tiny = dir.join("tiny.mind");
+    std::fs::write(&tiny, "fn main() -> i64 { 40 + 2 }\n").expect("write tiny");
+    // bank_acc8.mind calls ymm intrinsics that the v0.10.2 compiler rejects.
+    // The shared corpus is the programs both compilers emit.
+    let programs = [
+        ("tiny", tiny),
+        (
+            "note_kinds",
+            root.join("examples/mindc_mind/testdata/native_cf/note_kinds.mind"),
+        ),
+        (
+            "keystone_fixture",
+            root.join("examples/mindc_mind/fixture.mind"),
+        ),
+    ];
+    let mut ran = 0u32;
+    for (label, src) in &programs {
+        assert!(
+            src.is_file(),
+            "corpus file missing ({label}): {}",
+            src.display()
+        );
+        let mic = dir.join(format!("{label}.mic3"));
+        let ev = dir.join(format!("{label}.ev"));
+        emit_artifact(&bin, src, "--emit-mic3", &mic);
+        emit_artifact(&bin, src, "--emit-evidence", &ev);
+        let (hashlib_hex, sha256sum_hex) = independent_sha256(&mic);
+        assert_eq!(
+            hashlib_hex, sha256sum_hex,
+            "{label}: hashlib {hashlib_hex} != sha256sum {sha256sum_hex}"
+        );
+        let stored = stored_trace_hash(&std::fs::read(&ev).expect("read evidence"))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            stored, hashlib_hex,
+            "E2 mismatch {label}: stored={stored} independent={hashlib_hex}"
+        );
+        ran += 1;
+    }
+    assert!(
+        ran >= 3,
+        "ran={ran}; a missing compiler or empty corpus is a failure"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn mindc_for_independent_hash() -> PathBuf {
+    if let Some(raw) = std::env::var_os("MINDC_BIN") {
+        let path = PathBuf::from(&raw);
+        assert!(
+            path.is_file(),
+            "MINDC_BIN is set but the compiler is missing: {}",
+            path.display()
+        );
+        return path;
+    }
+    PathBuf::from(require_mindc())
+}
+
+fn emit_artifact(bin: &PathBuf, src: &PathBuf, flag: &str, out: &PathBuf) {
+    let run = Command::new(bin)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args([src.as_os_str(), std::ffi::OsStr::new(flag), out.as_os_str()])
+        .output()
+        .unwrap_or_else(|e| panic!("failed to spawn mindc {flag}: {e}"));
+    assert!(
+        run.status.success(),
+        "mindc {flag} {} failed:\n{}",
+        src.display(),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+fn independent_sha256(path: &PathBuf) -> (String, String) {
+    let py = Command::new("python3")
+        .args([
+            "-c",
+            "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())",
+        ])
+        .arg(path)
+        .output()
+        .expect("python3 hashlib");
+    assert!(
+        py.status.success(),
+        "python3 hashlib failed: {}",
+        String::from_utf8_lossy(&py.stderr)
+    );
+    let hashlib_hex = String::from_utf8_lossy(&py.stdout).trim().to_string();
+    let sum = Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .expect("sha256sum");
+    assert!(
+        sum.status.success(),
+        "sha256sum failed: {}",
+        String::from_utf8_lossy(&sum.stderr)
+    );
+    let sha256sum_hex = String::from_utf8_lossy(&sum.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    (hashlib_hex, sha256sum_hex)
+}
+
+/// Read the stored `evidence_chain.trace_hash` bytes. The walk is the MAP
+/// layout: ULEB key length, key, tag 0x02, ULEB 32, then 32 digest bytes.
+fn stored_trace_hash(bytes: &[u8]) -> Result<String, String> {
+    let key = b"evidence_chain.trace_hash";
+    let mut hits = Vec::new();
+    let mut start = 0usize;
+    while start < bytes.len() {
+        let Some(rel) = bytes[start..]
+            .windows(key.len())
+            .position(|window| window == key)
+        else {
+            break;
+        };
+        let at = start + rel;
+        start = at + 1;
+        if at == 0 || bytes[at - 1] != u8::try_from(key.len()).unwrap_or(0) {
+            continue;
+        }
+        let tag_at = at + key.len();
+        if tag_at + 2 + 32 > bytes.len() || bytes[tag_at] != 0x02 || bytes[tag_at + 1] != 32 {
+            continue;
+        }
+        hits.push(to_hex(&bytes[tag_at + 2..tag_at + 2 + 32]));
+    }
+    match hits.as_slice() {
+        [one] => Ok(one.clone()),
+        other => Err(format!(
+            "expected one stored trace_hash, found {}",
+            other.len()
+        )),
+    }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[usize::from(byte >> 4)] as char);
+        out.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    out
+}
+
+fn unique_dir(label: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "mindc_{label}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&path).unwrap_or_else(|e| panic!("create {}: {e}", path.display()));
+    path
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
