@@ -262,16 +262,11 @@ impl ProjectTableGuard {
         table: super::module_table::ModuleTable,
         parsed: &[(String, Module)],
     ) -> Self {
-        Self {
-            _guard: super::active_module_table::Guard::install_legacy(table),
-            _enums: None,
-            _resolved_imports: None,
-            _collision_imports: Some(super::active_module_table::CollisionImportsGuard::install(
-                link_import_map(parsed),
-            )),
-            _module_path: None,
-            _consts: None,
-        }
+        let mut guard = Self::install(table);
+        guard._collision_imports = Some(
+            super::active_module_table::CollisionImportsGuard::install(link_import_map(parsed)),
+        );
+        guard
     }
 
     pub(crate) fn install_with_enums(
