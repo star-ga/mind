@@ -10,12 +10,15 @@
 //! CQE) works end-to-end from pure MIND: a NOP's `user_data` must round-trip
 //! unchanged through the kernel completion ring.
 //!
-//! io_uring may be unavailable on a CI runner (a kernel without it, the
-//! `kernel.io_uring_disabled` sysctl, or a seccomp policy) — `io_uring_nop` then
-//! returns io_uring_setup's own -ENOSYS / -EPERM and the battery SKIPS, printing
-//! that reason. Any OTHER negative NOP result FAILS with the precise reason
-//! (errno name, or the surface's typed `iouring_err_*` code), and a positive but
-//! wrong return indicates ring-protocol corruption and FAILS.
+//! The process reads `kernel.io_uring_disabled` once. Value 2, and value 1 for
+//! a caller the kernel does not allow, must produce the documented refusal:
+//! `io_uring_nop` and `io_ring_try_new_flags` return -EPERM (-1), and
+//! `io_ring_new` returns a null handle. A missing sysctl file is the ENOSYS
+//! case: those calls must return -ENOSYS (-38). Value 0 runs the real ring
+//! checks. The expected errno comes from Python's errno table. A refusal is an
+//! assertion, never a skip. Any other negative result FAILS with the errno name
+//! or the typed `iouring_err_*` code. A positive but wrong return is ring
+//! corruption and FAILS.
 //!
 //! Every probe runs under a hard wall-clock bound: a probe that does not exit
 //! in time FAILS here instead of hanging the harness. That is the defect the
@@ -104,6 +107,35 @@ REL = os.uname().release
 def kver():
     p = REL.split('.')
     return (int(p[0]), int(''.join(c for c in p[1] if c.isdigit()) or '0'))
+def bind(name, n):
+    f = getattr(lib, name)
+    f.restype = ctypes.c_int64
+    f.argtypes = [ctypes.c_int64] * n
+    return f
+def assert_refused(expect):
+    # expect is -errno from this interpreter, not a saved run.
+    t0 = time.monotonic()
+    r = bind('io_uring_nop', 1)(0x4242)
+    h = bind('io_ring_new', 1)(4)
+    slot = ctypes.c_int64(99)
+    h2 = bind('io_ring_try_new_flags', 3)(4, 0, ctypes.addressof(slot))
+    dt = time.monotonic() - t0
+    assert dt < 5.0, 'refusal took %.2f s; setup must not block' % dt
+    assert r == expect, 'io_uring_nop returned %s; expected %s' % (reason(r), reason(expect))
+    assert h == 0, 'io_ring_new returned %s on a forbidden kernel' % h
+    assert h2 == 0, 'io_ring_try_new_flags returned %s' % h2
+    assert slot.value == expect, 'setup reason %s; expected %s' % (reason(slot.value), reason(expect))
+    print('REFUSED', reason(r), 'new', h, 'try', h2, 'dt', '%.3f' % dt)
+"#;
+
+/// Sysctl file absent: -ENOSYS is the refusal. Any other nop result means the
+/// kernel has io_uring, and the real ring checks must run.
+const PROBE_ENOSYS: &str = r#"
+r = bind('io_uring_nop', 1)(0x4242)
+if r == -errno.ENOSYS:
+    assert_refused(-errno.ENOSYS)
+else:
+    print('HAS_URING', reason(r))
 "#;
 
 /// Run `body` (after [`PRELUDE`], with `SO` bound to `so` and `SCRATCH` to its
@@ -136,15 +168,118 @@ fn run_probe(so: &std::path::Path, body: &str, secs: u64) -> String {
         out.status.success(),
         "probe failed (exit {code:?}):\nstdout: {stdout}\nstderr: {stderr}"
     );
-    // A probe that found no kernel ring checked nothing: count it as a skip,
-    // which fails closed under MIND_BENCH_REQUIRE=1.
-    if stdout.contains("SKIP io_uring unavailable") {
-        crate::common::gate::skipped(
-            "std_surface_iouring",
-            "iouring: kernel io_uring unavailable",
-        );
-    }
+    assert!(
+        !stdout.contains("SKIP io_uring unavailable"),
+        "a kernel refusal is a result, not a skip:\n{stdout}"
+    );
     stdout
+}
+
+fn cap_bit(hex: &str, bit: u32) -> bool {
+    let hex = hex.trim();
+    let bytes = hex.as_bytes();
+    let from_end = (bit / 4) as usize;
+    if from_end >= bytes.len() {
+        return false;
+    }
+    let c = bytes[bytes.len() - 1 - from_end];
+    let val = match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        b'A'..=b'F' => c - b'A' + 10,
+        _ => return false,
+    };
+    (val & (1 << (bit % 4))) != 0
+}
+
+/// CAP_SYS_ADMIN is bit 21 of CapEff. One read of `/proc/self/status`.
+fn cap_sys_admin() -> bool {
+    let text = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("CapEff:") {
+            return cap_bit(rest, 21);
+        }
+    }
+    false
+}
+
+/// `kernel.io_uring_disabled=1` still allows a member of `io_uring_group`.
+fn in_iouring_group() -> bool {
+    let group = match std::fs::read_to_string("/proc/sys/kernel/io_uring_group") {
+        Ok(text) => text.trim().to_string(),
+        Err(_) => return false,
+    };
+    if group.is_empty() || group == "-1" {
+        return false;
+    }
+    let text = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("Groups:") {
+            return rest.split_whitespace().any(|g| g == group);
+        }
+    }
+    false
+}
+
+struct UringHost {
+    disabled: String,
+    /// `allow`, `forbid-eperm`, or `probe-enosys`.
+    policy: &'static str,
+}
+
+/// One read of `kernel.io_uring_disabled` for this test process.
+fn uring_host() -> &'static UringHost {
+    static HOST: OnceLock<UringHost> = OnceLock::new();
+    HOST.get_or_init(|| {
+        let disabled = match std::fs::read_to_string("/proc/sys/kernel/io_uring_disabled") {
+            Ok(text) => text.trim().to_string(),
+            Err(_) => "absent".to_string(),
+        };
+        let policy = match disabled.as_str() {
+            "0" => "allow",
+            "2" => "forbid-eperm",
+            "1" => {
+                if cap_sys_admin() || in_iouring_group() {
+                    "allow"
+                } else {
+                    "forbid-eperm"
+                }
+            }
+            "absent" => "probe-enosys",
+            _ => "bad",
+        };
+        println!("io_uring_disabled={disabled} policy={policy}");
+        UringHost { disabled, policy }
+    })
+}
+
+/// Allowed kernel: `body`. Forbidden kernel: the documented refusal. Never a skip.
+fn run_gated(so: &std::path::Path, body: &str, secs: u64) -> String {
+    let host = uring_host();
+    match host.policy {
+        "allow" => run_probe(so, body, secs),
+        "forbid-eperm" => {
+            let out = run_probe(so, "assert_refused(-errno.EPERM)\n", 30);
+            assert!(out.contains("REFUSED"), "missing refusal:\n{out}");
+            out
+        }
+        "probe-enosys" => {
+            let probe = run_probe(so, PROBE_ENOSYS, 30);
+            if probe.contains("REFUSED") {
+                return probe;
+            }
+            assert!(
+                probe.contains("HAS_URING"),
+                "io_uring_disabled={} probe was neither ENOSYS nor a ring:\n{probe}",
+                host.disabled
+            );
+            run_probe(so, body, secs)
+        }
+        _ => panic!(
+            "io_uring_disabled={} is not 0, 1, 2, or absent",
+            host.disabled
+        ),
+    }
 }
 
 #[test]
@@ -258,9 +393,6 @@ def check(name, v, want):
     return v
 r = lib.io_uring_nop(0x4242)
 if r < 0:
-    if -r in (errno.ENOSYS, errno.EPERM) or r == FEATURE:
-        print('SKIP io_uring unavailable on kernel', REL, '->', reason(r))
-        sys.exit(0)
     raise SystemExit(f'io_uring_nop failed on kernel {REL}: {reason(r)}')
 assert r == 0x4242, f'NOP user_data corrupted: got {hex(r)}'
 msg = b'MIND-io_uring-echo'
@@ -327,7 +459,7 @@ print('OK kernel', REL, hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'm
 for s in skips:
     print('SKIP-CASE', s)
 "#;
-    print!("{}", run_probe(so, body, 120));
+    print!("{}", run_gated(so, body, 120));
 }
 
 /// `cqe.res` is a SIGNED 32-bit field. A RECV on fd -1 completes with exactly
@@ -349,7 +481,7 @@ addr = lambda b: ctypes.cast(b, ctypes.c_void_p).value
 for reaper in ('io_ring_reap', 'io_ring_reap_full'):
     h = lib.io_ring_new(4)
     if h == 0:
-        print('SKIP io_uring unavailable'); sys.exit(0)
+        raise SystemExit('io_ring_new returned 0 on a kernel that allows io_uring')
     assert lib.io_ring_submit_op(h, 0, 27, -1, addr(buf), 8, 0x55) == 0
     lib.io_ring_publish(h, 1)
     er = lib.io_ring_enter(h, 1, 1)
@@ -366,7 +498,7 @@ for reaper in ('io_ring_reap', 'io_ring_reap_full'):
     lib.io_ring_free(h)
 print('ok res', res[0])
 "#;
-    print!("{}", run_probe(so, body, 60));
+    print!("{}", run_gated(so, body, 60));
 }
 
 /// A multishot RECV with a nonzero length is NOT portable: Linux 6.6 rejects it
@@ -386,7 +518,7 @@ lib.io_ring_free.restype = I
 lib.io_ring_free.argtypes = [I]
 h = lib.io_ring_new(4)
 if h == 0:
-    print('SKIP io_uring unavailable'); sys.exit(0)
+    raise SystemExit('io_ring_new returned 0 on a kernel that allows io_uring')
 a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
 r = lib.io_ring_submit_recv_multishot(h, 0, b.fileno(), 256, 0, 2)
 assert r == -errno.EINVAL, (
@@ -398,7 +530,7 @@ assert r0 == 0, f'len=0 must be accepted, got {r0}'
 lib.io_ring_free(h)
 print('ok', r, r0)
 "#;
-    print!("{}", run_probe(so, body, 60));
+    print!("{}", run_gated(so, body, 60));
 }
 
 /// The Linux 6.6 hang, reproduced on any kernel: a multishot RECV on fd -1
@@ -421,7 +553,7 @@ for f, n in [('io_ring_submit_recv_multishot', 6), ('io_ring_publish', 2),
 addr = lambda b: ctypes.cast(b, ctypes.c_void_p).value
 h = lib.io_ring_new(8)
 if h == 0:
-    print('SKIP io_uring unavailable'); sys.exit(0)
+    raise SystemExit('io_ring_new returned 0 on a kernel that allows io_uring')
 assert lib.io_ring_submit_recv_multishot(h, 0, -1, 0, 0, 7) == 0
 lib.io_ring_publish(h, 1)
 t0 = time.monotonic()
@@ -472,7 +604,7 @@ lib.io_ring_free(h)
 print(f'ok wait_multishot terminal={term} after {dt_term:.3f} s; idle={idle}; '
       f'enter_timeout idle={et}; no-EXT_ARG enter={ef}')
 "#;
-    print!("{}", run_probe(so, body, 60));
+    print!("{}", run_gated(so, body, 60));
 }
 
 /// io_ring_submit_raw must fail closed (return -EINVAL) on invalid caller input
