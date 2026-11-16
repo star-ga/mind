@@ -370,43 +370,6 @@ def pairs_protocol_errors(rows: dict[str, list[tuple[int, str, int, int]]]) -> l
     return errors
 
 
-def _grade_pipeline_pairs(rows: dict[str, list[tuple[int, str, int, int]]]) -> int:
-    """Per fixture, the grade_pairs bounds. Nine pairs still bound the median."""
-    minimum, ids = 9, tuple(sorted(PIPELINE_BENCH_IDS))
-    errors: list[str] = []
-    extra = sorted(set(rows) - set(ids))
-    if extra:
-        errors.append("unknown row " + ", ".join(extra))
-    for row in ids:
-        got = rows.get(row) or []
-        if len(got) < minimum:
-            errors.append(f"pipeline: {row} has {len(got)} pairs, minimum {minimum}")
-            continue
-        if sorted(i for i, *_ in got) != list(range(len(got))):
-            errors.append(f"pipeline: {row} indices are not 0..{len(got) - 1}")
-        bad_i = [i for i, order, *_ in got if order != ("BC" if i % 2 == 0 else "CB")]
-        if bad_i:
-            errors.append(f"pipeline: {row} breaks ABBA at {bad_i[:5]}")
-    if errors:
-        print("asserted=0")
-        print("::error::pipeline paired input does not follow the protocol; nothing is decided:")
-        print("\n".join(f"  - {err}" for err in errors))
-        return 4
-    failed = noisy = False
-    for row in ids:
-        ds = [math.log(tc / tb) for _, _, tb, tc in rows[row]]
-        med, lo, hi = median_bounds(ds)
-        verdict = "FAIL" if lo > PAIR_FAIL_BOUND else "NOISY" if hi - lo > PAIR_NOISY_WIDTH else "OK"
-        failed, noisy = failed or verdict == "FAIL", noisy or verdict == "NOISY"
-        print(f"{row} N={len(ds)} R={math.exp(med):.4f} L95={math.exp(lo):.4f} U95={math.exp(hi):.4f} {verdict}")
-    print(f"asserted={0 if failed or noisy else len(ids)}")
-    if failed or noisy:
-        print("::error::pipeline paired gate: " + ("FAIL" if failed else "INCONCLUSIVE"))
-        return 1 if failed else 2
-    print("pipeline paired gate: PASS")
-    return 0
-
-
 def grade_pairs(path: Path) -> int:
     """The end-to-end decision: same-run paired A/B, one-sided, per tier."""
     try:
@@ -416,7 +379,8 @@ def grade_pairs(path: Path) -> int:
         print(f"::error::paired A/B input is malformed or unreadable: {exc}")
         return 4
     if meta.get("protocol") == "pipeline":
-        return _grade_pipeline_pairs(rows)
+        from bench_pairs import grade_pipeline_pairs
+        return grade_pipeline_pairs(rows)
     errors = pairs_protocol_errors(rows)
     if errors:
         print("asserted=0")
