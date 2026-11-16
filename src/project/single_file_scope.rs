@@ -239,6 +239,7 @@ pub struct ProjectTableGuard {
     _guard: super::active_module_table::Guard,
     _enums: Option<crate::qualified_enums::GlobalGuard>,
     _resolved_imports: Option<super::active_module_table::ResolvedImportsGuard>,
+    _collision_imports: Option<super::active_module_table::CollisionImportsGuard>,
     _module_path: Option<crate::qualified_enums::ModuleGuard>,
     _consts: Option<ConstsGuard>,
 }
@@ -249,9 +250,23 @@ impl ProjectTableGuard {
             _guard: super::active_module_table::Guard::install_legacy(table),
             _enums: None,
             _resolved_imports: None,
+            _collision_imports: None,
             _module_path: None,
             _consts: None,
         }
+    }
+
+    /// Executable compile. Records import targets for the collision preflight
+    /// only. The visibility map stays unset, so bare-name lookup is unchanged.
+    pub(crate) fn install_executable(
+        table: super::module_table::ModuleTable,
+        parsed: &[(String, Module)],
+    ) -> Self {
+        let mut guard = Self::install(table);
+        guard._collision_imports = Some(
+            super::active_module_table::CollisionImportsGuard::install(link_import_map(parsed)),
+        );
+        guard
     }
 
     pub(crate) fn install_with_enums(
@@ -262,6 +277,7 @@ impl ProjectTableGuard {
             _guard: super::active_module_table::Guard::install_legacy(table),
             _enums: Some(crate::qualified_enums::GlobalGuard::install(enums)),
             _resolved_imports: None,
+            _collision_imports: None,
             _module_path: None,
             _consts: None,
         }
@@ -279,10 +295,75 @@ impl ProjectTableGuard {
             _resolved_imports: Some(super::active_module_table::ResolvedImportsGuard::install(
                 resolved_imports,
             )),
+            _collision_imports: None,
             _module_path: Some(crate::qualified_enums::ModuleGuard::install(module_path)),
             _consts: None,
         }
     }
+}
+
+/// Import targets for one executable link. `std` imports stay out, as they do
+/// on the shared-library route. A unique file stem resolves when one module owns it.
+fn link_import_map(parsed: &[(String, Module)]) -> BTreeMap<(String, Vec<String>), String> {
+    let mut modules = BTreeSet::new();
+    let mut stems: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (path, _) in parsed {
+        if path.starts_with("std.") {
+            continue;
+        }
+        modules.insert(path.clone());
+        let stem = path.rsplit('.').next().unwrap_or(path.as_str());
+        stems
+            .entry(stem.to_string())
+            .or_default()
+            .push(path.clone());
+    }
+    let mut resolved = BTreeMap::new();
+    for (owner, module) in parsed {
+        if owner.starts_with("std.") {
+            continue;
+        }
+        for item in &module.items {
+            crate::type_checker::nerve_walk::walk(item, &mut |node| {
+                let crate::ast::Node::Import { path, .. } = node else {
+                    return;
+                };
+                let Some(target) = resolve_link_import(path, &modules, &stems) else {
+                    return;
+                };
+                resolved.insert((owner.clone(), path.clone()), target);
+            });
+        }
+    }
+    resolved
+}
+
+fn resolve_link_import(
+    path: &[String],
+    modules: &BTreeSet<String>,
+    stems: &BTreeMap<String, Vec<String>>,
+) -> Option<String> {
+    if matches!(path.first().map(String::as_str), Some("std")) {
+        return None;
+    }
+    let key = path.join(".");
+    if modules.contains(&key) {
+        return Some(key);
+    }
+    if !key.starts_with("crate.") {
+        let crate_key = format!("crate.{key}");
+        if modules.contains(&crate_key) {
+            return Some(crate_key);
+        }
+    }
+    if path.len() == 1 {
+        if let Some(found) = stems.get(&path[0]) {
+            if found.len() == 1 {
+                return found.first().cloned();
+            }
+        }
+    }
+    None
 }
 
 /// Discover project context without rereading an entry the caller captured.

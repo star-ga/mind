@@ -511,3 +511,83 @@ pub fn crate_alias() -> i64 {
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// One module's enum and another module's struct share the name `NormMode`.
+/// The module-qualified spellings build and run with each module's own type;
+/// the bare spelling, which could name either, is refused.
+#[test]
+fn an_enum_shadowed_by_a_same_named_struct_keeps_its_owner() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        crate::common::gate::skipped(
+            "qualified_enum_shadowed",
+            "qualified-enum-shadowed: mindc not found; skipping",
+        );
+        return;
+    }
+    let proj = crate::common::scratch_dir("qualified_enum_run").join("shadowed");
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(proj.join("src")).expect("mkdir src");
+    std::fs::write(
+        proj.join("Mind.toml"),
+        "[package]\nname = \"qualified_shadowed\"\nversion = \"0.1.0\"\n\n[build]\nemit = \"cdylib\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        proj.join("src/config.mind"),
+        "pub enum NormMode { GroupNorm, Clamp }\npub fn make_clamp() -> NormMode { NormMode::Clamp }\n",
+    )
+    .expect("write config");
+    std::fs::write(
+        proj.join("src/other.mind"),
+        "pub struct NormMode { pub value: i64 }\npub fn make_other() -> NormMode { NormMode { value: 7 } }\n",
+    )
+    .expect("write other");
+    std::fs::write(
+        proj.join("src/main.mind"),
+        r#"import config;
+import other;
+pub fn qualified_variant() -> i64 {
+    let m: config.NormMode = config.make_clamp();
+    match m {
+        config.NormMode::GroupNorm => 1,
+        config.NormMode::Clamp => 2,
+    }
+}
+pub fn qualified_struct() -> i64 {
+    let s: other.NormMode = other.make_other();
+    s.value
+}
+"#,
+    )
+    .expect("write main");
+    let built = Command::new(&mindc)
+        .args(["build", "--backend", "mlir"])
+        .current_dir(&proj)
+        .output()
+        .expect("build shadowed enum");
+    if !crate::common::gate::compiled("qualified_enum_shadowed", &built) {
+        return;
+    }
+    let so = proj.join("target/debug/libqualified_shadowed.so");
+    let py = format!(
+        "import ctypes\nl=ctypes.CDLL(r'{}')\nfor n,e in (('qualified_variant',2),('qualified_struct',7)):\n f=getattr(l,n); f.restype=ctypes.c_int64; r=f(); assert r==e,(n,r)\n",
+        so.display()
+    );
+    let run = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("run shadowed enum artifact");
+    assert!(
+        run.status.success(),
+        "shadowed enum native checks failed:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_e2002_refusal(
+        &mindc,
+        &proj,
+        "bare_shadowed",
+        "import config;\nimport other;\npub fn bare() -> i64 {\n    match config.make_clamp() {\n        NormMode::GroupNorm => 1,\n        NormMode::Clamp => 2,\n    }\n}\n",
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}

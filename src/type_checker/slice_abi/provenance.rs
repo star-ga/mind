@@ -17,7 +17,7 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
         Node::Lit(Literal::Ident(name), _) => env.handles.get(name).cloned(),
         Node::Paren(inner, _) => expr_kind(inner, env),
         // `check_fn` validates a declared collection result before it authorizes callers.
-        Node::Call { callee, .. } => call_signature(callee)
+        Node::Call { callee, span, .. } => call_signature(callee, *span)
             .and_then(|(_, ret)| ret)
             .as_ref()
             .and_then(declared_kind),
@@ -52,7 +52,7 @@ fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass>
         return Some(class);
     }
     match element {
-        Node::Call { callee, .. } => call_signature(callee)?
+        Node::Call { callee, span, .. } => call_signature(callee, *span)?
             .1
             .as_ref()
             .and_then(scalar_class_of_ann),
@@ -93,7 +93,7 @@ fn element_int_width(element: &Node, env: &Env) -> Option<u32> {
             .or_else(|| env.types.get(name))
             .and_then(int_width_of_ann),
         Node::As { ty, .. } => int_width_of_ann(&canonical(ty)),
-        Node::Call { callee, .. } => call_signature(callee)?
+        Node::Call { callee, span, .. } => call_signature(callee, *span)?
             .1
             .as_ref()
             .and_then(int_width_of_ann),
@@ -148,7 +148,7 @@ pub(super) fn expr_type(node: &Node, env: &Env) -> Option<TypeAnn> {
         Node::Lit(Literal::Str(_), _) => Some(TypeAnn::Named("string".to_string())),
         Node::StructLit { name, .. } => Some(canonical(&TypeAnn::Named(name.clone()))),
         Node::Paren(inner, _) => expr_type(inner, env),
-        Node::Call { callee, .. } => call_signature(callee).and_then(|(_, ret)| ret),
+        Node::Call { callee, span, .. } => call_signature(callee, *span).and_then(|(_, ret)| ret),
         Node::FieldAccess {
             receiver, field, ..
         } => field_type(receiver, field, env),
@@ -427,4 +427,148 @@ pub(super) fn compatible_source(target: &HandleKind, value: &Node, env: &Env) ->
         || (matches!(target, HandleKind::Array(_))
             && !value_contains_borrow(value, env)
             && matches!(value, Node::Lit(Literal::Ident(_), _) | Node::Call { .. }))
+}
+
+/// Whether executing `node` necessarily leaves the function through an
+/// explicit return. This is deliberately conservative for loops: their bodies
+/// may execute zero times, so a return inside one does not prove the function's
+/// declared handle result.
+pub(super) fn stmt_guarantees_return(node: &Node) -> bool {
+    match node {
+        Node::Return { .. } => true,
+        Node::Block { stmts, .. } => stmts.iter().any(stmt_guarantees_return),
+        Node::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            then_branch.iter().any(stmt_guarantees_return)
+                && else_branch.iter().any(stmt_guarantees_return)
+        }
+        _ => false,
+    }
+}
+
+/// Prove that every fallthrough path produces the declared Vec-layout result.
+/// Explicit returns are checked individually by `check_expr`; this closes the
+/// separate hole where a declaration such as `-> &[i64]` authorized callers
+/// even though its body fell through with a scalar or no value.
+pub(super) fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env) -> bool {
+    if stmts.iter().any(stmt_guarantees_return) {
+        return true;
+    }
+    match stmts.last() {
+        Some(Node::Block { stmts, .. }) => result_paths_proven(stmts, target, env),
+        Some(Node::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        }) => {
+            result_paths_proven(then_branch, target, env)
+                && result_paths_proven(else_branch, target, env)
+        }
+        Some(value) => compatible_source(target, value, env),
+        None => false,
+    }
+}
+
+/// What a function-body tail hands back as the implicit result, read from the
+/// value lowering gives each node.
+pub(super) enum TailYield<'a> {
+    /// The statement lists whose own tails are yielded: `if`, `match`, a
+    /// block, a region.
+    Branches(Vec<&'a [Node]>),
+    /// No value a handle can ride on: a binding, a store (it yields its store
+    /// helper's status), a loop, a jump, a print, an assert, a declaration.
+    Nothing,
+    /// The node's own value.
+    Itself,
+}
+
+/// Classify `node` by what it yields. The match is exhaustive on purpose: a
+/// new node kind must state what it yields before the escape check admits it.
+pub(super) fn tail_yield(node: &Node) -> TailYield<'_> {
+    match node {
+        Node::Block { stmts, .. } => TailYield::Branches(vec![stmts]),
+        // A region evaluates to the last expression of its body, like a block.
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => TailYield::Branches(vec![body]),
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => TailYield::Branches(vec![
+            then_branch,
+            else_branch.as_deref().unwrap_or_default(),
+        ]),
+        Node::Match { arms, .. } => TailYield::Branches(
+            arms.iter()
+                .map(|arm| std::slice::from_ref(&arm.body))
+                .collect(),
+        ),
+        Node::Let { .. }
+        | Node::LetTuple { .. }
+        | Node::Assign { .. }
+        | Node::IndexAssign { .. }
+        | Node::FieldAssign { .. }
+        | Node::For { .. }
+        | Node::ForEach { .. }
+        | Node::Print { .. }
+        | Node::Assert { .. }
+        | Node::Return { .. }
+        | Node::FnDef(..)
+        | Node::Import { .. }
+        | Node::Const { .. }
+        | Node::ExternConst { .. }
+        | Node::TypeAlias { .. }
+        | Node::Export { .. }
+        | Node::StructDef { .. }
+        | Node::EnumDef { .. }
+        | Node::ExternBlock { .. }
+        | Node::TraitDef { .. }
+        | Node::ImplBlock { .. } => TailYield::Nothing,
+        #[cfg(feature = "std-surface")]
+        Node::While { .. } | Node::Break { .. } | Node::Continue { .. } => TailYield::Nothing,
+        Node::Lit(..)
+        | Node::Binary { .. }
+        | Node::Paren(..)
+        | Node::Tuple { .. }
+        | Node::Call { .. }
+        | Node::CallGrad { .. }
+        | Node::CallTensorSum { .. }
+        | Node::CallTensorMean { .. }
+        | Node::CallReshape { .. }
+        | Node::CallExpandDims { .. }
+        | Node::CallSqueeze { .. }
+        | Node::CallTranspose { .. }
+        | Node::CallIndex { .. }
+        | Node::CallSlice { .. }
+        | Node::CallSliceStride { .. }
+        | Node::CallGather { .. }
+        | Node::CallDot { .. }
+        | Node::CallMatMul { .. }
+        | Node::TensorMatmul { .. }
+        | Node::TensorElemwise { .. }
+        | Node::CallTensorRelu { .. }
+        | Node::CallTensorRand { .. }
+        | Node::CallTensorConv2d { .. }
+        | Node::ArrayLit { .. }
+        | Node::MapLit { .. }
+        | Node::SetLit { .. }
+        | Node::Neg { .. }
+        | Node::Not { .. }
+        | Node::BitNot { .. }
+        | Node::MethodCall { .. }
+        | Node::FieldAccess { .. }
+        | Node::StructLit { .. }
+        | Node::IndexAccess { .. }
+        | Node::SliceRange { .. }
+        | Node::As { .. }
+        | Node::Logical { .. }
+        | Node::Try { .. }
+        | Node::Ref { .. }
+        | Node::Closure(..) => TailYield::Itself,
+        #[cfg(feature = "std-surface")]
+        Node::Bitwise { .. } => TailYield::Itself,
+    }
 }

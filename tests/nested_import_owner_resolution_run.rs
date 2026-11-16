@@ -274,3 +274,139 @@ fn captured_single_owner_same_abi_executes_selected_body() {
         }
     }
 }
+
+fn collide_manifest() -> &'static str {
+    "[package]\nname = \"collide_probe\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"collide_probe\"\n\n[exports]\nc_abi = [\"main\"]\n"
+}
+
+fn write_collide_project(root: &Path, main_src: &str, encoder_src: &str) -> PathBuf {
+    let project = root.join("project");
+    fs::create_dir_all(project.join("src")).expect("create collide src");
+    fs::write(project.join("Mind.toml"), collide_manifest()).expect("write collide manifest");
+    fs::write(project.join("src/main.mind"), main_src).expect("write collide main");
+    fs::write(project.join("src/encoder.mind"), encoder_src).expect("write encoder");
+    project
+}
+
+#[test]
+fn executable_route_refuses_local_name_that_collides_with_import() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("collision scratch");
+    let local_v: i64 = 1;
+    let imported_v: i64 = 2;
+    let encoder = format!("pub fn encode(x: i64) -> i64 {{\n    return {imported_v};\n}}\n");
+    let main_src = format!(
+        "import encoder;\n\nfn encode(x: i64) -> i64 {{\n    return {local_v};\n}}\n\npub fn main() -> i64 {{\n    return encoder.encode(0) * 10 + encode(0);\n}}\n"
+    );
+    let project = write_collide_project(temp.path(), &main_src, &encoder);
+    let build = common::run_build_captured(&mindc, &project, &["--no-cache"]);
+    let rendered = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        !build.status.success(),
+        "executable route built a colliding program:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("lower::imported_local_fn_collision"),
+        "executable route lost the collision refusal:\n{rendered}"
+    );
+
+    let cdylib = project.join("collide.so");
+    let emit = Command::new(&mindc)
+        .current_dir(&project)
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--emit",
+            "cdylib",
+            "--no-cache",
+            "--out",
+            cdylib.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cdylib build");
+    let cdylib_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&emit.stdout),
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !emit.status.success(),
+        "cdylib route accepted the collision:\n{cdylib_text}"
+    );
+    assert!(
+        cdylib_text.contains("lower::imported_local_fn_collision"),
+        "cdylib route changed its refusal:\n{cdylib_text}"
+    );
+    assert!(!cdylib.exists(), "cdylib route published an artifact");
+
+    let native_out = project.join("native-bin");
+    let native = Command::new(&mindc)
+        .current_dir(&project)
+        .args([
+            "build",
+            "--backend",
+            "native",
+            "--no-cache",
+            "--out",
+            native_out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run native build");
+    let native_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        !native.status.success(),
+        "native route accepted the collision:\n{native_text}"
+    );
+    assert!(
+        native_text.contains("closure.duplicate_definition"),
+        "native route changed its refusal:\n{native_text}"
+    );
+    assert!(
+        !native_text.contains("lower::imported_local_fn_collision"),
+        "native route took the executable preflight:\n{native_text}"
+    );
+}
+
+#[test]
+fn distinct_local_name_still_runs_imported_body() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("distinct-name scratch");
+    let local_v: i64 = 1;
+    let imported_v: i64 = 2;
+    let expect = imported_v * 10 + local_v;
+    let encoder = format!("pub fn encode(x: i64) -> i64 {{\n    return {imported_v};\n}}\n");
+    let main_src = format!(
+        "import encoder;\n\nfn tag(x: i64) -> i64 {{\n    return {local_v};\n}}\n\npub fn main() -> i64 {{\n    return encoder.encode(0) * 10 + tag(0);\n}}\n"
+    );
+    let project = write_collide_project(temp.path(), &main_src, &encoder);
+    let build = common::run_build_captured(&mindc, &project, &["--no-cache"]);
+    let rendered = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "distinct names failed to build:\n{rendered}"
+    );
+    let artifact = common::reported_artifact(&build);
+    let run = Command::new(&artifact)
+        .output()
+        .expect("run distinct binary");
+    assert_eq!(
+        run.status.code(),
+        Some(i32::try_from(expect).expect("expect fits the process status")),
+        "distinct names returned the wrong body\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

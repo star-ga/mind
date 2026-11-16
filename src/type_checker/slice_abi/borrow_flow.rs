@@ -8,6 +8,7 @@ use crate::ast::{FnDefData, Node, Pattern, Span, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
 use super::aliases::type_needs_collection_flow;
+use super::provenance::{TailYield, result_paths_proven, tail_yield};
 use super::{
     Env, HandleKind, SLICE_ARG_ABI_CODE, SLICE_CAPABILITY_CODE, call_signature, canonical,
     check_stmts, compatible_source, declared_kind, expr_kind, report, scalar_class_of_ann,
@@ -459,12 +460,13 @@ pub(super) fn check_while(
 pub(super) fn check_call(
     callee: &str,
     args: &[Node],
+    span: Span,
     env: &Env,
     src: &str,
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    let Some((params, _)) = call_signature(callee) else {
+    let Some((params, _)) = call_signature(callee, span) else {
         for arg in args {
             if value_contains_borrow(arg, env) {
                 report(
@@ -519,6 +521,7 @@ pub(super) fn check_call(
     }
 }
 
+/// Refuse a borrowed handle in the value the body tail yields as the implicit result.
 pub(super) fn reject_borrowed_tail(
     stmts: &[Node],
     env: &Env,
@@ -526,27 +529,25 @@ pub(super) fn reject_borrowed_tail(
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    match stmts.last() {
-        Some(Node::Return { .. }) | None => {}
-        Some(Node::Block { stmts, .. }) => reject_borrowed_tail(stmts, env, src, file, errs),
-        Some(Node::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        }) => {
-            reject_borrowed_tail(then_branch, env, src, file, errs);
-            reject_borrowed_tail(else_branch, env, src, file, errs);
+    let Some(tail) = stmts.last() else {
+        return;
+    };
+    match tail_yield(tail) {
+        TailYield::Branches(branches) => {
+            for branch in branches {
+                reject_borrowed_tail(branch, env, src, file, errs);
+            }
         }
-        Some(value) if value_contains_borrow(value, env) => report(
+        TailYield::Itself if value_contains_borrow(tail, env) => report(
             errs,
             src,
             file,
             "a borrowed slice handle cannot escape as an implicit non-slice function result"
                 .to_string(),
-            value.span(),
+            tail.span(),
             SLICE_CAPABILITY_CODE,
         ),
-        Some(_) => {}
+        TailYield::Itself | TailYield::Nothing => {}
     }
 }
 
@@ -571,49 +572,6 @@ pub(crate) fn check_struct_fields(
                 SLICE_CAPABILITY_CODE,
             );
         }
-    }
-}
-
-/// Whether executing `node` necessarily leaves the function through an
-/// explicit return. This is deliberately conservative for loops: their bodies
-/// may execute zero times, so a return inside one does not prove the function's
-/// declared handle result.
-pub(super) fn stmt_guarantees_return(node: &Node) -> bool {
-    match node {
-        Node::Return { .. } => true,
-        Node::Block { stmts, .. } => stmts.iter().any(stmt_guarantees_return),
-        Node::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        } => {
-            then_branch.iter().any(stmt_guarantees_return)
-                && else_branch.iter().any(stmt_guarantees_return)
-        }
-        _ => false,
-    }
-}
-
-/// Prove that every fallthrough path produces the declared Vec-layout result.
-/// Explicit returns are checked individually by `check_expr`; this closes the
-/// separate hole where a declaration such as `-> &[i64]` authorized callers
-/// even though its body fell through with a scalar or no value.
-fn result_paths_proven(stmts: &[Node], target: &HandleKind, env: &Env) -> bool {
-    if stmts.iter().any(stmt_guarantees_return) {
-        return true;
-    }
-    match stmts.last() {
-        Some(Node::Block { stmts, .. }) => result_paths_proven(stmts, target, env),
-        Some(Node::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        }) => {
-            result_paths_proven(then_branch, target, env)
-                && result_paths_proven(else_branch, target, env)
-        }
-        Some(value) => compatible_source(target, value, env),
-        None => false,
     }
 }
 
@@ -646,10 +604,12 @@ fn function_needs_collection_flow(fd: &FnDefData, has_collection_owner_field: bo
     fd.body.iter().any(|stmt| {
         super::super::nerve_walk::any(stmt, &|node| match node {
             Node::Let { ann: Some(ty), .. } => type_needs_collection_flow(ty),
-            Node::Call { callee, .. } => call_signature(callee).is_some_and(|(params, ret)| {
-                params.iter().any(type_needs_collection_flow)
-                    || ret.as_ref().is_some_and(type_needs_collection_flow)
-            }),
+            Node::Call { callee, span, .. } => {
+                call_signature(callee, *span).is_some_and(|(params, ret)| {
+                    params.iter().any(type_needs_collection_flow)
+                        || ret.as_ref().is_some_and(type_needs_collection_flow)
+                })
+            }
             Node::IndexAssign { .. } => true,
             Node::FieldAssign { .. } => has_collection_owner_field,
             _ => false,

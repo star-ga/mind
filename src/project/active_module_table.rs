@@ -33,6 +33,10 @@ thread_local! {
     /// across modules or override an exact qualified path.
     static ACTIVE_RESOLVED_IMPORTS: RefCell<Option<ResolvedImportMap>> =
         const { RefCell::new(None) };
+    /// Import targets for the executable collision preflight only.
+    /// The executable compiler does not install the visibility import map:
+    /// that map also narrows bare-name lookup. This record does not.
+    static COLLISION_IMPORTS: RefCell<Option<ResolvedImportMap>> = const { RefCell::new(None) };
     /// Evaluator parsing keeps the owner qualifier for namespace references,
     /// while the ordinary AST intentionally folds `mod.name` to `name`.
     /// Keep those references span-scoped during evaluator setup so qualified
@@ -105,6 +109,10 @@ thread_local! {
     /// the call stays on the extern lowering path.
     static LOCAL_EXTERN_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
     static QUALIFIED_POSIX_CALLS: RefCell<BTreeSet<(usize, usize)>> = const { RefCell::new(BTreeSet::new()) };
+    /// Import path of each desugared `qualifier.name` call, keyed by span.
+    /// `None` means the qualifier is not one imported module.
+    static QUALIFIED_CALL_IMPORTS: RefCell<BTreeMap<(usize, usize), Option<String>>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn is_import_scoped_module(module: &str) -> bool {
@@ -183,6 +191,7 @@ pub(crate) struct FileScopeGuard {
     previous_admitted: BTreeSet<String>,
     previous_externs: BTreeSet<String>,
     previous_qualified: BTreeSet<(usize, usize)>,
+    previous_calls: BTreeMap<(usize, usize), Option<String>>,
 }
 
 impl FileScopeGuard {
@@ -204,12 +213,27 @@ impl FileScopeGuard {
             })
             .collect();
         let previous_qualified = QUALIFIED_POSIX_CALLS.with(|cell| cell.replace(qualified));
+        let qualified_calls = module
+            .spelling
+            .call_qualifiers
+            .iter()
+            .map(|(span, qualifier)| {
+                let key = qualifier.replace("::", ".");
+                let import = match qualifiers.get(&key) {
+                    Some(targets) if targets.len() == 1 => targets.iter().next().cloned(),
+                    _ => None,
+                };
+                ((span.start(), span.end()), import)
+            })
+            .collect();
+        let previous_calls = QUALIFIED_CALL_IMPORTS.with(|cell| cell.replace(qualified_calls));
         let previous_admitted = ADMITTED_IMPORT_SCOPED.with(|cell| cell.replace(admitted));
         let previous_externs = LOCAL_EXTERN_NAMES.with(|cell| cell.replace(externs));
         Self {
             previous_admitted,
             previous_externs,
             previous_qualified,
+            previous_calls,
         }
     }
 }
@@ -225,6 +249,55 @@ impl Drop for FileScopeGuard {
         LOCAL_EXTERN_NAMES.with(|cell| {
             *cell.borrow_mut() = std::mem::take(&mut self.previous_externs);
         });
+        QUALIFIED_CALL_IMPORTS.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_calls);
+        });
+    }
+}
+
+/// A module-qualified call after the parser folds it to the bare member.
+pub(crate) enum QualifiedFn {
+    /// This span has no recorded qualifier.
+    Bare,
+    /// The qualifier does not name one imported module, or that module does
+    /// not export `name`.
+    Missing,
+    /// Defining module and exported signature.
+    Found(String, super::module_table::ExportedFn),
+}
+
+/// Signature of a desugared `qualifier.name` call. A bare call stays
+/// [`QualifiedFn::Bare`] so the caller can use the ordinary name lookup.
+pub(crate) fn lookup_qualified_fn(span: crate::ast::Span, name: &str) -> QualifiedFn {
+    let key = (span.start(), span.end());
+    let slot = QUALIFIED_CALL_IMPORTS.with(|cell| cell.borrow().get(&key).cloned());
+    let Some(import) = slot else {
+        return QualifiedFn::Bare;
+    };
+    let Some(dotted) = import else {
+        return QualifiedFn::Missing;
+    };
+    let path: Vec<String> = dotted.split('.').map(str::to_string).collect();
+    let Some(owner) = resolve_import(
+        crate::qualified_enums::current_module_path().as_deref(),
+        &path,
+    ) else {
+        return QualifiedFn::Missing;
+    };
+    let found = ACTIVE.with(|active| {
+        active.borrow().as_ref().and_then(|table| {
+            table.get(&owner).and_then(|module| {
+                module
+                    .exported_fns
+                    .iter()
+                    .find(|function| function.name == name)
+                    .cloned()
+            })
+        })
+    });
+    match found {
+        Some(signature) => QualifiedFn::Found(owner, signature),
+        None => QualifiedFn::Missing,
     }
 }
 
@@ -529,21 +602,18 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
 /// the runnable-artifact preflight refuses this shape before lowering can let
 /// clang report a duplicate symbol.
 pub(crate) fn imported_fn_conflicts_with_local(owner: Option<&str>, name: &str) -> bool {
-    ACTIVE_RESOLVED_IMPORTS.with(|resolved| {
-        let captured = captured_import_targets_from_map(resolved.borrow().as_ref(), owner);
-        let Some(targets) = captured else {
+    let Some(targets) = collision_targets(owner) else {
+        return false;
+    };
+    ACTIVE.with(|active| {
+        let table = active.borrow();
+        let Some(table) = table.as_ref() else {
             return false;
         };
-        ACTIVE.with(|active| {
-            let table = active.borrow();
-            let Some(table) = table.as_ref() else {
-                return false;
-            };
-            table
-                .exported_fn_candidate_refs(name)
-                .into_iter()
-                .any(|(module, _)| targets.contains(module))
-        })
+        table
+            .exported_fn_candidate_refs(name)
+            .into_iter()
+            .any(|(module, _)| targets.contains(module))
     })
 }
 
@@ -610,6 +680,39 @@ impl Drop for ResolvedImportsGuard {
     fn drop(&mut self) {
         ACTIVE_RESOLVED_IMPORTS.with(|cell| *cell.borrow_mut() = self.previous.take());
     }
+}
+
+/// Installs executable-route import targets for the collision preflight
+/// and restores the previous record on drop. Lookup does not read it.
+pub(crate) struct CollisionImportsGuard {
+    previous: Option<ResolvedImportMap>,
+}
+
+impl CollisionImportsGuard {
+    pub(crate) fn install(imports: ResolvedImportMap) -> Self {
+        let previous = COLLISION_IMPORTS.with(|cell| cell.borrow_mut().replace(imports));
+        Self { previous }
+    }
+}
+
+impl Drop for CollisionImportsGuard {
+    fn drop(&mut self) {
+        COLLISION_IMPORTS.with(|cell| *cell.borrow_mut() = self.previous.take());
+    }
+}
+
+/// Captured import targets the collision preflight consults.
+///
+/// A manifest scope map wins, so the shared-library route stays as it is.
+/// The executable route has no scope map. It records the same import targets
+/// here, and this function reads them. Bare-name lookup does not.
+fn collision_targets(owner: Option<&str>) -> Option<BTreeSet<String>> {
+    let scoped = ACTIVE_RESOLVED_IMPORTS
+        .with(|resolved| captured_import_targets_from_map(resolved.borrow().as_ref(), owner));
+    if scoped.is_some() {
+        return scoped;
+    }
+    COLLISION_IMPORTS.with(|cell| captured_import_targets_from_map(cell.borrow().as_ref(), owner))
 }
 
 impl Drop for Guard {
