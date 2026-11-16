@@ -131,6 +131,15 @@ fn leftover_vs_control(
     args: &[&str],
 ) -> [Output; 2] {
     let tmp = tempfile::tempdir().unwrap();
+    let mut ancestor = tmp.path().to_path_buf();
+    while ancestor.pop() {
+        let manifest = ancestor.join("Mind.toml");
+        assert!(
+            !manifest.exists(),
+            "ancestor of the tempdir holds Mind.toml at {}",
+            manifest.display()
+        );
+    }
     let mindc = require_mindc();
     let run_in = |dir: &Path| {
         Command::new(&mindc)
