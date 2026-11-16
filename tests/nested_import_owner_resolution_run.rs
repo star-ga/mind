@@ -276,7 +276,7 @@ fn captured_single_owner_same_abi_executes_selected_body() {
 }
 
 fn collide_manifest() -> &'static str {
-    "[package]\nname = \"collide_probe\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"collide_probe\"\n\n[exports]\nc_abi = [\"main\"]\n"
+    "[package]\nname = \"collide_probe\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"collide_probe\"\n"
 }
 
 fn write_collide_project(root: &Path, main_src: &str, encoder_src: &str) -> PathBuf {

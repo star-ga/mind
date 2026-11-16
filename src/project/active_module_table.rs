@@ -597,6 +597,13 @@ pub(crate) fn visible_symbols(owner: Option<&str>) -> BTreeSet<String> {
     })
 }
 
+/// Whether the link plan installed for this compile emits `name` internal.
+/// Shared-library and cdylib compiles install that plan after the preflight,
+/// so this stays false there and a same-named import is still a global clash.
+pub(crate) fn local_fn_emitted_internal(name: &str) -> bool {
+    super::private_linkage::name_is_internal(name)
+}
+
 /// Whether an imported typed function would collide with a local definition
 /// in the native link unit. Until linker symbols carry their defining owner,
 /// the runnable-artifact preflight refuses this shape before lowering can let
