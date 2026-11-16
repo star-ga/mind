@@ -599,3 +599,132 @@ fn malformed_source_still_uses_the_parser_diagnostic_path() {
     );
     assert!(!artifact.exists());
 }
+
+/// A qualified call to an imported `encode` must use that signature.
+/// The bare name is also an implicit std function, so a bare lookup is ambiguous.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn qualified_imported_slice_call_checks_and_runs() {
+    let root = common::scratch_dir("slice_call_abi_qualified").join("flat");
+    write_qualified_project(
+        &root,
+        "pub fn encode(x: &[i64], n: u32) -> i64 {\n    return x[0];\n}\n",
+        "import encoder;\nfn fwd(input: &[i64], n: u32) -> i64 {\n    return encoder.encode(input, n);\n}\npub fn run() -> i64 {\n    let a: array<i64> = [4, 5];\n    return fwd(a, 2);\n}\n",
+    );
+    assert_project_check(&root);
+    let artifact = root.join("run.so");
+    let built = mindc_in(
+        &root,
+        &[
+            "build",
+            "--backend=mlir",
+            "--emit",
+            "cdylib",
+            "--no-cache",
+            "--out",
+            artifact.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        built.status.success(),
+        "qualified call did not build:\n{}",
+        combined(&built)
+    );
+    assert_qualified_native(&artifact, "run", 4);
+
+    let blocked = common::scratch_dir("slice_call_abi_qualified").join("module");
+    write_qualified_project(
+        &blocked,
+        "module encoder {\n    fn encode(x: &[i64], n: u32) -> i64 { return x[0] }\n    export fn encode\n}\n",
+        "module user {\n    use encoder\n    fn fwd(input: &[i64], n: u32) -> i64 { return encoder.encode(input, n) }\n    pub fn run() -> i64 {\n        let a: array<i64> = [4, 5]\n        return fwd(a, 2)\n    }\n    export fn run\n}\n",
+    );
+    assert_project_check(&blocked);
+}
+
+/// An unresolved qualifier, a non-slice parameter, and an unexported fn stay refused.
+#[cfg(feature = "cross-module-imports")]
+#[test]
+fn qualified_slice_calls_stay_refused() {
+    let cases = [
+        (
+            "missing",
+            "pub fn encode(x: &[i64], n: u32) -> i64 { return x[0] }\n",
+            "import encoder;\npub fn run(input: &[i64], n: u32) -> i64 {\n    return encoder.missing(input, n)\n}\n",
+            "unresolved function `missing`",
+        ),
+        (
+            "scalar",
+            "pub fn take(x: i64, n: u32) -> i64 { return x + (n as i64) }\n",
+            "import encoder;\npub fn run(input: &[i64], n: u32) -> i64 {\n    return encoder.take(input, n)\n}\n",
+            "is not a slice",
+        ),
+        (
+            "unexported",
+            "module encoder {\n    fn hide(x: &[i64], n: u32) -> i64 { return x[0] }\n    fn keep() -> i64 { return 1 }\n    export fn keep\n}\n",
+            "import encoder;\nfn hide(x: &[i64], n: u32) -> i64 { return x[0] }\npub fn run(input: &[i64], n: u32) -> i64 {\n    return encoder.hide(input, n)\n}\n",
+            "unresolved function `hide`",
+        ),
+    ];
+    for (tag, encoder, main_src, needle) in cases {
+        let root = common::scratch_dir("slice_call_abi_qualified").join(tag);
+        write_qualified_project(&root, encoder, main_src);
+        let checked = mindc_in(&root, &["check", "--no-fmt", "--no-lint"]);
+        let text = combined(&checked);
+        assert!(!checked.status.success(), "{tag} was admitted:\n{text}");
+        assert!(text.contains("E2033"), "{tag} missed E2033:\n{text}");
+        assert!(text.contains(needle), "{tag} missed `{needle}`:\n{text}");
+    }
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn write_qualified_project(root: &Path, encoder: &str, main_src: &str) {
+    let _ = std::fs::remove_dir_all(root);
+    std::fs::create_dir_all(root.join("src")).expect("src");
+    std::fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"qslice\"\nversion = \"0.1.0\"\n\n[build]\nentry = \"src/main.mind\"\noutput = \"qslice\"\n\n[targets.cpu]\nbackend = \"cpu\"\n\n[exports]\nc_abi = [\"run\"]\n",
+    )
+    .expect("manifest");
+    std::fs::write(root.join("src/encoder.mind"), encoder).expect("encoder");
+    std::fs::write(root.join("src/main.mind"), main_src).expect("main");
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn assert_project_check(root: &Path) {
+    let checked = mindc_in(root, &["check", "--no-fmt", "--no-lint"]);
+    assert!(
+        checked.status.success(),
+        "qualified slice call refused:\n{}",
+        combined(&checked)
+    );
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn assert_qualified_native(artifact: &Path, name: &str, want: i64) {
+    let py = format!(
+        "import ctypes\nlib = ctypes.CDLL(r'{}')\nfn = getattr(lib, '{name}')\nfn.restype = ctypes.c_int64\ngot = fn()\nassert got == {want}, f'{{got}}'\nprint('native-ok')\n",
+        artifact.display()
+    );
+    let ran = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("run native artifact");
+    assert!(
+        ran.status.success() && combined(&ran).contains("native-ok"),
+        "native run failed:\n{}",
+        combined(&ran)
+    );
+}
+
+#[cfg(feature = "cross-module-imports")]
+fn mindc_in(root: &Path, args: &[&str]) -> Output {
+    Command::new(common::mindc_bin())
+        .args(args)
+        .current_dir(root)
+        .env(
+            "MINDC_STD_DIR",
+            format!("{}/std", env!("CARGO_MANIFEST_DIR")),
+        )
+        .output()
+        .expect("run mindc")
+}

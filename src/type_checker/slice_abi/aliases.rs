@@ -140,7 +140,25 @@ pub(super) fn int_width_of_ann(ty: &TypeAnn) -> Option<u32> {
 }
 
 /// Parameter and result types of `callee`, in the checked file's terms.
-pub(super) fn call_signature(callee: &str) -> Option<(Vec<TypeAnn>, Option<TypeAnn>)> {
+///
+/// A module-qualified call is folded to the bare member. Its span still
+/// records the qualifier, and that module's exported signature wins. A
+/// qualifier that does not export `callee` stays unresolved.
+pub(super) fn call_signature(callee: &str, span: Span) -> Option<(Vec<TypeAnn>, Option<TypeAnn>)> {
+    #[cfg(feature = "cross-module-imports")]
+    match crate::project::active_module_table::lookup_qualified_fn(span, callee) {
+        crate::project::active_module_table::QualifiedFn::Found(owner, sig) => {
+            let read = |ty: &TypeAnn| canonical_in_owner(ty, &owner);
+            return Some((
+                sig.param_types.iter().map(read).collect(),
+                sig.ret_type.as_ref().map(read),
+            ));
+        }
+        crate::project::active_module_table::QualifiedFn::Missing => return None,
+        crate::project::active_module_table::QualifiedFn::Bare => {}
+    }
+    #[cfg(not(feature = "cross-module-imports"))]
+    let _ = span;
     if let Some(sig) = intra_lookup_fn(callee) {
         return Some((
             sig.param_types.iter().map(canonical).collect(),

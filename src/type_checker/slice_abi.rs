@@ -116,8 +116,8 @@ fn check_expr(
     errs: &mut Vec<Diagnostic>,
 ) {
     match node {
-        Node::Call { callee, args, .. } => {
-            check_call(callee, args, env, src, file, errs);
+        Node::Call { callee, args, span } => {
+            check_call(callee, args, *span, env, src, file, errs);
             for arg in args {
                 check_expr(arg, env, expected_return, src, file, errs);
             }

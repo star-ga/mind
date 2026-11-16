@@ -460,12 +460,13 @@ pub(super) fn check_while(
 pub(super) fn check_call(
     callee: &str,
     args: &[Node],
+    span: Span,
     env: &Env,
     src: &str,
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
 ) {
-    let Some((params, _)) = call_signature(callee) else {
+    let Some((params, _)) = call_signature(callee, span) else {
         for arg in args {
             if value_contains_borrow(arg, env) {
                 report(
@@ -603,10 +604,12 @@ fn function_needs_collection_flow(fd: &FnDefData, has_collection_owner_field: bo
     fd.body.iter().any(|stmt| {
         super::super::nerve_walk::any(stmt, &|node| match node {
             Node::Let { ann: Some(ty), .. } => type_needs_collection_flow(ty),
-            Node::Call { callee, .. } => call_signature(callee).is_some_and(|(params, ret)| {
-                params.iter().any(type_needs_collection_flow)
-                    || ret.as_ref().is_some_and(type_needs_collection_flow)
-            }),
+            Node::Call { callee, span, .. } => {
+                call_signature(callee, *span).is_some_and(|(params, ret)| {
+                    params.iter().any(type_needs_collection_flow)
+                        || ret.as_ref().is_some_and(type_needs_collection_flow)
+                })
+            }
             Node::IndexAssign { .. } => true,
             Node::FieldAssign { .. } => has_collection_owner_field,
             _ => false,

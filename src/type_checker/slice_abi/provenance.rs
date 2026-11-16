@@ -17,7 +17,7 @@ pub(super) fn expr_kind(node: &Node, env: &Env) -> Option<HandleKind> {
         Node::Lit(Literal::Ident(name), _) => env.handles.get(name).cloned(),
         Node::Paren(inner, _) => expr_kind(inner, env),
         // `check_fn` validates a declared collection result before it authorizes callers.
-        Node::Call { callee, .. } => call_signature(callee)
+        Node::Call { callee, span, .. } => call_signature(callee, *span)
             .and_then(|(_, ret)| ret)
             .as_ref()
             .and_then(declared_kind),
@@ -52,7 +52,7 @@ fn element_class(element: &Node, env: &Env) -> Option<super::super::ScalarClass>
         return Some(class);
     }
     match element {
-        Node::Call { callee, .. } => call_signature(callee)?
+        Node::Call { callee, span, .. } => call_signature(callee, *span)?
             .1
             .as_ref()
             .and_then(scalar_class_of_ann),
@@ -93,7 +93,7 @@ fn element_int_width(element: &Node, env: &Env) -> Option<u32> {
             .or_else(|| env.types.get(name))
             .and_then(int_width_of_ann),
         Node::As { ty, .. } => int_width_of_ann(&canonical(ty)),
-        Node::Call { callee, .. } => call_signature(callee)?
+        Node::Call { callee, span, .. } => call_signature(callee, *span)?
             .1
             .as_ref()
             .and_then(int_width_of_ann),
@@ -148,7 +148,7 @@ pub(super) fn expr_type(node: &Node, env: &Env) -> Option<TypeAnn> {
         Node::Lit(Literal::Str(_), _) => Some(TypeAnn::Named("string".to_string())),
         Node::StructLit { name, .. } => Some(canonical(&TypeAnn::Named(name.clone()))),
         Node::Paren(inner, _) => expr_type(inner, env),
-        Node::Call { callee, .. } => call_signature(callee).and_then(|(_, ret)| ret),
+        Node::Call { callee, span, .. } => call_signature(callee, *span).and_then(|(_, ret)| ret),
         Node::FieldAccess {
             receiver, field, ..
         } => field_type(receiver, field, env),

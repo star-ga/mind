@@ -105,6 +105,10 @@ thread_local! {
     /// the call stays on the extern lowering path.
     static LOCAL_EXTERN_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
     static QUALIFIED_POSIX_CALLS: RefCell<BTreeSet<(usize, usize)>> = const { RefCell::new(BTreeSet::new()) };
+    /// Import path of each desugared `qualifier.name` call, keyed by span.
+    /// `None` means the qualifier is not one imported module.
+    static QUALIFIED_CALL_IMPORTS: RefCell<BTreeMap<(usize, usize), Option<String>>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn is_import_scoped_module(module: &str) -> bool {
@@ -183,6 +187,7 @@ pub(crate) struct FileScopeGuard {
     previous_admitted: BTreeSet<String>,
     previous_externs: BTreeSet<String>,
     previous_qualified: BTreeSet<(usize, usize)>,
+    previous_calls: BTreeMap<(usize, usize), Option<String>>,
 }
 
 impl FileScopeGuard {
@@ -204,12 +209,27 @@ impl FileScopeGuard {
             })
             .collect();
         let previous_qualified = QUALIFIED_POSIX_CALLS.with(|cell| cell.replace(qualified));
+        let qualified_calls = module
+            .spelling
+            .call_qualifiers
+            .iter()
+            .map(|(span, qualifier)| {
+                let key = qualifier.replace("::", ".");
+                let import = match qualifiers.get(&key) {
+                    Some(targets) if targets.len() == 1 => targets.iter().next().cloned(),
+                    _ => None,
+                };
+                ((span.start(), span.end()), import)
+            })
+            .collect();
+        let previous_calls = QUALIFIED_CALL_IMPORTS.with(|cell| cell.replace(qualified_calls));
         let previous_admitted = ADMITTED_IMPORT_SCOPED.with(|cell| cell.replace(admitted));
         let previous_externs = LOCAL_EXTERN_NAMES.with(|cell| cell.replace(externs));
         Self {
             previous_admitted,
             previous_externs,
             previous_qualified,
+            previous_calls,
         }
     }
 }
@@ -225,6 +245,55 @@ impl Drop for FileScopeGuard {
         LOCAL_EXTERN_NAMES.with(|cell| {
             *cell.borrow_mut() = std::mem::take(&mut self.previous_externs);
         });
+        QUALIFIED_CALL_IMPORTS.with(|cell| {
+            *cell.borrow_mut() = std::mem::take(&mut self.previous_calls);
+        });
+    }
+}
+
+/// A module-qualified call after the parser folds it to the bare member.
+pub(crate) enum QualifiedFn {
+    /// This span has no recorded qualifier.
+    Bare,
+    /// The qualifier does not name one imported module, or that module does
+    /// not export `name`.
+    Missing,
+    /// Defining module and exported signature.
+    Found(String, super::module_table::ExportedFn),
+}
+
+/// Signature of a desugared `qualifier.name` call. A bare call stays
+/// [`QualifiedFn::Bare`] so the caller can use the ordinary name lookup.
+pub(crate) fn lookup_qualified_fn(span: crate::ast::Span, name: &str) -> QualifiedFn {
+    let key = (span.start(), span.end());
+    let slot = QUALIFIED_CALL_IMPORTS.with(|cell| cell.borrow().get(&key).cloned());
+    let Some(import) = slot else {
+        return QualifiedFn::Bare;
+    };
+    let Some(dotted) = import else {
+        return QualifiedFn::Missing;
+    };
+    let path: Vec<String> = dotted.split('.').map(str::to_string).collect();
+    let Some(owner) = resolve_import(
+        crate::qualified_enums::current_module_path().as_deref(),
+        &path,
+    ) else {
+        return QualifiedFn::Missing;
+    };
+    let found = ACTIVE.with(|active| {
+        active.borrow().as_ref().and_then(|table| {
+            table.get(&owner).and_then(|module| {
+                module
+                    .exported_fns
+                    .iter()
+                    .find(|function| function.name == name)
+                    .cloned()
+            })
+        })
+    });
+    match found {
+        Some(signature) => QualifiedFn::Found(owner, signature),
+        None => QualifiedFn::Missing,
     }
 }
 
