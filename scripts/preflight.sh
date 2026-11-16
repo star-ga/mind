@@ -434,31 +434,42 @@ if [ "${1:-}" = "--full" ]; then
   fi
 
   step "release mindc for the artifact gates  [ambient cargo target dir]"
-  # Vacuity has already run, while this release bin was still absent on purpose
-  # (the unset-handle leg requires no reachable mindc). The check binary in
+  # Vacuity has already run. The unset-handle leg must not see a reachable
+  # mindc, so this build stays after that sweep. The check binary in
   # $PF_TARGET is built without mlir-build, so it cannot emit the cdylib the
   # artifact gates need. Build --bin mindc into the cargo target dir this
   # process already uses. Do not override CARGO_TARGET_DIR and do not point
-  # the handles at $PF_TARGET. A missing file fails the aggregate.
+  # the handles at $PF_TARGET.
+  # A shared cargo target dir can already hold another tree's mindc. Remove
+  # only that one file, then let this cargo invocation write it again. The
+  # artifact gates then run the binary this run produced. A missing file
+  # fails the aggregate. Never search PATH.
   rel_err=/tmp/preflight-mindc-release.err
-  if cargo build --release --locked --no-default-features \
-      --features "mlir-build std-surface cross-module-imports" \
-      --bin mindc --quiet >"$rel_err" 2>&1; then
-    mindc_rel=""
-    if mindc_rel=$(python3 -c 'import sys; sys.path.insert(0, "examples/mindc_mind"); from _selfhost_so import release_mindc_path; print(release_mindc_path())'); then
-      if [ -n "${mindc_rel:-}" ] && [ -f "${mindc_rel:-}" ]; then
+  mindc_rel=""
+  if ! mindc_rel=$(python3 -c 'import sys; sys.path.insert(0, "examples/mindc_mind"); from _selfhost_so import release_mindc_path; print(release_mindc_path())'); then
+    bad "release mindc resolver failed"
+  elif [ -z "${mindc_rel:-}" ]; then
+    bad "release mindc resolver returned an empty path"
+  else
+    rm -f -- "${mindc_rel}"
+    if cargo build --release --locked --no-default-features \
+        --features "mlir-build std-surface cross-module-imports" \
+        --bin mindc --quiet >"$rel_err" 2>&1 \
+        && [ -f "${mindc_rel}" ]; then
+      mindc_sha="$(sha256sum -- "${mindc_rel}" | awk 'NR==1 { print $1 }')"
+      if [ -n "${mindc_sha:-}" ]; then
         export MINDC="${mindc_rel}"
         export MINDC_BIN="${mindc_rel}"
-        echo "ok (${mindc_rel})"
+        echo "ok path=${mindc_rel} sha256=${mindc_sha}"
       else
-        bad "release mindc build exited 0 but the resolver found no file at ${mindc_rel:-<empty>}"
+        bad "release mindc exists at ${mindc_rel} but sha256 produced no digest"
       fi
     else
-      bad "release mindc resolver failed"
+      bad "could not build the mlir release mindc the artifact gates run (resolved ${mindc_rel})"
+      if [ -f "$rel_err" ]; then
+        tail -20 "$rel_err"
+      fi
     fi
-  else
-    bad "could not build the mlir release mindc the artifact gates run"
-    tail -20 "$rel_err"
   fi
 
   step "whole-module mic@3 FLIP  [examples/mindc_mind/mic3_flip_smoke.py]"
