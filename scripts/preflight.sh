@@ -11,6 +11,7 @@
 #   scripts/preflight.sh --full   # + keystone 7/7 + cross-substrate determinism
 #                                 #   + executable-semantics tier + self-host LOOP
 #                                 #   + mic@3 FLIP + bench gate
+#   scripts/preflight.sh --bench-only   # the bench leg alone
 #
 # The executable-semantics tier is the long pole (~317 harnesses, ~1900 tests, a full
 # mlir-build compile). Set MIND_PREFLIGHT_SKIP_EXEC_SEMANTICS=1 to opt out explicitly;
@@ -649,41 +650,216 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
     grep -E "FAIL|BLOCKED|WARN\[_selfhost_so\]" /tmp/preflight-loop.out | tail -4
   fi
 
+fi
+
+if [ "${1:-}" = "--full" ] || [ "${1:-}" = "--bench-only" ]; then
   step "bench gate (frozen low-level frontend)  [bench-gate.yml, --no-default-features]"
   # Pin the same committed floor as bench-gate.yml. Selecting by mtime made a
   # later historical correctness file silently change the local gate.
   base=.bench-baseline-2026-06-01-correctness.txt
+  # The absolute floor is a host time. On a trip, pair HEAD with the
+  # merge-base on one quiet core. --pairs protocol=pipeline uses the same
+  # 3% bound. Head slower is a regression. Otherwise name the slow host.
+  slow_host_pairs() {
+    local bench_tmp="$1" head_td="$2" floor_file="$3"
+    local base_sha="" base_wt="" base_td="$bench_tmp/base-target" pairs="$bench_tmp/pairs.tsv"
+    local core="" idle=""
+    stop() { bad "$1"; git worktree remove --force "$base_wt" || true; echo "bench logs retained in $bench_tmp"; }
+    base_sha=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)
+    if [ -z "${base_sha:-}" ]; then
+      bad "no merge-base; the paired bench was not evaluated"
+      echo "bench logs retained in $bench_tmp"
+      return
+    fi
+    echo "LOAD_START $(cat /proc/loadavg)"
+    echo "bench pairs base=$base_sha head=$(git rev-parse HEAD)"
+    base_wt="$bench_tmp/base-src"
+    if ! git worktree add --detach "$base_wt" "$base_sha"; then
+      bad "could not check out the merge-base; the paired bench was not evaluated"
+      echo "bench logs retained in $bench_tmp"
+      return
+    fi
+    local pick_out
+    pick_out=$(python3 - << 'PY'
+import time
+def snap():
+    rows = {}
+    for line in open("/proc/stat"):
+        if line.startswith("cpu") and line[3:4].isdigit():
+            p = line.split(); n = list(map(int, p[1:9]))
+            rows[int(p[0][3:])] = (n[3] + n[4], sum(n))
+    return rows
+allow = set()
+for line in open("/proc/self/status"):
+    if line.startswith("Cpus_allowed_list:"):
+        for part in line.split(":", 1)[1].split(","):
+            part = part.strip()
+            if "-" in part:
+                a, b = part.split("-", 1); allow.update(range(int(a), int(b) + 1))
+            elif part.isdigit():
+                allow.add(int(part))
+def sibs(cpu):
+    raw = open("/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list" % cpu).read()
+    return [int(x) for x in raw.replace("-", ",").split(",") if x.strip().isdigit()]
+a = snap(); time.sleep(1); b = snap(); scores = []
+for k in a:
+    if allow and k not in allow:
+        continue
+    tot = b[k][1] - a[k][1]; idle = b[k][0] - a[k][0]
+    scores.append((100.0 * idle / tot if tot else 0.0, k))
+scores.sort(reverse=True)
+chosen = None
+for pct, k in scores:
+    if pct < 98.0:
+        break
+    quiet = True
+    for s in sibs(k):
+        if s == k or s not in a:
+            continue
+        st = b[s][1] - a[s][1]; si = b[s][0] - a[s][0]
+        if st and 100.0 * si / st < 95.0:
+            quiet = False
+    if quiet:
+        chosen = (k, pct); break
+if chosen is None and scores:
+    chosen = (scores[0][1], scores[0][0])
+print("TOP " + " ".join("%d:%.1f" % (k, pct) for pct, k in scores[:8]))
+print("PICK" if chosen is None else "PICK %d\nIDLE %.1f" % chosen)
+PY
+)
+    printf '%s\n' "$pick_out"
+    core=$(printf '%s\n' "$pick_out" | awk '$1=="PICK" {print $2}')
+    idle=$(printf '%s\n' "$pick_out" | awk '$1=="IDLE" {print $2}')
+    if [ -z "${core:-}" ]; then stop "no core for the paired bench; the regression gate was not evaluated"; return; fi
+    echo "PAIR_CORE $core IDLE ${idle:-}"
+    local -a pin
+    if taskset -c "$core" chrt -f 2 true >/dev/null 2>&1; then
+      pin=(taskset -c "$core" chrt -f 2); echo "PIN taskset+fifo core=$core"
+    else
+      pin=(taskset -c "$core"); echo "PIN taskset core=$core"
+    fi
+    printf '# protocol=pipeline\n# core=%s\n# idle=%s\nrow\ti\torder\tt_base_ns\tt_cand_ns\n' \
+      "$core" "${idle:-}" > "$pairs"
+    run_side() {
+      local rc=0
+      CARGO_TARGET_DIR="$1" CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never \
+        "${pin[@]}" cargo bench --manifest-path "$2" --offline --locked \
+        --bench compiler --no-default-features -- \
+        --warm-up-time 3 --measurement-time 8 --output-format bencher \
+        compiler_pipeline/parse_typecheck_ir > "$3" 2>"$3.err" || rc=$?
+      return "$rc"
+    }
+    local i=0 order="" rc=0
+    while [ "$i" -lt 9 ]; do
+      if [ $((i % 2)) -eq 0 ]; then order=BC; else order=CB; fi
+      echo "PAIR i=$i order=$order LOAD $(cat /proc/loadavg) CORE $core"
+      rc=0
+      if [ "$order" = "BC" ]; then
+        run_side "$base_td" "$base_wt/Cargo.toml" "$bench_tmp/p${i}-base.out" || rc=$?
+        if [ "$rc" -eq 0 ]; then run_side "$head_td" Cargo.toml "$bench_tmp/p${i}-cand.out" || rc=$?; fi
+      else
+        run_side "$head_td" Cargo.toml "$bench_tmp/p${i}-cand.out" || rc=$?
+        if [ "$rc" -eq 0 ]; then run_side "$base_td" "$base_wt/Cargo.toml" "$bench_tmp/p${i}-base.out" || rc=$?; fi
+      fi
+      if [ "$rc" -ne 0 ]; then
+        tail -15 "$bench_tmp/p${i}-base.err" "$bench_tmp/p${i}-cand.err" 2>/dev/null || true
+        stop "paired bench command failed (exit $rc) at pair $i"; return
+      fi
+      PYTHONPATH=tools python3 - "$pairs" "$i" "$order" \
+        "$bench_tmp/p${i}-base.out" "$bench_tmp/p${i}-cand.out" << 'PY'
+import re, sys
+from pathlib import Path
+pairs, i_s, order, base_p, cand_p = sys.argv[1:]
+pat = re.compile(r"test\s+(\S+)\s+\.\.\.\s+bench:\s+([0-9.]+)\s+(ns|us|µs)/iter")
+want = ("compiler_pipeline/parse_typecheck_ir/small_matmul",
+        "compiler_pipeline/parse_typecheck_ir/medium_mlp",
+        "compiler_pipeline/parse_typecheck_ir/large_network")
+def grab(path):
+    found = {}
+    for line in Path(path).read_text(errors="replace").splitlines():
+        m = pat.search(line)
+        if m:
+            scale = 1.0 if m.group(3) == "ns" else 1000.0
+            found[m.group(1)] = int(round(float(m.group(2)) * scale))
+    return found
+base, cand = grab(base_p), grab(cand_p)
+if any(n not in base or n not in cand for n in want):
+    sys.exit(4)
+with open(pairs, "a", encoding="utf-8") as fh:
+    for n in want:
+        fh.write("%s\t%s\t%s\t%s\t%s\n" % (n, i_s, order, base[n], cand[n]))
+        if n.endswith("small_matmul"):
+            print("PAIR_ROW i=%s order=%s small_matmul base_ns=%s head_ns=%s" % (i_s, order, base[n], cand[n]))
+PY
+      if [ "$?" -ne 0 ]; then stop "paired bench output did not contain the three pipeline rows"; return; fi
+      i=$((i + 1))
+    done
+    echo "LOAD_END $(cat /proc/loadavg)"; echo "PAIRS_TSV"; cat "$pairs"
+    local pair_rc=0
+    python3 tools/bench_gate.py --pairs "$pairs" || pair_rc=$?
+    echo "GATE pairs rc=${pair_rc}"
+    git worktree remove --force "$base_wt" || true
+    if [ "$pair_rc" -eq 1 ]; then
+      bad "bench REGRESSION: head is slower than the merge-base on the paired run"
+      echo "bench logs retained in $bench_tmp"; return
+    fi
+    if [ "$pair_rc" -ne 0 ]; then
+      bad "paired bench could not decide (exit $pair_rc); not a pass"
+      echo "bench logs retained in $bench_tmp"; return
+    fi
+    local host_rc=0
+    PYTHONPATH=tools python3 - "$pairs" "$floor_file" << 'PY' || host_rc=$?
+import statistics, sys
+from pathlib import Path
+sys.path.insert(0, "tools")
+from bench_gate import PIPELINE_BENCH_IDS, parse_pairs, parse_reference
+_meta, rows = parse_pairs(Path(sys.argv[1]))
+floor = parse_reference(Path(sys.argv[2]), prefix="compiler_pipeline/parse_typecheck_ir")
+for row in sorted(PIPELINE_BENCH_IDS):
+    b = statistics.median(tb for _i, _o, tb, _c in rows[row]) / 1000.0
+    h = statistics.median(tc for _i, _o, _b, tc in rows[row]) / 1000.0
+    fl = floor[row]
+    print(row)
+    if not b > fl:
+        print("BASE_UNDER_FLOOR base=%.3f floor=%.3f" % (b, fl)); sys.exit(3)
+    print("HOST-BELOW-FLOOR base=%.3f head=%.3f floor=%.3f; absolute floor is judged by CI" % (b, h, fl))
+PY
+    if [ "$host_rc" -ne 0 ]; then
+      bad "paired gate passed but the base is not above the floor; not a slow-host pass"
+      echo "bench logs retained in $bench_tmp"; return
+    fi
+    echo "bench logs retained in $bench_tmp"
+  }
   if [ -f "$base" ] && [ -f tools/bench_gate.py ]; then
-    # ISOLATED TARGET DIR, same reason as the mindc-check step above — and this one is
-    # nastier, because `cargo bench` builds in the RELEASE profile and this invocation
-    # passes --no-default-features with NO feature flags at all. Run in the shared
-    # ./target it rewrote target/release/mindc WITHOUT std-surface, as preflight's very
-    # LAST step — so the toolchain was left broken at the exact moment preflight printed
-    # "safe to push". The symptom is a loud fail-close on the next MLIR build:
-    #   lower_expr: no IR lowering for `Let` in value position — refusing to emit a
-    #   const-0 placeholder (that would be a silent miscompile)
-    # which reads like a compiler regression and is really just a feature-stripped binary.
-    # The gate is unaffected: bench_gate.py compares against a committed
-    # .bench-baseline-*.txt file, not criterion's own on-disk history.
+    # Private target dir. This bench passes --no-default-features. A shared
+    # ./target would replace release/mindc and the next MLIR build fails closed.
+    # bench_gate.py reads the committed floor file, not criterion history.
     bench_tmp=""
     if bench_tmp=$(mktemp -d "${TMPDIR:-/tmp}/mind-preflight-bench.XXXXXX"); then
       bench_out="$bench_tmp/bench.out"
       bench_err="$bench_tmp/bench.err"
       bench_target="$bench_tmp/target"
       bench_rc=0
-      CARGO_TARGET_DIR="$bench_target" cargo bench --bench compiler --no-default-features -- \
+      CARGO_TARGET_DIR="$bench_target" cargo bench --offline --locked --bench compiler --no-default-features -- \
         --warm-up-time 3 --measurement-time 8 --output-format bencher \
+        compiler_pipeline/parse_typecheck_ir \
         > "$bench_out" 2>"$bench_err" || bench_rc=$?
       if [ "$bench_rc" -ne 0 ]; then
         bad "compiler bench command failed (exit $bench_rc); the regression gate was not evaluated"
         tail -15 "$bench_err"
         echo "bench logs retained in $bench_tmp"
-      elif python3 tools/bench_gate.py --baseline "$base" --current "$bench_out" --require-pipeline --threshold 0.10; then
-        echo "ok (regression <= +10% vs $base; speedups always pass)"
-        rm -rf "$bench_tmp"
       else
-        bad "frozen-frontend bench regression >+10% vs $base — STOP & decide: revert, or re-bless baseline if a dramatic win elsewhere justifies it"
-        echo "bench logs retained in $bench_tmp"
+        gate_rc=0
+        python3 tools/bench_gate.py --baseline "$base" --current "$bench_out" --require-pipeline --threshold 0.10 || gate_rc=$?
+        if [ "$gate_rc" -eq 0 ]; then
+          echo "ok (regression <= +10% vs $base; speedups always pass)"
+          rm -rf "$bench_tmp"
+        elif [ "$gate_rc" -eq 1 ]; then
+          slow_host_pairs "$bench_tmp" "$bench_target" "$base"
+        else
+          bad "frozen-frontend bench gate could not assert a result (exit $gate_rc)"
+          echo "bench logs retained in $bench_tmp"
+        fi
       fi
     else
       bad "could not create a private temporary directory for compiler bench output"
