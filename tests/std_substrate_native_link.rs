@@ -447,6 +447,15 @@ fn a_native_source_can_call_into_a_linked_std_module() {
 /// entry); the shared library, or `None` when the build was routed through the
 /// capability-skip gate.
 fn emit_shared(target: &str, files: &[(&str, &str)]) -> Option<std::path::PathBuf> {
+    emit_shared_with(target, files, &[])
+}
+
+/// [`emit_shared`] with `extra` command-line arguments.
+fn emit_shared_with(
+    target: &str,
+    files: &[(&str, &str)],
+    extra: &[&str],
+) -> Option<std::path::PathBuf> {
     let dir = common::scratch_dir(target);
     write_project(&dir, files, "");
     let so = dir.join("lib.so");
@@ -454,6 +463,7 @@ fn emit_shared(target: &str, files: &[(&str, &str)]) -> Option<std::path::PathBu
         .arg(dir.join(files[0].0))
         .arg("--emit-shared")
         .arg(&so)
+        .args(extra)
         .output()
         .expect("run mindc --emit-shared");
     if !common::gate::compiled(target, &out) {
@@ -680,6 +690,84 @@ fn import_std_iouring_compiles() {
         return;
     };
     assert_eq!(code, 0);
+}
+
+/// A program that CALLS the affinity names of `std.iouring` links and runs on
+/// every emit route. The forwards call `cpu_affinity_*` by bare symbol, so
+/// `std.cpu_affinity` must be in the link closure of whatever imports them.
+#[cfg(target_os = "linux")]
+mod iouring_affinity {
+    use super::*;
+
+    /// Answers 0 when every per-core read agrees with the mask and the mask
+    /// is `want`, the kernel's own report of the allowed CPUs.
+    fn probe(want: u64) -> String {
+        format!(
+            "import std.iouring;\n\npub fn go() -> i64 {{\n    let m: i64 = io_reactor_affinity_mask();\n    let mut c: i64 = 0;\n    while c < 64 {{\n        let h: i64 = io_reactor_affinity_has(c);\n        let b: i64 = (m >> c) & 1;\n        if h < 0 {{\n            return 1;\n        }}\n        if b != h {{\n            return 2;\n        }}\n        c = c + 1;\n    }}\n    if (m & 4294967295) != {} {{\n        return 3;\n    }}\n    if ((m >> 32) & 4294967295) != {} {{\n        return 4;\n    }}\n    return 0;\n}}\n",
+            want & 0xffff_ffff,
+            want >> 32
+        )
+    }
+
+    /// The low 64 bits of the calling thread's allowed-CPU mask, from procfs.
+    fn allowed_low64() -> u64 {
+        let status = std::fs::read_to_string("/proc/thread-self/status").expect("read status");
+        let line = status.lines().find_map(|l| l.strip_prefix("Cpus_allowed:"));
+        // 32-bit hex groups, most significant first.
+        let mut groups = line.expect("a Cpus_allowed line").trim().rsplit(',');
+        let mut group = || u64::from_str_radix(groups.next()?, 16).ok();
+        group().expect("mask group") | (group().unwrap_or(0) << 32)
+    }
+
+    /// Load `so` with every symbol bound at once, so an undefined
+    /// `cpu_affinity_*` fails here, and return what `go()` answers.
+    fn call_go(so: &Path) -> i64 {
+        use libloading::os::unix::{Library, RTLD_NOW};
+        let lib = unsafe { Library::open(Some(so), RTLD_NOW) }.expect("load the library");
+        let go: libloading::os::unix::Symbol<unsafe extern "C" fn() -> i64> =
+            unsafe { lib.get(b"go\0") }.expect("resolve go");
+        unsafe { go() }
+    }
+
+    fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+        match (p.downcast_ref::<String>(), p.downcast_ref::<&str>()) {
+            (Some(s), _) => s.clone(),
+            (_, Some(s)) => s.to_string(),
+            _ => "panic".into(),
+        }
+    }
+
+    #[test]
+    fn iouring_affinity_call_links_and_runs_on_every_route() {
+        let lib = probe(allowed_low64());
+        let exe = format!("{lib}\nfn main() -> i64 {{\n    return go();\n}}\n");
+        // The program reads host CPU topology, which the determinism veto
+        // counts as World, so the flat route needs the authorisation flag.
+        let run = |route: &str| -> Option<i64> {
+            let so = match route {
+                "executable" => {
+                    let files = [("main.mind", exe.as_str())];
+                    return build_and_run("iouring_affinity_exe", &files).map(i64::from);
+                }
+                "cdylib" => build_cdylib("iouring_affinity_so", &["go"], &[("main.mind", &lib)]),
+                _ => emit_shared_with(
+                    "iouring_affinity_flat",
+                    &[("lib.mind", &lib)],
+                    &["--allow-nondeterministic"],
+                ),
+            };
+            so.map(|so| call_go(&so))
+        };
+        let mut failures = Vec::new();
+        for route in ["executable", "cdylib", "flat shared library"] {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(route))) {
+                Ok(Some(0) | None) => {}
+                Ok(Some(code)) => failures.push(format!("{route}: the probe answered {code}")),
+                Err(p) => failures.push(format!("{route}: {}", panic_text(&*p))),
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 }
 
 #[test]
