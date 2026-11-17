@@ -172,6 +172,56 @@ def main() -> int:
                and "small_matmul base_ns=4000 head_ns=4200" in added.stdout,
                added.stdout + added.stderr + text)
 
+        exe_a, exe_b, exe_c = d / "a.bin", d / "b.bin", d / "c.bin"
+        exe_a.write_bytes(b"\x7fELF same bench bytes")
+        exe_b.write_bytes(b"\x7fELF same bench bytes")
+        exe_c.write_bytes(b"\x7fELF other bench bytes")
+        sha_a = __import__("hashlib").sha256(exe_a.read_bytes()).hexdigest()
+        sha_c = __import__("hashlib").sha256(exe_c.read_bytes()).hexdigest()
+
+        def same(base: Path, head: Path) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(HERE / "bench_pairs.py"), "same-binary", str(base), str(head)],
+                capture_output=True, text=True,
+            )
+
+        equal, differ, absent = same(exe_a, exe_b), same(exe_a, exe_c), same(exe_a, d / "none.bin")
+        want_equal = f"IDENTICAL base={sha_a} head={sha_a}; no timing needed"
+        report(failures, "identical bench binaries pass without timing",
+               equal.returncode == 0 and equal.stdout.strip() == want_equal, equal.stdout)
+        report(failures, "different bench binaries go to the timed pairs",
+               differ.returncode == 1 and "IDENTICAL" not in differ.stdout
+               and f"base={sha_a} head={sha_c}" in differ.stdout, differ.stdout)
+        report(failures, "a missing bench binary is not a pass",
+               absent.returncode == 4 and "IDENTICAL" not in absent.stdout, absent.stdout)
+
+        msgs = d / "build.json"
+        msgs.write_text(
+            "not json\n"
+            '{"reason":"compiler-artifact","target":{"name":"mind","kind":["lib"]},"executable":null}\n'
+            '{"reason":"compiler-artifact","target":{"name":"compiler","kind":["bench"]},'
+            f'"executable":"{exe_a}"}}\n'
+            '{"reason":"build-finished","success":true}\n'
+        )
+        found = subprocess.run(
+            [sys.executable, str(HERE / "bench_pairs.py"), "bench-exe", str(msgs)],
+            capture_output=True, text=True,
+        )
+        report(failures, "bench-exe reads the compiler bench path from cargo messages",
+               found.returncode == 0 and found.stdout.strip() == str(exe_a), found.stdout)
+        msgs.write_text('{"reason":"build-finished","success":true}\n')
+        none = subprocess.run(
+            [sys.executable, str(HERE / "bench_pairs.py"), "bench-exe", str(msgs)],
+            capture_output=True, text=True,
+        )
+        report(failures, "bench-exe without a bench artifact is not a pass",
+               none.returncode == 4 and none.stdout.strip() == "", none.stdout)
+
+    shell_same = shell.index("same-binary")
+    report(failures, "the binary compare runs before any timed pair",
+           shell_same < shell.index("pick-core") and "--no-run" in shell
+           and "exit 0" in shell[shell_same:shell.index("pick-core")])
+
     if failures:
         print(f"\n{len(failures)} bench-pair test(s) FAILED")
         return 1

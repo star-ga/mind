@@ -39,6 +39,40 @@ if ! git worktree add --detach "$base_wt" "$base_sha"; then
   exit 4
 fi
 
+# Build both bench binaries before any timing. Equal bytes run equal code,
+# so equal sha256 is the verdict. Different bytes go to the timed pairs.
+build_exe() {
+  local rc=0
+  CARGO_TARGET_DIR="$1" CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never \
+    cargo bench --manifest-path "$2" --offline --locked --no-run \
+    --bench compiler --no-default-features --message-format=json \
+    > "$3" 2>"$3.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    tail -15 "$3.err" >&2
+    return "$rc"
+  fi
+  python3 tools/bench_pairs.py bench-exe "$3"
+}
+base_exe=""
+head_exe=""
+if ! base_exe=$(build_exe "$base_td" "${base_wt}/Cargo.toml" "${bench_tmp}/base-build.json") \
+  || ! head_exe=$(build_exe "$head_td" Cargo.toml "${bench_tmp}/head-build.json"); then
+  echo "FAIL: could not build the base and head bench binaries; the paired bench was not evaluated"
+  echo "bench logs retained in ${bench_tmp}"
+  exit 4
+fi
+same_rc=0
+python3 tools/bench_pairs.py same-binary "$base_exe" "$head_exe" || same_rc=$?
+if [ "$same_rc" -eq 0 ]; then
+  echo "bench logs retained in ${bench_tmp}"
+  exit 0
+fi
+if [ "$same_rc" -ne 1 ]; then
+  echo "FAIL: bench binary compare could not decide (exit ${same_rc}); not a pass"
+  echo "bench logs retained in ${bench_tmp}"
+  exit 4
+fi
+
 pick_rc=0
 pick_out=$(python3 tools/bench_pairs.py pick-core) || pick_rc=$?
 printf '%s\n' "$pick_out"

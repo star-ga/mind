@@ -131,6 +131,46 @@ def noisy_line(load: str) -> str:
     return f"NOISY host load={load}; no verdict; re-run on a quiet host"
 
 
+def bench_executable(messages: Path, name: str = "compiler") -> str:
+    """The path of bench target ``name`` in cargo JSON messages, or ''."""
+    import json
+
+    found = ""
+    for line in messages.read_text(errors="replace").splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        target = msg.get("target") if isinstance(msg, dict) else None
+        if (
+            msg.get("reason") == "compiler-artifact"
+            and isinstance(target, dict)
+            and target.get("name") == name
+            and "bench" in (target.get("kind") or [])
+            and msg.get("executable")
+        ):
+            found = str(msg["executable"])
+    return found
+
+
+def same_binary(base_exe: Path, head_exe: Path) -> int:
+    """Exit 0 when both bench binaries hash equal, 1 when they differ, 4 when one is absent."""
+    import hashlib
+
+    digests: list[str] = []
+    for path in (base_exe, head_exe):
+        if not path.is_file():
+            print(f"FAIL: bench binary missing: {path}")
+            return 4
+        digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
+    base_sha, head_sha = digests
+    if base_sha == head_sha:
+        print(f"IDENTICAL base={base_sha} head={head_sha}; no timing needed")
+        return 0
+    print(f"DIFFERENT base={base_sha} head={head_sha}; timing the pairs")
+    return 1
+
+
 def _pipeline_ids() -> tuple[str, ...]:
     from bench_gate import PIPELINE_BENCH_IDS
 
@@ -245,6 +285,12 @@ def main(argv: list[str]) -> int:
         return append_pair_rows(Path(argv[2]), int(argv[3]), argv[4], Path(argv[5]), Path(argv[6]))
     if cmd == "host-floor" and len(argv) == 4:
         return report_host_floor(Path(argv[2]), Path(argv[3]))
+    if cmd == "bench-exe" and len(argv) == 3:
+        exe = bench_executable(Path(argv[2]))
+        print(exe)
+        return 0 if exe else 4
+    if cmd == "same-binary" and len(argv) == 4:
+        return same_binary(Path(argv[2]), Path(argv[3]))
     if cmd == "grade" and len(argv) == 3:
         from bench_gate import parse_pairs
 
@@ -252,7 +298,8 @@ def main(argv: list[str]) -> int:
         return grade_pipeline_pairs(rows)
     print(
         "usage: bench_pairs.py pick-core | noisy-line LOAD | "
-        "append-rows PAIRS I ORDER BASE CAND | host-floor PAIRS FLOOR | grade PAIRS",
+        "append-rows PAIRS I ORDER BASE CAND | host-floor PAIRS FLOOR | grade PAIRS | "
+        "bench-exe MESSAGES | same-binary BASE_EXE HEAD_EXE",
         file=sys.stderr,
     )
     return 4
