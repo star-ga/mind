@@ -580,7 +580,7 @@ def check_base_step(failures: list[str], e2e_job: str) -> None:
         git(main, "checkout", "-q", "-b", "feat", c2)  # diverged: merge-base c2, HEAD^1 is f1
         commit(main, "f1")
         f2 = commit(main, "f2")
-        git(solo, "update-ref", "refs/remotes/origin/main", commit(solo, "s1"))
+        git(solo, "update-ref", "refs/remotes/origin/main", commit(solo, "only"))
         for label, repo, at, event, before, given, want_rc, want_sha, want_msg in (
             ("dispatch, no input, tip on main -> the tip's parent", main, c3, dispatch, "", "", 0, c2, ""),
             ("dispatch, no input, diverged branch -> merge-base kept (not HEAD^1)", main, f2, dispatch, "", "", 0, c2, ""),
