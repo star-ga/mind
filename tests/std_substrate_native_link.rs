@@ -709,14 +709,16 @@ mod iouring_affinity {
         )
     }
 
-    /// The low 64 bits of the calling thread's allowed-CPU mask, from procfs.
+    /// The low 64 bits of the allowed-CPU mask that the kernel reports to a
+    /// child of this thread, read by an independent client of the same call.
     fn allowed_low64() -> u64 {
-        let status = std::fs::read_to_string("/proc/thread-self/status").expect("read status");
-        let line = status.lines().find_map(|l| l.strip_prefix("Cpus_allowed:"));
-        // 32-bit hex groups, most significant first.
-        let mut groups = line.expect("a Cpus_allowed line").trim().rsplit(',');
-        let mut group = || u64::from_str_radix(groups.next()?, 16).ok();
-        group().expect("mask group") | (group().unwrap_or(0) << 32)
+        let py = "import os; print(sum(1 << c for c in os.sched_getaffinity(0) if c < 64))";
+        let out = Command::new("python3").args(["-c", py]).output();
+        let out = out.expect("run python3");
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .expect("a mask")
     }
 
     /// Load `so` with every symbol bound at once, so an undefined
