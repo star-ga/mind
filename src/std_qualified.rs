@@ -428,7 +428,7 @@ mod tests {
 
     /// Local-binding shapes: `@N` is the binding, and each shape reads it as a
     /// value. A `let`, a `let mut`, a parameter, a loop variable, a match arm
-    /// binding and a closure parameter.
+    /// binding, a closure parameter and a module `const`.
     const LOCAL_SHAPES: &[&str] = &[
         "pub fn f(p: i64) -> i64 {\n    let @N: i64 = p;\n    @N + 1\n}\n",
         "pub fn f(p: i64) -> i64 {\n    let mut @N: i64 = p;\n    @N = @N + 1;\n    @N\n}\n",
@@ -437,6 +437,7 @@ mod tests {
          s = s + @N;\n    }\n    s\n}\n",
         "pub fn f(p: i64) -> i64 {\n    match p {\n        0 => 7,\n        @N => @N + 1,\n    }\n}\n",
         "pub fn f(p: i64) -> i64 {\n    let g = |; @N: i64| -> i64 { @N + 1 };\n    p\n}\n",
+        "const @N: i64 = 3\n\npub fn f(p: i64) -> i64 {\n    @N + p\n}\n",
     ];
 
     /// A local binding spelled like `row` is no world use, with the `import` (or

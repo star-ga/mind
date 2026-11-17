@@ -250,7 +250,7 @@ fn a_user_function_named_like_an_affinity_name_is_deterministic() {
 }
 
 /// Local-binding shapes: `@N` is the binding, read as a value. A `let`, a
-/// `let mut`, a parameter, a loop variable and a match arm binding.
+/// `let mut`, a parameter, a loop variable, a match arm binding and a module `const`.
 const LOCAL_SHAPES: &[&str] = &[
     "pub fn f(p: i64) -> i64 {\n    let @N: i64 = p;\n    @N + 1\n}\n",
     "pub fn f(p: i64) -> i64 {\n    let mut @N: i64 = p;\n    @N = @N + 1;\n    @N\n}\n",
@@ -258,6 +258,7 @@ const LOCAL_SHAPES: &[&str] = &[
     "pub fn f(p: i64) -> i64 {\n    let mut s: i64 = 0;\n    for @N in 0..p {\n        \
      s = s + @N;\n    }\n    s\n}\n",
     "pub fn f(p: i64) -> i64 {\n    match p {\n        0 => 7,\n        @N => @N + 1,\n    }\n}\n",
+    "const @N: i64 = 3\n\npub fn f(p: i64) -> i64 {\n    @N + p\n}\n",
 ];
 
 /// `text` built to evidence with no flag as `dir/<tag>.mind`: `(ok, output, evidence)`.
@@ -309,13 +310,20 @@ fn a_local_binding_named_like_an_affinity_name_is_deterministic() {
                 if !(ok && vok && vout.contains("determinism:      deterministic")) {
                     failed.push(format!("{tag}: local `{name}`: {}", first_error(&out)));
                 }
-                let world = format!("{local}\nfn h(p: i64) -> i64 {{\n    {call}\n}}\n");
+                // A module `const` is visible to every function, so calling its own
+                // name there is a type error (E2012): that twin calls another name.
+                let (twin_call, twin) = if shape.starts_with("const") {
+                    (other_call, other)
+                } else {
+                    (*call, *name)
+                };
+                let world = format!("{local}\nfn h(p: i64) -> i64 {{\n    {twin_call}\n}}\n");
                 let (ok, out, _) = emit_evidence(&dir, &format!("{tag}w"), &world);
                 if ok
                     || !out.contains("error[determinism]")
-                    || !out.contains(&format!("`{name}()`"))
+                    || !out.contains(&format!("`{twin}()`"))
                 {
-                    failed.push(format!("{tag}w: call `{name}`: {}", first_error(&out)));
+                    failed.push(format!("{tag}w: call `{twin}`: {}", first_error(&out)));
                 }
                 ran += 2;
                 if j == 0 {
