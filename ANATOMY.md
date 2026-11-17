@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3317 | **Est. tokens:** ~5,828,699
-**Generated:** 2026-11-16 08:54 UTC
+**Files:** 3320 | **Est. tokens:** ~5,843,097
+**Generated:** 2026-11-17 02:15 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 336 | ~943,935 |
+| `examples/mindc_mind/` | 336 | ~944,186 |
 | `examples/mindc_mind/testdata/` | 5 | ~7,025 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 1 | ~3,641 |
@@ -134,7 +134,7 @@
 | `.github/workflows/` | 9 | ~18,758 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 35 | ~148,276 |
+| `scripts/` | 36 | ~150,866 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -159,7 +159,7 @@
 | `src/diagnostics/` | 4 | ~17,991 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 57 | ~194,170 |
+| `src/eval/` | 57 | ~194,657 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/string_equality/` | 12 | ~48,169 |
 | `src/eval/string_equality/facts/` | 1 | ~1,401 |
@@ -185,7 +185,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~31,177 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 25 | ~96,976 |
+| `src/project/` | 25 | ~97,837 |
 | `src/project/single_file_scope/` | 2 | ~4,072 |
 | `src/project/stdlib/` | 1 | ~4,671 |
 | `src/qualified_enums/` | 2 | ~3,391 |
@@ -199,7 +199,7 @@
 | `src/types/` | 10 | ~23,602 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 76 | ~320,914 |
-| `tests/` | 492 | ~1,191,350 |
+| `tests/` | 492 | ~1,195,733 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 7 | ~18,102 |
@@ -294,7 +294,7 @@
 | `tests/x509/testdata/` | 86 | ~13,454 |
 | `tests/x509/testdata/adv/` | 26 | ~5,523 |
 | `tests/xsi_quant/` | 3 | ~11,922 |
-| `tools/` | 4 | ~21,010 |
+| `tools/` | 6 | ~26,836 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -781,9 +781,9 @@
 - `match_struct_smoke.py` (~1350 tok, large)
 - `method_callee_smoke.py` (~1390 tok, large)
 - `method_calls_smoke.py` (~1334 tok, large)
-- `mic3_flip_smoke.py` (~1942 tok, huge)
+- `mic3_flip_smoke.py` (~1928 tok, huge)
 - `mic3_oracle_smoke.py` (~1060 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
-- `mic3_primitives_smoke.py` (~22604 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mic3_primitives_smoke.py` (~22585 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mindfuzz_self_host.py` (~11993 tok, huge)
 - `_mindfuzz_twin_emit.py` (~4697 tok, huge) — Twin-emitter half of the self-host differential fuzzer.
 - `mod_operator_smoke.py` (~2871 tok, huge)
@@ -930,7 +930,7 @@
 - `_ref_struct_field.note` (~16 tok, tiny) — a791129ac06f310c309a8b1ab9b373a526d98874d5fc9109f261b533982b497a
 - `_ref_value_if.note` (~16 tok, tiny) — db94c1697bd51d345e80694795a2831f6950dc04183233da595f9f960cc5b54c
 - `rh_f64_aggregate_canary_smoke.py` (~1603 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
-- `ri_d1_frozen_profile_gate.py` (~4787 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
+- `ri_d1_frozen_profile_gate.py` (~4812 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
 - `self_host_andor_precedence_smoke.py` (~1685 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
@@ -1040,7 +1040,7 @@
 - `self_host_open_smoke.py` (~1321 tok, large)
 - `self_host_param_mutation_smoke.py` (~1323 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
 - `selfhost_so_provenance_smoke.py` (~2391 tok, huge) — Gate: `resolve_so()` must QUALIFY the `.so` it returns and REFUSE a stale one.
-- `_selfhost_so.py` (~5202 tok, huge) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
+- `_selfhost_so.py` (~5461 tok, huge) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
 - `selfhost_source_bundle_check.py` (~4152 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
 - `selfhost_source_bundle.md` (~1570 tok, huge) — Captured compiler source bundles
 - `self_host_source_note_smoke.py` (~3265 tok, huge) — Native MIND regression for PT_NOTE tagging with trailing string rodata.
@@ -2123,11 +2123,12 @@
 - `operand_visitor_parity_lint.py` (~1198 tok, large) — Fail closed when the two IR operand visitors drift apart.
 - `pqc_hybrid_ci.sh` (~663 tok, large) — Required-CI execution gate for the existing MIC3 two-leg PQC-hybrid controls.
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
-- `preflight.sh` (~9495 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight_bench_pairs.sh` (~1561 tok, huge) — Pair HEAD with the merge-base after the absolute bench floor misses.
+- `preflight.sh` (~10519 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2224 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~7635 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
-- `run_gate.py` (~9123 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
+- `run_gate.py` (~9128 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
 ### `scripts/sdlc/`
 
 - `enforcement_bijection.py` (~1504 tok, huge) — A test must never outlive the rule it asserts.
@@ -2336,7 +2337,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `float_ops.rs` (~1055 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
-- `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
+- `import_collision_gate.rs` (~914 tok, large) — Copyright 2026 STARGA Inc.
 - `imported_extern_decls.rs` (~1178 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5911 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2589,8 +2590,8 @@
 ### `src/project/`
 
 - `active_module_table_extern_abi_tests.rs` (~1945 tok, huge) — Copyright 2025 STARGA Inc.
-- `active_module_table.rs` (~7347 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `artifact.rs` (~1045 tok, large) — Copyright 2025 STARGA Inc.
+- `active_module_table.rs` (~7515 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `artifact.rs` (~1639 tok, huge) — Copyright 2025 STARGA Inc.
 - `build_input_snapshot.rs` (~4689 tok, huge) — Copyright 2025 STARGA Inc.
 - `build_lock.rs` (~4456 tok, huge) — Copyright 2026 STARGA Inc.
 - `call_bindings.rs` (~5326 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -2605,7 +2606,7 @@
 - `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
 - `private_linkage.rs` (~7899 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~2184 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `single_file_scope.rs` (~6911 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `single_file_scope.rs` (~7131 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/project/single_file_scope/`
 
 - `tests.rs` (~2078 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2613,7 +2614,7 @@
 ### `src/project/`
 
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `sources.rs` (~8538 tok, huge) — Copyright 2025 STARGA Inc.
+- `sources.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/stdlib/`
 
 - `load.rs` (~4671 tok, huge) — Copyright 2026 STARGA Inc.
@@ -3512,7 +3513,7 @@
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_array_store_roundtrip.rs` (~1061 tok, large) — Copyright 2026 STARGA Inc.
 - `mic3_break_continue_string_roundtrip.rs` (~1685 tok, huge) — Copyright 2026 STARGA Inc.
-- `mic3_cli_emit.rs` (~2324 tok, huge) — Copyright 2025 STARGA Inc.
+- `mic3_cli_emit.rs` (~3807 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~2596 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_parser_dos.rs` (~1891 tok, huge) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3528,7 +3529,7 @@
 - `mindc_deps_phase_de.rs` (~6880 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~3004 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_inspect.rs` (~2191 tok, huge) — Integration test for `mindc inspect` — the mic@3 artifact decoder/differ.
-- `mindc_project_lock.rs` (~6131 tok, huge) — Copyright 2026 STARGA Inc.
+- `mindc_project_lock.rs` (~6202 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/mindcraft/check/`
 
 - `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
@@ -3728,7 +3729,7 @@
 - `nerve_numerics_lint.rs` (~4079 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~990 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~772 tok, large) — Copyright 2025 STARGA Inc.
-- `nested_import_owner_resolution_run.rs` (~3685 tok, huge) — Copyright 2026 STARGA Inc.
+- `nested_import_owner_resolution_run.rs` (~5373 tok, huge) — Copyright 2026 STARGA Inc.
 - `nested_mut_thread_run.rs` (~1520 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_project_import_scope_run.rs` (~3562 tok, huge) — Copyright 2026 STARGA Inc.
 - `non_final_catch_all_match_run.rs` (~861 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
@@ -4104,7 +4105,7 @@
 - `std_surface_io_ansi.rs` (~793 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_io_canon.rs` (~4918 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_iouring.rs` (~5633 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_iouring.rs` (~6774 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json_canon.rs` (~4864 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7071 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
@@ -4372,7 +4373,8 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~8583 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~8618 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_pairs.py` (~2873 tok, huge) — # Copyright 2025 STARGA Inc.
 ### `tools/mindfuzz/`
 
 - `ci_batch.py` (~1482 tok, large) — MIND-Fuzz deterministic batch GENERATOR -> cross-substrate reference corpus.
@@ -4419,6 +4421,7 @@
 ### `tools/`
 
 - `test_bench_gate.py` (~10760 tok, huge) — Regression test for the bench-gate fail-closed contract (tools/bench_gate.py).
+- `test_bench_pairs.py` (~2918 tok, huge) — Tests for the pipeline pair module. No third-party deps.
 
 ---
 *Generated by `anatomy 1.0.0`. Edit descriptions manually — re-run preserves structure.*
