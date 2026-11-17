@@ -268,17 +268,21 @@ fn evidence_body_prefix_equals_plain_mic3() {
 // The digest is hashlib and sha256sum of the bytes this run just wrote.
 // A stored note is not an oracle. mindc verify is not an oracle.
 
-/// True on the rows whose `mindc` resolves `import std.vec` (the keystone
-/// fixture). The same cfg guards the type checker's std-import refusal.
+/// SELECTION: true on the rows whose `mindc` resolves `import std.vec` (the
+/// keystone fixture). The same cfg guards the type checker's std-import refusal.
 const KEYSTONE_ROW: bool = cfg!(any(
     feature = "std-surface",
     feature = "cross-module-imports"
 ));
 
-/// The exact program count the hash test must run on this row: the three
-/// std-free programs (tiny, note_kinds, simple) plus the keystone fixture on a
-/// KEYSTONE_ROW. A row cannot silently drop a program.
-const EXPECTED_RAN: u32 = if KEYSTONE_ROW { 4 } else { 3 };
+/// COUNT: the exact program count the hash test must run on this row. The
+/// literal is stated per row by its own cfg attribute and is never computed
+/// from `KEYSTONE_ROW`. Computed from the selector, the count would follow any
+/// change of the selection and a dropped keystone would stay green.
+#[cfg(any(feature = "std-surface", feature = "cross-module-imports"))]
+const EXPECTED_RAN: u32 = 4; // tiny, note_kinds, simple, keystone_fixture
+#[cfg(not(any(feature = "std-surface", feature = "cross-module-imports")))]
+const EXPECTED_RAN: u32 = 3; // tiny, note_kinds, simple
 
 #[test]
 fn emit_trace_hash_matches_independent_sha256() {
@@ -334,6 +338,30 @@ fn emit_trace_hash_matches_independent_sha256() {
         "ran={ran}, expected {EXPECTED_RAN} on this row; a dropped program, a \
          missing compiler or an empty corpus is a failure"
     );
+    // Control for the selection: where the keystone is left out, this row's
+    // `mindc` must refuse it with E2007. Where it is left out but the binary
+    // emits it, the selection is wrong and this assertion is red.
+    if !KEYSTONE_ROW {
+        let keystone = root.join("examples/mindc_mind/fixture.mind");
+        assert!(
+            keystone.is_file(),
+            "keystone fixture missing: {}",
+            keystone.display()
+        );
+        let run = run_emit(
+            &bin,
+            &keystone,
+            "--emit-mic3",
+            &dir.join("keystone_refused.mic3"),
+        );
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !run.status.success() && stderr.contains("E2007") && stderr.contains("import std.vec"),
+            "the keystone is left out of this row's corpus, so its mindc must \
+             refuse it with E2007 on `import std.vec`; status={:?} stderr:\n{stderr}",
+            run.status.code()
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -350,12 +378,16 @@ fn mindc_for_independent_hash() -> PathBuf {
     PathBuf::from(require_mindc())
 }
 
-fn emit_artifact(bin: &PathBuf, src: &PathBuf, flag: &str, out: &PathBuf) {
-    let run = Command::new(bin)
+fn run_emit(bin: &PathBuf, src: &PathBuf, flag: &str, out: &PathBuf) -> std::process::Output {
+    Command::new(bin)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args([src.as_os_str(), std::ffi::OsStr::new(flag), out.as_os_str()])
         .output()
-        .unwrap_or_else(|e| panic!("failed to spawn mindc {flag}: {e}"));
+        .unwrap_or_else(|e| panic!("failed to spawn mindc {flag}: {e}"))
+}
+
+fn emit_artifact(bin: &PathBuf, src: &PathBuf, flag: &str, out: &PathBuf) {
+    let run = run_emit(bin, src, flag, out);
     assert!(
         run.status.success(),
         "mindc {flag} {} failed:\n{}",
