@@ -310,6 +310,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound fails closed (E_OVF). This replaces the 2048-byte buffer that
   reclaimed consumed bytes before its bound check.
 - **Linux release binaries need glibc 2.28 or newer.** Each Linux asset is built in a digest-pinned manylinux_2_28 image: `quay.io/pypa/manylinux_2_28_x86_64@sha256:9555ba6c479fa69a2aa80ad1dc57154a60d562b19df159361d9379a02beb1e36` and `quay.io/pypa/manylinux_2_28_aarch64@sha256:cb37f0d66c8a75abb93cf6085cad1f1427cd7208f0c0fc48359bb1eea9924f21`. The v0.10.2 Linux asset needed GLIBC_2.39.
+- **Behaviour change: the CPU affinity names are world calls for the determinism
+  veto and the evidence label.** A program that calls a public function of
+  `std.cpu_affinity` (`cpu_affinity_pin`, `cpu_affinity_mask`, `cpu_affinity_has`,
+  `cpu_affinity_pin_demo`) or one of the four affinity names of `std.iouring`
+  (`io_reactor_pin_cpu`, `io_reactor_affinity_mask`, `io_reactor_affinity_has`,
+  `io_reactor_pin_demo`) is refused by `--emit-obj`, `--emit-shared` and
+  `--emit-evidence` without `--allow-nondeterministic`, and with the flag its
+  evidence is attested `nondeterministic`. Before this change such a program was
+  built without the flag and attested `deterministic`, although it reads or writes
+  the CPU mask of the host. Both modules are in the implicit std set, so a bare
+  call with no import counts too. A program that defines its own function of that
+  name, or that uses the name only for a local binding, is not affected. The other
+  functions of `std.iouring` and the modules `std.net`, `std.fs` and `std.process`
+  that reach the host are not classified by this change.
+  (`src/std_qualified.rs`, `tests/determinism_veto_std_callers.rs`,
+  `tests/determinism_veto_bare_std.rs`)
 
 ### Fixed
 - The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
