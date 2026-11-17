@@ -1182,13 +1182,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refusal-key rows for the nine `lane.extern.*` keys replace the
   `lane.extern.unimplemented` row. The `lane.source.cast` row now refuses an f64
   to i32 cast, because an i64 to i32 cast is admitted for an extern argument.
-  Request corpus records under the committed seed: the five extern records
-  refuse `lane.extern.compiler_unmarked`, `w3_cast_i32` refuses
-  `lane.type.mismatch` and the four integer-to-pointer cast records refuse
-  `lane.source.binding_type`. The ci.yml step that would run
-  the same contract stays commented until the reseed, and this change does not
-  add a tracked harness script: the harness inventory has no spare slot.
-  Both the wiring row and that step flip to `ci` together in the L10 commit.
+  Request corpus records under the committed seed, which carries `nbextc01`: the
+  five extern records refuse by name (`lane.extern.signature_mismatch`,
+  `lane.extern.type`, `lane.extern.varargs` and, for two records,
+  `lane.extern.unknown_symbol`), `w3_cast_i32` refuses `lane.type.mismatch` and
+  the four integer-to-pointer cast records refuse `lane.source.binding_type`.
+  The `ci.yml` step that would run the extern determinism contract as a script
+  is still commented out, and no such script is tracked.
 
 ### Fixed — fixed i64 array reads on the default native path
 - The native lane (the default `--backend native` profile) refused every array
@@ -1207,8 +1207,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallbacks are listed as unreachable from a source program. 24 request-corpus
   records and the operator differential's narrow-type rows pin the new names.
 - The pure-MIND compiler refuses an array operand of a binary operator itself (a
-  second fence behind the Rust `binop.array_operand` refusal). This reaches the
-  committed compiler at the next reseed.
+  second fence behind the Rust `binop.array_operand` refusal). The committed seed
+  carries this fence: it is minted from sources that hold it.
 - `ri_d1_frozen_profile_gate.py` takes `--compiler PATH`; integer `/` and `>>`
   are in-profile rows checked against MLIR; the f32-compare, `zeros`, struct-return
   and u8 rows assert the lane's named refusal. `self_host_native_diag_smoke.py`
