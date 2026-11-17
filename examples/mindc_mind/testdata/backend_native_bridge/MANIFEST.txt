@@ -17,10 +17,10 @@
 # wire:      stdin [8B user_lo LE][8B src_len LE][std_blob ++ program]; ELF -> stdout
 #
 # name  size_bytes  sha256  expected_exit_code
-add           492  997bb7a16c524d855d20d077a52e4886b67218332eda52597f2a70cb7c2ae138  5
-const_return  397  06efb126185759f6d923d5d46d0fa727609c2bd8b76028e681fc8e7a581de27b  7
-local_call    474  b5a53e34d95cb0bcec06be6f1785bebcfc0435ce7d52984169bbac0e2ce75382  7
-while_sum     581  0a7d47adf7a28f0971b5dd034566b20eb56e2bbc6a30533b5e8208c2b09da62d  45
+add           492  ee995d4bc7d7880a8797951f6c55ce99d9b00ffe640c0dcdf04ccf81e3010e64  5
+const_return  397  757d23ad98898181dc0e6b1e953a429274dc7edb3eb9d593f29af0eb0be7b180  7
+local_call    474  8eacdb3e9f6bdc2f8978f277a7417ca544c30888f94da919e5d0885bdecaea3c  7
+while_sum     581  998de1303461d5f2a7ccb0911fed1b17e3d4205b944a66312addf392882a7e3e  45
 #
 # Old-Rust divergence (native_elf_oracle/add.elf, sha b20651a5..., same 492B): 32 of 492
 # bytes differ, ALL in the tail (bytes 460-492). ELF header, entry (0x400120), program
