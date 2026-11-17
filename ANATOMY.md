@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3320 | **Est. tokens:** ~5,843,097
-**Generated:** 2026-11-17 02:15 UTC
+**Files:** 3322 | **Est. tokens:** ~5,848,997
+**Generated:** 2026-11-17 06:30 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~42,242 |
+| `./` | 35 | ~42,335 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~835 |
@@ -66,7 +66,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 336 | ~944,186 |
-| `examples/mindc_mind/testdata/` | 5 | ~7,025 |
+| `examples/mindc_mind/testdata/` | 5 | ~7,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 1 | ~3,641 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -134,7 +134,7 @@
 | `.github/workflows/` | 9 | ~18,758 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~150,866 |
+| `scripts/` | 36 | ~150,928 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -145,7 +145,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~63,433 |
+| `src/` | 13 | ~63,447 |
 | `src/ast/` | 2 | ~12,334 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -159,7 +159,7 @@
 | `src/diagnostics/` | 4 | ~17,991 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 57 | ~194,657 |
+| `src/eval/` | 57 | ~194,682 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/string_equality/` | 12 | ~48,169 |
 | `src/eval/string_equality/facts/` | 1 | ~1,401 |
@@ -185,7 +185,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~31,177 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 25 | ~97,837 |
+| `src/project/` | 25 | ~97,854 |
 | `src/project/single_file_scope/` | 2 | ~4,072 |
 | `src/project/stdlib/` | 1 | ~4,671 |
 | `src/qualified_enums/` | 2 | ~3,391 |
@@ -198,8 +198,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~17,202 |
 | `src/types/` | 10 | ~23,602 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 76 | ~320,914 |
-| `tests/` | 492 | ~1,195,733 |
+| `std/` | 77 | ~321,677 |
+| `tests/` | 493 | ~1,200,370 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 7 | ~18,102 |
@@ -294,7 +294,7 @@
 | `tests/x509/testdata/` | 86 | ~13,454 |
 | `tests/x509/testdata/adv/` | 26 | ~5,523 |
 | `tests/xsi_quant/` | 3 | ~11,922 |
-| `tools/` | 6 | ~26,836 |
+| `tools/` | 6 | ~27,119 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -318,7 +318,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~1738 tok, huge) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~4115 tok, huge) — [package]
+- `Cargo.toml` (~4208 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -1891,7 +1891,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~1056 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~1062 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/testdata/string_borrowed/`
 
 - `reference.c` (~869 tok, large) — Copyright STARGA Inc. Reference infrastructure only, not MIND implementation.
@@ -2124,7 +2124,7 @@
 - `pqc_hybrid_ci.sh` (~663 tok, large) — Required-CI execution gate for the existing MIC3 two-leg PQC-hybrid controls.
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
 - `preflight_bench_pairs.sh` (~1561 tok, huge) — Pair HEAD with the merge-base after the absolute bench floor misses.
-- `preflight.sh` (~10519 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~10581 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2224 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~7635 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
@@ -2337,7 +2337,7 @@
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `float_ops.rs` (~1055 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `for_hygiene.rs` (~1119 tok, large) — Copyright 2026 STARGA Inc.
-- `import_collision_gate.rs` (~914 tok, large) — Copyright 2026 STARGA Inc.
+- `import_collision_gate.rs` (~939 tok, large) — Copyright 2026 STARGA Inc.
 - `imported_extern_decls.rs` (~1178 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `interp_mem.rs` (~5911 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2428,7 +2428,7 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~4924 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~11038 tok, huge) — The intrinsic registry: the ONE table naming every `__mind_*` primitive the
+- `intrinsics.rs` (~11052 tok, huge) — The intrinsic registry: the ONE table naming every `__mind_*` primitive the
 ### `src/intrinsics/`
 
 - `tests.rs` (~3070 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2620,7 +2620,7 @@
 - `load.rs` (~4671 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~5331 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~5348 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_link_set.rs` (~2506 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
 - `substrate_link.rs` (~5092 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2729,6 +2729,7 @@
 - `blas.mind` (~2522 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `chacha20_poly1305.mind` (~3973 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3223 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `cpu_affinity.mind` (~1221 tok, large) — std/cpu_affinity.mind — CPU affinity mask of CPU_SETSIZE 1024 bits.
 - `detmath.mind` (~4180 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `dns.mind` (~6140 tok, huge) — std/dns.mind — host name resolution, connect-by-name, and the stream options
 - `ecdsa_p256.mind` (~7346 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
@@ -2749,7 +2750,7 @@
 - `https_url.mind` (~5267 tok, huge) — std/https_url.mind — the std.https error codes and bounds, URL parsing and
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1719 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
-- `iouring.mind` (~23515 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
+- `iouring.mind` (~23057 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json_canon.mind` (~4338 tok, huge) — std/json_canon.mind -- CRX-04 canonical JSON dump (WP-MC-47b, ruling D-5).
 - `json.mind` (~15391 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
@@ -3068,7 +3069,7 @@
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
 - `determinism_veto_bare_std.rs` (~955 tok, large) — Copyright 2026 STARGA Inc.
-- `determinism_veto_control.rs` (~7331 tok, huge) — Copyright 2025 STARGA Inc.
+- `determinism_veto_control.rs` (~7374 tok, huge) — Copyright 2025 STARGA Inc.
 - `determinism_veto_std_callers.rs` (~2029 tok, huge) — Copyright 2026 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
@@ -3729,7 +3730,7 @@
 - `nerve_numerics_lint.rs` (~4079 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~990 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~772 tok, large) — Copyright 2025 STARGA Inc.
-- `nested_import_owner_resolution_run.rs` (~5373 tok, huge) — Copyright 2026 STARGA Inc.
+- `nested_import_owner_resolution_run.rs` (~6563 tok, huge) — Copyright 2026 STARGA Inc.
 - `nested_mut_thread_run.rs` (~1520 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_project_import_scope_run.rs` (~3562 tok, huge) — Copyright 2026 STARGA Inc.
 - `non_final_catch_all_match_run.rs` (~861 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
@@ -4038,6 +4039,7 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8123 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_cpu_affinity.rs` (~3142 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_dns_free_run.rs` (~1732 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_dns_layout_run.rs` (~2220 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_entropy_dns_run.rs` (~5013 tok, huge) — Copyright 2026 STARGA Inc.
@@ -4105,7 +4107,7 @@
 - `std_surface_io_ansi.rs` (~793 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_io_canon.rs` (~4918 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_iouring.rs` (~6774 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_iouring.rs` (~7036 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json_canon.rs` (~4864 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7071 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
@@ -4421,7 +4423,7 @@
 ### `tools/`
 
 - `test_bench_gate.py` (~10760 tok, huge) — Regression test for the bench-gate fail-closed contract (tools/bench_gate.py).
-- `test_bench_pairs.py` (~2918 tok, huge) — Tests for the pipeline pair module. No third-party deps.
+- `test_bench_pairs.py` (~3201 tok, huge) — Tests for the pipeline pair module. No third-party deps.
 
 ---
 *Generated by `anatomy 1.0.0`. Edit descriptions manually — re-run preserves structure.*
