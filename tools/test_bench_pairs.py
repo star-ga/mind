@@ -60,7 +60,7 @@ def grade(text: str) -> subprocess.CompletedProcess[str]:
         )
 
 
-def pair_env(hint: str | None, stub: Path, log: Path) -> dict[str, str]:
+def pair_env(hint: str | None, stub: Path, log: Path, exe: Path | None = None) -> dict[str, str]:
     """A clean environment: no outer git state, no outer base hint, a stub cargo first on PATH.
 
     HOME stays as it is: a git installed under HOME needs it to start.
@@ -74,6 +74,8 @@ def pair_env(hint: str | None, stub: Path, log: Path) -> dict[str, str]:
     )
     if hint is not None:
         env["MIND_HYGIENE_BASE"] = hint
+    if exe is not None:
+        env["PAIR_STUB_EXE"] = str(exe)
     return env
 
 
@@ -81,7 +83,8 @@ def check_pair_base(failures: list[str]) -> None:
     """Run the real pair script in a temporary repository and read which base it resolves.
 
     The stub cargo fails at once, so a resolved base shows as the "bench pairs base=" line plus
-    one stub call, and a miss shows as the named failure with no stub call.
+    one stub call, and a miss shows as the named failure with no stub call. With PAIR_STUB_EXE
+    set the stub builds one fixed bench binary for both sides, so the identical-binary rule runs.
     """
     script = ROOT / "scripts" / "preflight_bench_pairs.sh"
     with tempfile.TemporaryDirectory() as td:
@@ -90,8 +93,16 @@ def check_pair_base(failures: list[str]) -> None:
         for d in (repo / "scripts", stub):
             d.mkdir(parents=True)
         shutil.copy(script, repo / "scripts" / script.name)
+        (repo / "tools").mkdir()
+        shutil.copy(HERE / "bench_pairs.py", repo / "tools" / "bench_pairs.py")
+        exe = top / "bench.bin"
+        exe.write_bytes(b"\x7fELF one bench binary for both sides")
         (stub / "cargo").write_text(
-            '#!/bin/sh\necho called >> "$PAIR_STUB_LOG"\necho "stub cargo: no build here" >&2\nexit 97\n'
+            '#!/bin/sh\necho called >> "$PAIR_STUB_LOG"\n'
+            'if [ -n "${PAIR_STUB_EXE:-}" ]; then\n'
+            '  printf \'{"reason":"compiler-artifact","target":{"name":"compiler","kind":["bench"]},'
+            '"executable":"%s"}\\n\' "$PAIR_STUB_EXE"\n  exit 0\nfi\n'
+            'echo "stub cargo: no build here" >&2\nexit 97\n'
         )
         (stub / "cargo").chmod(0o755)
         env = pair_env(None, stub, log)
@@ -121,8 +132,11 @@ def check_pair_base(failures: list[str]) -> None:
         report(failures, "pair base: the side commit diverged from HEAD",
                side not in (c1, c2, c3) and git("merge-base", "HEAD", side) == c1)
         orphan = git("commit-tree", git("hash-object", "-w", "-t", "tree", "/dev/null"), "-m", "unrelated")
+        ahead = git("commit-tree", f"{c3}^{{tree}}", "-p", c3, "-m", "ahead")
+        report(failures, "pair base: the ahead commit is a descendant of HEAD",
+               ahead != c3 and git("merge-base", "HEAD", ahead) == c3)
 
-        def run_pair(main: str | None, origin: str | None, hint: str | None):
+        def run_pair(main: str | None, origin: str | None, hint: str | None, use_exe: bool = False):
             for name, sha in (("refs/heads/main", main), ("refs/remotes/origin/main", origin)):
                 if sha:
                     git("update-ref", name, sha)
@@ -135,13 +149,15 @@ def check_pair_base(failures: list[str]) -> None:
             done = subprocess.run(
                 ["bash", str(repo / "scripts" / script.name), str(bench), str(top / "head-target"),
                  str(top / "floor.txt")],
-                cwd=top, env=pair_env(hint, stub, log), capture_output=True, text=True, timeout=60,
+                cwd=top, env=pair_env(hint, stub, log, exe if use_exe else None),
+                capture_output=True, text=True, timeout=60,
             )
             out = done.stdout + done.stderr
             found = re.search(r"^bench pairs base=([0-9a-f]{40}) head=", out, re.M)
             return done.returncode, out, (found.group(1) if found else None), log.exists()
 
         miss = "FAIL: no merge-base"
+        empty = "pair range is empty: HEAD is on every base candidate"
         cases = [
             ("no main, no origin, no hint: exit 4, every miss named", None, None, None, None,
              ["refs/heads/main not a commit", "refs/remotes/origin/main not a commit",
@@ -168,9 +184,54 @@ def check_pair_base(failures: list[str]) -> None:
             if want is None:
                 ok = rc == 4 and base is None and not stubbed and miss in out and all(n in out for n in names)
             else:
-                ok = rc == 4 and base == want and stubbed and miss not in out
+                ok = rc == 4 and base == want and stubbed and miss not in out and empty not in out
             report(failures, f"pair base: {label}", ok, f"rc={rc} base={base} stub={stubbed}\n{out}")
         report(failures, f"pair base: all {len(cases)} cases ran", ran == len(cases) == 13)
+
+        # R4a: a candidate whose merge-base with HEAD is HEAD gives no comparison. It is skipped and
+        # the next candidate is tried. When every resolved candidate was skipped the range is empty.
+        # HEAD is c3 here. Each row says which candidate position holds HEAD or a descendant of it.
+        self_cases = [
+            ("HEAD is local main, origin/main is the parent: the base is the parent",
+             c3, c2, None, c2, False),
+            ("HEAD is local main, origin/main is the parent, the hint is older: origin/main wins",
+             c3, c2, c1, c2, False),
+            ("HEAD is local main and origin/main: the hint is the base",
+             c3, c3, c1, c1, False),
+            ("HEAD is origin/main and there is no main: the hint is the base",
+             None, c3, c1, c1, False),
+            ("local main is ahead of HEAD, origin/main is the parent: the base is the parent",
+             ahead, c2, None, c2, False),
+            ("HEAD is local main and origin/main: the range is empty, the base is HEAD",
+             c3, c3, None, c3, True),
+            ("HEAD is local main alone: the range is empty",
+             c3, None, None, c3, True),
+            ("HEAD is the hint alone: the range is empty",
+             None, None, c3, c3, True),
+            ("HEAD is local main, the hint is not a commit: the range is empty",
+             c3, None, "no-such-ref", c3, True),
+            ("local main is ahead of HEAD alone: the range is empty",
+             ahead, None, None, c3, True),
+            ("an unrelated main and HEAD as origin/main: the range is empty",
+             orphan, c3, None, c3, True),
+        ]
+        for label, main, origin, hint, want, is_empty in self_cases:
+            rc, out, base, stubbed = run_pair(main, origin, hint)
+            ok = (rc == 4 and base == want and stubbed and miss not in out
+                  and out.count(empty) == (1 if is_empty else 0))
+            report(failures, f"pair self base: {label}", ok, f"rc={rc} base={base} stub={stubbed}\n{out}")
+        report(failures, f"pair self base: all {len(self_cases)} cases ran", len(self_cases) == 11)
+
+        # An empty range is decided by the identical-binary rule, never by the range itself.
+        rc, out, base, stubbed = run_pair(c3, c3, None, use_exe=True)
+        report(failures, "pair self base: an empty range with one binary passes on the identical-binary rule",
+               rc == 0 and base == c3 and out.count(empty) == 1 and "IDENTICAL" in out, f"rc={rc}\n{out}")
+        rc, out, base, stubbed = run_pair(None, None, None, use_exe=True)
+        report(failures, "pair self base: no candidate at all is still exit 4 even with a building cargo",
+               rc == 4 and base is None and not stubbed and miss in out and empty not in out, f"rc={rc}\n{out}")
+        rc, out, base, stubbed = run_pair(orphan, None, None, use_exe=True)
+        report(failures, "pair self base: a lone unrelated main is still exit 4 even with a building cargo",
+               rc == 4 and base is None and not stubbed and miss in out and empty not in out, f"rc={rc}\n{out}")
 
 
 def main() -> int:

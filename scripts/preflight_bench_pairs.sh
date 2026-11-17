@@ -27,8 +27,14 @@ trap cleanup EXIT
 # resolve_hygiene_base in preflight.sh: local main, then the remote-tracking
 # main, then MIND_HYGIENE_BASE. A candidate counts only when it names a commit
 # that shares history with HEAD. A miss is named. It is never a pass.
+# A candidate whose merge-base with HEAD is HEAD itself gives no comparison
+# (HEAD against HEAD): it is skipped and the next candidate is tried. When every
+# candidate that resolved was skipped, the range is empty: the base is HEAD and
+# the identical-binary rule below decides. When none resolved, the exit is 4.
+head_sha=$(git rev-parse HEAD)
 base_sha=""
 base_tries=""
+resolved=0
 try_base() { # <label> <ref>
   local mb=""
   if ! git rev-parse --verify -q "${2}^{commit}" >/dev/null; then
@@ -36,7 +42,8 @@ try_base() { # <label> <ref>
   elif ! mb=$(git merge-base HEAD "$2" 2>/dev/null) || [ -z "$mb" ]; then
     base_tries="${base_tries}; ${1} shares no history with HEAD"
   else
-    base_sha="$mb"
+    resolved=$((resolved + 1))
+    [ "$mb" = "$head_sha" ] || base_sha="$mb"
   fi
 }
 try_base refs/heads/main refs/heads/main
@@ -48,6 +55,10 @@ if [ -z "$base_sha" ]; then
     try_base "MIND_HYGIENE_BASE=${MIND_HYGIENE_BASE}" "$MIND_HYGIENE_BASE"
   fi
 fi
+if [ -z "$base_sha" ] && [ "$resolved" -gt 0 ]; then
+  base_sha="$head_sha"
+  echo "pair range is empty: HEAD is on every base candidate"
+fi
 if [ -z "$base_sha" ]; then
   echo "FAIL: no merge-base; the paired bench was not evaluated. Tried: ${base_tries#; }"
   echo "Fetch refs/heads/main or refs/remotes/origin/main, or set MIND_HYGIENE_BASE to a commit."
@@ -56,7 +67,7 @@ if [ -z "$base_sha" ]; then
 fi
 
 echo "LOAD_START $(cat /proc/loadavg)"
-echo "bench pairs base=${base_sha} head=$(git rev-parse HEAD)"
+echo "bench pairs base=${base_sha} head=${head_sha}"
 base_wt="${bench_tmp}/base-src"
 if ! git worktree add --detach "$base_wt" "$base_sha"; then
   echo "FAIL: could not check out the merge-base; the paired bench was not evaluated"
