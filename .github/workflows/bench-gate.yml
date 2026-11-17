@@ -111,7 +111,7 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Base commit for the e2e paired A/B (empty = merge-base with origin/main)"
+        description: "Base commit for the e2e paired A/B (empty = merge-base with origin/main, or the tip's parent when the merge-base is the tip); the tip itself is refused"
         required: false
         default: ''
 
@@ -286,7 +286,10 @@ jobs:
       - name: Resolve the base commit
         # pull_request / workflow_dispatch: merge-base with origin/main (or the
         # dispatch input). push to main: the pushed range's start, HEAD^1 when
-        # `before` is the zero sha. An unresolvable base is a wiring defect: exit 4.
+        # `before` is the zero sha. A base that is the candidate would time the
+        # tip against itself: with no input given the base is HEAD^1 (as on a
+        # push), and an explicit input that names the candidate is refused.
+        # An unresolvable base is a wiring defect: exit 4.
         id: base
         env:
           EVENT: ${{ github.event_name }}
@@ -294,6 +297,7 @@ jobs:
           INPUT_BASE: ${{ inputs.base }}
         run: |
           set -o pipefail
+          cand="$(git rev-parse HEAD)"
           case "$EVENT" in
             push)
               base="$BEFORE"
@@ -305,6 +309,8 @@ jobs:
               base="$INPUT_BASE"
               if [ -z "$base" ]; then
                 base="$(git merge-base HEAD origin/main)" || { echo "::error::no merge-base with origin/main: no paired verdict is possible"; exit 4; }
+                # On main the merge-base is the tip itself: pair the tip with its parent.
+                if [ "$base" = "$cand" ]; then base=HEAD^1; fi
               fi
               ;;
           esac
@@ -312,8 +318,12 @@ jobs:
             -*|*[!0-9A-Za-z._/^~-]*) echo "::error::base '$base' is not a commit-ish"; exit 4 ;;
           esac
           sha="$(git rev-parse --verify --end-of-options "${base}^{commit}")" || { echo "::error::base '$base' does not resolve to a commit: no paired verdict is possible"; exit 4; }
+          if [ "$sha" = "$cand" ]; then
+            echo "::error::the base is the candidate ($sha): the pair would time the tip against itself, so no paired verdict is possible"
+            exit 4
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "e2e paired A/B: base $sha (event $EVENT), candidate $(git rev-parse HEAD)"
+          echo "e2e paired A/B: base $sha (event $EVENT), candidate $cand"
 
       - name: Cache the base build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

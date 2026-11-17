@@ -509,6 +509,7 @@ def main() -> int:
         ):
             report(failures, label, ok)
 
+        check_base_step(failures, e2e_job)
         cases += check_paired(failures, _bg)
         for label, got, want in cases:
             report(failures, f"{label} (got {got}, want {want})", got == want)
@@ -548,6 +549,53 @@ def step_script(job: str, name_prefix: str) -> str:
     body = [ln for ln in lines[at + 1:]]
     indent = min(len(ln) - len(ln.lstrip()) for ln in body if ln.strip())
     return "\n".join(ln[indent:] for ln in body) + "\n"
+
+
+def check_base_step(failures: list[str], e2e_job: str) -> None:
+    """Run the real base step in throwaway repositories: a pair of the tip with itself is
+    rewritten to the tip's parent (no input given) or refused (explicit input)."""
+    script = step_script(e2e_job, "Resolve the base commit")
+    report(failures, "the base step script was extracted from the workflow", bool(script))
+    dispatch, refused = "workflow_dispatch", "the base is the candidate"
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    with tempfile.TemporaryDirectory() as td:
+        def git(repo: Path, *a: str) -> str:
+            cfg = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+            return subprocess.run(["git", *cfg, *a], cwd=repo, env=clean_env, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        def commit(repo: Path, msg: str) -> str:  # the message keeps same-second commits distinct
+            git(repo, "commit", "-q", "--allow-empty", "-m", msg)
+            return git(repo, "rev-parse", "HEAD")
+
+        main, solo, out = Path(td) / "main", Path(td) / "solo", Path(td) / "github-output"
+        for r in (main, solo):
+            r.mkdir()
+            git(r, "init", "-q", "-b", "main")
+        c1, c2, c3 = commit(main, "c1"), commit(main, "c2"), commit(main, "c3")
+        git(main, "update-ref", "refs/remotes/origin/main", c3)
+        git(main, "checkout", "-q", "-b", "feat", c2)  # diverged: merge-base c2, HEAD^1 is f1
+        commit(main, "f1")
+        f2 = commit(main, "f2")
+        git(solo, "update-ref", "refs/remotes/origin/main", commit(solo, "s1"))
+        for label, repo, at, event, before, given, want_rc, want_sha, want_msg in (
+            ("dispatch, no input, tip on main -> the tip's parent", main, c3, dispatch, "", "", 0, c2, ""),
+            ("dispatch, no input, diverged branch -> merge-base kept (not HEAD^1)", main, f2, dispatch, "", "", 0, c2, ""),
+            ("dispatch, explicit base = the tip -> exit 4", main, c3, dispatch, "", c3, 4, "", refused),
+            ("dispatch, explicit base HEAD -> exit 4", main, c3, dispatch, "", "HEAD", 4, "", refused),
+            ("dispatch, explicit base = an older commit -> kept as given", main, c3, dispatch, "", c1, 0, c1, ""),
+            ("push, zero before -> the tip's parent", main, c3, "push", "0" * 40, "", 0, c2, ""),
+            ("push, real before -> kept as given", main, c3, "push", c1, "", 0, c1, ""),
+            ("dispatch, no input, root commit -> exit 4 (no parent to pair)", solo, "main", dispatch, "", "", 4, "",
+             "does not resolve to a commit"),
+        ):
+            git(repo, "checkout", "-q", "--detach", at)
+            out.write_text("")
+            env = dict(clean_env, EVENT=event, BEFORE=before, INPUT_BASE=given, GITHUB_OUTPUT=str(out))
+            r = subprocess.run(["bash", "-e", "-c", script], cwd=repo, env=env, capture_output=True, text=True)
+            got, log = out.read_text().strip(), r.stdout + r.stderr
+            report(failures, f"base step: {label} (rc {r.returncode}, wrote {got!r})",
+                   r.returncode == want_rc and got == (f"sha={want_sha}" if want_sha else "") and want_msg in log, log)
 
 
 def spread(n: int, sigma: float) -> list[float]:
