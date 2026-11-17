@@ -24,12 +24,16 @@ parser and a real dependency.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import os
 import re
 import shlex
 import fnmatch
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_.\-]+):(?P<rest>.*)$")
@@ -430,7 +434,50 @@ def _self_test() -> int:
     expected = ["--features", "real", "--no-fail-fast", "--locked", "--", "--locked", "--no-fail-fast"]
     if cargo_test_execution_argv(boundary, True) != expected:
         raise AssertionError("Cargo options were not inserted before the libtest separator")
+    _matrix_row_environment_probe(root)
     return 0
+
+
+def _matrix_row_environment_probe(root: Path) -> None:
+    """Run the real matrix runner against a fake cargo that records what it inherits.
+
+    Both tier-owned variables are exported to the parent first. A control call
+    proves the fake cargo can see them; every matrix row must then see neither.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        record = Path(td) / "env.log"
+        fake = Path(td) / "cargo"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'printf "%s %s\\n" "${MIND_BENCH_REQUIRE-unset}" "${MIND_INTDOT_VNNI_VERIFY-unset}"'
+            ' >> "$MIND_PROBE_RECORD"\n'
+            'echo "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        saved = dict(os.environ)
+        os.environ.update({
+            "PATH": f"{td}{os.pathsep}{saved.get('PATH', '')}",
+            "MIND_PROBE_RECORD": str(record),
+            "MIND_BENCH_REQUIRE": "1",
+            "MIND_INTDOT_VNNI_VERIFY": "1",
+        })
+        try:
+            subprocess.run([str(fake)], check=True, capture_output=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = run_cargo_test_matrix(root)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        seen = record.read_text(encoding="utf-8").splitlines()
+    if seen[:1] != ["1 1"]:
+        raise AssertionError(f"probe control: the fake cargo did not see the exported variables: {seen[:1]}")
+    rows = seen[1:]
+    if rc != 0 or len(rows) < 10 or set(rows) != {"unset unset"}:
+        raise AssertionError(
+            f"matrix rows inherited the caller's MIND_BENCH_REQUIRE/MIND_INTDOT_VNNI_VERIFY: "
+            f"rc={rc} rows={len(rows)} seen={sorted(set(rows))}"
+        )
 
 
 # --- Lockfile / cargo-call scanning for check_release_gating.py (rule R7) ---

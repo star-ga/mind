@@ -213,6 +213,9 @@ def main() -> int:
             "import json, os, sys, time\n"
             "args = sys.argv[1:]\n"
             "with open(os.environ['PREFLIGHT_ARGV_LOG'], 'a') as f: f.write(json.dumps(args) + '\\n')\n"
+            "with open(os.environ['PREFLIGHT_ARGV_LOG'] + '.env', 'a') as f:\n"
+            "    f.write(os.environ.get('MIND_BENCH_REQUIRE', 'unset') + ' ' "
+            "+ os.environ.get('MIND_INTDOT_VNNI_VERIFY', 'unset') + '\\n')\n"
             "if os.environ.get('PREFLIGHT_TIMEOUT_PROBE') == '1' and 'timeout-probe' in args: time.sleep(2)\n"
             "n = 0 if os.environ.get('PREFLIGHT_EMPTY') == '1' else 1\n"
             "print(f'test result: ok. {n} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out')\n"
@@ -220,11 +223,23 @@ def main() -> int:
             encoding="utf-8")
         cargo.chmod(0o755)
         log = d / "argv.log"
+        # Both tier-owned variables are exported to the parent, as the launch
+        # that measured the defect did. The control proves the fake sees them.
         env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"],
-                   PREFLIGHT_ARGV_LOG=str(log))
+                   PREFLIGHT_ARGV_LOG=str(log),
+                   MIND_BENCH_REQUIRE="1", MIND_INTDOT_VNNI_VERIFY="1")
+        control_log = d / "control.log"
+        subprocess.run([str(cargo)], cwd=d, env=dict(env, PREFLIGHT_ARGV_LOG=str(control_log)),
+                       capture_output=True, text=True, timeout=15, check=True)
         exact = subprocess.run([sys.executable, str(scanner), "run_cargo_test_matrix"],
                                cwd=d, env=env, capture_output=True, text=True, timeout=15)
         recorded = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        control_seen = (d / "control.log.env").read_text(encoding="utf-8").splitlines()
+        rows_seen = (d / "argv.log.env").read_text(encoding="utf-8").splitlines()
+        ok = control_seen == ["1 1"] and rows_seen == ["unset unset"] * 10
+        print(f"  [{'ok' if ok else 'FAIL'}] matrix rows do not inherit MIND_BENCH_REQUIRE/MIND_INTDOT_VNNI_VERIFY")
+        if not ok:
+            failures.append(f"matrix env probe: control={control_seen}, rows={sorted(set(rows_seen))}")
         bare = ["test", "--verbose", "--no-default-features", "--no-fail-fast"]
         ok = (exact.returncode == 0 and len(recorded) == 10 and bare in recorded
               and any("ffi::sys" in argv for argv in recorded)
@@ -542,6 +557,62 @@ def main() -> int:
     case("no tracked .py/.sh at all -> RED (not a vacuous pass)",
          erase_harness, expect_nonzero=True,
          expect_in="matched no .py/.sh at all")
+
+    # preflight stops at the start, with ONE named failure, on a python3 older
+    # than 3.12. The fake python3 reports a chosen version through the real
+    # interpreter, so the comparison itself is exercised, not a canned verdict.
+    def fake_python3(d: Path, version: tuple[int, int, int]) -> dict[str, str]:
+        fake = d / "pybin"
+        fake.mkdir()
+        (fake / "python3").write_text(
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            f"V = {version!r}\n"
+            "if sys.argv[1:2] == ['--version']:\n"
+            "    print('Python %d.%d.%d' % V)\n"
+            "    sys.exit(0)\n"
+            "if sys.argv[1:2] == ['-c']:\n"
+            "    sys.version_info = V\n"
+            "    exec(sys.argv[2])\n"
+            "sys.exit(1)\n", encoding="utf-8")
+        (fake / "python3").chmod(0o755)
+        (fake / "cargo").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (fake / "cargo").chmod(0o755)
+        return dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"])
+
+    for version, stops in (((3, 9, 6), True), ((3, 11, 99), True), ((3, 12, 0), False)):
+        label = ".".join(map(str, version))
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            scratch(d)
+            env = fake_python3(d, version)
+            text = (d / "scripts/preflight.sh").read_text(encoding="utf-8")
+            marker = "require_python_312() {"
+            if text.count(marker) != 1:
+                failures.append(f"preflight python guard: {marker!r} not found exactly once")
+                continue
+            if stops:
+                try:
+                    run = subprocess.run(["bash", "scripts/preflight.sh"], cwd=d, env=env,
+                                         capture_output=True, text=True, timeout=60)
+                    rc, out = run.returncode, run.stdout + run.stderr
+                except subprocess.TimeoutExpired:
+                    rc, out = -1, "timed out: preflight kept running past the python guard"
+                ok = (rc == 1 and out.count("FAIL:") == 1 and "older than 3.12" in out
+                      and f"Python {label}" in out and "==" not in out)
+            else:
+                body = text[text.index(marker):]
+                body = body[:body.index("\n}\n") + 3]
+                script = ('set -uo pipefail\nbad() { printf "FAIL: %s\\n" "$*"; }\n'
+                          + body + "\nrequire_python_312\n")
+                run = subprocess.run(["bash", "-c", script], cwd=d, env=env,
+                                     capture_output=True, text=True, timeout=30)
+                rc, out = run.returncode, run.stdout + run.stderr
+                ok = rc == 0 and not out
+            print(f"  [{'ok' if ok else 'FAIL'}] preflight python {label} "
+                  f"{'stops with one named failure' if stops else 'passes the guard'}: exit={rc}")
+            if not ok:
+                failures.append(f"preflight python guard {label}: exit={rc}\n{out.rstrip()[-1500:]}")
 
     # And the real tree must pass, from the real repo root.
     rc, out = run_lint(ROOT)

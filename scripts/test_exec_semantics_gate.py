@@ -223,11 +223,13 @@ def run_gate(log_text: str, tier: str) -> subprocess.CompletedProcess[str]:
         return proc
 
 
-def check_exec_vnni_opt_in() -> None:
-    """The live exec-tier driver must opt VNNI hardware into native execution.
+def tier_env_seen(tier: str | None, ambient: dict[str, str]) -> list[str]:
+    """The two tier-owned variables as the cargo child of the real driver sees them.
 
-    Use a fake cargo executable and ``--print-count`` so this checks the actual
-    shell environment wiring without compiling or running any workload.
+    A fake cargo records MIND_INTDOT_VNNI_VERIFY then MIND_BENCH_REQUIRE (the word
+    ``unset`` when absent). ``--print-count`` drives the live ``run_tier_cargo``
+    path without compiling or running any workload. ``tier=None`` runs the fake
+    directly: the positive control that the exported values are visible at all.
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -235,34 +237,58 @@ def check_exec_vnni_opt_in() -> None:
         fake_cargo = root / "cargo"
         fake_cargo.write_text(
             "#!/usr/bin/env bash\n"
-            "printf '%s\\n' \"$MIND_INTDOT_VNNI_VERIFY\" > \"$MIND_TEST_MARKER\"\n"
-            "printf '%s\\n' \"$MIND_BENCH_REQUIRE\" >> \"$MIND_TEST_MARKER\"\n",
+            "printf '%s\\n' \"${MIND_INTDOT_VNNI_VERIFY-unset}\" > \"$MIND_TEST_MARKER\"\n"
+            "printf '%s\\n' \"${MIND_BENCH_REQUIRE-unset}\" >> \"$MIND_TEST_MARKER\"\n",
             encoding="utf-8",
         )
         fake_cargo.chmod(0o755)
         env = os.environ.copy()
-        # Exercise the driver even when CI itself already exports these flags.
         env.pop("MIND_INTDOT_VNNI_VERIFY", None)
         env.pop("MIND_BENCH_REQUIRE", None)
+        env.update(ambient)
         env["PATH"] = f"{root}{os.pathsep}{env['PATH']}"
         env["MIND_TIER_LOG_DIR"] = str(root)
         env["MIND_TEST_MARKER"] = str(marker)
-        proc = subprocess.run(
-            ["bash", str(GATE), "--print-count", "exec"],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        command = [str(fake_cargo)] if tier is None else ["bash", str(GATE), "--print-count", tier]
+        proc = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True)
         if proc.returncode != 0:
             raise AssertionError(
-                "exec-tier fake-cargo wiring probe failed "
+                f"tier {tier} fake-cargo wiring probe failed "
                 f"(rc={proc.returncode}): {proc.stdout[-1000:]}{proc.stderr[-1000:]}"
             )
-        if marker.read_text(encoding="utf-8").splitlines() != ["1", "1"]:
+        return marker.read_text(encoding="utf-8").splitlines()
+
+
+def check_exec_vnni_opt_in() -> None:
+    """The live exec-tier driver must opt VNNI hardware into native execution."""
+    # Exercise the driver even when CI itself already exports these flags.
+    if tier_env_seen("exec", {}) != ["1", "1"]:
+        raise AssertionError(
+            "exec-tier cargo invocation did not receive "
+            "MIND_INTDOT_VNNI_VERIFY=1 and MIND_BENCH_REQUIRE=1"
+        )
+
+
+def check_tier_env_not_ambient() -> None:
+    """A tier owns both variables: the caller's shell never reaches its cargo.
+
+    The launch that measured the defect exported both as 1 for the whole run;
+    the lowering and pkg tiers build without mlir-build on purpose, so a
+    leaked MIND_BENCH_REQUIRE=1 reds them by construction. The exec tier sets
+    both itself, and its ambient value is 0 here so the 1 it sees is its own.
+    """
+    exported = {"MIND_INTDOT_VNNI_VERIFY": "1", "MIND_BENCH_REQUIRE": "1"}
+    if tier_env_seen(None, exported) != ["1", "1"]:
+        raise AssertionError("probe control: the fake cargo did not see the exported variables")
+    zeroed = {name: "0" for name in exported}
+    if tier_env_seen("exec", zeroed) != ["1", "1"]:
+        raise AssertionError("exec tier did not set both variables over an ambient 0")
+    for tier in ("lowering", "pkg"):
+        seen = tier_env_seen(tier, exported)
+        if seen != ["unset", "unset"]:
             raise AssertionError(
-                "exec-tier cargo invocation did not receive "
-                "MIND_INTDOT_VNNI_VERIFY=1 and MIND_BENCH_REQUIRE=1"
+                f"{tier} tier cargo inherited the caller's variables "
+                f"(MIND_INTDOT_VNNI_VERIFY, MIND_BENCH_REQUIRE) = {seen}"
             )
 
 
@@ -638,6 +664,12 @@ def main() -> int:
     except (AssertionError, OSError) as exc:
         print(f"[FAIL] exec tier VNNI wiring: {exc}")
         bad += 1
+    try:
+        check_tier_env_not_ambient()
+        print("[PASS] tiers own MIND_BENCH_REQUIRE and MIND_INTDOT_VNNI_VERIFY, not the caller's shell")
+    except (AssertionError, OSError) as exc:
+        print(f"[FAIL] tier environment ownership: {exc}")
+        bad += 1
     for name, produce, want in PARSER_CHECKS:
         got = produce()
         ok = got == want
@@ -668,7 +700,7 @@ def main() -> int:
             sys.stderr.write(proc.stderr[-2000:])
     # The sanctioned marker shape (see scripts/gate_assert.py MARKER_RES); a
     # bare `ran=/fail=` is refused by examples/mindc_mind/smoke_wiring_lint.py.
-    ran = 1 + len(CASES) + len(PARSER_CHECKS)
+    ran = 2 + len(CASES) + len(PARSER_CHECKS)
     print(f"\nSDLC-GATE exec_semantics_gate_selftest ran={ran} fail={bad}")
     if bad:
         print("FAIL: exec_semantics_gate.sh did not grade as required above")
