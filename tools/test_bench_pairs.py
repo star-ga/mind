@@ -222,6 +222,41 @@ def main() -> int:
            shell_same < shell.index("pick-core") and "--no-run" in shell
            and "exit 0" in shell[shell_same:shell.index("pick-core")])
 
+    def pair_guard_exits(text: str) -> set[int]:
+        lines = text.splitlines()
+        call_at = next(
+            (i for i, line in enumerate(lines) if "scripts/preflight_bench_pairs.sh" in line),
+            None,
+        )
+        if call_at is None:
+            return set()
+        guard = ""
+        for j in range(call_at, -1, -1):
+            stripped = lines[j].strip()
+            if stripped.startswith("elif ") or stripped.startswith("if "):
+                guard = stripped
+                break
+        found: set[int] = set()
+        if "-eq 1" in guard:
+            found.add(1)
+        if "-eq 2" in guard:
+            found.add(2)
+        return found
+
+    pair_at = preflight.index("scripts/preflight_bench_pairs.sh")
+    hard_at = preflight.index("could not assert a result")
+    report(
+        failures,
+        "bench exit 1 and exit 2 both reach the pair script",
+        pair_guard_exits(preflight) == {1, 2},
+        str(pair_guard_exits(preflight)),
+    )
+    report(
+        failures,
+        "a bench exit other than 1 or 2 stays a hard fail after the pair call",
+        hard_at > pair_at,
+    )
+
     if failures:
         print(f"\n{len(failures)} bench-pair test(s) FAILED")
         return 1

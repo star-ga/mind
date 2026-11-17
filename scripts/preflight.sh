@@ -687,7 +687,10 @@ if [ "${1:-}" = "--full" ] || [ "${1:-}" = "--bench-only" ]; then
         if [ "$gate_rc" -eq 0 ]; then
           echo "ok (regression <= +10% vs $base; speedups always pass)"
           rm -rf "$bench_tmp"
-        elif [ "$gate_rc" -eq 1 ]; then
+        # Exit 1 (trusted regression) and exit 2 (noisy canonical rows) both
+        # take the pair verdict. IDENTICAL, OK, and HOST-BELOW-FLOOR pass.
+        # REGRESSION and NOISY fail. Any other exit stays a hard fail.
+        elif [ "$gate_rc" -eq 1 ] || [ "$gate_rc" -eq 2 ]; then
           pair_rc=0
           bash scripts/preflight_bench_pairs.sh "$bench_tmp" "$bench_target" "$base" || pair_rc=$?
           if [ "$pair_rc" -ne 0 ]; then
