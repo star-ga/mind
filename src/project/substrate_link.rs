@@ -66,6 +66,11 @@ use crate::runtime::types::BackendTarget;
 ///   provides their symbols; linking the MIND objects too would replace the
 ///   shim's implementations in every program that imports them.
 ///
+/// `std.cpu_affinity` is a member because `std.iouring` imports it and calls its
+/// names by bare symbol: the closure follows that import, so a program calling
+/// the `io_reactor_*` affinity forwards links the module instead of leaving
+/// `cpu_affinity_*` undefined.
+///
 /// `std.cli` reads the process arguments through `__mind_argc` / `__mind_argv`,
 /// which the runtime support defines for the MLIR path. `std.io` defines
 /// `print_bytes`, which the shim defines too, as a weak symbol the std.io
@@ -89,6 +94,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.blas",
     "std.chacha20_poly1305",
     "std.cli",
+    "std.cpu_affinity",
     "std.detmath",
     "std.dns",
     "std.ecdsa_p256",
