@@ -2411,6 +2411,19 @@ jobs:
         # fail-closed cases go red and the runner exits 1.
         run: python3 scripts/run_gate.py tools/test_bench_gate.py
 
+      - name: Bench pair rules must hold on a temporary repository
+        # tools/bench_pairs.py --self-test proves the pair leg of the preflight
+        # bench check: the 3% fail bound, the ABBA order rule, the core pick, the
+        # identical-binary rule, and the base that scripts/preflight_bench_pairs.sh
+        # resolves (a candidate that is HEAD itself is skipped, an all-HEAD range is
+        # empty and named, no base at all exits 4). It needs no toolchain: the pair
+        # script runs in a temporary git repository against a stub cargo.
+        #
+        # It sits beside tools/test_bench_gate.py for the same reason: the job needs
+        # no build and is in .github/required-ci-jobs.tsv. Before this step the pair
+        # self-test ran in no workflow.
+        run: python3 scripts/run_gate.py tools/bench_pairs.py --self-test
+
   conformance:
     name: Core v1 conformance suite
     runs-on: ubuntu-24.04

@@ -198,7 +198,15 @@ GATED_EVENTS = ("push", "pull_request")
 # the tls handshake driver. Folding the joined harnesses into those drivers put
 # them at 1283 and 970 lines, over the 800-line module_size_ratchet ceiling;
 # the bodies moved unchanged and still run only through their drivers.
-HARNESS_CEILING = 326  # Exact reviewed integration inventory; no spare allowance.
+# 326 -> 327 adds scripts/preflight_bench_pairs.sh, the pair leg of the preflight
+# bench check (220 lines; inside scripts/preflight.sh, now 718 lines, it would
+# end near 940 lines, over the 800-line ceiling). Its pair rules are proven by
+# tools/bench_pairs.py --self-test, not by a file of their own.
+# 327 -> 328 adds tools/bench_pairs.py, the pair verdict and its --self-test
+# (inside tools/bench_gate.py, now 762 lines, it would pass 1000 lines). Its
+# former test file is folded in and gone, and the self-test now runs in
+# ci.yml sdlc_integrity, where before it ran in no workflow.
+HARNESS_CEILING = 328  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
