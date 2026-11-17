@@ -9,23 +9,36 @@
 //! This is the milestone that retires cargo from the pure-MIND compile loop.
 //! All tests in this module use the `mindc` binary (built via `cargo build`
 //! from the Rust host crate) to drive `mindc build` against the mind repo's
-//! own `Mind.toml`. The output must be byte-identical to:
+//! own `Mind.toml`. The contract is route identity on the same host: on one
+//! host, with one `mindc` binary, the artifact does not depend on which route
+//! built it. The output must be byte-identical to:
 //!
 //!   1. A direct `mindc build <path> --emit=cdylib --out=<path>` invocation
 //!      (same flags, same source, no `Mind.toml` involvement) — proves that
 //!      `Mind.toml`-driven builds are a transparent layer over the single-file
 //!      path.
 //!
-//!   2. The Phase F warm-cache hit — proves that Phase G adds no overhead
-//!      to the incremental rebuild path.
+//!   2. A second uncached (`--no-cache`) build of the same source.
 //!
-//! The byte-identity claim is the load-bearing keystone. The Rust crate
-//! continues to host `mindc` (compiles the Rust source via cargo) until
+//!   3. The cached build (the Phase F warm-cache path). A cache-free build
+//!      reproduces the cached artifact, and the warm rebuild stays a cache
+//!      hit — proves that Phase G adds no overhead to the incremental rebuild
+//!      path and that the cache returns the same bytes as a cache-free build.
+//!
+//! The same-host byte-identity claim is the load-bearing keystone. The Rust
+//! crate continues to host `mindc` (compiles the Rust source via cargo) until
 //! RFC 0010 lands a pure-MIND libMLIR FFI. What Phase G claims:
 //!
-//!   "mindc build produces libmindc_mind.so byte-identical to the v0.6.1
-//!   fixed-point oracle, driven entirely by the pure-MIND build orchestrator.
-//!   Cargo is no longer load-bearing for the pure-MIND compile loop."
+//!   "mindc build produces libmindc_mind.so driven entirely by the pure-MIND
+//!   build orchestrator, and on the same host every route produces the same
+//!   file. Cargo is no longer load-bearing for the pure-MIND compile loop."
+//!
+//! What this file does NOT claim: identity between hosts. The host toolchain
+//! links the final file, so the linker, the startup files and libgcc come from
+//! the machine that ran the build. Measured on 2026-11-17 on two hosts with
+//! the same compiler commit: the LLVM IR and every module object were
+//! identical, and the final file was not. Compare artifact hashes only for
+//! builds made on the same host.
 //!
 //! Gate:
 //! ```
