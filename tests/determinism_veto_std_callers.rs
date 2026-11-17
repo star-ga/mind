@@ -3,7 +3,8 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Callers of std functions that read the world (`std.entropy`, `std.dns`,
-//! `std.https`, `std.https_probe`, `std.https_io`).
+//! `std.https`, `std.https_probe`, `std.https_io`, and the CPU affinity calls of
+//! `std.cpu_affinity` and `std.iouring`).
 //!
 //! Companion to `determinism_veto_control`. A std function's body is compiled
 //! into a separate object, so the caller's IR holds only the call, and the
@@ -82,6 +83,68 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
     ),
     ("https_io", "https_io.hio_arm(p, 9)", "hio_arm"),
     ("https_io", "https_io.hio_io_failure(p)", "hio_io_failure"),
+    // The CPU affinity calls make a real affinity system call: the std.cpu_affinity
+    // functions, and the forwards of std.iouring. Qualified, then bare.
+    (
+        "cpu_affinity",
+        "cpu_affinity.cpu_affinity_pin(p)",
+        "cpu_affinity_pin",
+    ),
+    (
+        "cpu_affinity",
+        "cpu_affinity.cpu_affinity_mask()",
+        "cpu_affinity_mask",
+    ),
+    (
+        "cpu_affinity",
+        "cpu_affinity.cpu_affinity_has(p)",
+        "cpu_affinity_has",
+    ),
+    (
+        "cpu_affinity",
+        "cpu_affinity.cpu_affinity_pin_demo(p)",
+        "cpu_affinity_pin_demo",
+    ),
+    (
+        "iouring",
+        "iouring.io_reactor_pin_cpu(p)",
+        "io_reactor_pin_cpu",
+    ),
+    (
+        "iouring",
+        "iouring.io_reactor_affinity_mask()",
+        "io_reactor_affinity_mask",
+    ),
+    (
+        "iouring",
+        "iouring.io_reactor_affinity_has(p)",
+        "io_reactor_affinity_has",
+    ),
+    (
+        "iouring",
+        "iouring.io_reactor_pin_demo(p)",
+        "io_reactor_pin_demo",
+    ),
+    ("cpu_affinity", "cpu_affinity_pin(p)", "cpu_affinity_pin"),
+    ("cpu_affinity", "cpu_affinity_mask()", "cpu_affinity_mask"),
+    ("cpu_affinity", "cpu_affinity_has(p)", "cpu_affinity_has"),
+    (
+        "cpu_affinity",
+        "cpu_affinity_pin_demo(p)",
+        "cpu_affinity_pin_demo",
+    ),
+    ("iouring", "io_reactor_pin_cpu(p)", "io_reactor_pin_cpu"),
+    (
+        "iouring",
+        "io_reactor_affinity_mask()",
+        "io_reactor_affinity_mask",
+    ),
+    (
+        "iouring",
+        "io_reactor_affinity_has(p)",
+        "io_reactor_affinity_has",
+    ),
+    ("iouring", "io_reactor_pin_demo(p)", "io_reactor_pin_demo"),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -95,6 +158,9 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
     ("https_probe", "https_probe.https_probe_ok()"),
     ("https_io", "https_io.hio_deadline_s()"),
     ("https_record", "https_record.tls13rl_pend_ready(p)"),
+    // A function of std.iouring that reads no World name stays deterministic.
+    ("iouring", "iouring.iouring_cqe_f_more()"),
+    ("iouring", "iouring_cqe_f_more()"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

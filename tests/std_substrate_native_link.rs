@@ -743,8 +743,14 @@ mod iouring_affinity {
     fn iouring_affinity_call_links_and_runs_on_every_route() {
         let lib = probe(allowed_low64());
         let exe = format!("{lib}\nfn main() -> i64 {{\n    return go();\n}}\n");
-        // The program reads the CPU mask, a World read: the flat build is
-        // authorised so this route stays valid if its veto learns to see it.
+        // The program reads the CPU mask, a World read: the flat build is refused
+        // without the flag (asserted here) and built with it (the route below).
+        let flat = |flags: &[&str]| {
+            emit_shared_with("iouring_affinity_flat", &[("lib.mind", &lib)], flags)
+        };
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flat(&[])));
+        let text = refused.err().map_or_else(String::new, |p| panic_text(&*p));
+        assert!(text.contains("error[determinism]"), "not refused: {text}");
         let run = |route: &str| -> Option<i64> {
             let so = match route {
                 "executable" => {
@@ -752,11 +758,7 @@ mod iouring_affinity {
                     return build_and_run("iouring_affinity_exe", &files).map(i64::from);
                 }
                 "cdylib" => build_cdylib("iouring_affinity_so", &["go"], &[("main.mind", &lib)]),
-                _ => emit_shared_with(
-                    "iouring_affinity_flat",
-                    &[("lib.mind", &lib)],
-                    &["--allow-nondeterministic"],
-                ),
+                _ => flat(&["--allow-nondeterministic"]),
             };
             so.map(|so| call_go(&so))
         };

@@ -357,6 +357,27 @@ mod tests {
             "tcp_connect_host_timeout(p, 9, 80, 100)",
             "tcp_connect_host_timeout",
         ),
+        // The CPU affinity rows: qualified, aliased with `::`, and bare.
+        (
+            "import std.iouring;",
+            "iouring.io_reactor_pin_cpu(8)",
+            "io_reactor_pin_cpu",
+        ),
+        (
+            "import std.iouring;",
+            "io_reactor_affinity_mask()",
+            "io_reactor_affinity_mask",
+        ),
+        (
+            "import std.cpu_affinity as c;",
+            "c::cpu_affinity_has(8)",
+            "cpu_affinity_has",
+        ),
+        (
+            "import std.cpu_affinity;",
+            "cpu_affinity_pin_demo(p)",
+            "cpu_affinity_pin_demo",
+        ),
     ];
 
     #[test]
@@ -416,6 +437,36 @@ mod tests {
             Some("entropy_fill")
         );
         assert_eq!(reached_offender(shadow, "f"), None);
+    }
+
+    /// The implicit std modules (`std.iouring`, `std.cpu_affinity`) resolve a
+    /// bare name with no import, so a bare call of one of their rows is the std
+    /// function unless the module defines that name. `std.dns`, `std.entropy`
+    /// and `std.https` are not implicit: the same bare call there is a user name.
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    #[test]
+    fn a_bare_call_of_an_implicit_std_row_needs_no_import() {
+        let rows = [
+            ("io_reactor_pin_cpu", "(p)"),
+            ("io_reactor_affinity_mask", "()"),
+            ("io_reactor_affinity_has", "(p)"),
+            ("io_reactor_pin_demo", "(p)"),
+            ("cpu_affinity_pin", "(p)"),
+            ("cpu_affinity_mask", "()"),
+            ("cpu_affinity_has", "(p)"),
+            ("cpu_affinity_pin_demo", "(p)"),
+        ];
+        for (row, args) in rows {
+            let world = format!("pub fn f(p: i64) -> i64 {{\n    {row}{args}\n}}\n");
+            assert_eq!(offender(&world).as_deref(), Some(row), "{row}");
+            assert_eq!(reached_offender(&world, "f").as_deref(), Some(row), "{row}");
+            let shadow = format!("fn {row}(p: i64) -> i64 {{\n    p\n}}\n\n{world}");
+            assert_eq!(offender(&shadow), None, "{row} is defined by the module");
+        }
+        for call in ["dns_resolve(p, 9)", "entropy_fill(p, 8)", "https_get(p, 9)"] {
+            let src = format!("pub fn f(p: i64) -> i64 {{\n    {call}\n}}\n");
+            assert_eq!(offender(&src), None, "{call}: its module is not implicit");
+        }
     }
 
     /// `Q` is the qualifier. Each position holds a `std.entropy` use (a world

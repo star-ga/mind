@@ -425,6 +425,42 @@ const SIBLING_WORLD: &[SiblingCase] = &[
         offender: "tcp_connect_host",
         via: "::k`",
     },
+    // The CPU affinity names of the implicit std modules: with the import, with
+    // none (behind a helper), and from a third module.
+    SiblingCase {
+        tag: "affinity_iouring",
+        files: &[(
+            "w.mind",
+            "import std.iouring;\n\npub fn g(p: i64) -> i64 {\n    io_reactor_pin_cpu(p)\n}\n",
+        )],
+        offender: "io_reactor_pin_cpu",
+        via: "::g`",
+    },
+    SiblingCase {
+        tag: "affinity_implicit_helper",
+        files: &[(
+            "w.mind",
+            "fn h(p: i64) -> i64 {\n    cpu_affinity_mask() + p\n}\n\n\
+             pub fn g(p: i64) -> i64 {\n    h(p) + 1\n}\n",
+        )],
+        offender: "cpu_affinity_mask",
+        via: "::h`",
+    },
+    SiblingCase {
+        tag: "affinity_third_module",
+        files: &[
+            (
+                "w.mind",
+                "import v;\n\npub fn g(p: i64) -> i64 {\n    v.k(p) + 1\n}\n",
+            ),
+            (
+                "v.mind",
+                "import std.cpu_affinity;\n\npub fn k(p: i64) -> i64 {\n    cpu_affinity_has(p)\n}\n",
+            ),
+        ],
+        offender: "cpu_affinity_has",
+        via: "::k`",
+    },
 ];
 
 /// A program whose sibling module reads the world is that program: refused

@@ -205,7 +205,17 @@ const NAMED_STD_MODULES: &[(&str, &str)] = &[
         "std.os_evidence",
         include_str!("../../std/os_evidence.mind"),
     ),
+    (
+        "std.cpu_affinity",
+        include_str!("../../std/cpu_affinity.mind"),
+    ),
 ];
+
+/// Named modules whose every public function reaches the world, so the scan
+/// below has no pure side. A pure public function added to one of them makes
+/// its pure side non-empty and must take the module off this list.
+#[cfg(feature = "std-surface")]
+const ALL_WORLD_STD_MODULES: &[&str] = &["std.cpu_affinity"];
 
 /// Every callee named anywhere in `instrs`, through every nested body.
 #[cfg(feature = "std-surface")]
@@ -226,6 +236,25 @@ fn callees(instrs: &[crate::ir::Instr], out: &mut std::collections::BTreeSet<Str
 /// callee of the module itself counts only through its own body.
 #[cfg(feature = "std-surface")]
 fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
+    public_reach(module, src, &|c| {
+        // A call into another named std module (std.https calls std.dns
+        // and std.entropy) reaches the world through that module's row.
+        callee_is_nondeterministic(c)
+            || NAMED_STD_MODULES
+                .iter()
+                .any(|(m, _)| crate::std_qualified::is_row(m, c))
+    })
+}
+
+/// `(reaches, does not)`: the `pub fn`s of `src`, split by whether their body
+/// reaches a callee `leaf` accepts that the module does not define, directly or
+/// through other functions of the module.
+#[cfg(feature = "std-surface")]
+fn public_reach(
+    module: &str,
+    src: &str,
+    leaf: &dyn Fn(&str) -> bool,
+) -> (Vec<String>, Vec<String>) {
     use std::collections::{BTreeMap, BTreeSet};
     let ast = crate::parser::parse(src).unwrap_or_else(|e| panic!("{module}: parse: {e:?}"));
     let public: Vec<String> = ast
@@ -255,12 +284,7 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
                 if calls.contains_key(c) {
                     world.contains(c)
                 } else {
-                    // A call into another named std module (std.https calls std.dns
-                    // and std.entropy) reaches the world through that module's row.
-                    callee_is_nondeterministic(c)
-                        || NAMED_STD_MODULES
-                            .iter()
-                            .any(|(m, _)| crate::std_qualified::is_row(m, c))
+                    leaf(c.as_str())
                 }
             });
             if reaches {
@@ -293,8 +317,8 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
     for (module, src) in NAMED_STD_MODULES {
         let (reach, pure) = public_world_reach(module, src);
         assert!(
-            !reach.is_empty() && !pure.is_empty(),
-            "{module}: vacuous scan, reach={reach:?} pure={pure:?}"
+            !reach.is_empty() && pure.is_empty() == ALL_WORLD_STD_MODULES.contains(module),
+            "{module}: vacuous scan, or its pure side changed: reach={reach:?} pure={pure:?}"
         );
         for f in &reach {
             assert!(
@@ -318,11 +342,58 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 21,
+        named, 25,
         "dns_resolve, tcp_connect_host(_timeout), dns_tcp_socket, dns_connect_fd, \
          dns_clock_gettime, entropy_fill, \
          https_get(_ca), https_post(_ca), https_get_with_headers, https_post_with_headers, \
          https_probe, hio_now_unix, hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure, \
-         procgroup_spawn_ev, procgroup_wait_all_ev"
+         procgroup_spawn_ev, procgroup_wait_all_ev, \
+         cpu_affinity_pin, cpu_affinity_mask, cpu_affinity_has, cpu_affinity_pin_demo"
     );
+}
+
+/// The four affinity names of `std.iouring` are its forwards into
+/// `std.cpu_affinity`. A public function of `std.iouring` whose body reaches a
+/// World function of `std.cpu_affinity` is a row, so a new forward without a
+/// row fails here, and no other public function of it is a row. The other
+/// World-reaching functions of `std.iouring` (a raw `syscall`) are NOT rows
+/// yet, so this scan follows `std.cpu_affinity` only. Two-sided, and a scan
+/// that found no forward fails rather than passing vacuously.
+#[cfg(feature = "std-surface")]
+#[test]
+fn std_iouring_rows_are_its_forwards_into_std_cpu_affinity() {
+    let src = include_str!("../../std/iouring.mind");
+    let (mut forwards, others) = public_reach("std.iouring", src, &|c| {
+        crate::std_qualified::is_row("std.cpu_affinity", c)
+    });
+    forwards.sort();
+    assert_eq!(
+        forwards,
+        [
+            "io_reactor_affinity_has",
+            "io_reactor_affinity_mask",
+            "io_reactor_pin_cpu",
+            "io_reactor_pin_demo",
+        ],
+        "the std.iouring forwards into std.cpu_affinity changed"
+    );
+    for f in &forwards {
+        assert!(
+            crate::std_qualified::is_row("std.iouring", f),
+            "std.iouring: `{f}` calls a World function of std.cpu_affinity but is not a \
+             qualified row, so a caller of it is attested deterministic"
+        );
+        assert!(
+            !callee_is_nondeterministic(f),
+            "std.iouring: `{f}` is classified by its bare name, so a user function \
+             of that spelling is refused"
+        );
+    }
+    assert!(!others.is_empty(), "vacuous scan: no other public function");
+    for f in &others {
+        assert!(
+            !crate::std_qualified::is_row("std.iouring", f),
+            "std.iouring: `{f}` does not reach std.cpu_affinity but is a row"
+        );
+    }
 }

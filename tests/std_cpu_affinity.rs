@@ -116,6 +116,10 @@ fn cpu_affinity_parses_and_lowers() {
             names.contains(&required),
             "std.cpu_affinity must define `{required}`; found {names:?}"
         );
+        assert!(
+            libmind::std_qualified::is_row("std.cpu_affinity", required),
+            "`{required}` makes an affinity system call, so it is a World row of std_qualified"
+        );
     }
 }
 
@@ -145,6 +149,10 @@ fn iouring_forwards_io_reactor_affinity_names() {
         assert!(
             body_calls(fn_body(&ir, fwd), dest),
             "`{fwd}` must call `{dest}`"
+        );
+        assert!(
+            libmind::std_qualified::is_row("std.iouring", fwd),
+            "`{fwd}` forwards to the World function `{dest}`, so it is a row of std_qualified"
         );
     }
 }
