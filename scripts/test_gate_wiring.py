@@ -122,6 +122,122 @@ def drop_manifest_row(text: str, needle: str) -> str:
     return "".join(kept)
 
 
+# The commit-message range base of preflight.sh. The REAL resolver and the REAL
+# step are cut out of the script and run in a temporary repository.
+GIT_ENV = {k: v for k, v in os.environ.items() if k != "MIND_HYGIENE_BASE"}
+GIT_ENV.update(GIT_AUTHOR_NAME="STARGA Inc", GIT_AUTHOR_EMAIL="noreply@star.ga",
+               GIT_COMMITTER_NAME="STARGA Inc", GIT_COMMITTER_EMAIL="noreply@star.ga",
+               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+CREDIT = "\n\nCo-authored-by: Pat Example <pat@example.invalid>"
+EMPTY_LINE = "commit-message range is empty: HEAD is on every base candidate"
+ALL_MISSES = ("refs/heads/main absent; refs/remotes/origin/main absent; "
+              "MIND_HYGIENE_BASE unset")
+# (key, verdict, main, origin/main, MIND_HYGIENE_BASE, credit on c2, want).
+# HEAD is c2 in every case. c1 is its parent. c3 is a commit on a side line off c1.
+# want = (base commit, scanned count, range empty, text of the failure).
+HYGIENE_CASES = (
+    ("on-main", "HEAD is local main, origin/main is the parent: the base is the parent",
+     "c2", "c1", None, False, ("c1", 1, False, None)),
+    ("on-main-credit", "HEAD is local main, origin/main is the parent: a credit on main is refused",
+     "c2", "c1", None, True, ("c1", None, False, "commit-message gate FAILED")),
+    ("on-both", "HEAD is local main and origin/main: the range is empty and says so",
+     "c2", "c2", None, False, ("c2", 0, True, None)),
+    ("on-main-only", "HEAD is local main, origin/main is absent: the range is empty and says so",
+     "c2", None, None, False, ("c2", 0, True, None)),
+    ("on-origin", "HEAD is origin/main, MIND_HYGIENE_BASE is the parent: the base is the parent",
+     None, "c2", "c1", False, ("c1", 1, False, None)),
+    ("on-env", "HEAD is MIND_HYGIENE_BASE alone: the range is empty and says so",
+     None, None, "c2", False, ("c2", 0, True, None)),
+    ("ahead", "main is behind HEAD: the base is main",
+     "c1", None, None, False, ("c1", 1, False, None)),
+    ("diverged", "main diverged from HEAD: the base is main",
+     "c3", None, None, False, ("c3", 1, False, None)),
+    ("no-candidate", "no candidate resolves: the gate fails and names all three misses",
+     None, None, None, False, (None, None, False, ALL_MISSES)),
+    ("env-not-commit", "MIND_HYGIENE_BASE is not a commit: the gate fails and names it",
+     None, None, "no-such-ref", False,
+     (None, None, False, "MIND_HYGIENE_BASE=no-such-ref not a commit")),
+)
+RES_FN = "resolve_hygiene_base() {"
+SKIP = 'git merge-base --is-ancestor HEAD "${cand}" 2>/dev/null && continue'
+# (name, anchor, replacement, keys that must go red)
+HYGIENE_MUTANTS = (
+    ("skip removed", SKIP, ":", ("on-main", "on-both", "on-origin", "on-env")),
+    ("skip always", SKIP, "continue", ("ahead", "diverged")),
+    ("skip reversed", SKIP, SKIP.replace('HEAD "${cand}"', '"${cand}" HEAD'), ("on-main", "ahead")),
+    ("empty range is a miss", 'if [ "${resolved}" = 1 ]; then', "if false; then",
+     ("on-both", "on-main-only", "on-env")),
+    ("resolved not recorded", "    resolved=1\n", "    resolved=0\n", ("on-both", "on-main-only", "on-env")),
+    ("empty range not said", f'echo "{EMPTY_LINE}"', ":", ("on-both", "on-main-only", "on-env")),
+    ("no candidate passes", '"${tries#; }" >&2\n  return 1', '"${tries#; }" >&2\n  return 0',
+     ("no-candidate", "env-not-commit")),
+    ("miss not named", 'tries="${tries}; ${name} ${miss}"', 'tries="${tries}; miss"',
+     ("no-candidate", "env-not-commit")),
+)
+
+
+def git(d: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=d, env=GIT_ENV, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def build_hygiene_repo(d: Path, main, origin, credit: bool) -> dict[str, str]:
+    """HEAD is c2 on branch topic; main and origin/main sit where the case says."""
+    def commit(msg: str) -> str:
+        git(d, "commit", "-q", "--allow-empty", "-m", msg)
+        return git(d, "rev-parse", "HEAD")
+    git(d, "init", "-q", "-b", "topic")
+    c = {"c1": commit("feat: one")}
+    git(d, "checkout", "-q", "-b", "side")
+    c["c3"] = commit("feat: side")
+    git(d, "checkout", "-q", "topic")
+    c["c2"] = commit("feat: two" + (CREDIT if credit else ""))
+    for ref, at in (("refs/heads/main", main), ("refs/remotes/origin/main", origin)):
+        if at:
+            git(d, "update-ref", ref, c[at])
+    for rel in ("check_commit_messages.sh", "ai_attribution_patterns.sh"):
+        (d / "scripts").mkdir(exist_ok=True)
+        shutil.copy2(ROOT / "scripts" / rel, d / "scripts" / rel)
+    return c
+
+
+def hygiene_script(text: str) -> str:
+    """The resolver and the commit-message step of preflight.sh, ready to run."""
+    start = text.index(RES_FN)
+    fn = text[start:text.index("\n}\n", start) + 3]
+    at = text.index('step "commit-message hygiene')
+    step = text[at:text.index("# --- git-level SDLC gates", at)]
+    err = "hygiene_err=/tmp/preflight-hygiene-base.err"
+    if err not in step:
+        raise SystemExit(f"test_gate_wiring: {err!r} moved out of the commit-message step")
+    return ("set -uo pipefail\nfail=0\nstep() { :; }\nbad() { printf 'FAIL: %s\\n' \"$*\"; fail=1; }\n"
+            + fn + step.replace(err, 'hygiene_err="${HYGIENE_ERR}"') + '\nexit "$fail"\n')
+
+
+def hygiene_problem(script: str, d: Path, c: dict[str, str], env_base, want) -> str:
+    """Run the script in repo d; return why its output differs from `want`, or ''."""
+    base, scanned, empty, failure = want
+    env = dict(GIT_ENV, HYGIENE_ERR=str(d / ".git" / "hygiene.err"))
+    if env_base:
+        env["MIND_HYGIENE_BASE"] = c.get(env_base, env_base)
+    run = subprocess.run(["bash", "-c", script], cwd=d, env=env, capture_output=True,
+                         text=True, timeout=60)
+    out = run.stdout + run.stderr
+    if (failure is None) != (run.returncode == 0 and "FAIL:" not in out):
+        return f"exit={run.returncode}, expected {'a pass' if failure is None else 'a failure'}: {out.strip()[-300:]}"
+    if failure is not None and failure not in out:
+        return f"the failure does not name {failure!r}: {out.strip()[-300:]}"
+    if (EMPTY_LINE in out) != empty:
+        return f"empty-range line {'missing' if empty else 'printed'}: {out.strip()[-300:]}"
+    got = re.findall(r"^commit-message base: (.+)$", out, re.MULTILINE)
+    if base is not None and (len(got) != 1 or git(d, "rev-parse", got[0]) != c[base]):
+        return f"range base {got}, expected {base} = {c[base][:12]}"
+    seen = re.findall(r"^commit-message gate: scanned (\d+) commits", out, re.MULTILINE)
+    if scanned is not None and seen != [str(scanned)]:
+        return f"scanned {seen}, expected {scanned}"
+    return ""
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -613,6 +729,44 @@ def main() -> int:
                   f"{'stops with one named failure' if stops else 'passes the guard'}: exit={rc}")
             if not ok:
                 failures.append(f"preflight python guard {label}: exit={rc}\n{out.rstrip()[-1500:]}")
+
+    # The commit-message range base. Every case runs the real resolver and the
+    # real step in its own repository. A mutant of the resolver must turn the
+    # cases it names red, or the cases do not pin that line.
+    pf_text = (ROOT / "scripts/preflight.sh").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as td:
+        repos: dict[str, tuple[Path, dict[str, str]]] = {}
+        for key, _, main_at, origin_at, _, credit, _ in HYGIENE_CASES:
+            repo = Path(td) / key
+            repo.mkdir()
+            repos[key] = (repo, build_hygiene_repo(repo, main_at, origin_at, credit))
+
+        def verdicts(script: str) -> dict[str, str]:
+            return {key: hygiene_problem(script, *repos[key], env_base, want)
+                    for key, _, _, _, env_base, _, want in HYGIENE_CASES}
+        real = verdicts(hygiene_script(pf_text))
+        for key, verdict, *_ in HYGIENE_CASES:
+            # Only a passing case prints its verdict line; a failing one prints the reason.
+            print(f"  [{'FAIL' if real[key] else 'ok'}] "
+                  + (f"hygiene case {key}: {real[key]}" if real[key] else f"hygiene base: {verdict}"))
+            if real[key]:
+                failures.append(f"hygiene case {key}: {real[key]}")
+        for name, old, new, red in HYGIENE_MUTANTS:
+            if pf_text.count(old) != 1:
+                failures.append(f"hygiene mutant {name!r}: anchor {old!r} is not in preflight.sh exactly once")
+                print(f"  [FAIL] hygiene mutant {name}: anchor not found exactly once")
+                continue
+            script = hygiene_script(pf_text.replace(old, new, 1))
+            syntax = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True)
+            if syntax.returncode:  # a script that does not parse is red for the wrong reason
+                failures.append(f"hygiene mutant {name!r} does not parse: {syntax.stderr.strip()}")
+                print(f"  [FAIL] hygiene mutant {name}: the mutated script does not parse")
+                continue
+            got = verdicts(script)
+            alive = [k for k in red if not got[k]]
+            print(f"  [{'FAIL' if alive else 'ok'}] hygiene mutant {name} -> RED in {', '.join(red)}")
+            if alive:
+                failures.append(f"hygiene mutant {name!r} stays green in: {alive}")
 
     # And the real tree must pass, from the real repo root.
     rc, out = run_lint(ROOT)

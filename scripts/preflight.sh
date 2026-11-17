@@ -66,30 +66,38 @@ require_python_312
 # Order is fixed: local main, then the remote-tracking main, then
 # MIND_HYGIENE_BASE. A miss is named. None of the three resolving is a
 # failure. It is never a pass.
+# A candidate that HEAD is on (its merge-base with HEAD is HEAD itself) leaves
+# the range candidate..HEAD empty, so a commit made on local main would go
+# unscanned before the push. It is skipped and the next candidate is tried. When
+# every candidate that resolved was skipped, the range is empty: the base is
+# HEAD and the caller says so. That is not a miss.
 resolve_hygiene_base() {
-  local tries=""
-  local cand=""
-  cand="refs/heads/main"
-  if git rev-parse --verify -q "${cand}" >/dev/null; then
+  local tries="" resolved=0 name="" cand="" miss="absent"
+  for name in refs/heads/main refs/remotes/origin/main MIND_HYGIENE_BASE; do
+    cand="${name}"
+    if [ "${name}" = MIND_HYGIENE_BASE ]; then
+      cand="${MIND_HYGIENE_BASE:-}"
+      miss="not a commit"
+      name="MIND_HYGIENE_BASE=${cand}"
+      if [ -z "${cand}" ]; then
+        tries="${tries}; MIND_HYGIENE_BASE unset"
+        continue
+      fi
+    fi
+    if ! git rev-parse --verify -q "${cand}^{commit}" >/dev/null; then
+      tries="${tries}; ${name} ${miss}"
+      continue
+    fi
+    resolved=1
+    git merge-base --is-ancestor HEAD "${cand}" 2>/dev/null && continue
     printf '%s\n' "${cand}"
     return 0
-  fi
-  tries="${cand} absent"
-  cand="refs/remotes/origin/main"
-  if git rev-parse --verify -q "${cand}" >/dev/null; then
-    printf '%s\n' "${cand}"
+  done
+  if [ "${resolved}" = 1 ]; then
+    printf 'HEAD\n'
     return 0
   fi
-  tries="${tries}; ${cand} absent"
-  if [ -z "${MIND_HYGIENE_BASE:-}" ]; then
-    tries="${tries}; MIND_HYGIENE_BASE unset"
-  elif git rev-parse --verify -q "${MIND_HYGIENE_BASE}^{commit}" >/dev/null; then
-    printf '%s\n' "${MIND_HYGIENE_BASE}"
-    return 0
-  else
-    tries="${tries}; MIND_HYGIENE_BASE=${MIND_HYGIENE_BASE} not a commit"
-  fi
-  printf '%s\n' "${tries}" >&2
+  printf '%s\n' "${tries#; }" >&2
   return 1
 }
 
@@ -292,6 +300,7 @@ else
   : > "${hygiene_err}"
   if hygiene_base=$(resolve_hygiene_base 2>"${hygiene_err}"); then
     echo "commit-message base: ${hygiene_base}"
+    [ "${hygiene_base}" != HEAD ] || echo "commit-message range is empty: HEAD is on every base candidate"
     if cm_out=$(bash scripts/check_commit_messages.sh "${hygiene_base}..HEAD" 2>&1); then
       printf '%s\n' "$cm_out" | grep -E '^commit-message gate:' | tail -1
     else
