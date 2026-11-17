@@ -614,3 +614,145 @@ fn reexport_middle_refuses_local_encode() {
     );
     assert_three_routes_refuse_collision(&mindc, &project);
 }
+
+const LOCAL_ELEVEN: &str = "fn encode(x: i64) -> i64 {\n    return 11;\n}\n";
+const IMPORTED_TWENTY_ONE: &str = "pub fn encode(x: i64) -> i64 {\n    return 21;\n}\n";
+
+fn assert_length_one_import_runs_imported_body(mindc: &Path, project: &Path, expect: i32) {
+    let build = common::run_build_captured(mindc, project, &["--no-cache"]);
+    let rendered = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        build.status.success(),
+        "executable route failed:\n{rendered}"
+    );
+    let artifact = common::reported_artifact(&build);
+    let run = Command::new(&artifact).output().expect("run imported body");
+    assert_eq!(
+        run.status.code(),
+        Some(expect),
+        "executable route returned the wrong body"
+    );
+
+    let cdylib = project.join("plain.so");
+    let emit = Command::new(mindc)
+        .current_dir(project)
+        .args([
+            "build",
+            "--backend",
+            "mlir",
+            "--emit",
+            "cdylib",
+            "--no-cache",
+            "--out",
+            cdylib.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cdylib build");
+    let cdylib_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&emit.stdout),
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        emit.status.success() && cdylib.is_file(),
+        "cdylib route failed:\n{cdylib_text}"
+    );
+    unsafe {
+        let lib = Library::new(&cdylib).expect("load cdylib");
+        let entry: Symbol<unsafe extern "C" fn() -> i64> = lib.get(b"main\0").expect("load main");
+        assert_eq!(entry(), i64::from(expect), "cdylib returned the wrong body");
+    }
+
+    // std/json.mind already exports `encode`. A user image that publishes the
+    // same name is a native std-symbol refusal. MLIR and cdylib still run the
+    // imported body. The native route must not publish a local-body exit.
+    let native_out = project.join("native-bin");
+    let native = Command::new(mindc)
+        .current_dir(project)
+        .args([
+            "build",
+            "--backend",
+            "native",
+            "--no-cache",
+            "--out",
+            native_out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run native build");
+    let native_text = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        !native.status.success(),
+        "native route accepted an encode export that std already owns:\n{native_text}"
+    );
+    assert!(
+        native_text.contains("closure.std_symbol_collision"),
+        "native route lost the std-symbol refusal:\n{native_text}"
+    );
+    if native_out.is_file() {
+        let native_run = Command::new(&native_out).output().expect("run native body");
+        assert_ne!(
+            native_run.status.code(),
+            Some(11),
+            "native route returned the local body"
+        );
+    }
+}
+
+#[test]
+fn length_one_item_import_bare_call_refuses() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("item1 scratch");
+    let main_src = format!(
+        "import encode;\n\n{LOCAL_ELEVEN}\npub fn main() -> i64 {{\n    return encode(0);\n}}\n"
+    );
+    let project = write_project_files(
+        temp.path(),
+        &[
+            ("src/main.mind", main_src.as_str()),
+            ("src/encode.mind", IMPORTED_TWENTY_ONE),
+        ],
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}
+
+#[test]
+fn length_one_item_import_without_local_runs_imported_body() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("item1 control scratch");
+    let project = write_project_files(
+        temp.path(),
+        &[
+            (
+                "src/main.mind",
+                "import encode;\n\npub fn main() -> i64 {\n    return encode(0);\n}\n",
+            ),
+            ("src/encode.mind", IMPORTED_TWENTY_ONE),
+        ],
+    );
+    assert_length_one_import_runs_imported_body(&mindc, &project, 21);
+}
+
+#[test]
+fn item_import_bare_call_refuses_local_encode() {
+    let mindc = common::require_mindc();
+    let temp = tempfile::tempdir().expect("itemN bare scratch");
+    let main_src = format!(
+        "import encoder.encode;\n\n{LOCAL_ELEVEN}\npub fn main() -> i64 {{\n    return encode(0);\n}}\n"
+    );
+    let project = write_project_files(
+        temp.path(),
+        &[
+            ("src/main.mind", main_src.as_str()),
+            ("src/encoder.mind", IMPORTED_TWENTY_ONE),
+        ],
+    );
+    assert_three_routes_refuse_collision(&mindc, &project);
+}

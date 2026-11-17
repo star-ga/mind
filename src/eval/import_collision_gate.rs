@@ -11,8 +11,9 @@ use crate::diagnostics::{Diagnostic, Span};
 const HELP: &str = "the shipped backend cannot emit owner-colliding native symbols yet; rename the local or imported function";
 
 /// On the executable route, refuse local function `N` only when this module
-/// references the imported function `N` (a qualified call, or an item import
-/// of `N`). A local that merely shares an unused export name still builds.
+/// references the imported function `N`. A reference is a qualified call, or
+/// the last segment or alias of a `use` or `import`, including a one-segment
+/// item. A local that merely shares an unused export name still builds.
 /// The shared-library route has a scope map and keeps the name check.
 pub fn check_imported_local_fn_collisions(
     module: &Module,
@@ -56,7 +57,8 @@ pub fn check_imported_local_fn_collisions(
 }
 
 /// Names this module uses as an imported function: the callee of a qualified
-/// call, or the last segment (and alias) of an item import.
+/// call, or the last segment and alias of each `use` or `import`. The shared
+/// collision resolver then decides whether that name is an imported function.
 fn imported_fn_references(module: &Module) -> BTreeSet<String> {
     let mut names = qualified_import_callees(module);
     for item in &module.items {
@@ -64,9 +66,6 @@ fn imported_fn_references(module: &Module) -> BTreeSet<String> {
             let Node::Import { path, alias, .. } = node else {
                 return;
             };
-            if path.len() < 2 {
-                return;
-            }
             if let Some(last) = path.last() {
                 names.insert(last.clone());
             }
