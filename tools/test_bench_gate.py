@@ -556,6 +556,9 @@ def check_base_step(failures: list[str], e2e_job: str) -> None:
     rewritten to the tip's parent (no input given) or refused (explicit input)."""
     script = step_script(e2e_job, "Resolve the base commit")
     report(failures, "the base step script was extracted from the workflow", bool(script))
+    binds = ("EVENT: ${{ github.event_name }}", "BEFORE: ${{ github.event.before }}", "INPUT_BASE: ${{ inputs.base }}")
+    report(failures, "the base step binds the event, before and base input the script reads",
+           all(b in step_block(e2e_job, "Resolve the base commit") for b in binds))
     dispatch, refused = "workflow_dispatch", "the base is the candidate"
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     with tempfile.TemporaryDirectory() as td:
