@@ -461,6 +461,18 @@ const SIBLING_WORLD: &[SiblingCase] = &[
         offender: "cpu_affinity_has",
         via: "::k`",
     },
+    // A local binding spelled like the name hides nothing: the call in `h` is the read.
+    SiblingCase {
+        tag: "affinity_local_and_call",
+        files: &[(
+            "w.mind",
+            "fn h(p: i64) -> i64 {\n    cpu_affinity_mask() + p\n}\n\n\
+             pub fn g(p: i64) -> i64 {\n    let cpu_affinity_mask: i64 = p;\n    \
+             h(cpu_affinity_mask)\n}\n",
+        )],
+        offender: "cpu_affinity_mask",
+        via: "::h`",
+    },
 ];
 
 /// A program whose sibling module reads the world is that program: refused
@@ -519,11 +531,14 @@ fn sibling_module_world_calls_are_refused_and_attested_nondeterministic() {
 
 /// The control: a sibling whose called function is pure stays `deterministic`,
 /// even though the same module holds a world-reading function the program never
-/// calls, so a refusal for any other reason cannot pass as the veto.
+/// calls, and even though the called function binds locals spelled like a world
+/// row, so a refusal for any other reason cannot pass as the veto.
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn a_pure_sibling_call_is_still_attested_deterministic() {
-    let w = "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    entropy.entropy_max_len() + p\n}\n\n\
+    let w = "import std.entropy;\n\npub fn g(p: i64) -> i64 {\n    \
+             let entropy_fill: i64 = entropy.entropy_max_len();\n    \
+             let cpu_affinity_mask: i64 = p;\n    entropy_fill + cpu_affinity_mask\n}\n\n\
              pub fn unused(p: i64) -> i64 {\n    entropy.entropy_fill(p, 8)\n}\n";
     let dir = sibling_project("pure", &[("w.mind", w)]);
     let (ok, text) = mindc_in(&dir, &["main.mind", "--emit-evidence", "x.ev"]);

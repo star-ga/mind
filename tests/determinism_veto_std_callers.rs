@@ -145,6 +145,23 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "io_reactor_affinity_has",
     ),
     ("iouring", "io_reactor_pin_demo(p)", "io_reactor_pin_demo"),
+    // A local binding spelled like one row beside a real call of another row of
+    // the same module: the binding hides nothing, the call is still the world read.
+    (
+        "dns",
+        "let dns_connect_fd: i64 = p;\n    dns_connect_fd + dns_resolve(p, 9)",
+        "dns_resolve",
+    ),
+    (
+        "iouring",
+        "let io_reactor_pin_cpu: i64 = p;\n    io_reactor_pin_cpu + io_reactor_affinity_has(p)",
+        "io_reactor_affinity_has",
+    ),
+    (
+        "cpu_affinity",
+        "let cpu_affinity_has: i64 = p;\n    cpu_affinity_has + cpu_affinity_pin(p)",
+        "cpu_affinity_pin",
+    ),
 ];
 
 /// Pure functions of the same modules: the positive control.
@@ -161,6 +178,22 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
     // A function of std.iouring that reads no World name stays deterministic.
     ("iouring", "iouring.iouring_cqe_f_more()"),
     ("iouring", "iouring_cqe_f_more()"),
+    // A local binding spelled like a row of the imported module is a value, not a
+    // call (a function name read as a value is a type error, E2037): no call, no
+    // world read, with the std module imported.
+    (
+        "entropy",
+        "let entropy_fill: i64 = p;\n    entropy_fill + 1",
+    ),
+    ("dns", "let dns_resolve: i64 = p;\n    dns_resolve + 1"),
+    (
+        "iouring",
+        "let io_reactor_pin_cpu: i64 = p;\n    io_reactor_pin_cpu + 1",
+    ),
+    (
+        "cpu_affinity",
+        "let cpu_affinity_has: i64 = p;\n    cpu_affinity_has + 1",
+    ),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

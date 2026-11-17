@@ -8,12 +8,14 @@
 //!
 //! Companion to `determinism_veto_control`, which holds the qualified spellings
 //! and the sibling-module cases (the review's A, B and D).
-//! This file holds the `#[deterministic]` case (C) and the shadowing controls.
+//! This file holds the `#[deterministic]` case (C) and the shadowing controls,
+//! for a user function and for a local binding.
 
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 mod common;
 
+use std::path::Path;
 use std::process::Command;
 
 /// `mindc <args>`: `(success, stdout + stderr)`.
@@ -245,4 +247,102 @@ fn a_user_function_named_like_an_affinity_name_is_deterministic() {
             "a module function `{name}` was not attested deterministic\n{out}"
         );
     }
+}
+
+/// Local-binding shapes: `@N` is the binding, read as a value. A `let`, a
+/// `let mut`, a parameter, a loop variable and a match arm binding.
+const LOCAL_SHAPES: &[&str] = &[
+    "pub fn f(p: i64) -> i64 {\n    let @N: i64 = p;\n    @N + 1\n}\n",
+    "pub fn f(p: i64) -> i64 {\n    let mut @N: i64 = p;\n    @N = @N + 1;\n    @N\n}\n",
+    "pub fn f(@N: i64) -> i64 {\n    @N + 1\n}\n",
+    "pub fn f(p: i64) -> i64 {\n    let mut s: i64 = 0;\n    for @N in 0..p {\n        \
+     s = s + @N;\n    }\n    s\n}\n",
+    "pub fn f(p: i64) -> i64 {\n    match p {\n        0 => 7,\n        @N => @N + 1,\n    }\n}\n",
+];
+
+/// `text` built to evidence with no flag as `dir/<tag>.mind`: `(ok, output, evidence)`.
+fn emit_evidence(dir: &Path, tag: &str, text: &str) -> (bool, String, String) {
+    let src = common::scratch_src_in(dir, &format!("{tag}.mind"), text);
+    let ev = dir.join(format!("{tag}.ev")).to_string_lossy().into_owned();
+    let (ok, out) = mindc(&[src.to_str().unwrap(), "--emit-evidence", &ev]);
+    (ok, out, ev)
+}
+
+/// The first error line of `out`, for a one-line failure summary.
+fn first_error(out: &str) -> String {
+    let line = out
+        .lines()
+        .find(|l| l.contains("error"))
+        .unwrap_or("no error");
+    line.chars().take(110).collect()
+}
+
+/// A local variable, parameter, loop variable or match binding spelled like an
+/// affinity name is a value, not a call: the program makes no affinity system call,
+/// so it builds with no flag and is attested `deterministic`, with the std module
+/// imported and with none. A bare function value is a type error (E2037), so a
+/// bare read of the name is always a local. Two-sided: the same program plus a
+/// real call of the same name in another function is refused naming that call,
+/// and so is a real call of another name in the same function.
+#[test]
+fn a_local_binding_named_like_an_affinity_name_is_deterministic() {
+    let dir = common::scratch_dir("determinism_local_affinity");
+    let (mut ran, mut failed) = (0usize, Vec::<String>::new());
+    for (i, (call, name)) in AFFINITY_CALLS.iter().enumerate() {
+        let module = if name.starts_with("io_reactor") {
+            "std.iouring"
+        } else {
+            "std.cpu_affinity"
+        };
+        let imports = ["".to_string(), format!("import {module};\n\n")];
+        let (other_call, other) = AFFINITY_CALLS[(i + 1) % AFFINITY_CALLS.len()];
+        for (j, shape) in LOCAL_SHAPES.iter().enumerate() {
+            for (k, import) in imports.iter().enumerate() {
+                let tag = format!("l{i}_{j}_{k}");
+                let local = format!("{import}{}", shape.replace("@N", name));
+                let (ok, out, ev) = emit_evidence(&dir, &tag, &local);
+                let (vok, vout) = if ok {
+                    mindc(&["verify", "--require-deterministic", &ev])
+                } else {
+                    (false, String::new())
+                };
+                if !(ok && vok && vout.contains("determinism:      deterministic")) {
+                    failed.push(format!("{tag}: local `{name}`: {}", first_error(&out)));
+                }
+                let world = format!("{local}\nfn h(p: i64) -> i64 {{\n    {call}\n}}\n");
+                let (ok, out, _) = emit_evidence(&dir, &format!("{tag}w"), &world);
+                if ok
+                    || !out.contains("error[determinism]")
+                    || !out.contains(&format!("`{name}()`"))
+                {
+                    failed.push(format!("{tag}w: call `{name}`: {}", first_error(&out)));
+                }
+                ran += 2;
+                if j == 0 {
+                    let call_it = shape.replace("@N + 1", &format!("@N + {other_call}"));
+                    let same = format!("{import}{}", call_it.replace("@N", name));
+                    let (ok, out, _) = emit_evidence(&dir, &format!("{tag}s"), &same);
+                    if ok || !out.contains(&format!("`{other}()`")) {
+                        failed.push(format!("{tag}s: call `{other}`: {}", first_error(&out)));
+                    }
+                    ran += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "determinism_veto_control(local affinity): ran={ran} fail={}",
+        failed.len()
+    );
+    assert!(
+        failed.is_empty(),
+        "{} of {ran} failed:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+    assert_eq!(
+        ran,
+        AFFINITY_CALLS.len() * (LOCAL_SHAPES.len() * 2 * 2 + 2),
+        "vacuous run"
+    );
 }

@@ -417,6 +417,40 @@ mod tests {
         ),
     ];
 
+    /// Local-binding shapes: `@N` is the binding, and each shape reads it as a
+    /// value. A `let`, a `let mut`, a parameter, a loop variable, a match arm
+    /// binding and a closure parameter.
+    const LOCAL_SHAPES: &[&str] = &[
+        "pub fn f(p: i64) -> i64 {\n    let @N: i64 = p;\n    @N + 1\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let mut @N: i64 = p;\n    @N = @N + 1;\n    @N\n}\n",
+        "pub fn f(@N: i64) -> i64 {\n    @N + 1\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let mut s: i64 = 0;\n    for @N in 0..p {\n        \
+         s = s + @N;\n    }\n    s\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    match p {\n        0 => 7,\n        @N => @N + 1,\n    }\n}\n",
+        "pub fn f(p: i64) -> i64 {\n    let g = |; @N: i64| -> i64 { @N + 1 };\n    p\n}\n",
+    ];
+
+    /// A local binding spelled like `row` is no world use, with the `import` (or
+    /// none): a function name read as a value is a type error (E2037), so a bare
+    /// identifier read is a local. The positive control is the same program with a
+    /// real call of `row` in another function: it stays a world use, and the
+    /// sibling reach reads the same.
+    fn assert_a_local_binding_is_not_a_use(import: &str, row: &str, args: &str) {
+        for shape in LOCAL_SHAPES {
+            let local = format!("{import}{}", shape.replace("@N", row));
+            assert_eq!(offender(&local), None, "{local}");
+            assert_eq!(reached_offender(&local, "f"), None, "{local}");
+            let world = format!("{local}\nfn h(p: i64) -> i64 {{\n    {row}{args}\n}}\n");
+            assert_eq!(offender(&world).as_deref(), Some(row), "{world}");
+            assert_eq!(
+                reached_offender(&world, "h").as_deref(),
+                Some(row),
+                "{world}"
+            );
+            assert_eq!(reached_offender(&world, "f"), None, "{world}");
+        }
+    }
+
     #[test]
     fn every_qualifier_spelling_is_a_world_use() {
         for (import, call, row) in SPELLINGS {
@@ -474,6 +508,10 @@ mod tests {
             Some("entropy_fill")
         );
         assert_eq!(reached_offender(shadow, "f"), None);
+        // A bare identifier READ is a local, never a call, with the import.
+        assert_a_local_binding_is_not_a_use("import std.entropy;\n\n", "entropy_fill", "(p, 8)");
+        assert_a_local_binding_is_not_a_use("import std.dns;\n\n", "dns_resolve", "(p, 9)");
+        assert_a_local_binding_is_not_a_use("import std.iouring;\n\n", "io_reactor_pin_cpu", "(p)");
     }
 
     /// The implicit std modules (`std.iouring`, `std.cpu_affinity`) resolve a
@@ -499,6 +537,8 @@ mod tests {
             assert_eq!(reached_offender(&world, "f").as_deref(), Some(row), "{row}");
             let shadow = format!("fn {row}(p: i64) -> i64 {{\n    p\n}}\n\n{world}");
             assert_eq!(offender(&shadow), None, "{row} is defined by the module");
+            // A local binding of that name, with no import, is not the std call.
+            assert_a_local_binding_is_not_a_use("", row, args);
         }
         for call in ["dns_resolve(p, 9)", "entropy_fill(p, 8)", "https_get(p, 9)"] {
             let src = format!("pub fn f(p: i64) -> i64 {{\n    {call}\n}}\n");
