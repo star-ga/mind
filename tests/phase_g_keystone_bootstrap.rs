@@ -36,9 +36,9 @@
 //! What this file does NOT claim: identity between hosts. The host toolchain
 //! links the final file, so the linker, the startup files and libgcc come from
 //! the machine that ran the build. Measured on 2026-11-17 on two hosts with
-//! the same compiler commit: the LLVM IR and every module object were
-//! identical, and the final file was not. Compare artifact hashes only for
-//! builds made on the same host.
+//! the same compiler commit: the LLVM IR of every module and the code section
+//! of every module object were identical, and the final file was not. Compare
+//! artifact hashes only for builds made on the same host.
 //!
 //! Gate:
 //! ```
