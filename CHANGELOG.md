@@ -7,21 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **CPU affinity mask is 1024 bits (glibc `CPU_SETSIZE`).** `io_reactor_pin_cpu`
-  built one i64 by doubling a bit: a core at or above 64 overflowed, and a
-  restore dropped CPUs 64 and up. The helpers now live in `std/cpu_affinity.mind`
-  (`word = core / 64`, `bit = core % 64` by a shift). A core outside 0..1023
-  returns -22 without a syscall. `io_reactor_pin_demo` saves and restores the
-  full 128-byte mask and returns a negative errno if that restore fails. `io_reactor_affinity_mask` still returns the low 64 bits.
-  `io_reactor_affinity_has(core)` reads any CPU in 0..1023. The four names in
-  `std/iouring.mind` forward. `cpu_affinity` is bundled, not seed.
-  `std.cpu_affinity` is loaded with the implicit std set, so its four public
-  names resolve with no import.
-  `SEED_BLOB_SHA256` moves ef646c3f… ->
-  5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee
-  (21 modules, 417431 bytes) with the iouring edit.
-
 ## [0.10.3] - 2026-11-13
 
 ### Added
@@ -537,6 +522,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`#296`, `#283`).
 - **CI, docs and test changes**: #373, #370, #369, #361, #357, #353, #352, #348,
   #332, #325, #323, #322, #321, #319, #307, #306, #304, #303, #301, #299, #295.
+- **CPU affinity mask is 1024 bits (glibc `CPU_SETSIZE`).** `io_reactor_pin_cpu`
+  built one i64 by doubling a bit: a core at or above 64 overflowed, and a
+  restore dropped CPUs 64 and up. The helpers now live in the new module
+  `std/cpu_affinity.mind` (`word = core / 64`, `bit = core % 64` by a shift).
+  A core outside 0..1023 returns -22 without a syscall. `io_reactor_pin_demo`
+  saves and restores the full 128-byte mask and returns a negative errno if
+  that restore fails. `io_reactor_affinity_mask` still returns the low 64 bits.
+  The new `io_reactor_affinity_has(core)` reads any CPU in 0..1023. The four
+  `io_reactor` affinity names in `std/iouring.mind` forward to
+  `std.cpu_affinity`. `std.cpu_affinity` is a bundled module, not a seed module.
+  It is in the implicit std set, so its four public names (`cpu_affinity_pin`,
+  `cpu_affinity_mask`, `cpu_affinity_has`, `cpu_affinity_pin_demo`) resolve with
+  no import. It is in the std link set, so a program that calls the
+  `io_reactor` affinity names links and runs as an executable, as a cdylib and
+  as a flat `--emit-shared` library (`tests/std_substrate_native_link.rs`).
+  `std/iouring.mind` is a seed module: its edit moves `SEED_BLOB_SHA256` (see
+  the entry on the frozen self-host seeds).
+- **A local function that shares the name of an import the module uses is refused
+  on the MLIR executable route.** `mindc build --backend mlir` of a project to an
+  executable refuses `fn encode` when the same module also references an imported
+  `encode`: a qualified call (`encoder.encode(0)`), or an `import` or `use` item
+  whose last segment or alias is the name (`import encoder.encode;`,
+  `use encoder::encode;`, `import encode;`, an alias, an item re-exported by
+  `pub import`). The refusal is `lower::imported_local_fn_collision`; rename one
+  of the two functions. Before, the executable build linked both under one symbol
+  and the qualified call ran the local body. A local that shares only the name of
+  an export the module does not reference still builds, and so does a local with
+  a different name. `--backend mlir --emit cdylib` refused the shape before, and
+  `--backend native` refuses it with `closure.duplicate_definition`
+  (`src/eval/import_collision_gate.rs`,
+  `tests/nested_import_owner_resolution_run.rs`).
+- **`mindc check` accepts valid forms it had refused.**
+  - A function whose tail writes through a slice parameter is accepted. The check
+    that a borrowed slice cannot escape as the implicit result reads what the tail
+    yields: a `for` or `while` loop, a store (`out[0] = 1`), and an `if`, `match`
+    or block whose branches end in a loop or a store yield nothing a slice handle
+    can ride on. A tail whose value is the borrowed slice (`xs`, or an `if` or
+    `match` that yields it) stays refused with `E2033`. A borrowed slice stored by
+    the tail (`out[0] = xs`) stays refused too
+    (`tests/slice_literal_element_gaps_run.rs`).
+  - A module-qualified type or enum variant resolves when the module is imported
+    by a `use` inside a `module { }` block (`fixed_point.Q16_16` in a signature,
+    `config.NormMode.GroupNorm` in a `match` pattern), and when a project with a
+    root `main.mind` imports a module of `src/` by its flat name. A name the
+    module does not declare or does not export stays refused.
+  - A qualified spelling (`config.NormMode`, `config.NormMode.GroupNorm`,
+    `config.NormMode::GroupNorm`) is not made ambiguous by another import that
+    exports a type of the same name. A bare name that two imports denote as one
+    type (a module that re-exports the enum by alias) resolves. A bare name that
+    they denote as different types (an enum and a struct) stays refused as
+    ambiguous with `E2002`
+    (`tests/qualified_enum_explicit_sources.rs`, `tests/qualified_enum_run.rs`).
+  - A call qualified by an imported module (`encoder.encode(input, n)`) is
+    checked against that module's function, so a slice argument passes where the
+    signature takes a slice, also when the bare name is an implicit std function.
+    An unresolved callee, a function the module does not export and a parameter
+    that is not a slice stay refused with `E2033`
+    (`tests/slice_call_abi_run.rs`).
+- **The documented install pin pins.** `scripts/install.sh` reads `MIND_VERSION`
+  and `MIND_DRY_RUN` in its own process, so `docs/install.md` sets them on the
+  installer, right of the pipe:
+  `curl -sSL https://mindlang.dev/install.sh | MIND_VERSION=v0.10.3 sh`.
+  A variable set before `curl` goes to `curl`, and the script then installs the
+  latest release. The PowerShell pin is the script block form, because `iex`
+  passes no arguments:
+  `& ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.3`.
+  `scripts/check_claims.py` fails a shown install pipeline that sets a `MIND_*`
+  variable on a stage before the shell.
 
 ### Changed (breaking) — extern "C" ABI resolution and refusals
 - `extern "C"` resolves its calling convention from the compile target (before: the host that built `mindc`). The evidence records the resolved callconv byte, so the same source and target give the same bytes on every host. Gate: `c_callconv_follows_the_compile_target_not_the_host` (3 targets, 1 host).
@@ -581,7 +634,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `std.mic_record` is three modules under 400 lines (`mic_record_wire`, `mic_record_table`, `mic_record`; same `import std.mic_record;`). `mrec_decode` frees its reader cursor on every path and the partly built record on every refusal, a growing table frees the old table, `mrec_remove` frees the removed entry, and the new `mrec_free(h)` releases a record (`tests/std_surface_mic_record_refusals.rs` bounds the resident set over repeated decode, insert and remove). The `std.mic_results` helpers free every key buffer they build (`tests/std_surface_mic_record.rs` bounds the resident set over repeated writes and reads). Allocation-failure paths that still leak carry `deferred:` markers: no fault-injection hook exists yet.
 - A seed drift ledger: `tools/seed_ledger/` (pure MIND) checks one sha256 row per seed-bound file (the seed sources, their G2 table rows, and a fixed list of pinned files) against `examples/mindc_mind/testdata/seed_ledger/SEED_LEDGER.tsv`. CI (`mindcraft_self_host`) is red when a changed row has no `SEED_DRIFT.txt` line, when a line is stale, when a row is edited or deleted by hand, when a pinned file has no row, or when `stage1.elf` does not hash to the published stage sha256 of its MANIFEST (`stage2_sha256` when the receipt has the row `published_stage` = `stage2`, as a two-hop advance writes; `stage1_sha256` for all other receipts). With no seed source drifted it is also red unless the seed sources, joined in `_selfhost_sources.py` order, hash to the MANIFEST `combined_source_sha256`. The re-pin (`printf write | seed_ledger`) requires both MANIFEST values to match.
 - The architecture gate lists `tools/seed_ledger/` as gate tooling. Its product metrics do not include the tool in this release.
-- The frozen self-host seeds advance for 0.10.3 (`self_host_loop_smoke.py --advance --hops 2`, two advances): `testdata/selfhost_loop/stage1.elf` moves 5131e278… -> bb35955f… -> 6739d58d1e3c89c22a08d421a0f10c76829c152efa88f87df1d63c2a37251e9c (3434737 bytes), and `testdata/selfhost_loop_bounded/stage1.elf` moves 02914794… -> 77be7b09… -> 3896547d2812615619343fb38979ff1c8f334b95555b5f7a414071b635763077 (3349291 bytes). `SEED_BLOB_SHA256` and the mirror gate's `EXPECTED_STD_SEED_SHA256` move fc66c18b… -> ef646c3faebec81838902834c5b9c97190fbfad5224331cd145367da40e72873 (21 modules, 419266 bytes). The four `testdata/backend_native_bridge/*.elf` anchors follow the seed: the code bytes, the sizes and the exit codes do not change, and the 32-byte trace note of each anchor now equals the Rust `emit_mic3` reference note (add 997bb7a1…, const_return 06efb126…, local_call b5a53e34…, while_sum 0a7d47ad…). The seed ledger is re-pinned to this seed and `SEED_DRIFT.txt` is empty.
+- The frozen self-host seeds advance for 0.10.3 (`self_host_loop_smoke.py --advance --hops 2`, three advances of two hops each): `testdata/selfhost_loop/stage1.elf` moves 5131e278… -> bb35955f… -> 6739d58d… -> 00e9c2d9d5cab969b27afa3b936763949b2d211b50e965a406fd54cff05ec9cb (3434737 bytes), and `testdata/selfhost_loop_bounded/stage1.elf`, derived from each new default seed, moves 02914794… -> 77be7b09… -> 3896547d… -> 66e5bd30deaf8b72b0513e1cd1df012cee3acc858219f313f571bff0b608a14d (3349291 bytes). The mirror gate's `EXPECTED_COMPILER_SHA256` is the default seed above. `SEED_BLOB_SHA256` and the mirror gate's `EXPECTED_STD_SEED_SHA256` move fc66c18b… -> ef646c3f… -> 5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee (21 modules, 417431 bytes); the last move is the `std/iouring.mind` edit of the CPU affinity entry above. The four `testdata/backend_native_bridge/*.elf` anchors follow the seed: the code bytes, the sizes and the exit codes do not change, and only the 32-byte trace note at the end of each anchor moves (the `add` note equals the committed Rust `emit_mic3` reference note `_ref_add.note`). The anchor sha256 values are add ee995d4b…, const_return 757d23ad…, local_call 8eacdb3e… and while_sum 998de130…. The seed ledger is re-pinned to this seed and `SEED_DRIFT.txt` is empty.
 - The native self-host computes the merged branch writes of each `if` node once per function, and reads the id count of each else list from the count walk that already made it (`nb_branch_memo.mind`): on the SSA path an else-if chain or a `match` no longer re-walks or recounts every later arm for each arm, and `nb_branch_defines` borrows one scratch table instead of allocating 4 KB per call. The `native_cf` smoke checks that the compile time of a `match` grows at most 8x for 4x the arms. Compiled bytes are unchanged. Chains and trees routed to the HOME lowering are not changed by this.
 - **A project's sources are its manifest's scope**: without a declared `[targets.*].sources` list, `mindc build`, `mindc check` and `mindc test` take the `.mind` files in the entry's directory plus the files their imports reach (and, for a checked or tested file, what that file imports). A file in a subdirectory that nothing imports (a `docs/` repro, an old module, a harness) no longer enters the build or the analysis.
 - **`mindc check` with no path checks the project's source set**: in a project, `mindc check` with no path checks every file that `mindc build` compiles there (the declared `[targets.*].sources` list, or the files in the entry's directory plus the files their imports reach). A file of that set is checked whatever its extension, and also when the ignore file (`.gitignore`) matches it, because the build compiles it. Before: the check read every `.mind` file below the current directory that the ignore file did not match, so a broken file that the build ignores failed the check. One stderr line gives the number of `.mind` files below the project root that are not in the set: `note[check]: N .mind file(s) below <root> are not in the project source set`. The count does not include ignored files. The project-root `tests/` tree is not in the set; check it with `mindc check tests` or `mindc test`. `mindc check <file>` always checks that file, also when the ignore file matches it (before: such a file was skipped with no message and exit 0). `mindc check <dir>` checks the `.mind` files below `<dir>`, in the source set or not; ignored files below a directory are skipped, as before. There is no command-line flag for the filter: `[mindcraft.vcs] use_ignore_file = false` in `Mind.toml` stops it. `mindc check --fix` takes the same files. With no project, or with a manifest that gives no source set, no path means the `.mind` files below the current directory, as before. The rule is the same in every feature build (`docs/rfcs/0007-mindcraft.md` §5). Gates: `project_check_with_no_path_takes_the_build_source_set`, `a_path_operand_is_never_narrowed_to_the_source_set`, `a_temporary_manifest_does_not_scope_the_check`, `a_named_file_is_checked_when_the_ignore_file_matches_it`, `an_ignored_member_of_the_source_set_is_checked`, `a_declared_source_with_another_extension_is_checked`, `project_check_follows_the_declared_source_list`, `project_check_and_build_take_one_source_set_in_the_src_layout`, `check_and_build_agree_on_the_declared_source_list`, `check_and_build_agree_on_an_ignored_imported_module`.
@@ -779,10 +832,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with that module's prefix (`_SEED_PRIVATE_PREFIXES`), and no private name may be
   defined by two seed modules; either case fails the lint.
 - `SEED_BLOB_SHA256` and the mirror gate's `EXPECTED_STD_SEED_SHA256` move 199f304b… ->
-  fc66c18b… (21 modules, 418837 bytes). The new pin also covers the std changes merged
+  fc66c18b… (21 modules, 418837 bytes) -> ef646c3f… -> 5ec57f4e… (21 modules, 417431
+  bytes, the pin of this release). The fc66c18b… pin also covers the std changes merged
   since the last pin (fs, iouring, sha256, string, toml), so native builds against the
-  embedded std no longer refuse. The frozen self-host seeds are re-minted at the next
-  seed event.
+  embedded std no longer refuse. The frozen self-host seeds are re-minted in this release,
+  by three advances (see the entry on the frozen self-host seeds).
 ### Fixed — exits and NEEDED entries of driver-row images on the native lane
 - An image whose extern block declares a driver row (called or not) now ends
   through `exit_group` (231) at the entry return and at the runtime bounds trap
@@ -1247,11 +1301,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are all at or below -4096, outside the errno range.
 - `std/iouring.mind` is a native-seed module, so this change moves the std seed blob.
   Measured on its own over the pre-batch std, it moved `SEED_BLOB_SHA256` 199f304b… ->
-  8e29ed8b…; in the seed batch (with the std.sha256 and json/toml changes) the blob is
-  45218a70… (`stdlib_manifest_lint.py --print-seed-sha256`). Until the next seed event advances the
-  frozen self-host seeds (`self_host_loop_smoke.py --advance`, then the bounded seed and the
-  manifest pin), the native backend refuses to build against the unpinned blob and the
-  self-host loop verifies a new fixed point (0c9036e6…) instead of the frozen seed.
+  8e29ed8b…; in the seed batch (with the std.sha256 and json/toml changes) the blob was
+  45218a70… (`stdlib_manifest_lint.py --print-seed-sha256`). Later std changes moved the pin
+  again, and this release advances the frozen self-host seeds (`self_host_loop_smoke.py --advance`,
+  then the bounded seed and the manifest pin): the pin of this release is in the entry on the
+  frozen self-host seeds.
 
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer
