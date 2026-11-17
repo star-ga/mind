@@ -59,6 +59,21 @@ def report(failures: list[str], label: str, ok: bool, detail: str = "") -> None:
         failures.append(f"{label}: {detail}" if detail else label)
 
 
+def put(d: Path, name: str, text: str) -> Path:
+    (d / name).write_text(text)
+    return d / name
+
+
+PIPE = [f"compiler_pipeline/parse_typecheck_ir/{n}" for n in ("small_matmul", "medium_mlp", "large_network")]
+GENERIC = [f"simple_benchmarks/{n}" for n in ("scalar_math", "tensor_ops", "io_roundtrip")]
+
+
+def rows(ids: list[str], spreads: tuple[str, ...] = ("", "", "")) -> str:
+    """Bencher rows 3000 / 6100 / 16800 ns for up to three ids, each with its spread suffix."""
+    return "".join(f"test {i} ... bench: {ns} ns/iter{sp}\n"
+                   for i, ns, sp in zip(ids, (3000, 6100, 16800), spreads))
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -151,36 +166,26 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
-        base = d / "baseline.txt"
-        base.write_text(GOOD_BASELINE)
-        good = d / "good.out"
-        good.write_text(GOOD_CURRENT)
-        empty = d / "empty.out"
-        empty.write_text("")
-        partial = d / "partial.out"
-        partial.write_text("\n".join(GOOD_CURRENT.splitlines()[:2]) + "\n")
-        one_noisy = d / "one-noisy.out"
-        one_noisy.write_text(
+        base = put(d, "baseline.txt", GOOD_BASELINE)
+        good = put(d, "good.out", GOOD_CURRENT)
+        empty = put(d, "empty.out", "")
+        partial = put(d, "partial.out", "\n".join(GOOD_CURRENT.splitlines()[:2]) + "\n")
+        one_noisy = put(d, "one-noisy.out",
             "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter (+/- 50)\n"
             "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter (+/- 80)\n"
             "test compiler_pipeline/parse_typecheck_ir/large_network ... bench: 14689 ns/iter (+/- 2157)\n"
         )
-        zero_current = d / "zero-current.out"
-        zero_current.write_text(bencher(0, 0, 0))
+        zero_current = put(d, "zero-current.out", bencher(0, 0, 0))
         huge = "9" * 400 + ".0"
-        nonfinite_current = d / "nonfinite-current.out"
-        nonfinite_current.write_text(
+        nonfinite_current = put(d, "nonfinite-current.out",
             f"test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: {huge} ns/iter\n"
             + GOOD_CURRENT.split("\n", 1)[1]
         )
-        zero_baseline = d / "zero-baseline.txt"
-        zero_baseline.write_text("small_matmul: 0.00 µs\nmedium_mlp: 6.13 µs\nlarge_network: 16.82 µs\n")
-        nonfinite_baseline = d / "nonfinite-baseline.txt"
-        nonfinite_baseline.write_text(
+        zero_baseline = put(d, "zero-baseline.txt", "small_matmul: 0.00 µs\nmedium_mlp: 6.13 µs\nlarge_network: 16.82 µs\n")
+        nonfinite_baseline = put(d, "nonfinite-baseline.txt",
             f"small_matmul: {huge} µs\nmedium_mlp: 6.13 µs\nlarge_network: 16.82 µs\n"
         )
-        reversed_current = d / "reversed-current.out"
-        reversed_current.write_text(
+        reversed_current = put(d, "reversed-current.out",
             "Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul:\n"
             "                        time:   [3.0 µs 2.0 µs 1.0 µs]\n"
             + "Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp:\n"
@@ -188,8 +193,7 @@ def main() -> int:
             "Benchmarking compiler_pipeline/parse_typecheck_ir/large_network:\n"
             "                        time:   [16.0 µs 16.1 µs 16.2 µs]\n"
         )
-        out_of_order_current = d / "out-of-order-current.out"
-        out_of_order_current.write_text(
+        out_of_order_current = put(d, "out-of-order-current.out",
             "Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul:\n"
             "                        time:   [2.0 µs 3.0 µs 2.5 µs]\n"
             + "Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp:\n"
@@ -221,34 +225,20 @@ def main() -> int:
         # path. Not one drove the gate to its actual FAIL verdict, so the only
         # branch that can stop a regression from landing had no test at all.
         # A gate whose enforcement is untested is a gate nobody has watched fail.
-        regressed = d / "regressed.out"
-        regressed.write_text(bencher(3600, 7400, 20200))   # ~+20% on every bench
-        within = d / "within.out"
-        within.write_text(bencher(3120, 6380, 17480))      # ~+4%, under the 10% default
-        faster = d / "faster.out"
-        faster.write_text(bencher(2700, 5500, 15100))      # a win: one-sided, must pass
+        regressed = put(d, "regressed.out", bencher(3600, 7400, 20200))   # ~+20% on every bench
+        within = put(d, "within.out", bencher(3120, 6380, 17480))      # ~+4%, under the 10% default
+        faster = put(d, "faster.out", bencher(2700, 5500, 15100))      # a win: one-sided, must pass
 
         # Generic benchmark groups remain supported unless a caller explicitly
         # requests the compiler-pipeline inventory contract.
-        generic_base = d / "generic-baseline.txt"
-        generic_base.write_text(
-            "test simple_benchmarks/scalar_math ... bench: 3000 ns/iter\n"
-            "test simple_benchmarks/tensor_ops ... bench: 6100 ns/iter\n"
-            "test simple_benchmarks/io_roundtrip ... bench: 16800 ns/iter\n"
-        )
-        generic_current = d / "generic-current.out"
-        generic_current.write_text(
-            "test simple_benchmarks/scalar_math ... bench: 3000 ns/iter (+/- 50)\n"
-            "test simple_benchmarks/tensor_ops ... bench: 6100 ns/iter (+/- 80)\n"
-            "test simple_benchmarks/io_roundtrip ... bench: 16800 ns/iter (+/- 120)\n"
-        )
+        generic_base = put(d, "generic-baseline.txt", rows(GENERIC))
+        generic_current = put(d, "generic-current.out", rows(GENERIC, (" (+/- 50)", " (+/- 80)", " (+/- 120)")))
         cases += [
             ("generic benchmark group passes without pipeline flag",
              run_args("--baseline", str(generic_base), "--current", str(generic_current)), 0),
         ]
         # ALL three above the variance threshold: a uniformly loaded box.
-        all_noisy = d / "all_noisy.out"
-        all_noisy.write_text(
+        all_noisy = put(d, "all_noisy.out",
             "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench:  3600 ns/iter (+/- 900)\n"
             "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench:  7400 ns/iter (+/- 1850)\n"
             "test compiler_pipeline/parse_typecheck_ir/large_network ... bench:  20200 ns/iter (+/- 5050)\n"
@@ -260,8 +250,7 @@ def main() -> int:
         # gate's behaviour. Both shapes are asserted now, because "ignored the
         # noise, enforced on what it could trust" is the behaviour that matters
         # on a shared machine.
-        mixed_noisy = d / "mixed_noisy.out"
-        mixed_noisy.write_text(bencher(3600, 7400, 20200, spread=900))
+        mixed_noisy = put(d, "mixed_noisy.out", bencher(3600, 7400, 20200, spread=900))
 
         cases += [
             ("+20% regression -> exit 1 (THE enforcement path)",
@@ -286,14 +275,12 @@ def main() -> int:
         #
         # This case is exactly that shape: current EQUALS the floor (so the floor
         # is satisfied and would pass) while sitting ~20% above the champion.
-        champ = d / "champion.txt"
-        champ.write_text(
+        champ = put(d, "champion.txt",
             "compiler_pipeline/parse_typecheck_ir/small_matmul:   2.508 µs\n"
             "compiler_pipeline/parse_typecheck_ir/medium_mlp:     5.222 µs\n"
             "compiler_pipeline/parse_typecheck_ir/large_network: 12.231 µs\n"
         )
-        champbeat = d / "champbeat.out"
-        champbeat.write_text(bencher(2400, 5000, 11800))
+        champbeat = put(d, "champbeat.out", bencher(2400, 5000, 11800))
 
         import importlib.util as _ilu  # the gate as a module: parsers + median rank
         _spec = _ilu.spec_from_file_location("bench_gate", GATE)
@@ -314,17 +301,8 @@ def main() -> int:
 
         # The opt-in pipeline contract rejects a wrong-group or partial
         # reference, even when its rows would otherwise meet min-trusted.
-        wrong_group = d / "wrong-group.txt"
-        wrong_group.write_text(
-            "test simple_benchmarks/scalar_math ... bench: 3000 ns/iter\n"
-            "test simple_benchmarks/tensor_ops ... bench: 6100 ns/iter\n"
-            "test simple_benchmarks/io_roundtrip ... bench: 16800 ns/iter\n"
-        )
-        partial_champion = d / "partial-champion.txt"
-        partial_champion.write_text(
-            "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter\n"
-        )
+        wrong_group = put(d, "wrong-group.txt", rows(GENERIC))
+        partial_champion = put(d, "partial-champion.txt", rows(PIPE[:2]))
         cases += [
             ("pipeline flag rejects wrong-group reference",
              run_args("--baseline", str(wrong_group), "--current", str(good),
@@ -336,24 +314,9 @@ def main() -> int:
 
         # Three clean non-pipeline benches must not make a noisy canonical
         # frontier pass when the pipeline contract is requested.
-        pipeline_extra_ref = d / "pipeline-extra-ref.txt"
-        pipeline_extra_ref.write_text(
-            "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/large_network ... bench: 16800 ns/iter\n"
-            "test simple_benchmarks/scalar_math ... bench: 3000 ns/iter\n"
-            "test simple_benchmarks/tensor_ops ... bench: 6100 ns/iter\n"
-            "test simple_benchmarks/io_roundtrip ... bench: 16800 ns/iter\n"
-        )
-        canonical_noisy_extra_clean = d / "canonical-noisy-extra-clean.out"
-        canonical_noisy_extra_clean.write_text(
-            "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter (+/- 900)\n"
-            "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter (+/- 900)\n"
-            "test compiler_pipeline/parse_typecheck_ir/large_network ... bench: 16800 ns/iter (+/- 900)\n"
-            "test simple_benchmarks/scalar_math ... bench: 3000 ns/iter (+/- 50)\n"
-            "test simple_benchmarks/tensor_ops ... bench: 6100 ns/iter (+/- 50)\n"
-            "test simple_benchmarks/io_roundtrip ... bench: 16800 ns/iter (+/- 50)\n"
-        )
+        pipeline_extra_ref = put(d, "pipeline-extra-ref.txt", rows(PIPE) + rows(GENERIC))
+        canonical_noisy_extra_clean = put(d, "canonical-noisy-extra-clean.out",
+            rows(PIPE, (" (+/- 900)",) * 3) + rows(GENERIC, (" (+/- 50)",) * 3))
         cases += [
             ("pipeline flag rejects noisy canonical rows despite 3 clean extras",
              run_args("--baseline", str(pipeline_extra_ref),
@@ -363,28 +326,14 @@ def main() -> int:
 
         # Both references contribute watched rows.  A floor-only regression and
         # a champion-only regression must each reach the comparator.
-        union_champion = d / "union-champion.txt"
-        union_champion.write_text(
-            "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/large_network ... bench: 16800 ns/iter\n"
-            "test extra_group/champion_only ... bench: 3000 ns/iter\n"
-        )
-        union_floor = d / "union-floor.txt"
-        union_floor.write_text(
-            "test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench: 3000 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/medium_mlp ... bench: 6100 ns/iter\n"
-            "test compiler_pipeline/parse_typecheck_ir/large_network ... bench: 16800 ns/iter\n"
-            "test extra_group/floor_only ... bench: 3000 ns/iter\n"
-        )
-        union_floor_regressed = d / "union-floor-regressed.out"
-        union_floor_regressed.write_text(
+        union_champion = put(d, "union-champion.txt", rows(PIPE) + "test extra_group/champion_only ... bench: 3000 ns/iter\n")
+        union_floor = put(d, "union-floor.txt", rows(PIPE) + "test extra_group/floor_only ... bench: 3000 ns/iter\n")
+        union_floor_regressed = put(d, "union-floor-regressed.out",
             GOOD_CURRENT
             + "test extra_group/champion_only ... bench: 3000 ns/iter (+/- 50)\n"
             + "test extra_group/floor_only ... bench: 4000 ns/iter (+/- 50)\n"
         )
-        union_champion_regressed = d / "union-champion-regressed.out"
-        union_champion_regressed.write_text(
+        union_champion_regressed = put(d, "union-champion-regressed.out",
             GOOD_CURRENT
             + "test extra_group/champion_only ... bench: 4000 ns/iter (+/- 50)\n"
             + "test extra_group/floor_only ... bench: 3000 ns/iter (+/- 50)\n"
@@ -408,8 +357,7 @@ def main() -> int:
         # REF_LINE used to match the prose line first and setdefault() locked in
         # its LEFT-hand (superseded) value, so the gate silently enforced the
         # numbers the file exists to REPLACE. Assert the frozen block wins.
-        rebaselined = d / "rebaselined.txt"
-        rebaselined.write_text(
+        rebaselined = put(d, "rebaselined.txt",
             "Net effect vs the prior baseline:\n"
             "\n"
             "  small_matmul:   2.80 µs \u2192 2.98 µs   (+6.4%)\n"
@@ -448,13 +396,10 @@ def main() -> int:
             "test e2e_reference/rustc_cdylib/add ... bench: 90000000 ns/iter (+/- 900000)\n"
             "test e2e_reference/clang_c_to_so/add ... bench: 100000000 ns/iter (+/- 900000)\n"
         )
-        rf_faster = d / "rf-faster.out"
-        rf_faster.write_text(GOOD_CURRENT + e2e_rows)
-        rf_slower = d / "rf-slower.out"
-        rf_slower.write_text(GOOD_CURRENT + e2e_rows.replace(
+        rf_faster = put(d, "rf-faster.out", GOOD_CURRENT + e2e_rows)
+        rf_slower = put(d, "rf-slower.out", GOOD_CURRENT + e2e_rows.replace(
             "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 520000000"))
-        rf_equal = d / "rf-equal.out"
-        rf_equal.write_text(GOOD_CURRENT + e2e_rows.replace(
+        rf_equal = put(d, "rf-equal.out", GOOD_CURRENT + e2e_rows.replace(
             "e2e_native/add ... bench: 60000000", "e2e_native/add ... bench: 90000000"))
         rf_noisy = d / "rf-noisy.out"
         # 20 ms spread on a 90 ms median = 22% > the 12% default band.
@@ -659,8 +604,7 @@ def check_paired(failures: list[str], bg) -> list[tuple[str, object, object]]:
         d = Path(td)
 
         def grade(text: str, *extra: str) -> subprocess.CompletedProcess[str]:
-            f = d / "pairs.tsv"
-            f.write_text(text)
+            f = put(d, "pairs.tsv", text)
             return subprocess.run([sys.executable, str(GATE), "--pairs", str(f), *extra],
                                   capture_output=True, text=True)
 
