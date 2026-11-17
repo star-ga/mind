@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full 128-byte mask and returns a negative errno if that restore fails. `io_reactor_affinity_mask` still returns the low 64 bits.
   `io_reactor_affinity_has(core)` reads any CPU in 0..1023. The four names in
   `std/iouring.mind` forward. `cpu_affinity` is bundled, not seed.
+  `std.cpu_affinity` is loaded with the implicit std set, so its four public
+  names resolve with no import.
   `SEED_BLOB_SHA256` moves ef646c3f… ->
   5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee
   (21 modules, 417431 bytes) with the iouring edit.

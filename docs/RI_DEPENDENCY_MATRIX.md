@@ -302,8 +302,9 @@ contract, `examples/mindc_mind/testdata/stdlib_manifest.txt`.
 (43 of 43), so `import std.<m>` resolves for every shipped module under `mindc check`,
 `mindc test` and `mindc build`; `tests/std_bundled_module_table.rs` enumerates `std/`
 and fails on a missing row, and an import of a `std` path that names no shipped module
-is refused at the import (E2002). A compile parses only the 24 implicit modules (the
-pre-table set, whose names resolve with no import) plus what it imports. The native
+is refused at the import (E2002). A compile parses only the 25 implicit modules (the
+pre-table set plus `std.cpu_affinity`, which `std.iouring` imports; their names
+resolve with no import) plus what it imports. The native
 seed blob is unchanged (21): `--backend native` refuses an import of any other shipped
 module at the import (`scope.std_module_not_in_native_seed`) until a reseed.
 

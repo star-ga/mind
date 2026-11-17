@@ -31,17 +31,19 @@ use super::STDLIB_MIND_SOURCES;
 use crate::ast::{Module, Node, Span};
 
 /// The standard-library modules whose names resolve with no import: the
-/// modules the bundle carried before it became exhaustive over `std/*.mind`.
-/// A program that called one of them without an import keeps compiling.
-/// Every other bundled module is loaded only for a program that imports it,
-/// directly or through another std module. This set is closed under std
-/// imports (a unit test checks it), so loading it never pulls in another
-/// module.
+/// modules the bundle carried before it became exhaustive over `std/*.mind`,
+/// plus the std modules those import (`std.cpu_affinity`, which `std.iouring`
+/// imports). A program that called one of the first kind without an import
+/// keeps compiling. Every other bundled module is loaded only for a program
+/// that imports it, directly or through another std module. This set is
+/// closed under std imports (a unit test checks it), so loading it never
+/// pulls in another module.
 pub const IMPLICIT_STD_MODULES: &[&str] = &[
     "std.arena",
     "std.async",
     "std.blas",
     "std.cli",
+    "std.cpu_affinity",
     "std.fs",
     "std.http",
     "std.io",
