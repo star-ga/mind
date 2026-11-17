@@ -25,7 +25,7 @@
 //! 4. Default invocation (no emit flags) still prints IR text to stdout.
 
 mod common;
-use common::require_mindc;
+use common::{require_mindc, scratch_dir};
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -268,6 +268,18 @@ fn evidence_body_prefix_equals_plain_mic3() {
 // The digest is hashlib and sha256sum of the bytes this run just wrote.
 // A stored note is not an oracle. mindc verify is not an oracle.
 
+/// True on the rows whose `mindc` resolves `import std.vec` (the keystone
+/// fixture). The same cfg guards the type checker's std-import refusal.
+const KEYSTONE_ROW: bool = cfg!(any(
+    feature = "std-surface",
+    feature = "cross-module-imports"
+));
+
+/// The exact program count the hash test must run on this row: the three
+/// std-free programs (tiny, note_kinds, simple) plus the keystone fixture on a
+/// KEYSTONE_ROW. A row cannot silently drop a program.
+const EXPECTED_RAN: u32 = if KEYSTONE_ROW { 4 } else { 3 };
+
 #[test]
 fn emit_trace_hash_matches_independent_sha256() {
     let bin = mindc_for_independent_hash();
@@ -277,17 +289,22 @@ fn emit_trace_hash_matches_independent_sha256() {
     std::fs::write(&tiny, "fn main() -> i64 { 40 + 2 }\n").expect("write tiny");
     // bank_acc8.mind calls ymm intrinsics that the v0.10.2 compiler rejects.
     // The shared corpus is the programs both compilers emit.
-    let programs = [
+    let mut programs = vec![
         ("tiny", tiny),
         (
             "note_kinds",
             root.join("examples/mindc_mind/testdata/native_cf/note_kinds.mind"),
         ),
-        (
+        ("simple", root.join("tests/fixtures/simple.mind")),
+    ];
+    // The keystone fixture imports `std.vec`: a row built without the std
+    // surface refuses it with E2007, so it joins the corpus only where it emits.
+    if KEYSTONE_ROW {
+        programs.push((
             "keystone_fixture",
             root.join("examples/mindc_mind/fixture.mind"),
-        ),
-    ];
+        ));
+    }
     let mut ran = 0u32;
     for (label, src) in &programs {
         assert!(
@@ -312,9 +329,10 @@ fn emit_trace_hash_matches_independent_sha256() {
         );
         ran += 1;
     }
-    assert!(
-        ran >= 3,
-        "ran={ran}; a missing compiler or empty corpus is a failure"
+    assert_eq!(
+        ran, EXPECTED_RAN,
+        "ran={ran}, expected {EXPECTED_RAN} on this row; a dropped program, a \
+         missing compiler or an empty corpus is a failure"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -421,16 +439,10 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
+/// A subdirectory of this target's scratch directory, so the caller can remove
+/// it whole without touching the files its sibling tests write beside it.
 fn unique_dir(label: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!(
-        "mindc_{label}_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    let path = scratch_dir("mic3_cli_emit").join(label);
     std::fs::create_dir_all(&path).unwrap_or_else(|e| panic!("create {}: {e}", path.display()));
     path
 }
@@ -440,7 +452,8 @@ fn unique_dir(label: &str) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 fn tempfile_path(name: &str) -> String {
-    let mut p = std::env::temp_dir();
-    p.push(format!("mindc_test_{name}"));
-    p.to_string_lossy().into_owned()
+    scratch_dir("mic3_cli_emit")
+        .join(format!("mindc_test_{name}"))
+        .to_string_lossy()
+        .into_owned()
 }

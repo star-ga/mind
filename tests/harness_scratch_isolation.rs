@@ -119,7 +119,6 @@ const SHARED_TEMP_BACKLOG: &[(&str, usize)] = &[
     ("match_arm_stmt_run.rs", 1),
     ("match_scrutinee_once.rs", 1),
     ("merge_kind_order_symmetry.rs", 1),
-    ("mic3_cli_emit.rs", 1),
     ("mindc_build_phase_a.rs", 1),
     ("mindfuzz_cross_substrate.rs", 1),
     ("module_const_run.rs", 1),
