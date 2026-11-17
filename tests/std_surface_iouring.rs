@@ -50,9 +50,11 @@ use std::sync::OnceLock;
 
 const SRC: &str = include_str!("../std/iouring.mind");
 
-/// Compile `std/iouring.mind` ONCE per test process, into the per-process
-/// scratch directory (never a shared temp-root path). `None` only for a
-/// tolerated toolchain gap; every other compile failure panics in the gate.
+/// Compile `std/cpu_affinity.mind` then `std/iouring.mind` ONCE per test
+/// process, into the per-process scratch directory (never a shared temp-root
+/// path). Flat `--emit-shared` of iouring leaves `cpu_affinity_*` undefined;
+/// the affinity `.so` is loaded `RTLD_GLOBAL` in [`PRELUDE`]. `None` only for
+/// a tolerated toolchain gap; every other compile failure panics in the gate.
 fn iouring_so() -> Option<&'static PathBuf> {
     static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
     SO.get_or_init(|| {
@@ -62,8 +64,23 @@ fn iouring_so() -> Option<&'static PathBuf> {
             return None;
         }
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let so = common::scratch_dir("std_surface_iouring").join("mind_iouring.so");
+        let dir = common::scratch_dir("std_surface_iouring");
+        let cpu_src = manifest.join("std").join("cpu_affinity.mind");
+        let cpu_so = dir.join("cpu_affinity.so");
         let src = manifest.join("std").join("iouring.mind");
+        let so = dir.join("mind_iouring.so");
+        let cpu_out = Command::new(&mindc)
+            .args([
+                cpu_src.to_str().unwrap(),
+                "--allow-nondeterministic",
+                "--emit-shared",
+                cpu_so.to_str().unwrap(),
+            ])
+            .output()
+            .expect("run mindc cpu_affinity");
+        if !crate::common::gate::compiled("std_surface_iouring", &cpu_out) {
+            return None;
+        }
         // std/iouring.mind is a raw `syscall()` surface, which the determinism
         // check rejects by default; the artifact is attested `nondeterministic`.
         // Without the flag the compile exits 1 and, under the historic fail-OPEN
@@ -89,6 +106,9 @@ fn iouring_so() -> Option<&'static PathBuf> {
 /// <= -4096 is a typed `iouring_err_*` of the surface; -1..=-4095 is -errno.
 const PRELUDE: &str = r#"
 import ctypes, errno, os, sys, time
+# cpu_affinity.so defines cpu_affinity_*; iouring.so's io_reactor_* forwards
+# refer to them. RTLD_GLOBAL is the same pattern as std.net + std.http.
+ctypes.CDLL(CPU_SO, mode=ctypes.RTLD_GLOBAL)
 lib = ctypes.CDLL(SO)
 TIMEOUT, FEATURE, ENDED, MISMATCH = -4097, -4098, -4099, -4100
 TYPED = {
@@ -147,9 +167,11 @@ fn run_probe(so: &std::path::Path, body: &str, secs: u64) -> String {
     // SCRATCH: the per-process directory the `.so` lives in — the probe's
     // on-disk files go there too, never to a fixed shared-temp-root path.
     let scratch = so.parent().expect("scratch .so has a parent directory");
+    let cpu_so = scratch.join("cpu_affinity.so");
     let py = format!(
-        "SO = r'{}'\nSCRATCH = r'{}'\n{PRELUDE}\n{body}",
+        "SO = r'{}'\nCPU_SO = r'{}'\nSCRATCH = r'{}'\n{PRELUDE}\n{body}",
         so.display(),
+        cpu_so.display(),
         scratch.display()
     );
     let out = Command::new("timeout")
