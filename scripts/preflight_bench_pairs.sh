@@ -23,9 +23,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-base_sha=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)
-if [ -z "${base_sha:-}" ]; then
-  echo "FAIL: no merge-base; the paired bench was not evaluated"
+# A detached gate checkout has neither main ref. Same fixed order as
+# resolve_hygiene_base in preflight.sh: local main, then the remote-tracking
+# main, then MIND_HYGIENE_BASE. A candidate counts only when it names a commit
+# that shares history with HEAD. A miss is named. It is never a pass.
+base_sha=""
+base_tries=""
+try_base() { # <label> <ref>
+  local mb=""
+  if ! git rev-parse --verify -q "${2}^{commit}" >/dev/null; then
+    base_tries="${base_tries}; ${1} not a commit"
+  elif ! mb=$(git merge-base HEAD "$2" 2>/dev/null) || [ -z "$mb" ]; then
+    base_tries="${base_tries}; ${1} shares no history with HEAD"
+  else
+    base_sha="$mb"
+  fi
+}
+try_base refs/heads/main refs/heads/main
+[ -n "$base_sha" ] || try_base refs/remotes/origin/main refs/remotes/origin/main
+if [ -z "$base_sha" ]; then
+  if [ -z "${MIND_HYGIENE_BASE:-}" ]; then
+    base_tries="${base_tries}; MIND_HYGIENE_BASE unset"
+  else
+    try_base "MIND_HYGIENE_BASE=${MIND_HYGIENE_BASE}" "$MIND_HYGIENE_BASE"
+  fi
+fi
+if [ -z "$base_sha" ]; then
+  echo "FAIL: no merge-base; the paired bench was not evaluated. Tried: ${base_tries#; }"
+  echo "Fetch refs/heads/main or refs/remotes/origin/main, or set MIND_HYGIENE_BASE to a commit."
   echo "bench logs retained in ${bench_tmp}"
   exit 4
 fi
