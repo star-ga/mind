@@ -739,8 +739,8 @@ fn a_std_module_the_project_supplies_is_not_an_unknown_import() {
 /// spec/v1.0/stdlib.md, "Environment override": a `MIND_STDLIB_PATH`
 /// directory holding the four specified files is used. Each module it holds
 /// replaces the bundled one for `mindc check` and `mindc test` alike; the
-/// others keep their bundled source. The directory of every module the bundle
-/// carried before it became exhaustive (the implicit set) is used too.
+/// others keep their bundled source. A directory that holds every module of
+/// the implicit set (`IMPLICIT_STD_MODULES`) is used too.
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn a_stdlib_override_with_the_specified_files_applies_to_check_and_test() {

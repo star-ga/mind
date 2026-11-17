@@ -55,8 +55,9 @@ const CPU_SRC: &str = include_str!("../std/cpu_affinity.mind");
 const IOURING_SRC: &str = include_str!("../std/iouring.mind");
 
 /// Thin forwards so ctypes calls the public `io_reactor_*` names. Concatenated
-/// with `CPU_SRC` into one translation unit: a flat `mindc --emit-shared` of a
-/// file that only `import`s `std.cpu_affinity` leaves those callees undefined.
+/// with `CPU_SRC` into one translation unit, so this file tests the module
+/// source itself and does not depend on the std link set. The import route is
+/// covered by `tests/std_substrate_native_link.rs`.
 const FORWARDS: &str = r#"
 pub fn io_reactor_pin_cpu(core: i64) -> i64 {
     cpu_affinity_pin(core)
