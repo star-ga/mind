@@ -27,8 +27,10 @@
 //! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
 //! walker of the numerics lint (`type_checker::nerve_walk`), so a call in any
 //! expression position (an array, map or set literal, a field receiver, a
-//! top-level `const`, a closure) is found, and a function-value read of a row
-//! counts as a use.
+//! top-level `const`, a closure) is found, and a qualified function-value read
+//! of a row (`q.name`) counts as a use. A bare identifier read is not a call: a
+//! local binding (a `let`, a parameter, a loop or match binding) spelled like a
+//! row is a value, with an import or without one.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -178,14 +180,21 @@ impl QualMap {
         }
     }
 
-    /// The first std-world call or function-value read in `node`'s
-    /// subtree, `node` included.
+    /// The first std-world call or qualified function-value read in `node`'s
+    /// subtree, `node` included. A bare identifier read is a local, not a use.
     fn offender_in(&self, node: &Node) -> Option<String> {
         let mut found = None;
         nerve_walk::walk(node, &mut |n| {
             let (name, span) = match n {
                 Node::Call { callee, span, .. } => (callee, *span),
-                Node::Lit(Literal::Ident(name), span) => (name, *span),
+                // A bare identifier READ (no qualifier recorded) is a value: a `let`,
+                // a parameter, a loop or a match binding. It calls nothing, so a local
+                // spelled like a row is no world use. A function name read as a value
+                // is a type error (E2037), so such a read is always a local. Only the
+                // qualified read `q.name`, which names its module, can be one.
+                Node::Lit(Literal::Ident(name), span) if self.refs.contains_key(span) => {
+                    (name, *span)
+                }
                 _ => return,
             };
             if found.is_none() && self.is_world(span, name) {
