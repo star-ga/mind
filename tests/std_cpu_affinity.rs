@@ -9,7 +9,8 @@
 //! `io_reactor_affinity_has`, restore; cores -1 and 1024 return -22;
 //! `io_reactor_pin_demo(70)` returns 1 and the 128-byte mask after restore
 //! equals the mask before (libc `sched_getaffinity`, all 16 words).
-//! A host with fewer than 72 CPUs, or a mask that lacks those cores, FAILS.
+//! A shim that fails the restore `sched_setaffinity` makes `pin_demo` return
+//! -5 (EIO). A host with fewer than 72 CPUs, or a mask that lacks those cores, FAILS.
 //!
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
 //!                   --test std_cpu_affinity`
@@ -249,4 +250,151 @@ fn pin_has_restore_and_range() {
         stdout.contains("ok"),
         "affinity probe printed no ok:\nstdout: {stdout}\nstderr: {stderr}"
     );
+}
+
+/// Fails the restore `sched_setaffinity` (a mask with more than one bit) with
+/// errno 5. `MIND_AFF_FAIL=both` also fails the single-bit pin with errno 1.
+/// The real syscall stays available for the probe's own cleanup.
+const RESTORE_SHIM: &str = r#"
+#define _GNU_SOURCE
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+static int fail_pin = 0;
+static int fail_restore = 0;
+
+static int bits_of(const unsigned char *p, unsigned long n) {
+    unsigned long i;
+    int b = 0;
+    if (n > 128) {
+        n = 128;
+    }
+    for (i = 0; i < n; i++) {
+        unsigned char c = p[i];
+        while (c) {
+            b += c & 1;
+            c = (unsigned char)(c >> 1);
+        }
+    }
+    return b;
+}
+
+int sched_setaffinity(int pid, unsigned long cpusetsize, const void *mask) {
+    const char *mode = getenv("MIND_AFF_FAIL");
+    int bits = 0;
+    if (mask != 0) {
+        bits = bits_of((const unsigned char *)mask, cpusetsize);
+    }
+    if (mode != 0 && strcmp(mode, "both") == 0 && bits == 1 && fail_pin == 0) {
+        fail_pin = 1;
+        errno = 1;
+        return -1;
+    }
+    if (mode != 0 && bits > 1 && fail_restore == 0) {
+        fail_restore = 1;
+        errno = 5;
+        return -1;
+    }
+    return (int)syscall(SYS_sched_setaffinity, pid, cpusetsize, mask);
+}
+"#;
+
+const RESTORE_PROBE: &str = r#"
+import ctypes, os
+SYS_GET = 204
+SYS_SET = 203
+libc = ctypes.CDLL(None, use_errno=True)
+syscall = libc.syscall
+syscall.restype = ctypes.c_long
+
+def mask128():
+    buf = ctypes.create_string_buffer(128)
+    r = syscall(SYS_GET, 0, 128, ctypes.cast(buf, ctypes.c_void_p))
+    if r < 0:
+        raise OSError(ctypes.get_errno(), 'sched_getaffinity')
+    return buf
+
+def set_raw(buf):
+    r = syscall(SYS_SET, 0, 128, ctypes.cast(buf, ctypes.c_void_p))
+    if r < 0:
+        raise OSError(ctypes.get_errno(), 'sched_setaffinity')
+
+def bit_set(raw, core):
+    off = (core // 64) * 8
+    w = int.from_bytes(raw[off:off + 8], 'little')
+    return (w >> (core % 64)) & 1
+
+ncpu = os.cpu_count()
+assert ncpu is not None and ncpu >= 72, f'ncpu={ncpu} need >= 72'
+saved = mask128()
+raw = bytes(saved.raw)
+assert bit_set(raw, 0) == 1 and bit_set(raw, 70) == 1, 'mask lacks 0 or 70'
+lib = ctypes.CDLL(SO)
+fn = lib.io_reactor_pin_demo
+fn.restype = ctypes.c_int64
+fn.argtypes = [ctypes.c_int64]
+try:
+    demo = int(fn(70))
+    print(f'demo={demo}')
+finally:
+    set_raw(saved)
+"#;
+
+fn restore_shim(dir: &std::path::Path) -> PathBuf {
+    let src = dir.join("restore_shim.c");
+    let so = dir.join("restore_shim.so");
+    std::fs::write(&src, RESTORE_SHIM).expect("write restore shim");
+    let out = Command::new("gcc")
+        .args(["-shared", "-fPIC", "-O2", "-o"])
+        .arg(&so)
+        .arg(&src)
+        .output()
+        .expect("gcc");
+    assert!(
+        out.status.success(),
+        "gcc restore shim failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    so
+}
+
+fn run_restore_mode(so: &std::path::Path, shim: &std::path::Path, mode: &str) -> String {
+    let py = format!("SO = r'{}'\n{RESTORE_PROBE}", so.display());
+    let out = Command::new("timeout")
+        .args(["--kill-after=5", "30", "python3", "-c", &py])
+        .env("LD_PRELOAD", shim)
+        .env("MIND_AFF_FAIL", mode)
+        .output()
+        .expect("run restore probe");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let code = out.status.code();
+    assert!(
+        code != Some(124) && code != Some(137) && code.is_some(),
+        "restore probe mode={mode} did not finish (exit {code:?}):\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        out.status.success(),
+        "restore probe mode={mode} failed (exit {code:?}):\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    stdout
+}
+
+#[test]
+fn pin_demo_reports_failed_restore() {
+    let Some(so) = affinity_so() else {
+        return;
+    };
+    let dir = common::scratch_dir("std_cpu_affinity_restore");
+    let shim = restore_shim(&dir);
+    for mode in ["restore", "both"] {
+        let stdout = run_restore_mode(so, &shim, mode);
+        assert!(
+            stdout.contains("demo=-5"),
+            "mode={mode} must return -5 (EIO) when restore fails:\n{stdout}"
+        );
+    }
 }

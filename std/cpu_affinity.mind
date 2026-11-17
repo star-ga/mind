@@ -126,9 +126,17 @@ pub fn cpu_affinity_has(core: i64) -> i64 {
     (w >> bit) & 1
 }
 
+// Apply the saved 128-byte mask. Returns 0, or a negative errno when the
+// restore syscall fails.
+fn cpu_affinity_restore(n: i64, save: i64) -> i64 {
+    let r: i64 = sched_setaffinity(0, n, save);
+    cpu_affinity_sys(r)
+}
+
 // Pin to `core`, confirm with cpu_affinity_has, then restore the full 128-byte
-// mask. Returns 1 on success, or a negative code. Always restores after a
-// successful save, including when pin or has fails.
+// mask. Returns 1 when the pin is visible and the restore succeeds. A failed
+// restore returns a negative errno, including when pin or has failed, so the
+// caller learns the affinity was not restored.
 pub fn cpu_affinity_pin_demo(core: i64) -> i64 {
     let bad: i64 = cpu_affinity_range(core);
     if bad < 0 {
@@ -145,13 +153,19 @@ pub fn cpu_affinity_pin_demo(core: i64) -> i64 {
     }
     let pr: i64 = cpu_affinity_pin(core);
     if pr < 0 {
-        let _ = sched_setaffinity(0, n, save);
+        let rr: i64 = cpu_affinity_restore(n, save);
         let _ = __mind_free(save);
+        if rr < 0 {
+            return rr;
+        }
         return pr;
     }
     let ok: i64 = cpu_affinity_has(core);
-    let _ = sched_setaffinity(0, n, save);
+    let rr: i64 = cpu_affinity_restore(n, save);
     let _ = __mind_free(save);
+    if rr < 0 {
+        return rr;
+    }
     if ok == 1 {
         return 1;
     }
