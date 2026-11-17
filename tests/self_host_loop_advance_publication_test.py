@@ -345,10 +345,14 @@ def case_preflight_self_host_branch_fails_closed_for_exit_statuses() -> None:
     """
     source = PREFLIGHT.read_text(encoding="utf-8")
     start_marker = "  loop_rc=0; python3 scripts/run_gate.py --min-asserted 2 "
-    end_marker = "\n  fi\n\n  step \"bench gate"
+    # The status dispatch closes at the first `fi` on its own indentation. What
+    # follows it in the script is not part of the branch and may change.
+    end_marker = "\n  fi\n"
     start = source.index(start_marker)
     end = source.index(end_marker, start) + len("\n  fi")
     branch = source[start:end]
+    check("preflight branch: holds the BLOCKED arm", 'elif [ "$loop_rc" = 2 ]' in branch, True)
+    check("preflight branch: holds the failure arm", "self-host loop gate FAILED" in branch, True)
 
     for fake_rc, want_fail in ((0, 0), (1, 1), (2, 1)):
         with tempfile.TemporaryDirectory(prefix="preflight-control-") as td:
