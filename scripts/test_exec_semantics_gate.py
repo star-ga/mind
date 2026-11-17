@@ -275,14 +275,19 @@ def check_tier_env_not_ambient() -> None:
     The launch that measured the defect exported both as 1 for the whole run;
     the lowering and pkg tiers build without mlir-build on purpose, so a
     leaked MIND_BENCH_REQUIRE=1 reds them by construction. The exec tier sets
-    both itself, and its ambient value is 0 here so the 1 it sees is its own.
+    both itself. Its ambient value is probed as 0 (the 1 it sees is its own)
+    and as 1 (the launch condition: a guard that skips the set when the
+    caller already exported 1 must not drop the variable).
     """
     exported = {"MIND_INTDOT_VNNI_VERIFY": "1", "MIND_BENCH_REQUIRE": "1"}
     if tier_env_seen(None, exported) != ["1", "1"]:
         raise AssertionError("probe control: the fake cargo did not see the exported variables")
     zeroed = {name: "0" for name in exported}
-    if tier_env_seen("exec", zeroed) != ["1", "1"]:
-        raise AssertionError("exec tier did not set both variables over an ambient 0")
+    for label, ambient in (("0", zeroed), ("1", exported)):
+        if tier_env_seen("exec", ambient) != ["1", "1"]:
+            raise AssertionError(
+                f"exec tier did not set both variables to 1 over an ambient {label}"
+            )
     for tier in ("lowering", "pkg"):
         seen = tier_env_seen(tier, exported)
         if seen != ["unset", "unset"]:
