@@ -5,9 +5,11 @@
 //! Calls into the world-reading std modules.
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
-//! `dns_tcp_socket`, `dns_connect_fd`, `dns_clock_gettime`, `entropy_fill` and
-//! the `https_*` entry points read the world only when the call resolves to `std.dns`,
-//! `std.entropy`, `std.https`, `std.https_probe` or `std.https_io`. A user
+//! `dns_tcp_socket`, `dns_connect_fd`, `dns_clock_gettime`, `entropy_fill`, the
+//! `https_*` entry points and the CPU affinity calls (`cpu_affinity_*`, and the
+//! `io_reactor_*` forwards of `std.iouring`) read the world only when the call
+//! resolves to `std.dns`, `std.entropy`, `std.https`, `std.https_probe`,
+//! `std.https_io`, `std.cpu_affinity` or `std.iouring`. A user
 //! function of the same bare name is deterministic. The lowered IR keeps only
 //! the bare name (the qualifier lives on the call span, in `SourceSpelling`),
 //! so this module reads the source.
@@ -16,8 +18,10 @@
 //! qualified call (`dns.dns_resolve(..)`) resolves through its qualifier. A
 //! bare call (`dns_resolve(..)`, no qualifier recorded) resolves by name: it is
 //! the std function when the module imports the std module that owns that row
-//! and defines no function of that name. A bare name that the module defines
-//! is the user's function and stays deterministic.
+//! (or that module is in the implicit std set, whose names resolve with no
+//! import: `std.iouring` and `std.cpu_affinity`) and defines no function of
+//! that name. A bare name that the module defines is the user's function and
+//! stays deterministic.
 //!
 //! Every spelling of the qualifier counts: the module name, an alias, the
 //! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
@@ -36,10 +40,12 @@ use crate::type_checker::nerve_walk;
 /// `(module path, public function)` rows. A call matches only both.
 ///
 /// deferred: would also list the World-reaching functions of std.net, std.fs,
-/// std.process and std.iouring, not done because the veto would then refuse
-/// their existing callers without the flag (a policy change, not a fix) —
-/// upgrade path: add each module to `NAMED_STD_MODULES` in the intrinsics
-/// tests, which derives the rows from the module source.
+/// std.process and the other public functions of std.iouring (every one that
+/// reaches `syscall`; only its four affinity forwards are rows), not done
+/// because the veto would then refuse their existing callers without the flag
+/// (a policy change, not a fix) — upgrade path: add each module to
+/// `NAMED_STD_MODULES` in the intrinsics tests, which derives the rows from the
+/// module source, and for std.iouring replace its forwards-only scan by that.
 const ROWS: &[(&str, &str)] = &[
     ("std.dns", "dns_resolve"),
     ("std.dns", "tcp_connect_host"),
@@ -68,11 +74,41 @@ const ROWS: &[(&str, &str)] = &[
     // std.os_evidence runs procgroup_spawn and procgroup_wait_all.
     ("std.os_evidence", "procgroup_spawn_ev"),
     ("std.os_evidence", "procgroup_wait_all_ev"),
+    // The CPU affinity calls make a real affinity system call. Both modules
+    // are in the implicit std set, so a bare call with no import is the std
+    // function too.
+    ("std.cpu_affinity", "cpu_affinity_pin"),
+    ("std.cpu_affinity", "cpu_affinity_mask"),
+    ("std.cpu_affinity", "cpu_affinity_has"),
+    ("std.cpu_affinity", "cpu_affinity_pin_demo"),
+    // The four forwards of std.iouring into std.cpu_affinity, tied to the module
+    // source by a test in `intrinsics/tests.rs`.
+    ("std.iouring", "io_reactor_pin_cpu"),
+    ("std.iouring", "io_reactor_affinity_mask"),
+    ("std.iouring", "io_reactor_affinity_has"),
+    ("std.iouring", "io_reactor_pin_demo"),
 ];
 
 /// Whether `name` is a world-reading public function of `module`.
 pub fn is_row(module: &str, name: &str) -> bool {
     ROWS.iter().any(|(m, n)| *m == module && *n == name)
+}
+
+/// Whether `name` is a row of a std module whose names resolve with no import
+/// (`IMPLICIT_STD_MODULES`, the one list the build resolves by). A build with
+/// no std bundle has no such module.
+fn implicit_row(name: &str) -> bool {
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    {
+        use crate::project::stdlib::IMPLICIT_STD_MODULES;
+        ROWS.iter()
+            .any(|(module, row)| *row == name && IMPLICIT_STD_MODULES.contains(module))
+    }
+    #[cfg(not(any(feature = "cross-module-imports", feature = "std-surface")))]
+    {
+        let _ = name;
+        false
+    }
 }
 
 /// Qualifier spellings of one parsed module, and the qualifier recorded for
@@ -131,9 +167,10 @@ impl QualMap {
     fn is_world(&self, span: Span, name: &str) -> bool {
         let Some(qual) = self.refs.get(&span) else {
             // A bare name resolves to the std row it names when the module
-            // imports that std module and defines no function of that name.
+            // imports that std module, or that module is implicit, and the
+            // module defines no function of that name.
             return !self.defined.contains(name)
-                && self.imported.iter().any(|path| is_row(path, name));
+                && (self.imported.iter().any(|path| is_row(path, name)) || implicit_row(name));
         };
         match self.by_qual.get(qual.as_str()) {
             Some(paths) => paths.iter().any(|path| is_row(path, name)),

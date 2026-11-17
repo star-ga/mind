@@ -21,12 +21,14 @@
 //! Precision: a function is classified by its own body, so a sibling that holds
 //! one world-reading function does not taint a caller of its pure functions.
 //! Conservative where it cannot see: a callee that matches the exports of two
-//! imported modules is followed into both. A call (qualified or bare) into `std.dns` or
-//! `std.entropy` is read from the sibling source, because the lowered body
-//! holds only the bare name. A reached module that does not lower, or an
-//! export that has no body, is refused and labelled nondeterministic: the
-//! program is not shipped on an unclassified sibling. An unclassified
-//! `extern "C"` callee stays a different path and is still not a hard veto.
+//! imported modules is followed into both. A call (qualified or bare) into a
+//! world-reading std module (`std.dns`, `std.entropy`, the CPU affinity names of
+//! `std.cpu_affinity` and `std.iouring`, the rows of `std_qualified`) is read from
+//! the sibling source, because the lowered body holds only the bare name. A
+//! reached module that does not lower, or an export that has no body, is
+//! refused and labelled nondeterministic: the program is not shipped on an
+//! unclassified sibling. An unclassified `extern "C"` callee stays a different
+//! path and is still not a hard veto.
 //!
 //! shortcut: a module the project supplies under a `std.` path is not followed
 //! (the capture records local imports only); upgrade when such a module can be

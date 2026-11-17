@@ -834,9 +834,9 @@ fn mindc_main() {
     #[cfg(not(feature = "cross-module-imports"))]
     let (project_hard, mut project_nondeterministic): (Option<(String, String)>, bool) =
         (None, false);
-    // A qualified std.dns / std.entropy call in the entry is invisible to the
-    // IR classifier: lowering keeps the bare name, and that name is not itself
-    // nondeterministic. The source scan is whole-module, as the IR scan is.
+    // A call into a world-reading std module (a row of `std_qualified`) is
+    // invisible to the IR classifier: lowering keeps the bare name, and that name
+    // is not itself nondeterministic. The source scan is whole-module, as the IR scan is.
     let source_world = if produces_artifact {
         libmind::std_qualified::module_offender(&source)
     } else {
