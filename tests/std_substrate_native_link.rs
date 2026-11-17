@@ -718,7 +718,7 @@ mod iouring_affinity {
         String::from_utf8_lossy(&out.stdout)
             .trim()
             .parse()
-            .expect("a mask")
+            .expect("python3 must print the mask")
     }
 
     /// Load `so` with every symbol bound at once, so an undefined
@@ -743,8 +743,8 @@ mod iouring_affinity {
     fn iouring_affinity_call_links_and_runs_on_every_route() {
         let lib = probe(allowed_low64());
         let exe = format!("{lib}\nfn main() -> i64 {{\n    return go();\n}}\n");
-        // The program reads host CPU topology, which the determinism veto
-        // counts as World, so the flat route needs the authorisation flag.
+        // The program reads the CPU mask, a World read: the flat build is
+        // authorised so this route stays valid if its veto learns to see it.
         let run = |route: &str| -> Option<i64> {
             let so = match route {
                 "executable" => {
