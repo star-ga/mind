@@ -58,10 +58,10 @@ pub(crate) enum Det {
     World,
 }
 pub(crate) use crate::intrinsic_contract::{
-    intrinsic_contract, intrinsic_supports_profile, IntrinsicContract, IntrinsicEffect,
-    IntrinsicImplementation, IntrinsicOffsetPolicy, IntrinsicProfile, IntrinsicResult,
-    IntrinsicSpec, IntrinsicValueType, FIVE_I64, FOUR_I64, NO_I64, ONE_I64, SIX_I64, THREE_I64,
-    TWO_I64, YMM_READ32_WRITE32, YMM_READ64_WRITE32,
+    FIVE_I64, FOUR_I64, IntrinsicContract, IntrinsicEffect, IntrinsicImplementation,
+    IntrinsicOffsetPolicy, IntrinsicProfile, IntrinsicResult, IntrinsicSpec, IntrinsicValueType,
+    NO_I64, ONE_I64, SIX_I64, THREE_I64, TWO_I64, YMM_READ32_WRITE32, YMM_READ64_WRITE32,
+    intrinsic_contract, intrinsic_supports_profile,
 };
 #[rustfmt::skip] // data table: the R-01b bank rows are one row per line (module ceiling)
 pub(crate) const STD_SURFACE_INTRINSICS: &[IntrinsicSpec] = &[
