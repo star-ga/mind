@@ -6,7 +6,7 @@ compute a number rather than matching a string, and a computed comparison is
 the kind that can stop comparing and still exit 0. This file is the mutation
 proof for both: each case breaks one input and requires the gate to go red.
 
-All three suites live in ONE file on purpose. The product surface of this repository
+All four suites live in ONE file on purpose. The product surface of this repository
 is MIND and Rust; every tracked .py/.sh is harness, and harness that grows by a
 file per gate is the surface nobody decided to grow. A gate's proof belongs
 beside the gate's other proof, and scripts/check_gate_wiring.py holds the whole
@@ -53,6 +53,17 @@ counts[stdlib_modules] declared 13 against 42 files in std/, leaving ~70% of the
 standard library deletable with this gate green. Suite 3 requires a floor to
 declare the maximum lag it may carry, reddens the gate when the lag is exceeded,
 and reddens it for a floor entry that declares no bound at all.
+
+SUITE 4 — A DOCUMENTED INSTALLER PIPELINE MUST HAND ITS VARIABLE TO THE INSTALLER
+---------------------------------------------------------------------------------
+docs/install.md showed `MIND_VERSION=v0.10.3 curl -sSL <url> | sh`. In
+`VAR=x A | B` the variable reaches A only, so the installer never saw the pin and
+installed the latest release, while every other check on that page stayed green.
+check_claims.py now refuses a `MIND_*` assignment on any stage before a shell in
+a pipeline, on every surface and in the usage comments of scripts/install.*.
+Suite 4 runs the wrong form in every shape a page can show it, and the right
+form next to it. A green case must also prove the check examined a command: a
+pass over zero commands is not a pass.
 
 Run:  python3 tests/check_claims_gate_tests.py
 Exit: 0 = all cases pass, 1 = a case failed (prints the offending case).
@@ -573,8 +584,169 @@ def floor_main() -> int:
     return 0
 
 
+# ==========================================================================
+# SUITE 4 — a documented installer pipeline hands its variable to the installer
+# ==========================================================================
+
+INSTALL_URL = "https://example.invalid/install.sh"
+INSTALL_CAPS = '[ir]\ncanonical_text   = "mic@1"\ncanonical_binary = "mic@3"\n'
+INSTALL_README = "Canonical IR: mic@1 text, mic@3 binary.\n"
+
+
+def doc(*lines: str) -> str:
+    """A page that shows each line as a command in one fenced block."""
+    return "# Install\n\n```sh\n" + "\n".join(lines) + "\n```\n"
+
+
+def install_case(
+    label: str,
+    files: dict[str, str],
+    *,
+    red_in: str | None = None,
+    vacuous: bool = False,
+    examined: tuple[str, int] | None = None,
+) -> bool:
+    """One fixture tree. A red case names the file the DRIFT line must point at,
+    and the line must be the wrong-side finding: the "page shows no command" line
+    would otherwise hide a missed command on a one-command page (`vacuous` marks
+    the case that wants that line). A green case that names `examined` must show
+    the check counted that many pipe-to-shell commands on that file."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        files = {"README.md": "", **files}
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text + (INSTALL_README if rel == "README.md" else ""),
+                            encoding="utf-8")
+        caps = root / "caps.toml"
+        caps.write_text(INSTALL_CAPS, encoding="utf-8")
+        env = dict(os.environ, CHECK_CLAIMS_ROOT=str(root), CHECK_CLAIMS_CAPS=str(caps),
+                   CHECK_CLAIMS_SURFACES="README.md:docs/**/*.md", CHECK_CLAIMS_MODE="phrases")
+        proc = subprocess.run([sys.executable, str(CHECK)], env=env,
+                              capture_output=True, text=True, check=False)
+    out = proc.stdout + proc.stderr
+    if red_in is not None:
+        drift = [ln for ln in out.splitlines() if ln.startswith(f"DRIFT [installer] {red_in}:")]
+        empty = [ln for ln in drift if "shows no installer command" in ln]
+        ok = proc.returncode != 0 and bool(empty if vacuous else set(drift) - set(empty))
+    else:
+        ok = proc.returncode == 0 and (
+            examined is None
+            or f"installer env {examined[0]} ({examined[1]} pipe-to-shell" in out)
+    print(f"[{'PASS' if ok else 'FAIL'}] {label}: rc={proc.returncode} red_in={red_in}")
+    if not ok:
+        print(out)
+    return ok
+
+
+def live_install() -> bool:
+    """The LIVE page must show the pin on the installer, and the gate must count it.
+
+    Fixture cases alone would stay green if the real page lost its pin example
+    or the surface glob stopped reaching it.
+    """
+    text = (REPO / "docs" / "install.md").read_text(encoding="utf-8")
+    pinned = re.search(r"\|\s*MIND_VERSION=v\d+\.\d+\.\d+\s+sh\b", text) is not None
+    proc = subprocess.run([sys.executable, str(CHECK)], cwd=REPO,
+                          capture_output=True, text=True, check=False)
+    counted = re.search(r"\[PASS\] installer env docs/install\.md \([1-9]\d* pipe-to-shell",
+                        proc.stdout) is not None
+    for what, ok in (("docs/install.md pins on the installer", pinned),
+                     ("the gate counts its installer commands", counted),
+                     ("the gate is green on the real tree", proc.returncode == 0)):
+        print(f"[{'PASS' if ok else 'FAIL'}] live: {what}")
+    return pinned and counted and proc.returncode == 0
+
+
+def install_main() -> int:
+    good = f"curl -sSL {INSTALL_URL} | MIND_VERSION=v0.10.3 sh"
+    bad = f"MIND_VERSION=v0.10.3 curl -sSL {INSTALL_URL} | sh"
+    page = "docs/install.md"
+    results = [
+        # The healthy page, and the controls that must not turn red.
+        install_case("pin on sh passes", {page: doc(good)}, examined=(page, 1)),
+        install_case("dry run on sh passes",
+                     {page: doc(f"curl -sSL {INSTALL_URL} | MIND_DRY_RUN=1 sh")},
+                     examined=(page, 1)),
+        install_case("export before curl reaches sh and passes",
+                     {page: doc(f"export MIND_VERSION=v0.10.3; curl -sSL {INSTALL_URL} | sh")},
+                     examined=(page, 1)),
+        install_case("a variable for curl itself passes",
+                     {page: doc(f"HTTPS_PROXY=http://p:3128 curl -sSL {INSTALL_URL} | sh")},
+                     examined=(page, 1)),
+        install_case("a sibling repo without the page passes", {}),
+        # The defect, in every shape a page can show it.
+        install_case("pin before curl is DRIFT", {page: doc(bad)}, red_in=page),
+        install_case("dry run before curl is DRIFT",
+                     {page: doc(f"MIND_DRY_RUN=1 curl -sSL {INSTALL_URL} | sh")}, red_in=page),
+        install_case("any MIND_ variable is DRIFT, not only the pin",
+                     {page: doc(f"MIND_INSTALL_DIR=/opt/m curl -sSL {INSTALL_URL} | sh")},
+                     red_in=page),
+        install_case("wget is DRIFT",
+                     {page: doc(f"MIND_VERSION=v0.10.3 wget -qO- {INSTALL_URL} | sh")},
+                     red_in=page),
+        install_case("env prefix is DRIFT",
+                     {page: doc(f"env MIND_VERSION=v0.10.3 curl -sSL {INSTALL_URL} | sh")},
+                     red_in=page),
+        install_case("bash and sudo sinks are DRIFT",
+                     {page: doc(f"MIND_VERSION=v0.10.3 curl -sSL {INSTALL_URL} | sudo -E bash -s --")},
+                     red_in=page),
+        install_case("a non-curl first stage is DRIFT",
+                     {page: doc("MIND_VERSION=v0.10.3 cat scripts/install.sh | sh")},
+                     red_in=page),
+        install_case("shell prompt prefix is DRIFT", {page: doc("$ " + bad)}, red_in=page),
+        install_case("inline code in prose is DRIFT",
+                     {page: f"# Install\n\nRun `{bad}` to pin.\n"}, red_in=page),
+        install_case("backslash continuation is DRIFT",
+                     {page: doc(f"MIND_VERSION=v0.10.3 curl -sSL \\\n  {INSTALL_URL} | sh")},
+                     red_in=page),
+        install_case("trailing pipe continuation is DRIFT",
+                     {page: doc(f"MIND_VERSION=v0.10.3 curl -sSL {INSTALL_URL} |\n  sh")},
+                     red_in=page),
+        install_case("a table cell shows the pipe escaped and is DRIFT",
+                     {page: doc(good) + f"\n| Linux | `{bad.replace('|', chr(92) + '|')}` |\n"},
+                     red_in=page),
+        install_case("a table cell with the pin on sh passes",
+                     {page: doc(good) + f"\n| Linux | `{good.replace('|', chr(92) + '|')}` |\n| Shell | sh |\n"},
+                     examined=(page, 2)),
+        install_case("irm piped to iex passes",
+                     {page: doc(good, f"irm {INSTALL_URL} | iex")}, examined=(page, 2)),
+        install_case("a script parameter on iex is DRIFT",
+                     {page: doc(good, f"irm {INSTALL_URL} | iex -Version v0.10.3")}, red_in=page),
+        install_case("a script parameter on irm is DRIFT",
+                     {page: doc(good, f"irm {INSTALL_URL} -Version v0.10.3 | Invoke-Expression")},
+                     red_in=page),
+        # First-match masking: a good command earlier must not hide a bad one.
+        install_case("a good command first does not hide a bad one",
+                     {page: doc(good, "", bad)}, red_in=page),
+        # Sibling sites: every surface the gate reads carries its own proof.
+        install_case("README.md surface is DRIFT",
+                     {page: doc(good), "README.md": doc(bad)}, red_in="README.md"),
+        install_case("a second docs page is DRIFT",
+                     {page: doc(good), "docs/other.md": doc(bad)}, red_in="docs/other.md"),
+        install_case("usage comment of scripts/install.sh is DRIFT",
+                     {page: doc(good), "scripts/install.sh": f"#!/bin/sh\n#   {bad}\n"},
+                     red_in="scripts/install.sh"),
+        install_case("usage comment of scripts/install.ps1 is DRIFT",
+                     {page: doc(good), "scripts/install.ps1": f"# Usage:\n#   {bad}\n"},
+                     red_in="scripts/install.ps1"),
+        # Vacuity: the page that exists to show the command shows none.
+        install_case("docs/install.md without an installer command is DRIFT",
+                     {page: "# Install\n\nDownload a release.\n"}, red_in=page, vacuous=True),
+        live_install(),
+    ]
+    failed = results.count(False)
+    print(f"check_claims installer-env gate: cases={len(results)} failed={failed}")
+    if failed:
+        print("FAILED — a variable on the download tool is still reported as a pass")
+        return 1
+    print("OK — an installer variable on the wrong side of the pipe reddens the gate")
+    return 0
+
+
 def main() -> int:
-    """Both suites, both verdicts. A failure in either fails the gate.
+    """All four suites, every verdict. A failure in either fails the gate.
 
     Run unconditionally rather than short-circuiting: a merged file that stopped
     after the first red suite would report LESS evidence than the two separate
@@ -586,13 +758,16 @@ def main() -> int:
     surface_rc = surface_main()
     print("\n=== check_claims: a floor must keep ratcheting ===")
     floor_rc = floor_main()
-    if cost_rc or surface_rc or floor_rc:
+    print("\n=== check_claims: an installer variable must reach the installer ===")
+    install_rc = install_main()
+    if cost_rc or surface_rc or floor_rc or install_rc:
         print(f"\ncheck_claims gate tests: FAILED "
               f"(cost={'FAIL' if cost_rc else 'PASS'}, "
               f"surface={'FAIL' if surface_rc else 'PASS'}, "
-              f"floor={'FAIL' if floor_rc else 'PASS'})")
+              f"floor={'FAIL' if floor_rc else 'PASS'}, "
+              f"install={'FAIL' if install_rc else 'PASS'})")
         return 1
-    print("\ncheck_claims gate tests: OK — all three derived comparisons bite")
+    print("\ncheck_claims gate tests: OK — all four comparisons bite")
     return 0
 
 

@@ -23,6 +23,12 @@ each was fixed, and this gate stops them from silently drifting back:
      one check that fails CLOSED on a missing input: a dollar figure whose inputs
      cannot be read is exactly the drift this gate exists to stop.
 
+  5. installer pipelines — a shown `NAME=x A | sh` hands NAME to A, never to the
+     shell that runs the script, and `irm URL | iex` passes no script parameter.
+     Every surface, and the usage comments of scripts/install.*, must write a MIND_*
+     variable on the shell stage and show -Version only in the script block form. A
+     page that exists to show the install command (docs/install.md) must show one.
+
 Run from the mind repo root (CI + pre-commit). Exit non-zero on drift.
 Low false-positive by design: it only flags exact known-bad phrases and counts that
 breach a declared floor/tolerance — never fuzzy matches.
@@ -132,6 +138,98 @@ def check_canonical(files: list[Path]) -> list[str]:
     ct, cb = CAPS["ir"]["canonical_text"], CAPS["ir"]["canonical_binary"]
     joined = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in files)
     return [v for v in (ct, cb) if v not in joined]
+
+
+# --------------------------------------------------------------------------------
+# Installer pipelines. In `NAME=x A | B` the variable reaches A only. A page that
+# wrote the version pin before the download tool gave the pin to that tool, the
+# installer never saw it, and the command installed the latest release. A MIND_*
+# assignment on a stage that feeds a shell is therefore always wrong, whatever the
+# first command is.
+# --------------------------------------------------------------------------------
+
+_SEQ_RX = re.compile(r"\|\||&&|;")
+# A shell stage: optional sudo/env wrapper and assignments, then sh/bash/zsh/dash/ksh.
+_SINK_RX = re.compile(
+    r"\s*(?:(?:env|sudo)\s+(?:-\S+\s+)*)?(?:[A-Za-z_]\w*=\S*\s+)*"
+    r"(?:\S*/)?(?:ba|z|da|k)?sh(?=[\s`.,;:)]|$)"
+)
+# Assignments that start a command: at the line start, after a backtick (prose that
+# quotes a command) or after a prompt mark. `export X=1; cmd` never matches.
+_ENV_RUN_RX = re.compile(
+    r"(?:^\s*|`\s*|(?:^|\s)[$>#]\s+)(?:(?:env|sudo)\s+)?((?:[A-Za-z_]\w*=\S*\s+)+)\S"
+)
+# PowerShell: `irm URL | iex` runs the text with no arguments, so a script parameter
+# written on irm or iex never reaches install.ps1 (the script block form does).
+_PS_SINK_RX = re.compile(r"\s*(?:iex|invoke-expression)(?=[\s`.,;:)]|$)", re.IGNORECASE)
+_PS_ARG_RX = re.compile(r"\s(-(?:Version|InstallDir|DryRun))\b", re.IGNORECASE)
+_INSTALL_PAGE = "docs/install.md"
+
+
+def _logical_lines(text: str):
+    """(first line number, text) with `\\` and trailing-`|` continuations joined."""
+    buf: list[str] = []
+    start = 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        if not buf:
+            start = n
+        body = raw.rstrip()
+        cont = body.endswith("\\") or (body.endswith("|") and not body.lstrip().startswith("|"))
+        buf.append(body[:-1] if body.endswith("\\") else body)
+        if not cont:
+            yield start, " ".join(buf)
+            buf = []
+    if buf:
+        yield start, " ".join(buf)
+
+
+def installer_pipelines(text: str):
+    """Yield (line, arguments given to a stage before the shell) per pipe-to-shell.
+
+    The names are MIND_* variables for a shell sink and -Version/-InstallDir/-DryRun
+    for a PowerShell sink (iex runs the piped text with no arguments).
+    """
+    for line, logical in _logical_lines(text):
+        # A table cell shows a pipe as `\|`: split the row into cells, restore the pipe.
+        rows = ([c.replace("\\|", "|") for c in re.split(r"(?<!\\)\|", logical)]
+                if logical.lstrip().startswith("|") else [logical])
+        for row in rows:
+            for cmd in _SEQ_RX.split(row):
+                stages = cmd.split("|")
+                sink = next((i for i, st in enumerate(stages)
+                             if i and (_SINK_RX.match(st) or _PS_SINK_RX.match(st))), None)
+                if sink is None:
+                    continue
+                wrong: list[str] = []
+                for st in stages[:sink]:
+                    m = _ENV_RUN_RX.search(st)
+                    if m:
+                        wrong += [n for n in re.findall(r"([A-Za-z_]\w*)=", m.group(1))
+                                  if n.startswith("MIND_")]
+                if _PS_SINK_RX.match(stages[sink]):
+                    wrong += [a for st in stages[:sink + 1] for a in _PS_ARG_RX.findall(" " + st)]
+                yield line, wrong
+
+
+def check_installer_env(files: list[Path]) -> list[tuple[Path, int, list[str]]]:
+    """Every surface plus the usage comments of scripts/install.*; one verdict per file."""
+    scripts = [ROOT / "scripts" / n for n in ("install.sh", "install.ps1")]
+    sources = sorted(set(files) | {p for p in scripts if p.is_file()})
+    bad: list[tuple[Path, int, list[str]]] = []
+    for f in sources:
+        seen = 0
+        hits: list[tuple[Path, int, list[str]]] = []
+        for line, wrong in installer_pipelines(f.read_text(encoding="utf-8", errors="replace")):
+            seen += 1
+            if wrong:
+                hits.append((f, line, wrong))
+        if f == ROOT / _INSTALL_PAGE and not seen:
+            hits.append((f, 1, []))  # the page that shows the command shows none
+        if seen or hits:
+            print(f"[{'FAIL' if hits else 'PASS'}] installer env {f.relative_to(ROOT)} "
+                  f"({seen} pipe-to-shell command(s))")
+        bad.extend(hits)
+    return bad
 
 
 # --------------------------------------------------------------------------------
@@ -627,6 +725,19 @@ def main() -> int:
     missing = check_canonical(files)
     if missing:
         print(f"DRIFT [ir]: canonical IR version(s) absent from docs: {missing}")
+        ok = False
+
+    for f, line, names in check_installer_env(files):
+        where = f"{f.relative_to(ROOT)}:{line}"
+        if not names:
+            print(f"DRIFT [installer] {where}: this page shows no installer command "
+                  f"('... | sh'); the check has nothing to examine")
+        elif names[0].startswith("-"):
+            print(f"DRIFT [installer] {where}: {', '.join(names)} goes to irm or iex, which pass "
+                  f"no argument to the script. Use '& ([scriptblock]::Create((irm URL))) {names[0]} ...'")
+        else:
+            print(f"DRIFT [installer] {where}: {', '.join(names)} goes to the download tool, "
+                  f"not to the installer. Write it on the shell: '... | {names[0]}=... sh'")
         ok = False
 
     # The cost claim runs in BOTH modes: it is a claim check, not a tree-shape
