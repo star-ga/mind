@@ -1,0 +1,162 @@
+// std/cpu_affinity.mind — CPU affinity mask of CPU_SETSIZE 1024 bits.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// glibc CPU_SETSIZE is 1024 bits = 128 bytes = 16 i64 words. word = core / 64,
+// bit = core % 64 by a shift (1 << bit), never a doubling loop. A core outside
+// 0..1023 returns -22 (EINVAL) and makes no syscall.
+//
+// cpu_affinity_mask returns the low 64 bits of the current mask. Use
+// cpu_affinity_has(core) to read any CPU in 0..1023.
+//
+// Determinism: sched_setaffinity / sched_getaffinity are World externs
+// (src/intrinsics.rs). A program that calls this is refused by the
+// determinism veto without `--allow-nondeterministic` and, with it, attested
+// `nondeterministic`.
+//
+// Linux only. This module imports nothing.
+
+extern "C" {
+    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+fn cpu_affinity_bytes() -> i64 {
+    128
+}
+
+fn cpu_affinity_nwords() -> i64 {
+    16
+}
+
+fn cpu_affinity_einval() -> i64 {
+    0 - 22
+}
+
+fn cpu_affinity_errno() -> i64 {
+    let slot: i64 = __errno_location() as i64;
+    __mind_load_i32(slot)
+}
+
+fn cpu_affinity_sys(r: i64) -> i64 {
+    if r < 0 {
+        let e: i64 = cpu_affinity_errno();
+        if e > 0 {
+            return 0 - e;
+        }
+    }
+    r
+}
+
+fn cpu_affinity_range(core: i64) -> i64 {
+    if core < 0 {
+        return cpu_affinity_einval();
+    }
+    if core >= 1024 {
+        return cpu_affinity_einval();
+    }
+    0
+}
+
+fn cpu_affinity_zero(m: i64) -> i64 {
+    let n: i64 = cpu_affinity_nwords();
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(m + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// Pin the calling thread to a single CPU `core`. Returns 0 or a negative errno.
+pub fn cpu_affinity_pin(core: i64) -> i64 {
+    let bad: i64 = cpu_affinity_range(core);
+    if bad < 0 {
+        return bad;
+    }
+    let n: i64 = cpu_affinity_bytes();
+    let m: i64 = __mind_alloc(n);
+    let _ = cpu_affinity_zero(m);
+    let word: i64 = core / 64;
+    let bit: i64 = core % 64;
+    __mind_store_i64(m + word * 8, 1 << bit);
+    let r: i64 = sched_setaffinity(0, n, m);
+    let rc: i64 = cpu_affinity_sys(r);
+    let _ = __mind_free(m);
+    rc
+}
+
+// Low 64 bits of the calling thread's CPU-affinity mask, or a negative errno.
+pub fn cpu_affinity_mask() -> i64 {
+    let n: i64 = cpu_affinity_bytes();
+    let m: i64 = __mind_alloc(n);
+    let _ = cpu_affinity_zero(m);
+    let r: i64 = sched_getaffinity(0, n, m);
+    let rc: i64 = cpu_affinity_sys(r);
+    let mut out: i64 = rc;
+    if rc >= 0 {
+        out = __mind_load_i64(m + 0);
+    }
+    let _ = __mind_free(m);
+    out
+}
+
+// 1 if CPU `core` is in the current mask, 0 if not, negative errno on failure.
+pub fn cpu_affinity_has(core: i64) -> i64 {
+    let bad: i64 = cpu_affinity_range(core);
+    if bad < 0 {
+        return bad;
+    }
+    let n: i64 = cpu_affinity_bytes();
+    let m: i64 = __mind_alloc(n);
+    let _ = cpu_affinity_zero(m);
+    let r: i64 = sched_getaffinity(0, n, m);
+    let rc: i64 = cpu_affinity_sys(r);
+    if rc < 0 {
+        let _ = __mind_free(m);
+        return rc;
+    }
+    let word: i64 = core / 64;
+    let bit: i64 = core % 64;
+    let w: i64 = __mind_load_i64(m + word * 8);
+    let _ = __mind_free(m);
+    (w >> bit) & 1
+}
+
+// Pin to `core`, confirm with cpu_affinity_has, then restore the full 128-byte
+// mask. Returns 1 on success, or a negative code. Always restores after a
+// successful save, including when pin or has fails.
+pub fn cpu_affinity_pin_demo(core: i64) -> i64 {
+    let bad: i64 = cpu_affinity_range(core);
+    if bad < 0 {
+        return bad;
+    }
+    let n: i64 = cpu_affinity_bytes();
+    let save: i64 = __mind_alloc(n);
+    let _ = cpu_affinity_zero(save);
+    let g: i64 = sched_getaffinity(0, n, save);
+    let gr: i64 = cpu_affinity_sys(g);
+    if gr < 0 {
+        let _ = __mind_free(save);
+        return gr;
+    }
+    let pr: i64 = cpu_affinity_pin(core);
+    if pr < 0 {
+        let _ = sched_setaffinity(0, n, save);
+        let _ = __mind_free(save);
+        return pr;
+    }
+    let ok: i64 = cpu_affinity_has(core);
+    let _ = sched_setaffinity(0, n, save);
+    let _ = __mind_free(save);
+    if ok == 1 {
+        return 1;
+    }
+    if ok < 0 {
+        return ok;
+    }
+    0 - 2
+}

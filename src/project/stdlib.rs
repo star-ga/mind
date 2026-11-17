@@ -38,9 +38,9 @@ use crate::ast::Module;
 
 mod load;
 pub use load::{
-    IMPLICIT_STD_MODULES, bundled_module_ast, imported_std_extras, is_loaded, misplaced_std_import,
+    bundled_module_ast, imported_std_extras, is_loaded, misplaced_std_import,
     misplaced_std_imports, parsed_std_modules, parsed_stdlib_modules_for, std_import_roots,
-    std_source, std_sources, stdlib_override_error,
+    std_source, std_sources, stdlib_override_error, IMPLICIT_STD_MODULES,
 };
 
 /// Compile-time bundle of every std/*.mind file, laid out as
@@ -65,6 +65,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.chacha20_poly1305", include_str!("../../std/chacha20_poly1305.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.cpu_affinity", include_str!("../../std/cpu_affinity.mind")),
     ("std.detmath", include_str!("../../std/detmath.mind")),
     ("std.dns", include_str!("../../std/dns.mind")),
     ("std.ecdsa_p256", include_str!("../../std/ecdsa_p256.mind")),

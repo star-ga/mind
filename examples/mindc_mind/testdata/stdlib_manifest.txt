@@ -33,18 +33,18 @@
 # native build — a whole-corpus RESEED event, never a routine edit. The lint pins
 # this with a positive golden below.
 #
-# SEED_BLOB_SHA256 ef646c3faebec81838902834c5b9c97190fbfad5224331cd145367da40e72873
+# SEED_BLOB_SHA256 5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee
 #   sha256 of b"".join(read(std/<m>.mind) + b"\n" for each `seed` row in file
 #   order) = the exact stdin image prefix the bridge composes. Recompute with:
 #     python3 examples/mindc_mind/stdlib_manifest_lint.py --print-seed-sha256
 #
 # SEED_COUNT 21
-# BUNDLED_COUNT 76
-# TOTAL_COUNT 76
+# BUNDLED_COUNT 77
+# TOTAL_COUNT 77
 #
 # Every module is `bundled`: STDLIB_MIND_SOURCES is exhaustive over std/*.mind,
 # and tests/std_bundled_module_table.rs fails when a shipped module has no row.
-# 55 modules are not `seed`: the frozen native compiler cannot see them until a
+# 56 modules are not `seed`: the frozen native compiler cannot see them until a
 # reseed. See docs/RI_DEPENDENCY_MATRIX.md row 14.
 #
 # module	native_seed	bundled
@@ -54,6 +54,7 @@ async	seed	bundled
 blas	seed	bundled
 chacha20_poly1305	no	bundled
 cli	seed	bundled
+cpu_affinity	no	bundled
 detmath	no	bundled
 dns	no	bundled
 ecdsa_p256	no	bundled

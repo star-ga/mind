@@ -230,6 +230,16 @@ required-features = ["std-surface"]
 name = "native_array_binop_refusal"
 required-features = ["std-surface", "mlir-build"]
 
+# 1024-bit CPU affinity. Compiles std.cpu_affinity through io_reactor_* names.
+[[test]]
+name = "std_cpu_affinity"
+required-features = ["mlir-build", "std-surface", "cross-module-imports"]
+
+# iouring imports std.cpu_affinity; compiling it needs the bundled std.
+[[test]]
+name = "std_surface_iouring"
+required-features = ["mlir-build", "std-surface", "cross-module-imports"]
+
 [[bench]]
 name = "compiler"
 harness = false

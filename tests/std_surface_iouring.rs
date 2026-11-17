@@ -336,6 +336,7 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_storage_rw_demo",
         "io_reactor_pin_cpu",
         "io_reactor_affinity_mask",
+        "io_reactor_affinity_has",
         "io_reactor_pin_demo",
         "io_uring_ktls_echo",
         "io_uring_dmabuf_io_demo",

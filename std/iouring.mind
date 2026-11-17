@@ -27,8 +27,8 @@
 // async server recv (Phase 2 provided buffers × the Phase 3 multishot pattern).
 //
 // Phase 4: deterministic scheduling — pin the reactor thread to one core
-// (sched_setaffinity) so completion timing is jitter-free and the canonicaliser
-// reorders a smaller window. Scheduling only; never enters the evidence chain.
+// (1024-bit CPU_SETSIZE mask via std.cpu_affinity) so completion timing is
+// jitter-free. Scheduling only; never enters the evidence chain.
 //
 // Phase 5: storage I/O — OP_OPENAT / OP_READ / OP_WRITE drive files through the
 // same submit/reap engine; the O_DIRECT round-trip bypasses the page cache
@@ -67,6 +67,8 @@
 // with iouring_err_kernel_feature(), never allowed to block forever. The bound
 // only decides WHEN a stuck wait gives up; it never changes the value or the
 // bytes of an operation that completed.
+
+import std.cpu_affinity;
 
 // ── libc / syscall surface ──────────────────────────────────────────────────
 extern "C" {
@@ -1491,76 +1493,26 @@ pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
 }
 
 // ── Phase 4: deterministic scheduling (reactor core-pinning) ────────────────
-// Completion ORDER is canonicalised by std.io_canon, but completion TIMING —
-// and thus the physical interleave the reactor must re-sort — is only stable if
-// the reactor thread is not migrated across cores by the scheduler. Pinning the
-// reactor to one (ideally isolated, `isolcpus=`) core removes that jitter, the
-// lightweight half of "sched_ext core-pinning hardening": fewer cross-core
-// wakeups, a steadier reap cadence, and a smaller window the canonicaliser must
-// reorder. sched_setaffinity (203) / sched_getaffinity (204); a CPU mask is a
-// bitset (bit i = CPU i). Scheduling only — it never enters the evidence chain.
+// Pin the reactor to one core so completion timing is stable. The 1024-bit
+// mask, the EINVAL range check, and full-mask save/restore live in
+// std.cpu_affinity; these names forward so existing callers stay valid.
+// io_reactor_affinity_mask returns the low 64 bits. Scheduling only — it
+// never enters the evidence chain.
 
-// Pin the calling thread to a single CPU `core`. Returns 0 or a negative errno.
 pub fn io_reactor_pin_cpu(core: i64) -> i64 {
-    let m: i64 = __mind_alloc(8);
-    let mut bit: i64 = 1;
-    let mut j: i64 = 0;
-    while j < core {
-        bit = bit * 2;
-        j = j + 1;
-    }
-    __mind_store_i64(m + 0, bit);
-    let r: i64 = sched_setaffinity(0, 8, m);
-    let _ = __mind_free(m);
-    r
+    cpu_affinity_pin(core)
 }
 
-// Return the calling thread's current CPU-affinity mask (low 64 CPUs), or -1.
 pub fn io_reactor_affinity_mask() -> i64 {
-    let m: i64 = __mind_alloc(8);
-    __mind_store_i64(m + 0, 0);
-    let r: i64 = sched_getaffinity(0, 8, m);
-    let mut mask: i64 = 0 - 1;
-    if r >= 0 {
-        mask = __mind_load_i64(m + 0);
-    }
-    let _ = __mind_free(m);
-    mask
+    cpu_affinity_mask()
 }
 
-// Phase-4 proof: pin the reactor thread to `core`, confirm the affinity mask is
-// exactly that core, then RESTORE the original affinity (so a pin probe never
-// leaves the caller stuck on one CPU). Returns 1 on success, or a negative code.
+pub fn io_reactor_affinity_has(core: i64) -> i64 {
+    cpu_affinity_has(core)
+}
+
 pub fn io_reactor_pin_demo(core: i64) -> i64 {
-    let save: i64 = __mind_alloc(8);
-    __mind_store_i64(save + 0, 0);
-    if sched_getaffinity(0, 8, save) < 0 {
-        let _ = __mind_free(save);
-        return 0 - 1;
-    }
-    let orig: i64 = __mind_load_i64(save + 0);
-    let pr: i64 = io_reactor_pin_cpu(core);
-    if pr < 0 {
-        let _ = __mind_free(save);
-        return pr;
-    }
-    let now: i64 = io_reactor_affinity_mask();
-    let mut want: i64 = 1;
-    let mut j: i64 = 0;
-    while j < core {
-        want = want * 2;
-        j = j + 1;
-    }
-    // Restore the original affinity mask.
-    let rm: i64 = __mind_alloc(8);
-    __mind_store_i64(rm + 0, orig);
-    let _ = sched_setaffinity(0, 8, rm);
-    let _ = __mind_free(rm);
-    let _ = __mind_free(save);
-    if now == want {
-        return 1;
-    }
-    0 - 2
+    cpu_affinity_pin_demo(core)
 }
 
 // ── Phase 7: dma-buf device-memory I/O substrate ────────────────────────────

@@ -5,7 +5,7 @@
 # (gate: backend_native_bridge_smoke.py).
 #
 # compiler:  testdata/selfhost_loop/stage1.elf (frozen pure-MIND stage0)
-# std_blob:  21 modules, sha256 ef646c3faebec81838902834c5b9c97190fbfad5224331cd145367da40e72873 (419266 bytes)
+# std_blob:  21 modules, sha256 5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee (417431 bytes)
 # programs:  each row's source is <name>.mind in this directory; the gate reads the
 #            manifest and iterates every row. Previously the gate hardcoded ONE
 #            program, so "byte anchor" meant a single 492-byte artifact and a

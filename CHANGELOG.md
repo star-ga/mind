@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **CPU affinity mask is 1024 bits (glibc `CPU_SETSIZE`).** `io_reactor_pin_cpu`
+  built one i64 by doubling a bit: a core at or above 64 overflowed, and a
+  restore dropped CPUs 64 and up. The helpers now live in `std/cpu_affinity.mind`
+  (`word = core / 64`, `bit = core % 64` by a shift). A core outside 0..1023
+  returns -22 without a syscall. `io_reactor_pin_demo` saves and restores the
+  full 128-byte mask. `io_reactor_affinity_mask` still returns the low 64 bits.
+  `io_reactor_affinity_has(core)` reads any CPU in 0..1023. The four names in
+  `std/iouring.mind` forward. `cpu_affinity` is bundled, not seed.
+  `SEED_BLOB_SHA256` moves ef646c3f… ->
+  5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee
+  (21 modules, 417431 bytes) with the iouring edit.
+
 ## [0.10.3] - 2026-11-13
 
 ### Added
