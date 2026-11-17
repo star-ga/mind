@@ -312,6 +312,11 @@ _TEST_RESULT_RE = re.compile(
     r"^test result: (?:ok|FAILED)\. ([0-9]+) passed; ([0-9]+) failed;"
 )
 
+# The row (like CI build_test, which sets neither) decides these two variables;
+# the caller's shell does not. A leaked MIND_BENCH_REQUIRE=1 reds the rows that
+# build without mlir-build on purpose.
+TIER_OWNED_ENV = ("MIND_BENCH_REQUIRE", "MIND_INTDOT_VNNI_VERIFY")
+
 
 def run_cargo_test_matrix(root: Path) -> int:
     """Execute the derived matrix without a shell or an argv serialization layer."""
@@ -320,6 +325,7 @@ def run_cargo_test_matrix(root: Path) -> int:
     if len(rows) < 10:
         raise ValueError(f"build_test cargo matrix has {len(rows)} semantic rows; need >=10")
     locked = (root / "Cargo.lock").is_file()
+    row_env = {k: v for k, v in os.environ.items() if k not in TIER_OWNED_ENV}
     failures = 0
     for index, row in enumerate(rows, 1):
         argv = cargo_test_execution_argv(row, locked)
@@ -332,7 +338,7 @@ def run_cargo_test_matrix(root: Path) -> int:
         try:
             result = subprocess.run(
                 command, cwd=root, capture_output=True, text=True, timeout=timeout,
-                check=False,
+                check=False, env=row_env,
             )
         except subprocess.TimeoutExpired as exc:
             print(f"FAIL feature row {label!r} timed out after {timeout}s; argv={json.dumps(argv)}")

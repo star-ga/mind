@@ -51,6 +51,16 @@ PF_TARGET="${PF_TARGET:-target-preflight}"
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '\033[31mFAIL:\033[0m %s\n' "$1"; fail=1; }
 
+# The gate scripts use python 3.12 syntax; an older interpreter shows up as five
+# unrelated-looking reds. Not a gate: this is the one early stop, with one named
+# failure, before any step runs.
+require_python_312() {
+  python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null && return 0
+  bad "python3 is older than 3.12 (found: $(python3 --version 2>&1)); put python 3.12 or newer first on PATH"
+  exit 1
+}
+require_python_312
+
 # Base of the unpushed commit-message range. A detached checkout has no
 # local branch, so a single `main` lookup fails closed before the gate runs.
 # Order is fixed: local main, then the remote-tracking main, then
