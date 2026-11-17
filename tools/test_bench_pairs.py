@@ -6,6 +6,9 @@ Run: ``python3 tools/test_bench_pairs.py``
 from __future__ import annotations
 
 import math
+import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,6 +58,103 @@ def grade(text: str) -> subprocess.CompletedProcess[str]:
             capture_output=True,
             text=True,
         )
+
+
+def pair_env(home: Path, hint: str | None, stub: Path, log: Path) -> dict[str, str]:
+    """A clean environment: no outer git state, no outer base hint, a stub cargo first on PATH."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "MIND_HYGIENE_BASE"}
+    env.update(
+        HOME=str(home), XDG_CONFIG_HOME=str(home), GIT_CONFIG_NOSYSTEM="1",
+        GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
+        PAIR_STUB_LOG=str(log), PATH=f"{stub}{os.pathsep}{env.get('PATH', '')}",
+    )
+    if hint is not None:
+        env["MIND_HYGIENE_BASE"] = hint
+    return env
+
+
+def check_pair_base(failures: list[str]) -> None:
+    """Run the real pair script in a temporary repository and read which base it resolves.
+
+    The stub cargo fails at once, so a resolved base shows as the "bench pairs base=" line plus
+    one stub call, and a miss shows as the named failure with no stub call.
+    """
+    script = ROOT / "scripts" / "preflight_bench_pairs.sh"
+    with tempfile.TemporaryDirectory() as td:
+        top = Path(td)
+        repo, home, stub, log = top / "repo", top / "home", top / "stub", top / "cargo.log"
+        for d in (repo / "scripts", home, stub):
+            d.mkdir(parents=True)
+        shutil.copy(script, repo / "scripts" / script.name)
+        (stub / "cargo").write_text(
+            '#!/bin/sh\necho called >> "$PAIR_STUB_LOG"\necho "stub cargo: no build here" >&2\nexit 97\n'
+        )
+        (stub / "cargo").chmod(0o755)
+        env = pair_env(home, None, stub, log)
+
+        def git(*args: str, check: bool = True) -> str:
+            done = subprocess.run(["git", "-c", "commit.gpgsign=false", *args], cwd=repo, env=env,
+                                  capture_output=True, text=True, check=check)
+            return done.stdout.strip()
+
+        git("init", "-q")
+        git("symbolic-ref", "HEAD", "refs/heads/work")
+        shas = []
+        for n in range(3):
+            (repo / "f.txt").write_text(f"{n}\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", f"c{n}")
+            shas.append(git("rev-parse", "HEAD"))
+        c1, c2, c3 = shas
+        git("checkout", "-q", "--detach")
+        orphan = git("commit-tree", git("hash-object", "-w", "-t", "tree", "/dev/null"), "-m", "unrelated")
+
+        def run_pair(main: str | None, origin: str | None, hint: str | None):
+            for name, sha in (("refs/heads/main", main), ("refs/remotes/origin/main", origin)):
+                if sha:
+                    git("update-ref", name, sha)
+                elif git("rev-parse", "-q", "--verify", name, check=False):
+                    git("update-ref", "-d", name)
+            log.unlink(missing_ok=True)
+            bench = top / "bench"
+            shutil.rmtree(bench, ignore_errors=True)
+            bench.mkdir()
+            done = subprocess.run(
+                ["bash", str(repo / "scripts" / script.name), str(bench), str(top / "head-target"),
+                 str(top / "floor.txt")],
+                cwd=top, env=pair_env(home, hint, stub, log), capture_output=True, text=True, timeout=60,
+            )
+            out = done.stdout + done.stderr
+            found = re.search(r"^bench pairs base=([0-9a-f]{40}) head=", out, re.M)
+            return done.returncode, out, (found.group(1) if found else None), log.exists()
+
+        miss = "FAIL: no merge-base"
+        cases = [
+            ("no main, no origin, no hint: exit 4, every miss named", None, None, None, None,
+             ["refs/heads/main not a commit", "refs/remotes/origin/main not a commit",
+              "MIND_HYGIENE_BASE unset"]),
+            ("no main, hint names a commit: the hint resolves", None, None, c1, c1, []),
+            ("no main, hint is not a commit: exit 4, hint named", None, None, "no-such-ref", None,
+             ["MIND_HYGIENE_BASE=no-such-ref not a commit"]),
+            ("origin/main alone resolves", None, c2, None, c2, []),
+            ("origin/main wins over the hint", None, c2, c1, c2, []),
+            ("local main wins over origin/main", c1, c2, None, c1, []),
+            ("local main wins over origin/main and the hint", c1, c2, c3, c1, []),
+            ("a main with no shared history is a named miss", orphan, None, None, None,
+             ["refs/heads/main shares no history with HEAD"]),
+            ("a main with no shared history falls through to the hint", orphan, None, c1, c1, []),
+        ]
+        ran = 0
+        for label, main, origin, hint, want, names in cases:
+            rc, out, base, stubbed = run_pair(main, origin, hint)
+            ran += 1
+            if want is None:
+                ok = rc == 4 and base is None and not stubbed and miss in out and all(n in out for n in names)
+            else:
+                ok = rc == 4 and base == want and stubbed and miss not in out
+            report(failures, f"pair base: {label}", ok, f"rc={rc} base={base} stub={stubbed}\n{out}")
+        report(failures, f"pair base: all {len(cases)} cases ran", ran == len(cases) == 9)
 
 
 def main() -> int:
@@ -256,6 +356,8 @@ def main() -> int:
         "a bench exit other than 1 or 2 stays a hard fail after the pair call",
         hard_at > pair_at,
     )
+
+    check_pair_base(failures)
 
     if failures:
         print(f"\n{len(failures)} bench-pair test(s) FAILED")
