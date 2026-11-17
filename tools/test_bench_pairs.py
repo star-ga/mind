@@ -110,7 +110,16 @@ def check_pair_base(failures: list[str]) -> None:
             git("commit", "-q", "-m", f"c{n}")
             shas.append(git("rev-parse", "HEAD"))
         c1, c2, c3 = shas
-        git("checkout", "-q", "--detach")
+        git("checkout", "-q", "--detach", c1)
+        (repo / "f.txt").write_text("side\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "side")
+        side = git("rev-parse", "HEAD")
+        git("checkout", "-q", "--detach", c3)
+        # Every case above uses a candidate that is an ancestor of HEAD, where the merge-base is the
+        # candidate itself. The side commit forks from c1, so the merge-base (c1) differs from it.
+        report(failures, "pair base: the side commit diverged from HEAD",
+               side not in (c1, c2, c3) and git("merge-base", "HEAD", side) == c1)
         orphan = git("commit-tree", git("hash-object", "-w", "-t", "tree", "/dev/null"), "-m", "unrelated")
 
         def run_pair(main: str | None, origin: str | None, hint: str | None):
@@ -147,6 +156,10 @@ def check_pair_base(failures: list[str]) -> None:
             ("a main with no shared history is a named miss", orphan, None, None, None,
              ["refs/heads/main shares no history with HEAD"]),
             ("a main with no shared history falls through to the hint", orphan, None, c1, c1, []),
+            ("diverged local main: the base is the merge-base, not main", side, None, None, c1, []),
+            ("diverged origin/main: the base is the merge-base, not origin/main", None, side, None, c1, []),
+            ("diverged hint: the base is the merge-base, not the hint", None, None, side, c1, []),
+            ("diverged local main wins over a nearer origin/main", side, c2, None, c1, []),
         ]
         ran = 0
         for label, main, origin, hint, want, names in cases:
@@ -157,7 +170,7 @@ def check_pair_base(failures: list[str]) -> None:
             else:
                 ok = rc == 4 and base == want and stubbed and miss not in out
             report(failures, f"pair base: {label}", ok, f"rc={rc} base={base} stub={stubbed}\n{out}")
-        report(failures, f"pair base: all {len(cases)} cases ran", ran == len(cases) == 9)
+        report(failures, f"pair base: all {len(cases)} cases ran", ran == len(cases) == 13)
 
 
 def main() -> int:
