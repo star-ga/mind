@@ -60,11 +60,14 @@ def grade(text: str) -> subprocess.CompletedProcess[str]:
         )
 
 
-def pair_env(home: Path, hint: str | None, stub: Path, log: Path) -> dict[str, str]:
-    """A clean environment: no outer git state, no outer base hint, a stub cargo first on PATH."""
+def pair_env(hint: str | None, stub: Path, log: Path) -> dict[str, str]:
+    """A clean environment: no outer git state, no outer base hint, a stub cargo first on PATH.
+
+    HOME stays as it is: a git installed under HOME needs it to start.
+    """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "MIND_HYGIENE_BASE"}
     env.update(
-        HOME=str(home), XDG_CONFIG_HOME=str(home), GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
         GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
         GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
         PAIR_STUB_LOG=str(log), PATH=f"{stub}{os.pathsep}{env.get('PATH', '')}",
@@ -83,15 +86,15 @@ def check_pair_base(failures: list[str]) -> None:
     script = ROOT / "scripts" / "preflight_bench_pairs.sh"
     with tempfile.TemporaryDirectory() as td:
         top = Path(td)
-        repo, home, stub, log = top / "repo", top / "home", top / "stub", top / "cargo.log"
-        for d in (repo / "scripts", home, stub):
+        repo, stub, log = top / "repo", top / "stub", top / "cargo.log"
+        for d in (repo / "scripts", stub):
             d.mkdir(parents=True)
         shutil.copy(script, repo / "scripts" / script.name)
         (stub / "cargo").write_text(
             '#!/bin/sh\necho called >> "$PAIR_STUB_LOG"\necho "stub cargo: no build here" >&2\nexit 97\n'
         )
         (stub / "cargo").chmod(0o755)
-        env = pair_env(home, None, stub, log)
+        env = pair_env(None, stub, log)
 
         def git(*args: str, check: bool = True) -> str:
             done = subprocess.run(["git", "-c", "commit.gpgsign=false", *args], cwd=repo, env=env,
@@ -123,7 +126,7 @@ def check_pair_base(failures: list[str]) -> None:
             done = subprocess.run(
                 ["bash", str(repo / "scripts" / script.name), str(bench), str(top / "head-target"),
                  str(top / "floor.txt")],
-                cwd=top, env=pair_env(home, hint, stub, log), capture_output=True, text=True, timeout=60,
+                cwd=top, env=pair_env(hint, stub, log), capture_output=True, text=True, timeout=60,
             )
             out = done.stdout + done.stderr
             found = re.search(r"^bench pairs base=([0-9a-f]{40}) head=", out, re.M)
