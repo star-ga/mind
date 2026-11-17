@@ -1271,7 +1271,9 @@ jobs:
           MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
 
-      # PENDING RESEED (R5): flip to uncommitted `ci` in the L10 commit.
+      # The script form of this contract is not tracked. The same contract runs as
+      # the test dynamic_elf_is_deterministic_across_directories in
+      # tests/native_lane_extern_fixed.rs.
       # - name: Native fixed-arity extern determinism gate (native_extern_fixed_smoke.py)
       #   # Builds the closed-table extern corpus twice in two directories under
       #   # `--compiler` and requires byte-identical dynamic images: fixed

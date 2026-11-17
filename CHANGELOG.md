@@ -1131,17 +1131,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panics. Unrelated process failures never satisfy an evaluator pin.
 
 ### Added — native-lane request corpus (native-wave2 / native-wave3 programs)
-- `tests/native_lane_request_fixtures.rs` runs 172 programs from the native-wave2 and
+- `tests/native_lane_request_fixtures.rs` runs 179 programs from the native-wave2 and
   native-wave3 checkpoints and from the native admission requests
-  (`tests/fixtures/native_lane/request_corpus.txt`) on native-lane-v1. 44 build
-  natively and match the MLIR backend (exit code and stdout); 115 are refused with a
-  named lane kind and no artifact. A compiler whose seed predates the lane refuses 138
-  of them with exit 3 (the ignored RED leg, run with `MIND_LANE_PRESEED_MINDC`).
-- 13 programs build on the lane and exit differently from MLIR: allocation sizes of 0
-  or less (the C runtime returns 0, the native arena a pointer), 2000 allocations of
-  1 MB freed in a loop (the native build traps), a non-canonical `bool` argument used
-  with `!`, `== true` or arithmetic, and an `f64` result from `main`. They stay in an
-  ignored open-defect test until each is a named refusal or matches MLIR.
+  (`tests/fixtures/native_lane/request_corpus.txt`) on native-lane-v1. 57 build
+  natively and match the MLIR backend (exit code and stdout); 122 are refused: the
+  native build exits 3, writes no artifact and names the refusal the record pins. A
+  compiler whose seed predates the lane refuses 141 of them with exit 3 (48 of the
+  building programs and 93 of the refused ones; the ignored RED leg, run with
+  `MIND_LANE_PRESEED_MINDC`).
+- No program of the corpus builds on the lane and exits differently from MLIR. A
+  record is either refused with the text it pins or asserted equal to the MLIR
+  artifact in exit code and stdout, and the suite holds no ignored open-defect test:
+  its one ignored test is the RED leg. The former silent mismatches are settled in
+  the corpus: allocation and reallocation sizes of 0 or less build and match MLIR;
+  2000 allocations of 1 MB freed in a loop refuse `lane.alloc.free_in_loop`; a
+  `bool` operand of `!`, `==` or arithmetic refuses `lane.bool.width`; an `f64`
+  result from `main` refuses `lane.entry.f64_result`.
 
 ### Added — fixed-arity `extern "C"` admission and lowering for the native lane
 - The native-lane fence now admits a top-level `extern "C"` block against a closed
@@ -1188,7 +1193,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lane.extern.unknown_symbol`), `w3_cast_i32` refuses `lane.type.mismatch` and
   the four integer-to-pointer cast records refuse `lane.source.binding_type`.
   The `ci.yml` step that would run the extern determinism contract as a script
-  is still commented out, and no such script is tracked.
+  is commented out, and no such script is tracked. The same contract runs as the
+  test `dynamic_elf_is_deterministic_across_directories` in
+  `tests/native_lane_extern_fixed.rs`.
 
 ### Fixed — fixed i64 array reads on the default native path
 - The native lane (the default `--backend native` profile) refused every array

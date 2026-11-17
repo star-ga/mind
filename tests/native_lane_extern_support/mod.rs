@@ -7,10 +7,14 @@
 //! `native_lane_extern_fixed.rs` and `native_lane_extern_parity.rs`, so neither
 //! exceeds the ceiling `tests/module_size_ratchet.rs` pins.
 //!
-//! The extern lowering lives in this checkout's `main.mind`; the committed
-//! testdata seed predates it and carries no `nbextc01`. The marked cases
-//! therefore run a stage1 minted from this checkout (`mint_stage1`), or the
-//! compiler `MINDC_NATIVE_ELF` names. The committed seed is never replaced.
+//! The extern lowering lives in this checkout's `main.mind`. The committed
+//! testdata seed carries `nbextc01`, but it is the compiler of the last seed
+//! advance, which need not match the text of this checkout. The marked cases
+//! therefore run a stage1 that the committed seed mints from this checkout
+//! (`mint_stage1`), or the compiler `MINDC_NATIVE_ELF` names. An edit of
+//! `main.mind`, a part or a std seed module is tested before the next advance,
+//! and a mutant is a stage1 minted from the edited text. The committed seed is
+//! never replaced.
 
 // It writes and execs a POSIX shell stub, so it is unix-only at file scope
 // (tests/harness_portability.rs).
@@ -169,8 +173,8 @@ pub fn mint_library(library: &str) -> PathBuf {
 }
 
 /// The compiler the marked cases run: `MINDC_NATIVE_ELF` when it is set, else
-/// a stage1 minted from this checkout. Never the committed testdata seed:
-/// falling back to it turns every marked case into an unmarked refusal.
+/// a stage1 minted from this checkout. Never the committed testdata seed
+/// itself: it need not match the compiler text of this checkout.
 pub fn fresh_compiler() -> &'static Path {
     static FRESH: OnceLock<PathBuf> = OnceLock::new();
     FRESH.get_or_init(|| match std::env::var_os("MINDC_NATIVE_ELF") {
