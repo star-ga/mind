@@ -20,16 +20,18 @@ release asset, and installs `mindc` to `/usr/local/bin` when that directory is
 writable. Otherwise it installs to `~/.local/bin`. `MIND_INSTALL_DIR` overrides
 the directory.
 
-Pin a tag with `MIND_VERSION`. The script reads no positional arguments.
+Pin a tag with `MIND_VERSION`. The script reads no positional arguments. Set
+the variable on `sh`, the process that runs the script. A variable set before
+`curl` goes to `curl`, and the script installs the latest release.
 
 ```sh
-MIND_VERSION=v0.10.3 curl -sSL https://mindlang.dev/install.sh | sh
+curl -sSL https://mindlang.dev/install.sh | MIND_VERSION=v0.10.3 sh
 ```
 
 Preview the download and the install path. The script writes nothing.
 
 ```sh
-MIND_DRY_RUN=1 curl -sSL https://mindlang.dev/install.sh | sh
+curl -sSL https://mindlang.dev/install.sh | MIND_DRY_RUN=1 sh
 ```
 
 When the release publishes `<asset>.sha256`, the script checks that file. If

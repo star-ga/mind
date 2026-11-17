@@ -2,8 +2,12 @@
 #
 # Usage:
 #   irm https://mindlang.dev/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.3
 #   .\install.ps1
 #   .\install.ps1 -DryRun          # print what would happen, do nothing
+#
+# iex passes no arguments. To give -Version or -DryRun to a script fetched with
+# irm, use the script block form.
 #
 # Environment / parameter overrides:
 #   -Version <tag>       pin a specific release, e.g. -Version v0.6.9
