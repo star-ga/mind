@@ -66,6 +66,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.chacha20_poly1305", include_str!("../../std/chacha20_poly1305.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
     ("std.cpu_affinity", include_str!("../../std/cpu_affinity.mind")),
+    ("std.cpu_affinity_sys", include_str!("../../std/cpu_affinity_sys.mind")),
     ("std.detmath", include_str!("../../std/detmath.mind")),
     ("std.dns", include_str!("../../std/dns.mind")),
     ("std.ecdsa_p256", include_str!("../../std/ecdsa_p256.mind")),

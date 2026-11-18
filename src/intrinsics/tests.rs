@@ -209,13 +209,17 @@ const NAMED_STD_MODULES: &[(&str, &str)] = &[
         "std.cpu_affinity",
         include_str!("../../std/cpu_affinity.mind"),
     ),
+    (
+        "std.cpu_affinity_sys",
+        include_str!("../../std/cpu_affinity_sys.mind"),
+    ),
 ];
 
 /// Named modules whose every public function reaches the world, so the scan
 /// below has no pure side. A pure public function added to one of them makes
 /// its pure side non-empty and must take the module off this list.
 #[cfg(feature = "std-surface")]
-const ALL_WORLD_STD_MODULES: &[&str] = &["std.cpu_affinity"];
+const ALL_WORLD_STD_MODULES: &[&str] = &["std.cpu_affinity", "std.cpu_affinity_sys"];
 
 /// Every callee named anywhere in `instrs`, through every nested body.
 #[cfg(feature = "std-surface")]
@@ -243,6 +247,11 @@ fn public_world_reach(module: &str, src: &str) -> (Vec<String>, Vec<String>) {
             || NAMED_STD_MODULES
                 .iter()
                 .any(|(m, _)| crate::std_qualified::is_row(m, c))
+            // `cpu_affinity_sys_errno` reads the errno cell the two affinity calls
+            // write. Its extern is not classified World (std.dns and std.process
+            // read the same cell for their own error codes), so the wrapper is a
+            // row by this one named rule, not by the classifier.
+            || (module == "std.cpu_affinity_sys" && c == "__errno_location")
     })
 }
 
@@ -342,13 +351,14 @@ fn public_world_reach_of_std_entropy_dns_and_https_is_named() {
         }
     }
     assert_eq!(
-        named, 25,
+        named, 29,
         "dns_resolve, tcp_connect_host(_timeout), dns_tcp_socket, dns_connect_fd, \
          dns_clock_gettime, entropy_fill, \
          https_get(_ca), https_post(_ca), https_get_with_headers, https_post_with_headers, \
          https_probe, hio_now_unix, hio_now_mono_ms, hio_remaining_ms, hio_arm, hio_io_failure, \
-         procgroup_spawn_ev, procgroup_wait_all_ev, \
-         cpu_affinity_pin, cpu_affinity_mask, cpu_affinity_has, cpu_affinity_pin_demo"
+         procgroup_spawn_ev, procgroup_wait_all_ev, cpu_affinity_pin_ev, \
+         cpu_affinity_pin, cpu_affinity_mask, cpu_affinity_has, cpu_affinity_pin_demo, \
+         cpu_affinity_sys_set, cpu_affinity_sys_get, cpu_affinity_sys_errno"
     );
 }
 

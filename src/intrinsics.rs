@@ -669,8 +669,8 @@ pub(crate) const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "read_line",
     "system_time",
     "time_now",
-    // `std.dns`, `std.entropy` and the CPU affinity names of `std.cpu_affinity` and
-    // `std.iouring` are deliberately absent. Matching the bare name refused a user
+    // `std.dns`, `std.entropy` and the CPU affinity names (`std.cpu_affinity`, `_sys`,
+    // `std.iouring`) are deliberately absent. Matching the bare name refused a user
     // function spelled the same way. A call is a world read only when it resolves to
     // that module and the caller does not define the name (`crate::std_qualified`).
 ];

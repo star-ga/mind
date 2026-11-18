@@ -69,7 +69,8 @@ use crate::runtime::types::BackendTarget;
 /// `std.cpu_affinity` is a member because `std.iouring` imports it and calls its
 /// names by bare symbol: the closure follows that import, so a program calling
 /// the `io_reactor_*` affinity forwards links the module instead of leaving
-/// `cpu_affinity_*` undefined.
+/// `cpu_affinity_*` undefined. `std.cpu_affinity_sys` is a member because
+/// `std.cpu_affinity` imports it and calls its wrappers by bare symbol.
 ///
 /// `std.cli` reads the process arguments through `__mind_argc` / `__mind_argv`,
 /// which the runtime support defines for the MLIR path. `std.io` defines
@@ -95,6 +96,7 @@ pub const SUBSTRATE_MODULES: &[&str] = &[
     "std.chacha20_poly1305",
     "std.cli",
     "std.cpu_affinity",
+    "std.cpu_affinity_sys",
     "std.detmath",
     "std.dns",
     "std.ecdsa_p256",

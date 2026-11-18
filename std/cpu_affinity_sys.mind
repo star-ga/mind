@@ -1,0 +1,46 @@
+// std.cpu_affinity_sys — the OS calls of std.cpu_affinity, one straight-line wrapper each.
+//
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// std.cpu_affinity keeps the 1024-bit mask logic, the core range guard and its
+// public names; every sched_setaffinity, sched_getaffinity and errno read it
+// makes is here. A function in this module is straight-line: one OS call, with
+// no branch, no loop and no call to another function. Each call acts on the
+// calling thread (pid 0). The mask size and the mask address are the caller's:
+// the 128-byte mask layout, the bit of a core and the range check live in
+// std.cpu_affinity. Every wrapper returns the C result unchanged: 0 or -1 for
+// set and get, and the errno of the last failed call for the errno read.
+//
+// Linux only (glibc CPU_SETSIZE of 1024 bits).
+//
+// Determinism: sched_setaffinity and sched_getaffinity are World externs
+// (src/intrinsics.rs). The three public names here are World rows of
+// src/std_qualified.rs, like the names of std.cpu_affinity: a program that
+// calls one is refused by the determinism veto without
+// `--allow-nondeterministic` and, with it, attested `nondeterministic`.
+
+extern "C" {
+    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+// cpu_affinity_sys_set — sched_setaffinity(2) of the calling thread to the
+// `size` mask bytes at `mask`. Returns 0, or -1 when the call fails.
+pub fn cpu_affinity_sys_set(size: i64, mask: i64) -> i64 {
+    sched_setaffinity(0, size, mask) as i64
+}
+
+// cpu_affinity_sys_get — sched_getaffinity(2) of the calling thread into the
+// `size` mask bytes at `mask`. Returns 0, or -1 when the call fails.
+pub fn cpu_affinity_sys_get(size: i64, mask: i64) -> i64 {
+    sched_getaffinity(0, size, mask) as i64
+}
+
+// cpu_affinity_sys_errno — the errno of the calling thread, read through
+// __errno_location(3). It holds the failure of the last call that set it.
+pub fn cpu_affinity_sys_errno() -> i64 {
+    __mind_load_i32(__errno_location() as i64)
+}

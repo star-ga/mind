@@ -67,6 +67,10 @@ pub fn evd_mod_x509() -> i64 {
     3
 }
 
+pub fn evd_mod_cpu_affinity() -> i64 {
+    4
+}
+
 // Kind codes (record word 1).
 // refuse: the call returned an error; reason = that error code.
 pub fn evd_kind_refuse() -> i64 {
@@ -94,10 +98,11 @@ pub fn evd_kind_child() -> i64 {
 //   module 2 procgroup    kinds 1 refuse, 2 accept, 3 fail,  bits 17, 18, 19,
 //                         4 child                                 20
 //   module 3 x509         kinds 1 refuse, 2 accept           bits 25, 26
+//   module 4 cpu_affinity kinds 1 refuse, 2 accept           bits 33, 34
 // evidence_record reads it on write and evd_le_valid on load. A new pair
 // sets its bit here.
 fn evd_pairs() -> i64 {
-    102630912
+    25872434688
 }
 
 // 1 when (module, kind) is a pair in evd_pairs(), else 0.

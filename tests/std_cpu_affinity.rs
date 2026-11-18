@@ -56,8 +56,9 @@ const IOURING_SRC: &str = include_str!("../std/iouring.mind");
 
 /// Thin forwards so ctypes calls the public `io_reactor_*` names. Concatenated
 /// with `CPU_SRC` into one translation unit, so this file tests the module
-/// source itself and does not depend on the std link set. The import route is
-/// covered by `tests/std_substrate_native_link.rs`.
+/// source itself. `CPU_SRC` imports `std.cpu_affinity_sys`, so the library links
+/// that wrapper module from the substrate archive. The import route of the
+/// forwards is covered by `tests/std_substrate_native_link.rs`.
 const FORWARDS: &str = r#"
 pub fn io_reactor_pin_cpu(core: i64) -> i64 {
     cpu_affinity_pin(core)

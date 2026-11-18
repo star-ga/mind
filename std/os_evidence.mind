@@ -1,4 +1,5 @@
-// std/os_evidence.mind — std.evidence records of std.fs_checked and std.procgroup verdicts.
+// std/os_evidence.mind — std.evidence records of std.fs_checked, std.procgroup and
+// std.cpu_affinity verdicts.
 // Author: STARGA Inc.
 //
 // Each `_ev` call runs the unchanged std call and, when the caller passes a
@@ -8,7 +9,7 @@
 // here. sink 0 returns at once and records nothing. These are opt-in variants:
 // no existing std or compiler path calls them, and the plain calls and their
 // callers are unchanged. The x509 wrapper is std/x509_evidence.mind, so a
-// caller of these two OS-call wrappers does not compile the x509 validator.
+// caller of these OS-call wrappers does not compile the x509 validator.
 //
 // The program writes the records about itself; they are NOT authenticated
 // (see std/evidence.mind).
@@ -36,7 +37,17 @@
 // deadline and the host's speed; the record reports the verdict std reached,
 // it does not make it reproducible. Unused fields are 0: the wait refusal
 // record has a = 0.
+//
+// cpu_affinity_pin_ev, one record:
+//   [ evd_mod_cpu_affinity | refuse or accept | errno | core | 0 ]
+// accept when cpu_affinity_pin returned 0, else refuse. errno is 0 on accept,
+// else the negated status the call returned: EINVAL 22 for a core outside
+// 0..1023, or the OS errno of sched_setaffinity. core is the core the caller
+// passed. The mask is not recorded. The pin is a real system call, so
+// cpu_affinity_pin_ev is a World row of src/std_qualified.rs, like
+// cpu_affinity_pin, with a sink or without one.
 
+import std.cpu_affinity;
 import std.evidence;
 import std.fs_checked;
 import std.procgroup;
@@ -106,4 +117,18 @@ pub fn procgroup_record_verdicts(g: i64, sink: i64) -> i64 {
         i = i + 1;
     }
     n
+}
+
+#[protection]
+pub fn cpu_affinity_pin_ev(core: i64, sink: i64) -> i64 {
+    let status: i64 = cpu_affinity_pin(core);
+    if sink == 0 {
+        return status;
+    }
+    let mut kind: i64 = evd_kind_refuse();
+    if status == 0 {
+        kind = evd_kind_accept();
+    }
+    let _ = evidence_record(sink, evd_mod_cpu_affinity(), kind, 0 - status, core, 0);
+    status
 }

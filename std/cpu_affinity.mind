@@ -11,18 +11,17 @@
 // cpu_affinity_mask returns the low 64 bits of the current mask. Use
 // cpu_affinity_has(core) to read any CPU in 0..1023.
 //
-// Determinism: sched_setaffinity / sched_getaffinity are World externs
-// (src/intrinsics.rs). A program that calls this is refused by the
+// Every affinity system call and the errno read are made by std.cpu_affinity_sys
+// (one straight-line wrapper each); this module makes no OS call of its own.
+//
+// Determinism: the wrappers reach sched_setaffinity / sched_getaffinity, World
+// externs (src/intrinsics.rs). A program that calls this is refused by the
 // determinism veto without `--allow-nondeterministic` and, with it, attested
 // `nondeterministic`.
 //
-// Linux only. This module imports nothing.
+// Linux only. This module imports std.cpu_affinity_sys.
 
-extern "C" {
-    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
-    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
-    unsafe fn __errno_location() -> *mut i32;
-}
+import std.cpu_affinity_sys;
 
 fn cpu_affinity_bytes() -> i64 {
     128
@@ -37,11 +36,10 @@ fn cpu_affinity_einval() -> i64 {
 }
 
 fn cpu_affinity_errno() -> i64 {
-    let slot: i64 = __errno_location() as i64;
-    __mind_load_i32(slot)
+    cpu_affinity_sys_errno()
 }
 
-fn cpu_affinity_sys(r: i64) -> i64 {
+fn cpu_affinity_status(r: i64) -> i64 {
     if r < 0 {
         let e: i64 = cpu_affinity_errno();
         if e > 0 {
@@ -51,6 +49,16 @@ fn cpu_affinity_sys(r: i64) -> i64 {
     r
 }
 
+// Set or get the calling thread's mask of `n` bytes at `m`: 0, or a negative errno.
+fn cpu_affinity_set(n: i64, m: i64) -> i64 {
+    cpu_affinity_status(cpu_affinity_sys_set(n, m))
+}
+
+fn cpu_affinity_get(n: i64, m: i64) -> i64 {
+    cpu_affinity_status(cpu_affinity_sys_get(n, m))
+}
+
+#[protection]
 fn cpu_affinity_range(core: i64) -> i64 {
     if core < 0 {
         return cpu_affinity_einval();
@@ -83,8 +91,7 @@ pub fn cpu_affinity_pin(core: i64) -> i64 {
     let word: i64 = core / 64;
     let bit: i64 = core % 64;
     __mind_store_i64(m + word * 8, 1 << bit);
-    let r: i64 = sched_setaffinity(0, n, m);
-    let rc: i64 = cpu_affinity_sys(r);
+    let rc: i64 = cpu_affinity_set(n, m);
     let _ = __mind_free(m);
     rc
 }
@@ -94,8 +101,7 @@ pub fn cpu_affinity_mask() -> i64 {
     let n: i64 = cpu_affinity_bytes();
     let m: i64 = __mind_alloc(n);
     let _ = cpu_affinity_zero(m);
-    let r: i64 = sched_getaffinity(0, n, m);
-    let rc: i64 = cpu_affinity_sys(r);
+    let rc: i64 = cpu_affinity_get(n, m);
     let mut out: i64 = rc;
     if rc >= 0 {
         out = __mind_load_i64(m + 0);
@@ -113,8 +119,7 @@ pub fn cpu_affinity_has(core: i64) -> i64 {
     let n: i64 = cpu_affinity_bytes();
     let m: i64 = __mind_alloc(n);
     let _ = cpu_affinity_zero(m);
-    let r: i64 = sched_getaffinity(0, n, m);
-    let rc: i64 = cpu_affinity_sys(r);
+    let rc: i64 = cpu_affinity_get(n, m);
     if rc < 0 {
         let _ = __mind_free(m);
         return rc;
@@ -129,8 +134,7 @@ pub fn cpu_affinity_has(core: i64) -> i64 {
 // Apply the saved 128-byte mask. Returns 0, or a negative errno when the
 // restore syscall fails.
 fn cpu_affinity_restore(n: i64, save: i64) -> i64 {
-    let r: i64 = sched_setaffinity(0, n, save);
-    cpu_affinity_sys(r)
+    cpu_affinity_set(n, save)
 }
 
 // Pin to `core`, confirm with cpu_affinity_has, then restore the full 128-byte
@@ -145,8 +149,7 @@ pub fn cpu_affinity_pin_demo(core: i64) -> i64 {
     let n: i64 = cpu_affinity_bytes();
     let save: i64 = __mind_alloc(n);
     let _ = cpu_affinity_zero(save);
-    let g: i64 = sched_getaffinity(0, n, save);
-    let gr: i64 = cpu_affinity_sys(g);
+    let gr: i64 = cpu_affinity_get(n, save);
     if gr < 0 {
         let _ = __mind_free(save);
         return gr;

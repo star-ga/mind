@@ -6,10 +6,12 @@
 //!
 //! `dns_resolve`, `tcp_connect_host`, `tcp_connect_host_timeout`,
 //! `dns_tcp_socket`, `dns_connect_fd`, `dns_clock_gettime`, `entropy_fill`, the
-//! `https_*` entry points and the CPU affinity calls (`cpu_affinity_*`, and the
-//! `io_reactor_*` forwards of `std.iouring`) read the world only when the call
-//! resolves to `std.dns`, `std.entropy`, `std.https`, `std.https_probe`,
-//! `std.https_io`, `std.cpu_affinity` or `std.iouring`. A user
+//! `https_*` entry points and the CPU affinity calls (`cpu_affinity_*`, the
+//! `cpu_affinity_sys_*` wrappers they reach the OS through, `cpu_affinity_pin_ev`
+//! of `std.os_evidence`, and the `io_reactor_*` forwards of `std.iouring`) read
+//! the world only when the call resolves to `std.dns`, `std.entropy`,
+//! `std.https`, `std.https_probe`, `std.https_io`, `std.cpu_affinity`,
+//! `std.cpu_affinity_sys`, `std.os_evidence` or `std.iouring`. A user
 //! function of the same bare name is deterministic. The lowered IR keeps only
 //! the bare name (the qualifier lives on the call span, in `SourceSpelling`),
 //! so this module reads the source.
@@ -19,9 +21,9 @@
 //! bare call (`dns_resolve(..)`, no qualifier recorded) resolves by name: it is
 //! the std function when the module imports the std module that owns that row
 //! (or that module is in the implicit std set, whose names resolve with no
-//! import: `std.iouring` and `std.cpu_affinity`) and defines no function of
-//! that name. A bare name that the module defines is the user's function and
-//! stays deterministic.
+//! import: `std.iouring`, `std.cpu_affinity` and `std.cpu_affinity_sys`) and
+//! defines no function of that name. A bare name that the module defines is
+//! the user's function and stays deterministic.
 //!
 //! Every spelling of the qualifier counts: the module name, an alias, the
 //! dotted path, and the `::` forms of each. The scan uses the exhaustive AST
@@ -73,9 +75,11 @@ const ROWS: &[(&str, &str)] = &[
     ("std.https_io", "hio_remaining_ms"),
     ("std.https_io", "hio_arm"),
     ("std.https_io", "hio_io_failure"),
-    // std.os_evidence runs procgroup_spawn and procgroup_wait_all.
+    // std.os_evidence runs procgroup_spawn, procgroup_wait_all and
+    // cpu_affinity_pin.
     ("std.os_evidence", "procgroup_spawn_ev"),
     ("std.os_evidence", "procgroup_wait_all_ev"),
+    ("std.os_evidence", "cpu_affinity_pin_ev"),
     // The CPU affinity calls make a real affinity system call. Both modules
     // are in the implicit std set, so a bare call with no import is the std
     // function too.
@@ -83,6 +87,13 @@ const ROWS: &[(&str, &str)] = &[
     ("std.cpu_affinity", "cpu_affinity_mask"),
     ("std.cpu_affinity", "cpu_affinity_has"),
     ("std.cpu_affinity", "cpu_affinity_pin_demo"),
+    // The effect module std.cpu_affinity reaches the OS through: set and get
+    // are the two affinity system calls, errno reads the cell they write. It
+    // is in the implicit std set too, so a bare call with no import is the std
+    // wrapper.
+    ("std.cpu_affinity_sys", "cpu_affinity_sys_set"),
+    ("std.cpu_affinity_sys", "cpu_affinity_sys_get"),
+    ("std.cpu_affinity_sys", "cpu_affinity_sys_errno"),
     // The four forwards of std.iouring into std.cpu_affinity, tied to the module
     // source by a test in `intrinsics/tests.rs`.
     ("std.iouring", "io_reactor_pin_cpu"),
@@ -424,6 +435,32 @@ mod tests {
             "cpu_affinity_pin_demo(p)",
             "cpu_affinity_pin_demo",
         ),
+        // The wrapper module and the evidence wrapper: qualified, aliased, bare.
+        (
+            "import std.cpu_affinity_sys;",
+            "cpu_affinity_sys.cpu_affinity_sys_set(8, p)",
+            "cpu_affinity_sys_set",
+        ),
+        (
+            "import std.cpu_affinity_sys as s;",
+            "s::cpu_affinity_sys_get(8, p)",
+            "cpu_affinity_sys_get",
+        ),
+        (
+            "import std.cpu_affinity_sys;",
+            "cpu_affinity_sys_errno()",
+            "cpu_affinity_sys_errno",
+        ),
+        (
+            "import std.os_evidence;",
+            "os_evidence.cpu_affinity_pin_ev(p, 0)",
+            "cpu_affinity_pin_ev",
+        ),
+        (
+            "import std.os_evidence;",
+            "cpu_affinity_pin_ev(p, 0)",
+            "cpu_affinity_pin_ev",
+        ),
     ];
 
     /// Local-binding shapes: `@N` is the binding, and each shape reads it as a
@@ -524,10 +561,11 @@ mod tests {
         assert_a_local_binding_is_not_a_use("import std.iouring;\n\n", "io_reactor_pin_cpu", "(p)");
     }
 
-    /// The implicit std modules (`std.iouring`, `std.cpu_affinity`) resolve a
-    /// bare name with no import, so a bare call of one of their rows is the std
-    /// function unless the module defines that name. `std.dns`, `std.entropy`
-    /// and `std.https` are not implicit: the same bare call there is a user name.
+    /// The implicit std modules (`std.iouring`, `std.cpu_affinity`,
+    /// `std.cpu_affinity_sys`) resolve a bare name with no import, so a bare
+    /// call of one of their rows is the std function unless the module defines
+    /// that name. `std.dns`, `std.entropy` and `std.https` are not implicit: the
+    /// same bare call there is a user name.
     #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
     #[test]
     fn a_bare_call_of_an_implicit_std_row_needs_no_import() {
@@ -540,6 +578,9 @@ mod tests {
             ("cpu_affinity_mask", "()"),
             ("cpu_affinity_has", "(p)"),
             ("cpu_affinity_pin_demo", "(p)"),
+            ("cpu_affinity_sys_set", "(8, p)"),
+            ("cpu_affinity_sys_get", "(8, p)"),
+            ("cpu_affinity_sys_errno", "()"),
         ];
         for (row, args) in rows {
             let world = format!("pub fn f(p: i64) -> i64 {{\n    {row}{args}\n}}\n");

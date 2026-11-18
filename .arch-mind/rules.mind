@@ -67,6 +67,9 @@ module mind_root_rules {
     // std/posix_sys.mind only wraps the raw syscalls. std/posix.mind keeps
     // the public names and the branches, std/fs_checked.mind the directory
     // walk, and both call these wrappers.
+    // std/cpu_affinity_sys.mind only wraps sched_setaffinity, sched_getaffinity
+    // and the errno read. std/cpu_affinity.mind keeps the mask logic, the range
+    // guard and the public names, and calls these wrappers.
     [arch_effect_module]
-    const OS_EFFECT_MODULES: str = "std/procgroup_sys.mind, std/posix_sys.mind"
+    const OS_EFFECT_MODULES: str = "std/procgroup_sys.mind, std/posix_sys.mind, std/cpu_affinity_sys.mind"
 }

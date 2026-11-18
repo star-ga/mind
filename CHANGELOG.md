@@ -320,12 +320,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence is attested `nondeterministic`. Before this change such a program was
   built without the flag and attested `deterministic`, although it reads or writes
   the CPU mask of the host. Both modules are in the implicit std set, so a bare
-  call with no import counts too. A program that defines its own function of that
-  name, or that uses the name only for a local binding, is not affected. The other
-  functions of `std.iouring` and the modules `std.net`, `std.fs` and `std.process`
-  that reach the host are not classified by this change.
+  call with no import counts too. The three wrappers of `std.cpu_affinity_sys`
+  (`cpu_affinity_sys_set`, `cpu_affinity_sys_get`, `cpu_affinity_sys_errno`), which
+  `std.cpu_affinity` makes its system calls through, and `cpu_affinity_pin_ev` of
+  `std.os_evidence` count the same way (the wrapper module is implicit too;
+  `std.os_evidence` needs its import). A program that defines its own function of
+  that name, or that uses the name only for a local binding, is not affected. The
+  other functions of `std.iouring` and the modules `std.net`, `std.fs` and
+  `std.process` that reach the host are not classified by this change.
   (`src/std_qualified.rs`, `tests/determinism_veto_std_callers.rs`,
-  `tests/determinism_veto_bare_std.rs`)
+  `tests/determinism_veto_bare_std.rs`, `tests/determinism_veto_affinity_sys.rs`)
 
 ### Fixed
 - The self-host reference generator (`tests/_ref_mic3_dump.rs`) lowers its merged module through `eval::string_equality::segments::lower_seeded_reference`, which keeps only an `Untyped` string comparison as the integer compare and lists it; every other refusal still panics with `E2038`, and builds and `mindc check` are unchanged.
@@ -547,8 +551,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that restore fails. `io_reactor_affinity_mask` still returns the low 64 bits.
   The new `io_reactor_affinity_has(core)` reads any CPU in 0..1023. The four
   `io_reactor` affinity names in `std/iouring.mind` forward to
-  `std.cpu_affinity`. `std.cpu_affinity` is a bundled module, not a seed module.
-  It is in the implicit std set, so its four public names (`cpu_affinity_pin`,
+  `std.cpu_affinity`. `std.cpu_affinity` is a bundled module, not a seed module;
+  its system calls are made by `std.cpu_affinity_sys` (see the entry on that
+  module). It is in the implicit std set, so its four public names (`cpu_affinity_pin`,
   `cpu_affinity_mask`, `cpu_affinity_has`, `cpu_affinity_pin_demo`) resolve with
   no import. It is in the std link set, so a program that calls the
   `io_reactor` affinity names links and runs as an executable, as a cdylib and
@@ -692,15 +697,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release every temporary it allocated; that leak is in `std.mic_record`, and a
   separate change to `std.mic_record` fixes it.
 - `std/os_evidence.mind` (`fs_read_dir_checked_ev`, `procgroup_spawn_ev`,
-  `procgroup_wait_all_ev`, `procgroup_record_verdicts`) and `std/x509_evidence.mind`
+  `procgroup_wait_all_ev`, `procgroup_record_verdicts`, `cpu_affinity_pin_ev`) and `std/x509_evidence.mind`
   (`x509_verify_server_chain_budget_ev`) run the unchanged std calls with their
   arguments passed through and record the verdicts (refusal code or accept, per-child
   state, exit code and signal, never the pid). The x509 wrapper has its own file, so
   a caller of the fs or procgroup wrappers does not compile the x509 validator. These
   are opt-in variants: no existing std or compiler path calls them, and the plain std
   calls and their callers are unchanged.
-- `procgroup_spawn_ev` and `procgroup_wait_all_ev` are `std_qualified` world rows,
-  so a caller is marked nondeterministic like a caller of `procgroup_spawn`.
+- `cpu_affinity_pin_ev(core, sink)` runs the unchanged `cpu_affinity_pin(core)` and
+  appends one record `[ evd_mod_cpu_affinity | refuse or accept | errno | core | 0 ]`:
+  accept when the status is 0, else refuse, with errno the negated status (22 for a
+  core outside 0..1023). Sink 0 records nothing. `std.evidence` has the new module code
+  `evd_mod_cpu_affinity()` (4) and the pairs (4, refuse) and (4, accept) in
+  `evd_pairs`; every earlier code and pair is unchanged. The affinity decision of the
+  wrapper carries `#[protection]`. `tests/std_evidence_wrappers` has a fifth check
+  group for it, so the program prints `evd_wrapper_groups_passed 5`.
+- `procgroup_spawn_ev`, `procgroup_wait_all_ev` and `cpu_affinity_pin_ev` are
+  `std_qualified` world rows, so a caller is marked nondeterministic like a caller of
+  `procgroup_spawn` or `cpu_affinity_pin`.
 - CI: the executable miscompile gate job runs `mindc test` on
   `tests/std_evidence_kat` and `tests/std_evidence_load` (exact passed counts, 0
   failed), builds and runs those two programs and `tests/std_evidence_wrappers`
@@ -905,6 +919,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does) instead of its own byte loop, and its admission and record-validation
   decisions (`fs_read_dir_checked`, `fsc_block`, `fsc_push`) carry
   `#[protection]`, as do `signal`, `fdopendir` and `readdir` in `std/posix.mind`.
+
+### Changed — std.cpu_affinity calls its affinity system calls through std.cpu_affinity_sys
+- New `std/cpu_affinity_sys.mind`: the `extern "C"` block that `std/cpu_affinity.mind`
+  held (`sched_setaffinity`, `sched_getaffinity`, `__errno_location`) and three public
+  straight-line wrappers, `cpu_affinity_sys_set(size, mask)`,
+  `cpu_affinity_sys_get(size, mask)` and `cpu_affinity_sys_errno()`. The two affinity
+  calls act on the calling thread (pid 0). The module is declared an OS-effect module
+  in `.arch-mind/rules.mind`, as `std.posix_sys` and `std.procgroup_sys` are.
+- `std/cpu_affinity.mind` keeps its four public names, signatures and return values,
+  the 128-byte mask layout and the rule that a core outside 0..1023 returns -22 and
+  makes no system call. It makes no OS call of its own now: it imports the wrapper
+  module and calls it. Its range guard carries `#[protection]`.
+- `std.cpu_affinity_sys` is a bundled non-seed module in the implicit std set (it is
+  imported by `std.cpu_affinity`, so the set stays closed under std imports) and in the
+  std link set: a program that calls the `io_reactor` affinity names links it. The
+  native seed blob is unchanged (`SEED_BLOB_SHA256`, 21 seed rows).
+- The behaviour of the world-call rows is unchanged (see the entry on the CPU
+  affinity names): the three wrappers are rows too.
+  (`tests/std_cpu_affinity_split.rs`, `tests/std_cpu_affinity.rs`)
 
 ### Added — dynamic allocation sizes on the native lane
 - `src/ir/native_lane_profile/alloc_size.rs` proves an allocation size positive from

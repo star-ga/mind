@@ -315,6 +315,15 @@ every bundled module except `std.vec`, `std.map`, `std.string`, `std.cli` and `s
 is a `substrate_link::SUBSTRATE_MODULES` member, so an import that `mindc check` admits
 also links. The native seed blob rows are unchanged (21).
 
+**Update (2026-11-17):** `std.cpu_affinity` makes its affinity system calls and its
+errno read through the new bundled module `std.cpu_affinity_sys` (one straight-line
+wrapper each, declared an OS-effect module in `.arch-mind/rules.mind`). The joined
+tree bundles 78 of 78 `std/*.mind`. `std.cpu_affinity_sys` is the 26th implicit
+module, because `std.cpu_affinity` imports it and the implicit set stays closed under
+std imports, and it is a `substrate_link::SUBSTRATE_MODULES` member. Its row in
+`stdlib_manifest.txt` is `no` (not a seed row), so the native seed blob rows are
+unchanged (21).
+
 **Structural fact this shares with row 12:** the defect was the same one the
 2026-08-21 audit found in `admit_binop` and the tensor-builtin fix found in
 `admit_call` — a fact asserted by its *duplicate spelling* rather than derived from
