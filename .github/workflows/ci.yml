@@ -1271,9 +1271,7 @@ jobs:
           MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
 
-      # The script form of this contract is not tracked. The same contract runs as
-      # the test dynamic_elf_is_deterministic_across_directories in
-      # tests/native_lane_extern_fixed.rs.
+      # No script form of this contract is tracked; it runs as dynamic_elf_is_deterministic_across_directories (tests/native_lane_extern_fixed.rs).
       # - name: Native fixed-arity extern determinism gate (native_extern_fixed_smoke.py)
       #   # Builds the closed-table extern corpus twice in two directories under
       #   # `--compiler` and requires byte-identical dynamic images: fixed
@@ -2396,7 +2394,7 @@ jobs:
         # always pass. It prints ran=/fail= counts, never a bare exit code.
         run: python3 scripts/run_gate.py scripts/test_smoke_wiring_lint.py
 
-      - name: Bench gate must fail CLOSED on a missing measurement
+      - name: Bench gate must fail CLOSED on a missing measurement; the bench pair rules must hold
         # tools/test_bench_gate.py asserts the fail-closed contract of
         # tools/bench_gate.py: an empty / truncated bench.out or a missing
         # baseline must exit 4, never fall through to "bench gate: PASS".
@@ -2411,20 +2409,7 @@ jobs:
         # Non-vacuity (measured): against a bench_gate.py stubbed to always
         # `exit 0` — exactly the vacuous-PASS hole this defends — the three
         # fail-closed cases go red and the runner exits 1.
-        run: python3 scripts/run_gate.py tools/test_bench_gate.py
-
-      - name: Bench pair rules must hold on a temporary repository
-        # tools/bench_pairs.py --self-test proves the pair leg of the preflight
-        # bench check: the 3% fail bound, the ABBA order rule, the core pick, the
-        # identical-binary rule, and the base that scripts/preflight_bench_pairs.sh
-        # resolves (a candidate that is HEAD itself is skipped, an all-HEAD range is
-        # empty and named, no base at all exits 4). It needs no toolchain: the pair
-        # script runs in a temporary git repository against a stub cargo.
-        #
-        # It sits beside tools/test_bench_gate.py for the same reason: the job needs
-        # no build and is in .github/required-ci-jobs.tsv. Before this step the pair
-        # self-test ran in no workflow.
-        run: python3 scripts/run_gate.py tools/bench_pairs.py --self-test
+        run: python3 scripts/run_gate.py tools/test_bench_gate.py && python3 scripts/run_gate.py tools/bench_pairs.py --self-test
 
   conformance:
     name: Core v1 conformance suite
