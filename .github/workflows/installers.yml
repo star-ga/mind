@@ -1,0 +1,209 @@
+name: Installers
+
+# Runs the real installers, scripts/install.ps1 on Windows and scripts/install.sh on
+# Linux and macOS, against the latest published release of this repository. Each leg
+# then runs the installed binary and compares the version it prints with the release
+# tag. A change to an installer that no longer finds or no longer installs the
+# published asset turns a leg red.
+#
+# Why the tag is passed to the installers: both look up the latest tag with an
+# unauthenticated call to api.github.com, which is rate limited per runner address.
+# The first job resolves the latest tag with the job token and every leg installs
+# exactly that tag, so a leg fails on an installer fault and not on that quota.
+#
+# This workflow is not in .github/required-ci-jobs.tsv. It tests a release that is
+# already published, so no release can require it.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - '.github/workflows/installers.yml'
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - '.github/workflows/installers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Latest release tag
+    runs-on: ubuntu-24.04
+    # No run history yet. The cap only ends a hung call. Re-size it with the
+    # slow-runner rule of ci.yml (build_test) once 20 runs exist.
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      # neutralize proxies
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    steps:
+      - name: Resolve the latest release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api repos/star-ga/mind/releases/latest --jq .tag_name)
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "FAIL: the latest release tag '$tag' is not a version tag"; exit 1 ;;
+          esac
+          echo "Latest release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: install.ps1 (${{ matrix.shell }})
+    needs: latest
+    runs-on: windows-2025
+    # No run history yet. The cap only ends a hung download. Re-size it with the
+    # slow-runner rule of ci.yml (build_test) once 20 runs exist.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # pwsh is PowerShell 7. powershell is Windows PowerShell 5.1.
+        shell: [ pwsh, powershell ]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      # neutralize proxies
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      TAG: ${{ needs.latest.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dry run prints the URLs and the install path and writes nothing
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'mindc-dry'
+          $out = & ${{ matrix.shell }} -NoProfile -File scripts/install.ps1 -Version $env:TAG -InstallDir $dir -DryRun | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 -DryRun exited with $LASTEXITCODE" }
+          Write-Host $out
+          $asset = "https://github.com/star-ga/mind/releases/download/$env:TAG/mindc-windows-x64.zip"
+          foreach ($want in @($asset, "$asset.sha256", (Join-Path $dir 'mindc.exe'))) {
+            if (-not $out.Contains($want)) { throw "the dry run did not print: $want" }
+          }
+          if (Test-Path -LiteralPath $dir) { throw "the dry run wrote $dir" }
+
+      - name: Install the latest release
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'mindc-bin'
+          $out = & ${{ matrix.shell }} -NoProfile -File scripts/install.ps1 -Version $env:TAG -InstallDir $dir | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) { throw "install.ps1 exited with $code" }
+          # The release publishes mindc-windows-x64.zip.sha256, so the check must have run.
+          if ($out -notmatch 'Checksum OK\.') { throw "install.ps1 did not report a verified checksum" }
+
+      - name: The installed mindc.exe reports the release version
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'mindc-bin\mindc.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "$exe was not installed" }
+          $lines = @(& $exe --version)
+          if ($LASTEXITCODE -ne 0) { throw "mindc.exe --version exited with $LASTEXITCODE" }
+          $first = ([string]$lines[0]).Trim()
+          $want = $env:TAG.Substring(1)
+          if (-not ($first -match '^mind (?<version>\S+)$')) { throw "the version line '$first' does not start with 'mind '" }
+          if ($Matches.version -ne $want) { throw "mindc.exe reports '$($Matches.version)', the release tag is '$env:TAG'" }
+          Write-Host "PASS: '$first' matches the release tag $env:TAG"
+
+      - name: A wrong checksum installs nothing
+        # The positive control is the step "Install the latest release" above: the same
+        # script, the same tag and the same runner install mindc.exe. The only change
+        # here is the content of the .sha256 file, which a stand-in for Invoke-WebRequest
+        # replaces with a wrong hash. The zip is still downloaded from the release, so
+        # the install reaches its checksum check. The script is dot-sourced: that only
+        # defines its functions and installs nothing. TMP and TEMP point at a new
+        # directory, so the zip path shows where the script put its temporary directory.
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'mindc-neg-bin'
+          $tmp = Join-Path $env:RUNNER_TEMP 'mindc-neg-tmp'
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          $env:TMP = $tmp
+          $env:TEMP = $tmp
+          . .\scripts\install.ps1
+          $global:ZipOut = $null
+          function Invoke-WebRequest {
+            [CmdletBinding()]
+            param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
+            if ($Uri.EndsWith('.sha256')) {
+              Set-Content -Path $OutFile -Value (('0' * 64) + '  mindc-windows-x64.zip')
+              return
+            }
+            $global:ZipOut = $OutFile
+            Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+          }
+          $message = $null
+          try { Install-Mindc -Version $env:TAG -InstallDir $dir } catch { $message = $_.Exception.Message }
+          Remove-Item -Path Function:\Invoke-WebRequest
+          Write-Host "install failed with: $message"
+          if ($null -eq $message) { throw "the install succeeded with a wrong checksum" }
+          if ($message -notmatch 'SHA-256 mismatch') { throw "the install failed for another reason: $message" }
+          if ($null -eq $global:ZipOut) { throw "the zip was never downloaded, so the checksum check was not reached" }
+          if (-not $global:ZipOut.StartsWith($tmp, [StringComparison]::OrdinalIgnoreCase)) { throw "the zip went to $global:ZipOut, not under $tmp" }
+          if (Test-Path -LiteralPath (Split-Path -Parent $global:ZipOut)) { throw "the temporary directory of the install was not removed" }
+          if (Test-Path -LiteralPath (Join-Path $dir 'mindc.exe')) { throw "mindc.exe was installed despite the wrong checksum" }
+          if (Test-Path -LiteralPath $dir) { throw "the install directory $dir was created" }
+          Write-Host "PASS: a wrong checksum stops the install, installs nothing and leaves no temporary directory"
+
+  unix:
+    name: install.sh (${{ matrix.os }})
+    needs: latest
+    runs-on: ${{ matrix.os }}
+    # No run history yet. The cap only ends a hung download. Re-size it with the
+    # slow-runner rule of ci.yml (build_test) once 20 runs exist.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, macos-15 ]
+    env:
+      # neutralize proxies
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      TAG: ${{ needs.latest.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # run_gate-exempt: scripts/install.sh - the installer is the product under test, not a gate; it prints no asserted=N line and the steps after it decide the verdict
+      - name: Install the latest release
+        run: |
+          dir="$RUNNER_TEMP/mindc-bin"
+          if ! out=$(MIND_VERSION="$TAG" MIND_INSTALL_DIR="$dir" sh scripts/install.sh 2>&1); then
+            printf '%s\n' "$out"
+            echo "FAIL: install.sh exited with an error"
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          # The release publishes mindc-<os>-<arch>.tar.gz.sha256, so the check must have run.
+          printf '%s\n' "$out" | grep -q 'SHA-256 verified' || { echo "FAIL: install.sh did not report a verified checksum"; exit 1; }
+
+      - name: The installed mindc reports the release version
+        run: |
+          bin="$RUNNER_TEMP/mindc-bin/mindc"
+          test -x "$bin" || { echo "FAIL: $bin was not installed"; exit 1; }
+          version_out=$("$bin" --version)
+          first=$(printf '%s\n' "$version_out" | head -n 1 | tr -d '\r')
+          want="mind ${TAG#v}"
+          if [ "$first" != "$want" ]; then
+            echo "FAIL: '$bin --version' printed '$first', expected '$want' (release tag $TAG)"
+            exit 1
+          fi
+          echo "PASS: '$first' matches the release tag $TAG"
