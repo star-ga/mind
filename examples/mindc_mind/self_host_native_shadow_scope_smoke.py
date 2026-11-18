@@ -80,6 +80,7 @@ import tempfile
 
 HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
+from _exec_retry import check_exec_retry, exec_run  # noqa: E402
 from _stdlib_manifest import seed_blob  # noqa: E402
 from _selfhost_sources import compiler_library  # noqa: E402
 from _shadow_scope_lang import (  # noqa: E402
@@ -102,7 +103,7 @@ def build_stage1(cache: pathlib.Path) -> pathlib.Path:
     out = cache / f"stage1_{key}.elf"
     if out.exists():
         return out
-    r = subprocess.run([str(FROZEN_SEED)], input=img, capture_output=True, timeout=1800)
+    r = exec_run([str(FROZEN_SEED)], input=img, capture_output=True, timeout=1800)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise RuntimeError(f"frozen seed failed to build stage1: rc={r.returncode}")
     tmp = cache / f".{key}.{os.getpid()}"
@@ -117,7 +118,7 @@ def native_exit(stage1: pathlib.Path, src: str, wd: pathlib.Path, name: str):
     blob = seed_blob()
     combined = blob + src.encode()
     img = struct.pack("<qq", len(blob), len(combined)) + combined
-    r = subprocess.run([str(stage1)], input=img, capture_output=True, timeout=600)
+    r = exec_run([str(stage1)], input=img, capture_output=True, timeout=600)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         if r.returncode < 0:
             return "crash", f"stage1 signal {r.returncode}"
@@ -126,7 +127,7 @@ def native_exit(stage1: pathlib.Path, src: str, wd: pathlib.Path, name: str):
     p.write_bytes(r.stdout)
     os.chmod(p, 0o755)
     try:
-        e = subprocess.run([str(p)], capture_output=True, timeout=60)
+        e = exec_run([str(p)], capture_output=True, timeout=60)
     except subprocess.TimeoutExpired:
         return "crash", "elf did not exit within 60 s (hang)"
     if e.returncode < 0:
@@ -171,7 +172,7 @@ def split_refusal(lib, src: str, wd: pathlib.Path, name: str):
     p = wd / f"{name}.cg"
     p.write_bytes(elf)
     os.chmod(p, 0o755)
-    r = subprocess.run([str(p)], capture_output=True, timeout=60)
+    r = exec_run([str(p)], capture_output=True, timeout=60)
     return "note", r.returncode
 
 
@@ -205,13 +206,13 @@ def bridge_exit(src: str, wd: pathlib.Path, name: str, compiler):
     env.pop("MINDC_NATIVE_ELF", None)
     if compiler is not None:
         env["MINDC_NATIVE_ELF"] = str(compiler)
-    b = subprocess.run([mindc_bin(), "build", str(f), "--release", "--backend", "native",
-                        "--out", str(out)], capture_output=True, timeout=900, cwd=str(d),
-                       env=env)
+    b = exec_run([mindc_bin(), "build", str(f), "--release", "--backend", "native",
+                  "--out", str(out)], capture_output=True, timeout=900, cwd=str(d),
+                 env=env)
     if b.returncode != 0 or not out.exists():
         return "refused", b.returncode, b.stderr.decode(errors="replace")[-600:], out.exists()
     os.chmod(out, 0o755)
-    r = subprocess.run([str(out)], capture_output=True, timeout=60)
+    r = exec_run([str(out)], capture_output=True, timeout=60)
     return "ok", r.returncode
 
 
@@ -220,11 +221,11 @@ def mlir_exit(src: str, wd: pathlib.Path, name: str):
     f = wd / f"{name}.mind"
     f.write_text(src)
     out = wd / f"{name}.mlir.bin"
-    b = subprocess.run([mindc, "build", "--backend", "mlir", str(f), "--release", "--out", str(out)],
-                       capture_output=True, timeout=900, cwd=str(wd))
+    b = exec_run([mindc, "build", "--backend", "mlir", str(f), "--release", "--out", str(out)],
+                 capture_output=True, timeout=900, cwd=str(wd))
     if b.returncode != 0 or not out.exists():
         return "build-failed", (b.stdout + b.stderr)[-300:]
-    r = subprocess.run([str(out)], capture_output=True, timeout=60)
+    r = exec_run([str(out)], capture_output=True, timeout=60)
     return "ok", r.returncode
 
 
@@ -578,7 +579,8 @@ def main(argv=None) -> int:
     st = build_stage1(pathlib.Path(tempfile.gettempdir()) / "shadow_scope_stage1_cache")
     print(f"stage1: {st.name}")
     lib = so_lib()
-    fails = check_fixtures(st, td, lib)
+    fails = check_exec_retry(td)  # the busy-exec retry of every exec below works
+    fails += check_fixtures(st, td, lib)
     has_mark = MARK in st.read_bytes()
     fails += not has_mark
     print(f"  {'PASS' if has_mark else 'FAIL'}  stage1 carries the scoped-nested-bindings mark "

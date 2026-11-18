@@ -206,7 +206,11 @@ GATED_EVENTS = ("push", "pull_request")
 # (inside tools/bench_gate.py, now 762 lines, it would pass 1000 lines). Its
 # former test file is folded in and gone, and the self-test now runs in
 # ci.yml sdlc_integrity, where before it ran in no workflow.
-HARNESS_CEILING = 328  # Exact reviewed integration inventory; no spare allowance.
+# 328 -> 329 adds examples/mindc_mind/_exec_retry.py, the busy-exec (ETXTBSY) retry
+# of self_host_native_shadow_scope_smoke.py and its three controls (inside that
+# gate, now 738 lines, it would end near 840 lines, over the 800-line ceiling).
+# The controls run inside the gate on every run, not in a file of their own.
+HARNESS_CEILING = 329  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
