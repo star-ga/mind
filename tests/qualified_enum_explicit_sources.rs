@@ -16,6 +16,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 fn mindc() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_mindc"))
@@ -323,8 +324,10 @@ fn a_flat_qualified_variant_resolves_beside_an_alias_reexport() {
 }
 
 /// Two modules whose aliases name each other form a cycle. The checker must
-/// stop on it and still accept the program, not loop. `timeout` turns a hang
-/// into rc 124 instead of a stalled test run.
+/// stop on it and still accept the program, not loop. The deadline turns a hang
+/// into a failure instead of a stalled test run. It is in the test (no `timeout`
+/// program: macOS has none), and the output goes to a file, so a full pipe
+/// cannot stall the child.
 #[test]
 fn a_cyclic_alias_pair_does_not_hang_the_check() {
     let temp = tempfile::tempdir().unwrap();
@@ -340,19 +343,29 @@ fn a_cyclic_alias_pair_does_not_hang_the_check() {
     for (name, src) in files {
         fs::write(temp.path().join(name), src).unwrap();
     }
-    let out = Command::new("timeout")
+    let log = temp.path().join("check.log");
+    let sink = fs::File::create(&log).unwrap();
+    let mut child = Command::new(mindc())
         .current_dir(temp.path())
-        .arg("60")
-        .arg(mindc())
         .args(["check", "--no-fmt"])
         .args(files.iter().map(|(name, _)| *name))
-        .output()
-        .expect("run mindc check under timeout");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_ne!(out.status.code(), Some(124), "the check hung:\n{text}");
-    assert!(out.status.success(), "a cyclic alias pair:\n{text}");
+        .stdout(sink.try_clone().unwrap())
+        .stderr(sink)
+        .spawn()
+        .expect("run mindc check");
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait on mindc check") {
+            break status;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let text = fs::read_to_string(&log).unwrap_or_default();
+            panic!("the check hung:\n{text}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let text = fs::read_to_string(&log).unwrap_or_default();
+    assert!(status.success(), "a cyclic alias pair:\n{text}");
 }

@@ -420,12 +420,31 @@ fn independent_sha256(path: &PathBuf) -> (String, String) {
         "sha256sum failed: {}",
         String::from_utf8_lossy(&sum.stderr)
     );
-    let sha256sum_hex = String::from_utf8_lossy(&sum.stdout)
+    // GNU sha256sum starts the line with one backslash when the file name holds
+    // a backslash (every Windows path). The digest follows it unchanged.
+    let first = String::from_utf8_lossy(&sum.stdout)
         .split_whitespace()
         .next()
         .unwrap_or("")
         .to_string();
+    let sha256sum_hex = first.strip_prefix('\\').unwrap_or(&first).to_string();
     (hashlib_hex, sha256sum_hex)
+}
+
+/// Control for the escaped line form: a backslash in the file name. A Windows
+/// path always has this form; on unix the file name gives it.
+#[cfg(unix)]
+#[test]
+fn sha256sum_escaped_line_form_gives_the_digest() {
+    let dir = unique_dir("escaped_line");
+    let odd = dir.join("back\\slash.bin");
+    std::fs::write(&odd, b"mind").expect("write the control file");
+    let (hashlib_hex, sha256sum_hex) = independent_sha256(&odd);
+    assert_eq!(
+        hashlib_hex, "1c48f6310f1c849b4ac338d340ee667bf3b6d59b589348eaa2b8a0698ff73481",
+        "SHA-256 of the four bytes `mind`"
+    );
+    assert_eq!(hashlib_hex, sha256sum_hex, "escaped line form");
 }
 
 /// Read the stored `evidence_chain.trace_hash` bytes. The walk is the MAP
