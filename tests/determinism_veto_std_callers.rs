@@ -145,6 +145,48 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "io_reactor_affinity_has",
     ),
     ("iouring", "io_reactor_pin_demo(p)", "io_reactor_pin_demo"),
+    // The wrapper module std.cpu_affinity reaches the OS through, and the evidence
+    // wrapper of std.os_evidence that runs cpu_affinity_pin: qualified, then bare.
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys.cpu_affinity_sys_set(8, p)",
+        "cpu_affinity_sys_set",
+    ),
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys.cpu_affinity_sys_get(8, p)",
+        "cpu_affinity_sys_get",
+    ),
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys.cpu_affinity_sys_errno()",
+        "cpu_affinity_sys_errno",
+    ),
+    (
+        "os_evidence",
+        "os_evidence.cpu_affinity_pin_ev(p, 0)",
+        "cpu_affinity_pin_ev",
+    ),
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys_set(8, p)",
+        "cpu_affinity_sys_set",
+    ),
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys_get(8, p)",
+        "cpu_affinity_sys_get",
+    ),
+    (
+        "cpu_affinity_sys",
+        "cpu_affinity_sys_errno()",
+        "cpu_affinity_sys_errno",
+    ),
+    (
+        "os_evidence",
+        "cpu_affinity_pin_ev(p, 0)",
+        "cpu_affinity_pin_ev",
+    ),
     // A local binding spelled like one row beside a real call of another row of
     // the same module: the binding hides nothing, the call is still the world read.
     (
@@ -161,6 +203,16 @@ const STD_WORLD_CALLERS: &[(&str, &str, &str)] = &[
         "cpu_affinity",
         "let cpu_affinity_has: i64 = p;\n    cpu_affinity_has + cpu_affinity_pin(p)",
         "cpu_affinity_pin",
+    ),
+    (
+        "cpu_affinity_sys",
+        "let cpu_affinity_sys_set: i64 = p;\n    cpu_affinity_sys_set + cpu_affinity_sys_errno()",
+        "cpu_affinity_sys_errno",
+    ),
+    (
+        "os_evidence",
+        "let procgroup_spawn_ev: i64 = p;\n    procgroup_spawn_ev + cpu_affinity_pin_ev(p, 0)",
+        "cpu_affinity_pin_ev",
     ),
 ];
 
@@ -194,6 +246,16 @@ const STD_PURE_CALLERS: &[(&str, &str)] = &[
         "cpu_affinity",
         "let cpu_affinity_has: i64 = p;\n    cpu_affinity_has + 1",
     ),
+    (
+        "cpu_affinity_sys",
+        "let cpu_affinity_sys_get: i64 = p;\n    cpu_affinity_sys_get + 1",
+    ),
+    (
+        "os_evidence",
+        "let cpu_affinity_pin_ev: i64 = p;\n    cpu_affinity_pin_ev + 1",
+    ),
+    // A function of std.os_evidence that reaches no World row stays deterministic.
+    ("os_evidence", "os_evidence.procgroup_record_verdicts(p, 0)"),
 ];
 
 /// Write `import std.<module>; pub fn f(p: i64) -> i64 { <call> }` to

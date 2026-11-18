@@ -49,9 +49,9 @@ const CASES: &[(&str, &str, &str)] = &[
     ("net.mind", "getsockname", "tests/std_surface_http.rs"),
     // tests/std_surface_iouring.rs (one shared compile, `iouring_so`)
     ("iouring.mind", "syscall", "tests/std_surface_iouring.rs"),
-    // tests/std_cpu_affinity.rs (compiles std/cpu_affinity.mind)
+    // tests/std_cpu_affinity.rs (std/cpu_affinity.mind calls the wrappers of this file)
     (
-        "cpu_affinity.mind",
+        "cpu_affinity_sys.mind",
         "sched_setaffinity",
         "tests/std_cpu_affinity.rs",
     ),

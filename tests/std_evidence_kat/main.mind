@@ -129,11 +129,11 @@ fn check_sink() -> i64 {
     }
     let s: i64 = evd_new(2);
     // Module or kind codes outside the defined set are refused and not stored.
-    if evidence_record(s, 0, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 4, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 0, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 5, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 || evd_dropped(s) != 0 {
+    if evidence_record(s, 0, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 5, 1, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 0, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 5, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 || evd_dropped(s) != 0 {
         return 18;
     }
     // Defined codes in a pair no wrapper writes are refused too.
-    if evidence_record(s, 3, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 3, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 3, 3, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 {
+    if evidence_record(s, 3, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 3, 1, 1, 1) != 0 - 1 || evidence_record(s, 1, 4, 1, 1, 1) != 0 - 1 || evidence_record(s, 3, 3, 1, 1, 1) != 0 - 1 || evidence_record(s, 4, 3, 1, 1, 1) != 0 - 1 || evidence_record(s, 4, 4, 1, 1, 1) != 0 - 1 || evd_len(s) != 0 {
         return 98;
     }
     if evidence_record(s, 1, 1, 22, 5, 7) != 0 || evidence_record(s, 2, 2, 0, 3, 0) != 0 {
@@ -163,10 +163,10 @@ fn check_sink() -> i64 {
     0
 }
 
-// 1 for the 8 (module, kind) pairs the std wrappers write: fs_checked and
-// x509 refuse or accept, procgroup refuse, accept, fail or child.
+// 1 for the 10 (module, kind) pairs the std wrappers write: fs_checked, x509
+// and cpu_affinity refuse or accept, procgroup refuse, accept, fail or child.
 fn pair_written(m: i64, k: i64) -> i64 {
-    if (m == 1 || m == 3) && (k == 1 || k == 2) {
+    if (m == 1 || m == 3 || m == 4) && (k == 1 || k == 2) {
         return 1;
     }
     if m == 2 && k >= 1 && k <= 4 {
@@ -175,7 +175,7 @@ fn pair_written(m: i64, k: i64) -> i64 {
     0
 }
 
-// evd_code_ok accepts exactly those 8 pairs over module and kind codes -1..9.
+// evd_code_ok accepts exactly those 10 pairs over module and kind codes -1..9.
 fn check_pairs() -> i64 {
     let mut n: i64 = 0;
     let mut m: i64 = 0 - 1;
@@ -190,7 +190,7 @@ fn check_pairs() -> i64 {
         }
         m = m + 1;
     }
-    if n != 8 {
+    if n != 10 {
         return 99;
     }
     0

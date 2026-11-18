@@ -45,6 +45,11 @@ fn a_bare_imported_std_world_call_is_resolved_by_name() {
         ("std.dns", "dns_resolve(p, 9)", "dns_resolve"),
         ("std.entropy", "entropy_fill(p, 8)", "entropy_fill"),
         ("std.dns", "tcp_connect_host(p, 9, 80)", "tcp_connect_host"),
+        (
+            "std.os_evidence",
+            "cpu_affinity_pin_ev(p, 0)",
+            "cpu_affinity_pin_ev",
+        ),
     ]
     .iter()
     .enumerate()
@@ -78,6 +83,11 @@ fn a_bare_imported_std_world_call_is_resolved_by_name() {
             "fn dns_resolve(p: i64, n: i64) -> i64 {\n    p + n\n}",
             "dns_resolve(p, 9)",
         ),
+        (
+            "std.os_evidence",
+            "fn cpu_affinity_pin_ev(p: i64, n: i64) -> i64 {\n    p + n\n}",
+            "cpu_affinity_pin_ev(p, 0)",
+        ),
     ]
     .iter()
     .enumerate()
@@ -101,7 +111,7 @@ fn a_bare_imported_std_world_call_is_resolved_by_name() {
             "a module function shadowing `{call}` was not attested deterministic\n{text}"
         );
     }
-    println!("determinism_veto_control(bare resolution): ran=5 fail=0");
+    println!("determinism_veto_control(bare resolution): ran=7 fail=0");
 }
 
 /// `(call, the row it names)`: the CPU affinity names of `std.iouring` and of
@@ -116,6 +126,11 @@ const AFFINITY_CALLS: &[(&str, &str)] = &[
     ("cpu_affinity_mask()", "cpu_affinity_mask"),
     ("cpu_affinity_has(p)", "cpu_affinity_has"),
     ("cpu_affinity_pin_demo(p)", "cpu_affinity_pin_demo"),
+    // The wrappers `std.cpu_affinity` makes its system calls through: the module
+    // is in the implicit std set too.
+    ("cpu_affinity_sys_set(8, p)", "cpu_affinity_sys_set"),
+    ("cpu_affinity_sys_get(8, p)", "cpu_affinity_sys_get"),
+    ("cpu_affinity_sys_errno()", "cpu_affinity_sys_errno"),
 ];
 
 /// A bare affinity call with NO import is the std function: refused without
@@ -161,7 +176,10 @@ fn a_bare_implicit_std_affinity_call_is_a_world_call() {
             "#[deterministic] bare `{call}` was accepted\n{out}"
         );
     }
-    println!("determinism_veto_control(bare affinity): ran=16 fail=0");
+    println!(
+        "determinism_veto_control(bare affinity): ran={} fail=0",
+        AFFINITY_CALLS.len() * 2
+    );
 }
 
 /// The reach through a helper function of the same file is the same call, with
@@ -292,6 +310,8 @@ fn a_local_binding_named_like_an_affinity_name_is_deterministic() {
     for (i, (call, name)) in AFFINITY_CALLS.iter().enumerate() {
         let module = if name.starts_with("io_reactor") {
             "std.iouring"
+        } else if name.starts_with("cpu_affinity_sys_") {
+            "std.cpu_affinity_sys"
         } else {
             "std.cpu_affinity"
         };
