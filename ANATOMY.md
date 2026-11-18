@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3325 | **Est. tokens:** ~5,882,393
-**Generated:** 2026-11-18 12:47 UTC
+**Files:** 3326 | **Est. tokens:** ~5,885,709
+**Generated:** 2026-11-18 15:39 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 45 | ~129,635 |
+| `docs/` | 45 | ~129,872 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 11 | ~27,509 |
@@ -131,10 +131,10 @@
 | `.github/actions/std-fs-checked/` | 1 | ~1,148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/scripts/` | 1 | ~1,297 |
-| `.github/workflows/` | 9 | ~18,926 |
+| `.github/workflows/` | 10 | ~21,323 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~157,700 |
+| `scripts/` | 36 | ~158,382 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -569,7 +569,7 @@
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
 - `INDEPENDENCE_ROADMAP.md` (~19730 tok, huge) — MIND Rust-Independence Roadmap
-- `install.md` (~1515 tok, huge) — Installing mindc
+- `install.md` (~1752 tok, huge) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1946 tok, huge) — IR stability contract
@@ -2074,6 +2074,7 @@
 - `cargo-deny.yml` (~333 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~1616 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2937 tok, huge) — name: Docs Claims
+- `installers.yml` (~2397 tok, huge) — name: Installers
 - `link-check.yml` (~327 tok, medium) — name: Link Check
 - `mindcraft.yml` (~938 tok, large) — name: Mindcraft Check
 - `pr-review.yml` (~1482 tok, large) — name: pr-review
@@ -2108,7 +2109,7 @@
 - `exec_semantics_gate.sh` (~10206 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
-- `install.ps1` (~1907 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
+- `install.ps1` (~2589 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1094 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
 ### `scripts/mind-vs-rust/`
 
