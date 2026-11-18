@@ -40,8 +40,13 @@ asset names are in the manual table below.
 
 ### Windows (PowerShell)
 
-`scripts/install.ps1` reads `-Version`. A script fetched with `irm` and run
-with `iex` does not receive arguments, so the pin form is a script block:
+```powershell
+irm https://mindlang.dev/install.ps1 | iex
+```
+
+`scripts/install.ps1` reads `-Version`, `-InstallDir` and `-DryRun`. A script
+fetched with `irm` and run with `iex` does not receive arguments, so the pin
+form is a script block:
 
 ```powershell
 & ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.3
@@ -53,13 +58,29 @@ From a clone:
 powershell -File scripts/install.ps1 -Version v0.10.3
 ```
 
-The default install directory is `%USERPROFILE%\.local\bin`.
+The script runs in Windows PowerShell 5.1 and in PowerShell 7. It downloads
+`mindc-windows-x64.zip` and `mindc-windows-x64.zip.sha256` from the release
+page of the tag, and installs to `%USERPROFILE%\.local\bin` unless
+`-InstallDir` names another directory. It does these steps in order:
 
-The published Windows asset is `mindc-windows-x64.zip`, with
-`mindc-windows-x64.zip.sha256` beside it. `scripts/install.ps1` in this tree
-still requests `mindc-<tag>-x86_64-pc-windows-msvc.exe` and a `SHA256SUMS`
-file. Those names are not release assets. Use the manual steps for the
-published file. Windows ARM64 has no pre-built binary.
+1. It compares the SHA-256 of the zip with the first field of the first line
+   of the `.sha256` file. On a mismatch it stops and installs nothing. If the
+   release publishes no `.sha256` file (HTTP 404), it installs without the
+   check and prints a warning. Any other error while it downloads that file
+   stops the install.
+2. It unpacks the zip in a new temporary directory and requires `mindc.exe` in
+   it.
+3. It copies `mindc.exe` to the install directory and removes the temporary
+   directory. It removes that directory when a step fails too.
+4. If no entry of your user `PATH` equals the install directory, it appends
+   the directory to your user `PATH`. The current shell keeps its old `PATH`.
+
+`-DryRun` prints the asset URL, the checksum URL and the install path, and
+writes nothing. Without `-Version` it still reads the latest tag from the
+GitHub API.
+
+Windows ARM64 and 32-bit Windows have no pre-built binary. The script stops
+with a message on both.
 
 ## What a build needs
 
