@@ -30,8 +30,8 @@
 # the install directory, it prepends the directory to the user PATH; the current shell
 # keeps its old PATH.
 #
-# Dot-sourcing this file (. .\install.ps1) only defines the functions and installs
-# nothing.
+# Dot-sourcing this file (. .\install.ps1) installs nothing. It defines the functions
+# and sets $Version, $InstallDir, $DryRun and $MindcRepo in the calling scope.
 
 [CmdletBinding()]
 param(

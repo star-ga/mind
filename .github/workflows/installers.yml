@@ -125,8 +125,8 @@ jobs:
         # script, the same tag and the same runner install mindc.exe. The only change
         # here is the content of the .sha256 file, which a stand-in for Invoke-WebRequest
         # replaces with a wrong hash. The zip is still downloaded from the release, so
-        # the install reaches its checksum check. The script is dot-sourced: that only
-        # defines its functions and installs nothing. TMP and TEMP point at a new
+        # the install reaches its checksum check. The script is dot-sourced: that installs
+        # nothing and defines its functions and its variables. TMP and TEMP point at a new
         # directory, so the zip path shows where the script put its temporary directory.
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'mindc-neg-bin'
