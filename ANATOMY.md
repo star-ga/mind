@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3324 | **Est. tokens:** ~5,881,103
-**Generated:** 2026-11-18 07:46 UTC
+**Files:** 3325 | **Est. tokens:** ~5,882,393
+**Generated:** 2026-11-18 12:47 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 336 | ~944,186 |
+| `examples/mindc_mind/` | 337 | ~945,396 |
 | `examples/mindc_mind/testdata/` | 5 | ~7,038 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 1 | ~3,641 |
@@ -134,7 +134,7 @@
 | `.github/workflows/` | 9 | ~18,926 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~157,620 |
+| `scripts/` | 36 | ~157,700 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -763,6 +763,7 @@
 - `_diagnostic_project.py` (~376 tok, medium) — Owned CLI projects for diagnostic smoke fixtures."""
 - `div_shift_cmp_edge_smoke.py` (~2106 tok, huge)
 - `enum_netverify.py` (~1957 tok, huge) — # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
+- `_exec_retry.py` (~1145 tok, large) — Retry of a busy exec (ETXTBSY) for a smoke that writes a program file and runs
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `fast_keystone.sh` (~3910 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `field_store_netverify.py` (~1413 tok, large) — # Canonical independent value harness for struct field STORES (`p.x = v`) in the
@@ -1012,7 +1013,7 @@
 - `self_host_native_scalar_f64_smoke.py` (~1301 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
 - `self_host_native_scalar_narrow_smoke.py` (~1805 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
 - `self_host_native_scast_smoke.py` (~1699 tok, huge)
-- `self_host_native_shadow_scope_smoke.py` (~10669 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
+- `self_host_native_shadow_scope_smoke.py` (~10690 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
 - `self_host_native_simd_dot_f32_smoke.py` (~1606 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
 - `self_host_native_simd_dot_i16_smoke.py` (~1234 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
@@ -1070,7 +1071,7 @@
 - `sha256_hash_smoke.py` (~1290 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~6818 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~6862 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~5530 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
@@ -2098,7 +2099,7 @@
 - `check_claims.py` (~9033 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1873 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring_preflight.py` (~3182 tok, huge) — Preflight cargo-test parity checks extracted from check_gate_wiring.
-- `check_gate_wiring.py` (~8094 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~8174 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~8548 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
