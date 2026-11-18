@@ -98,7 +98,7 @@ jobs:
   pqc_hybrid_signing:
     name: PQC hybrid signing controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35  # slow-runner rule (see build_test): 3.5 x 8.77 min
     permissions:
       contents: read
 
@@ -141,7 +141,7 @@ jobs:
           - os: windows-2025
             name: Windows x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45  # slow-runner rule (see build_test): 3.5 x 11.78 min
     permissions:
       contents: read
 
@@ -353,12 +353,12 @@ jobs:
             name: Windows x86_64
 
     runs-on: ${{ matrix.os }}
-    # Healthy matrix jobs finish in 4-9 min (Windows is slowest at ~8m); GitHub's
-    # default cap is 6 HOURS. A scarce macos-15 ARM64 runner that stalls in
-    # `cargo test` therefore burns hours before being killed and reported as an
-    # opaque "failure". Bound it so a stall fails fast and legibly as `timed_out`
-    # in 30 min (~4x headroom) — without masking any genuine test failure.
-    timeout-minutes: 30
+    # GitHub's default cap is 6 HOURS, so a runner that stalls in `cargo test` needs
+    # a cap. SLOW-RUNNER RULE for the caps of this file: at least 3.5x the slowest
+    # green job of the last 20 runs. On 2026-11-18 a hosted runner (macOS row) was
+    # 2.6x slow over the job and 2.75x in the gated test step, and the old 30 min cap
+    # cancelled it with no failed test; 2.8 x 1.25 margin = 3.5. Here: 3.5 x 25.98 min.
+    timeout-minutes: 95
 
     env:
       # neutralize proxies
@@ -876,9 +876,9 @@ jobs:
     # 42687591085: cut off at 4692s, 6.0 min into the Phase G tests, which take
     # 6.4 min; every step runs after an early red). 2*1022+4716 = 6760s (113 min). The
     # twin-emitter mic@3 fuzzer step stopped at its sanity check there; its own
-    # 25 min step limit binds once it fuzzes (nested debug `cargo test` build of
-    # the dump_ref oracle), so the job budget is 113 + 25 = 138 min.
-    timeout-minutes: 138
+    # 25 min step limit binds once it fuzzes (nested debug `cargo test` build of the
+    # dump_ref oracle): 113 + 25 = 138 min. Slow-runner rule (see build_test): 3.5 x 47.67 min.
+    timeout-minutes: 170
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -2072,9 +2072,9 @@ jobs:
         llvm: ["23", "20"]
     runs-on: ubuntu-24.04
     # Install step max 1022s (LLVM 20, run 42273645377: Fetched 148 MB in 16min 49s)
-    # across runs 42310768179, 42273645377 and 42015873391. Rest of the job max
-    # 1291s. 2*1022+1291 = 3335s. Still builds ~317 harnesses and runs ~1913 tests.
-    timeout-minutes: 56
+    # across runs 42310768179, 42273645377 and 42015873391. ~317 harnesses, ~1913 tests.
+    # Slow-runner rule (see build_test): 3.5 x 49.53 min, the slowest green job (run 43402159534).
+    timeout-minutes: 175
 
     # THE TIER THAT RAN NOWHERE. Measured at f2a2d87d: 123 integration-test files /
     # 262 test functions were reachable by NO `cargo test` invocation in this
