@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3321 | **Est. tokens:** ~5,872,211
-**Generated:** 2026-11-17 20:34 UTC
+**Files:** 3324 | **Est. tokens:** ~5,881,103
+**Generated:** 2026-11-18 07:46 UTC
 
 ## Token Budget Guide
 
@@ -22,10 +22,10 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~42,335 |
+| `./` | 35 | ~42,334 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 2 | ~835 |
+| `.arch-mind/` | 2 | ~898 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `audits/native-direct-2026-10-20/` | 5 | ~1,394 |
@@ -43,8 +43,8 @@
 | `benchmarks/mojo/` | 8 | ~4,276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 2 | ~3,617 |
-| `docs/` | 45 | ~129,486 |
+| `config/` | 2 | ~3,628 |
+| `docs/` | 45 | ~129,635 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/compiler/` | 11 | ~27,509 |
@@ -66,7 +66,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 336 | ~944,186 |
-| `examples/mindc_mind/testdata/` | 5 | ~7,031 |
+| `examples/mindc_mind/testdata/` | 5 | ~7,038 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 1 | ~3,641 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -134,7 +134,7 @@
 | `.github/workflows/` | 9 | ~18,926 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~157,595 |
+| `scripts/` | 36 | ~157,620 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -145,7 +145,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 13 | ~65,268 |
+| `src/` | 13 | ~65,685 |
 | `src/ast/` | 2 | ~12,334 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -168,7 +168,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~27,552 |
 | `src/fmt/printer/` | 1 | ~1,912 |
-| `src/intrinsics/` | 1 | ~3,769 |
+| `src/intrinsics/` | 1 | ~3,924 |
 | `src/ir/` | 16 | ~109,322 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -185,9 +185,9 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 9 | ~31,177 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 25 | ~97,928 |
+| `src/project/` | 25 | ~97,984 |
 | `src/project/single_file_scope/` | 2 | ~4,104 |
-| `src/project/stdlib/` | 1 | ~4,701 |
+| `src/project/stdlib/` | 1 | ~4,725 |
 | `src/qualified_enums/` | 2 | ~3,391 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
@@ -198,8 +198,8 @@
 | `src/type_checker/slice_abi/` | 4 | ~17,202 |
 | `src/types/` | 10 | ~23,602 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 77 | ~321,677 |
-| `tests/` | 493 | ~1,210,974 |
+| `std/` | 78 | ~322,516 |
+| `tests/` | 495 | ~1,217,567 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 7 | ~18,102 |
@@ -284,9 +284,9 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/std_entropy_dns_support/` | 1 | ~1,599 |
-| `tests/std_evidence_kat/` | 2 | ~2,524 |
+| `tests/std_evidence_kat/` | 2 | ~2,553 |
 | `tests/std_evidence_load/` | 2 | ~1,905 |
-| `tests/std_evidence_wrappers/` | 2 | ~2,524 |
+| `tests/std_evidence_wrappers/` | 2 | ~3,049 |
 | `tests/std_process_wait/` | 5 | ~7,294 |
 | `tests/support/` | 15 | ~37,958 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -334,7 +334,7 @@
 - `mindci.toml` (~245 tok, medium) — [pipeline]
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~7768 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~7767 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~171 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1903 tok, huge) — Security Policy
@@ -349,7 +349,7 @@
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `.arch-mind/`
 
-- `rules.mind` (~748 tok, large) — mind (language compiler / runtime root) architectural-governance rules
+- `rules.mind` (~811 tok, large) — mind (language compiler / runtime root) architectural-governance rules
 - `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `assets/logo/`
 
@@ -508,7 +508,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~2645 tok, huge) — [ir]
+- `capabilities.toml` (~2656 tok, huge) — [ir]
 - `token_pricing.toml` (~972 tok, large) — [pricing]
 ### `docs/`
 
@@ -631,7 +631,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~7142 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~7291 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `runtime-open-errors.md` (~831 tok, large) — Runtime file-open errors
 - `security.md` (~1619 tok, huge) — Security Guide
@@ -1891,7 +1891,7 @@
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
-- `stdlib_manifest.txt` (~1062 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
+- `stdlib_manifest.txt` (~1069 tok, large) — # std/*.mind MANIFEST — the single committed source of truth for "which std
 ### `examples/mindc_mind/testdata/string_borrowed/`
 
 - `reference.c` (~869 tok, large) — Copyright STARGA Inc. Reference infrastructure only, not MIND implementation.
@@ -2137,7 +2137,7 @@
 
 - `sha256_memory_regression.sh` (~1431 tok, large) — Author: STARGA Inc. Build/transport harness; all executable checks are MIND.
 - `test_exec_semantics_gate.py` (~7163 tok, huge) — Regression test for scripts/exec_semantics_gate.sh: a FAILING test must red the tier.
-- `test_gate_wiring.py` (~10521 tok, huge) — Regression test for scripts/check_gate_wiring.py.
+- `test_gate_wiring.py` (~10546 tok, huge) — Regression test for scripts/check_gate_wiring.py.
 - `test_no_ai_attribution.py` (~8877 tok, huge) — Self-test for the no-AI-attribution gate and for what feeds it.
 - `test_smoke_wiring_lint.py` (~8928 tok, huge) — Regression test for the CI-coverage and branch-awareness contracts of
 - `verify_ci_green.py` (~3651 tok, huge) — verify_ci_green.py — refuse to release a commit that CI has not proven green.
@@ -2428,10 +2428,10 @@
 ### `src/`
 
 - `intrinsic_contract.rs` (~4924 tok, huge) — Copyright 2025 STARGA Inc.
-- `intrinsics.rs` (~11057 tok, huge) — The intrinsic registry: the ONE table naming every `__mind_*` primitive the
+- `intrinsics.rs` (~11058 tok, huge) — The intrinsic registry: the ONE table naming every `__mind_*` primitive the
 ### `src/intrinsics/`
 
-- `tests.rs` (~3769 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~3924 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2617,13 +2617,13 @@
 - `sources.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/stdlib/`
 
-- `load.rs` (~4701 tok, huge) — Copyright 2026 STARGA Inc.
+- `load.rs` (~4725 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/project/`
 
-- `stdlib.rs` (~5348 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~5368 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_link_set.rs` (~2506 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `std_struct_schema.rs` (~840 tok, large) — Copyright 2026 STARGA Inc.
-- `substrate_link.rs` (~5166 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~5202 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~7554 tok, huge) — route rule (see [`Backend`]).
 ### `src/`
 
@@ -2655,7 +2655,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `std_qualified.rs` (~6842 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_qualified.rs` (~7258 tok, huge) — Copyright 2026 STARGA Inc.
 - `target.rs` (~6043 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
@@ -2729,13 +2729,14 @@
 - `blas.mind` (~2522 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `chacha20_poly1305.mind` (~3973 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3223 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
-- `cpu_affinity.mind` (~1221 tok, large) — std/cpu_affinity.mind — CPU affinity mask of CPU_SETSIZE 1024 bits.
+- `cpu_affinity.mind` (~1234 tok, large) — std/cpu_affinity.mind — CPU affinity mask of CPU_SETSIZE 1024 bits.
+- `cpu_affinity_sys.mind` (~561 tok, large) — std.cpu_affinity_sys — the OS calls of std.cpu_affinity, one straight-line wrapper each.
 - `detmath.mind` (~4180 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `dns.mind` (~6140 tok, huge) — std/dns.mind — host name resolution, connect-by-name, and the stream options
 - `ecdsa_p256.mind` (~7346 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `entropy.mind` (~860 tok, large) — std/entropy.mind — operating-system randomness (keys, nonces, TLS randoms).
 - `evidence_mic.mind` (~3080 tok, huge) — std/evidence_mic.mind — write a std.evidence sink as a mic@3 MAP record and read it back.
-- `evidence.mind` (~2476 tok, huge) — std/evidence.mind — record governance verdicts of std calls in a caller-owned sink.
+- `evidence.mind` (~2507 tok, huge) — std/evidence.mind — record governance verdicts of std calls in a caller-owned sink.
 - `fs_checked.mind` (~2600 tok, huge) — Checked Linux x86-64 directory enumeration. Author: STARGA Inc.
 - `fs.mind` (~5376 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
@@ -2763,7 +2764,7 @@
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `mlkem768.mind` (~6450 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
-- `os_evidence.mind` (~1188 tok, large) — std/os_evidence.mind — std.evidence records of std.fs_checked and std.procgroup verdicts.
+- `os_evidence.mind` (~1422 tok, large) — std/os_evidence.mind — std.evidence records of std.fs_checked, std.procgroup and
 - `posix.mind` (~1553 tok, huge) — std.posix — Linux x86-64 filesystem surface, with no libc in native builds.
 - `posix_sys.mind` (~1098 tok, large) — std.posix_sys — the raw Linux x86-64 system calls of std.posix and
 - `process.mind` (~6149 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
@@ -3068,9 +3069,10 @@
 - `cross_substrate_receipts.rs` (~2546 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `determinism_veto_bare_std.rs` (~3862 tok, huge) — Copyright 2026 STARGA Inc.
-- `determinism_veto_control.rs` (~7831 tok, huge) — Copyright 2025 STARGA Inc.
-- `determinism_veto_std_callers.rs` (~2808 tok, huge) — Copyright 2026 STARGA Inc.
+- `determinism_veto_affinity_sys.rs` (~3081 tok, huge) — Copyright 2026 STARGA Inc.
+- `determinism_veto_bare_std.rs` (~4047 tok, huge) — Copyright 2026 STARGA Inc.
+- `determinism_veto_control.rs` (~7838 tok, huge) — Copyright 2025 STARGA Inc.
+- `determinism_veto_std_callers.rs` (~3263 tok, huge) — Copyright 2026 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
@@ -3514,7 +3516,7 @@
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_array_store_roundtrip.rs` (~1061 tok, large) — Copyright 2026 STARGA Inc.
 - `mic3_break_continue_string_roundtrip.rs` (~1685 tok, huge) — Copyright 2026 STARGA Inc.
-- `mic3_cli_emit.rs` (~4377 tok, huge) — Copyright 2025 STARGA Inc.
+- `mic3_cli_emit.rs` (~4598 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~2596 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_parser_dos.rs` (~1891 tok, huge) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3751,7 +3753,7 @@
 - `private_fn_link_collision_run.rs` (~992 tok, large) — Copyright 2026 STARGA Inc.
 - `project_function_resolution.rs` (~1475 tok, large) — Copyright 2026 STARGA Inc.
 - `public_cpu_native_link.rs` (~3345 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `qualified_enum_explicit_sources.rs` (~3614 tok, huge) — Copyright 2026 STARGA Inc.
+- `qualified_enum_explicit_sources.rs` (~3767 tok, huge) — Copyright 2026 STARGA Inc.
 - `qualified_enum_run.rs` (~4729 tok, huge) — Copyright 2025 STARGA Inc.
 - `reap_threshold.rs` (~2108 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4039,7 +4041,8 @@
 - `sparse_tensor_types.rs` (~1997 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~911 tok, large) — Copyright 2025 STARGA Inc.
 - `std_bundled_module_table.rs` (~8119 tok, huge) — Copyright 2026 STARGA Inc.
-- `std_cpu_affinity.rs` (~5386 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_cpu_affinity.rs` (~5408 tok, huge) — Copyright 2026 STARGA Inc.
+- `std_cpu_affinity_split.rs` (~2469 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_dns_free_run.rs` (~1732 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_dns_layout_run.rs` (~2220 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_entropy_dns_run.rs` (~5013 tok, huge) — Copyright 2026 STARGA Inc.
@@ -4048,7 +4051,7 @@
 - `mod.rs` (~1599 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/std_evidence_kat/`
 
-- `main.mind` (~2489 tok, huge) — Known-answer checks for std.evidence and std.evidence_mic (the load-side
+- `main.mind` (~2518 tok, huge) — Known-answer checks for std.evidence and std.evidence_mic (the load-side
 - `Mind.toml` (~35 tok, tiny) — [package]
 ### `tests/std_evidence_load/`
 
@@ -4056,7 +4059,7 @@
 - `Mind.toml` (~35 tok, tiny) — [package]
 ### `tests/std_evidence_wrappers/`
 
-- `main.mind` (~2488 tok, huge) — Checks for the `_ev` std variants (std.os_evidence, std.x509_evidence) and the
+- `main.mind` (~3013 tok, huge) — Checks for the `_ev` std variants (std.os_evidence, std.x509_evidence) and the
 - `Mind.toml` (~36 tok, tiny) — [package]
 ### `tests/`
 
