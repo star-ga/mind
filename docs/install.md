@@ -72,7 +72,7 @@ page of the tag, and installs to `%USERPROFILE%\.local\bin` unless
    it.
 3. It copies `mindc.exe` to the install directory and removes the temporary
    directory. It removes that directory when a step fails too.
-4. If no entry of your user `PATH` equals the install directory, it appends
+4. If no entry of your user `PATH` equals the install directory, it prepends
    the directory to your user `PATH`. The current shell keeps its old `PATH`.
 
 `-DryRun` prints the asset URL, the checksum URL and the install path, and

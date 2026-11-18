@@ -27,7 +27,7 @@
 #
 # The script creates the install directory if needed (no admin rights needed for the
 # default directory) and never asks for elevation. If no entry of the user PATH equals
-# the install directory, it appends the directory to the user PATH; the current shell
+# the install directory, it prepends the directory to the user PATH; the current shell
 # keeps its old PATH.
 #
 # Dot-sourcing this file (. .\install.ps1) only defines the functions and installs
@@ -166,7 +166,7 @@ function Install-MindcAsset {
     }
 }
 
-# Appends $Dir to the user PATH unless one entry already names it.
+# Prepends $Dir to the user PATH unless one entry already names it.
 function Add-MindcToUserPath {
     param([string]$Dir)
     Set-StrictMode -Version Latest
