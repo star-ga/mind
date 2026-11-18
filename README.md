@@ -150,7 +150,7 @@ supported in Phase A (only `cpu` and `cerebras`). `mindc test` has no
 `mindc bench --backend mlir --target cuda` pass the name `cuda` to the project
 link. That link requires `libmind_cuda_linux-x64.so` from `MIND_LIB_DIR` or
 `~/.mind/lib` (`E5002` when the file is absent). This repository does not ship
-that library. GPU execution is in the commercial mind-runtime.
+that library. GPU execution is in the commercial runtime.
 
 ### Mindcraft Source Toolchain (RFC 0007 — fmt/check shipped in v0.6.8; see note)
 

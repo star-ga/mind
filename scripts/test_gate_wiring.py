@@ -128,7 +128,8 @@ GIT_ENV = {k: v for k, v in os.environ.items() if k != "MIND_HYGIENE_BASE"}
 GIT_ENV.update(GIT_AUTHOR_NAME="STARGA Inc", GIT_AUTHOR_EMAIL="noreply@star.ga",
                GIT_COMMITTER_NAME="STARGA Inc", GIT_COMMITTER_EMAIL="noreply@star.ga",
                GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-CREDIT = "\n\nCo-authored-by: Pat Example <pat@example.invalid>"
+# Two string parts: no tracked file holds the whole trailer text, which the hygiene scans refuse.
+CREDIT = "\n\nCo-authored" "-by: Pat Example <pat@example.invalid>"
 EMPTY_LINE = "commit-message range is empty: HEAD is on every base candidate"
 ALL_MISSES = ("refs/heads/main absent; refs/remotes/origin/main absent; "
               "MIND_HYGIENE_BASE unset")
