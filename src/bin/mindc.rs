@@ -12,6 +12,10 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 //! MIND command-line compiler: parse, type-check, lower to IR/MLIR, and
 //! optionally run autodiff.
+// deferred: would allow this lint on the command table alone, stubbed because clap derives one
+// function for the whole table and an item-level allow does not reach it — upgrade path: one module
+// and one argument struct per subcommand, then drop this line.
+#![allow(clippy::large_unopt_stack_frames)]
 // Small-object primary allocator, opted in per-binary (not registered by the
 // library — see `libmind::SmallHeapAlloc`). Cuts allocation overhead on the
 // compile hot path; produces no values, so emitted artifacts are unaffected.
@@ -44,12 +48,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 #[derive(Parser, Debug)]
-#[command(
-    author,
-    about = None,
-    long_about = None,
-    disable_version_flag = true
-)]
+#[command(author, about = None, long_about = None, disable_version_flag = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
