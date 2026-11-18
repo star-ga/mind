@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.3] - 2026-11-17
+## [0.10.3] - 2026-11-18
 
 ### Added
 - **`std.https`: authenticated HTTPS GET and POST for `mindc build` executables
