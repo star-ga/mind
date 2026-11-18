@@ -2,7 +2,7 @@
 # Rows change only through the re-pin: printf write | seed_ledger (refused
 # unless the seed sources compose to the frozen seed). rows_sha256 makes a
 # hand edit red. Columns: role, sha256 (- = absent), path.
-# rows_sha256	0002171950771b85a9b7fa3a1719ec23d3f23b4f763fc382a88576ce4fae5884
+# rows_sha256	22801062c06a1525ee4657fc730ab2360748517acd4ca25485ffe36b43cdbb78
 seed	15bacf0d2f51064c90424261276ac417cea4b1886e8f25ec4e5bef576cac892d	std/arena.mind
 seed	89aeea3b3b6d7c96f56b980643a680a49e5225627a9f23d305ece3f5b4ffd262	std/async.mind
 seed	62009fe091e8aa2b7c3c1b06f7a3cffdbee54ad19861ac2ed137fce71d9c0f84	std/blas.mind
@@ -143,7 +143,7 @@ pin	00e9c2d9d5cab969b27afa3b936763949b2d211b50e965a406fd54cff05ec9cb	examples/mi
 pin	5253709058d3e991325623ceaccd767140ab11c52868308844f5b133464afbf2	examples/mindc_mind/testdata/selfhost_loop/MANIFEST.txt
 pin	66e5bd30deaf8b72b0513e1cd1df012cee3acc858219f313f571bff0b608a14d	examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
 pin	677cb407cdc3ae5b546218692abf297e1f7b54659d09e7de78c80a5868a89174	examples/mindc_mind/testdata/selfhost_loop_bounded/MANIFEST.txt
-pin	c962a1a79bfd5fa46aff45367429d5cd48ab83860248872e6b50996b7dd2f66b	examples/mindc_mind/testdata/stdlib_manifest.txt
+pin	542d421635c36ef78d14308381d952f08485f471d9991f0583757b57b226771d	examples/mindc_mind/testdata/stdlib_manifest.txt
 pin	45b9e341a1d3f3fa9c74cb0e7bb0ec9ec5aa3f45756709960dabfc6a3c187856	examples/mind_mirror_v04/mirror_gate.py
 pin	66a09c6495e9f203c57105f9ff4ad9073ee13de8f478f332c4fae9b421bd5404	examples/mind_mirror_v04/testdata/MANIFEST.tsv
 pin	23c379da11b546e708cd51d0a7959d93a3f10933ae32aad99557ade91beb824b	examples/mindc_mind/_ref_add.note
