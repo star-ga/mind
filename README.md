@@ -566,6 +566,12 @@ The skill contains only public Apache 2.0 content from `star-ga/mind` and `star-
 * [Contributing guidelines](CONTRIBUTING.md)
 * [Security policy](SECURITY.md)
 
+## Community
+
+- **Discussions:** <https://github.com/star-ga/mind/discussions> — questions,
+  ideas and help for the MIND language and its ecosystem.
+- **Discord:** <https://mindlang.dev/discord> — the MindLang community server.
+
 ## Licensing
 
 MIND follows an open-core dual licensing model maintained by STARGA Inc.
